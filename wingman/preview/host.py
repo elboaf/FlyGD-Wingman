@@ -11,11 +11,12 @@ records the identical discovery about webview.start() carrying none of
 the old event loop, and answers it with an owned loop.
 """
 
-import contextlib
 import ctypes
 import logging
 import threading
 import time
+from ctypes import wintypes
+from dataclasses import dataclass
 
 from . import (
     cycle,
@@ -33,14 +34,13 @@ from .window import PreviewWindow
 logger = logging.getLogger(__name__)
 
 SWEEP_MS = 700  # TriffView uses the same interval
-# Upper bound on the minimize send. With SMTO_ABORTIFHUNG this is what
-# keeps a still-loading EVE client from stalling the preview thread --
-# see the SendMessageTimeoutW bind comment in win32.py. The send now goes
-# to a client that still holds the foreground (see _activate_client), the
-# case measured at 6-9ms; the budget is a ceiling for a hung one, not the
-# expected wait.
-MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
+ACTIVATE_RETRY_TIMER_ID = 3
+# A 20ms timer keeps each pump turn short. Twenty-five retries provide about
+# 500ms for ShowWindowAsync restoration without blocking hotkeys or retaining
+# a saved outgoing minimize indefinitely.
+ACTIVATE_RETRY_MS = 20
+ACTIVATE_RETRY_MAX = 25
 # How long an armed bind capture survives without being disarmed. Long
 # enough that nobody meets it while deciding which key to press; short
 # enough that a page which died mid-capture cannot leave the preview
@@ -62,83 +62,36 @@ COPY_MISSING = "missing"
 COPY_PERSIST_FAILED = "persist_failed"
 
 
-@contextlib.contextmanager
-def _animation_off(libs):
-    """Suspend the minimize/restore window animation for the block.
+@dataclass(frozen=True)
+class _PendingSwitch:
+    """The one restore still awaiting Windows' foreground verdict."""
 
-    Ported from EVE-O Preview (WindowManager.TurnOffAnimation /
-    RestoreAnimation), where it is the default. What it buys is the
-    VISIBLE zoom, and only that -- measured 2026-08-30, cross-thread
-    SendMessageTimeoutW(SC_MINIMIZE) against a synthetic top-level
-    window, n=7 each: 12.6ms median with the animation ON, 14.2ms with
-    it OFF. The animation is composited by DWM, not run inside the
-    target's message handler, so it delays neither the send nor the
-    switch. An earlier version of this comment claimed ~200-250ms and
-    called it "the bulk of the visible lag"; the blocking half of that
-    claim is measurably false, and the duration of the zoom itself has
-    never been measured here. It is also a no-op for anyone whose
-    animation is already off -- including this repo's maintainer, whose
-    desktop reads iMinAnimate=0 -- so it explains no part of the field
-    reports that motivated the switch reorder.
+    stable_key: str
+    hwnd: int
+    previous_key: str | None
+    previous_hwnd: int
+    minimize: bool
+    attempts: int = 0
 
-    Kept anyway: for the Windows default (animation ON) the zoom is real
-    and on screen for every minimize and every restore of a minimized
-    client, which is perceived latency even when nothing is blocked.
 
-    Toggled for the switch only and put back in a finally, so a refused
-    activation or an exception cannot leave the user's desktop without
-    its animation. Left alone when it is already off: nothing to write,
-    and nothing to "restore" to a value the user never had.
+def coalesce_hotkey_ids(peek, hwnd, first_ident) -> list[int]:
+    """Drain this host's queued hotkeys without disturbing other messages.
 
-    fWinIni is 0 on both calls -- the live value changes, the user's
-    registry preference does not.
-
-    The restore of a target that was itself minimized is asynchronous
-    (ShowWindowAsync in window.activate), so the animation can come back
-    before the client processes it. EVE-O Preview carries the same race
-    and it is not visible in practice; a synchronous ShowWindow would
-    close it at the cost of blocking on a loading client, which is the
-    stall SendMessageTimeoutW exists to avoid.
+    There is deliberately no cap: every queued press contributes to the
+    sequential target, while folding keeps the cost to one final activation.
+    PeekMessageW stops as soon as this host's finite hotkey queue is caught up.
     """
-    if libs is None:
-        yield
-        return
-    info = win32.ANIMATIONINFO()
-    size = info.cbSize = ctypes.sizeof(info)
-    got = libs.user32.SystemParametersInfoW(
-        win32.SPI_GETANIMATION, size, ctypes.pointer(info), 0
-    )
-    if not got or not info.iMinAnimate:
-        yield
-        return
-    # Restored to what was read, not to a literal 1: the field is
-    # documented as a flag but it is the user's value, and it goes back
-    # exactly as it came.
-    original = info.iMinAnimate
-    info.iMinAnimate = 0
-    if not libs.user32.SystemParametersInfoW(
-        win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
+    ids = [int(first_ident)]
+    message = wintypes.MSG()
+    while peek(
+        ctypes.byref(message),
+        hwnd,
+        win32.WM_HOTKEY,
+        win32.WM_HOTKEY,
+        win32.PM_REMOVE,
     ):
-        # Nothing changed, so nothing to put back -- and the zoom the
-        # user came to lose is still there, which is worth one line.
-        logger.info("Could not suspend the window animation for the switch")
-        yield
-        return
-    try:
-        yield
-    finally:
-        info.iMinAnimate = original
-        if not libs.user32.SystemParametersInfoW(
-            win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
-        ):
-            # The one outcome this block exists to prevent: the user's
-            # desktop left without its animation for the session. It
-            # cannot be retried usefully from here, but it must not be
-            # silent.
-            logger.warning(
-                "Could not restore the window animation after the switch; "
-                "it stays off until the next switch or logon"
-            )
+        ids.append(int(message.wParam))
+    return ids
 
 
 def reconcile(current: set, desired: set):
@@ -169,7 +122,7 @@ def plan_registrations(table) -> list:
     characters on one chord is a supported setup: a multiboxer runs a
     different subset each session and wants one key to mean "go to
     whichever of these is up". Windows has only one registration per
-    chord to give, so the names ride together on it and _on_hotkey
+    chord to give, so the names ride together on it and _on_hotkeys
     resolves between them against who is actually running.
     """
     table = table if isinstance(table, dict) else {}
@@ -404,6 +357,14 @@ class PreviewHost:
         # rather than derived so KillTimer is called exactly once when the
         # last alert clears, and only ever from the preview thread.
         self._alert_timer = False
+        # A restored EVE client can briefly remain iconic after activation.
+        # Retain the outgoing decision so a later observed success completes
+        # the same switch, but never block this thread waiting for Windows.
+        self._pending_switch = None
+        # Like _alert_timer, track the OS timer rather than inferring it from
+        # the request: a newer pending target replaces the request but shares
+        # its periodic timer, which must be killed exactly once on any exit.
+        self._pending_activation_timer = False
         # Recorded by the foreground hook (an arbitrary thread) and
         # resolved by _sweep, never the other way around -- see
         # _install_hook and _apply_selection.
@@ -568,10 +529,9 @@ class PreviewHost:
         the lock: the callables themselves are the live state, so this
         only has to post the signal.
 
-        The single live-update entry point for all five settings this
-        task wires (minimize_inactive_clients included): there is no
-        separate "minimize changed" message, because minimize is read per
-        switch (Task 7), not per window.
+        The single live-update entry point for these settings
+        (minimize_inactive_clients included): there is no separate "minimize
+        changed" message, because minimize is read per switch, not per window.
         """
         self._post(win32.WM_APP_RESTYLE)
 
@@ -727,8 +687,6 @@ class PreviewHost:
     # ---- everything below runs ON the preview thread -------------------
 
     def _run(self) -> None:
-        from ctypes import wintypes
-
         libs = win32.bind()
 
         # First, before any window exists. Thread-local, so the process
@@ -773,7 +731,6 @@ class PreviewHost:
         nothing to signal and blocks until its timeout on exactly the
         paths that matter most.
         """
-        from ctypes import wintypes
 
         class WNDCLASSW(ctypes.Structure):
             _fields_ = [
@@ -813,6 +770,9 @@ class PreviewHost:
 
     def _host_proc(self, hwnd, msg, wparam, lparam):
         libs = win32.bind()
+        if msg == win32.WM_TIMER and wparam == ACTIVATE_RETRY_TIMER_ID:
+            self._retry_pending_activation(libs)
+            return 0
         if msg == win32.WM_TIMER and wparam == SWEEP_TIMER_ID:
             self._sweep(libs)
             return 0
@@ -849,7 +809,8 @@ class PreviewHost:
             self._apply_layouts()
             return 0
         if msg == win32.WM_HOTKEY:
-            self._on_hotkey(libs, wparam)
+            idents = coalesce_hotkey_ids(libs.user32.PeekMessageW, hwnd, wparam)
+            self._on_hotkeys(libs, idents)
             return 0
         return libs.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -1198,37 +1159,68 @@ class PreviewHost:
                 logger.exception("on_hotkey_status callback raised")
 
     def _on_hotkey(self, libs, ident) -> None:
-        action = self._registered.get(ident)
-        if action is None:
-            # Not silent by accident: this is the one case Risk 4 (does
-            # WM_HOTKEY even reach this window) would look like on a real
-            # machine, and it must not read the same as "nothing happened
-            # because nothing was pressed".
-            logger.debug("WM_HOTKEY for unknown id %s ignored", ident)
+        """Keep the one-message entry point for direct callers and tests."""
+        self._on_hotkeys(libs, [ident])
+
+    def _on_hotkeys(self, libs, idents: list[int]) -> None:
+        registered = []
+        for ident in idents:
+            action = self._registered.get(ident)
+            if action is None:
+                # Not silent by accident: this is the one case Risk 4 (does
+                # WM_HOTKEY even reach this window) would look like on a real
+                # machine, and it must not read the same as "nothing happened
+                # because nothing was pressed".
+                logger.debug("WM_HOTKEY for unknown id %s ignored", ident)
+                continue
+            registered.append((ident, action))
+
+        # Capture has one physical newest chord. A missing text mapping is an
+        # incomplete registration state, not permission to capture an older
+        # press the user did not make.
+        newest_text = (
+            self._registered_text.get(registered[-1][0]) if registered else None
+        )
+        if self._take_capture(newest_text):
+            if newest_text is not None and len(registered) > 1:
+                logger.debug(
+                    "Coalesced preview hotkeys: %d -> captured %s",
+                    len(registered),
+                    newest_text,
+                )
             return
-        if self._take_capture(self._registered_text.get(ident)):
+        if not registered:
             return
-        kind, value = action
-        if kind == "focus":
-            target = self._pick_focus_target(libs, value)
-            if target is None:
-                # Every name on this chord is offline. Correct no-op, but
-                # logged -- otherwise indistinguishable from the chord
-                # never reaching the process at all.
-                logger.debug("Preview hotkey targets %r are not running", value)
-                return
-        else:
-            foreground = libs.user32.GetForegroundWindow()
-            anchor = next(
-                (
-                    key
-                    for key, client in self._clients.items()
-                    if client.hwnd == foreground
-                ),
-                None,
-            )
-            # Fall back to the last chord's target when focus is not on a
-            # client at all -- a browser, or Wingman itself.
+
+        foreground = libs.user32.GetForegroundWindow()
+        foreground_key = next(
+            (key for key, client in self._clients.items() if client.hwnd == foreground),
+            None,
+        )
+        # `target` is the final dispatch decision, while `resolved_cursor`
+        # remembers the last place this sequential batch reached. A failed
+        # focus must suppress dispatch if it is final without making a later
+        # relative action resume from stale cross-batch cycle history.
+        target = foreground_key
+        resolved_cursor = foreground_key
+        cycle_seen = False
+        last_cycle_target = None
+        final_action = None
+        for _ident, action in registered:
+            final_action = action
+            kind, value = action
+            if kind == "focus":
+                target = self._pick_focus_target(value, resolved_cursor)
+                if target is None:
+                    # An unavailable absolute request supersedes the final
+                    # dispatch target, but not the cursor a later relative
+                    # action continues from.
+                    logger.debug("Preview hotkey targets %r are not running", value)
+                else:
+                    resolved_cursor = target
+                continue
+
+            cycle_seen = True
             keys = self._cycle_keys()
             if not keys:
                 # Distinct from the "not running" no-op below, and it has
@@ -1239,31 +1231,64 @@ class PreviewHost:
                     "Cycle keybind had nothing to visit: every running "
                     "character is opted out of previews"
                 )
-                return
-            target = cycle.step(keys, anchor or self._last_cycled, value)
-            self._last_cycled = target
-        logger.debug("Preview hotkey fired: %s -> %s", action, target)
+                target = None
+                continue
+            target = cycle.step(
+                keys, target or resolved_cursor or self._last_cycled, value
+            )
+            if target is not None:
+                resolved_cursor = target
+                # A later direct focus determines this folded batch's final
+                # dispatch target, but must not overwrite cycle's sequential
+                # fallback anchor for the next press outside EVE.
+                last_cycle_target = target
+
+        if last_cycle_target is not None:
+            self._last_cycled = last_cycle_target
+        if len(registered) > 1:
+            logger.debug(
+                "Coalesced preview hotkeys: %d, final %s -> %s",
+                len(registered),
+                final_action,
+                target,
+            )
+        else:
+            logger.debug("Preview hotkey fired: %s -> %s", final_action, target)
+
+        if target is None:
+            # The action-specific branch already explained why resolution
+            # failed; a second "target None is not running" line is noise.
+            return
+        if cycle_seen and target == foreground_key:
+            # A folded cycle sequence can cancel back to its starting client,
+            # so activating would add work without changing sequential state.
+            # This intentionally also makes cycling a one-client roster a no-op.
+            return
         client = self._clients.get(target)
         if client is None:
-            # bound to a character that is not running: correct no-op, but
-            # logged -- otherwise this is indistinguishable from the chord
-            # never reaching the process at all.
+            # A concrete target can disappear between resolution and dispatch.
             logger.debug("Preview hotkey target %r is not running", target)
             return
+        # Folding ends in one host-owned switch, including its pending-restore
+        # and minimize decisions.
         self._activate_client(libs, client)
 
     def _take_capture(self, text) -> bool:
         """Hand *text* to an armed capture. Returns whether it was taken.
 
+        An armed capture also consumes an incomplete newest-text mapping: it
+        must not fall through and activate the chord, or guess an older text.
+        That no-op stays armed so a later complete mapping can still capture.
+
         Disarms on the way out: the page sends set_capture(False) too, but
         that round trip is not instant and a second press arriving inside
         it must not be eaten as well.
         """
-        if not text:
-            return False
         with self._lock:
             if time.monotonic() >= self._capture_until:
                 return False
+            if not text:
+                return True
             self._capture_until = 0.0
         logger.debug("Preview hotkey %s taken by an armed bind capture", text)
         if self._on_bind_captured is not None:
@@ -1276,7 +1301,7 @@ class PreviewHost:
                 logger.exception("on_bind_captured callback raised")
         return True
 
-    def _pick_focus_target(self, libs, names):
+    def _pick_focus_target(self, names, current_target):
         """Which of the characters sharing this chord to switch to.
 
         Several names on one chord is the supported multibox setup (see
@@ -1284,207 +1309,206 @@ class PreviewHost:
         group is up. So offline names are not an error here, they are the
         normal case -- they are simply skipped.
 
-        Among the ones running, prefer any that is not already in the
-        foreground, so a press always moves you. It is a tie-break and not
-        a filter: with a single running match that happens to be in front,
-        that match is still the answer, or the key would go dead exactly
-        while the user is looking at that client.
+        Among the ones running, prefer any that is not the batch's virtual
+        target, so queued presses behave like sequential activations even
+        though only the final target is activated. It is a tie-break and not
+        a filter: with a single running match that is already the target, that
+        match is still the answer, or the key would go dead on that client.
 
-        Sorted, so with several running and none in front the choice is
+        Sorted, so with several running and no current match the choice is
         stable rather than dependent on discovery order.
         """
         running = sorted(name for name in names if name in self._clients)
         if not running:
             return None
-        foreground = libs.user32.GetForegroundWindow()
         for name in running:
-            if self._clients[name].hwnd != foreground:
+            if name != current_target:
                 return name
         return running[0]
 
-    def _activate_client(self, libs, client) -> bool:
-        """Switch the foreground to *client*. Returns whether it took.
-
-        The single owner of the switch. Both entry points land here -- a
-        hotkey, and a click on a preview (PreviewWindow classifies the
-        gesture and calls this through its on_activate callback, rather
-        than activating on its own as it used to). Keeping one sequence
-        is what lets the host read the outgoing foreground before it
-        moves; a later step in the switch added here applies to both.
-
-        The bool is window_mod.activate's verdict, read from
-        GetForegroundWindow -- callers that do more work after the switch
-        need to know it actually happened.
-
-        The order is EVE-O Preview's (ThumbnailManager.SwitchActiveClient:
-        MinimizeWindow, then ActivateWindow), and it replaced TriffView's
-        activate / settle 10ms / minimize / re-activate:
-
-        - The minimize goes to a client that still HAS the foreground.
-          It does NOT make the send reliably faster: measured on two
-          live clients 2026-08-30, both orders are quick when the
-          clients are quiet -- old order median 29.6ms, new order
-          40.0ms, and with this thread owning a DWM thumbnail of the
-          target (the app's real shape) the old order ran 9.1ms. None
-          of 26 probe sends came near the budget.
-
-          What it does buy is what happens when the send DOES exceed
-          the budget: a timed-out send is still delivered later, and in
-          the old order that late minimize landed on the window the
-          switch had just left, which is where the compensating
-          re-activation came from. Minimizing before the activation
-          means a late minimize lands on a window that is no longer
-          the foreground, so it cannot take focus off the client the
-          user just asked for.
-
-          An earlier version of this comment said the old send "timed
-          out for its full budget on every switch (166 consecutive
-          timeouts)". That is not supported: the code logs only the
-          FAILURES, never the successes, so the field log's 223 lines
-          have no denominator. The 44 of them that carry an elapsed
-          time are real waits clipped at the budget (min 102ms, median
-          114ms, max 231ms), spread across normal play, and no probe
-          has reproduced one -- the remaining candidate is the client's
-          own message-pump latency during a busy moment (grid load, a
-          jump, a session change), which is EVE-side and not ordering.
-        - Nothing is minimized after the activate, so there is no
-          foreground theft to undo: the settle and the second activation
-          are gone. This function no longer sleeps on the preview thread
-          -- the thread that also pumps hotkeys, alerts, the sweep and
-          every preview's mouse messages.
-        - A refused activation now has to bring the outgoing client back
-          (switching.should_restore); that is the old "never minimize
-          after a refused switch" safety property in the only shape
-          minimize-first allows.
-
-        Every decision about *whether* to minimize or restore lives in
-        switching.py so it can be tested off Windows; this function owns
-        only the Win32 calls and their order.
-        """
-        # Read BEFORE anything moves: once the foreground has changed
-        # there is nothing left to identify the outgoing client by. This
-        # ordering is the reason the switch has a single owner -- the
-        # click path used to activate inside window.py and tell the host
-        # afterwards, by which point this read was already too late.
-        previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
-        previous_key, previous = next(
-            ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
-            (None, None),
-        )
-
-        minimize = switching.should_minimize(
-            enabled=self._minimizing_inactive(),
-            previous_key=previous_key,
-            next_key=client.stable_key,
-            # should_minimize only asks whether previous_key is in the
-            # roster, so the guarded per-key reader answers it exactly;
-            # there is no guarded reader for the whole list.
-            never=[previous_key] if self._is_never_minimize(previous_key) else [],
-        )
-
-        with _animation_off(libs):
-            if minimize:
-                self._minimize(libs, previous.hwnd)
-            try:
-                ok = window_mod.activate(libs, client.hwnd)
-            except Exception:
-                # The outgoing client is already down and the verdict was
-                # never reached. On the click path the caller is the
-                # ctypes WndProc, which prints an uncaught exception to
-                # stderr and swallows it -- so without this the user gets
-                # the empty desktop with no line in the log. Roll back,
-                # say so, and let the exception carry on to whoever logs
-                # it; the switch itself is still a failure.
-                if switching.should_restore(activated=False, attempted=minimize):
-                    logger.exception(
-                        "Switch to 0x%x raised; restoring 0x%x",
-                        client.hwnd,
-                        previous.hwnd,
-                    )
-                    window_mod.activate(libs, previous.hwnd)
-                raise
-            if ok:
-                # The ring moves HERE, inline, the instant the switch is
-                # known to have taken -- not on the sweep the foreground
-                # hook asks for. The hook and the sweep stay exactly as
-                # they were: they are still the only thing that catches
-                # alt-tab, and the only thing that moves the ring off a
-                # client the user left by any route other than a switch
-                # Wingman performed itself. TriffView marks its highlight
-                # in the same place (TriffViewSubsystem.cs,
-                # TryActivateClient).
-                #
-                # Assigned rather than left for the hook to report:
-                # activate() read GetForegroundWindow to reach `ok`, so
-                # this IS the live foreground, and _apply_selection
-                # prefers _foreground over a syscall of its own. Leaving
-                # it stale would make the line below re-apply the
-                # OUTGOING client's ring.
-                self._foreground = client.hwnd
-                self._apply_selection(libs)
-            elif switching.should_restore(activated=ok, attempted=minimize):
-                # activate() restores an iconic window before raising it,
-                # so this one call undoes the minimize AND hands the
-                # foreground back. Its verdict does not reach the caller
-                # -- their bool is about the client they asked for -- but
-                # it is logged: the refusal that stopped the switch (no
-                # recent input in this process) applies to the rollback
-                # too, and without this line the user's log shows two
-                # "did not take" lines for two hwnds with nothing saying
-                # the second was a rollback. A refused rollback IS the
-                # empty-desktop case the smoke checklist says to watch.
-                restored = window_mod.activate(libs, previous.hwnd)
+    def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> bool:
+        """Retain an armable restore request and report whether it was kept."""
+        if not self._hwnd or libs is None:
+            # This can be reached by a pending retry racing teardown. A request
+            # without its host window has no path back into the pump, so keeping
+            # its saved minimize would make stale intent look live forever.
+            self._pending_switch = None
+            self._pending_activation_timer = False
+            logger.info(
+                "Pending activation of %s discarded; preview host window is unavailable",
+                pending.stable_key,
+            )
+            return False
+        if not self._pending_activation_timer:
+            timer = libs.user32.SetTimer(
+                self._hwnd,
+                ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID),
+                ACTIVATE_RETRY_MS,
+                None,
+            )
+            if not timer:
+                self._pending_switch = None
                 logger.info(
-                    "Switch to 0x%x refused; %s 0x%x",
-                    client.hwnd,
-                    "restored" if restored else "could not restore",
-                    previous.hwnd,
+                    "Pending activation of %s discarded; retry timer could not be armed",
+                    pending.stable_key,
                 )
-        return ok
+                return False
+            self._pending_activation_timer = True
+        self._pending_switch = pending
+        return True
 
-    def _minimize(self, libs, hwnd) -> None:
-        """Send SC_MINIMIZE to *hwnd*, logging a send that did not complete.
+    def _clear_pending_activation(self, libs) -> None:
+        """Forget an outstanding restore and stop its timer exactly once."""
+        self._pending_switch = None
+        if self._pending_activation_timer:
+            if self._hwnd and libs is not None:
+                libs.user32.KillTimer(
+                    self._hwnd, ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID)
+                )
+            self._pending_activation_timer = False
 
-        No verdict is returned on purpose: a timed-out send is still
-        delivered later, so the caller could not act on "it did not
-        minimize" even if told -- see switching.should_restore.
+    def _minimize_after_activation(self, libs, pending: _PendingSwitch) -> None:
+        """Request a nonactivating minimize only for the exact client left.
+
+        ShowWindowAsync reports the prior show state, not whether its request
+        has completed, so its BOOL is deliberately not an outcome to inspect.
+        SW_SHOWMINNOACTIVE minimizes without activating the next top-level
+        window, narrowing the late-delivery risk after a rapid return.
         """
-        started = time.perf_counter()
-        sent = libs.user32.SendMessageTimeoutW(
-            hwnd,
-            win32.WM_SYSCOMMAND,
-            win32.SC_MINIMIZE,
-            0,
-            win32.SMTO_ABORTIFHUNG,
-            MINIMIZE_TIMEOUT_MS,
+        if not pending.minimize:
+            return
+        previous = self._clients.get(pending.previous_key)
+        if previous is None or previous.hwnd != pending.previous_hwnd:
+            logger.info(
+                "Activation of %s: saved minimize skipped; previous %s exited or changed",
+                pending.stable_key,
+                pending.previous_key,
+            )
+            return
+        libs.user32.ShowWindowAsync(previous.hwnd, win32.SW_SHOWMINNOACTIVE)
+
+    def _mark_client_activated(self, libs, client) -> None:
+        """Commit foreground-derived host state after an observed success."""
+        self._foreground = client.hwnd
+        self._apply_selection(libs)
+
+    def _retry_pending_activation(self, libs) -> None:
+        """Retry one restored target without ever waiting inside the pump."""
+        pending = self._pending_switch
+        if pending is None:
+            return
+        client = self._clients.get(pending.stable_key)
+        if client is None or client.hwnd != pending.hwnd:
+            logger.info(
+                "Pending activation of %s discarded; its window exited or changed",
+                pending.stable_key,
+            )
+            self._clear_pending_activation(libs)
+            return
+
+        try:
+            result = window_mod.activate(libs, client.hwnd)
+        except Exception:
+            logger.exception(
+                "Pending activation of %s (0x%x) raised; retry cancelled",
+                pending.stable_key,
+                pending.hwnd,
+            )
+            self._clear_pending_activation(libs)
+            return
+        if result is window_mod.ActivationResult.ACTIVATED:
+            self._clear_pending_activation(libs)
+            self._mark_client_activated(libs, client)
+            self._minimize_after_activation(libs, pending)
+            return
+        if result is window_mod.ActivationResult.PENDING_RESTORE:
+            attempts = pending.attempts + 1
+            if attempts < ACTIVATE_RETRY_MAX:
+                self._arm_pending_activation(
+                    libs,
+                    _PendingSwitch(
+                        pending.stable_key,
+                        pending.hwnd,
+                        pending.previous_key,
+                        pending.previous_hwnd,
+                        pending.minimize,
+                        attempts,
+                    ),
+                )
+                return
+            if pending.minimize:
+                logger.info(
+                    "Activation of %s did not complete after %d restore retries; "
+                    "saved minimize of 0x%x was dropped",
+                    pending.stable_key,
+                    ACTIVATE_RETRY_MAX,
+                    pending.previous_hwnd,
+                )
+            else:
+                logger.info(
+                    "Activation of %s did not complete after %d restore retries",
+                    pending.stable_key,
+                    ACTIVATE_RETRY_MAX,
+                )
+        else:
+            logger.info("Pending activation of %s was refused", pending.stable_key)
+        self._clear_pending_activation(libs)
+
+    def _activate_client(self, libs, client) -> window_mod.ActivationResult:
+        """Activate *client*, then asynchronously minimize the exact outgoing client.
+
+        The host records the outgoing client before foreground changes. Pending
+        and refused activation leave that saved client alone. Only an observed
+        activation updates selection and requests its async minimize, which
+        prevents the minimize-first desktop gap found in Windows smoke.
+        """
+        # A newer click or hotkey supersedes an outstanding restored target.
+        if self._pending_switch is not None:
+            logger.debug(
+                "Pending activation of %s superseded by %s",
+                self._pending_switch.stable_key,
+                client.stable_key,
+            )
+        self._clear_pending_activation(libs)
+        previous_hwnd = (
+            libs.user32.GetForegroundWindow() if libs is not None else 0
+        ) or 0
+        previous_key = next(
+            (
+                key
+                for key, value in self._clients.items()
+                if value.hwnd == previous_hwnd
+            ),
             None,
         )
-        if sent:
-            return
-        # Zero covers three cases the API does not separate: the send
-        # timed out, it was abandoned because the client was hung
-        # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
-        # client that exited between the foreground read and here. In
-        # all of them the client never processed the message and is
-        # still where it was; the switch goes ahead without it. INFO for
-        # the same reason window.py logs a refused activation at INFO:
-        # the root logger runs at INFO, and this is what "minimize
-        # sometimes does nothing" looks like in a user's log.
-        #
-        # The elapsed time is what separates those three, and it is the
-        # only one of them a user's log can ever tell us: a send that
-        # spent the whole budget waiting really did time out, while one
-        # that came back in under a millisecond was refused outright and
-        # never waited for anything. Without it the line reads
-        # identically either way -- which is how a live install could
-        # log 166 of these in a session and still leave the cause open.
-        logger.info(
-            "Minimize of 0x%x did not complete (timeout or abandoned) "
-            "after %.0fms of a %dms budget; leaving it as it is",
-            hwnd,
-            (time.perf_counter() - started) * 1000,
-            MINIMIZE_TIMEOUT_MS,
+        pending = _PendingSwitch(
+            client.stable_key,
+            client.hwnd,
+            previous_key,
+            previous_hwnd,
+            switching.should_minimize(
+                enabled=self._minimizing_inactive(),
+                previous_key=previous_key,
+                next_key=client.stable_key,
+                never=[previous_key] if self._is_never_minimize(previous_key) else [],
+            ),
         )
+        try:
+            result = window_mod.activate(libs, client.hwnd)
+        except Exception:
+            # A preview click arrives through a ctypes WndProc, which swallows
+            # an uncaught traceback. No rollback is needed: activation runs
+            # before minimize, but the failure still needs a durable log line.
+            logger.exception(
+                "Activation of 0x%x raised; outgoing client left unchanged", client.hwnd
+            )
+            raise
+        if result is window_mod.ActivationResult.PENDING_RESTORE:
+            self._arm_pending_activation(libs, pending)
+        elif result is window_mod.ActivationResult.ACTIVATED:
+            self._mark_client_activated(libs, client)
+            self._minimize_after_activation(libs, pending)
+        return result
 
     def _apply_alerts(self, libs, pending) -> None:
         """Arm the preview each event names, then make sure the tick timer
@@ -1801,9 +1825,8 @@ class PreviewHost:
         """Whether an unfocused client's real window should be minimized,
         read live. Same guard as _labels_shown.
 
-        Not consulted anywhere in this task -- Task 7's switching logic
-        is the first caller -- but stored and guarded now so
-        build_preview_host wires all five settings in one pass.
+        Consulted for each switch rather than cached on a preview, so a
+        settings change applies immediately without rebuilding windows.
         """
         if self._minimize_inactive_clients is None:
             return False
@@ -1850,7 +1873,7 @@ class PreviewHost:
         """
         if libs is None or not foreground:
             return False
-        from ctypes import byref, wintypes
+        from ctypes import byref
 
         try:
             pid = wintypes.DWORD()
@@ -1928,7 +1951,7 @@ class PreviewHost:
         to keep showing an excluded character or there would be no row left
         to re-enable them from.
 
-        Note what this does NOT filter: the ANCHOR in _on_hotkey is still
+        Note what this does NOT filter: the ANCHOR in _on_hotkeys is still
         resolved against _clients, so cycling while an excluded character's
         own client holds the foreground finds an anchor that is not in this
         list. cycle.step then takes its documented "anchor has gone"
@@ -1944,9 +1967,8 @@ class PreviewHost:
         """Push live show_labels/opacity/locked onto every open preview,
         and re-run the visibility pass.
 
-        minimize_inactive_clients and never_minimize are read per switch
-        (Task 7), not walked here -- there is no per-window state for
-        them to update.
+        minimize_inactive_clients and never_minimize are read per switch,
+        not walked here -- there is no per-window state for them to update.
 
         hide_on_lost_focus IS walked here, unlike those two, because there
         is per-window state: unticking the box has to put the previews back
@@ -2118,6 +2140,7 @@ class PreviewHost:
         # a reader on another thread must never observe a half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
+        self._clear_pending_activation(libs)
         # Same reasoning, for the state the render path reads: an hour-old
         # batch queued between stop() and the next enable would arm every
         # preview at once with a stale fight (raise_alert is safe from any

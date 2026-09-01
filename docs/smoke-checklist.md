@@ -2265,6 +2265,14 @@ size. None of this is covered by pytest — it needs a
 real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
 
+**Known risk:** **Minimize inactive clients** activates and marks the requested
+client before it asynchronously requests `SW_SHOWMINNOACTIVE` for the exact
+outgoing EVE HWND. That command minimizes without activating the next top-level
+window, removing the observed minimize-first browser/desktop gap. Windows does
+not report completion for `ShowWindowAsync`; a very rapid return to the outgoing
+client can still race a late minimize request. Record source, target, foreground,
+and any late minimize in that case.
+
 - [ ] Labels off reclaims the character-name band and the mirrored video
       grows into it; labels on restores the band. Both take effect on
       already-open previews without a restart.
@@ -2308,80 +2316,50 @@ foreground.
       saved position — that is the case the lock's own storage list
       exists for, since `locked` cannot ride in `preview.layouts`
       without a saved rect.
-- [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
-      Activation ownership moved from the preview window into the host as
-      part of this slice; this is a pure regression check on the
-      subsystem's primary interaction, and nothing in the suite executes
-      Win32 to catch it failing.
-- [ ] Minimize-inactive: with the checkbox on, clicking a different preview
-      minimizes the client you were on, the new client ends up foreground
-      and stays there, and a character on the never-minimize list is skipped
-      entirely.
-- [ ] **LOAD-BEARING: minimize-inactive holds across REPEATED switches.**
-      Cycle A -> B -> A -> B -> A, at least five switches, and confirm the
-      outgoing client minimizes EVERY time. A single successful switch does
-      not satisfy this item. The switch is minimize-first (EVE-O Preview's
-      order): the outgoing client is minimized while it still holds the
-      foreground, THEN the target is activated. Switching BACK to a client
-      this feature just minimized goes through `activate()`'s
-      `ShowWindowAsync(SW_RESTORE)`, which is asynchronous; the
-      `GetForegroundWindow()` verdict is read a few instructions later.
-      The user-visible shape of a problem there is "works the first time,
-      then intermittently", which the single-switch item above passes
-      straight through.
-- [ ] **No minimize/restore animation during the switch, and the user's
-      setting survives it.** The outgoing client should vanish and the
-      target should appear with no window-zoom. Note what this is and is
-      not: the animation is composited by DWM and blocks nothing —
-      measured, `SC_MINIMIZE` takes the same time either way (12.6 ms ON
-      vs 14.2 ms OFF) — so this item is about what the zoom looks like,
-      not about the switch finishing sooner. **This machine's own desktop
-      has the animation off (`iMinAnimate=0`), so the code path
-      early-returns here and the item cannot be walked without turning it
-      on first.** Windows' default is on, which is who it is for. Turn it
-      on under System > Accessibility > Visual effects (or
-      SystemPropertiesPerformance: "Animate windows when minimizing and
-      maximizing"), walk the switch, then confirm the setting is still on
-      afterwards — the switch toggles the LIVE value only, with
-      `fWinIni=0`, and puts it back in a `finally`.
-- [ ] A refused activation brings the outgoing client BACK. Windows refuses
-      a foreground change from a process without recent input; with
-      minimize-first the outgoing client is already down when that refusal
-      is learned, so the host re-activates it (`switching.should_restore`).
-      The visible shape of a failure is the old TriffView complaint: an
-      empty desktop with nothing focused. Hard to force deliberately; watch
-      for it rather than staging it.
-- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
-      a client with visible motion — undocked, drones out, or the camera
-      spinning. Do NOT use a docked ship on a static scene: it looks
-      identical whether the thumbnail is live or frozen on its last frame,
-      so that scene cannot tell you which one you saw. This is the check
-      that decides whether minimize-inactive is compatible with the
-      previews it sits beside.
-- [ ] Note the `Minimize of 0x... did not complete` lines in the log, but
-      do **not** treat one as a defect on its own. Only failures are
-      logged — a successful minimize writes nothing — so those lines have
-      no denominator and never showed the rate anyone read into them. The
-      44 that carry an elapsed time are real waits clipped at the budget
-      (min 102 ms, median 114 ms, max 231 ms), and four separate probes
-      have failed to reproduce one: quiet clients answer in 7–57 ms in
-      both orders, including with the sending thread owning a DWM
-      thumbnail of the target. The open candidate is the client's own
-      message pump during a busy moment (grid load, a jump, a session
-      change), which no ordering change here can fix. What IS worth
-      filing: the elapsed figure separates a real wait from an instant
-      refusal, so a line reading well under a millisecond means something
-      new. The reorder's payoff is that a late-landing minimize can no
-      longer drop focus, so watch for THAT instead — see the item above.
-- [ ] Reader's note, not a defect to file on its own: the never-minimize
-      COLUMN sits in the card headed "Global keybinds" — right for its
-      adjacency to the character rows, but that card's intro tells the
-      user everything in it is a global keybind, and a per-character
-      minimize exemption is not one. Worth noticing during the walk.
-      (The Minimize-inactive CHECKBOX used to sit there too and this note
-      used to say so; round 5's C4 moved it up to "EVE client previews",
-      beside the other window-behaviour settings, which is where the
-      Previews checklist item above expects to find it.)
+- [ ] **LOAD-BEARING: locked and unlocked clicks focus the requested client.**
+      Test one locked preview and one unlocked preview from each starting
+      foreground: another EVE client, Windows Search, a browser text field,
+      and Wingman. A click (on release when unlocked, on press when locked)
+      must either put the requested EVE client in the foreground or leave the
+      source application in the foreground if Windows refuses the switch; the
+      preview itself must never become foreground. Type immediately after each
+      attempt. The application that remains foreground must receive the input.
+- [ ] **A held push-to-talk key does not prevent switching.** Hold the actual
+      push-to-talk key used during play, click both a locked and an unlocked
+      preview, and repeat with a character hotkey. Each accepted switch must
+      reach the requested client while the key remains held.
+- [ ] **Minimize inactive clients activates before minimizing.** With the
+      checkbox on, switch from EVE A to EVE B. B must become foreground and its
+      selection ring must move before A receives an asynchronous minimize. A
+      never-minimize outgoing client is skipped entirely; a refused or pending
+      activation minimizes nothing.
+- [ ] **LOAD-BEARING browser-flash regression:** enable **Hide previews on lost
+      focus** and **Minimize inactive clients**. Leave a maximized browser in
+      front, switch to EVE A, then make the first EVE A -> EVE B switch. The
+      browser remains visible until A takes foreground; on A -> B, B appears
+      without a browser or desktop frame. Repeat through a preview click and a
+      character hotkey.
+- [ ] **LOAD-BEARING: no late minimize after a rapid return.** With **Minimize
+      inactive clients** on, rapidly switch EVE A -> EVE B -> EVE A, first while
+      idle and then while B is busy loading grid or changing session. Repeat by
+      preview click and character hotkey. **Fail** if A minimizes after the
+      return, or foreground jumps to the browser or desktop; either means a
+      delayed outgoing request still disrupted the client the user returned to.
+- [ ] **A minimized target restores without stalling later input.** Switch
+      repeatedly to a target that Minimize inactive clients put down. It must
+      either restore and become foreground within about 500ms (25 non-blocking
+      20ms retries) or stop retrying while Wingman remains responsive. Pending
+      restoration minimizes nothing. After a successful retry, the target ring
+      moves before Wingman asynchronously minimizes only the exact saved
+      outgoing HWND; an exited or recreated outgoing client is logged and
+      skipped. Start another click or hotkey immediately and confirm the newer
+      request wins.
+- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize a
+      client with visible motion — undocked, drones out, or the camera spinning.
+      Do NOT use a docked ship on a static scene: it looks identical whether the
+      thumbnail is live or frozen on its last frame, so that scene cannot tell
+      you which one you saw. A frozen preview blocks the merge: minimize-inactive
+      is not compatible with the previews it sits next to.
 
 ### Opacity is translucency, not dimming
 
@@ -2485,6 +2463,22 @@ pytest.
   see risk 4 in `docs/history/eve-preview-hotkeys-design.md`.
 - [ ] A per-character chord switches to that client from another application
   (try it from a browser, not just from Wingman).
+- [ ] **A direct-character burst ends at its final absolute target.** Alternate
+  several character chords rapidly, finish on a known character, then stop.
+  Expected: at most one final switch after the keys stop, it is to that last
+  character, and no intermediate clients appear afterward.
+- [ ] **LOAD-BEARING: keyboard input lands promptly after foreground
+  activation.** Switch with a character hotkey and, separately, by clicking its
+  preview, then immediately type in EVE. Expected: the foreground target
+  receives every keystroke without a focusless delay. Repeat with a previously
+  minimized target. This behavior requires a live Windows desktop and cannot be
+  verified by the automated suite.
+- [ ] **A refused switch leaves keyboard focus in the retained application.**
+  Open Windows Search and attempt a preview switch while Search remains in the
+  foreground; type immediately and confirm Search receives the keystrokes.
+  Repeat from a focused browser text field. Expected: when Windows retains
+  either application instead of activating EVE, typing continues there rather
+  than going nowhere.
 - [ ] **A state update mid-hotkey-capture does not orphan or hide the capture.**
   With the Previews tab open and a hotkey row showing "Press a key…", start
   or close an EVE client (which pushes new state from Python). Expected: the
@@ -2498,6 +2492,11 @@ pytest.
   it falls back to the last-cycled target. The browser case is the one a
   multiboxer actually uses, so it must be checked, not just the EVE-focused
   case.
+- [ ] **A cycle burst lands at its net destination.** With four clients in
+  known name order and A foreground, press Cycle forward three times rapidly
+  and stop. Expected: the final target is D, with no intermediate clients
+  appearing after the final switch. Repeat with mixed forward and back presses,
+  calculate the destination first, and confirm Wingman lands there.
 - [ ] **Holding a chord fires once, not at the key-repeat rate.** Hold it for
   three seconds; the client must not flicker through repeated activations.
 - [ ] **A chord another application already owns is visible on the Previews
@@ -2579,8 +2578,13 @@ pytest.
   Expected: both the offline character and the latent-collision row read
   noticeably quieter than normal rows, not more prominent. A visual regression
   here reverses the hierarchy.
-- [ ] Quitting Wingman with chords bound leaves them released: the owning
-  application gets them back without a reboot.
+- [ ] **Quitting leaves input queues and hotkeys released.** After several
+  click, direct-hotkey, cycle, refused, and minimized-target attempts, quit
+  Wingman from the tray. Type in the foreground EVE client and in another
+  application; input must stay with the focused window, with no stuck keys or
+  keystrokes arriving in a different client. The preview chords must be
+  available to another application without a reboot. Relaunch Wingman and
+  confirm the chords register and switch normally again.
 
 ## Shared preview keybinds
 

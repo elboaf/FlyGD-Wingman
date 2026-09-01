@@ -7,6 +7,7 @@ below it touches HWNDs and therefore may only run on the preview thread.
 import logging
 import os
 import time
+from enum import Enum, auto
 
 from ..alerts import state as alerts_state
 from . import alertframes, chrome, geometry, layered, win32
@@ -19,9 +20,6 @@ logger = logging.getLogger(__name__)
 # how many moves it processed, how long the handler took, and -- the part
 # that matters -- the largest gap BETWEEN events, which is what a stutter
 # actually is.
-# .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
-# trailing space, so an exact match silently disables this for anyone
-# who sets it the obvious way.
 # .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
 # trailing space, so an exact match silently disables this for anyone
 # who sets it the obvious way.
@@ -70,12 +68,18 @@ def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(
     return rect._replace(w=max(min_size[0], w), h=max(min_size[1], h))
 
 
-def activate(libs, hwnd) -> bool:
-    """Bring *hwnd* to the foreground. Returns whether it actually worked.
+class ActivationResult(Enum):
+    ACTIVATED = auto()
+    PENDING_RESTORE = auto()
+    REFUSED = auto()
 
-    SetForegroundWindow alone does not work: Windows refuses it from a
-    process that does not own the foreground. The two-stage
-    AttachThreadInput dance is what makes it succeed.
+
+def activate(libs, hwnd) -> ActivationResult:
+    """Bring *hwnd* to the foreground and report the observed outcome.
+
+    SetForegroundWindow alone is often refused from a process that does not
+    own the foreground. Attaching the relevant input queues gives the request
+    its best supported chance, but the observed foreground remains authoritative.
 
     The verdict is read from GetForegroundWindow, never from
     SetForegroundWindow's return value -- that reports the request was
@@ -87,11 +91,17 @@ def activate(libs, hwnd) -> bool:
     arriving in the wrong client.
     """
     if libs.user32.IsIconic(hwnd):
+        # ShowWindowAsync only requests restoration. On Windows smoke, raising
+        # the still-iconic EVE window immediately afterward briefly left a
+        # browser with no usable foreground under hide-on-lost-focus, flashing
+        # the desktop. Let the host's 20ms retry attempt foreground work only
+        # after IsIconic is false. The host bounds repeats to 25 timer turns.
         libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
+        return ActivationResult.PENDING_RESTORE
 
     current = libs.user32.GetForegroundWindow()
     if current == hwnd:
-        return True
+        return ActivationResult.ACTIVATED
 
     our_tid = libs.kernel32.GetCurrentThreadId()
     fg_tid = libs.user32.GetWindowThreadProcessId(current, None)
@@ -99,7 +109,9 @@ def activate(libs, hwnd) -> bool:
 
     attached = []
     try:
-        for tid in (fg_tid, target_tid):
+        # Foreground and target HWNDs can share an input queue; attaching the
+        # same thread twice would require matching duplicate detach calls.
+        for tid in dict.fromkeys((fg_tid, target_tid)):
             if (
                 tid
                 and tid != our_tid
@@ -107,25 +119,34 @@ def activate(libs, hwnd) -> bool:
             ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
+        foreground = libs.user32.GetForegroundWindow()
+        # Teammate commit 3f4466f reported live foreground-but-focusless input
+        # loss and identified EVE-O's SetFocus slot; our external probe was
+        # inconclusive. Repair focus only after Windows actually put this target
+        # in the foreground, while its queue remains attached. Otherwise
+        # SetFocus could steal keyboard focus from the application Windows kept.
+        if foreground == hwnd:
+            libs.user32.SetFocus(hwnd)
     finally:
-        for tid in attached:
+        for tid in reversed(attached):
             libs.user32.AttachThreadInput(our_tid, tid, False)
 
-    ok = libs.user32.GetForegroundWindow() == hwnd
-    if not ok:
-        # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
-        # so a debug line here is invisible in the only log a user will
-        # ever send us -- for the single most likely field complaint,
-        # "clicking a preview does nothing". It cannot spam either: this
-        # fires once per click, and only when the click failed.
-        logger.info(
-            "Activation of 0x%x did not take; foreground is 0x%x. "
-            "Windows refuses a foreground change from a process "
-            "that has not received recent user input.",
-            hwnd,
-            libs.user32.GetForegroundWindow() or 0,
-        )
-    return ok
+    if foreground == hwnd:
+        return ActivationResult.ACTIVATED
+
+    # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
+    # so a debug line here is invisible in the only log a user will
+    # ever send us -- for the single most likely field complaint,
+    # "clicking a preview does nothing". It cannot spam either: this
+    # fires once per click, and only when Windows refused the click.
+    logger.info(
+        "Activation of 0x%x did not take; foreground is 0x%x. "
+        "Windows refuses a foreground change from a process "
+        "that has not received recent user input.",
+        hwnd,
+        foreground or 0,
+    )
+    return ActivationResult.REFUSED
 
 
 _CLASS_REGISTERED = False
@@ -286,12 +307,12 @@ class PreviewWindow:
         # user locked must still be locked after a restart, and reporting
         # locked=False on the next drag would erase the flag.
         self.locked = locked
-        # Set once from the host at creation; Task 4 wires the live-update
-        # path that lets this change on an already-open window.
+        # Set once from the host at creation; the live restyle path lets this
+        # change on an already-open window.
         self.show_labels = show_labels
         # A DWM thumbnail property, not a bitmap one -- see the note on
-        # _chrome_key() below. Set once at creation; Task 4 wires the
-        # live-update path that lets this change on an already-open window.
+        # _chrome_key() below. Set once at creation; the live restyle path lets
+        # this change on an already-open window.
         self.opacity = opacity
         # Set once from the host at creation; PreviewHost._restyle pushes
         # live updates, like show_labels and locked.
