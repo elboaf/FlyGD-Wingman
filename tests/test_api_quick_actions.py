@@ -596,10 +596,12 @@ def test_a_case_only_rename_is_not_a_collision(tmp_path):
     and on a case-insensitive filesystem the file IS its own destination.
     Refusing it as a clash would be the validator arguing with itself.
 
-    On Linux, where this suite runs, Fight.mkv simply does not exist and
-    the ordinary path succeeds -- so this pins that the normcase check
-    does not refuse it, not that NTFS accepts a case-only MoveFileExW.
-    That one is a smoke item, and a load-bearing one."""
+    What it proves depends on where it runs, and CI runs it in both
+    places. On Linux, Fight.mkv simply does not exist, so this pins only
+    that the normcase check does not refuse the rename as a self-collision.
+    On the windows-latest job it goes further and exercises Path.rename
+    against a real NTFS volume, which is the half that could not be
+    reasoned out from here."""
     api, _window, _rows, _watcher = rename_api(tmp_path, names=("fight.mkv",))
 
     result = api.rename_recording("r0", "Fight")

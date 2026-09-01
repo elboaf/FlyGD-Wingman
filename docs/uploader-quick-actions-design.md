@@ -579,3 +579,9 @@ One defect of the same kind was found in the validator: `rename_problem`
 compared the whole stem against the reserved device names, so `CON.foo`
 passed and was then refused by Windows with a message about a path that
 cannot be found. It now checks the portion before the first dot.
+
+Risk 2 above — "the case-only rename is unverified" — is now largely
+discharged, and not by anything in the design. CI runs the whole suite on
+`windows-latest` as well as ubuntu, so `test_a_case_only_rename_is_not_a_collision`
+exercises `Path.rename` against a real NTFS volume on every push. The
+two-step-rename contingency the design held in reserve is not needed.

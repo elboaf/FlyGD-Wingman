@@ -1161,13 +1161,16 @@ report of it.
       renamed file keeps its original extension. Type `fight.mp4` and
       confirm you get `fight.mp4.mkv` rather than a file claiming to be an
       MP4.
-- [ ] **LOAD-BEARING: rename to a CASE-ONLY variant.** `fight.mkv` →
-      `Fight.mkv`. This is the rename a user is most likely to want and it
-      is the one that could not be verified off Windows: the pre-check
-      treats the file as its own destination, but whether `MoveFileExW`
-      accepts a case-only change on NTFS was never established. If this
-      fails, the fix is a two-step rename through a temporary name and it
-      needs its own decision, not an improvisation.
+- [ ] **Rename to a CASE-ONLY variant.** `fight.mkv` → `Fight.mkv`. This
+      is the rename a user is most likely to want, and it was the one this
+      list originally called unverifiable. It is no longer: CI runs the
+      whole suite on `windows-latest` as well as ubuntu, so
+      `test_a_case_only_rename_is_not_a_collision` exercises `Path.rename`
+      against a real NTFS volume and passes. What is left for a human is
+      confirming it end to end in the app — the prompt, the repaint, the
+      row text — not discovering whether the filesystem allows it. If it
+      fails HERE while CI is green, the difference is Wingman's own code
+      path rather than NTFS.
 - [ ] **Rename to a name already in the folder is refused, and the file it
       would have replaced is untouched.** Check its size and timestamp
       afterwards. A silent overwrite here destroys a fight.
