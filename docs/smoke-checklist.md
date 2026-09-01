@@ -2708,8 +2708,10 @@ headless.
       Alerts. Each event offers the same five named swatches: Red, Amber,
       Green, Cyan, and Magenta, and prints the selected name below its dots.
       Change each event once and confirm the word follows the selected dot.
-      They render as dark-theme controls rather than opening a native Windows
-      colour picker. Give two enabled events the same
+      Event boxes align with the modifier boxes below; event names and the
+      Flashes/Speed line share the next inset, so no checkbox hangs by itself
+      at the card edge. They render as dark-theme controls rather than opening
+      a native Windows colour picker. Give two enabled events the same
       colour. Expected: one warning below the table names both events and says
       their preview pulses are indistinguishable; the warning is not repeated
       under both rows. Disable either event or choose a distinct colour and it

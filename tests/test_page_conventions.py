@@ -1426,6 +1426,27 @@ def test_the_alert_volume_note_finishes_its_thought():
     )
 
 
+def test_alert_event_controls_share_deliberate_box_and_text_rails():
+    event_box = re.search(
+        r"\.alert-events \.alert-row > \.check \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert event_box and "margin-left: 24px" in event_box.group(1), (
+        "event boxes must align with the modifier checkbox rail"
+    )
+
+    event_head = re.search(r"\.alert-head > span:first-child \{(.*?)\}", CSS, re.DOTALL)
+    assert event_head and "padding-left: 48px" in event_head.group(1), (
+        "the Event header must align with event label text, not hang over its box"
+    )
+
+    flash = re.search(
+        r"\.alert-events \.alert-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert flash and re.search(r"margin:\s*2px 0 2px 48px", flash.group(1)), (
+        "Flashes and Speed must begin on the event text rail"
+    )
+
+
 def test_two_enabled_alerts_on_one_colour_are_flagged():
     """Round 6, P1-1. Two alerts the same colour are one alert with two
     meanings, and nothing said so.
@@ -1876,6 +1897,10 @@ def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
     assert offline and re.search(
         r"top:\s*var\(--preview-bind-head-height\)", offline.group(1)
     ), "the Offline heading must stick below, not on top of, the column header"
+    assert re.search(r"padding-bottom:\s*4px", offline.group(1)), (
+        "the sticky Offline background must separate its text from rows "
+        "scrolling underneath"
+    )
 
 
 def test_the_previews_headings_are_in_the_order_makeRow_builds():

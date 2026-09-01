@@ -2359,7 +2359,7 @@ button.btn:disabled,
    groups stick; rules do not. */
 #preview-binds .bind-group:not(:empty) {
   position: sticky; top: var(--preview-bind-head-height); z-index: 1;
-  background: var(--panel);
+  padding-bottom: 4px; background: var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
    under it to separate from, only the header row. */
@@ -2884,6 +2884,11 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-faint);
 }
+/* Event boxes share the 24px modifier rail below the table; their words and
+   continuation controls share the next 24px step. The two rails make the
+   checkbox placement deliberate without adding a fifth grid column. */
+.alert-events .alert-row > .check { margin-left: 24px; }
+.alert-head > span:first-child { padding-left: 48px; }
 /* Every header string is narrower than the control column beneath it
    ("Colour" ~45px against 5 swatches at 110px), so naming the columns
    cannot grow a track and cannot reach the 840 floor's overflow. */
@@ -2918,11 +2923,11 @@ button.btn:disabled,
    push the NAME column wide and shove Test off the right edge. */
 .alert-events .alert-row > .alert-flash {
   grid-column: 1 / -1; width: 0; min-width: 100%;
-  display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 24px;
+  display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 48px;
 }
-/* Indented to 24px above, matching .alert-mods: both are subordinate to
-   the thing directly above them, and the indent is what says so without
-   spending a sentence on it. */
+/* Indented to 48px above, matching the event label text after its checkbox.
+   The modifier boxes stay on the 24px rail because they are one level up:
+   they modify the table rather than one event row inside it. */
 .alert-events .alert-row > .alert-flash > select.field {
   width: auto; min-width: 0; flex: 0 0 auto;
 }
