@@ -1367,7 +1367,10 @@ response leaves a worker waiting forever, which presents as a hung upload.
       several specific messages, not one generic guard.
 - [ ] **Escape and the scrim answer a confirm as "no", never as nothing.**
       Both cancel cleanly and the app is immediately usable — no upload, no
-      stuck busy state, and Upload works on the next press.
+      stuck busy state, and Upload works on the next press. Clicking inside
+      the dialog does not dismiss it; only a primary-button press and release
+      both on the scrim do. Drag-select body text past the dialog edge to prove
+      that gesture does not cancel or discard a prompt value.
 - [ ] **A dialog raised from a worker thread reaches the page.** Kill the
       network mid-upload and let the retries exhaust. The error modal
       appears with plain-language text, not a traceback, and the window is
@@ -2705,8 +2708,12 @@ headless.
       armed, not per frame.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
       Alerts. Each event offers the same five named swatches: Red, Amber,
-      Green, Cyan, and Magenta. They render as dark-theme controls rather than
-      opening a native Windows colour picker. Give two enabled events the same
+      Green, Cyan, and Magenta, and prints the selected name below its dots.
+      Change each event once and confirm the word follows the selected dot.
+      Event boxes align with the modifier boxes below; event names and the
+      Flashes/Speed line share the next inset, so no checkbox hangs by itself
+      at the card edge. They render as dark-theme controls rather than opening
+      a native Windows colour picker. Give two enabled events the same
       colour. Expected: one warning below the table names both events and says
       their preview pulses are indistinguishable; the warning is not repeated
       under both rows. Disable either event or choose a distinct colour and it
@@ -3094,7 +3101,8 @@ so these are the checks that matter and only a Windows machine can run them.
       a keyboard-accessible More disclosure for its single Delete action; Delete
       retains danger treatment. Opening one disclosure closes any other without
       moving focus. Escape closes the current disclosure and returns focus to
-      its More control.
+      its More control. Scroll to the final row and open More: its menu opens
+      upward, wholly inside the route rather than being cut by the bottom edge.
 - [ ] **Retention is explicit and protects manual backups.** The collapsed
       Retention summary shows a chevron, rotates it when opened, and remains
       keyboard-operable through the native disclosure. With `auto_keep`
@@ -3611,15 +3619,17 @@ behaviour a lexical guard cannot reach.
       below it. The dimming reinforces the heading; it is not the encoding
       on its own, which is the WCAG 1.4.1 failure this arrangement is the
       third attempt at.
-- [ ] **The heading cannot leave its own block.** Same screen, a roster
-      long enough that the offline block exceeds the pane — about 16
-      characters at the 840x625 floor, fewer if the window is shorter.
-      Scroll to the bottom of the list. Expected: `OFFLINE` is still on
-      screen, pinned at the top of the pane, with the rows it heads under
-      it. Verified over CDP at 30 characters: the heading's top and the
-      pane's top both read 56. This is the whole reason it is sticky — the
-      legend it replaces was rejected in round 5 for scrolling off the
-      rows it explained.
+- [ ] **The table labels and Offline heading cannot leave their rows.** Same
+      screen, with a roster long enough that the offline block exceeds the
+      pane — about 16 characters at the 840x625 floor, fewer if the window is
+      shorter. Scroll to the bottom of the list. Expected: the four named
+      column labels and the blank actions header remain pinned at the top of
+      the pane; `OFFLINE` remains directly below them while one of its rows is
+      visible; and neither sticky layer covers the other. A row cut by the
+      current scroll position may emerge partially below `OFFLINE`; that is the
+      normal edge of the opaque sticky layer, not overlap inside it. This is the
+      whole reason both are sticky — a label that scrolls off the controls it
+      explains recreates the original context-loss defect.
 - [ ] **The rule above the column headers is one line, not four dashes.**
       `.row` is `display: contents` in this grid, so a border on the
       header CELLS is cut by every 10px column gap. It is drawn by an

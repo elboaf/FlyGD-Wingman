@@ -280,7 +280,7 @@
      Five sizes, and the RATIOS are what the scale is, so they are stated
      here rather than left to be re-derived off the values:
 
-       --fs-head   17px   1.31 over body    h1 x2, .dialog h3
+       --fs-head   17px   1.31 over body    h1 x2, .dialog h2
        --fs-body   13px   --                the content, and card/rail headings
        --fs-mono   12px   0.92 of body      monospace and tabular cells
        --fs-muted  12px   1.08 under body   column headers, counts, hints
@@ -304,7 +304,7 @@
      that reads as a heading rather than as bold body.
 
      Deliberately narrow blast radius: --fs-head has exactly three users
-     (h1, .dialog h3, and the skills plan title), all of them real
+     (h1, .dialog h2, and the skills plan title), all of them real
      headings. Re-checked in round 5 and still three: the skills plan title
      IS one of the two h1 elements, so the rule count is two and the user
      count is three. The muted/mono/label steps are NOT touched — widening
@@ -2088,17 +2088,17 @@ button.btn:disabled,
   border-radius: var(--radius); padding: 18px 20px 16px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
 }
-.dialog h3 {
+.dialog h2 {
   font-size: var(--fs-head); font-weight: 620; margin-bottom: 10px;
   display: flex; align-items: center; gap: 9px;
 }
-.dialog h3::before {
+.dialog h2::before {
   content: ""; width: 3px; height: 15px; border-radius: 2px; flex: none;
   background: var(--text-faint);
 }
-.dialog.error h3::before   { background: var(--err); }
-.dialog.warning h3::before { background: var(--warn); }
-.dialog.confirm h3::before {
+.dialog.error h2::before   { background: var(--err); }
+.dialog.warning h2::before { background: var(--warn); }
+.dialog.confirm h2::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
 }
 /* A destructive confirm takes --danger, the token minted at :root for
@@ -2107,7 +2107,7 @@ button.btn:disabled,
    .dialog.confirm and equal specificity (0,2,0), which is what lets a
    dialog carry both classes -- panel.js sets `dialog confirm destructive`
    so a page that never passes the flag is unchanged. */
-.dialog.confirm.destructive h3::before { background: var(--danger); }
+.dialog.confirm.destructive h2::before { background: var(--danger); }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
      (n/total) titles in it; pre-wrap is what keeps that layout. */
@@ -2284,8 +2284,15 @@ button.btn:disabled,
    not sort, and the rule about ordering an arrow before a right-aligned
    label exists for the lists that do. */
 .bind-head > span {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center;
+  height: var(--preview-bind-head-height);
   font-size: var(--fs-muted); color: var(--text-dim);
-  white-space: nowrap; padding-bottom: 2px;
+  white-space: nowrap;
+  background: var(--panel);
+  /* Each span is a separate grid item. Paint across the following gap so
+     row text cannot flash between the cells while the pane scrolls. */
+  box-shadow: 10px 0 var(--panel);
 }
 /* The rule that opens the table is drawn by an EMPTY `.bind-group` before
    the header row (previews.js), not by the header cells themselves.
@@ -2342,16 +2349,16 @@ button.btn:disabled,
    as a second surface; the card's gradient has already resolved to
    --panel by 78%, which is above where this list starts.
 
-   `top: 0` and not the header row's height: the column headers are not
-   sticky, so there is nothing above this to clear. Make them sticky and
-   this number becomes their height.
+   The column headers now stay at the top of the pane. This heading uses
+   their measured height rather than `top: 0`, so the two sticky layers
+   stack instead of covering one another.
 
    `:not(:empty)` because the rule that opens the table is an EMPTY
    .bind-group of the same class, and pinning a bare hairline to the top
    of the pane would leave a stray line floating over the rows. Named
    groups stick; rules do not. */
 #preview-binds .bind-group:not(:empty) {
-  position: sticky; top: 0; z-index: 1;
+  position: sticky; top: var(--preview-bind-head-height); z-index: 1;
   background: var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
@@ -2359,6 +2366,10 @@ button.btn:disabled,
 #preview-binds .bind-group:empty { margin-top: 12px; padding-top: 8px; }
 
 #preview-binds {
+  /* 12px muted text at the shared line-height needs 18px; four more pixels
+     keep its sticky background clear of the first row without adding a
+     second scroll container. */
+  --preview-bind-head-height: 22px;
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
   /* A fixed name column, four content-sized control tracks, then one
@@ -2719,6 +2730,12 @@ button.btn:disabled,
   min-width: 112px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
 }
+/* The route owns the scrollbar. Its final visible archive row can sit at the
+   scrollport boundary even when controls follow the archive, so open that
+   row's menu upward into the list rather than downward across the edge. */
+.es-backup-row:last-child .bk-menu > button {
+  top: auto; bottom: calc(100% + 4px);
+}
 #es-backups-more { margin-top: 8px; }
 #es-backups-more[hidden] { display: none; }
 
@@ -2816,6 +2833,14 @@ button.btn:disabled,
 .swatch input:focus-visible + .dot {
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
+/* A word for the selected alert colour, below rather than beside the five
+   dots so the width-budgeted event grid does not gain another column. */
+.alert-events .swatches { flex-wrap: wrap; }
+.alert-events .swatch-name {
+  flex-basis: 100%; width: 0; min-width: 100%;
+  margin-top: 1px; text-align: center;
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
 
 /* An event row reports its OWN failures. Twelve controls used to write
    into one shared .hint at the top of the card, each message overwriting
@@ -2860,8 +2885,17 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-faint);
 }
+/* Event boxes share the 24px modifier rail below the table; their words and
+   continuation controls share the next 24px step. The two rails make the
+   checkbox placement deliberate without adding a fifth grid column.
+
+   The Event header follows DESIGN.md's same-inset rule at the 48px text
+   rail, not the 24px box rail: the word labels event NAMES, not their
+   enable boxes. */
+.alert-events .alert-row > .check { margin-left: 24px; }
+.alert-head > span:first-child { padding-left: 48px; }
 /* Every header string is narrower than the control column beneath it
-   ("Colour" ~45px against 5 swatches at 110px), so naming the columns
+   ("Colour" ~45px against 5 swatches at 120px), so naming the columns
    cannot grow a track and cannot reach the 840 floor's overflow. */
 .alert-events .alert-row > select.field { width: 100%; min-width: 0; }
 .alert-events .alert-row { display: contents; }
@@ -2880,7 +2914,8 @@ button.btn:disabled,
    the 840 floor. Zero width removes that contribution; min-width puts the
    rendered box back. */
 .alert-events .alert-row > .field-msg {
-  grid-column: 1 / -1; margin: 0 0 4px; width: 0; min-width: 100%;
+  grid-column: 1 / -1; margin: 0 0 4px; padding-left: 48px;
+  width: 0; min-width: 100%;
 }
 /* The second line of an event's row: how many flashes it gets and how
    fast they go. A LINE and not two more columns -- the four tracks above
@@ -2894,11 +2929,11 @@ button.btn:disabled,
    push the NAME column wide and shove Test off the right edge. */
 .alert-events .alert-row > .alert-flash {
   grid-column: 1 / -1; width: 0; min-width: 100%;
-  display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 24px;
+  display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 48px;
 }
-/* Indented to 24px above, matching .alert-mods: both are subordinate to
-   the thing directly above them, and the indent is what says so without
-   spending a sentence on it. */
+/* Indented to 48px above, matching the event label text after its checkbox.
+   The modifier boxes stay on the 24px rail because they are one level up:
+   they modify the table rather than one event row inside it. */
 .alert-events .alert-row > .alert-flash > select.field {
   width: auto; min-width: 0; flex: 0 0 auto;
 }

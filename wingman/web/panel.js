@@ -384,6 +384,7 @@
   var lastPageFocus = null;
 
   var overlay = WM.el('overlay');
+  var scrimPressStarted = false;
   var dlg = WM.el('dialog');
   var btnOk = WM.el('dlg-ok');
   var btnCancel = WM.el('dlg-cancel');
@@ -576,6 +577,19 @@
 
   btnOk.addEventListener('click', function () { answer(true); });
   btnCancel.addEventListener('click', function () { answer(false); });
+  overlay.addEventListener('mousedown', function (ev) {
+    scrimPressStarted = ev.target === overlay;
+  });
+  overlay.addEventListener('mouseup', function (ev) {
+    // Both ends must be a primary-button press on the scrim. A text-selection
+    // drag that overshoots the dialog must not discard a prompt value, and a
+    // context click must remain only a context click.
+    var cancel = ev.button === 0
+      && scrimPressStarted && ev.target === overlay;
+    scrimPressStarted = false;
+    if (ev.button !== 0) { return; }
+    if (cancel) { answer(false); }
+  });
   dlgInput.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && active && active.kind === 'prompt') {
       ev.preventDefault();

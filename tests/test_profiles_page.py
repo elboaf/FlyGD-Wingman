@@ -807,6 +807,17 @@ def test_backups_route_has_one_heading_and_native_retention_disclosure():
     assert 'id="es-backup-filter-clear"' in BACKUPS_ROUTE
 
 
+def test_the_last_backup_menu_opens_away_from_the_route_edge():
+    rule = re.search(
+        r"\.es-backup-row:last-child \.bk-menu > button \{(.*?)\}",
+        CSS,
+        re.DOTALL,
+    )
+    assert rule, "the final backup menu still opens into the route boundary"
+    assert "top: auto" in rule.group(1)
+    assert re.search(r"bottom:\s*calc\(100% \+ 4px\)", rule.group(1))
+
+
 def test_backups_retention_has_a_visible_native_state_affordance():
     assert re.search(r"#es-retention > summary::before \{[^}]*content:", CSS, re.DOTALL)
     assert re.search(
