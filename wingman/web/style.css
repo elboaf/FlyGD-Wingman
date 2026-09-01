@@ -2171,7 +2171,19 @@ button.btn:disabled,
    a divider inside a card rather than a second card heading. It was one
    step quieter in COLOUR only -- both were --fs-label -- until round 5's
    G3 raised .card > h2 to --fs-body and left this at --fs-label, which is
-   the same claim now made in two dimensions instead of one. */
+   the same claim now made in two dimensions instead of one.
+
+   AND ONE OF THOSE TWO DIMENSIONS POINTED THE WRONG WAY. This was
+   --text-dim (#9aa2b1) under a heading at --text-label (#8b93a1): the
+   subhead was BRIGHTER than the heading it is subordinate to, so Previews'
+   four dividers out-ranked the card title above them and the card read as
+   five peer bands rather than one card with sections. The comment above
+   describing this as "one step quieter" had been false since G3 and is
+   left standing because it is the argument, not the measurement.
+
+   The rank is now carried by SIZE alone -- --fs-label under the heading's
+   --fs-body -- with both at --text-label. Size is the dimension that
+   cannot invert by a token moving underneath it. */
 .bind-group {
   grid-column: 1 / -1;
   display: flex; align-items: baseline; gap: 9px;
@@ -2180,7 +2192,7 @@ button.btn:disabled,
 }
 .bind-group-name {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text-label);
 }
 /* No producer. The offline legend it once qualified became a per-row
    `.off-tag`, and round 6 made it a sticky group heading instead. Kept
@@ -3628,6 +3640,39 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    indent with nothing above it. */
 .settings .check + .hint,
 .settings .row:has(> .check) + .row > .hint { margin-left: 24px; }
+
+/* PROXIMITY, which this card had spent uniformly. Every gap in a settings
+   card was 10px: between a checkbox and its own hint, and between that
+   hint and the next unrelated setting. Proximity is the only grouping
+   signal a flat list has, and at one value it signals nothing -- measured
+   on Previews, 22 blocks in a single undifferentiated 10px column, which
+   is why that section read as a wall of prose rather than as nine
+   settings. It is also why it FELT longer than Bookmarks while being only
+   156px taller.
+
+   A continuation row belongs to the control above it, so the pair closes
+   to 4px and the 10px step is left to mean "next setting". Three tiers
+   now, cheapest first: 4px inside a control, 10px between controls, the
+   .bind-group hairline between groups.
+
+   Keyed on the NEXT row holding an empty .lab, because that is what a
+   continuation row IS on this page -- the shape the collapse rule at :1666
+   is written against, and the same shape .settings .row:has(> .check) +
+   .row > .hint indents. A hint that shares its control's row (Snap, Lock)
+   needs none of this: it is already adjacent.
+
+   `.card >`, so this reaches the card's own column and nothing nested in
+   it. Written as `.settings .row` first, it out-specified
+   `.pv-master > .row { margin-bottom: 0 }` at :1606 and put 4px back under
+   two rows of a block that spaces itself with flex `gap` -- 14px gaps
+   inside the one block on this card whose height is deliberately fixed
+   against the state of the switch in it. Measured, then scoped.
+
+   This REMOVES height rather than adding it -- about 30px on Previews
+   across its visible continuation rows -- so the grouping and the
+   scrolling complaint are answered by one declaration rather than trading
+   against each other. */
+.settings .card > .row:has(+ .row > .lab:empty) { margin-bottom: 4px; }
 
 /* "Connected" as a status PILL, not an oversized button.
 
