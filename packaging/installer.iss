@@ -61,6 +61,12 @@ WizardStyle=modern
 [Tasks]
 Name: "startup"; Description: "Start automatically when I log in"; GroupDescription: "Startup"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts"; Flags: unchecked
+; Checked by default: FightRecorder produces the very recordings Wingman
+; watches, so a user who unticks this has probably said so on purpose.
+; The install itself is a single DLL into the detected OBS plugin
+; directory; see InstallFightRecorder in [Code] for the detection and
+; the elevation story.
+Name: "fightrecorder"; Description: "Install the FightRecorder plugin into OBS Studio"; GroupDescription: "OBS integration"
 
 [Files]
 ; FIRST on purpose. SolidCompression=yes means the archive must be
@@ -72,6 +78,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 ; dontcopy: this is never installed into {app}. It is extracted to {tmp}
 ; only when the runtime is actually missing, and deleted with {tmp}.
 Source: "bin\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy noencryption
+Source: "bin\obs-fightrecorder.dll"; Flags: dontcopy noencryption
 Source: "..\dist\Wingman\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -332,6 +339,135 @@ begin
   Log('Predecessor: still registered after 30s; continuing without it.');
 end;
 
+{ ------------------------------------------------------------------------
+  FightRecorder (the OBS plugin).
+
+  The DLL is fetched at build time by packaging/fetch_fightrecorder.py,
+  which verifies it against the sha256 digest GitHub publishes on the
+  release asset -- so what this installer packs is, by construction,
+  what upstream released. Here we only decide WHERE it goes and whether
+  it needs replacing: OBS's plugin directory is not ours, so an
+  existing identical DLL is left alone (byte-identical means the
+  sha256 matches), and the write into Program Files may need one UAC
+  prompt, because this installer deliberately runs per-user.
+
+  Non-fatal throughout, like InstallWebView2Runtime: a FightRecorder
+  install that does not happen is reported on the Finished page, never
+  allowed to fail the install of Wingman itself.
+  ------------------------------------------------------------------------ }
+var
+  FightRecorderNote: String;
+
+function ObsPluginDir(): String;
+var
+  Location: String;
+begin
+  { The OBS Studio installer writes InstallLocation under HKLM. The
+    64-bit view first -- an OBS install is 64-bit -- then the 32-bit
+    view, then the default directory, which is where a "download and
+    drop in a folder" OBS install lands. }
+  Result := '';
+  if IsWin64 and RegQueryStringValue(HKLM64, 'SOFTWARE\OBS Studio',
+       'InstallLocation', Location) then
+    Result := RemoveQuotes(Trim(Location));
+  if (Result = '') and RegQueryStringValue(HKLM32, 'SOFTWARE\OBS Studio',
+       'InstallLocation', Location) then
+    Result := RemoveQuotes(Trim(Location));
+  if Result = '' then
+    Result := ExpandConstant('{pf}\obs-studio');
+  { A registry entry can point at an uninstalled location. Requiring the
+    obs-plugins directory to exist keeps us from creating directories
+    under Program Files on a machine without OBS. The 64bit subdir is
+    OBS's own standard layout, so creating it when only obs-plugins
+    exists is completing their structure, not inventing ours. }
+  if not DirExists(Result + '\obs-plugins') then
+    Result := ''
+  else
+    Result := Result + '\obs-plugins\64bit';
+end;
+
+function FilesIdentical(const A, B: String): Boolean;
+var
+  BytesA, BytesB: AnsiString;
+begin
+  { The DLL is ~30KB, so a full byte compare is cheaper and more honest
+    than any size-plus-timestamp heuristic: byte-identical is exactly
+    what "the sha256 matches" means, which is the check the spec asks
+    for. False on either read failing -- a locked or unreadable existing
+    file simply means "replace it". }
+  Result := False;
+  if not LoadStringFromFile(A, BytesA) then
+    Exit;
+  if not LoadStringFromFile(B, BytesB) then
+    Exit;
+  Result := (Length(BytesA) = Length(BytesB)) and (CompareStr(BytesA, BytesB) = 0);
+end;
+
+procedure InstallFightRecorder();
+var
+  Staged, PluginDir, Target, Params: String;
+  ResultCode: Integer;
+begin
+  Staged := ExpandConstant('{tmp}\obs-fightrecorder.dll');
+  PluginDir := ObsPluginDir();
+  if PluginDir = '' then
+  begin
+    Log('FightRecorder: OBS Studio not detected; skipping.');
+    FightRecorderNote :=
+      'FightRecorder was not installed: OBS Studio was not detected on ' +
+      'this machine. Install it manually if you add OBS later.';
+    Exit;
+  end;
+
+  ExtractTemporaryFile('obs-fightrecorder.dll');
+  Target := PluginDir + '\obs-fightrecorder.dll';
+
+  if FilesIdentical(Staged, Target) then
+  begin
+    Log('FightRecorder: ' + Target + ' is already this exact release; skipping.');
+    Exit;
+  end;
+
+  { Direct copy first -- OBS portable installs and per-user installs can
+    be writable without elevation. If Windows refuses, one UAC prompt
+    covers the copy via an elevated PowerShell; the result is verified
+    on disk, never trusted from the exit code (the same discipline
+    InstallWebView2Runtime uses). ForceNewWindow-less SW_HIDE: the work
+    is a silent file copy. }
+  if not ForceDirectories(PluginDir) then
+  begin
+    Log('FightRecorder: could not create ' + PluginDir + '; skipping.');
+    FightRecorderNote := 'FightRecorder was not installed: could not ' +
+      'create its plugin directory.';
+    Exit;
+  end;
+  if (not FileCopy(Staged, Target, False)) and
+     (not FilesIdentical(Staged, Target)) then
+  begin
+    Log('FightRecorder: direct copy refused; asking for elevation.');
+    { Apostrophes doubled inside the PowerShell single-quoted strings --
+      the standard PS escape, and the same doubling Inno itself uses. }
+    Params :=
+      '-NoProfile -ExecutionPolicy Bypass -Command ' +
+      'Copy-Item -Force -LiteralPath ''' + Staged + ''' -Destination ''' +
+      Target + '''';
+    if not ShellExec('runas', 'powershell.exe', Params, '', SW_HIDE,
+                     ewWaitUntilTerminated, ResultCode) then
+      Log(Format('FightRecorder: elevated copy exited with %d', [ResultCode]));
+    if not FilesIdentical(Staged, Target) then
+    begin
+      Log('FightRecorder: the DLL is still not in place.');
+      FightRecorderNote :=
+        'FightRecorder was not installed: the copy into ''' + PluginDir +
+        ''' was refused or declined. Install it manually from the OBS ' +
+        'plugins folder, or run this installer as administrator.';
+      Exit;
+    end;
+  end;
+  Log('FightRecorder: installed to ' + Target);
+  FightRecorderNote := 'FightRecorder was installed into ' + PluginDir + '.';
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   { ssInstall, not ssPostInstall: the predecessor must be gone before our
@@ -348,7 +484,11 @@ begin
     braced comments, so a wrapped "[Run]" landing in column 1 is read as a
     section header and fails the compile with "Invalid section tag". }
   if CurStep = ssPostInstall then
+  begin
     InstallWebView2Runtime();
+    if WizardIsTaskSelected('fightrecorder') then
+      InstallFightRecorder();
+  end;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -365,4 +505,10 @@ begin
       'WARNING: the Microsoft Edge WebView2 runtime is still missing, so ' +
       'FlyGD Wingman will not open a window. Install it from ' +
       WEBVIEW2_DOWNLOAD_URL;
+  { FightRecorder's outcome rides the same slot: installed where, or why
+    not. Silent installs never reach this page, so the Log lines in
+    InstallFightRecorder are their only record there. }
+  if (CurPageID = wpFinished) and (FightRecorderNote <> '') then
+    WizardForm.FinishedLabel.Caption :=
+      WizardForm.FinishedLabel.Caption + #13#10#13#10 + FightRecorderNote;
 end;

@@ -1334,4 +1334,83 @@
       commit(enabledStatus, ['toggle_sig_bar', check.checked], null);
     });
   }());
+
+  // ---- FightRecorder (OBS plugin) -------------------------------------
+  // Local-on-load, network-on-demand: the initial state line comes from
+  // fightrecorder_status's local half, and only the two buttons call
+  // GitHub. Install/Update may raise ONE UAC prompt (OBS's plugin
+  // directory is under Program Files; Wingman runs without admin), so
+  // the button is disabled for the duration rather than allowing a
+  // second click into a pending elevation.
+  (function () {
+    var status = WM.el('fr-status');
+    var checkBtn = WM.el('btn-fr-check');
+    var updateBtn = WM.el('btn-fr-update');
+    var msg = WM.el('msg-fightrecorder');
+    if (!status || !checkBtn || !updateBtn || !msg) { return; }
+
+    function paint(res) {
+      var text;
+      var canInstall = false;
+      if (!res) {
+        text = 'Could not read the plugin state.';
+      } else if (res.error) {
+        text = res.error;
+      } else if (!res.detected) {
+        text = 'OBS Studio was not detected.';
+      } else if (!res.installed) {
+        text = 'Not installed.';
+        canInstall = true;
+      } else if (res.up_to_date === true) {
+        text = 'Up to date.';
+      } else if (res.up_to_date === false) {
+        text = 'An update is available' +
+               (res.latest_tag ? ' (' + res.latest_tag + ')' : '') + '.';
+        canInstall = true;
+      } else {
+        text = 'Installed.' +
+               (res.latest_tag ? ' Latest release: ' + res.latest_tag + '.' : '');
+        canInstall = true;
+      }
+      status.textContent = text;
+      updateBtn.hidden = !canInstall;
+      updateBtn.textContent = res && res.installed ? 'Update' : 'Install';
+    }
+
+    function sayError(text) {
+      msg.textContent = text;
+      msg.hidden = false;
+    }
+
+    function busy(on) {
+      WM.setEnabled('btn-fr-check', !on);
+      WM.setEnabled('btn-fr-update', !on);
+      if (on) { msg.hidden = true; }
+    }
+
+    function refresh(live) {
+      busy(true);
+      WM.send('fightrecorder_status', !!live).then(function (res) {
+        busy(false);
+        paint(res);
+      });
+    }
+
+    checkBtn.addEventListener('click', function () { refresh(true); });
+
+    updateBtn.addEventListener('click', function () {
+      busy(true);
+      status.textContent = 'Downloading and installing…';
+      WM.send('update_fightrecorder').then(function (res) {
+        busy(false);
+        if (!res) { sayError('Could not reach the installer.'); return; }
+        if (!res.ok) { sayError(res.error || 'The update did not happen.'); }
+        else { status.textContent = 'Updated to ' + res.tag + '.'; }
+        // The local half re-runs so the buttons match what is on disk.
+        refresh(false);
+      });
+    });
+
+    refresh(false);
+  }());
 }());

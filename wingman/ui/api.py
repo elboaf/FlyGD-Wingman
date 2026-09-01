@@ -27,6 +27,7 @@ import logging
 import os
 import queue
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -42,6 +43,7 @@ from .. import (
     discord,
     durations,
     evewindows,
+    fightrecorder,
     library,
     links,
     obsconfig,
@@ -1978,6 +1980,97 @@ class Api:
             )
             return ""
         return str(detected)
+
+    # ---- FightRecorder (the OBS plugin) ---------------------------------
+
+    def fightrecorder_status(self, check: bool = False) -> dict:
+        """What the page's FightRecorder card shows.
+
+        Purely local unless `check` is set: the network round trip to the
+        releases API happens only when the user presses Check for
+        updates, never as a side effect of opening Settings -- a card
+        that phones GitHub on every render is a card nobody asked for.
+
+        Returned, not pushed: the card is the only consumer and there is
+        nothing to keep in sync.
+        """
+        installed = fightrecorder.dll_path()
+        status = {
+            "installed": installed is not None,
+            "path": installed or "",
+            "detected": fightrecorder.find_obs_plugin_dir() is not None,
+            "up_to_date": None,
+            "latest_tag": "",
+            "error": "",
+        }
+        if not check:
+            return status
+        try:
+            release = fightrecorder.latest_release()
+        except Exception:
+            logger.exception("FightRecorder update check failed")
+            status["error"] = "Could not reach GitHub -- check your internet."
+            return status
+        status["latest_tag"] = release["tag"]
+        if installed is None:
+            return status
+        if not release["digest"]:
+            # No digest to compare against: report the release without a
+            # verdict rather than claiming either side of up-to-date.
+            return status
+        status["up_to_date"] = fightrecorder.sha256_file(installed) == release["digest"]
+        return status
+
+    def update_fightrecorder(self) -> dict:
+        """Download, verify and install the latest FightRecorder DLL.
+
+        The stages are deliberately sequential and each reports its own
+        failure, because the three ways this fails are different user
+        problems: offline (check the internet), checksum mismatch (don't
+        install it), and the write (a UAC prompt the user may decline, or
+        OBS holding the old DLL open).
+        """
+        plugin_dir = fightrecorder.find_obs_plugin_dir()
+        if plugin_dir is None:
+            return {
+                "ok": False,
+                "error": "OBS Studio was not detected on this machine.",
+            }
+        try:
+            release = fightrecorder.latest_release()
+        except Exception:
+            logger.exception("FightRecorder update check failed")
+            return {
+                "ok": False,
+                "error": "Could not reach GitHub -- check your internet.",
+            }
+        staged = os.path.join(tempfile.gettempdir(), fightrecorder.DLL_NAME)
+        error = fightrecorder.download_latest(release["url"], release["digest"], staged)
+        if error:
+            return {"ok": False, "error": error}
+        error = fightrecorder.apply_update(plugin_dir, staged)
+        if error and "admin" in error:
+            # The plugin directory is not writable by this user (OBS's
+            # default install is under Program Files): one UAC prompt
+            # covers the copy. The elevated helper is verified by
+            # checking the result on disk, not by trusting exit codes.
+            error = fightrecorder.elevated_copy(plugin_dir, staged)
+        with contextlib.suppress(OSError):
+            os.unlink(staged)
+        if error:
+            return {"ok": False, "error": error}
+        installed = fightrecorder.dll_path()
+        if (
+            installed
+            and release["digest"]
+            and (fightrecorder.sha256_file(installed) != release["digest"])
+        ):
+            return {
+                "ok": False,
+                "error": "The installed file does not match the release "
+                "checksum -- it may not have been replaced.",
+            }
+        return {"ok": True, "error": "", "tag": release["tag"]}
 
     # ---- per-field settings writes -------------------------------------
     #
