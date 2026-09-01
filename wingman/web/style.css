@@ -1654,9 +1654,25 @@ button.btn:disabled,
 
    `:empty` and `[hidden]` both re-evaluate when settings.js writes a
    message in, so the row returns on its own. That is why this is a
-   display rule and not a `hidden` attribute somebody has to clear. */
-.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty),
-.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]) {
+   display rule and not a `hidden` attribute somebody has to clear.
+
+   AND THE ROW MUST HOLD NO CONTROL. That is what the three `:not()`s on
+   the end are for, and they are not defensive: without them this rule hid
+   `Apply to open previews` -- an empty `.lab`, a `<button>`, and a status
+   slot that only ever fills in AFTER the button has been clicked. The
+   control appeared once you had performed the action it was the only
+   route to, which is to say never. It shipped that way, and nothing could
+   see it: the rule is correct in isolation, the markup is correct in
+   isolation, and pytest reads this page without rendering it, so the two
+   only met on a real machine.
+
+   Fixing it by giving the status a default sentence was the first idea
+   and is the wrong one twice over -- it re-adds the line this rule exists
+   to remove, and it leaves the trap armed for the next row that pairs a
+   control with a silent status slot.
+   tests/test_page_conventions.py pins the predicate instead. */
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty):not(:has(> button)):not(:has(> input)):not(:has(> select)),
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]):not(:has(> button)):not(:has(> input)):not(:has(> select)) {
   display: none;
 }
 

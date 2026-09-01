@@ -254,6 +254,53 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
         )
 
 
+def test_the_empty_continuation_collapse_never_swallows_a_control():
+    """The blank-continuation-row rule hid a button for an entire release.
+
+    `.settings .row:has(> .lab:empty)...:has(> .hint:empty)` exists to stop
+    a status slot that is blank on most installs from spending a line. The
+    row holding `Apply to open previews` has exactly that shape -- an empty
+    `.lab`, and a `.hint` that settings.js only fills in AFTER the button
+    has been clicked -- so the rule hid the control until you had performed
+    the action the control was the only route to.
+
+    Both halves were individually correct, which is why nothing caught it:
+    the CSS is right about blank rows, the markup is right about a silent
+    status slot, and nothing in this suite renders the page, so the two
+    only met on a real machine. This is the failure class DESIGN.md opens
+    with, arriving through CSS rather than through a handler name.
+
+    The predicate is pinned rather than the one row, because the row is not
+    special -- any future pairing of a control with a status slot that
+    starts empty walks into the same rule.
+    """
+    collapse = [
+        part.strip()
+        for sel in re.findall(r"([^{}]*\.lab:empty[^{}]*)\{[^{}]*display:\s*none", CSS)
+        for part in sel.split(",")
+        # The ROW collapse only. `.settings .row > .lab:empty` hides the
+        # empty label itself and is a different rule with a different job:
+        # it takes a label out of the layout, never a control.
+        if ".row:has(> .lab:empty)" in part
+    ]
+    assert collapse, "the empty-continuation collapse rule is gone entirely"
+
+    for sel in collapse:
+        for control in ("button", "input", "select"):
+            assert f":not(:has(> {control}))" in sel, (
+                f"the collapse selector {sel.strip()!r} does not exclude "
+                f"<{control}>, so a row pairing a control with a status "
+                f"slot that starts empty is hidden until it is used"
+            )
+
+    # The subject the rule was written against, so this test keeps a
+    # reason to exist rather than guarding a shape nothing has any more.
+    assert 'id="btn-preview-apply-size"' in HTML, (
+        "Apply to open previews is gone; if that was deliberate, this "
+        "test needs a new subject, not deleting"
+    )
+
+
 def test_each_keybind_list_declares_a_deliberate_first_track():
     """Round 3's B1 made both bind lists stack the name above its controls,
     because each list's first track was `max-content` over ITS OWN labels
