@@ -149,7 +149,7 @@ def _preview_defaults() -> dict:
         # land these become the default group's, so the schema grows
         # without migrating anyone -- the same shape the parent design
         # used to defer profiles.
-        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": "", "groups": [], "group_by_character": {}},
         "seen": [],
         # Where a preview OPENS: on, at the rect the user last dragged
         # it to; off, at default_stack placement. Positions are
@@ -439,6 +439,47 @@ def validated_preview(raw) -> dict:
             parsed = preview_gestures.parse(raw_hotkeys.get(key))
             if parsed is not None:
                 section["hotkeys"][key] = preview_gestures.display(parsed)
+
+        # Normalize cycle groups: track seen IDs and case-folded names,
+        # keep first valid occurrence.
+        groups = raw_hotkeys.get("groups")
+        valid_ids = set()
+        seen_names = set()
+        if isinstance(groups, list):
+            for raw_group in groups:
+                if not isinstance(raw_group, dict):
+                    continue
+                group_id = raw_group.get("id")
+                name = raw_group.get("name")
+                if not isinstance(group_id, str) or not group_id:
+                    continue
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                clean_name = name.strip()
+                folded = clean_name.casefold()
+                if group_id in valid_ids or folded in seen_names:
+                    continue
+                parsed = preview_gestures.parse(raw_group.get("cycle"))
+                section["hotkeys"]["groups"].append(
+                    {
+                        "id": group_id,
+                        "name": clean_name,
+                        "cycle": preview_gestures.display(parsed) if parsed else "",
+                    }
+                )
+                valid_ids.add(group_id)
+                seen_names.add(folded)
+
+        # Normalize membership: deserialize character names to reject hwnd:,
+        # then filter to only valid group IDs.
+        group_by_character = raw_hotkeys.get("group_by_character")
+        if isinstance(group_by_character, dict):
+            # Use roster.deserialize to handle character name validation.
+            valid_names = preview_roster.deserialize(list(group_by_character.keys()))
+            for name in valid_names:
+                group_id = group_by_character.get(name)
+                if isinstance(group_id, str) and group_id in valid_ids:
+                    section["hotkeys"]["group_by_character"][name] = group_id
 
     section["seen"] = preview_roster.deserialize(raw.get("seen"))
     # Without this line the whole section is rebuilt from defaults on every
