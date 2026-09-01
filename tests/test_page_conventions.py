@@ -1267,6 +1267,28 @@ def test_dialog_keyboard_behavior_follows_focus_and_contains_it():
     assert "active.kind === 'prompt'" in panel
 
 
+def test_dialog_heading_and_scrim_are_accessible_exit_paths():
+    html = _strip_html_comments(HTML)
+    assert '<h2 id="dlg-title"></h2>' in html
+    assert '<h3 id="dlg-title">' not in html
+    assert re.search(r"\.dialog h2 \{", CSS)
+    assert not re.search(r"\.dialog h3(?::|\s|\{)", CSS), (
+        "the corrected dialog heading must retain its visual treatment"
+    )
+
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    scrim = re.search(
+        r"overlay\.addEventListener\('click'.*?\n  \}\);", panel, re.DOTALL
+    )
+    assert scrim, "clicking the app-owned dialog scrim has no exit path"
+    assert "ev.target !== overlay" in scrim.group(0), (
+        "clicks inside the dialog must not dismiss it"
+    )
+    assert "answer(false)" in scrim.group(0), (
+        "the scrim must cancel an answerable dialog, never affirm it"
+    )
+
+
 def test_dialog_restores_the_invoker_after_the_queue_empties():
     panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
     assert "var returnFocus = null;" in panel
@@ -1372,6 +1394,30 @@ def test_every_offered_alert_colour_has_a_name():
     # The name is what the control announces; the hex may accompany it.
     assert "input.setAttribute('aria-label', name)" in alerts, (
         "the swatch must announce its NAME, not its hex"
+    )
+
+
+def test_alert_swatches_show_the_selected_colour_name():
+    alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    assert "'span', 'swatch-name'" in alerts, (
+        "the alert palette must render its selected colour name for sighted users"
+    )
+    assert re.search(
+        r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
+        r"colourName\(colour\)\)",
+        alerts,
+    ), "the visible swatch name must follow initial, changed, and reverted values"
+
+    style = re.search(r"\.alert-events \.swatch-name \{(.*?)\}", CSS, re.DOTALL)
+    assert style and "flex-basis: 100%" in style.group(1), (
+        "the colour name must sit below the fixed palette instead of widening "
+        "the already width-budgeted alert grid"
+    )
+
+
+def test_the_alert_volume_note_finishes_its_thought():
+    assert re.search(
+        r"alerts only interrupt for a client you are not\s+looking at\.", HTML
     )
 
 
@@ -1798,6 +1844,35 @@ def test_the_previews_header_row_names_one_column_per_track():
     )
 
 
+def test_the_previews_header_stays_above_rows_while_settings_scrolls():
+    """The one Settings pane scrolls, so the column labels must stay with it."""
+    rule = re.search(r"\.bind-head > span \{(.*?)\}", CSS, re.DOTALL)
+    assert rule, "the Preview column headers have no CSS rule"
+    for prop in (
+        "position: sticky",
+        "top: 0",
+        "z-index:",
+        "background: var(--panel)",
+    ):
+        assert prop in rule.group(1), (
+            f"Preview header cells need `{prop}` so their labels remain visible "
+            "and opaque while the Settings pane scrolls"
+        )
+
+
+def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
+    host = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert host and "--preview-bind-head-height:" in host.group(1), (
+        "#preview-binds must own the measured sticky-header height"
+    )
+    offline = re.search(
+        r"#preview-binds \.bind-group:not\(:empty\) \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert offline and re.search(
+        r"top:\s*var\(--preview-bind-head-height\)", offline.group(1)
+    ), "the Offline heading must stick below, not on top of, the column header"
+
+
 def test_the_previews_headings_are_in_the_order_makeRow_builds():
     """Counting columns is not the same as naming the right one.
 
@@ -1986,7 +2061,7 @@ def test_the_offline_state_is_a_heading_over_its_block_not_a_colour():
         "#preview-binds's group heading has no rule of its own, so it is "
         "not sticky and can scroll off the block it explains"
     )
-    for prop in ("position: sticky", "top: 0", "background:"):
+    for prop in ("position: sticky", "top:", "background:"):
         assert prop in rule.group(1), (
             f"the offline heading must declare `{prop}`: without sticky and "
             f"a top it leaves its own block, and without a background the "

@@ -576,6 +576,12 @@
 
   btnOk.addEventListener('click', function () { answer(true); });
   btnCancel.addEventListener('click', function () { answer(false); });
+  overlay.addEventListener('click', function (ev) {
+    // Only the scrim is an exit. A click inside the dialog bubbles through
+    // this listener too and must not turn an attempted action into Cancel.
+    if (ev.target !== overlay) return;
+    answer(false);
+  });
   dlgInput.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && active && active.kind === 'prompt') {
       ev.preventDefault();

@@ -305,6 +305,11 @@
         label.appendChild(dot);
         row.colors.appendChild(label);
       });
+      // The dots remain the compact chooser; this line gives the selected
+      // value a word without adding a sixth column to the floor-width grid.
+      var readout = WM.make('span', 'swatch-name');
+      readout.setAttribute('aria-hidden', 'true');
+      row.colors.appendChild(readout);
       row.colors.setAttribute('data-built', wanted.join(','));
     }
 
@@ -312,6 +317,7 @@
     for (var i = 0; i < boxes.length; i++) {
       boxes[i].checked = boxes[i].value === colour;
     }
+    setText(row.colors.querySelector('.swatch-name'), colourName(colour));
   }
 
   // Shared by the wm:settings hydration and refresh() (get_alert_state),
