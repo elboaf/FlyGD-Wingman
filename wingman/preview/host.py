@@ -44,8 +44,11 @@ SWEEP_MS = 700  # TriffView uses the same interval
 MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
 ACTIVATE_RETRY_TIMER_ID = 3
+# A 20ms timer keeps each pump turn short. Twenty-five retries provide about
+# 500ms for ShowWindowAsync restoration without blocking hotkeys or retaining
+# a saved outgoing minimize indefinitely.
 ACTIVATE_RETRY_MS = 20
-ACTIVATE_RETRY_MAX = 5
+ACTIVATE_RETRY_MAX = 25
 # How long an armed bind capture survives without being disarmed. Long
 # enough that nobody meets it while deciding which key to press; short
 # enough that a page which died mid-capture cannot leave the preview
@@ -1259,16 +1262,14 @@ class PreviewHost:
                 continue
             registered.append((ident, action))
 
-        newest_text = next(
-            (
-                self._registered_text.get(ident)
-                for ident, _action in reversed(registered)
-                if self._registered_text.get(ident)
-            ),
-            None,
+        # Capture has one physical newest chord. A missing text mapping is an
+        # incomplete registration state, not permission to capture an older
+        # press the user did not make.
+        newest_text = (
+            self._registered_text.get(registered[-1][0]) if registered else None
         )
         if self._take_capture(newest_text):
-            if len(registered) > 1:
+            if newest_text is not None and len(registered) > 1:
                 logger.debug(
                     "Coalesced preview hotkeys: %d -> captured %s",
                     len(registered),
@@ -1288,6 +1289,7 @@ class PreviewHost:
         # to the last cycle target when no action in this batch established one.
         target = foreground_key
         cycle_seen = False
+        last_cycle_target = None
         final_action = None
         for _ident, action in registered:
             final_action = action
@@ -1314,9 +1316,14 @@ class PreviewHost:
                 target = None
                 continue
             target = cycle.step(keys, target or self._last_cycled, value)
+            if target is not None:
+                # A later direct focus determines this folded batch's final
+                # dispatch target, but must not overwrite cycle's sequential
+                # fallback anchor for the next press outside EVE.
+                last_cycle_target = target
 
-        if cycle_seen and target is not None:
-            self._last_cycled = target
+        if last_cycle_target is not None:
+            self._last_cycled = last_cycle_target
         if len(registered) > 1:
             logger.debug(
                 "Coalesced preview hotkeys: %d, final %s -> %s",
@@ -1348,15 +1355,19 @@ class PreviewHost:
     def _take_capture(self, text) -> bool:
         """Hand *text* to an armed capture. Returns whether it was taken.
 
+        An armed capture also consumes an incomplete newest-text mapping: it
+        must not fall through and activate the chord, or guess an older text.
+        That no-op stays armed so a later complete mapping can still capture.
+
         Disarms on the way out: the page sends set_capture(False) too, but
         that round trip is not instant and a second press arriving inside
         it must not be eaten as well.
         """
-        if not text:
-            return False
         with self._lock:
             if time.monotonic() >= self._capture_until:
                 return False
+            if not text:
+                return True
             self._capture_until = 0.0
         logger.debug("Preview hotkey %s taken by an armed bind capture", text)
         if self._on_bind_captured is not None:
@@ -1395,16 +1406,34 @@ class PreviewHost:
         return running[0]
 
     def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> None:
-        """Retain the newest restore request and arrange its next pump turn."""
-        self._pending_switch = pending
-        if self._hwnd and libs is not None and not self._pending_activation_timer:
-            libs.user32.SetTimer(
+        """Retain a restore request only when its next pump turn is armable."""
+        if not self._hwnd or libs is None:
+            # This can be reached by a pending retry racing teardown. A request
+            # without its host window has no path back into the pump, so keeping
+            # its saved minimize would make stale intent look live forever.
+            self._pending_switch = None
+            self._pending_activation_timer = False
+            logger.info(
+                "Pending activation of %s discarded; preview host window is unavailable",
+                pending.stable_key,
+            )
+            return
+        if not self._pending_activation_timer:
+            timer = libs.user32.SetTimer(
                 self._hwnd,
                 ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID),
                 ACTIVATE_RETRY_MS,
                 None,
             )
+            if not timer:
+                self._pending_switch = None
+                logger.info(
+                    "Pending activation of %s discarded; retry timer could not be armed",
+                    pending.stable_key,
+                )
+                return
             self._pending_activation_timer = True
+        self._pending_switch = pending
 
     def _clear_pending_activation(self, libs) -> None:
         """Forget an outstanding restore and stop its timer exactly once."""
@@ -1472,11 +1501,20 @@ class PreviewHost:
                     ),
                 )
                 return
-            logger.info(
-                "Activation of %s did not complete after %d restore retries",
-                pending.stable_key,
-                ACTIVATE_RETRY_MAX,
-            )
+            if pending.minimize:
+                logger.info(
+                    "Activation of %s did not complete after %d restore retries; "
+                    "saved minimize of 0x%x was dropped",
+                    pending.stable_key,
+                    ACTIVATE_RETRY_MAX,
+                    pending.previous_hwnd,
+                )
+            else:
+                logger.info(
+                    "Activation of %s did not complete after %d restore retries",
+                    pending.stable_key,
+                    ACTIVATE_RETRY_MAX,
+                )
         else:
             logger.info("Pending activation of %s was refused", pending.stable_key)
         self._clear_pending_activation(libs)
@@ -1581,7 +1619,8 @@ class PreviewHost:
         # window_mod.activate probes IsIconic again because it owns restoration
         # and its verdict; this probe has to precede that external call so the
         # host can choose its ordering. Sharing it would couple those layers
-        # and still race a window changing state between the two operations.
+        # and still race a window changing state between the two operations;
+        # the handled two-IsIconic transition race has a branch below.
         target_was_iconic = (
             bool(libs.user32.IsIconic(client.hwnd)) if libs is not None else False
         )
@@ -1687,16 +1726,13 @@ class PreviewHost:
                 # the second was a rollback. A refused rollback IS the
                 # empty-desktop case the smoke checklist says to watch.
                 restored = window_mod.activate(libs, previous.hwnd)
-                logger.info(
-                    "Switch to 0x%x refused; %s 0x%x",
-                    client.hwnd,
-                    (
-                        "restored"
-                        if restored is window_mod.ActivationResult.ACTIVATED
-                        else "could not restore"
-                    ),
-                    previous.hwnd,
-                )
+                if restored is window_mod.ActivationResult.ACTIVATED:
+                    outcome = f"restored 0x{previous.hwnd:x}"
+                elif restored is window_mod.ActivationResult.PENDING_RESTORE:
+                    outcome = f"restore of 0x{previous.hwnd:x} is still pending"
+                else:
+                    outcome = f"restore of 0x{previous.hwnd:x} was refused"
+                logger.info("Switch to 0x%x refused; %s", client.hwnd, outcome)
         return result
 
     def _minimize(self, libs, hwnd) -> None:

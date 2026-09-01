@@ -38,12 +38,14 @@ def should_minimize(*, enabled, previous_key, next_key, never) -> bool:
 
 
 def should_restore(*, activated, attempted) -> bool:
-    """Whether a refused switch must bring the outgoing client back.
+    """Whether a failed switch must bring the outgoing client back.
 
     TriffView's safety property was "a failed switch minimizes nothing",
     kept by activating first. With minimize-first the outgoing client is
     already down when the refusal is learned, so this policy requests its
-    restoration. Windows can refuse that request too; without the attempt,
+    restoration. The same rollback is used when the host's first IsIconic
+    probe loses a transition race and activation reports pending restore after
+    ordinary minimize-first has already run. Windows can refuse that request too; without the attempt,
     however, a refused activation necessarily leaves the old client down and
     the new one absent, strictly worse than the switch simply not working.
 

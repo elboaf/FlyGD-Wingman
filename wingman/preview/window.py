@@ -114,12 +114,14 @@ def activate(libs, hwnd) -> ActivationResult:
             ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
+        foreground = libs.user32.GetForegroundWindow()
         # Teammate commit 3f4466f reported live foreground-but-focusless input
         # loss and identified EVE-O's SetFocus slot; our external probe was
-        # inconclusive. Assign focus before detaching, while
-        # GetForegroundWindow below remains the activation verdict.
-        libs.user32.SetFocus(hwnd)
-        foreground = libs.user32.GetForegroundWindow()
+        # inconclusive. Repair focus only after Windows actually put this target
+        # in the foreground, while its queue remains attached. Otherwise
+        # SetFocus could steal keyboard focus from the application Windows kept.
+        if foreground == hwnd:
+            libs.user32.SetFocus(hwnd)
     finally:
         for tid in reversed(attached):
             libs.user32.AttachThreadInput(our_tid, tid, False)

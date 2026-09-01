@@ -1042,7 +1042,14 @@ def test_cycle_uses_last_cycle_as_fallback_outside_eve(monkeypatch):
     assert h._last_cycled == "Bravo"
 
 
-def test_shared_focus_uses_cycle_target_established_in_same_batch(monkeypatch):
+def test_a_later_focus_in_a_mixed_batch_does_not_replace_the_cycle_fallback(
+    monkeypatch,
+):
+    """The folded direct focus is this dispatch's target, not cycle history.
+
+    A following cycle outside EVE must continue from the batch's last virtual
+    cycle target, exactly as sequential dispatch would after its cycle action.
+    """
     h, _libs = _batch_hotkey_host()
     h._last_cycled = "Alice"
     h._registered = {
@@ -1056,9 +1063,10 @@ def test_shared_focus_uses_cycle_target_established_in_same_batch(monkeypatch):
     )
 
     h._on_hotkeys(libs, [1, 2])
+    h._on_hotkeys(libs, [1])
 
-    assert activated == [0x1111]
-    assert h._last_cycled == "Alice"
+    assert activated == [0x1111, 0x3333]
+    assert h._last_cycled == "Carol"
 
 
 def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch):
@@ -1140,6 +1148,28 @@ def test_capture_uses_newest_registered_hotkey_in_the_batch(monkeypatch):
 
     assert captured == ["Ctrl+F2"]
     assert activated == []
+
+
+def test_capture_does_not_fall_back_to_an_older_registered_text(monkeypatch):
+    """An incomplete registration map must not capture or activate a missed chord."""
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._registered = {1: ("focus", ("Alice",)), 2: ("focus", ("Bravo",))}
+    h._registered_text = {1: "Ctrl+F1"}
+    h._clients = {"Bravo": _FakeClient("Bravo", hwnd=0x2222)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, client: activated.append(client.hwnd)
+    )
+    h.set_capture(True)
+
+    h._on_hotkeys(_FakeLibs(_FakeUser32()), [1, 2])
+
+    assert captured == []
+    assert activated == []
+    assert h._capture_until > 0
 
 
 def test_coalesced_hotkeys_emit_one_debug_summary(monkeypatch, caplog):
@@ -2761,6 +2791,86 @@ def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatc
     assert [entry for entry in order if entry[0] == "ring"] == []
 
 
+def test_pending_restore_without_a_live_host_window_is_discarded(monkeypatch, caplog):
+    """A pending result needs a timer-backed message pump to make progress."""
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.timers == []
+    assert any(
+        "discarded; preview host window is unavailable" in r.message
+        for r in caplog.records
+    )
+
+
+def test_pending_restore_with_a_rejected_timer_is_discarded(monkeypatch, caplog):
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(libs.user32, "SetTimer", lambda *_args: 0)
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert any(
+        "discarded; retry timer could not be armed" in r.message for r in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    ("rollback_result", "outcome"),
+    [
+        (host.window_mod.ActivationResult.ACTIVATED, "rollback restored"),
+        (
+            host.window_mod.ActivationResult.PENDING_RESTORE,
+            "rollback is still pending",
+        ),
+        (host.window_mod.ActivationResult.REFUSED, "rollback was refused"),
+    ],
+)
+def test_pending_transition_rollback_logs_its_explicit_outcome(
+    monkeypatch, caplog, rollback_result, outcome
+):
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: (
+            host.window_mod.ActivationResult.PENDING_RESTORE
+            if hwnd == 0x2222
+            else rollback_result
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert any(
+        f"Pending activation of 0x2222 after minimizing 0x1111: {outcome}"
+        in record.message
+        for record in caplog.records
+    )
+
+
 def test_a_target_that_becomes_iconic_after_the_host_probe_rolls_back_before_pending(
     monkeypatch,
 ):
@@ -2934,13 +3044,15 @@ def test_a_newer_pending_target_replaces_the_old_one_and_resets_its_timer(monkey
     assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
 
 
-def test_pending_restore_expires_after_the_bounded_attempt_count(monkeypatch, caplog):
+def test_pending_restore_expires_after_exactly_25_retries_and_logs_dropped_minimize(
+    monkeypatch, caplog
+):
     """A restore that never becomes foreground must stop retrying.
 
-    Without the bound, an EVE client stuck restoring leaves a permanent pump
-    wakeup that can eventually activate stale intent.
+    The 20ms timer gets 25 non-blocking retry turns (about 500ms), then drops
+    its saved outgoing minimize rather than silently retaining stale intent.
     """
-    h, libs, _ = _switching_host(
+    h, libs, order = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
@@ -2950,14 +3062,23 @@ def test_pending_restore_expires_after_the_bounded_attempt_count(monkeypatch, ca
     h._activate_client(libs, h._clients["Bravo"])
 
     with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
-        for _ in range(host.ACTIVATE_RETRY_MAX):
+        for _ in range(24):
             h._retry_pending_activation(libs)
+        assert h._pending_switch.attempts == 24
+        h._retry_pending_activation(libs)
 
+    assert host.ACTIVATE_RETRY_MS == 20
+    assert host.ACTIVATE_RETRY_MAX == 25
     assert h._pending_switch is None
     assert h._pending_activation_timer is False
+    assert len([entry for entry in order if entry == ("activate", 0x2222)]) == 26
     assert len(libs.user32.timers) == 1
     assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
-    assert any("did not complete after" in record.message for record in caplog.records)
+    assert any(
+        "did not complete after 25 restore retries; saved minimize of 0x1111 was dropped"
+        in record.message
+        for record in caplog.records
+    )
 
 
 def test_pending_restore_success_moves_the_selection_once(monkeypatch):
@@ -3547,23 +3668,41 @@ def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
     ]
 
 
-def test_a_refused_switch_logs_whether_the_rollback_took(monkeypatch, caplog):
-    """The refusal that stopped the switch -- no recent input in this
-    process -- applies to the rollback too. Without a line of its own the
-    log shows two 'did not take' lines for two hwnds and nothing saying
-    the second was a rollback; a refused rollback IS the empty-desktop
-    case the smoke checklist says to watch for."""
+@pytest.mark.parametrize(
+    ("rollback_result", "outcome"),
+    [
+        (host.window_mod.ActivationResult.ACTIVATED, "restored 0x1111"),
+        (
+            host.window_mod.ActivationResult.PENDING_RESTORE,
+            "restore of 0x1111 is still pending",
+        ),
+        (host.window_mod.ActivationResult.REFUSED, "restore of 0x1111 was refused"),
+    ],
+)
+def test_a_refused_switch_logs_the_explicit_rollback_outcome(
+    monkeypatch, caplog, rollback_result, outcome
+):
+    """Rollback can activate, still be restoring, or be refused itself."""
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.REFUSED,
     )
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: (
+            host.window_mod.ActivationResult.REFUSED
+            if hwnd == 0x2222
+            else rollback_result
+        ),
+    )
 
     with caplog.at_level("INFO", logger="wingman.preview.host"):
         h._activate_client(libs, h._clients["Bravo"])
 
-    lines = [r.message for r in caplog.records if "refused" in r.message]
-    assert lines == ["Switch to 0x2222 refused; could not restore 0x1111"]
+    lines = [r.message for r in caplog.records if r.message.startswith("Switch to")]
+    assert lines == [f"Switch to 0x2222 refused; {outcome}"]
 
 
 def test_a_failed_animation_restore_is_not_silent(monkeypatch, caplog):

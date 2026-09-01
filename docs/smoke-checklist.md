@@ -2337,15 +2337,15 @@ target client, and what became foreground if it occurs.
       retained minimize-first behavior can still expose that known gap.
 - [ ] **A minimized target restores without stalling later input.** Switch
       repeatedly to a target that Minimize inactive clients put down. It must
-      either restore and become foreground within the bounded retry period or
-      stop retrying while Wingman remains responsive. During a pending restore,
-      the outgoing client normally remains visible; if it was already minimized
-      in the narrow interval where the target became iconic between the host and
-      activation probes, Wingman must request its rollback before retaining the
-      retry. A refused or late rollback can still flash the desktop. After
-      success the outgoing client may minimize. Start another click or hotkey
-      immediately and confirm the newer request wins rather than waiting behind
-      the older restore.
+      either restore and become foreground within about 500ms (25 non-blocking
+      20ms retries) or stop retrying while Wingman remains responsive. During a
+      pending restore, the outgoing client normally remains visible; if it was
+      already minimized in the narrow interval where the target became iconic
+      between the host and activation probes, Wingman must request its rollback
+      before retaining the retry. A refused or late rollback can still flash the
+      desktop. After a successful restore the outgoing client must minimize.
+      Start another click or hotkey immediately and confirm the newer request
+      wins rather than waiting behind the older restore.
 - [ ] **No minimize/restore animation during the switch, and the user's
       setting survives it.** The outgoing client should vanish and the
       target should appear with no window-zoom. Note what this is and is

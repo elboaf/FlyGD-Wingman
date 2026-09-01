@@ -157,14 +157,19 @@ def _activation_libs(
 
 def test_iconic_target_reported_foreground_is_restored_and_pending():
     calls = []
-    iconic_libs = _activation_libs([TARGET, FOREGROUND, FOREGROUND], calls, iconic=True)
+    iconic_libs = _activation_libs([TARGET, FOREGROUND], calls, iconic=True)
 
     assert (
         window.activate(iconic_libs, TARGET) is window.ActivationResult.PENDING_RESTORE
     )
-    assert calls.index(("show", TARGET, window.win32.SW_RESTORE)) < calls.index(
-        ("set_foreground", TARGET)
-    )
+    assert calls == [
+        ("show", TARGET, window.win32.SW_RESTORE),
+        ("get_foreground", TARGET),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("set_foreground", TARGET),
+        ("get_foreground", FOREGROUND),
+        ("attach", OUR_TID, TARGET_TID, False),
+    ]
 
 
 def test_iconic_target_activates_when_restore_lands_before_observation():
@@ -180,8 +185,8 @@ def test_iconic_target_activates_when_restore_lands_before_observation():
     ]
     assert calls[4:7] == [
         ("set_foreground", TARGET),
-        ("set_focus", TARGET),
         ("get_foreground", TARGET),
+        ("set_focus", TARGET),
     ]
 
 
@@ -193,10 +198,10 @@ def test_non_iconic_target_already_foreground_skips_attachments():
     assert calls == [("get_foreground", TARGET)]
 
 
-def test_activation_focuses_target_before_verdict_and_detach():
+def test_activation_observes_foreground_before_focusing_target():
     """A live target can be foreground but focusless unless keyboard focus is
     assigned while its queue remains attached. SetFocus's return is not a
-    verdict; only the following foreground observation classifies activation.
+    verdict; the foreground observation gates it and classifies activation.
     """
     calls = []
     libs = _activation_libs([FOREGROUND, TARGET], calls)
@@ -207,8 +212,8 @@ def test_activation_focuses_target_before_verdict_and_detach():
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, TARGET_TID, True),
         ("set_foreground", TARGET),
-        ("set_focus", TARGET),
         ("get_foreground", TARGET),
+        ("set_focus", TARGET),
         ("attach", OUR_TID, TARGET_TID, False),
         ("attach", OUR_TID, FOREGROUND_TID, False),
     ]
@@ -225,12 +230,17 @@ def test_equal_foreground_and_target_threads_are_attached_once():
     ]
 
 
-def test_activation_refusal_detaches_in_reverse_order():
+def test_activation_refusal_does_not_focus_the_target_and_detaches_in_reverse_order():
     calls = []
     libs = _activation_libs([FOREGROUND, FOREGROUND], calls)
 
     assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
-    assert calls[-2:] == [
+    assert calls == [
+        ("get_foreground", FOREGROUND),
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("set_foreground", TARGET),
+        ("get_foreground", FOREGROUND),
         ("attach", OUR_TID, TARGET_TID, False),
         ("attach", OUR_TID, FOREGROUND_TID, False),
     ]

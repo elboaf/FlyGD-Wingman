@@ -4,7 +4,7 @@ Design. Base: `main` (`5eac83d`), 2026-09-01. Revised after independent review.
 
 ## Outcome
 
-Clicking a preview or using a preview hotkey should put the requested EVE client in the foreground promptly and reliably. Rapid hotkeys should resolve to one final requested client instead of replaying every intermediate switch. **Minimize inactive clients** remains minimize-first: the evidence did not justify changing its order, so this change does not close the known desktop-gap risk.
+Clicking a preview or using a preview hotkey should put the requested EVE client in the foreground promptly and reliably. Rapid hotkeys should resolve to one final requested client instead of replaying every intermediate switch. **Minimize inactive clients** remains minimize-first: the evidence did not justify changing its order, so the retained ordering does not close the known desktop-gap risk.
 
 The change stays inside the existing preview subsystem. It does not add settings, alter persisted data, move or resize an EVE client, change system-wide foreground policy, or inject synthetic keyboard input.
 
@@ -60,11 +60,11 @@ The current order avoids a different failure: a timed-out minimize can be delive
 4. Attach the foreground queue when distinct from the preview thread.
 5. Attach the target queue when distinct from the preview thread and the already-attached foreground thread.
 6. Call `SetForegroundWindow(target)`.
-7. Call `SetFocus(target)` while the target queue remains attached; ignore its return value.
-8. Read the final foreground verdict.
+7. Read the foreground verdict.
+8. Only when the observed foreground is `target`, call `SetFocus(target)` while the target queue remains attached; ignore its return value.
 9. Detach the target queue, then foreground queue, in a `finally` block.
 
-The final behavior retains one `SetFocus(HWND) -> HWND` binding in the EVE-O slot based on the reviewed live foreground-but-focusless symptom. It is an input-focus assignment, not another activation verdict or a refusal fallback. There is no synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO. Because `SetFocus` is unconditional after `SetForegroundWindow`, a refused foreground activation may remove keyboard focus from the application that Windows kept in the foreground; this accepted risk requires the retained-application keyboard smoke check below.
+The final behavior retains one `SetFocus(HWND) -> HWND` binding in the EVE-O slot based on the reviewed live foreground-but-focusless symptom. It is an input-focus repair, not another activation verdict or a refusal fallback. There is no synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO. A refused foreground activation leaves the application Windows retained untouched, while an observed target still receives the foreground-but-focusless repair before its queues detach.
 
 The design does **not** claim this will fix all recorded refusals. An activation approach that needs another bounded attempt must have a separately reproducible Windows/EVE justification rather than shipping ceremonial retries.
 
@@ -76,9 +76,9 @@ The design does **not** claim this will fix all recorded refusals. An activation
 - **pending restore** — target was iconic, restore was requested, but it is not foreground yet;
 - **refused** — target was not iconic and remains outside the foreground after the bounded attempts.
 
-A pending restore is completed by posting a dedicated host message after a short one-shot timer, not by sleeping in the preview WndProc. Only the newest pending target is retained. The retry re-resolves the client by stable key and HWND, so a client that exits or recreates its window becomes a logged no-op rather than targeting a stale handle.
+A pending restore is completed by posting a dedicated host message after a 20ms timer turn, not by sleeping in the preview WndProc. Only the newest pending target is retained. The retry re-resolves the client by stable key and HWND, so a client that exits or recreates its window becomes a logged no-op rather than targeting a stale handle. Twenty-five retries provide about 500ms of wall-clock opportunity without blocking the pump; expiry drops and logs any saved outgoing minimize decision. If no live host HWND or retry timer can be armed, the pending request is logged and discarded instead of becoming unserviceable state.
 
-No outgoing client is minimized and no selection ring moves until pending restoration is observed to succeed. A bounded retry count prevents a non-restoring client from keeping a timer alive indefinitely.
+No outgoing client is minimized and no selection ring moves until pending restoration is observed to succeed. The bounded retry count prevents a non-restoring client from keeping a timer alive indefinitely.
 
 ### 2. Batch queued hotkeys by action, then switch once
 
@@ -91,6 +91,8 @@ The drained IDs are not reduced to the newest ID. They are converted to register
 3. A cycle action applies its `+1` or `-1` delta to the virtual target using the current sorted, non-excluded cycle roster.
 4. Continue through the drained actions in arrival order.
 5. Activate only the final resolved client.
+
+`_last_cycled` records the last virtual target established by a cycle action, not a later direct-focus target in the same folded batch. This preserves the sequential-dispatch fallback when the next cycle begins outside EVE.
 
 Examples with clients `A, B, C, D` and `A` foreground:
 
@@ -114,11 +116,11 @@ General non-iconic switching remains minimize-first. If activation is refused af
 
 An iconic target is the narrow exception required by pending restoration: Wingman normally leaves the outgoing client alone while the target restore is pending, then minimizes the exact saved outgoing HWND only after the target is observed in the foreground. The host's initial `IsIconic` probe can lose a race to `activate()`'s own probe, however. If the first probe chose ordinary minimize-first and `activate()` subsequently returns pending restore, Wingman revalidates the saved stable key and HWND and requests rollback before retaining pending state; the saved minimize decision remains for a later successful retry. A refused rollback or a minimize delivered late can still expose the desktop briefly, so this narrow recovery does not close the retained minimize-first gap. This exception does not establish that activate-first is safe for ordinary switches.
 
-No minimize-recovery generation, foreground observer recovery, or asynchronous minimize was added. `switching.should_minimize()` remains a before-switch decision, `switching.should_restore()` remains the refusal rollback decision, and desktop-animation suppression remains scoped around the existing switch operation. No `SetWindowPos` fallback exists.
+No minimize-recovery generation, foreground observer recovery, or asynchronous minimize was added. `switching.should_minimize()` remains a before-switch decision, `switching.should_restore()` remains the refusal and pending-transition rollback decision, and desktop-animation suppression remains scoped around the existing switch operation. Pending retry activation does not enter `_animation_off`: toggling a system-wide animation preference every 20ms would create setting thrash, while only the successful saved minimize needs animation suppression. No `SetWindowPos` fallback exists.
 
 ### 4. Selection and alerts
 
-The host updates `_foreground`, focused state, `_last_cycled`, and the sticky selection ring only after activation is observed to succeed. Pending or refused activation leaves prior state unchanged.
+The host updates `_foreground`, focused state, and the sticky selection ring only after activation is observed to succeed. `_last_cycled` records a cycle action's virtual target during folding, so a later direct focus does not rewrite cycle fallback state. Pending or refused activation leaves foreground-derived state unchanged.
 
 Click acknowledgement remains guaranteed even when activation fails. If clearing a persistent alert performs visible rendering before focus is requested, acknowledgement may move after the first focus attempt, but it still runs regardless of the verdict. This is not otherwise an alert redesign.
 
@@ -138,7 +140,7 @@ All production changes are test-first.
 
 ### `tests/test_preview_window.py`
 
-- Both distinct queues are attached before focus manipulation.
+- Both distinct queues are attached before focus manipulation, and `SetFocus` runs only after `GetForegroundWindow` observes the target.
 - A target thread equal to the foreground thread is attached only once.
 - Attachments detach once each in reverse order on success, refusal, and exception.
 - `SetForegroundWindow` return values are ignored in favor of observed foreground.
@@ -154,7 +156,7 @@ All production changes are test-first.
 - Non-hotkey messages are not consumed.
 - Capture receives only the newest queued chord.
 - Coalescing emits one DEBUG summary when messages were discarded.
-- Pending restore retains only the newest target, validates stable key and HWND, and is bounded.
+- Pending restore retains only the newest target when its host timer is live, validates stable key and HWND, retries exactly 25 times at 20ms, logs a dropped saved minimize on expiry, and is bounded.
 - An iconic pending target leaves the outgoing client alone until activation succeeds.
 - A refused non-iconic activation exercises the retained minimize-first rollback.
 - With minimization disabled, minimize APIs are untouched.
@@ -187,11 +189,11 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 1. Record timestamped foreground HWND, process, class, and title transitions for every switch attempt.
 2. From EVE, Windows Search, a browser, and Wingman, click locked and unlocked previews. On an accepted switch, requested EVE must become foreground; on a refusal, the source must remain foreground. The preview must never become foreground.
 3. After every successful switch, send keyboard input promptly. The foreground target must receive it without a focusless interval; `SetFocus` is retained for this symptom, not as proof of refusal conversion.
-4. Attempt a switch while Windows Search and, separately, a browser retain the foreground after Windows refuses activation. Type immediately into the retained application; keyboard input must still reach it despite Wingman's unconditional `SetFocus` call.
+4. Attempt a switch while Windows Search and, separately, a browser retain the foreground after Windows refuses activation. Type immediately into the retained application; keyboard input must still reach it because Wingman skips `SetFocus` unless it observed the EVE target foreground.
 5. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
 6. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
 7. Enable **Minimize inactive clients** and switch while clients are idle and during grid/session load. Record any desktop/preview gap or wrong foreground; these remain known risks of the retained minimize-first order, not a fixed behavior.
-8. Switch to a minimized target repeatedly. Pending restore must resolve or expire without blocking hotkeys, and the outgoing client must stay up until the target is observed foreground.
+8. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys, and after a successful restore the outgoing client must minimize.
 9. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
 10. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
 
