@@ -118,13 +118,8 @@ def test_every_bridge_method_the_page_calls_has_a_double():
         "list.js: open_recording_dir",
         "previews.js: alert_bookmarks",
         "previews.js: capture_preview_bind",
-        "previews.js: create_preview_cycle_group",
-        "previews.js: delete_preview_cycle_group",
         "previews.js: parse_preview_bind",
-        "previews.js: rename_preview_cycle_group",
         "previews.js: set_preview_binds",
-        "previews.js: set_preview_character_group",
-        "previews.js: set_preview_cycle_group_bind",
         "settings.js: set_preview_enabled",
         "settings.js: set_restore_preview_positions",
     }
@@ -589,3 +584,57 @@ def test_the_bookmark_groups_are_not_a_hand_kept_copy():
     assert groups == [dict(g) for g in bookmarks.bind_groups()], (
         "dev.js's bookmarkGroups has drifted from bookmarks.bind_groups()"
     )
+
+
+def test_the_preview_groups_fixture_covers_real_states():
+    """The preview fixture must carry cycle groups, not just the old hotkeys.
+
+    The five group-mutation methods are no longer known gaps -- dev.js now
+    doubles them.  This test pins the fixture data those stubs read from.
+    """
+    from wingman.preview import gestures as preview_gestures
+
+    block = _fixture_body("api.get_preview_hotkey_state")
+    assert "groups:" in block, "preview fixture lacks groups array"
+    assert "group_by_character:" in block, "preview fixture lacks group_by_character map"
+    # At least one group must carry a real parseable cycle gesture.
+    gestures_in_groups = [
+        g for g in re.findall(r"cycle:\s*'([^']+)'", block) if g
+    ]
+    assert gestures_in_groups, "no group has a cycle gesture in the fixture"
+    for gesture in gestures_in_groups:
+        parsed = preview_gestures.parse(gesture)
+        assert parsed is not None, (
+            f"preview fixture group holds {gesture!r}, which gestures.py cannot parse"
+        )
+        assert preview_gestures.display(parsed) == gesture, (
+            f"preview fixture group holds {gesture!r}, not canonical spelling"
+        )
+    # Named groups must include at least a DPS group and an empty group.
+    names = re.findall(r"name:\s*'([^']+)'", block)
+    assert any("DPS" in n for n in names), (
+        "preview fixture lacks a group with 'DPS' in its name"
+    )
+    assert any("Empty" in n or "empty" in n for n in names), (
+        "preview fixture lacks an empty group"
+    )
+    # The UI label 'All only' is derived by the page, not persisted.
+    assert "All only" not in block, "'All only' is a UI label and must not appear in the fixture"
+
+
+def test_the_preview_group_dev_methods_are_no_longer_known_gaps():
+    """The five group-mutation methods were in the known-gaps list while
+    dev.js lacked stubs for them.  Task 5 adds the stubs, so they must
+    no longer appear in the known-gaps list AND they must be stubbed.
+    """
+    stubbed = _stubbed()
+    for method in (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+    ):
+        assert method in stubbed, (
+            f"dev.js does not stub {method!r} -- it is still a known gap"
+        )

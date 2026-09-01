@@ -78,6 +78,20 @@ SCREENS = (
         "previews",
         True,
     ),
+    Screen(
+        "settings-previews-groups",
+        "Settings - Previews (groups)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
+        "settings-previews-narrow",
+        "Settings - Previews (narrow 840x625)",
+        "settings",
+        "previews",
+        True,
+    ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen("settings-general", "Settings - General", "settings", "general", False),
     Screen("profiles", "Profiles", "evesettings", None, True),
@@ -163,6 +177,25 @@ def screen_setup_script(screen: Screen) -> str | None:
             ]}
           ],
           'Copy')"""
+    if screen.key == "settings-previews-groups":
+        # Scroll to the bottom of the pane so the Manage groups disclosure
+        # is visible, with all three seeded groups and their keybind rows
+        # rendered. pane.scrollHeight ensures the full table plus the
+        # disclosure are in frame even when the viewport is at its floor.
+        return """(function () {
+          var pane = document.querySelector('.settings-pane');
+          if (pane) { pane.scrollTop = pane.scrollHeight; }
+        }())"""
+    if screen.key == "settings-previews-narrow":
+        # Resize to the 840x625 viewport floor (logical pixels, as
+        # MIN_WIDTH/MIN_HEIGHT in ui/window.py are measured, not derived),
+        # then scroll the table into view so long character and group names
+        # are visible in a horizontally-constrained column.
+        return """(function () {
+          window.resizeTo(840, 625);
+          var pane = document.querySelector('.settings-pane');
+          if (pane) { pane.scrollTop = 0; }
+        }())"""
     return None
 
 

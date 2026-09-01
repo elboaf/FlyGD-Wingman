@@ -35,7 +35,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 14
+    assert len(to_shoot) == 16
     assert skipped == []
 
 
@@ -53,7 +53,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 10
+    assert len(skipped) == 12
 
 
 def _strip_js_comments(text: str) -> str:
@@ -113,6 +113,8 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         "settings-previews-middle",
         "settings-previews-table",
         "settings-previews-copy",
+        "settings-previews-groups",
+        "settings-previews-narrow",
     }
     assert "scrollTop = 0" in variants["settings-previews"]
     assert "scrollHeight - pane.clientHeight" in variants["settings-previews-middle"]
@@ -285,7 +287,9 @@ def test_manifest_records_what_the_gate_skipped():
         "settings-bookmarks",
         "settings-previews",
         "settings-previews-copy",
+        "settings-previews-groups",
         "settings-previews-middle",
+        "settings-previews-narrow",
         "settings-previews-table",
         "skills",
     ]
@@ -439,3 +443,63 @@ def test_ensure_engine_reports_false_when_the_fetcher_is_absent(tmp_path):
     """A checkout without packaging/ is not an error, just a set that will
     carry the artifact."""
     assert shoot.ensure_engine(str(tmp_path), "python") is False
+
+
+def test_preview_group_stages_are_present():
+    """Task 5: the shoot list must include a group-populated stage and an
+    840x625 narrow-viewport stage for the previews section.
+
+    The group-keybinds stage shows the Global keybinds card fully populated
+    with group rows.  The narrow stage captures 840x625 character rows with
+    long character/group names.  Both must be in SCREENS and gated (require
+    EVE) like the other previews screens.
+    """
+    keys = {s.key for s in shoot.SCREENS}
+    assert "settings-previews-groups" in keys, (
+        "settings-previews-groups stage missing from SCREENS"
+    )
+    assert "settings-previews-narrow" in keys, (
+        "settings-previews-narrow stage missing from SCREENS"
+    )
+    groups_screen = next(s for s in shoot.SCREENS if s.key == "settings-previews-groups")
+    narrow_screen = next(s for s in shoot.SCREENS if s.key == "settings-previews-narrow")
+    assert groups_screen.gated, "settings-previews-groups must be gated (EVE required)"
+    assert narrow_screen.gated, "settings-previews-narrow must be gated (EVE required)"
+    assert groups_screen.section == "previews"
+    assert narrow_screen.section == "previews"
+
+
+def test_preview_group_stage_setup_scripts():
+    """The staging scripts for the two new stages must follow the existing
+    pattern: scroll the pane to reveal groups, and use a narrow viewport
+    for the 840x625 stage.
+    """
+    scripts = {
+        s.key: shoot.screen_setup_script(s)
+        for s in shoot.SCREENS
+        if s.key in {"settings-previews-groups", "settings-previews-narrow"}
+    }
+    assert "settings-previews-groups" in scripts
+    assert "settings-previews-narrow" in scripts
+    groups_script = scripts["settings-previews-groups"]
+    narrow_script = scripts["settings-previews-narrow"]
+    # The groups stage must scroll to reveal the Manage groups disclosure.
+    assert groups_script is not None, "settings-previews-groups needs a setup script"
+    assert "scrollTop" in groups_script or "scrollHeight" in groups_script, (
+        "groups stage setup must scroll the pane"
+    )
+    # The narrow stage must set a viewport width of 840.
+    assert narrow_script is not None, "settings-previews-narrow needs a setup script"
+    assert "840" in narrow_script, (
+        "narrow stage must target the 840px floor width"
+    )
+    assert "625" in narrow_script, (
+        "narrow stage must target the 625px floor height"
+    )
+
+
+def test_gate_on_shoots_every_screen_including_new_group_stages():
+    """With the two new stages, the total must increase by 2."""
+    to_shoot, skipped = shoot.screens_for_gate(True)
+    assert len(to_shoot) == 16
+    assert skipped == []

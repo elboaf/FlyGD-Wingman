@@ -787,7 +787,33 @@
           'Zuelo Parvi': 'Ctrl+Alt+2'
         },
         cycle_next: 'Ctrl+Alt+Right',
-        cycle_prev: ''
+        cycle_prev: '',
+        // Ordered cycle groups. Three groups exercise the expected states:
+        // DPS (has members and a cycle bind), Logistics (deliberately shares
+        // DPS's chord so the collision branch renders), and Empty group (no
+        // members, no bind -- the zero-member UI path).
+        // Stable IDs are strings, not numbers: the bridge writes them that
+        // way, and the page never touches them except to echo them back.
+        groups: [
+          {id: 'g-dps',   name: 'DPS',         cycle: 'Ctrl+Shift+1'},
+          {id: 'g-logi',  name: 'Logistics',    cycle: 'Ctrl+Shift+1'},
+          {id: 'g-empty', name: 'Empty group',  cycle: ''}
+        ],
+        // Character → group_id assignment map. Does NOT store member counts;
+        // the page derives them from this map (same as production does).
+        // Aiga: online, assigned to DPS, opted-in.
+        // Tanuki: offline, assigned to Logistics.
+        // Aleksandrina: offline, assigned to DPS -- opted-out scenario
+        //   (opted-out is not in excluded[] here, that is Zuelo's slot,
+        //   but having an assignment while excluded shows the page handles
+        //   the combination).
+        // Zuelo: online, excluded, no group -- exercises the All-only path
+        //   where a character stays in the global pool only.
+        group_by_character: {
+          'Aiga Otsolen':                       'g-dps',
+          'Tanuki Solette':                     'g-logi',
+          'Aleksandrina Shadowbanes Voidstriders': 'g-dps'
+        }
       },
       // Running (online) characters. Both are also owed a row by
       // `hotkeys.characters` above, so this is what flips them from the
@@ -886,6 +912,167 @@
       // in this file. Caught by review while C6 was adding the other half.
       bookmark_chords: { active: ['Ctrl+Alt+1'], latent: [] }
     });
+  };
+
+  // ---- Stateful dev stubs for the five preview cycle-group methods.
+  //
+  // These mutate a local copy of the hotkeys table that mirrors what the
+  // real settings file would hold, then push window.onPreviewHotkeys so
+  // the page re-renders -- the same flow as Api._preview_group_result +
+  // Api._push('onPreviewHotkeys') in production. All five return the
+  // production result shape {applied, persisted, error, hotkeys}.
+  //
+  // devPreviewHotkeys is a live reference into the fixture so the
+  // get_preview_hotkey_state fixture and the mutation stubs share exactly
+  // one copy. Deep-copied on every push, exactly as Api._preview_hotkeys
+  // does, so callers cannot hold a stale alias.
+  var _devPreviewHotkeys = {
+    characters: {
+      'Aiga Otsolen': 'Ctrl+Alt+1',
+      'Zuelo Parvi': 'Ctrl+Alt+2'
+    },
+    cycle_next: 'Ctrl+Alt+Right',
+    cycle_prev: '',
+    groups: [
+      {id: 'g-dps',   name: 'DPS',        cycle: 'Ctrl+Shift+1'},
+      {id: 'g-logi',  name: 'Logistics',  cycle: 'Ctrl+Shift+1'},
+      {id: 'g-empty', name: 'Empty group', cycle: ''}
+    ],
+    group_by_character: {
+      'Aiga Otsolen':                          'g-dps',
+      'Tanuki Solette':                        'g-logi',
+      'Aleksandrina Shadowbanes Voidstriders': 'g-dps'
+    }
+  };
+
+  function _devHotkeysCopy() {
+    return JSON.parse(JSON.stringify(_devPreviewHotkeys));
+  }
+
+  function _devGroupResult(applied, error) {
+    return {
+      applied: applied,
+      persisted: applied,
+      error: error || null,
+      hotkeys: _devHotkeysCopy()
+    };
+  }
+
+  function _devPushHotkeys() {
+    if (window.onPreviewHotkeys) {
+      window.onPreviewHotkeys(_devHotkeysCopy());
+    }
+  }
+
+  api.create_preview_cycle_group = function (name) {
+    console.log('DEV api.create_preview_cycle_group(', name, ')');
+    if (!name || !name.trim()) {
+      return Promise.resolve(_devGroupResult(false, 'Group name must be a non-empty string'));
+    }
+    var clean = name.trim();
+    var folded = clean.toLowerCase();
+    var groups = _devPreviewHotkeys.groups;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].name.toLowerCase() === folded) {
+        return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
+      }
+    }
+    var newId = 'g-dev-' + Date.now();
+    groups.push({id: newId, name: clean, cycle: ''});
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.rename_preview_cycle_group = function (groupId, name) {
+    console.log('DEV api.rename_preview_cycle_group(', groupId, name, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    if (!name || !name.trim()) {
+      return Promise.resolve(_devGroupResult(false, 'Group name must be a non-empty string'));
+    }
+    var clean = name.trim();
+    var folded = clean.toLowerCase();
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    for (var j = 0; j < groups.length; j++) {
+      if (groups[j] !== target && groups[j].name.toLowerCase() === folded) {
+        return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
+      }
+    }
+    target.name = clean;
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.delete_preview_cycle_group = function (groupId) {
+    console.log('DEV api.delete_preview_cycle_group(', groupId, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var idx = -1;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { idx = i; break; }
+    }
+    if (idx === -1) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    groups.splice(idx, 1);
+    var gbc = _devPreviewHotkeys.group_by_character;
+    Object.keys(gbc).forEach(function (charName) {
+      if (gbc[charName] === groupId) { delete gbc[charName]; }
+    });
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_cycle_group_bind = function (groupId, gesture) {
+    console.log('DEV api.set_preview_cycle_group_bind(', groupId, gesture, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    target.cycle = gesture || '';
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_character_group = function (name, groupId) {
+    console.log('DEV api.set_preview_character_group(', name, groupId, ')');
+    if (!name) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid character name'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var gbc = _devPreviewHotkeys.group_by_character;
+    if (!groupId) {
+      // Empty string removes assignment (All-only).
+      delete gbc[name];
+    } else {
+      var valid = false;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].id === groupId) { valid = true; break; }
+      }
+      if (!valid) {
+        return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+      }
+      gbc[name] = groupId;
+    }
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
   };
 
   api.list_rows = function () {
