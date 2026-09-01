@@ -1277,14 +1277,22 @@ def test_dialog_heading_and_scrim_are_safe_exit_paths():
     )
 
     panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
-    scrim = re.search(
-        r"overlay\.addEventListener\('click'.*?\n  \}\);", panel, re.DOTALL
+    assert "var scrimPressStarted = false;" in panel
+    down = re.search(
+        r"overlay\.addEventListener\('mousedown'.*?\n  \}\);", panel, re.DOTALL
     )
-    assert scrim, "clicking the app-owned dialog scrim has no exit path"
-    assert "ev.target !== overlay" in scrim.group(0), (
-        "clicks inside the dialog must not dismiss it"
+    up = re.search(
+        r"overlay\.addEventListener\('mouseup'.*?\n  \}\);", panel, re.DOTALL
     )
-    assert "answer(false)" in scrim.group(0), (
+    assert down and up, "the app-owned dialog scrim has no complete exit gesture"
+    assert "scrimPressStarted = ev.target === overlay" in down.group(0)
+    assert "scrimPressStarted && ev.target === overlay" in up.group(0), (
+        "a drag that starts or ends inside the dialog must not dismiss it"
+    )
+    assert "ev.button !== 0" in up.group(0), (
+        "only a primary-button scrim click may dismiss the dialog"
+    )
+    assert "answer(false)" in up.group(0), (
         "the scrim must cancel an answerable dialog, never affirm it"
     )
 
@@ -1415,9 +1423,13 @@ def test_alert_swatches_show_the_selected_colour_name():
 
     style = re.search(r"\.alert-events \.swatch-name \{(.*?)\}", CSS, re.DOTALL)
     assert style and "flex-basis: 100%" in style.group(1), (
-        "the colour name must sit below the fixed palette instead of widening "
-        "the already width-budgeted alert grid"
+        "the colour name must sit below the fixed palette instead of beside it"
     )
+    for prop in ("width: 0", "min-width: 100%"):
+        assert prop in style.group(1), (
+            f"the colour name needs `{prop}` so its word does not widen the "
+            "intrinsic swatch track"
+        )
 
 
 def test_the_alert_volume_note_finishes_its_thought():
@@ -1444,6 +1456,13 @@ def test_alert_event_controls_share_deliberate_box_and_text_rails():
     )
     assert flash and re.search(r"margin:\s*2px 0 2px 48px", flash.group(1)), (
         "Flashes and Speed must begin on the event text rail"
+    )
+
+    message = re.search(
+        r"\.alert-events \.alert-row > \.field-msg \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert message and "padding-left: 48px" in message.group(1), (
+        "an event write outcome must align with the event text it describes"
     )
 
 

@@ -1368,7 +1368,9 @@ response leaves a worker waiting forever, which presents as a hung upload.
 - [ ] **Escape and the scrim answer a confirm as "no", never as nothing.**
       Both cancel cleanly and the app is immediately usable — no upload, no
       stuck busy state, and Upload works on the next press. Clicking inside
-      the dialog does not dismiss it; only the scrim does.
+      the dialog does not dismiss it; only a primary-button press and release
+      both on the scrim do. Drag-select body text past the dialog edge to prove
+      that gesture does not cancel or discard a prompt value.
 - [ ] **A dialog raised from a worker thread reaches the page.** Kill the
       network mid-upload and let the retries exhaust. The error modal
       appears with plain-language text, not a traceback, and the window is

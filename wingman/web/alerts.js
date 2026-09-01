@@ -484,6 +484,8 @@
         }
         lastGood[id] = lastGood[id] || {};
         lastGood[id].color = wanted;
+        // The dot follows the native radio immediately; the word follows the
+        // accepted value here so a refused write never labels an unsaved choice.
         setText(row.colors.querySelector('.swatch-name'), colourName(wanted));
         if (!res.persisted) {
           sayRow(row, 'The colour is set for this session, but could not be '

@@ -2730,9 +2730,9 @@ button.btn:disabled,
   min-width: 112px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
 }
-/* The route owns the scrollbar. Its final row has no content below it to
-   scroll behind a downward menu, so open that one into the archive instead
-   of into the scrollport boundary. */
+/* The route owns the scrollbar. Its final visible archive row can sit at the
+   scrollport boundary even when controls follow the archive, so open that
+   row's menu upward into the list rather than downward across the edge. */
 .es-backup-row:last-child .bk-menu > button {
   top: auto; bottom: calc(100% + 4px);
 }
@@ -2837,7 +2837,8 @@ button.btn:disabled,
    dots so the width-budgeted event grid does not gain another column. */
 .alert-events .swatches { flex-wrap: wrap; }
 .alert-events .swatch-name {
-  flex-basis: 100%; margin-top: 1px; text-align: center;
+  flex-basis: 100%; width: 0; min-width: 100%;
+  margin-top: 1px; text-align: center;
   color: var(--text-dim); font-size: var(--fs-muted);
 }
 
@@ -2886,11 +2887,15 @@ button.btn:disabled,
 }
 /* Event boxes share the 24px modifier rail below the table; their words and
    continuation controls share the next 24px step. The two rails make the
-   checkbox placement deliberate without adding a fifth grid column. */
+   checkbox placement deliberate without adding a fifth grid column.
+
+   The Event header follows DESIGN.md's same-inset rule at the 48px text
+   rail, not the 24px box rail: the word labels event NAMES, not their
+   enable boxes. */
 .alert-events .alert-row > .check { margin-left: 24px; }
 .alert-head > span:first-child { padding-left: 48px; }
 /* Every header string is narrower than the control column beneath it
-   ("Colour" ~45px against 5 swatches at 110px), so naming the columns
+   ("Colour" ~45px against 5 swatches at 120px), so naming the columns
    cannot grow a track and cannot reach the 840 floor's overflow. */
 .alert-events .alert-row > select.field { width: 100%; min-width: 0; }
 .alert-events .alert-row { display: contents; }
@@ -2909,7 +2914,8 @@ button.btn:disabled,
    the 840 floor. Zero width removes that contribution; min-width puts the
    rendered box back. */
 .alert-events .alert-row > .field-msg {
-  grid-column: 1 / -1; margin: 0 0 4px; width: 0; min-width: 100%;
+  grid-column: 1 / -1; margin: 0 0 4px; padding-left: 48px;
+  width: 0; min-width: 100%;
 }
 /* The second line of an event's row: how many flashes it gets and how
    fast they go. A LINE and not two more columns -- the four tracks above
