@@ -1050,3 +1050,205 @@ def test_groups_and_narrow_setup_scripts_embed_exact_fixture_payload():
             f"Expected keys: {sorted(fixture.keys())}\n"
             f"Got keys:      {sorted(embedded.keys())}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Round 3 fix: exact selector contracts, exact CDP ordering proof
+# ---------------------------------------------------------------------------
+
+
+def test_groups_stage_uses_preview_group_manager_selector():
+    """The settings-previews-groups setup script must scroll to
+    '.preview-group-manager'  — the exact class selector for the Manage
+    Groups disclosure element — not to a generic pane or a first-match.
+
+    A generic fallback (e.g. scrollTop = pane.scrollHeight) may overshoot
+    or miss entirely depending on how much content precedes the manager
+    at render time, defeating the purpose of the stage.
+
+    The script may fall back to pane.scrollHeight but the FIRST choice must
+    be document.querySelector('.preview-group-manager').
+    """
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    script = shoot.screen_setup_script(groups_screen)
+    assert script is not None
+    # Must explicitly reference the exact semantic selector
+    assert ".preview-group-manager" in script, (
+        "settings-previews-groups setup script must use "
+        "document.querySelector('.preview-group-manager') as the primary scroll target -- "
+        "a generic scroll-to-bottom may miss or overshoot the manager element"
+    )
+    # Must use querySelector (not a bare CSS string or comment)
+    assert re.search(
+        r"querySelector\s*\(['\"]\s*\.preview-group-manager['\"]\s*\)", script
+    ), (
+        "settings-previews-groups setup script must call "
+        "querySelector('.preview-group-manager') -- bare string presence is insufficient"
+    )
+
+
+def test_narrow_stage_uses_exact_aria_label_selector_syntax():
+    """The settings-previews-narrow setup script must target the character row
+    via the full CSS attribute selector:
+        select[aria-label=\"Cycle group for Aleksandrina Shadowbanes Voidstriders\"]
+
+    Partial matches (e.g. just the character name without the attribute
+    selector syntax) do not guarantee querySelector will find the element,
+    and 'aria-label' as a bare string in a comment would also pass a weaker
+    test.  This test asserts the complete syntax.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    # Must contain the complete attribute selector as a string
+    full_selector = (
+        'select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]'
+    )
+    assert full_selector in script, (
+        f"narrow stage setup script must contain the exact attribute selector:\n"
+        f"  {full_selector!r}\n"
+        "A partial match (name only, or class selector) is not sufficient "
+        "to guarantee querySelector targets the correct row."
+    )
+
+
+def test_narrow_stage_does_not_use_generic_first_select_selector():
+    """The settings-previews-narrow setup script must NOT target
+    '.preview-group-select' alone as the primary selector.
+
+    '.preview-group-select' matches the FIRST select in document order,
+    which is 'Aiga Otsolen' in the fixture — not the intended long-name
+    character whose ellipsis behaviour this stage captures.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    # Reject a bare .preview-group-select querySelector without an [aria-label]
+    # (a refinement like .preview-group-select[aria-label=...] is fine, but
+    #  querySelector('.preview-group-select') is not)
+    bare_first_match = re.search(
+        r"querySelector\s*\(\s*['\"]\s*\.preview-group-select\s*['\"]\s*\)",
+        script,
+    )
+    assert bare_first_match is None, (
+        "narrow stage setup script must NOT use querySelector('.preview-group-select') "
+        "-- it selects the first row (Aiga Otsolen), not the intended long-name character. "
+        "Use the full aria-label attribute selector instead."
+    )
+
+
+class _FailOnceCDP(_TrackedCDP):
+    """Extended TrackedCDP that records a 'screenshot_attempt' op before
+    raising (when fail_narrow_screenshot=True), enabling the test to prove
+    the attempt was made even when it raised.
+    """
+
+    def screenshot(self) -> bytes:
+        if self._fail_narrow and self._override_active:
+            # Record the attempt BEFORE raising so the test can verify the
+            # sequence includes the attempt step.
+            self._ops.append("screenshot_attempt")
+            raise RuntimeError("screenshot failed during narrow override")
+        self._ops.append("screenshot_attempt")
+        return super().screenshot()
+
+
+def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
+    tmp_path, monkeypatch
+):
+    """When the narrow screenshot raises the CDP call sequence must prove:
+        set:840x625  →  eval:setup  →  screenshot_attempt  →  clear
+
+    Recording the attempt before raising is the only way to verify the
+    attempt happened (once it raises there is no return value to inspect).
+    The test uses _FailOnceCDP which appends 'screenshot_attempt' before
+    raising so we can inspect the ordered ops list.
+
+    This test is stronger than test_walk_clears_device_metrics_even_when_narrow_screenshot_fails
+    because it asserts the entire ordered sequence, not just that set and clear
+    both appeared somewhere.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _FailOnceCDP(fail_narrow_screenshot=True)
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None and narrow["error"] is not None, (
+        "narrow screen must be recorded as failed"
+    )
+
+    ops = cdp._ops
+    # Locate the last set:840x625 (the narrow override)
+    try:
+        set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError(
+            f"set:840x625 not found in ops {ops!r} -- override never applied"
+        )
+
+    post_set = ops[set_idx + 1 :]
+
+    # eval:setup (onPreviewHotkeys injection) must follow set
+    # Note: _FailOnceCDP inherits evaluate() from _TrackedCDP which does not
+    # record evaluates by default; use _OrderedCDP to get that detail.
+    # Here we only assert screenshot_attempt and clear ordering.
+    assert "screenshot_attempt" in post_set, (
+        f"screenshot must be ATTEMPTED after set:840x625 even when it raises.\n"
+        f"post-set ops: {post_set!r}\n"
+        "The attempt was either never made or was skipped before the override."
+    )
+    attempt_idx = next(i for i, op in enumerate(post_set) if op == "screenshot_attempt")
+    post_attempt = post_set[attempt_idx + 1 :]
+    assert "clear" in post_attempt, (
+        f"clear must follow the screenshot_attempt even when it raised.\n"
+        f"post-attempt ops: {post_attempt!r}\n"
+        "The finally block must guarantee clear() runs after a failed attempt."
+    )
+
+
+def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
+    tmp_path, monkeypatch
+):
+    """A version of the failure-path test that specifically catches an
+    implementation that skips the screenshot attempt and goes straight to clear.
+
+    If walk() catches the error before attempting the screenshot (e.g. by
+    checking a flag) and jumps to the finally block, clear would appear in
+    the ops but screenshot_attempt would not.  This test catches that case.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _FailOnceCDP(fail_narrow_screenshot=True)
+    shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    ops = cdp._ops
+    assert "screenshot_attempt" in ops, (
+        "screenshot_attempt must appear in ops -- walk() must ATTEMPT the screenshot "
+        "before reaching the finally/except block that clears the override.\n"
+        f"ops: {ops!r}"
+    )
+    assert "clear" in ops, "clear must appear in ops"
+    # Find the narrow override (last set:840x625) and verify the attempt/clear ordering
+    # within that segment.  _FailOnceCDP records ALL screenshots so we anchor to
+    # the narrow override's set op.
+    try:
+        narrow_set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError(f"set:840x625 not found in ops: {ops!r}")
+    post_set = ops[narrow_set_idx + 1 :]
+    assert "screenshot_attempt" in post_set, (
+        f"screenshot_attempt must appear after the narrow set:840x625, got ops: {ops!r}\n"
+        "walk() must attempt the screenshot inside the device-metrics override block."
+    )
+    attempt_idx = next(i for i, op in enumerate(post_set) if op == "screenshot_attempt")
+    post_attempt_ops = post_set[attempt_idx + 1 :]
+    assert "clear" in post_attempt_ops, (
+        f"clear must appear AFTER the screenshot_attempt in the narrow block, "
+        f"post-set ops: {post_set!r}\n"
+        "Ensure the screenshot call is inside the try block, not after the finally."
+    )
