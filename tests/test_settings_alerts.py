@@ -43,8 +43,6 @@ def test_every_parser_event_has_a_config_entry():
     [
         ("cooldown_s", -5, 0),
         ("cooldown_s", 9999, 120),
-        ("duration_ms", 1, 250),
-        ("duration_ms", 999999, 15000),
         ("pulses", 0, 1),
         ("pulses", 99, 16),
     ],

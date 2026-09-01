@@ -10,6 +10,7 @@ rebuilt: it fakes only `_save_locked`, so the real lock-and-rollback
 machinery in `settings.update` stays in the loop.
 """
 
+import copy
 import json
 
 import pytest
@@ -605,23 +606,168 @@ def test_set_preview_size_rewrites_an_offline_entry_in_place(monkeypatch, tmp_pa
     assert (saved["w"], saved["h"], saved["x"]) == (640, 392, 5)
 
 
-class _FakeSizeHost:
-    """Just enough of PreviewHost for _preview_sizes and set_bind_capture:
-    characters(), is_running and set_capture(). Not fakes.py's build_api-produced host, because
-    settings_api/build_api take no preview_host kwarg -- this is assigned
-    onto the built Api the same way settings_api tests already assign
-    api._alert."""
+def test_copy_preview_layout_changes_only_geometry_without_a_host(
+    monkeypatch, tmp_path
+):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    section = api._state.settings["preview"]
+    section["seen"] = ["Source", "Target"]
+    section["layouts"] = {
+        "Source": {"x": 50, "y": 60, "w": 640, "h": 360, "locked": False},
+        "Target": {"x": 1, "y": 2, "w": 320, "h": 210, "locked": True},
+    }
+    section["hotkeys"]["characters"] = {"Target": "Ctrl+F1"}
+    section["locked"] = ["Target"]
+    section["never_minimize"] = ["Target"]
+    section["excluded"] = ["Target"]
+    preferences = {
+        key: copy.deepcopy(section[key])
+        for key in ("hotkeys", "locked", "never_minimize", "excluded")
+    }
 
-    def __init__(self, characters=(), is_running=True):
+    result = api.copy_preview_layout("Target", "Source")
+
+    assert result == {"applied": True, "persisted": True, "error": None}
+    target = api._state.settings["preview"]["layouts"]["Target"]
+    assert target == {"x": 50, "y": 60, "w": 640, "h": 360, "locked": True}
+    for key, value in preferences.items():
+        assert api._state.settings["preview"][key] == value
+
+
+class _FakeSizeHost:
+    """Just enough of PreviewHost for size, source and capture tests."""
+
+    def __init__(self, characters=(), is_running=True, layouts=None, copy_result=None):
         self._characters = list(characters)
         self.is_running = is_running
         self.captures = []
+        self.layouts = dict(layouts or {})
+        self.copies = []
+        self.copy_result = copy_result
 
     def characters(self):
         return list(self._characters)
 
+    def layout_entries(self):
+        return dict(self.layouts)
+
+    def hotkey_status(self):
+        return {}
+
+    def client_sizes(self):
+        return {}
+
+    def copy_layout(self, target, source):
+        self.copies.append((target, source))
+        return self.copy_result or ("ok" if source in self.layouts else "missing")
+
+    def sync_layout(self, name, entry):
+        self.layouts[name] = entry
+
+    def clear_layout_entries(self):
+        self.layouts = {}
+
     def set_capture(self, armed):
         self.captures.append(armed)
+
+
+def test_preview_layout_sources_include_valid_offline_entries_and_mark_online(
+    monkeypatch, tmp_path
+):
+    from wingman.preview import geometry, layout
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _FakeSizeHost(
+        characters=["Online"],
+        layouts={
+            "Online": layout.Entry(geometry.Rect(1, 2, 320, 210)),
+            "Offline": layout.Entry(geometry.Rect(3, 4, 640, 360)),
+            "hwnd:0x1234": layout.Entry(geometry.Rect(5, 6, 320, 210)),
+        },
+    )
+
+    assert api.get_preview_hotkey_state()["layout_sources"] == [
+        {"name": "Online", "online": True},
+        {"name": "Offline", "online": False},
+    ]
+
+
+def test_preview_layout_sources_do_not_claim_offline_when_host_is_stopped(
+    monkeypatch, tmp_path
+):
+    from wingman.preview import geometry, layout
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._preview_host = _FakeSizeHost(
+        is_running=False,
+        layouts={"Saved": layout.Entry(geometry.Rect(3, 4, 640, 360))},
+    )
+
+    assert api.get_preview_hotkey_state()["layout_sources"] == [
+        {"name": "Saved", "online": None}
+    ]
+
+
+def test_copy_preview_layout_delegates_to_the_host_snapshot(monkeypatch, tmp_path):
+    from wingman.preview import geometry, layout
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["seen"] = ["Target"]
+    host = _FakeSizeHost(
+        layouts={"Source": layout.Entry(geometry.Rect(1, 2, 320, 210))}
+    )
+    api._preview_host = host
+
+    assert api.copy_preview_layout("Target", "Source")["applied"] is True
+    assert host.copies == [("Target", "Source")]
+
+
+def test_offline_size_write_synchronizes_the_dormant_host(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Alice"] = {
+        "x": 5,
+        "y": 6,
+        "w": 320,
+        "h": 210,
+    }
+    host = _FakeSizeHost(is_running=False)
+    api._preview_host = host
+
+    assert api.set_preview_size("Alice", 640, 392)["applied"] is True
+    assert host.layouts["Alice"].rect == api_mod.preview_geometry.Rect(5, 6, 640, 392)
+
+
+def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):
+    from wingman.preview import geometry, layout
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Alice"] = {
+        "x": 5,
+        "y": 6,
+        "w": 320,
+        "h": 210,
+    }
+    host = _FakeSizeHost(
+        is_running=False,
+        layouts={"Alice": layout.Entry(geometry.Rect(5, 6, 320, 210))},
+    )
+    api._preview_host = host
+    pushed = fakes.record_pushes(api)
+
+    assert api.reset_preview_layouts()["applied"] is True
+    assert host.layouts == {}
+    assert [name for name, _payload in pushed] == ["onPreviewHotkeys"]
+
+
+def test_copy_preview_layout_reports_a_persistence_failure(monkeypatch, tmp_path):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["seen"] = ["Target"]
+    api._preview_host = _FakeSizeHost(copy_result="persist_failed")
+
+    result = api.copy_preview_layout("Target", "Source")
+
+    assert result["applied"] is False
+    assert result["error"] == "Could not save this to settings."
 
 
 def test_preview_sizes_falls_back_to_the_configured_default(monkeypatch, tmp_path):

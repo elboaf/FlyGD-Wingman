@@ -355,6 +355,8 @@
   var btnOk = WM.el('dlg-ok');
   var btnCancel = WM.el('dlg-cancel');
   var dlgInput = WM.el('dlg-input');
+  var dlgSelect = WM.el('dlg-select');
+  var dlgSelectLabel = WM.el('dlg-select-label');
 
   // A worker may disable its trigger before its confirmation reaches the
   // page. Remember focus while the page still owns it, then fall back to an
@@ -372,13 +374,32 @@
     WM.el('dlg-body').textContent = item.body || '';
     var isConfirm = item.kind === 'confirm';
     var isPrompt = item.kind === 'prompt';
+    var isChoice = item.kind === 'choice';
     dlgInput.hidden = !isPrompt;
     if (isPrompt) { dlgInput.value = item.value || ''; }
-    // A prompt is answerable too, so it needs the same way out.
-    btnCancel.hidden = !(isConfirm || isPrompt);
+    dlgSelect.hidden = !isChoice;
+    dlgSelectLabel.hidden = !isChoice;
+    if (isChoice) {
+      dlgSelectLabel.textContent = item.label || 'Choose';
+      dlgSelect.textContent = '';
+      (item.groups || []).forEach(function (group) {
+        var optgroup = document.createElement('optgroup');
+        optgroup.label = group.label || '';
+        (group.options || []).forEach(function (option) {
+          var node = document.createElement('option');
+          node.value = option.value;
+          node.textContent = option.label || option.value;
+          optgroup.appendChild(node);
+        });
+        if (optgroup.children.length) { dlgSelect.appendChild(optgroup); }
+      });
+    }
+    // Answerable dialogs need the same explicit way out.
+    btnCancel.hidden = !(isConfirm || isPrompt || isChoice);
     btnOk.textContent = isConfirm
       ? (item.confirm_label || 'Confirm')
-      : (isPrompt ? 'Set' : 'OK');
+      : (isPrompt ? 'Set'
+                  : (isChoice ? (item.confirm_label || 'Choose') : 'OK'));
     // The affirming button of a destructive confirm is .btn.danger, not
     // .btn.acc.
     //
@@ -411,6 +432,8 @@
     if (isPrompt) {
       dlgInput.focus();
       dlgInput.select();
+    } else if (isChoice) {
+      dlgSelect.focus();
     } else if (destructive) {
       btnCancel.focus();
     } else {
@@ -466,7 +489,9 @@
       // window.prompt, so the call sites' `=== null` guards still hold.
       active.resolve(active.kind === 'prompt'
                      ? (ok ? dlgInput.value : null)
-                     : ok);
+                     : (active.kind === 'choice'
+                        ? (ok ? dlgSelect.value : null)
+                        : ok));
     } else if (active.kind === 'confirm' && active.request_id !== undefined
                && active.request_id !== null) {
       WM.send('dialog_response', active.request_id, ok);
@@ -508,10 +533,24 @@
     });
   };
 
+  WM.choose = function (title, body, groups, confirmLabel) {
+    return new Promise(function (resolve) {
+      enqueue({kind: 'choice', title: title, body: body, label: 'Copy from',
+               groups: groups || [], confirm_label: confirmLabel || 'Choose',
+               resolve: resolve});
+    });
+  };
+
   btnOk.addEventListener('click', function () { answer(true); });
   btnCancel.addEventListener('click', function () { answer(false); });
   dlgInput.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && active && active.kind === 'prompt') {
+      ev.preventDefault();
+      answer(true);
+    }
+  });
+  dlgSelect.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && active && active.kind === 'choice') {
       ev.preventDefault();
       answer(true);
     }
@@ -525,11 +564,12 @@
       // blocked on an answer and must get one. A prompt cancels the same
       // way -- answering true would set whatever happened to be in the
       // field.
-      answer(active && (active.kind === 'confirm' || active.kind === 'prompt')
-             ? false : true);
+      answer(active && (active.kind === 'confirm' || active.kind === 'prompt'
+                        || active.kind === 'choice') ? false : true);
     } else if (ev.key === 'Tab') {
       var focusable = dlg.querySelectorAll(
-        'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled)');
+        'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
+        + 'select:not([hidden]):not(:disabled)');
       if (!focusable.length) {
         ev.preventDefault();
         return;

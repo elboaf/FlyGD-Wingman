@@ -35,7 +35,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 11
+    assert len(to_shoot) == 14
     assert skipped == []
 
 
@@ -53,7 +53,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 7
+    assert len(skipped) == 10
 
 
 def _strip_js_comments(text: str) -> str:
@@ -100,6 +100,26 @@ def test_gated_column_matches_the_apps_own_gate():
         assert screen.gated == expected, (
             f"{screen.key} gated flag disagrees with app.js"
         )
+
+
+def test_preview_capture_variants_cover_the_scroller_and_picker():
+    variants = {
+        screen.key: shoot.screen_setup_script(screen)
+        for screen in shoot.SCREENS
+        if screen.key.startswith("settings-previews")
+    }
+    assert set(variants) == {
+        "settings-previews",
+        "settings-previews-middle",
+        "settings-previews-table",
+        "settings-previews-copy",
+    }
+    assert "scrollTop = 0" in variants["settings-previews"]
+    assert "scrollHeight - pane.clientHeight" in variants["settings-previews-middle"]
+    assert "pane.scrollHeight" in variants["settings-previews-table"]
+    assert "WM.choose(" in variants["settings-previews-copy"]
+    assert "Online" in variants["settings-previews-copy"]
+    assert "Offline" in variants["settings-previews-copy"]
 
 
 def test_page_candidates_keeps_the_real_app_page():
@@ -264,6 +284,9 @@ def test_manifest_records_what_the_gate_skipped():
         "settings-alerts",
         "settings-bookmarks",
         "settings-previews",
+        "settings-previews-copy",
+        "settings-previews-middle",
+        "settings-previews-table",
         "skills",
     ]
     assert manifest["shot_count"] == 1

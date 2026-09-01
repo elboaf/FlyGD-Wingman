@@ -52,6 +52,9 @@ class FakeHost:
     def client_sizes(self):
         return {}
 
+    def layout_entries(self):
+        return {}
+
     @property
     def is_running(self):
         return self.started > self.stopped
@@ -153,6 +156,21 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
     host = main_mod.build_preview_host(state, {})
     assert host is not None
     assert not host.is_running  # constructed, never started
+
+
+def test_build_preview_host_wires_ordered_layout_replacement(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from wingman import __main__ as main_mod
+    from wingman.preview import geometry, layout
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    state = SimpleNamespace(settings={"preview": {"layouts": {}}})
+    host = main_mod.build_preview_host(state, {})
+    entry = layout.Entry(geometry.Rect(1, 2, 320, 210), False)
+
+    assert host._replace_layout("Alice", entry) is True
+    assert state.settings["preview"]["layouts"]["Alice"]["x"] == 1
 
 
 def test_build_preview_host_survives_a_broken_subsystem(monkeypatch):
@@ -634,6 +652,7 @@ def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
         characters=lambda: ["Zuelo Parvi"],
         hotkey_status=dict,
         client_sizes=dict,
+        layout_entries=dict,
     )
     assert api.get_preview_hotkey_state()["sizable"] == [
         "Aiga Otsolen",

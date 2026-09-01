@@ -220,11 +220,13 @@ somewhere stale and nothing on that screen is worth reviewing.
 ## Look and feel
 
 - [ ] **The screenshot shooter produces a complete set.** Run
-      `scripts/shoot_screens.py` with Wingman idle. Expected: `11/11 screens`
-      (or a `4/11` plus an explicit "EVE gate off, skipped:" line and seven
-      EVE-gated screens skipped), every PNG
-      showing populated content, `manifest.json` naming the checkout you
-      meant to shoot, and the previously-running Wingman restored. A blank
+      `scripts/shoot_screens.py` with Wingman idle. Expected: `14/14 screens`
+      (or a `4/14` plus an explicit "EVE gate off, skipped:" line and ten
+      EVE-gated screens skipped), every PNG showing populated content,
+      `manifest.json` naming the checkout you meant to shoot, and the
+      previously-running Wingman restored. The four Previews captures cover
+      its top, middle, character table, and Copy picker rather than presenting
+      the top of a long nested scroller as the complete screen. A blank
       screen in the set is a real defect, not a capture artifact -- one bad
       handler name silently disables every registration below it.
 
@@ -1551,15 +1553,15 @@ only ever checked by hand.
       failure WCAG 2.5.3 names.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
-      `Character`, `Preview`, `Keybind`, `Size` — sentence case, a step
+      `Character`, `Preview`, `Keybind`, `Geometry` — sentence case, a step
       smaller and dimmer than the names below it — with one blank heading
       over the cell `Clear` and `Edit…` share. `Lock` and `Never minimize`
       name nothing here any more: both left the row for their own
       disclosures under the toggles they except, so the three CHECKBOX
       columns this heading row used to carry are down to one, `Preview`,
       still a bare box with no word beside it. `Clear`, `Edit…` and
-      `Size…` still carry their own words on every row, and should: they
-      are verbs on a control, not the name of a column. `Clear` and
+      `Size…` and `Copy…` still carry their own words where available, and
+      should: they are verbs on controls, not the name of a column. `Clear` and
       `Edit…` have no heading for the same reason, and `Clear` is now
       ABSENT — not present and disabled — on a row with no chord to
       clear, sharing its cell with `Edit…`, right-aligned so `Edit…` sits
@@ -1602,8 +1604,8 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…` and `Size…` — goes dim and stops responding to
-      clicks. The row's saved keybind stays legible on the inert button;
+      `Clear`, `Edit…`, `Size…` and `Copy…` where present — goes dim and
+      stops responding to clicks. The row's saved keybind stays legible on the inert button;
       it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
       **the character's box in the Lock block must read inert**, since
@@ -1642,29 +1644,46 @@ only ever checked by hand.
 - [ ] **`Size…` is absent for a character that has never been dragged.**
       Settings > Previews with at least one character offline that has
       never had its preview moved or resized. Expected: that row shows no
-      `Size…` at all — the cell is a filler, not a missing cell. `Size…`
-      is now the last real column before the trailing flexible track, so
-      a missing cell here has nothing after it in the same row to shift;
-      the hazard a filler cell guards against is `#preview-binds`'s row
-      count matching its track count at all, not a leftward slide of
-      later controls (that was true when Lock and Never minimize still
-      followed Size in the row; both have since left it). It would not
-      disturb the rows below either: every row's first cell carries an
-      explicit `grid-column-start: 1` (`style.css`), which resets the
-      auto-placement cursor to a fresh row regardless of how many cells
-      the row before it contributed.
-      Hover the empty cell: it says how to make a size settable.
-      Now drag that character's preview once and reopen the
-      section: `Size…` is there. Running clients always have it.
-      The point is that `set_preview_size` REFUSES for a character with no
-      layouts entry ("Start this client once, or drag its preview"), and a
-      layouts entry is written on a drag or a resize, not when the client
-      starts — so on a fresh install this was a guaranteed refusal for
-      most of the roster.
+      `Size…`. If another character has saved geometry, `Copy…` may occupy
+      the Geometry cell instead; if neither action can succeed, the cell
+      carries a dash and its tooltip says how to make a size settable.
+      The cell itself is never omitted: `#preview-binds` is a shared grid
+      and every row must still contribute one Geometry cell. Now drag that
+      character's preview once and reopen the section: `Size…` is there.
+      Running clients always have it. The point is that
+      `set_preview_size` refuses a character with no layouts entry, and a
+      layouts entry is written on a drag or resize rather than merely on
+      discovery.
+- [ ] **Copy geometry offers only usable sources.** Give at least three
+      characters saved layouts, leave one online and one offline, and open
+      `Copy…` on a different target. Expected: the app-owned picker groups
+      sources under visible `Online` and `Offline` labels, excludes the
+      target, and offers no character without a full saved rectangle. The
+      selector owns initial focus, Tab stays inside the picker, Escape cancels,
+      and focus returns to the target's `Copy…` action.
+- [ ] **Copy changes only size and position.** Copy onto an open target:
+      its preview moves immediately through the normal monitor clamp. Copy
+      onto an offline target and launch it: it uses the copied rectangle.
+      In both cases compare settings before and after; keybind, effective
+      lock, preview exclusion, never-minimize, and every other character
+      preference are unchanged. A copied rectangle from a disconnected
+      monitor is rescued onto an attached display without rewriting the
+      source character.
+- [ ] **Copy handles empty and stale state.** With no row that has another
+      character's saved layout available, no dead Copy control renders and
+      one hint explains how to create a source. One saved layout is enough
+      for Copy on every other roster target, so verify that state too. Open a picker, remove/reset its source before
+      committing, then choose it: the refusal names that the placement is no
+      longer available, the rows refresh, and focus returns to the same target
+      by character name or to the first safe control if that row disappeared.
+- [ ] **Manual keybind entry remains the layout escape hatch.** After using
+      and cancelling Copy, click `Edit…`, type a valid virtual-key spelling,
+      save it, then arm ordinary key capture. Both paths still work, and
+      leaving Previews disarms capture as before.
 - [ ] **The row still fits at the window's floor.** Settings > Previews at
       the smallest the window will go (840x625). Expected: every row ends
-      inside the card with a gap after `Size…` (or the trailing `Edit…`
-      on a row with none), and nothing is clipped. Grid tracks do not
+      inside the card with a gap after `Copy…`, `Size…`, or the trailing
+      `Edit…` on a row with neither, and nothing is clipped. Grid tracks do not
       wrap, so an overflow here is a cut-off control at every width, not a
       reflow — a seven-track version of this row once measured 608.41px
       against the same 586px card interior, which is why the opt-out
@@ -1672,8 +1691,9 @@ only ever checked by hand.
       draft. **That constraint stayed retired, and shrank further:** Lock
       and Never minimize have since left the row for their own
       disclosures, taking their per-row labels and cells with them.
-      Measured after that move: 519.25px of the same 586px. Re-measure
-      here rather than trusting that figure if you add a column.
+      Measured after that move: 519.25px of the same 586px. This change
+      keeps the same column count and adds a second action inside Geometry;
+      re-measure both actions here rather than trusting the old figure.
 - [ ] **The two global defaults are reachable and take effect.** Settings >
       Previews, below `Keep previews the same shape as their client`.
       - `Default preview size` shows the current pair and commits on
@@ -1976,6 +1996,21 @@ Enable previews in Settings before starting.
 - [ ] Dragging a preview smaller and smaller floors it instead of
       inverting. An inverted rect makes the video vanish silently.
 - [ ] Restart Wingman: previews return to their saved positions and sizes.
+- [ ] **Same-session character selection keeps placement without keeping
+      identity.** Put Character A's preview somewhere unmistakable, then log
+      A out to character selection without closing that EVE client. Expected:
+      the generic preview remains at A's current rectangle, but its label is
+      generic and A is offline in Settings; A's character hotkey and alerts do
+      not target it. Log Character B into the same client. B moves to B's own
+      saved rectangle, or the normal default if B has none. Repeat rapidly and
+      with several clients, confirming only the transitioning preview moves.
+      With restore positions OFF, A-to-selection still keeps the current
+      rectangle, while B uses the default as that setting requires. An opted-
+      out A must not produce a generic preview at character selection.
+- [ ] **Cold-start character selection has no invented identity.** Close and
+      restart Wingman while an EVE client is already at character selection.
+      Expected: it uses the normal generic/default placement. No character is
+      inferred or added to `preview.seen` or `preview.layouts`.
 - [ ] Close one EVE client. Its preview disappears within ~1s; the others
       keep rendering and do not flicker or jump.
 - [ ] Close every EVE client. No previews remain, nothing crashes, and
@@ -1999,7 +2034,9 @@ Enable previews in Settings before starting.
 - [ ] Unplug a monitor that holds a saved preview position, then restart
       Wingman. That preview comes back **on a remaining display**, not at
       its saved coordinates in empty space. Same clamp as the item above,
-      reached by the other route.
+      reached by the other route. Also unplug during an A-to-character-
+      selection transition: the carried rectangle is rescued through this
+      same clamp rather than being stranded on the removed monitor.
 - [ ] Disable previews in Settings. Every preview vanishes and the
       `wingman-preview` thread exits — check Task Manager shows no extra
       thread and the log has no "did not exit within" warning.
@@ -2045,6 +2082,10 @@ appears, so an item that only restarts the app tests half of it.
       Wingman. Both come back exactly where they were.
 - [ ] On: with Wingman already running, start a third client. Its preview
       appears at that character's saved position, not on the stack.
+- [ ] Either setting: logging out to character selection in the same HWND/PID
+      keeps the current rectangle. This is continuity, not reopening from a
+      saved layout. Once another named character appears, this setting governs
+      that character's placement normally.
 - [ ] Off: quit that client and start it again. Its preview opens in the
       default stack, ignoring the saved rect.
 - [ ] Off: drag a preview, switch the checkbox back on, restart. The drag
@@ -2474,6 +2515,35 @@ headless.
 - [ ] **Confirm sounds play in the frozen build.** This is the only place
       the winsound module's packaging entry can be verified. Launch the
       installed build, trigger an alert, and confirm you hear the sound.
+      At any volume below 100 the file played is a scaled copy written to
+      %LOCALAPPDATA%\\FlyGD Wingman\\tmp, not the bundled asset — so this
+      item now also proves that directory is writable in an installed
+      build. Check the copy appears there the first time a quiet alert
+      fires.
+- [ ] **An alert on the client you are flying is silent but visible.** With
+      two clients logged in and previews on, be in client A and have client
+      B shoot at A (or run a site so A takes fire). Expected: A's preview
+      flashes and NO sound plays. The flash fades on its own even with
+      "Keep pulsing until you select the preview" ticked — you are already
+      on that client, so there is nothing left to acknowledge.
+- [ ] **The same alert on a client you are NOT flying still makes a noise.**
+      From client A, have B take fire. Expected: B's preview flashes and the
+      sound plays. This is the half of the pair that must not regress —
+      silence here is the feature failing.
+- [ ] **Alt-tab to a browser, then take fire on the client you just left.**
+      Expected: the sound plays. Focus is nobody once you leave EVE, so the
+      client you last flew is no longer exempt.
+- [ ] **Alert volume.** Settings > Alerts, drag Volume. Expected: the
+      readout tracks the thumb while dragging, and nothing is written until
+      you release. Press Test at 100, 40 and 0. Expected: audibly quieter at
+      40, completely silent at 0, and the difference between 100 and 40 is
+      obvious rather than marginal. Restart and confirm the level survived.
+- [ ] **Flashes and Speed.** Set Combat to 8 flashes / Slow and press Test.
+      Expected: a visibly longer, slower pulse than the default. Set it to
+      1 flash / Fast: a single quick blip. Both controls commit on change
+      and survive a restart. An alert already pulsing when you change them
+      finishes at its old rate — the values are read when an alert is
+      armed, not per frame.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
       Alerts. Each event offers the same five named swatches: Red, Amber,
       Green, Cyan, and Magenta. They render as dark-theme controls rather than

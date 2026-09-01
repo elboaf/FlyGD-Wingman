@@ -57,6 +57,27 @@ SCREENS = (
     ),
     Screen("settings-bookmarks", "Settings - Bookmarks", "settings", "bookmarks", True),
     Screen("settings-previews", "Settings - Previews", "settings", "previews", True),
+    Screen(
+        "settings-previews-middle",
+        "Settings - Previews (middle)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
+        "settings-previews-table",
+        "Settings - Previews (table)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
+        "settings-previews-copy",
+        "Settings - Previews (copy picker)",
+        "settings",
+        "previews",
+        True,
+    ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen("settings-general", "Settings - General", "settings", "general", False),
     Screen("profiles", "Profiles", "evesettings", None, True),
@@ -108,6 +129,41 @@ def dialog_payload() -> dict:
         "destructive": True,
         "confirm_label": f"Delete {count} {'file' if count == 1 else 'files'}",
     }
+
+
+def screen_setup_script(screen: Screen) -> str | None:
+    """Post-navigation staging for screenshots within a long screen."""
+    if screen.key == "settings-previews":
+        return """(function () {
+          var pane = document.querySelector('.settings-pane');
+          if (pane) { pane.scrollTop = 0; }
+        }())"""
+    if screen.key == "settings-previews-middle":
+        return """(function () {
+          var pane = document.querySelector('.settings-pane');
+          if (pane) {
+            pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
+          }
+        }())"""
+    if screen.key == "settings-previews-table":
+        return """(function () {
+          var pane = document.querySelector('.settings-pane');
+          if (pane) { pane.scrollTop = pane.scrollHeight; }
+        }())"""
+    if screen.key == "settings-previews-copy":
+        return """WM.choose(
+          'Copy preview geometry',
+          'Copy saved size and position to "Aleksandrina Shadowbanes Voidstriders".',
+          [
+            {label: 'Online', options: [
+              {value: 'Aiga Otsolen', label: 'Aiga Otsolen'}
+            ]},
+            {label: 'Offline', options: [
+              {value: 'Tanuki Solette', label: 'Tanuki Solette'}
+            ]}
+          ],
+          'Copy')"""
+    return None
 
 
 def screens_for_gate(eve_shown: bool) -> tuple[list[Screen], list[Screen]]:
@@ -476,16 +532,16 @@ def walk(
                 if screen.section:
                     cdp.evaluate(f"WM.section({screen.section!r})")
             time.sleep(settle_ms / 1000)
+            setup = screen_setup_script(screen)
+            if setup:
+                cdp.evaluate(setup)
+                time.sleep(0.25)
             (out_dir / name).write_bytes(cdp.screenshot())
-            if screen.key == "dialog":
-                # Dismiss what we just opened. Today this is the last
-                # screen and the instance dies seconds later, so leaving
-                # it open is only cosmetic -- but a screen added after
-                # this one would otherwise be shot through the modal
-                # overlay. Cancel (not Confirm) is the correct action
-                # regardless: it resolves WM.confirm's promise via
-                # panel.js's answer(false), and nothing consumes that
-                # promise here, so it triggers no side effect.
+            if screen.key in {"dialog", "settings-previews-copy"}:
+                # Dismiss every staged overlay before the next screen. Cancel
+                # is side-effect free for both the Python-shaped confirm and
+                # the page-owned choice promise, neither of which has a
+                # consumer in this tool.
                 cdp.evaluate("WM.el('dlg-cancel').click()")
         except Exception as exc:  # noqa: BLE001 -- one dead screen must not
             # abandon the other eight; the failure is recorded instead.

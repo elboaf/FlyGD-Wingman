@@ -36,14 +36,18 @@ class FakeAlerts:
 
 class FakePreviewHost:
     """Enough of PreviewHost for these tests: is_running, characters(),
-    raise_alert(), and the lifecycle calls the preview bridge methods make
-    regardless of whether alerts are involved."""
+    focused_character(), raise_alert(), and the lifecycle calls the preview
+    bridge methods make regardless of whether alerts are involved."""
 
-    def __init__(self, characters=()):
+    def __init__(self, characters=(), focused=None):
         self._characters = list(characters)
+        self._focused = focused
         self.raised = []
         self.started = self.stopped = 0
         self.hotkeys = None
+
+    def focused_character(self):
+        return self._focused
 
     def start(self):
         self.started += 1
@@ -70,28 +74,29 @@ def _alerts_section(**over):
         "enabled": True,
         "pve_filter": True,
         "persist_until_selected": True,
+        "volume": 100,
         "events": {
             "combat": {
                 "enabled": True,
                 "cooldown_s": 1,
-                "duration_ms": 1200,
                 "pulses": 3,
+                "flash_rate": "normal",
                 "color": "#ff4d4d",
                 "sound": "alarm",
             },
             "warp_scramble": {
                 "enabled": True,
                 "cooldown_s": 8,
-                "duration_ms": 1200,
                 "pulses": 3,
+                "flash_rate": "normal",
                 "color": "#ffd24d",
                 "sound": "ring",
             },
             "decloak": {
                 "enabled": True,
                 "cooldown_s": 8,
-                "duration_ms": 1200,
                 "pulses": 3,
+                "flash_rate": "normal",
                 "color": "#4dd2ff",
                 "sound": "alarm",
             },
@@ -289,14 +294,16 @@ def test_a_test_alert_plays_the_sound_once_per_preview_count(monkeypatch, tmp_pa
     """N previews ringing must not mean N overlapping sounds -- _handle
     plays one sound per dispatched event, and Test must match that."""
     played = []
-    monkeypatch.setattr(alert_service, "play_sound", played.append)
+    monkeypatch.setattr(
+        alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
+    )
     host = FakePreviewHost(characters=["Alice", "Bob", "Carol"])
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"alerts": _alerts_section()}
 
     api.test_alert("combat")
 
-    assert played == ["alarm"]
+    assert played == [("alarm", 100)]
     assert len(host.raised) == 3
 
 
@@ -305,7 +312,9 @@ def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tm
     applied: True with a plain-language explanation, never a silent
     no-op and never applied: False."""
     played = []
-    monkeypatch.setattr(alert_service, "play_sound", played.append)
+    monkeypatch.setattr(
+        alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
+    )
     api = make_api(tmp_path)  # preview_host defaults to None
     api._state.settings["preview"] = {"alerts": _alerts_section()}
 
@@ -314,7 +323,7 @@ def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tm
     assert result["applied"] is True
     assert result["persisted"] is False
     assert result["error"] == "Previews are off, so only the sound played."
-    assert played == ["alarm"]
+    assert played == [("alarm", 100)]
 
 
 def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
@@ -325,7 +334,9 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
     with a live host and no logged-in character reads the same "previews
     are off" message as someone who never turned previews on at all."""
     played = []
-    monkeypatch.setattr(alert_service, "play_sound", played.append)
+    monkeypatch.setattr(
+        alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
+    )
     host = FakePreviewHost(characters=[])  # host present, nothing named
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"alerts": _alerts_section()}
@@ -334,7 +345,7 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
 
     assert result["applied"] is True
     assert result["error"] == "No EVE clients are open, so only the sound played."
-    assert played == ["alarm"]
+    assert played == [("alarm", 100)]
     assert host.raised == []
 
 
@@ -381,6 +392,90 @@ def test_set_alert_event_does_not_reconcile(tmp_path):
     api.set_alert_event("combat", "cooldown_s", 5)
 
     assert alerts.reconciled == 0
+
+
+# ---- volume and flash speed -------------------------------------------------
+
+
+def test_set_alert_volume_persists_and_does_not_reconcile(tmp_path):
+    """Nothing is playing between two alerts, so there is no live state to
+    correct and no thread whose should-it-run answer changed."""
+    alerts = FakeAlerts()
+    api = make_api(tmp_path, alerts=alerts)
+
+    result = api.set_alert_volume(40)
+
+    assert result == {"applied": True, "persisted": True, "error": None}
+    assert api._state.settings["preview"]["alerts"]["volume"] == 40
+    assert alerts.reconciled == 0
+
+
+def test_set_alert_volume_lets_settings_clamp_the_value(tmp_path):
+    """Same division of labour as set_preview_opacity: validated_alerts
+    owns the 0-100 range, in one place."""
+    api = make_api(tmp_path, alerts=FakeAlerts())
+
+    result = api.set_alert_volume(400)
+
+    assert result["applied"]
+    assert api._state.settings["preview"]["alerts"]["volume"] == 100
+
+
+def test_set_alert_event_accepts_a_flash_rate(tmp_path):
+    api = make_api(tmp_path, alerts=FakeAlerts())
+
+    result = api.set_alert_event("combat", "flash_rate", "fast")
+
+    assert result["applied"]
+    assert (
+        api._state.settings["preview"]["alerts"]["events"]["combat"]["flash_rate"]
+        == "fast"
+    )
+
+
+def test_set_alert_event_no_longer_writes_a_duration(tmp_path):
+    """The duration is derived from flash_rate x pulses at the one site
+    that arms a ring. A writable copy here would be a second source of
+    truth for how long an alert pulses."""
+    api = make_api(tmp_path, alerts=FakeAlerts())
+
+    result = api.set_alert_event("combat", "duration_ms", 5000)
+
+    assert not result["applied"]
+    assert result["error"]
+
+
+def test_a_test_alert_plays_at_the_configured_volume(monkeypatch, tmp_path):
+    """Test exists to show what an alert is like. One that ignored the
+    slider would be the only control on the card that lies about what it
+    does."""
+    played = []
+    monkeypatch.setattr(
+        alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
+    )
+    api = make_api(tmp_path, preview_host=FakePreviewHost(characters=["Alice"]))
+    api._state.settings["preview"] = {"alerts": _alerts_section(volume=25)}
+
+    api.test_alert("combat")
+
+    assert played == [("alarm", 25)]
+
+
+def test_a_test_alert_is_not_silenced_by_a_focused_client(monkeypatch, tmp_path):
+    """You are looking at Wingman when you press Test, so no EVE client
+    holds the foreground -- and Test reaches the host directly rather than
+    through the poll path that does the suppressing."""
+    played = []
+    monkeypatch.setattr(
+        alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
+    )
+    host = FakePreviewHost(characters=["Alice"], focused="Alice")
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"alerts": _alerts_section()}
+
+    api.test_alert("combat")
+
+    assert played == [("alarm", 100)]
 
 
 # ---- the remaining bridge methods -------------------------------------------

@@ -1239,6 +1239,40 @@ def test_confirm_dialog_accepts_a_specific_affirming_label():
     assert '"confirm_label": confirm_label' in api
 
 
+def test_choice_dialog_uses_a_labelled_select_and_cancels_safely():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    html = _strip_html_comments(HTML)
+
+    assert 'for="dlg-select"' in html
+    assert 'id="dlg-select"' in html
+    assert "WM.choose = function" in panel
+    assert "var isChoice = item.kind === 'choice';" in panel
+    assert "dlgSelect.focus();" in panel
+    assert "active.kind === 'choice'" in panel
+    assert "dlgSelect.value" in panel
+
+    document_keys = re.search(
+        r"document\.addEventListener\('keydown'.*?\n  \}, true\);",
+        panel,
+        re.DOTALL,
+    )
+    assert document_keys
+    assert "select:not([hidden]):not(:disabled)" in document_keys.group(0)
+    escape = (
+        document_keys.group(0)
+        .split("ev.key === 'Escape'", 1)[1]
+        .split("ev.key === 'Tab'", 1)[0]
+    )
+    assert "active.kind === 'choice'" in escape
+
+
+def test_the_previews_table_names_geometry_as_geometry():
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+    assert "'Geometry'" in head
+    assert "'Size'" not in head
+
+
 def test_state_shapes_do_not_add_soft_halos_on_the_dark_surface():
     outward_halo = re.compile(r"box-shadow:\s*0 0 (?!0(?:px)?\b)")
     assert not outward_halo.search(CSS)
@@ -1664,7 +1698,7 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
-        ("Size", "makeSizeButton"),
+        ("Geometry", "makeGeometryActions"),
     )
 
     for heading, token in owners:
@@ -1878,45 +1912,64 @@ def test_every_previews_row_starts_a_fresh_grid_line():
     )
 
 
-def test_the_size_control_is_not_drawn_where_it_could_only_refuse():
-    """Size... renders only for a character set_preview_size can succeed
-    for, and a filler cell holds the column open where it cannot.
-
-    Two halves, and both matter. The GATE is the D6 rule -- a character
-    that is neither running nor already in `layouts` gets a refusal from
-    the endpoint ("Start this client once, or drag its preview"), and a
-    layouts entry is written on a drag or a resize, not when the client
-    starts, so on a fresh install that was every offline character.
-
-    The FILLER is the grid invariant. `.row` is display:contents, so a row
-    that skipped this cell would leave its remaining controls one track to
-    the left -- Lock under the Size heading, Never minimize under Lock's.
-    The damage stays inside that row (every row leads with a full-width
-    `.lab`, which forces a fresh grid row; measured in the header guard
-    above), but controls sitting under the wrong headings is exactly the
-    lie the headings were added to stop. Hence a ternary inside one
-    appendChild rather than an `if` around it -- the same shape the opt-out
-    box uses, and the same reason.
-    """
+def test_the_geometry_cell_gates_size_and_copy_on_backend_payloads():
+    """One cell owns both geometry actions without duplicating backend rules."""
     body = _makerow_body()
-    assert re.search(r"isSizable\(character\)", body), (
-        "makeRow no longer gates Size... on whether the character can be "
-        "sized, so it is drawn for rows where it can only refuse"
-    )
-    gate = body.split("isSizable(character)", 1)[1].split(";", 1)[0]
-    assert "makeSizeButton" in gate and "makeSizeFiller" in gate, (
-        "the Size... gate no longer chooses between the button and a "
-        "filler cell -- a missing cell puts every later control on that "
-        "row under the wrong heading"
-    )
+    assert "makeGeometryActions(character, off)" in body
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    helper = src.split("function isSizable(", 1)
-    assert len(helper) == 2, "previews.js has no isSizable"
-    assert "state.sizable" in helper[1].split("}", 1)[0], (
-        "isSizable no longer reads the payload's own answer, so the page "
-        "has its own copy of a rule that belongs to layout.deserialize"
-    )
+    geometry_actions = src.split("function makeGeometryActions(", 1)
+    assert len(geometry_actions) == 2
+    geometry_actions = geometry_actions[1].split("\n  }", 1)[0]
+    assert "isSizable(name)" in geometry_actions
+    assert "makeSizeButton" in geometry_actions
+    assert "makeSizeFiller" in geometry_actions
+    assert "makeCopyButton" in geometry_actions
+
+    sizable = src.split("function isSizable(", 1)
+    assert len(sizable) == 2
+    assert "state.sizable" in sizable[1].split("}", 1)[0]
+    sources = src.split("function copySources(", 1)
+    assert len(sources) == 2
+    assert "state.layout_sources" in sources[1].split("}", 1)[0]
+
+
+def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    picker = src.split("function makeCopyButton(", 1)
+    assert len(picker) == 2
+    picker = picker[1].split("\n  }", 1)[0]
+
+    assert picker.index("endCapture();") < picker.index("WM.choose(")
+    assert "'Online'" in picker and "'Offline'" in picker
+    assert "'Saved placements'" in picker
+    assert "source.online === true" in picker
+    assert "source.online === false" in picker
+    assert "copy_preview_layout" in picker
+    assert "data-copy-target" in picker
+    assert "focusCopyTarget(name)" in picker
+    assert "state.characters" not in picker
+    assert "It applies next time" not in picker
+    assert "source.name !== name" in src
+
+
+def test_copy_picker_has_collapsing_empty_and_status_lines():
+    html = _strip_html_comments(HTML)
+    assert 'id="preview-copy-empty"' in html
+    assert 'id="preview-copy-status"' in html
+    status = html.split('id="preview-copy-status"', 1)[1][:100]
+    assert 'role="status"' in status
+    assert "hidden" in status
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "preview-copy-empty" in src
+    assert "preview-copy-status" in src
+    assert "status.classList.toggle('err', !!error)" in src
+    assert "status.hidden = !status.textContent" in src
+    assert "function focusCopyTarget(" in src
+
+    section = src.split("document.addEventListener('wm:section'", 1)
+    assert len(section) == 2
+    assert "copyStatus('', false)" in section[1].split("});", 1)[0]
 
 
 def test_clear_is_not_drawn_where_it_could_only_refuse():
@@ -1994,7 +2047,7 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     # the second argument at the call site leaves the control live and
     # undimmed with the whole suite green -- which is the exact failure
     # this test's docstring claims to prevent.
-    for builder in ("makeSizeButton",):
+    for builder in ("makeGeometryActions",):
         assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
             f"makeRow does not pass the row's opted-out state to {builder}"
         )
@@ -2509,4 +2562,86 @@ def test_the_formation_editor_guards_both_of_its_async_windows():
     assert re.search(r"revision\s*!==\s*savingAt", done), (
         "the completion push clears `dirty` without checking whether an "
         "edit landed since the send"
+    )
+
+
+def test_the_alert_rows_offer_exactly_the_flash_speeds_that_exist():
+    """The same trap as the sound options above, one column over.
+
+    alerts.state.FLASH_MS is what turns a speed into a duration, and
+    settings.validated_alerts refuses anything not in it. A preset the
+    page offers and the backend drops leaves the <select> showing a speed
+    the alert does not flash at, with nothing said.
+    """
+    from wingman.alerts.state import FLASH_MS
+
+    for event in _ALERT_EVENT_IDS:
+        select = re.search(
+            rf'<select[^>]*id="alert-event-{event}-speed".*?</select>',
+            HTML,
+            re.DOTALL,
+        )
+        assert select, f"no speed select for {event!r}"
+        offered = set(re.findall(r'<option value="([^"]+)"', select.group(0)))
+        assert offered == set(FLASH_MS), (
+            f"the {event} speed options are {sorted(offered)}, but "
+            f"alerts.state.FLASH_MS is {sorted(FLASH_MS)}"
+        )
+
+
+def test_every_flash_count_the_page_offers_survives_the_settings_clamp():
+    """alerts.js builds the Flashes options from FLASH_COUNTS. An entry
+    outside settings.validated_alerts' 1-16 range would be clamped on
+    write and read back as a different number than the one clicked."""
+    from wingman import settings
+
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    listed = re.search(r"var FLASH_COUNTS = \[(.*?)\];", js, re.DOTALL)
+    assert listed, "alerts.js no longer declares a FLASH_COUNTS list"
+    counts = [int(n) for n in re.findall(r"\d+", listed.group(1))]
+    assert counts, "FLASH_COUNTS is empty; the Flashes control offers nothing"
+    for count in counts:
+        out = settings.validated_alerts({"events": {"combat": {"pulses": count}}})
+        assert out["events"]["combat"]["pulses"] == count, (
+            f"the page offers {count} flashes and settings clamps it to "
+            f"{out['events']['combat']['pulses']}"
+        )
+
+
+def test_the_volume_slider_spans_exactly_what_settings_will_keep():
+    """Round 5's C2 rule, applied to a new slider: the control's units are
+    the stored units, and its ends are the clamp's ends. A slider that can
+    reach past the clamp reports a value the app silently changed."""
+    from wingman import settings
+
+    tag = re.search(r'<input[^>]*id="alert-volume"[^>]*>', HTML)
+    assert tag, "the alert volume slider is gone"
+    assert 'type="range"' in tag.group(0)
+    low = int(re.search(r'min="(\d+)"', tag.group(0)).group(1))
+    high = int(re.search(r'max="(\d+)"', tag.group(0)).group(1))
+    kept = settings.validated_alerts({"volume": low})["volume"]
+    assert kept == low, f"the slider floor {low} is clamped to {kept}"
+    assert settings.validated_alerts({"volume": high})["volume"] == high
+    assert settings.validated_alerts({"volume": high + 1})["volume"] == high, (
+        "the slider can reach the top of the stored range, but the range "
+        "does not end there"
+    )
+
+
+def test_the_volume_slider_commits_on_change_not_on_input():
+    """A range fires `input` per pixel dragged. settings.js's opacity
+    slider carries the same split for the same reason: one settings write
+    per pixel is what this rule exists to prevent."""
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    body = js[js.index("var volumeBox = WM.el('alert-volume')") :]
+    input_handler = re.search(
+        r"volumeBox\.addEventListener\('input', ([A-Za-z]+)\)", body
+    )
+    assert input_handler, "the volume readout no longer follows the thumb"
+    assert input_handler.group(1) == "showVolume", (
+        "the `input` handler does something other than update the readout"
+    )
+    assert "set_alert_volume" not in body[: body.index("'change'")], (
+        "the volume commits before `change`, which is a settings write per "
+        "pixel dragged"
     )

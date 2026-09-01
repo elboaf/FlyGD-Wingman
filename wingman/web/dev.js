@@ -33,6 +33,7 @@
   ['set_privacy', 'set_notify_mode', 'set_category',
    'set_discord_webhook', 'clear_discord_webhook',
    'set_alert_enabled', 'set_alert_pve_filter', 'set_alert_persist',
+   'set_alert_volume',
    // M3. Same three-key shape, and it belongs in this list rather than the
    // generic one for the same reason: the ABOUT card reverts its checkbox
    // on anything that is not `applied`.
@@ -48,7 +49,7 @@
    // read `applied`/`error` the same way, even though neither reverts a
    // control state on refusal -- Size… is a one-shot dialog, not a
    // persistent checkbox.
-   'set_preview_size', 'reset_preview_layouts',
+   'set_preview_size', 'copy_preview_layout', 'reset_preview_layouts',
    // Task 9: same shape; settings.js reverts the checkbox on anything
    // that is not `applied`, same as show_labels/opacity above.
    'set_preview_snap',
@@ -484,14 +485,19 @@
             hide_on_lost_focus: true,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
+              // 70, against a shipped default of 100, for the same reason
+              // hide_on_lost_focus is true above: a fixture matching the
+              // default cannot show that the slider reads the payload
+              // rather than sitting where the markup left it.
+              volume: 70,
               events: {
-                combat: { enabled: true, cooldown_s: 1, duration_ms: 1200,
+                combat: { enabled: true, cooldown_s: 1, flash_rate: 'fast',
                   pulses: 3, color: '#ff4d4d', sound: 'alarm' },
                 warp_scramble: { enabled: true, cooldown_s: 8,
-                  duration_ms: 1200, pulses: 3, color: '#ffd24d',
+                  flash_rate: 'normal', pulses: 3, color: '#ffd24d',
                   sound: 'ring' },
-                decloak: { enabled: true, cooldown_s: 8, duration_ms: 1200,
-                  pulses: 3, color: '#4dd2ff', sound: 'notify' }
+                decloak: { enabled: true, cooldown_s: 8, flash_rate: 'slow',
+                  pulses: 5, color: '#4dd2ff', sound: 'notify' }
               }
             }
           },
@@ -847,6 +853,12 @@
       // this listed everyone the fixture would hide the whole point of the
       // gate, which is that most of a real roster cannot be sized.
       sizable: ['Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette'],
+      // Sources deliberately cross the online boundary: the picker groups
+      // both in words, and offline geometry is the feature's primary value.
+      layout_sources: [
+        {name: 'Aiga Otsolen', online: true},
+        {name: 'Tanuki Solette', online: false}
+      ],
       // ACTIVE, matching what Api._bookmark_chords would return for the
       // get_bookmarks fixture above: it ships `enabled: true` with
       // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a
