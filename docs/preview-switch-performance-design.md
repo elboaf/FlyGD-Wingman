@@ -64,7 +64,7 @@ The current order avoids a different failure: a timed-out minimize can be delive
 8. Read the final foreground verdict.
 9. Detach the target queue, then foreground queue, in a `finally` block.
 
-Task 4 retains one `SetFocus(HWND) -> HWND` binding in the EVE-O slot based on the reviewed live foreground-but-focusless symptom. It is an input-focus assignment, not another activation verdict or a refusal fallback. There is no retry, synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO.
+Task 4 retains one `SetFocus(HWND) -> HWND` binding in the EVE-O slot based on the reviewed live foreground-but-focusless symptom. It is an input-focus assignment, not another activation verdict or a refusal fallback. There is no retry, synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO. Because `SetFocus` is unconditional after `SetForegroundWindow`, a refused foreground activation may remove keyboard focus from the application that Windows kept in the foreground; this accepted risk requires the retained-application keyboard smoke check below.
 
 The design does **not** claim this will fix all recorded refusals. An activation approach that needs another bounded attempt must have a separately reproducible Windows/EVE justification rather than shipping ceremonial retries.
 
@@ -204,7 +204,7 @@ All production changes are test-first.
 
 ### Binding and convention guards
 
-- Exactly one `SetFocus(HWND) -> HWND` declaration is bound and covered by the ctypes completeness and pointer-sized-return guards.
+- Exactly one `SetFocus(HWND) -> HWND` declaration is bound; `tests/test_preview_wiring.py` enforces the exact single declaration on every platform, while the ctypes completeness and pointer-sized-return tests in `tests/test_preview_win32.py` run only on Windows.
 - `ShowWindowAsync` is already bound and remains the only minimize candidate under consideration.
 - Guards continue to reject bare `SendMessageW` and every geometry-capable API receiving an EVE HWND.
 
@@ -224,13 +224,14 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 1. Record timestamped foreground HWND, process, class, and title transitions for every switch attempt.
 2. From EVE, Windows Search, a browser, and Wingman, click locked and unlocked previews. Requested EVE must become foreground; preview must never become foreground.
 3. After every successful switch, send keyboard input promptly. The foreground target must receive it without a focusless interval; `SetFocus` is retained for this symptom, not as proof of refusal conversion.
-4. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
-5. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
-6. Enable **Minimize inactive clients**. Switch while clients are idle and during grid/session load. Target must appear first and no desktop/preview gap may follow.
-7. During the recovery window, intentionally alt-tab to another EVE client and to an unrelated application. Wingman must not steal focus back.
-8. Switch to a minimized target repeatedly. Pending restore must resolve or expire without blocking hotkeys.
-9. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
-10. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
+4. Attempt a switch while Windows Search and, separately, a browser retain the foreground after Windows refuses activation. Type immediately into the retained application; keyboard input must still reach it despite Wingman's unconditional `SetFocus` call.
+5. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
+6. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
+7. Enable **Minimize inactive clients**. Switch while clients are idle and during grid/session load. Target must appear first and no desktop/preview gap may follow.
+8. During the recovery window, intentionally alt-tab to another EVE client and to an unrelated application. Wingman must not steal focus back.
+9. Switch to a minimized target repeatedly. Pending restore must resolve or expire without blocking hotkeys.
+10. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
+11. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
 
 ## Probe results — 2026-09-01
 
