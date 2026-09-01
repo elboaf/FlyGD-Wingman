@@ -61,6 +61,18 @@ def _strip_js_comments(text: str) -> str:
     return re.sub(r"^\s*//.*$", "", text, flags=re.MULTILINE)
 
 
+def _query_selector_arguments(expression: str) -> list[str]:
+    """Parse literal arguments passed directly to document.querySelector."""
+    return [
+        match.group(2)
+        for match in re.finditer(
+            r"document\.querySelector\(\s*(['\"])(.*?)\1\s*\)",
+            expression,
+            re.DOTALL,
+        )
+    ]
+
+
 def test_screen_list_matches_the_page():
     """The routes and sections shot are the ones the page actually has.
 
@@ -1080,12 +1092,11 @@ def test_groups_stage_uses_preview_group_manager_selector():
         "document.querySelector('.preview-group-manager') as the primary scroll target -- "
         "a generic scroll-to-bottom may miss or overshoot the manager element"
     )
-    # Must use querySelector (not a bare CSS string or comment)
-    assert re.search(
-        r"querySelector\s*\(['\"]\s*\.preview-group-manager['\"]\s*\)", script
-    ), (
-        "settings-previews-groups setup script must call "
-        "querySelector('.preview-group-manager') -- bare string presence is insufficient"
+    # Parse direct calls so a selector elsewhere in the expression cannot pass.
+    selectors = _query_selector_arguments(script)
+    assert selectors.count(".preview-group-manager") == 1, (
+        "settings-previews-groups must pass '.preview-group-manager' exactly once "
+        f"to document.querySelector; got {selectors!r}"
     )
 
 
@@ -1104,15 +1115,13 @@ def test_narrow_stage_uses_exact_aria_label_selector_syntax():
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
-    # Must contain the complete attribute selector as a string
     full_selector = (
         'select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]'
     )
-    assert full_selector in script, (
-        f"narrow stage setup script must contain the exact attribute selector:\n"
-        f"  {full_selector!r}\n"
-        "A partial match (name only, or class selector) is not sufficient "
-        "to guarantee querySelector targets the correct row."
+    selectors = _query_selector_arguments(script)
+    assert selectors.count(full_selector) == 1, (
+        "settings-previews-narrow must pass the exact long-character selector "
+        f"to document.querySelector; got {selectors!r}"
     )
 
 
@@ -1143,20 +1152,12 @@ def test_narrow_stage_does_not_use_generic_first_select_selector():
     )
 
 
-class _FailOnceCDP(_TrackedCDP):
-    """Extended TrackedCDP that records a 'screenshot_attempt' op before
-    raising (when fail_narrow_screenshot=True), enabling the test to prove
-    the attempt was made even when it raised.
-    """
+class _FailOnceCDP(_OrderedCDP):
+    """Record setup evaluation and every screenshot attempt before failure."""
 
     def screenshot(self) -> bytes:
-        if self._fail_narrow and self._override_active:
-            # Record the attempt BEFORE raising so the test can verify the
-            # sequence includes the attempt step.
-            self._ops.append("screenshot_attempt")
-            raise RuntimeError("screenshot failed during narrow override")
         self._ops.append("screenshot_attempt")
-        return super().screenshot()
+        return _TrackedCDP.screenshot(self)
 
 
 def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
@@ -1184,32 +1185,14 @@ def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
     )
 
     ops = cdp._ops
-    # Locate the last set:840x625 (the narrow override)
-    try:
-        set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
-    except ValueError:
-        raise AssertionError(
-            f"set:840x625 not found in ops {ops!r} -- override never applied"
-        )
-
-    post_set = ops[set_idx + 1 :]
-
-    # eval:setup (onPreviewHotkeys injection) must follow set
-    # Note: _FailOnceCDP inherits evaluate() from _TrackedCDP which does not
-    # record evaluates by default; use _OrderedCDP to get that detail.
-    # Here we only assert screenshot_attempt and clear ordering.
-    assert "screenshot_attempt" in post_set, (
-        f"screenshot must be ATTEMPTED after set:840x625 even when it raises.\n"
-        f"post-set ops: {post_set!r}\n"
-        "The attempt was either never made or was skipped before the override."
-    )
-    attempt_idx = next(i for i, op in enumerate(post_set) if op == "screenshot_attempt")
-    post_attempt = post_set[attempt_idx + 1 :]
-    assert "clear" in post_attempt, (
-        f"clear must follow the screenshot_attempt even when it raised.\n"
-        f"post-attempt ops: {post_attempt!r}\n"
-        "The finally block must guarantee clear() runs after a failed attempt."
-    )
+    set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
+    assert ops[set_idx : set_idx + 4] == [
+        "set:840x625",
+        "eval:setup",
+        "screenshot_attempt",
+        "clear",
+    ], f"narrow failure sequence was incomplete or out of order: {ops!r}"
+    assert ops[set_idx + 3] == "clear"
 
 
 def test_walk_failure_path_records_attempt_before_clear_not_only_clear(

@@ -895,8 +895,8 @@
         return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
       }
     }
-    var newId = 'g-dev-' + Date.now();
-    groups.push({id: newId, name: clean, cycle: ''});
+    var id = 'g-dev-' + Date.now();
+    groups.push({id: id, name: clean, cycle: ''});
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
   };

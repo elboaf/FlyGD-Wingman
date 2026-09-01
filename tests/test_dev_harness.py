@@ -935,27 +935,71 @@ def test_preview_dev_push_sends_full_state_not_just_hotkeys():
 # ---------------------------------------------------------------------------
 
 
-def _extract_fn_body(marker: str) -> str:
-    """Extract the body of a JS function starting at `marker`.
-
-    Walks braces to find the matching close; strips `//` comments before
-    returning so comment-only mentions of keywords don't fool keyword checks.
-    """
-    assert marker in DEV_JS, f"{marker!r} must be defined in dev.js"
-    start = DEV_JS.index(marker)
-    brace_start = DEV_JS.index("{", start)
+def _matching_brace(source: str, opening: int) -> int:
+    """Return the matching brace while ignoring braces in JS strings/comments."""
+    assert source[opening] == "{"
     depth = 0
-    end = brace_start
-    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
-        if ch == "{":
+    quote = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    i = opening
+    while i < len(source):
+        char = source[i]
+        following = source[i + 1] if i + 1 < len(source) else ""
+        if line_comment:
+            line_comment = char != "\n"
+        elif block_comment:
+            if char == "*" and following == "/":
+                block_comment = False
+                i += 1
+        elif quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char == "/" and following == "/":
+            line_comment = True
+            i += 1
+        elif char == "/" and following == "*":
+            block_comment = True
+            i += 1
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "{":
             depth += 1
-        elif ch == "}":
+        elif char == "}":
             depth -= 1
             if depth == 0:
-                end = i
-                break
-    raw = DEV_JS[start : end + 1]
-    return re.sub(r"(?m)^\s*//.*$", "", raw)
+                return i
+        i += 1
+    raise AssertionError(f"unbalanced JS body beginning at offset {opening}")
+
+
+def _extract_fn_body(marker: str) -> str:
+    """Brace-match one specific function and return only its body."""
+    assert marker in DEV_JS, f"{marker!r} must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    opening = DEV_JS.index("{", start)
+    closing = _matching_brace(DEV_JS, opening)
+    return DEV_JS[opening + 1 : closing]
+
+
+def _extract_callback_body(source: str, marker: str) -> str:
+    """Brace-match the callback introduced by marker within one function."""
+    start = source.index(marker)
+    opening = source.index("{", start)
+    closing = _matching_brace(source, opening)
+    return source[opening + 1 : closing]
+
+
+def _normalise_js(source: str) -> str:
+    """Remove comments and insignificant whitespace for exact lexical contracts."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"(?m)^\s*//.*$", "", source)
+    return re.sub(r"\s+", "", source)
 
 
 def test_preview_group_result_success_values_are_correct_types():
@@ -1450,3 +1494,137 @@ def test_preview_delete_membership_cleanup_is_load_bearing():
         "Minimal splice-only body unexpectedly satisfies the cleanup checks -- "
         "the test assertions may be too loose to catch a missing cleanup loop"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 4: brace-matched, normalised contracts that tie every operation to
+# the lifecycle method's own parameters and local state.
+# ---------------------------------------------------------------------------
+
+
+def test_preview_group_result_is_the_exact_production_shape():
+    body = _normalise_js(_extract_fn_body("function _devGroupResult"))
+    assert body == (
+        "return{applied:applied,persisted:applied,error:error||null,"
+        "hotkeys:_devHotkeysCopy()};"
+    )
+
+
+def test_preview_group_success_lifecycle_uses_exact_result_arguments():
+    markers = (
+        "api.create_preview_cycle_group",
+        "api.rename_preview_cycle_group",
+        "api.delete_preview_cycle_group",
+        "api.set_preview_cycle_group_bind",
+        "api.set_preview_character_group",
+    )
+    result = "returnPromise.resolve(_devGroupResult(true,null));"
+    for marker in markers:
+        body = _normalise_js(_extract_fn_body(marker))
+        assert body.count(result) == 1, (
+            f"{marker} must return exactly one _devGroupResult(true, null) "
+            "from its success path"
+        )
+        assert body.index("_devPushHotkeys();") < body.index(result), (
+            f"{marker} must schedule its hotkeys push before returning success"
+        )
+
+
+def test_preview_dev_push_callback_has_exact_order_and_single_delivery():
+    body = _extract_fn_body("function _devPushHotkeys")
+    callback = _normalise_js(_extract_callback_body(body, "setTimeout(function"))
+    copy = "varfull=JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));"
+    assign = "full.hotkeys=_devHotkeysCopy();"
+    deliver = "window.onPreviewHotkeys(full);"
+
+    assert callback.count(copy) == 1
+    assert callback.count(assign) == 1
+    assert callback.count(deliver) == 1
+    assert _normalise_js(body).count(deliver) == 1
+    assert callback.index(copy) < callback.index(assign) < callback.index(deliver)
+
+
+def test_preview_create_appends_exact_group_from_its_locals_before_push():
+    body = _normalise_js(_extract_fn_body("api.create_preview_cycle_group"))
+    make_id = "varid='g-dev-'+Date.now();"
+    append = "groups.push({id:id,name:clean,cycle:''});"
+    push = "_devPushHotkeys();"
+    assert body.count(make_id) == 1
+    assert body.count("groups.push(") == 1
+    assert body.count(append) == 1
+    assert body.index(make_id) < body.index(append) < body.index(push)
+
+
+def _assert_target_group_mutation(marker: str, assignment: str) -> None:
+    body = _normalise_js(_extract_fn_body(marker))
+    locate = "if(groups[i].id===groupId){target=groups[i];break;}"
+    assert body.count(locate) == 1, (
+        f"{marker} must locate target from the group whose id equals groupId"
+    )
+    assert body.count(assignment) == 1, (
+        f"{marker} must mutate that located target with {assignment}"
+    )
+    field = "name" if ".name=" in assignment else "cycle"
+    assert re.findall(rf"(?:\w+|\w+\[[^]]+\])\.{field}=", body) == [f"target.{field}="]
+    assert (
+        body.index(locate) < body.index(assignment) < body.index("_devPushHotkeys();")
+    )
+
+
+def test_preview_rename_updates_only_the_group_located_by_group_id():
+    _assert_target_group_mutation(
+        "api.rename_preview_cycle_group", "target.name=clean;"
+    )
+
+
+def test_preview_bind_updates_only_the_group_located_by_group_id():
+    _assert_target_group_mutation(
+        "api.set_preview_cycle_group_bind", "target.cycle=gesture||'';"
+    )
+
+
+def test_preview_assignment_branches_use_requested_name_and_group_id():
+    body = _normalise_js(_extract_fn_body("api.set_preview_character_group"))
+    branches = _normalise_js(
+        """
+        if (!groupId) {
+          delete gbc[name];
+        } else {
+          var valid = false;
+          for (var i = 0; i < groups.length; i++) {
+            if (groups[i].id === groupId) { valid = true; break; }
+          }
+          if (!valid) {
+            return Promise.resolve(_devGroupResult(false, 'No group with id \\'' + groupId + '\\''));
+          }
+          gbc[name] = groupId;
+        }
+        """
+    )
+    assert body.count(branches) == 1
+    assert body.count("deletegbc[") == 1
+    assert body.count("deletegbc[name];") == 1
+    assert re.findall(r"gbc\[[^]]+\]=", body) == ["gbc[name]="]
+    assert body.count("gbc[name]=groupId;") == 1
+    assert body.index(branches) < body.index("_devPushHotkeys();")
+
+
+def test_preview_delete_removes_matched_group_and_only_its_memberships():
+    body = _extract_fn_body("api.delete_preview_cycle_group")
+    normal = _normalise_js(body)
+    locate = "if(groups[i].id===groupId){idx=i;break;}"
+    remove = "groups.splice(idx,1);"
+    callback = _normalise_js(
+        _extract_callback_body(body, "Object.keys(gbc).forEach(function (charName)")
+    )
+
+    assert normal.count(locate) == 1
+    assert normal.count("groups.splice(") == 1
+    assert normal.count(remove) == 1
+    assert callback == "if(gbc[charName]===groupId){deletegbc[charName];}"
+    assert normal.count("deletegbc[") == 1
+    assert normal.count("deletegbc[charName];") == 1
+    assert (
+        normal.index(locate) < normal.index(remove) < normal.index("Object.keys(gbc)")
+    )
+    assert normal.index("Object.keys(gbc)") < normal.index("_devPushHotkeys();")
