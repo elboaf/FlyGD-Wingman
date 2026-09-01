@@ -2146,3 +2146,83 @@ def test_state_defaults_fill_groups_and_group_by_character():
     assert "groups" in refresh_block, (
         "refresh() does not normalize groups in the returned payload"
     )
+
+
+def test_delete_group_restores_focus_to_surviving_control():
+    """After a successful group delete and repaint, keyboard focus must
+    return to a surviving logical control rather than falling to <body>.
+    The deleteGroup success path must call a focus helper (or equivalent)
+    that targets a surviving group manage button or the Add-name field.
+
+    Acceptable patterns:
+    - focusGroupManager() called in the success path of deleteGroup
+    - An explicit .focus() call on a surviving control or fallback in that path
+    - A querySelector for '.group-delete-btn' or '.group-add-name' after render
+
+    The helper must use a query-selector (to find an attached node) and must
+    fall back to a section-level enabled control, matching focusCopyTarget.
+    """
+    js = _web("previews.js")
+    delete_block = js.split("function deleteGroup", 1)
+    assert len(delete_block) > 1, "no deleteGroup function found in previews.js"
+    body = delete_block[1].split("\n  function ", 1)[0]
+
+    # The success path is the .then(...) block containing requestRender.
+    # It must contain a focus call or a helper that performs focus.
+    has_focus_helper = (
+        "focusGroupManager" in body
+        or ("querySelector" in body and ".focus()" in body)
+        or ("group-delete-btn" in body and ".focus()" in body)
+        or ("group-add-name" in body and ".focus()" in body)
+    )
+    assert has_focus_helper, (
+        "deleteGroup success path does not restore keyboard focus to a "
+        "surviving control. After repaint the browser drops focus to <body>. "
+        "Add a focusGroupManager() helper or explicit .focus() on a "
+        "surviving group button or the Add-name field."
+    )
+
+    # The focus must not be attempted on a detached node: the helper must
+    # run AFTER requestRender (which rebuilds the DOM), not before.
+    render_pos = body.find("requestRender")
+    # Allow both focusGroupManager and querySelector-based patterns.
+    focus_pos = body.find("focusGroupManager")
+    if focus_pos == -1:
+        focus_pos = body.find(".focus()")
+    assert render_pos != -1, "deleteGroup must call requestRender"
+    assert focus_pos != -1, "deleteGroup must contain a focus call"
+    assert focus_pos > render_pos, (
+        "focus call appears before requestRender in deleteGroup; "
+        "focus must run AFTER repaint so it targets an attached node"
+    )
+
+
+def test_make_group_select_has_generation_guard():
+    """makeGroupSelect's change handler must use a generation guard
+    (store `pushes` before the bridge call, check it before applying
+    res.hotkeys) matching the pattern in setGroupBind and other handlers.
+
+    Without the guard, a Python push that arrives while set_preview_character_group
+    is in flight will have its state overwritten by the stale response.
+    groupBusy prevents concurrent user-initiated requests but does NOT
+    prevent an onPreviewHotkeys push from replacing state.hotkeys wholesale
+    during the in-flight call.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+
+    # Must capture pushes before the bridge call.
+    assert "before = pushes" in body, (
+        "makeGroupSelect change handler does not capture the current push "
+        "generation before calling set_preview_character_group. "
+        "Add `var before = pushes;` before WM.send(...)."
+    )
+    # Must check for a newer push before applying res.hotkeys.
+    assert "pushes !== before" in body or "before !== pushes" in body, (
+        "makeGroupSelect does not guard res.hotkeys application with a "
+        "generation check. Add `if (pushes !== before) { return; }` "
+        "before applying res.hotkeys, matching the setGroupBind pattern."
+    )

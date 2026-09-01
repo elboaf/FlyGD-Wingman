@@ -1371,6 +1371,12 @@
       // Disable lifecycle and assignment controls for the duration.
       groupBusy = true;
       requestRender();
+      // Capture the push generation before the bridge call. If a newer
+      // onPreviewHotkeys push arrives while the call is in flight it
+      // replaces state.hotkeys wholesale; applying the stale response
+      // on top of that would overwrite the authoritative table. Same
+      // guard as setGroupBind.
+      var before = pushes;
       WM.send('set_preview_character_group', characterName, selectedId)
         .then(function (res) {
           groupBusy = false;
@@ -1383,6 +1389,7 @@
             requestRender();
             return;
           }
+          if (pushes !== before) { return; }
           if (res.hotkeys) {
             state.hotkeys = res.hotkeys;
             state.hotkeys.groups = state.hotkeys.groups || [];
@@ -1421,6 +1428,32 @@
     });
   }
 
+  // Restore keyboard focus to the first surviving group management control
+  // (a Delete button for a remaining group), then the Add-name field, then
+  // any enabled control in the Previews section.
+  //
+  // Called AFTER requestRender() rebuilds the DOM so it queries attached
+  // nodes only. The pattern matches focusCopyTarget: named target first,
+  // section-level fallback second, no focus on detached nodes.
+  function focusGroupManager() {
+    var section = WM.el('section-previews');
+    if (!section) { return; }
+    // Prefer a surviving group's Delete button (first enabled one).
+    var delBtn = section.querySelector(
+      '.group-delete-btn:not([hidden]):not(:disabled)');
+    if (delBtn) { delBtn.focus(); return; }
+    // Fall back to the Add-name field.
+    var addField = section.querySelector(
+      '.group-add-name:not([hidden]):not(:disabled)');
+    if (addField) { addField.focus(); return; }
+    // Last resort: any enabled interactive control in the section.
+    var fallback = section.querySelector(
+      'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)');
+    if (fallback) { fallback.focus(); }
+  }
+
   // Delete a named group. Called from the management disclosure. Ends the
   // capture first, then shows a WM.confirm with the group name and member
   // count so the user knows what they are removing.
@@ -1451,6 +1484,7 @@
           state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
         }
         requestRender();
+        focusGroupManager();
       });
     });
   }
