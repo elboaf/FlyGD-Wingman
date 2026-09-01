@@ -8,6 +8,8 @@ and must not steal focus on the way past. There is no click-versus-drag
 classification any more -- the thing that used to make a one-pixel
 wobble still count as a click."""
 
+import pytest
+
 from wingman.preview import window
 from wingman.preview.geometry import Rect
 
@@ -116,6 +118,7 @@ def _activation_libs(
     foreground_tid=FOREGROUND_TID,
     target_tid=TARGET_TID,
     attached_tids=(FOREGROUND_TID, TARGET_TID),
+    set_foreground_error=None,
 ):
     class FakeUser32:
         def __init__(self):
@@ -142,6 +145,8 @@ def _activation_libs(
 
         def SetForegroundWindow(self, h):
             calls.append(("set_foreground", h))
+            if set_foreground_error is not None:
+                raise set_foreground_error
             return False
 
         def SetFocus(self, h):
@@ -235,6 +240,35 @@ def test_activation_refusal_does_not_focus_the_target_and_detaches_in_reverse_or
         ("get_foreground", FOREGROUND),
         ("attach", OUR_TID, TARGET_TID, False),
         ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+
+
+def test_activation_exception_detaches_every_successful_attachment_in_reverse():
+    calls = []
+    libs = _activation_libs(
+        [FOREGROUND], calls, set_foreground_error=RuntimeError("foreground failed")
+    )
+
+    with pytest.raises(RuntimeError, match="foreground failed"):
+        window.activate(libs, TARGET)
+
+    assert [call for call in calls if call[0] == "attach"] == [
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("attach", OUR_TID, TARGET_TID, False),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+
+
+def test_failed_attachment_is_not_detached():
+    calls = []
+    libs = _activation_libs([FOREGROUND, TARGET], calls, attached_tids=(TARGET_TID,))
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert [call for call in calls if call[0] == "attach"] == [
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("attach", OUR_TID, TARGET_TID, False),
     ]
 
 

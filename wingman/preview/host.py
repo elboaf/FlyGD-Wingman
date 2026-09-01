@@ -1398,7 +1398,16 @@ class PreviewHost:
             self._clear_pending_activation(libs)
             return
 
-        result = window_mod.activate(libs, client.hwnd)
+        try:
+            result = window_mod.activate(libs, client.hwnd)
+        except Exception:
+            logger.exception(
+                "Pending activation of %s (0x%x) raised; retry cancelled",
+                pending.stable_key,
+                pending.hwnd,
+            )
+            self._clear_pending_activation(libs)
+            return
         if result is window_mod.ActivationResult.ACTIVATED:
             self._clear_pending_activation(libs)
             self._mark_client_activated(libs, client)
@@ -1446,8 +1455,16 @@ class PreviewHost:
         prevents the minimize-first desktop gap found in Windows smoke.
         """
         # A newer click or hotkey supersedes an outstanding restored target.
+        if self._pending_switch is not None:
+            logger.debug(
+                "Pending activation of %s superseded by %s",
+                self._pending_switch.stable_key,
+                client.stable_key,
+            )
         self._clear_pending_activation(libs)
-        previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
+        previous_hwnd = (
+            libs.user32.GetForegroundWindow() if libs is not None else 0
+        ) or 0
         previous_key = next(
             (
                 key

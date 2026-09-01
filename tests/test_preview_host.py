@@ -2952,6 +2952,41 @@ def test_pending_restore_success_moves_the_selection_once(monkeypatch):
     assert libs.user32.minimized == [0x1111]
 
 
+def test_pending_retry_exception_logs_once_and_cancels_future_retries(
+    monkeypatch, caplog
+):
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    calls = []
+
+    def raise_activation(_libs, hwnd):
+        calls.append(hwnd)
+        raise RuntimeError("retry failed")
+
+    monkeypatch.setattr(host.window_mod, "activate", raise_activation)
+
+    with caplog.at_level(logging.ERROR, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
+        h._retry_pending_activation(libs)
+
+    errors = [
+        record
+        for record in caplog.records
+        if "Pending activation of Bravo (0x2222) raised" in record.message
+    ]
+    assert len(errors) == 1
+    assert calls == [0x2222]
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
 def test_pending_restore_refusal_discards_the_saved_minimize(monkeypatch, caplog):
     """A refused retry must not minimize the old client after its target fails.
 
@@ -3187,7 +3222,6 @@ def _switching_host(
         "activate",
         lambda libs, hwnd: order.append(("activate", hwnd)) or activation,
     )
-    monkeypatch.setattr(host.time, "sleep", lambda s: order.append(("sleep", s)))
     user32 = _SwitchUser32(
         order,
         foreground=foreground,
@@ -3244,9 +3278,7 @@ def test_unsuccessful_switch_never_requests_an_async_minimize(monkeypatch, activ
 
     assert h._activate_client(libs, h._clients["Bravo"]) is activation
 
-    assert [entry for entry in order if entry[0] == "send"] == []
     assert [entry for entry in order if entry[0] == "show_async"] == []
-    assert [entry for entry in order if entry[0] == "animation"] == []
 
 
 def test_refused_switch_keeps_foreground_and_selection_ring_unchanged(monkeypatch):

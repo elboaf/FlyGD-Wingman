@@ -95,7 +95,7 @@ def activate(libs, hwnd) -> ActivationResult:
         # the still-iconic EVE window immediately afterward briefly left a
         # browser with no usable foreground under hide-on-lost-focus, flashing
         # the desktop. Let the host's 20ms retry attempt foreground work only
-        # after IsIconic is false.
+        # after IsIconic is false. The host bounds repeats to 25 timer turns.
         libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
         return ActivationResult.PENDING_RESTORE
 
