@@ -853,3 +853,200 @@ def test_fixture_extractor_raises_clearly_on_missing_marker():
         "load_dev_preview_fixture must raise a clear error when the marker "
         "is not found, rather than letting a bare index() raise a cryptic message"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 2: ordering proof and deterministic selector tests
+# ---------------------------------------------------------------------------
+
+
+class _OrderedCDP(_TrackedCDP):
+    """Extended TrackedCDP that also records evaluate calls and screenshot
+    invocations, enabling ordering proofs over the full CDP call sequence.
+
+    evaluate() records:
+      - "eval:setup"  when the expression contains "onPreviewHotkeys"
+        (the fixture-injection + scroll setup script for stages)
+      - "eval:screenshot_wait" for the settle-time evaluates (route/section)
+
+    screenshot() records "screenshot" unconditionally so the ordering test
+    can verify: set:840x625 -> eval:setup -> screenshot -> clear.
+    """
+
+    def evaluate(self, expression: str):
+        if "onPreviewHotkeys" in expression:
+            self._ops.append("eval:setup")
+        return super().evaluate(expression)
+
+    def screenshot(self) -> bytes:
+        self._ops.append("screenshot")
+        return super().screenshot()
+
+
+def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkeypatch):
+    """walk() MUST apply set_device_metrics_override before evaluating the
+    narrow stage's setup script (which injects the fixture and scrolls).
+
+    The required order is:
+      set:840x625 -> eval:setup (onPreviewHotkeys + scroll) -> screenshot -> clear
+
+    The current bug: walk() evaluates the setup script first, THEN sets
+    device metrics -- so the fixture injection and scroll happen at the
+    previous viewport size, not at 840x625.
+
+    This test records the exact CDP call sequence and asserts the ordering
+    constraint is satisfied.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _OrderedCDP()
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None and narrow["error"] is None, (
+        f"narrow screen must succeed: {narrow}"
+    )
+
+    # Locate the index of each required operation for the narrow stage.
+    # Because groups stage also has eval:setup before narrow, we want the
+    # LAST set:840x625 (the narrow override) and the eval:setup that follows it.
+    try:
+        set_idx = max(i for i, op in enumerate(cdp._ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError(
+            "set:840x625 not found in ops -- walk() never called set_device_metrics_override"
+        )
+
+    # The eval:setup for the narrow stage must come AFTER the set:840x625.
+    post_set_ops = cdp._ops[set_idx + 1 :]
+    assert "eval:setup" in post_set_ops, (
+        f"walk() runs the narrow setup script BEFORE applying set_device_metrics_override.\n"
+        f"Full ops: {cdp._ops}\n"
+        "Required order: set:840x625 -> eval:setup -> screenshot -> clear"
+    )
+
+    # screenshot must come after eval:setup (post-set)
+    post_set_setup_idx = next(
+        i for i, op in enumerate(post_set_ops) if op == "eval:setup"
+    )
+    post_setup_ops = post_set_ops[post_set_setup_idx + 1 :]
+    assert "screenshot" in post_setup_ops, (
+        "screenshot must occur after eval:setup (narrow setup script)"
+    )
+
+    # clear must come after screenshot
+    screenshot_idx = next(
+        i for i, op in enumerate(post_setup_ops) if op == "screenshot"
+    )
+    post_screenshot_ops = post_setup_ops[screenshot_idx + 1 :]
+    assert "clear" in post_screenshot_ops, (
+        "clear must come after screenshot in the narrow stage"
+    )
+
+
+def test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure(
+    tmp_path, monkeypatch
+):
+    """Even when the narrow screenshot fails the ordering must hold:
+    set:840x625 -> eval:setup -> (screenshot raises) -> clear.
+
+    A fail-then-clear order that skips the setup would mean the page
+    never received the fixture injection, making the cleared viewport the
+    only visible effect.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _OrderedCDP(fail_narrow_screenshot=True)
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None and narrow["error"] is not None, (
+        "narrow screen must be recorded as failed"
+    )
+
+    try:
+        set_idx = max(i for i, op in enumerate(cdp._ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError("set:840x625 not found in ops")
+
+    post_set_ops = cdp._ops[set_idx + 1 :]
+    assert "eval:setup" in post_set_ops, (
+        f"eval:setup must still occur after set:840x625 even on failure.\n"
+        f"Full ops: {cdp._ops}"
+    )
+    assert "clear" in post_set_ops, (
+        "clear must run even when the narrow screenshot fails (finally-safe)"
+    )
+
+
+def test_narrow_stage_targets_long_name_character_deterministically():
+    """The narrow stage setup script must target the long-name character
+    ('Aleksandrina Shadowbanes Voidstriders') by their stable aria-label
+    selector, not by the generic '.preview-group-select' class.
+
+    The first .preview-group-select is whichever row happens to be rendered
+    first -- with the fixture it is 'Aiga Otsolen', not the long-name
+    character whose ellipsis behaviour the narrow stage is meant to capture.
+    Using the generic first-match selector makes the framing non-deterministic
+    and defeats the purpose of the stage.
+
+    The page sets: aria-label="Cycle group for <characterName>" on each select
+    (previews.js line 1364), so the stable selector is:
+      select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+
+    # The long-name character must be explicitly named in the script.
+    assert "Aleksandrina Shadowbanes Voidstriders" in script, (
+        "narrow stage setup script must explicitly target the long-name character "
+        "'Aleksandrina Shadowbanes Voidstriders', not the first .preview-group-select.\n"
+        'Use: select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]'
+    )
+    # The aria-label selector must be used (not a generic class selector).
+    assert "aria-label" in script, (
+        "narrow stage must use the stable aria-label selector to target the "
+        "long-name character deterministically"
+    )
+
+
+def test_groups_and_narrow_setup_scripts_embed_exact_fixture_payload():
+    """Both setup scripts must embed the exact JSON serialization of
+    load_dev_preview_fixture() -- no extra fields, no missing fields.
+
+    The assertion is: json.loads(embedded_payload) == load_dev_preview_fixture().
+
+    If the embedded payload diverges from what load_dev_preview_fixture()
+    returns (e.g. the fixture changed after the script was generated), the
+    page receives stale data and the screenshots no longer match the tests.
+    """
+    import json as _json
+
+    fixture = shoot.load_dev_preview_fixture()
+
+    for key in ("settings-previews-groups", "settings-previews-narrow"):
+        screen = next(s for s in shoot.SCREENS if s.key == key)
+        script = shoot.screen_setup_script(screen)
+        assert script is not None
+
+        # Extract the embedded JSON by finding var payload = <JSON>;
+        match = re.search(r"var payload = (\{.*?\});", script, re.DOTALL)
+        assert match, (
+            f"{key} setup script must embed the fixture as "
+            "'var payload = <JSON>;' -- pattern not found in script"
+        )
+        embedded_json = match.group(1)
+        try:
+            embedded = _json.loads(embedded_json)
+        except _json.JSONDecodeError as exc:
+            raise AssertionError(
+                f"{key} setup script embeds invalid JSON: {exc}\n"
+                f"Embedded text: {embedded_json[:200]}"
+            ) from exc
+
+        assert embedded == fixture, (
+            f"{key} setup script embeds a different payload than load_dev_preview_fixture().\n"
+            f"Expected keys: {sorted(fixture.keys())}\n"
+            f"Got keys:      {sorted(embedded.keys())}"
+        )

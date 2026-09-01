@@ -263,19 +263,27 @@ def screen_setup_script(screen: Screen) -> str | None:
         # Load the authoritative dev fixture via onPreviewHotkeys so the
         # page has deterministic group state.  The 840x625 viewport override
         # is applied through CDP (Emulation.setDeviceMetricsOverride) in
-        # walk(), NOT here: window.resizeTo is a no-op inside a WebView2
-        # target controlled by pywebview, so it must never appear in this
-        # script.
-        # Scroll to the first .preview-group-select element (the character
-        # row dropdown for a long-named character).  This is the target that
-        # shows long character and group names at the 840px floor.
+        # walk() BEFORE this script runs, so the layout is already at 840px
+        # when the injection and scroll execute.
+        # window.resizeTo is a no-op inside a WebView2 target controlled by
+        # pywebview, so it must never appear in this script.
+        #
+        # Target 'Aleksandrina Shadowbanes Voidstriders' by stable aria-label
+        # (set at previews.js:1364 as aria-label="Cycle group for <name>").
+        # This is the load-bearing character: 37-char name exercises the
+        # ellipsis in the 150px name track and the offline tag width at 840px.
+        # Using the generic .preview-group-select class would match the first
+        # row ('Aiga Otsolen'), not the long-name character -- non-deterministic.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
+        long_name = "Aleksandrina Shadowbanes Voidstriders"
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
             "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
-            "  var sel = document.querySelector('.preview-group-select');\n"
+            "  var sel = document.querySelector('select[aria-label=\"Cycle group for "
+            + long_name
+            + "\"]');\n"
             "  if (sel) {\n"
             "    sel.scrollIntoView({block: 'center', behavior: 'instant'});\n"
             "  } else {\n"
@@ -674,21 +682,31 @@ def walk(
                 if screen.section:
                     cdp.evaluate(f"WM.section({screen.section!r})")
             time.sleep(settle_ms / 1000)
-            setup = screen_setup_script(screen)
-            if setup:
-                cdp.evaluate(setup)
-                time.sleep(0.25)
             if screen.key == "settings-previews-narrow":
-                # window.resizeTo is a no-op in a WebView2 target; use
-                # CDP emulation instead.  The clear runs in a finally so
-                # the real viewport is restored even when the capture
-                # fails, preventing distorted captures of all later screens.
+                # CDP viewport override MUST be applied before the setup
+                # script runs (finding 1, round 2): the setup script injects
+                # the fixture via onPreviewHotkeys and scrolls to the target
+                # character row -- both must execute at 840x625 so the layout
+                # is already constrained before the scroll position is chosen.
+                # window.resizeTo is a no-op in WebView2; CDP emulation is
+                # the only mechanism that works.
+                # The clear is in a finally so the real viewport is restored
+                # even when setup or capture fails, preventing distorted
+                # captures of all later screens.
                 cdp.set_device_metrics_override(width=840, height=625)
                 try:
+                    setup = screen_setup_script(screen)
+                    if setup:
+                        cdp.evaluate(setup)
+                        time.sleep(0.25)
                     (out_dir / name).write_bytes(cdp.screenshot())
                 finally:
                     cdp.clear_device_metrics_override()
             else:
+                setup = screen_setup_script(screen)
+                if setup:
+                    cdp.evaluate(setup)
+                    time.sleep(0.25)
                 (out_dir / name).write_bytes(cdp.screenshot())
             if screen.key in {"dialog", "settings-previews-copy"}:
                 # Dismiss every staged overlay before the next screen. Cancel

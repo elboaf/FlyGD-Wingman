@@ -927,3 +927,232 @@ def test_preview_dev_push_sends_full_state_not_just_hotkeys():
         "so onPreviewHotkeys receives enabled, roster, excluded, etc. -- "
         "currently it pushes only the hotkeys sub-object"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 2 fix: exact contracts — result types, delay value, payload delivery,
+# per-method mutation & push, selector determinism
+# ---------------------------------------------------------------------------
+
+
+def _extract_fn_body(marker: str) -> str:
+    """Extract the body of a JS function starting at `marker`.
+
+    Walks braces to find the matching close; strips `//` comments before
+    returning so comment-only mentions of keywords don't fool keyword checks.
+    """
+    assert marker in DEV_JS, f"{marker!r} must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    raw = DEV_JS[start : end + 1]
+    return re.sub(r"(?m)^\s*//.*$", "", raw)
+
+
+def test_preview_group_result_success_values_are_correct_types():
+    """_devGroupResult(true, null) must return applied:true, persisted:true,
+    error:null (not undefined, not "null", not false).
+
+    The page checks `res.applied` as a truthy boolean and passes `res.error`
+    to an alert path; wrong types cause silent UI failures.
+    """
+    body = _extract_fn_body("function _devGroupResult")
+    # Success path: applied and persisted must both be the parameter (true for
+    # success) and error must coalesce null not undefined.
+    assert "applied: applied" in body or "applied:applied" in body, (
+        "_devGroupResult must set applied from its parameter, not hardcode it"
+    )
+    assert "persisted: applied" in body or "persisted:applied" in body, (
+        "_devGroupResult must mirror applied into persisted"
+    )
+    # error must handle null explicitly (not `error: error` which would be
+    # undefined when omitted, not null)
+    assert (
+        "error: error || null" in body
+        or "error:error||null" in body
+        or ("|| null" in body)
+    ), "_devGroupResult must coalesce error to null: `error: error || null`"
+    # hotkeys must be a deep copy (not a direct reference)
+    assert "_devHotkeysCopy" in body or "JSON.parse" in body, (
+        "_devGroupResult must deep-copy hotkeys via _devHotkeysCopy() or JSON.parse"
+    )
+
+
+def test_preview_dev_push_settimeout_delay_is_exactly_zero():
+    """_devPushHotkeys must use setTimeout(function..., 0) — not 1, not 50,
+    not a named variable.
+
+    A non-zero delay means the push fires visibly later than a production
+    push (which is effectively zero latency from the page's perspective),
+    breaking timing parity with real mutation handlers.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    # Find the setTimeout call and extract its delay argument.
+    # Pattern: setTimeout(function () { ... }, <delay>)
+    match = re.search(r"setTimeout\s*\([^,]+,\s*(\d+)\s*\)", body, re.DOTALL)
+    assert match, "_devPushHotkeys must call setTimeout with an explicit numeric delay"
+    delay = int(match.group(1))
+    assert delay == 0, (
+        f"_devPushHotkeys uses setTimeout delay {delay}, must be exactly 0 "
+        "to match production timing"
+    )
+
+
+def test_preview_dev_push_calls_onPreviewHotkeys_inside_callback():
+    """onPreviewHotkeys must be called inside the setTimeout callback,
+    not outside it.
+
+    If it is called outside the callback the push is still synchronous and
+    the reason for the setTimeout is defeated.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    # Find the setTimeout block and check that onPreviewHotkeys is inside it.
+    # We look for the pattern: setTimeout(function () { ... onPreviewHotkeys ... }, 0)
+    settimeout_match = re.search(
+        r"setTimeout\s*\(function\s*\(\)\s*\{(.*?)\}\s*,\s*0\s*\)",
+        body,
+        re.DOTALL,
+    )
+    assert settimeout_match, (
+        "_devPushHotkeys must have a setTimeout(function () {...}, 0) block"
+    )
+    callback_body = settimeout_match.group(1)
+    assert "onPreviewHotkeys" in callback_body, (
+        "onPreviewHotkeys must be called inside the setTimeout callback in "
+        "_devPushHotkeys, not in the outer function body"
+    )
+
+
+def test_preview_dev_push_substitutes_current_hotkeys_into_full_fixture():
+    """_devPushHotkeys must substitute _devPreviewHotkeys (current mutable
+    state) into a deep copy of the full fixture before pushing.
+
+    Pattern: full = deep_copy(DEV_PREVIEW_HOTKEYS_FIXTURE);
+             full.hotkeys = _devHotkeysCopy();
+             onPreviewHotkeys(full);
+    This ensures the push carries enabled, roster, excluded, etc. from
+    the canonical fixture, with the mutation applied to the hotkeys field.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    # Must deep-copy the full fixture
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in body, (
+        "_devPushHotkeys must deep-copy from DEV_PREVIEW_HOTKEYS_FIXTURE"
+    )
+    # Must assign .hotkeys on the copy (not pass _devPreviewHotkeys directly)
+    assert ".hotkeys" in body, (
+        "_devPushHotkeys must assign .hotkeys on the full-fixture copy to "
+        "substitute the current mutable state"
+    )
+
+
+def test_preview_create_method_mutates_groups_and_calls_push_and_result():
+    """create_preview_cycle_group must: push a new group onto _devPreviewHotkeys.groups,
+    call _devPushHotkeys(), and return _devGroupResult(true, null) on success.
+    """
+    body = _extract_fn_body("api.create_preview_cycle_group")
+    # Must mutate groups (push or append)
+    assert ".push(" in body, (
+        "create_preview_cycle_group must push a new group onto groups array"
+    )
+    # Must call the shared push helper
+    assert "_devPushHotkeys" in body, (
+        "create_preview_cycle_group must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    # Must return via the shared result helper
+    assert "_devGroupResult" in body, (
+        "create_preview_cycle_group must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_preview_rename_method_mutates_target_and_calls_push_and_result():
+    """rename_preview_cycle_group must: find the group by id and update its
+    name field, call _devPushHotkeys(), and return _devGroupResult on success.
+    """
+    body = _extract_fn_body("api.rename_preview_cycle_group")
+    # Must assign a .name property on the found target
+    assert ".name" in body, (
+        "rename_preview_cycle_group must assign .name on the found group"
+    )
+    assert "_devPushHotkeys" in body, (
+        "rename_preview_cycle_group must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    assert "_devGroupResult" in body, (
+        "rename_preview_cycle_group must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_preview_bind_method_mutates_cycle_and_calls_push_and_result():
+    """set_preview_cycle_group_bind must: find the group by id and update its
+    cycle field, call _devPushHotkeys(), and return _devGroupResult on success.
+    """
+    body = _extract_fn_body("api.set_preview_cycle_group_bind")
+    # Must assign .cycle on the found target
+    assert ".cycle" in body, (
+        "set_preview_cycle_group_bind must assign .cycle on the found group"
+    )
+    assert "_devPushHotkeys" in body, (
+        "set_preview_cycle_group_bind must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    assert "_devGroupResult" in body, (
+        "set_preview_cycle_group_bind must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_preview_assignment_method_mutates_gbc_and_calls_push_and_result():
+    """set_preview_character_group must: update group_by_character (or delete
+    entry for All-only), call _devPushHotkeys(), and return _devGroupResult.
+    """
+    body = _extract_fn_body("api.set_preview_character_group")
+    # Must mutate group_by_character
+    assert "group_by_character" in body, (
+        "set_preview_character_group must mutate group_by_character"
+    )
+    assert "_devPushHotkeys" in body, (
+        "set_preview_character_group must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    assert "_devGroupResult" in body, (
+        "set_preview_character_group must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_load_dev_preview_fixture_payload_equals_dev_fixture_parsed_by_test_helper():
+    """load_dev_preview_fixture() (from shoot_screens.py) must return the
+    exact same dict that the test helper _dev_preview_fixture() returns.
+
+    Both parse the same DEV_PREVIEW_HOTKEYS_FIXTURE literal; any divergence
+    means one of them is reading a different source or applying different
+    parsing, which would cause the screenshot scripts to embed different
+    data than what the tests verify.
+    """
+    import importlib.util
+    import pathlib as _pathlib
+
+    path = _pathlib.Path(__file__).resolve().parents[1] / "scripts" / "shoot_screens.py"
+    spec = importlib.util.spec_from_file_location("shoot_screens", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    fixture_from_test_helper = _dev_preview_fixture()
+    fixture_from_shoot = mod.load_dev_preview_fixture()
+    assert fixture_from_shoot == fixture_from_test_helper, (
+        "load_dev_preview_fixture() must return the same dict as the test "
+        "helper -- both parse DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js; "
+        "a divergence means screenshot payload ≠ test-verified fixture"
+    )
