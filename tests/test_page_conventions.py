@@ -1506,6 +1506,68 @@ def test_every_default_alert_colour_is_offered_by_the_swatches():
     )
 
 
+def test_no_native_colour_input_survives_anywhere():
+    """style.css has called this control removed since round 5; it wasn't.
+
+    <input type="color"> opens the native Win32 ChooseColor dialog -- the
+    last unstyled system chrome reachable from a frameless dark app that
+    restyled its own scrollbar precisely because native chrome was a tell.
+    Alerts replaced it with a fixed palette and wrote that up in the sheet
+    ("the last unstyled system chrome reachable from this app"), and the
+    Previews selection ring went on shipping one for two more releases, one
+    rail item away from its own replacement.
+
+    The general failure is worth the test more than the one control is: a
+    thing documented as removed, but only removed from the screen someone
+    happened to be working on.
+    """
+    assert 'type="color"' not in _strip_html_comments(HTML), (
+        "a native colour input is back; the swatch palette in alerts.js / "
+        "settings.js is what replaced it, and style.css:2681 has the reason"
+    )
+    for path in sorted(WEB.glob("*.js")):
+        src = _strip_js_comments(path.read_text(encoding="utf-8"))
+        assert not re.search(r"""\.type\s*=\s*['"]color['"]""", src), (
+            f"{path.name} builds a native colour input in JS, which the "
+            f"markup guard above cannot see"
+        )
+
+
+def test_the_selection_ring_default_is_offered_by_its_swatches():
+    """Same rule as the alert palette above, for the other palette.
+
+    paint() appends any stored colour it does not recognise, so that a
+    hand-edited settings.json is not silently rewritten. A shipped default
+    outside the palette would turn that escape hatch into the normal case:
+    every fresh install would draw an unlabelled sixth swatch.
+
+    Also pins the pairing of hexes to names, because the name is the
+    accessible one -- an unnamed colour falls back to its hex by design,
+    and a palette one entry longer than its name list would do that
+    silently for the last swatch.
+    """
+    from wingman.settings import _preview_defaults
+
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    block = js.split("set_preview_selection_color", 1)[0]
+    listed = re.search(r"var COLOURS = \[(.*?)\]", block, re.DOTALL)
+    assert listed, "settings.js no longer declares a ring COLOURS palette"
+    palette = re.findall(r"'(#[0-9a-fA-F]{6})'", listed.group(1))
+
+    named = re.search(r"var COLOUR_NAMES = \[(.*?)\]", block, re.DOTALL)
+    assert named, "settings.js no longer declares COLOUR_NAMES"
+    assert len(re.findall(r"'([^']+)'", named.group(1))) == len(palette), (
+        "the ring palette and its names are different lengths, so a swatch "
+        "announces its hex instead of its name"
+    )
+
+    default = _preview_defaults()["selection_color"]
+    assert default in palette, (
+        f"settings.py's default ring colour {default} is not in the swatch "
+        f"palette {palette}, so a fresh install shows an extra swatch"
+    )
+
+
 def test_the_dense_bind_column_can_hold_a_whole_control_line():
     """Round 5, C8. A named bind group renders as a multi-column block
     (`.bind-dense`), and its column width is set by the CONTROL line, not

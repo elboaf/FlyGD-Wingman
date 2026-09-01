@@ -1183,36 +1183,114 @@
 }());
 
 // ---- Selection ring colour ----------------------------------------------
-// A color input, so it commits on change -- DESIGN.md's discrete-control
+// A fixed palette of radios, not <input type="color">. alerts.js made this
+// argument first and style.css:2681 records it: the native control opened
+// the Win32 ChooseColor dialog and offered 16.7 million answers to a
+// question with about five. Everything below is that decision applied to
+// the one site it had not reached.
+//
+// Still a discrete control, so it still commits on change -- DESIGN.md's
 // rule; there is no half-typed state to protect. The #rrggbb string is
 // shipped verbatim and never unpacked here: Python owns the format, the
 // same division the size field keeps with parse_preview_size.
 (function () {
-  var picker = WM.el('preview-selection-color');
+  var host = WM.el('preview-selection-color');
   var status = WM.el('preview-selection-color-status');
-  if (!picker || !status) { return; }
+  if (!host || !status) { return; }
+
+  // Five, well separated in hue and all bright enough to hold up as a
+  // 1px-ish ring over moving game content.
+  //
+  // Teal first because it is settings.py's default AND window.py's
+  // (0,200,220) -- test_page_conventions pins that the default is offered,
+  // for the reason alerts.js gives: a default outside the palette would
+  // render as an unlabelled sixth swatch on every fresh install.
+  //
+  // NO RED, deliberately, and it is the mirror of alerts.js's "no second
+  // teal". That palette refuses teal because this ring owns it; this one
+  // refuses red because alerts own it -- combat's default is #ff4d4d, and
+  // a steady red ring around the selected client, beside a red pulse
+  // meaning "you are being shot", is the one confusion in this app that
+  // costs something. The two palettes are complementary on purpose.
+  var COLOURS = ['#00c8dc', '#ffd24d', '#4dff7a', '#ff4db8', '#f5f7fa'];
+  var COLOUR_NAMES = ['Teal', 'Amber', 'Green', 'Magenta', 'White'];
+
+  function colourName(hex) {
+    var i = COLOURS.indexOf(hex);
+    return i === -1 ? hex : COLOUR_NAMES[i];
+  }
 
   var DEFAULT_HINT = status.textContent;
   function say(text) { status.textContent = text || DEFAULT_HINT; }
 
-  picker.addEventListener('change', function () {
-    WM.send('set_preview_selection_color', picker.value).then(function (res) {
+  // Last-known-good, so a refused or bridge-failed change has something to
+  // revert to: by the time 'change' fires the browser has committed the
+  // new value into the radio, so the control cannot tell us what it was.
+  var lastGood = '';
+
+  // Lifted from alerts.js's paintSwatches, including the data-built guard
+  // that makes a repaint from wm:settings a no-op when nothing changed --
+  // rebuilding under the pointer would drop focus mid-choose.
+  function paint(colour) {
+    var wanted = COLOURS.slice();
+    // An out-of-palette value (a hand-edited settings.json) is appended
+    // rather than silently rewritten to a palette entry. Same escape hatch
+    // alerts.js keeps, and the same reason: the file is the user's.
+    if (colour && wanted.indexOf(colour) === -1) { wanted.push(colour); }
+
+    if (host.getAttribute('data-built') !== wanted.join(',')) {
+      host.textContent = '';
+      wanted.forEach(function (hex) {
+        var label = WM.make('label', 'swatch');
+        var input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'preview-selection-color';
+        input.value = hex;
+        var dot = WM.make('span', 'dot');
+        dot.style.setProperty('--swatch', hex);
+        var name = colourName(hex);
+        label.title = name === hex ? hex : name + ' (' + hex + ')';
+        input.setAttribute('aria-label', name);
+        label.appendChild(input);
+        label.appendChild(dot);
+        host.appendChild(label);
+      });
+      host.setAttribute('data-built', wanted.join(','));
+    }
+
+    var boxes = host.querySelectorAll('input');
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].checked = boxes[i].value === colour;
+    }
+  }
+
+  // One listener on the host rather than one per radio, so a repaint does
+  // not have to re-bind: the radios are replaced, the host is not.
+  host.addEventListener('change', function (ev) {
+    var input = ev.target;
+    if (!input || input.type !== 'radio') { return; }
+    var wanted = input.value;
+    WM.send('set_preview_selection_color', wanted).then(function (res) {
       if (!res || !res.applied) {
+        // Never took effect, so the control must not go on showing it.
+        paint(lastGood);
         say((res && res.error) || 'Could not save this.');
         return;
       }
-      if (!res.persisted) { say('Applied for this session only — settings could not be written.'); }
+      lastGood = wanted;
+      say(res.persisted ? ''
+        : 'Applied for this session only — settings could not be written.');
     });
   });
 
   document.addEventListener('wm:settings', function (ev) {
     var p = ((ev.detail || {}).settings || {}).preview || {};
-    // Never while the picker is open: the native colour dialog holds the
-    // focus, and rewriting a focused control mid-choose is what the
-    // field rules above all exist to prevent.
-    if (p.selection_color && document.activeElement !== picker) {
-      picker.value = p.selection_color;
-    }
+    if (!p.selection_color) { return; }
+    lastGood = p.selection_color;
+    // Unlike the old picker this cannot be "open", so there is no focused
+    // state to protect -- and data-built makes an unchanged repaint a
+    // no-op, which is what keeps focus where it was.
+    paint(p.selection_color);
   });
 }());
 

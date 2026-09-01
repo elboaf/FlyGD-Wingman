@@ -846,10 +846,26 @@
           <span class="hint" id="preview-apply-size-status"></span></div>
         <div class="row">
           <!-- The ring a selected preview wears. #rrggbb in and out; the
-               page never unpacks the string, Python owns the format. -->
-          <label class="lab" for="preview-selection-color">Selection ring
-            colour</label>
-          <input type="color" id="preview-selection-color">
+               page never unpacks the string, Python owns the format.
+
+               A fixed palette, NOT <input type="color">. That control was
+               the last unstyled system chrome reachable from this app --
+               a 50x26 white UA widget on a dark card, opening the native
+               Win32 ChooseColor dialog in a frameless window -- and
+               style.css:2681 has described it as removed since alerts.js
+               replaced it there. It was still here, one rail item away
+               from its own replacement, which is the tell: a thing
+               documented as removed but only removed from the screen
+               someone was working on.
+
+               A radiogroup rather than a labelled control, so the .lab is
+               a span and the association is aria-labelledby: there is no
+               single input for a `for` to point at. -->
+          <span class="lab" id="preview-selection-color-label">Selection
+            ring colour</span>
+          <div class="swatches" id="preview-selection-color"
+               role="radiogroup"
+               aria-labelledby="preview-selection-color-label"></div>
           <span class="hint" id="preview-selection-color-status">The ring
             on the preview you last clicked.</span></div>
 
