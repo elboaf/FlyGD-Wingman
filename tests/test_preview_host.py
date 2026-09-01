@@ -8,6 +8,7 @@ import ctypes
 import itertools
 import logging
 import sys
+from ctypes import wintypes
 
 import pytest
 
@@ -904,6 +905,188 @@ def test_raise_alert_drops_oldest_beyond_the_cap():
     # Oldest dropped, newest kept.
     kept = [character for character, _event, _spec in h._pending_alerts]
     assert kept == [str(i) for i in range(5, host.PENDING_ALERTS_MAX + 5)]
+
+
+def test_coalesce_hotkey_ids_uses_exact_filter_and_preserves_other_messages():
+    queued = [
+        (0x99, host.win32.WM_TIMER, 70),
+        (0x99, host.win32.WM_HOTKEY, 20),
+        (0x77, host.win32.WM_HOTKEY, 30),
+        (0x99, host.win32.WM_HOTKEY, 40),
+    ]
+    filters = []
+
+    def peek(message, hwnd, minimum, maximum, remove):
+        filters.append((hwnd, minimum, maximum, remove))
+        assert (hwnd, minimum, maximum, remove) == (
+            0x99,
+            host.win32.WM_HOTKEY,
+            host.win32.WM_HOTKEY,
+            host.win32.PM_REMOVE,
+        )
+        for index, entry in enumerate(queued):
+            queued_hwnd, queued_message, queued_wparam = entry
+            if queued_hwnd == hwnd and minimum <= queued_message <= maximum:
+                queued.pop(index)
+                ctypes.cast(
+                    message, ctypes.POINTER(wintypes.MSG)
+                ).contents.wParam = queued_wparam
+                return 1
+        return 0
+
+    assert host.coalesce_hotkey_ids(peek, 0x99, 10) == [10, 20, 40]
+    assert queued == [
+        (0x99, host.win32.WM_TIMER, 70),
+        (0x77, host.win32.WM_HOTKEY, 30),
+    ]
+    assert len(filters) == 3
+
+
+def test_host_proc_coalesces_hotkeys_before_dispatch(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    user32 = _FakeUser32()
+    user32.PeekMessageW = lambda *_args: 0
+    libs = _FakeLibs(user32)
+    batches = []
+    monkeypatch.setattr(host.win32, "bind", lambda: libs)
+    monkeypatch.setattr(
+        host,
+        "coalesce_hotkey_ids",
+        lambda peek, hwnd, ident: [int(ident), 22, 33],
+    )
+    monkeypatch.setattr(h, "_on_hotkeys", lambda got_libs, ids: batches.append(ids))
+
+    assert h._host_proc(0x99, host.win32.WM_HOTKEY, 11, 0) == 0
+    assert batches == [[11, 22, 33]]
+
+
+def _batch_hotkey_host():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+        "Carol": _FakeClient("Carol", hwnd=0x3333),
+        "Delta": _FakeClient("Delta", hwnd=0x4444),
+    }
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0x1111
+    return h, _FakeLibs(user32)
+
+
+def test_three_focus_hotkeys_activate_only_the_last_target(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {
+        1: ("focus", ("Alice",)),
+        2: ("focus", ("Bravo",)),
+        3: ("focus", ("Carol",)),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 3])
+
+    assert activated == [0x3333]
+
+
+def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 1, 1])
+
+    assert activated == [0x4444]
+    assert h._last_cycled == "Delta"
+
+
+def test_focus_then_cycle_applies_cycle_to_the_virtual_focus_target(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("focus", ("Carol",)), 2: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x4444]
+    assert h._last_cycled == "Delta"
+
+
+def test_later_focus_supersedes_cycle_before_final_relative_action(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {
+        1: ("cycle", 1),
+        2: ("focus", ("Carol",)),
+        3: ("cycle", -1),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 3])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
+def test_opposite_cycle_actions_that_return_to_foreground_do_not_activate(
+    monkeypatch,
+):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1), 2: ("cycle", -1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == []
+    assert h._last_cycled == "Alice"
+
+
+def test_capture_uses_newest_registered_hotkey_in_the_batch(monkeypatch):
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._registered = {1: ("focus", ("Alice",)), 2: ("focus", ("Bravo",))}
+    h._registered_text = {1: "Ctrl+F1", 2: "Ctrl+F2"}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h.set_capture(True)
+
+    h._on_hotkeys(_FakeLibs(_FakeUser32()), [1, 2, 0xDEAD])
+
+    assert captured == ["Ctrl+F2"]
+    assert activated == []
+
+
+def test_coalesced_hotkeys_emit_one_debug_summary(monkeypatch, caplog):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1)}
+    monkeypatch.setattr(h, "_activate_client", lambda *_args: True)
+
+    with caplog.at_level(logging.DEBUG):
+        h._on_hotkeys(libs, [1, 0xDEAD, 1, 1])
+
+    summaries = [
+        record.message
+        for record in caplog.records
+        if "coalesced preview hotkeys" in record.message.lower()
+    ]
+    assert len(summaries) == 1
+    assert "3" in summaries[0]
+    assert "Delta" in summaries[0]
 
 
 def test_hotkey_focuses_the_named_character(monkeypatch):

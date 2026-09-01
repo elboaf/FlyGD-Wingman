@@ -16,6 +16,7 @@ import ctypes
 import logging
 import threading
 import time
+from ctypes import wintypes
 
 from . import (
     cycle,
@@ -139,6 +140,21 @@ def _animation_off(libs):
                 "Could not restore the window animation after the switch; "
                 "it stays off until the next switch or logon"
             )
+
+
+def coalesce_hotkey_ids(peek, hwnd, first_ident) -> list[int]:
+    """Drain this host's queued hotkeys without disturbing other messages."""
+    ids = [int(first_ident)]
+    message = wintypes.MSG()
+    while peek(
+        ctypes.byref(message),
+        hwnd,
+        win32.WM_HOTKEY,
+        win32.WM_HOTKEY,
+        win32.PM_REMOVE,
+    ):
+        ids.append(int(message.wParam))
+    return ids
 
 
 def reconcile(current: set, desired: set):
@@ -849,7 +865,8 @@ class PreviewHost:
             self._apply_layouts()
             return 0
         if msg == win32.WM_HOTKEY:
-            self._on_hotkey(libs, wparam)
+            idents = coalesce_hotkey_ids(libs.user32.PeekMessageW, hwnd, wparam)
+            self._on_hotkeys(libs, idents)
             return 0
         return libs.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -1198,37 +1215,64 @@ class PreviewHost:
                 logger.exception("on_hotkey_status callback raised")
 
     def _on_hotkey(self, libs, ident) -> None:
-        action = self._registered.get(ident)
-        if action is None:
-            # Not silent by accident: this is the one case Risk 4 (does
-            # WM_HOTKEY even reach this window) would look like on a real
-            # machine, and it must not read the same as "nothing happened
-            # because nothing was pressed".
-            logger.debug("WM_HOTKEY for unknown id %s ignored", ident)
+        """Keep the one-message entry point for direct callers and tests."""
+        self._on_hotkeys(libs, [ident])
+
+    def _on_hotkeys(self, libs, idents: list[int]) -> None:
+        registered = []
+        for ident in idents:
+            action = self._registered.get(ident)
+            if action is None:
+                # Not silent by accident: this is the one case Risk 4 (does
+                # WM_HOTKEY even reach this window) would look like on a real
+                # machine, and it must not read the same as "nothing happened
+                # because nothing was pressed".
+                logger.debug("WM_HOTKEY for unknown id %s ignored", ident)
+                continue
+            registered.append((ident, action))
+
+        newest_text = next(
+            (
+                self._registered_text.get(ident)
+                for ident, _action in reversed(registered)
+                if self._registered_text.get(ident)
+            ),
+            None,
+        )
+        if self._take_capture(newest_text):
+            if len(registered) > 1:
+                logger.debug(
+                    "Coalesced preview hotkeys: %d -> captured %s",
+                    len(registered),
+                    newest_text,
+                )
             return
-        if self._take_capture(self._registered_text.get(ident)):
+        if not registered:
             return
-        kind, value = action
-        if kind == "focus":
-            target = self._pick_focus_target(libs, value)
-            if target is None:
-                # Every name on this chord is offline. Correct no-op, but
-                # logged -- otherwise indistinguishable from the chord
-                # never reaching the process at all.
-                logger.debug("Preview hotkey targets %r are not running", value)
-                return
-        else:
-            foreground = libs.user32.GetForegroundWindow()
-            anchor = next(
-                (
-                    key
-                    for key, client in self._clients.items()
-                    if client.hwnd == foreground
-                ),
-                None,
-            )
-            # Fall back to the last chord's target when focus is not on a
-            # client at all -- a browser, or Wingman itself.
+
+        foreground = libs.user32.GetForegroundWindow()
+        foreground_key = next(
+            (key for key, client in self._clients.items() if client.hwnd == foreground),
+            None,
+        )
+        # This is a virtual cursor over the whole batch. Updating it for each
+        # action preserves relative cycle meaning without activating any of
+        # the intermediate clients.
+        target = foreground_key or self._last_cycled
+        cycle_seen = False
+        final_action = None
+        for _ident, action in registered:
+            final_action = action
+            kind, value = action
+            if kind == "focus":
+                target = self._pick_focus_target(libs, value)
+                if target is None:
+                    # An unavailable absolute request supersedes an earlier
+                    # virtual target; a later action can establish a new one.
+                    logger.debug("Preview hotkey targets %r are not running", value)
+                continue
+
+            cycle_seen = True
             keys = self._cycle_keys()
             if not keys:
                 # Distinct from the "not running" no-op below, and it has
@@ -1239,17 +1283,32 @@ class PreviewHost:
                     "Cycle keybind had nothing to visit: every running "
                     "character is opted out of previews"
                 )
-                return
-            target = cycle.step(keys, anchor or self._last_cycled, value)
+                target = None
+                continue
+            target = cycle.step(keys, target, value)
+
+        if cycle_seen and target is not None:
             self._last_cycled = target
-        logger.debug("Preview hotkey fired: %s -> %s", action, target)
+        if len(registered) > 1:
+            logger.debug(
+                "Coalesced preview hotkeys: %d, final %s -> %s",
+                len(registered),
+                final_action,
+                target,
+            )
+        else:
+            logger.debug("Preview hotkey fired: %s -> %s", final_action, target)
+
+        if cycle_seen and target == foreground_key:
+            return
         client = self._clients.get(target)
         if client is None:
-            # bound to a character that is not running: correct no-op, but
-            # logged -- otherwise this is indistinguishable from the chord
-            # never reaching the process at all.
+            # Bound to a character that is not running, or no action in the
+            # batch resolved. Log it so this remains distinguishable from a
+            # chord that never reached the process.
             logger.debug("Preview hotkey target %r is not running", target)
             return
+        # Keep one final call: Task 3 owns pending restore and minimize policy.
         self._activate_client(libs, client)
 
     def _take_capture(self, text) -> bool:
