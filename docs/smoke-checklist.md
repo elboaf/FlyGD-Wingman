@@ -3622,11 +3622,12 @@ behaviour a lexical guard cannot reach.
       pane — about 16 characters at the 840x625 floor, fewer if the window is
       shorter. Scroll to the bottom of the list. Expected: the four named
       column labels and the blank actions header remain pinned at the top of
-      the pane; `OFFLINE` remains directly
-      below them while one of its rows is visible; neither layer covers the
-      other; and row text does not show through the header-cell gaps. This is
-      the whole reason both are sticky — a label that scrolls off the controls
-      it explains recreates the original context-loss defect.
+      the pane; `OFFLINE` remains directly below them while one of its rows is
+      visible; and neither sticky layer covers the other. A row cut by the
+      current scroll position may emerge partially below `OFFLINE`; that is the
+      normal edge of the opaque sticky layer, not overlap inside it. This is the
+      whole reason both are sticky — a label that scrolls off the controls it
+      explains recreates the original context-loss defect.
 - [ ] **The rule above the column headers is one line, not four dashes.**
       `.row` is `display: contents` in this grid, so a border on the
       header CELLS is cut by every 10px column gap. It is drawn by an

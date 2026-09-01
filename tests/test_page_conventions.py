@@ -1897,10 +1897,6 @@ def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
     assert offline and re.search(
         r"top:\s*var\(--preview-bind-head-height\)", offline.group(1)
     ), "the Offline heading must stick below, not on top of, the column header"
-    assert re.search(r"padding-bottom:\s*4px", offline.group(1)), (
-        "the sticky Offline background must separate its text from rows "
-        "scrolling underneath"
-    )
 
 
 def test_the_previews_headings_are_in_the_order_makeRow_builds():

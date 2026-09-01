@@ -2359,7 +2359,7 @@ button.btn:disabled,
    groups stick; rules do not. */
 #preview-binds .bind-group:not(:empty) {
   position: sticky; top: var(--preview-bind-head-height); z-index: 1;
-  padding-bottom: 4px; background: var(--panel);
+  background: var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
    under it to separate from, only the header row. */
