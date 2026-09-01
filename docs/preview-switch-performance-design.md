@@ -124,7 +124,7 @@ No minimize-recovery generation, foreground observer recovery, or asynchronous m
 
 ### 4. Selection and alerts
 
-The host updates `_foreground`, focused state, and the sticky selection ring only after activation is observed to succeed. `_last_cycled` records a cycle action's virtual target during folding, so a later direct focus does not rewrite cycle fallback state. Pending or refused activation leaves foreground-derived state unchanged.
+The host updates `_foreground`, focused state, and the sticky selection ring only after activation is observed to succeed. `_last_cycled` records a cycle action's virtual target during folding, so a later direct focus does not rewrite cycle fallback state. Pending or refused activation leaves foreground-derived state unchanged, except that a refused target whose pending rollback later succeeds updates that state to the restored outgoing client.
 
 Click acknowledgement remains guaranteed even when activation fails. If clearing a persistent alert performs visible rendering before focus is requested, acknowledgement may move after the first focus attempt, but it still runs regardless of the verdict. This is not otherwise an alert redesign.
 

@@ -1405,8 +1405,8 @@ class PreviewHost:
                 return name
         return running[0]
 
-    def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> None:
-        """Retain a restore request only when its next pump turn is armable."""
+    def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> bool:
+        """Retain an armable restore request and report whether it was kept."""
         if not self._hwnd or libs is None:
             # This can be reached by a pending retry racing teardown. A request
             # without its host window has no path back into the pump, so keeping
@@ -1417,7 +1417,7 @@ class PreviewHost:
                 "Pending activation of %s discarded; preview host window is unavailable",
                 pending.stable_key,
             )
-            return
+            return False
         if not self._pending_activation_timer:
             timer = libs.user32.SetTimer(
                 self._hwnd,
@@ -1431,9 +1431,10 @@ class PreviewHost:
                     "Pending activation of %s discarded; retry timer could not be armed",
                     pending.stable_key,
                 )
-                return
+                return False
             self._pending_activation_timer = True
         self._pending_switch = pending
+        return True
 
     def _clear_pending_activation(self, libs) -> None:
         """Forget an outstanding restore and stop its timer exactly once."""
@@ -1508,6 +1509,12 @@ class PreviewHost:
                     pending.stable_key,
                     ACTIVATE_RETRY_MAX,
                     pending.previous_hwnd,
+                )
+            elif pending.previous_key is None and not pending.previous_hwnd:
+                logger.info(
+                    "Rollback activation of %s expired after %d restore retries",
+                    pending.stable_key,
+                    ACTIVATE_RETRY_MAX,
                 )
             else:
                 logger.info(
@@ -1649,12 +1656,24 @@ class PreviewHost:
                 if switching.should_restore(
                     activated=False, attempted=minimize and not target_was_iconic
                 ):
-                    logger.exception(
-                        "Switch to 0x%x raised; restoring 0x%x",
-                        client.hwnd,
-                        previous.hwnd,
-                    )
-                    window_mod.activate(libs, previous.hwnd)
+                    current_previous = self._clients.get(previous_key)
+                    if (
+                        current_previous is None
+                        or current_previous.hwnd != previous_hwnd
+                    ):
+                        logger.exception(
+                            "Switch to 0x%x raised; rollback skipped; previous %s "
+                            "exited or changed",
+                            client.hwnd,
+                            previous_key,
+                        )
+                    else:
+                        logger.exception(
+                            "Switch to 0x%x raised; restoring 0x%x",
+                            client.hwnd,
+                            current_previous.hwnd,
+                        )
+                        window_mod.activate(libs, current_previous.hwnd)
                 raise
             if result is window_mod.ActivationResult.PENDING_RESTORE:
                 # The host's ordering probe can see a normal target just before
@@ -1735,7 +1754,7 @@ class PreviewHost:
                     if restored is window_mod.ActivationResult.ACTIVATED:
                         outcome = f"restored 0x{current_previous.hwnd:x}"
                     elif restored is window_mod.ActivationResult.PENDING_RESTORE:
-                        self._arm_pending_activation(
+                        armed = self._arm_pending_activation(
                             libs,
                             _PendingSwitch(
                                 current_previous.stable_key,
@@ -1745,7 +1764,8 @@ class PreviewHost:
                                 False,
                             ),
                         )
-                        outcome = f"restore of 0x{current_previous.hwnd:x} is pending"
+                        state = "is pending" if armed else "was discarded"
+                        outcome = f"restore of 0x{current_previous.hwnd:x} {state}"
                     else:
                         outcome = f"restore of 0x{current_previous.hwnd:x} was refused"
                     logger.info("Switch to 0x%x refused; %s", client.hwnd, outcome)

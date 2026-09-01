@@ -2834,6 +2834,42 @@ def test_pending_restore_with_a_rejected_timer_is_discarded(monkeypatch, caplog)
     )
 
 
+@pytest.mark.parametrize(
+    ("rollback_result", "outcome"),
+    [
+        (host.window_mod.ActivationResult.ACTIVATED, "rollback restored"),
+        (
+            host.window_mod.ActivationResult.PENDING_RESTORE,
+            "rollback is still pending",
+        ),
+    ],
+)
+def test_pending_transition_rollback_logs_non_refusal_outcomes(
+    monkeypatch, caplog, rollback_result, outcome
+):
+    """The target retry and its rollback have separate observable verdicts."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: (
+            host.window_mod.ActivationResult.PENDING_RESTORE
+            if hwnd == 0x2222
+            else rollback_result
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert any(
+        f"Pending activation of 0x2222 after minimizing 0x1111: {outcome}"
+        in record.message
+        for record in caplog.records
+    )
+
+
 def test_a_target_that_becomes_iconic_after_the_host_probe_rolls_back_before_pending(
     monkeypatch,
 ):
@@ -3017,6 +3053,30 @@ def test_pending_restore_expires_after_exactly_25_retries_and_logs_dropped_minim
     assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
     assert any(
         "did not complete after 25 restore retries; saved minimize of 0x1111 was dropped"
+        in record.message
+        for record in caplog.records
+    )
+
+
+def test_pending_rollback_expiry_is_labelled_distinctly(monkeypatch, caplog):
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=False,
+    )
+    h._hwnd = 0x99
+    h._arm_pending_activation(
+        libs,
+        host._PendingSwitch("Alice", 0x1111, None, 0, False),
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        for _ in range(host.ACTIVATE_RETRY_MAX):
+            h._retry_pending_activation(libs)
+
+    assert any(
+        "Rollback activation of Alice expired after 25 restore retries"
         in record.message
         for record in caplog.records
     )
@@ -3732,7 +3792,7 @@ def test_host_probe_iconic_to_window_noniconic_race_skips_a_recreated_outgoing(
 
 
 def test_a_refused_switch_retries_a_pending_iconic_rollback_until_it_succeeds(
-    monkeypatch,
+    monkeypatch, caplog
 ):
     """A rollback restore can be pending rather than implicitly foregrounding.
 
@@ -3757,9 +3817,14 @@ def test_a_refused_switch_retries_a_pending_iconic_rollback_until_it_succeeds(
 
     monkeypatch.setattr(host.window_mod, "activate", activate)
 
-    assert (
-        h._activate_client(libs, h._clients["Bravo"])
-        is host.window_mod.ActivationResult.REFUSED
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        assert (
+            h._activate_client(libs, h._clients["Bravo"])
+            is host.window_mod.ActivationResult.REFUSED
+        )
+    assert any(
+        "Switch to 0x2222 refused; restore of 0x1111 is pending" in r.message
+        for r in caplog.records
     )
     assert h._pending_switch == host._PendingSwitch("Alice", 0x1111, None, 0, False)
     assert h._pending_activation_timer is True
@@ -3775,6 +3840,36 @@ def test_a_refused_switch_retries_a_pending_iconic_rollback_until_it_succeeds(
     ]
     assert h._focused_key == "Alice"
     assert libs.user32.minimized == [0x1111]
+
+
+@pytest.mark.parametrize("discard", ["no-host", "timer-refused"])
+def test_a_refused_switch_does_not_log_pending_when_rollback_is_discarded(
+    monkeypatch, caplog, discard
+):
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    if discard == "timer-refused":
+        h._hwnd = 0x99
+        monkeypatch.setattr(libs.user32, "SetTimer", lambda *_args: 0)
+
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: (
+            host.window_mod.ActivationResult.REFUSED
+            if hwnd == 0x2222
+            else host.window_mod.ActivationResult.PENDING_RESTORE
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert h._pending_switch is None
+    assert not any("restore of 0x1111 is pending" in r.message for r in caplog.records)
+    assert any(
+        "Switch to 0x2222 refused; restore of 0x1111 was discarded" in r.message
+        for r in caplog.records
+    )
 
 
 def test_a_refused_switch_does_not_arm_a_pending_rollback_for_a_recreated_outgoing(
@@ -3877,6 +3972,31 @@ def test_an_activation_that_raises_still_restores_the_minimized_client(
     assert libs.user32.animation == 1
 
 
+def test_an_activation_exception_skips_rollback_when_outgoing_was_recreated(
+    monkeypatch, caplog
+):
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
+
+    def activate(_libs, hwnd):
+        if hwnd == 0x2222:
+            h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+            raise RuntimeError("bad hwnd")
+        raise AssertionError(f"rollback targeted stale HWND 0x{hwnd:x}")
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+
+    with (
+        caplog.at_level(logging.ERROR, logger="wingman.preview.host"),
+        pytest.raises(RuntimeError, match="bad hwnd"),
+    ):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert any(
+        "rollback skipped; previous Alice exited or changed" in r.message
+        for r in caplog.records
+    )
+
+
 def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
     """A zero send is not proof the client stayed up: a send that timed
     out is still delivered and processed later, so it can minimize the
@@ -3905,10 +4025,6 @@ def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
     ("rollback_result", "outcome"),
     [
         (host.window_mod.ActivationResult.ACTIVATED, "restored 0x1111"),
-        (
-            host.window_mod.ActivationResult.PENDING_RESTORE,
-            "restore of 0x1111 is pending",
-        ),
         (host.window_mod.ActivationResult.REFUSED, "restore of 0x1111 was refused"),
     ],
 )
