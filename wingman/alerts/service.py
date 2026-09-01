@@ -271,9 +271,10 @@ class AlertService:
         # predates the key, and defaulting to anything else would silence
         # alerts for everyone who already had them.
         volume = cfg.get("volume", 100)
-        # Read once per poll rather than once per event. The foreground
-        # cannot meaningfully change between two lines of the same poll,
-        # and this is a cross-thread read.
+        # Read once per poll rather than once per event. A poll's events
+        # were all read from the log in the same tick, so one answer for
+        # the batch is as true as any other -- and this crosses to the
+        # preview thread, which is not something to do per line.
         focused = self._focused_character()
         dispatched = []
         for event in events:
@@ -299,17 +300,27 @@ class AlertService:
             # is nothing to interrupt you from when the fight is already
             # filling your screen -- while the ring is free, is where the
             # event happened, and is what tells you which of the three
-            # things just fired. arm_alert makes a focused client's alert
-            # timed rather than persistent (window.py), so it fades on its
-            # own instead of waiting to be acknowledged by a client you
-            # never left.
-            if sound_id != "none" and event.character != focused:
+            # things just fired.
+            silent = event.character == focused
+            if sound_id != "none" and not silent:
                 self._sound(sound_id, volume)
             # persist_until_selected is global but travels merged into the
             # per-event spec, so PreviewWindow.arm_alert reads one dict and
             # the host does not have to know the section's shape.
             payload = dict(spec)
-            payload["persist_until_selected"] = bool(cfg.get("persist_until_selected"))
+            persist = bool(cfg.get("persist_until_selected"))
+            if silent:
+                # Silent implies timed, decided HERE rather than left to
+                # arm_alert's own `focused` read. The two run on different
+                # threads with a queue between them, so a client that lost
+                # the foreground in that gap would otherwise get the worst
+                # pairing available: no sound, because this thread saw it
+                # focused, AND a ring that pulses until acknowledged,
+                # because the preview thread saw it was not. One decision,
+                # taken once, keeps "you are looking at it" meaning the
+                # same thing to both halves of the alert.
+                persist = False
+            payload["persist_until_selected"] = persist
             self._on_alert(event.character, event.event, payload)
             dispatched.append((event.character, event.event, spec.get("color")))
         return dispatched
@@ -341,33 +352,36 @@ def sound_path(sound_id: str) -> Path | None:
     return None
 
 
-def _play_bytes(data: bytes) -> None:
-    """Hand a complete WAV to the audio device. Windows only.
+def _play_file(path) -> None:
+    """Hand a WAV file to the audio device. Windows only.
 
-    SND_MEMORY rather than SND_FILENAME, because the buffer is what
-    carries the volume (sound.py): there is no scaled file on disk to
-    name. One code path for every volume including 100, so the quiet
-    case cannot behave differently from the loud one in any way except
-    amplitude.
+    SND_FILENAME | SND_ASYNC, unchanged from what shipped before volume
+    existed, and NOT the SND_MEMORY the scaled bytes would suggest:
+    winsound refuses `SND_MEMORY | SND_ASYNC` with RuntimeError ("this
+    module does not support playing from a memory image asynchronously"),
+    and the synchronous form would block the alert poll thread for the
+    length of the sound -- 1.5s for `ring`, against a 1s poll. So the
+    scaled audio is a file (sound.playable_path) and this call is the one
+    it always was.
     """
     try:
         import winsound  # Deferred: CI is ubuntu-latest.
     except ImportError:
         return
     try:
-        winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_ASYNC)
+        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
     except RuntimeError:
-        logger.exception("Could not play an alert sound")
+        logger.exception("Could not play alert sound %s", path)
 
 
 def play_sound(sound_id: str, volume: int = 100) -> None:
     """Play *sound_id* at *volume* (0-100).
 
     Volume 0 returns before resolving anything at all. A silent buffer
-    would still open the device and still cost a decode, for a setting
+    would still open the device and still cost a scale, for a setting
     whose entire meaning is "make no noise" -- and PlaySound replaces
-    whatever is still playing, so a silent buffer would also cut short
-    an alert that had been raised a moment earlier at an audible volume.
+    whatever is still playing, so a silent buffer would also cut short an
+    alert raised a moment earlier at an audible volume.
 
     The default is 100 so every caller that does not care about volume --
     and every test double that never did -- keeps working unchanged.
@@ -380,9 +394,4 @@ def play_sound(sound_id: str, volume: int = 100) -> None:
         # alert from the user's side.
         logger.warning("No sound file for id %r; alert will be silent", sound_id)
         return
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        logger.exception("Could not read alert sound %s", path)
-        return
-    _play_bytes(sound.scaled_for(sound_id, raw, volume))
+    _play_file(sound.playable_path(sound_id, path, volume))

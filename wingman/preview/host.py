@@ -708,6 +708,13 @@ class PreviewHost:
         guarantee the write side does not already give, and this is called
         once a second from the alert poll thread.
 
+        The value is a Client.stable_key, which is the character name for
+        any client past character-select and a synthetic "hwnd:0x..." for
+        one that is not (discovery.py). That is exactly right for the one
+        caller: an alert names the character its gamelog belongs to, so a
+        client with no character cannot match one, and a login screen is
+        never treated as the client you are flying.
+
         _focused_key, not _selected_key: the question this answers is
         "are you looking at this client right now", which is what decides
         whether an alert on it needs to make a noise. The selection ring

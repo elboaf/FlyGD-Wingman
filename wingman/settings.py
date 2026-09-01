@@ -88,12 +88,18 @@ def _alerts_defaults() -> dict:
                 # alerts.state.duration_for and deliberately not stored:
                 # three numbers that have to agree by hand is how a
                 # user-visible value drifts (CLAUDE.md's derive-don't-
-                # retype rule). `duration_ms` was stored until 4.6.0 and
-                # was never writable from the page, so nothing is lost by
-                # dropping it -- _normalize rebuilds this section from
-                # these defaults, which is also why no defaults_version
-                # bump is needed: a removed key needs no migration, and
-                # normal x 3 is the 1200ms that key always held.
+                # retype rule). `duration_ms` was stored until 4.6.0 but
+                # was never writable from the page, so every install that
+                # did not hand-edit settings.json held the default 1200ms,
+                # which normal x 3 reproduces exactly. A hand-edited value
+                # IS dropped -- deliberately, since keeping it would be
+                # the second source of truth this removes; the file simply
+                # reverts to the derived duration.
+                #
+                # No defaults_version bump: _normalize rebuilds this
+                # section from these defaults, so a removed key needs no
+                # migration, and the marker exists for a changed DEFAULT
+                # rather than a changed shape.
                 "pulses": 3,
                 "flash_rate": alert_state.DEFAULT_FLASH_RATE,
                 **_ALERT_EVENT_DEFAULTS[name],

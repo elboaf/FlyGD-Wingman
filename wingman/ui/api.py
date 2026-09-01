@@ -3177,7 +3177,7 @@ class Api:
         already owns the 20-255 range (settings.py:235-239), and letting
         update()'s normalise pass apply it keeps that the one place the
         range is defined -- same reasoning as set_alert_event's docstring
-        for cooldown_s/duration_ms/pulses. A value outside the range is
+        for cooldown_s/pulses. A value outside the range is
         silently coerced by normalise rather than refused here.
         """
         result = self._write_preview_setting(("opacity",), value)
@@ -3359,8 +3359,8 @@ class Api:
         would be silently dropped on the next normalise anyway -- refusing
         here tells the page immediately instead of on the next restart.
 
-        Deliberately does NOT clamp cooldown_s/duration_ms/pulses or
-        validate color/sound itself: settings.validated_alerts already
+        Deliberately does NOT clamp cooldown_s/pulses or validate
+        color/sound/flash_rate itself: settings.validated_alerts already
         owns those ranges, and letting `update()`'s normalise pass apply
         them keeps that the one place they are defined. A rejected value
         is silently dropped by normalise rather than reported here, which

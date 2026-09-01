@@ -24,10 +24,13 @@ FRAME_ALPHAS = (110, 139, 168, 197, 226, 255)
 # added everywhere -- test_page_conventions.py checks the dropdown against
 # this table rather than against a hand-kept copy of it.
 #
-# Normal is 400ms because 400 x 3 is 1200ms, the duration every install
-# has had since alerts shipped: the default arrangement has to reproduce
-# exactly what it replaced, or this becomes a silent retiming of a signal
-# people already read at a glance.
+# Normal is 400ms because 400 x 3 is 1200ms, the DEFAULT duration every
+# install shipped with: the default arrangement has to reproduce exactly
+# what it replaced, or this becomes a silent retiming of a signal people
+# already read at a glance. (Not every install's actual duration -- the
+# key was validated over 250-15000ms, so a hand-edited file could hold
+# another value. settings.py's comment on dropping it says what happens
+# to those.)
 FLASH_MS = {"slow": 600, "normal": 400, "fast": 250}
 DEFAULT_FLASH_RATE = "normal"
 
@@ -86,9 +89,21 @@ def arm(
     if rank > current_rank:
         return incoming
     if rank == current_rank:
-        # Restart the pulse and re-stamp the expiry. Colour comes from the
-        # incoming event so a live colour change in settings takes effect.
-        return current._replace(started=now, expires=expires, color=color)
+        # Restart the pulse and re-stamp the expiry. Colour, duration and
+        # pulse count all come from the INCOMING event so a live settings
+        # change takes effect -- the expiry was always computed from the
+        # incoming duration, so leaving the old duration_ms and pulses on
+        # the alert meant a re-armed combat alert could hold an expiry
+        # eight seconds out while animating a 1200ms/3-flash cycle, then
+        # sit still until it expired. Reachable the moment Flashes and
+        # Speed became controls on the card.
+        return current._replace(
+            started=now,
+            expires=expires,
+            color=color,
+            duration_ms=duration_ms,
+            pulses=pulses,
+        )
 
     # Lower severity: extend only, never repaint.
     if current.expires is None or expires is None:

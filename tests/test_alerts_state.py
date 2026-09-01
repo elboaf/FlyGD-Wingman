@@ -138,3 +138,26 @@ def test_a_pulse_count_below_one_still_produces_a_visible_alert():
     """progress() divides by the duration, so a zero here would be a
     zero-length alert -- armed, never drawn, and impossible to explain."""
     assert state.duration_for("normal", 0) > 0
+
+
+def test_re_arming_the_same_event_picks_up_new_flash_settings():
+    """The expiry was always computed from the INCOMING duration, so an
+    alert that kept its old duration_ms and pulses would animate one
+    cadence while expiring on another -- a re-armed combat alert holding
+    an eight-second expiry and a 1.2s three-flash cycle sits still for
+    the remaining seven. Unreachable until Flashes and Speed became
+    controls; reachable the moment they did."""
+    first = _arm(None, "combat", 0.0)
+    again = state.arm(
+        first,
+        "combat",
+        "#ff4d4d",
+        0.5,
+        duration_ms=4800,
+        pulses=8,
+        persist=False,
+        target_is_selected=False,
+    )
+    assert again.duration_ms == 4800
+    assert again.pulses == 8
+    assert again.expires == pytest.approx(0.5 + 4.8)

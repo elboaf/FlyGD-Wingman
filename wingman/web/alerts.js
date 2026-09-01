@@ -149,9 +149,23 @@
   // test_page_conventions.py checks this against the clamp.
   var FLASH_COUNTS = [1, 2, 3, 4, 5, 6, 8, 10];
 
-  function paintFlashCounts(row) {
-    if (!row.flashes || row.flashes.options.length) { return; }
-    FLASH_COUNTS.forEach(function (n) {
+  function paintFlashCounts(row, stored) {
+    if (!row.flashes) { return; }
+    var wanted = FLASH_COUNTS.slice();
+    // A stored count outside the offered set gets its own option rather
+    // than leaving the <select> blank. settings.validated_alerts keeps
+    // anything from 1 to 16, so a hand-edited 7 is a legitimate state --
+    // and a blank control would be the card failing to show a setting
+    // that is genuinely in force. Same reasoning, and same shape, as
+    // paintSwatches' out-of-palette colour above.
+    var extra = parseInt(stored, 10);
+    if (extra > 0 && wanted.indexOf(extra) === -1) {
+      wanted.push(extra);
+      wanted.sort(function (a, b) { return a - b; });
+    }
+    if (row.flashes.getAttribute('data-built') === wanted.join(',')) { return; }
+    row.flashes.textContent = '';
+    wanted.forEach(function (n) {
       var opt = document.createElement('option');
       opt.value = String(n);
       // textContent, not innerHTML: the same DOM-text rule WM.choose's
@@ -159,6 +173,7 @@
       opt.textContent = String(n);
       row.flashes.appendChild(opt);
     });
+    row.flashes.setAttribute('data-built', wanted.join(','));
   }
 
   // Each event row reports its own outcome, beside the control that
@@ -317,7 +332,7 @@
       var flashes = String(spec.pulses || 3);
       var speed = spec.flash_rate || 'normal';
       paintSwatches(row, id, color);
-      paintFlashCounts(row);
+      paintFlashCounts(row, flashes);
       row.sound.value = sound;
       row.flashes.value = flashes;
       row.speed.value = speed;

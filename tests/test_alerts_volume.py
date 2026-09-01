@@ -81,18 +81,83 @@ def test_a_sample_width_it_cannot_scale_is_left_alone():
     assert sound.scaled_wav(raw, 40) is raw
 
 
-def test_scaling_is_cached_per_sound_id():
-    """A drag across the slider must not grow memory, and an alert must
-    not re-encode 66k frames on every pulse. One buffer per sound id, so
-    the cache is bounded by the number of sounds that ship."""
+# ---- the file handed to PlaySound ------------------------------------------
+# winsound refuses SND_MEMORY together with SND_ASYNC, and the synchronous
+# form would block the alert poll thread for the length of the sound. So
+# the scaled audio has to reach the device as a FILE.
+
+
+def test_full_volume_plays_the_file_that_ships(tmp_path):
     sound.reset_cache()
-    raw = _wav([20000])
-    first = sound.scaled_for("alarm", raw, 40)
-    again = sound.scaled_for("alarm", raw, 40)
-    assert again is first
-    changed = sound.scaled_for("alarm", raw, 80)
-    assert changed is not first
+    source = tmp_path / "alarm.wav"
+    source.write_bytes(_wav([20000]))
+    assert sound.playable_path("alarm", source, 100) == source
+
+
+def test_a_quieter_volume_plays_a_scaled_copy(tmp_path):
+    sound.reset_cache()
+    source = tmp_path / "alarm.wav"
+    source.write_bytes(_wav([20000]))
+
+    out = sound.playable_path("alarm", source, 50)
+
+    assert out != source
+    assert _samples(out.read_bytes())[0] < 20000
+
+
+def test_the_scaled_copy_is_written_once_per_volume(tmp_path):
+    """An alert must not re-encode 66k frames every time it fires, and a
+    volume change must not leave the old level playing."""
+    sound.reset_cache()
+    source = tmp_path / "alarm.wav"
+    source.write_bytes(_wav([20000]))
+
+    first = sound.playable_path("alarm", source, 50)
+    stamp = first.stat().st_mtime_ns
+    quiet_peak = _samples(first.read_bytes())[0]
+    assert sound.playable_path("alarm", source, 50) == first
+    assert first.stat().st_mtime_ns == stamp
+
+    louder = sound.playable_path("alarm", source, 90)
+    # The SAME file, rewritten: one entry per sound means one file per
+    # sound, so the old level cannot be left behind for something to play.
+    assert louder == first
+    assert _samples(louder.read_bytes())[0] > quiet_peak
+    # One entry per sound, not one per level the slider passed through.
     assert len(sound._CACHE) == 1
+
+
+def test_a_deleted_cache_file_is_rewritten(tmp_path):
+    """The state directory is a place users and cleaners delete things
+    from. A cache entry pointing at a file that is gone would hand
+    PlaySound a missing path, and PlaySound's failure is a silent one."""
+    sound.reset_cache()
+    source = tmp_path / "alarm.wav"
+    source.write_bytes(_wav([20000]))
+    first = sound.playable_path("alarm", source, 50)
+    first.unlink()
+
+    again = sound.playable_path("alarm", source, 50)
+
+    assert again.is_file()
+
+
+def test_a_cache_that_cannot_be_written_falls_back_to_the_original(
+    tmp_path, monkeypatch
+):
+    """Louder than asked, never silent: PRODUCT.md's rule for this whole
+    feature is that a missed alert is the failure mode. Volume 0 cannot
+    reach here -- play_sound returns before it."""
+    sound.reset_cache()
+    source = tmp_path / "alarm.wav"
+    source.write_bytes(_wav([20000]))
+
+    def boom(*a, **kw):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(sound.Path, "write_bytes", boom)
+
+    assert sound.playable_path("alarm", source, 50) == source
 
 
 # ---- play_sound ------------------------------------------------------------
@@ -114,16 +179,37 @@ def test_the_volume_reaches_the_scaler(monkeypatch):
 
     seen = {}
 
-    def fake_scaled_for(sound_id, raw, volume):
+    def fake_playable_path(sound_id, source, volume):
         seen["args"] = (sound_id, volume)
-        return b"scaled"
+        return "scaled.wav"
 
-    monkeypatch.setattr(service.sound, "scaled_for", fake_scaled_for)
-    monkeypatch.setattr(
-        service, "_play_bytes", lambda data: seen.setdefault("data", data)
-    )
+    monkeypatch.setattr(service.sound, "playable_path", fake_playable_path)
+    monkeypatch.setattr(service, "_play_file", lambda p: seen.setdefault("played", p))
 
     service.play_sound("alarm", 40)
 
     assert seen["args"] == ("alarm", 40)
-    assert seen["data"] == b"scaled"
+    assert seen["played"] == "scaled.wav"
+
+
+def test_the_async_flag_pair_winsound_refuses_is_not_used():
+    """winsound raises RuntimeError on SND_MEMORY | SND_ASYNC ("this
+    module does not support playing from a memory image asynchronously").
+    Nothing on Linux can catch that, and the failure is a swallowed
+    exception and total silence -- so the flags are asserted lexically,
+    which is the same trade the web-page guards make.
+    """
+    import inspect
+
+    from wingman.alerts import service
+
+    call = [
+        line
+        for line in inspect.getsource(service._play_file).splitlines()
+        if "PlaySound(" in line
+    ]
+    assert len(call) == 1, "_play_file no longer has exactly one PlaySound call"
+    # The docstring names SND_MEMORY to say why it is not used, so this
+    # reads the CALL rather than the function's whole source.
+    assert "SND_FILENAME" in call[0] and "SND_ASYNC" in call[0]
+    assert "SND_MEMORY" not in call[0]

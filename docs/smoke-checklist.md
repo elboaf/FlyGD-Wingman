@@ -2486,10 +2486,11 @@ headless.
 - [ ] **Confirm sounds play in the frozen build.** This is the only place
       the winsound module's packaging entry can be verified. Launch the
       installed build, trigger an alert, and confirm you hear the sound.
-      The sound is played from memory now (SND_MEMORY, so the volume can be
-      applied to the samples), which is a different winsound call path from
-      the one that shipped through 4.5.0 — a frozen build is the only place
-      it can be proven.
+      At any volume below 100 the file played is a scaled copy written to
+      %LOCALAPPDATA%\\FlyGD Wingman\\tmp, not the bundled asset — so this
+      item now also proves that directory is writable in an installed
+      build. Check the copy appears there the first time a quiet alert
+      fires.
 - [ ] **An alert on the client you are flying is silent but visible.** With
       two clients logged in and previews on, be in client A and have client
       B shoot at A (or run a site so A takes fire). Expected: A's preview

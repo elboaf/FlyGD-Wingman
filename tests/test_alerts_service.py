@@ -52,8 +52,9 @@ def _config(**over):
 
 
 def _service(config=None, sounds=None, focused=None):
-    """*sounds*, when given, records (sound id, volume) per play -- the
-    volume is half of what the sink is now told."""
+    """*sounds*, when given, records one (sound id, volume) pair per
+    play: the volume is part of what the sink is told now, so a test that
+    recorded only the id could not see it."""
     cfg = config or _config()
     return service.AlertService(
         config=lambda: cfg,
@@ -462,3 +463,39 @@ def test_a_missing_volume_key_plays_at_full_volume():
     s = _service(cfg, sounds=sounds)
     s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
     assert sounds == [("alarm", 100)]
+
+
+def test_a_silenced_alert_is_also_a_timed_one():
+    """Silent and persistent is the worst pairing available: no sound
+    because this thread saw the client focused, and a ring that pulses
+    until acknowledged because the preview thread saw it lose focus a
+    moment later. The two halves are decided together, here."""
+    cfg = _config()
+    cfg["persist_until_selected"] = True
+    seen = []
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: None,
+        on_alert=lambda character, event, spec: seen.append(spec),
+        sound=lambda _id, _vol: None,
+        focused=lambda: "Alice",
+    )
+    s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert seen[0]["persist_until_selected"] is False
+
+
+def test_an_alert_you_can_hear_still_persists():
+    """The other side of the pair: suppression must not leak into every
+    alert and quietly retire persist_until_selected."""
+    cfg = _config()
+    cfg["persist_until_selected"] = True
+    seen = []
+    s = service.AlertService(
+        config=lambda: cfg,
+        folder=lambda: None,
+        on_alert=lambda character, event, spec: seen.append(spec),
+        sound=lambda _id, _vol: None,
+        focused=lambda: "Alice",
+    )
+    s._handle([tailer.Event("Bravo", "combat", PLAYER)], 0.0)
+    assert seen[0]["persist_until_selected"] is True
