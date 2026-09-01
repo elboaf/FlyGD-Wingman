@@ -17,6 +17,21 @@ Run on Windows against a real install before each release.
 - [ ] Installer runs without an admin prompt
 - [ ] Installer wizard, Start Menu entry, and Add/Remove Programs all read
       **FlyGD Wingman**
+- [ ] **The FightRecorder task is checked by default and does what it
+      says.** With OBS Studio installed, run the installer with the
+      "Install the FightRecorder plugin into OBS Studio" box ticked:
+      expected, one copy of `obs-fightrecorder.dll` in OBS's
+      `obs-plugins\64bit` directory (default
+      `C:\Program Files\obs-studio\obs-plugins\64bit\`), and a
+      FightRecorder line on the Finished page saying where it went.
+      Writing into Program Files may raise exactly ONE UAC prompt;
+      declining it lands on the Finished-page note, not a failed
+      install. Run the installer a SECOND time without any upstream
+      release change: the DLL must be left alone (byte-identical means
+      it already matches), with no UAC prompt. With OBS not installed,
+      the Finished page says it was skipped. Unticking the box installs
+      no DLL. The DLL is NOT part of Wingman's uninstall — removing
+      Wingman leaves the plugin with OBS, where it still works.
 - [ ] Start Menu shortcut launches the app
 - [ ] With "start at login" checked, the app appears after a reboot
 - [ ] Uninstall removes the app and leaves `%LOCALAPPDATA%` state intact
@@ -116,6 +131,20 @@ somewhere stale and nothing on that screen is worth reviewing.
 (`run-test-build.bat` points at the repository root and is unaffected.)
 
 - [ ] Recording folder is pre-filled from OBS config without being asked
+- [ ] **The FightRecorder card reports locally and only checks the
+      network when asked.** Settings, the card under Recording folder.
+      On load the status line reads from disk only — "Up to date.",
+      "Not installed.", or "OBS Studio was not detected." — and no
+      GitHub request has fired. Press **Check for updates**: the line
+      gains a release tag and an update verdict ("An update is
+      available (v1.1.2)." / "Up to date."). With the machine offline,
+      the check reports that it could not reach GitHub instead of
+      clearing the installed/not-installed state. **Install** /
+      **Update** appears only when there is something to install; on a
+      Program Files OBS it raises one UAC prompt, and declining it
+      produces a status-line error, never a crash. After a successful
+      update the line names the new release and OBS's plugin directory
+      holds the new DLL (verify the bytes changed if the release did).
 - [ ] With OBS absent, the in-app first-run folder screen appears instead of
       a bare OS dialog — see the LOAD-BEARING first-run item under
       Settings > Folder dialogs for the full check.

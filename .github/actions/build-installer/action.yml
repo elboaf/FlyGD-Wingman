@@ -245,6 +245,32 @@ runs:
       shell: pwsh
       run: python packaging/fetch_webview2.py
 
+    - name: Fetch FightRecorder
+      # The OBS plugin DLL bundled for the installer's optional
+      # "Install FightRecorder" task. Resolves the LATEST release rather
+      # than a pin -- this feature exists to track upstream -- and
+      # verifies the download against the sha256 digest the GitHub API
+      # publishes on the asset itself. The script refuses to write
+      # packaging/bin/obs-fightrecorder.dll on any mismatch, so what the
+      # installer packs is by construction what upstream shipped.
+      shell: pwsh
+      run: python packaging/fetch_fightrecorder.py
+
+    - name: Verify the FightRecorder DLL landed
+      shell: pwsh
+      run: |
+        $dll = "packaging\bin\obs-fightrecorder.dll"
+        $sidecar = "packaging\bin\.fightrecorder-version"
+        if (-not (Test-Path $dll -PathType Leaf)) {
+          throw "FightRecorder DLL not found at $dll"
+        }
+        if ((Get-Item $dll).Length -lt 1024) {
+          throw "FightRecorder DLL at $dll is suspiciously small"
+        }
+        if (-not (Test-Path $sidecar -PathType Leaf)) {
+          throw "FightRecorder version sidecar missing -- the DLL cannot be traced to a release"
+        }
+
     - name: Verify the WebView2 bootstrapper is signed by Microsoft
       # This is the integrity gate, standing in for the sha256 pin
       # fetch_ffmpeg.py uses. A pin is not possible here: Microsoft rotates

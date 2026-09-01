@@ -105,3 +105,29 @@ def test_the_built_codec_round_trips_a_document():
     )
     assert decoded.returncode == 0, decoded.stderr
     assert json.loads(decoded.stdout) == doc
+
+
+def test_the_installer_fightrecorder_feature_is_wired():
+    """The FightRecorder task, its bundled DLL and its install-time code
+    must all be present in installer.iss. Any one going missing has a
+    specific symptom: no task (feature gone), no [Files] entry (iscc
+    fails at compile), no code (a checkbox that does nothing)."""
+    iss = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    assert 'Name: "fightrecorder"' in iss
+    assert r'Source: "bin\obs-fightrecorder.dll"; Flags: dontcopy noencryption' in iss
+    assert "procedure InstallFightRecorder();" in iss
+    assert "WizardIsTaskSelected('fightrecorder')" in iss
+
+
+def test_the_fightrecorder_fetcher_is_on_the_ci_allowlist():
+    """ci.yml refuses bare `python` invocations in the build action
+    except for the stdlib-only fetch scripts. A new fetcher not on the
+    list turns every push red with a bypass error; this pins the
+    allowlist entry so removing the fetcher from the action is a
+    deliberate act."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "fetch_fightrecorder" in ci
+    action = (
+        ROOT / ".github" / "actions" / "build-installer" / "action.yml"
+    ).read_text(encoding="utf-8")
+    assert "packaging/fetch_fightrecorder.py" in action

@@ -442,6 +442,34 @@
       </section>
 
       <section class="card">
+        <!-- FightRecorder is the OBS plugin that produces the very
+             recordings the card above watches, so the two sit together.
+             The card is user-initiated only: nothing here calls GitHub
+             until Check for updates is pressed (api.fightrecorder_status
+             is local unless asked). Install/Update may raise ONE UAC
+             prompt, because OBS's plugin directory is under Program
+             Files and Wingman deliberately runs without admin rights. -->
+        <h2>FightRecorder (OBS plugin)</h2>
+        <div class="row">
+          <span class="lab">Plugin</span>
+          <!-- Purely local at load: installed/not, never a network
+               verdict. settings.js fills it from fightrecorder_status's
+               local half; the two action buttons below trigger the
+               network. -->
+          <p class="sub-hint" id="fr-status">checking&hellip;</p>
+        </div>
+        <div class="row">
+          <span class="lab"></span>
+          <button class="btn" id="btn-fr-check">Check for updates</button>
+          <!-- Hidden until a check (or the local load) says there is
+               something to install: an Install button beside "not
+               installed" is fine, beside "up to date" is noise. -->
+          <button class="btn acc" id="btn-fr-update" hidden>Install</button>
+        </div>
+        <p class="field-msg" id="msg-fightrecorder" hidden></p>
+      </section>
+
+      <section class="card">
         <!-- The other half of B10. Names the two things the card is
              about -- what is posted, and the control that posts it -- and
              leaves "Discord" to the rail entry that already says it. -->

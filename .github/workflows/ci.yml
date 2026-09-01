@@ -130,7 +130,7 @@ jobs:
         run: |
           offenders=$(grep -nE '^[[:space:]]+(python|pyinstaller)\b|run:[[:space:]]*(python|pyinstaller)\b' \
               .github/actions/build-installer/action.yml \
-              | grep -vE 'python packaging/(fetch_ffmpeg|fetch_autohotkey|fetch_webview2|write_version_iss|settings-codec/collect_licenses)\.py' \
+              | grep -vE 'python packaging/(fetch_ffmpeg|fetch_autohotkey|fetch_webview2|fetch_fightrecorder|write_version_iss|settings-codec/collect_licenses)\.py' \
               || true)
           if [ -n "$offenders" ]; then
             echo "::error::A step in build-installer/action.yml bypasses 'uv run'."

@@ -556,6 +556,28 @@
     return Promise.resolve(settingsPayload());
   };
 
+  // ---- FightRecorder: the harness has no OBS and no network, so the
+  // stub reports a plausible installed-and-current state. Check for
+  // updates returns up_to_date=true so the card exercises its "nothing
+  // to do" paint, which is the state most users will sit in.
+  api.fightrecorder_status = function (check) {
+    console.log('DEV api.fightrecorder_status(', check, ')');
+    return Promise.resolve({
+      installed: true,
+      path: 'C:\\Program Files\\obs-studio\\obs-plugins\\64bit\\'
+            + 'obs-fightrecorder.dll',
+      detected: true,
+      up_to_date: check === true ? true : null,
+      latest_tag: check === true ? 'v1.1.2' : '',
+      error: ''
+    });
+  };
+
+  api.update_fightrecorder = function () {
+    console.log('DEV api.update_fightrecorder()');
+    return Promise.resolve({ok: true, error: '', tag: 'v1.1.2'});
+  };
+
   // ---- Bookmarks and Previews, the two sections the harness could not
   // reach at all. Both call a real Api method that had no stub here, so
   // WM.send rejected to the console and the page rendered whatever it
