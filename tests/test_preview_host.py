@@ -738,9 +738,8 @@ def test_plan_group_cycle_with_non_canonical_gesture_is_canonicalized():
     assert ("cycle_group", "dps") in actions
     # The stored text is whatever gestures.display() returns -- not the raw input.
     dps_idx = actions.index(("cycle_group", "dps"))
-    import re
-
-    assert re.match(r"Ctrl\+F3", texts[dps_idx], re.IGNORECASE)
+    # Verify exact canonical form: lowercase input must be canonicalized to Ctrl+F3
+    assert texts[dps_idx] == "Ctrl+F3"
 
 
 def test_plan_group_with_invalid_gesture_is_dropped():
