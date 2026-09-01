@@ -1267,7 +1267,7 @@ def test_dialog_keyboard_behavior_follows_focus_and_contains_it():
     assert "active.kind === 'prompt'" in panel
 
 
-def test_dialog_heading_and_scrim_are_accessible_exit_paths():
+def test_dialog_heading_and_scrim_are_safe_exit_paths():
     html = _strip_html_comments(HTML)
     assert '<h2 id="dlg-title"></h2>' in html
     assert '<h3 id="dlg-title">' not in html
@@ -1406,7 +1406,12 @@ def test_alert_swatches_show_the_selected_colour_name():
         r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
         r"colourName\(colour\)\)",
         alerts,
-    ), "the visible swatch name must follow initial, changed, and reverted values"
+    ), "the visible swatch name must follow initial and reverted values"
+    assert re.search(
+        r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
+        r"colourName\(wanted\)\)",
+        alerts,
+    ), "a successful colour change must update its visible name immediately"
 
     style = re.search(r"\.alert-events \.swatch-name \{(.*?)\}", CSS, re.DOTALL)
     assert style and "flex-basis: 100%" in style.group(1), (

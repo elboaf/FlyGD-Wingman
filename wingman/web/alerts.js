@@ -484,6 +484,7 @@
         }
         lastGood[id] = lastGood[id] || {};
         lastGood[id].color = wanted;
+        setText(row.colors.querySelector('.swatch-name'), colourName(wanted));
         if (!res.persisted) {
           sayRow(row, 'The colour is set for this session, but could not be '
             + 'written to settings — it will not survive a restart.', 'warn');

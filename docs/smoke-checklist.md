@@ -3618,8 +3618,9 @@ behaviour a lexical guard cannot reach.
 - [ ] **The table labels and Offline heading cannot leave their rows.** Same
       screen, with a roster long enough that the offline block exceeds the
       pane — about 16 characters at the 840x625 floor, fewer if the window is
-      shorter. Scroll to the bottom of the list. Expected: the five column
-      labels remain pinned at the top of the pane; `OFFLINE` remains directly
+      shorter. Scroll to the bottom of the list. Expected: the four named
+      column labels and the blank actions header remain pinned at the top of
+      the pane; `OFFLINE` remains directly
       below them while one of its rows is visible; neither layer covers the
       other; and row text does not show through the header-cell gaps. This is
       the whole reason both are sticky — a label that scrolls off the controls
