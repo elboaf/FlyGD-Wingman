@@ -147,10 +147,13 @@ def rename(store: dict[str, LinkEntry], old_path, new_path) -> None:
 
     An entry already at the destination is OVERWRITTEN. Nothing prunes this
     file (see the module docstring), so an orphan for a long-deleted file
-    can be sitting on the name the user just chose. It could never match --
-    ``lookup`` validates ``(size, mtime)`` -- but leaving it keeps a stale
-    URL keyed to a live name, which is the one thing this module is careful
-    never to do.
+    can be sitting on the name the user just chose. It is very unlikely to
+    match -- ``lookup`` validates ``(size, mtime)``, which must agree to
+    the byte and the timestamp -- but "unlikely" is not "never": two
+    recordings CAN share both, which is why ui/api.py zips ids to infos
+    rather than looking a row up by its identity. Leaving the orphan would
+    keep a stale URL keyed to a live name, the one thing this module is
+    careful never to do.
     """
     entry = store.pop(str(old_path), None)
     if entry is None:

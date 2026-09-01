@@ -533,3 +533,49 @@ real verification is the smoke pass.
 4. **A second card at the floor.** Bounded by placing it last, but the
    measurement is a smoke item, not arithmetic.
 5. **Kept archives accumulate** in `tmp_dir()` on repeated failures.
+
+
+## Corrections found during implementation
+
+The design above is left as written. Four of its claims turned out to be
+false or overstated once the code was in front of the review, and the
+implementation follows this section where the two disagree.
+
+1. **The bridge thread is not exclusive with the watcher poll.**
+   `__main__.poll_tick` runs on the Scheduler's own thread, so a rename on
+   the bridge thread CAN interleave with `Watcher.poll_once`. The design
+   used that false exclusivity as the reason no lock was needed. The
+   conclusion survives with a different argument: each mutation is a single
+   dict operation, and `Watcher._save` now copies the map before walking it
+   — without that copy, `save_seen`'s comprehension could raise
+   `RuntimeError` and, uniquely on the rename path, escape across the
+   bridge *after* the file had been renamed. The residual race is the one
+   `Watcher.forget` has always had: at worst one extra announcement.
+
+2. **A stitched rename would not have lost the link.** The design refused
+   renames during uploads because `_link()` would persist against a path
+   captured before dispatch. It would not: `UploadJob.items` holds the same
+   mutable `VideoInfo` objects `RowSnapshot.rename` updates, so `_link`
+   would read the new path. The refusal stays, for the real reason — the
+   uploader reads a source path when it opens it, and on the plain path an
+   open read handle turns the rename into a sharing violation the user
+   reads as a Wingman failure — but the stated mechanism was wrong.
+
+3. **`get_settings` is not fetched only at page load.** `web/list.js`
+   re-fetches it whenever a rebuild returns an empty list. The reason not
+   to gate the button on the webhook is unchanged and only slightly
+   narrower: nothing *pushes* settings, and the refresh that exists never
+   fires for a user who configures a webhook with recordings on screen.
+
+4. **A re-push on every call cannot repair a lost disarm.** A button the
+   page has drawn as `disabled` takes neither a click nor a keypress, so it
+   cannot ask for its own repair — risk 3 above was only half-mitigated.
+   `list_rows` therefore re-states the flag on every rebuild, which is what
+   arrives without the user's help. `post_recent_logs` also releases its
+   claim if the worker fails to start, which would otherwise latch the
+   button for the life of the process.
+
+One defect of the same kind was found in the validator: `rename_problem`
+compared the whole stem against the reserved device names, so `CON.foo`
+passed and was then refused by Windows with a message about a path that
+cannot be found. It now checks the portion before the first dot.

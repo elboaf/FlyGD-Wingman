@@ -304,11 +304,13 @@
                Api._post_combat_logs stays silent in exactly this case
                precisely because the panel says it instead.
 
-               It does NOT gate the button below it. get_settings is
-               fetched once, at page load, and nothing pushes a settings
-               payload -- so a control disabled on this fact would stay
-               dead for the rest of the session after the user configured a
-               webhook, which is what WM.setEnabled's own rule forbids. The
+               It does NOT gate the button below it. Nothing pushes a
+               settings payload, and the page's only refresh is list.js's
+               own get_settings call, made at load and then only when the
+               list comes back empty -- so a user who configures a webhook
+               with recordings on screen never triggers one. A control
+               disabled on that stale fact would stay dead until the next
+               launch, which is what WM.setEnabled's own rule forbids. The
                note informs; Python refuses, in its own words, on the
                strip. -->
           <p class="hint" id="logs-note" hidden></p>

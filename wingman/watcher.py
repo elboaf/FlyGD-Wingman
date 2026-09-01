@@ -175,7 +175,19 @@ class Watcher:
         disk -- annoying, never silent data loss or a crash loop.
         """
         try:
-            save_seen(self.seen_path, self.seen)
+            # dict(...) rather than self.seen directly, and the copy is
+            # load-bearing. save_seen builds its payload with a Python-level
+            # comprehension that reads v.size and v.mtime between iteration
+            # steps, so another thread inserting or popping mid-walk raises
+            # "dictionary changed size during iteration". poll_once runs on
+            # the Scheduler's thread while forget() and rename() are called
+            # from the bridge and from delete's worker, so that is not
+            # hypothetical. A RuntimeError is not an OSError and would not
+            # be caught below: from poll_tick it would be swallowed by that
+            # function's broad except, but rename() is called on the bridge
+            # thread with nothing above it, where it would escape across
+            # the bridge AFTER the file had already been renamed.
+            save_seen(self.seen_path, dict(self.seen))
         except OSError:
             logger.warning(
                 "Could not persist seen-set to %s", self.seen_path, exc_info=True
@@ -294,6 +306,12 @@ class Watcher:
         A path with no entry is a no-op in both maps. Renaming a recording
         the watcher has never seen must not invent one, or the announcement
         of a genuinely new file is suppressed.
+
+        No lock, because this class has none and the poll it races is the
+        one `forget` has always raced. Each dict operation below is atomic
+        and `_save` copies before it walks, so an interleaved poll sees
+        either the old key or the new one; the worst case is the extra
+        announcement `forget` can already produce, not a corrupt map.
         """
         old_key, new_key = str(old_path), str(new_path)
         entry = self.seen.pop(old_key, None)

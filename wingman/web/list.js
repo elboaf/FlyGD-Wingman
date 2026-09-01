@@ -599,9 +599,11 @@
   });
 
   // One row, repainted in place. NOT a rebuild: list_rows re-mints every
-  // id (ui/rows.py), and the selection, the focus ring and the sort
-  // position go with them. A rename is incidental -- the only other
-  // refresh that clears a selection is Delete, which consumed it.
+  // id (ui/rows.py), and this file drops every selection and focus id it
+  // no longer recognises on each onRows -- so a rebuild would cost the
+  // user's ticks and their keyboard position. (The sort key survives; it
+  // lives here, not in Python.) Every other rebuild follows something
+  // that changed the folder; a rename changes one row's text.
   WM.handle('onRowRenamed', function (payload) {
     var row = byId(payload.id);
     if (!row) return;

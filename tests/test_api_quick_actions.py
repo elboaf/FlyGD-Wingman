@@ -284,7 +284,11 @@ def test_the_post_is_claimed_before_the_worker_starts(tmp_path, monkeypatch):
     pywebview serves each bridge call on its own thread, and a guard
     written against thread.is_alive() answers False for a handle that has
     been assigned and not yet started -- so the claim has to be a flag
-    taken under a lock, not the thread's own liveness."""
+    taken under a lock, not the thread's own liveness.
+
+    The spy reads _logs_busy(), which is the predicate every caller
+    actually consults; it says nothing about when _logs_thread is
+    assigned, which is bookkeeping for the tests' own join()."""
     api, _asked = logs_api(tmp_path, monkeypatch)
     posts(monkeypatch)
     started = []
@@ -319,9 +323,10 @@ def test_the_page_is_told_the_post_started_and_finished(tmp_path, monkeypatch):
 def test_the_running_flag_is_cleared_even_when_the_worker_explodes(
     tmp_path, monkeypatch
 ):
-    """_push swallows every evaluate_js failure and a push into a hidden
-    window is swallowed outright -- this is a tray app. A disarm that only
-    happens on the happy path leaves the button dead for the session."""
+    """_combat_log_worker reports its own failures and returns, so this
+    covers the disarm after a REPORTED failure rather than an escaping
+    exception. That is the case that actually occurs; the finally is there
+    for the one that does not, since a lost claim can never be retaken."""
     api, _asked = logs_api(tmp_path, monkeypatch)
 
     def explode(*args, **kwargs):
@@ -337,10 +342,12 @@ def test_the_running_flag_is_cleared_even_when_the_worker_explodes(
 
 
 def test_a_refused_post_repairs_the_pages_idea_of_the_flag(tmp_path, monkeypatch):
-    """The other half of the same defence. A lost disarm cannot be
-    detected, so every call restates the truth -- a click that arrives on a
-    wrongly-disabled button through the keyboard both works and fixes the
-    display."""
+    """Every call re-states the flag, refusals included.
+
+    This is one half of the defence against a disarm lost into a hidden
+    window; it cannot be the whole of it, because a button the page has
+    drawn as disabled takes neither a click nor a keypress and so cannot
+    ask for its own repair. The other half is list_rows, below."""
     api, _asked = logs_api(tmp_path, monkeypatch, settings={"discord_webhook": ""})
     posts(monkeypatch)
     sent = fakes.record_pushes(api)
@@ -457,9 +464,12 @@ def test_rename_moves_the_file_and_keeps_the_extension(tmp_path):
 
 
 def test_rename_reports_the_new_name_to_the_page_without_rebuilding(tmp_path):
-    """A rebuild would re-mint every id and take the selection, the focus
-    ring and the sort position with it. A rename is incidental; the only
-    other refresh that clears a selection is Delete, which consumed it."""
+    """A rebuild mints fresh ids, and web/list.js drops every selection and
+    focus id it no longer recognises -- so a rebuild costs the user's ticks
+    and keyboard position. (The sort key lives in the page and survives.)
+
+    What this asserts is the backend half: no rebuild, one targeted push.
+    Nothing in this suite executes the page."""
     api, _window, _rows, _watcher = rename_api(tmp_path)
     rebuilt = []
     api.list_rows = lambda preselect=None: rebuilt.append(True)
@@ -475,8 +485,13 @@ def test_rename_reports_the_new_name_to_the_page_without_rebuilding(tmp_path):
 
 def test_rename_carries_the_watcher_entry_so_it_is_not_announced(tmp_path):
     """THE regression. The seen-set is keyed by path, so without this the
-    next poll announces the renamed file as a finished recording -- days
-    later, reading as a bug about OBS."""
+    next completed settle cycle announces the renamed file as a finished
+    recording, preselected and ready to upload -- which reads as a bug
+    about OBS rather than about the rename.
+
+    This pins the delegation; tests/test_watcher.py owns the announcement
+    itself, including the control test that proves an unmigrated rename IS
+    announced."""
     api, _window, rows, watcher = rename_api(tmp_path)
     old = rows["r0"].path
 
@@ -521,10 +536,14 @@ def test_a_renamed_link_survives_a_restart(tmp_path):
 
 
 def test_rename_is_refused_while_an_upload_runs(tmp_path):
-    """A STITCHED upload holds its handle on the merged temporary, not on
-    the sources, so Windows will happily rename them mid-flight -- and
-    _link() then persists the URL against the path UploadJob captured
-    before dispatch, which no longer exists. The link is lost for good."""
+    """Refused whenever an upload thread is alive, which is all this test
+    exercises -- it fakes the thread rather than running an upload.
+
+    The reason for the rule is the race it forecloses: the uploader reads
+    a source path when it opens it, and on the stitched path the open
+    handle is on the merged temporary rather than on the sources, so
+    Windows would allow the rename outright. Verifying THAT needs a real
+    stitched upload on Windows, which is why it is also a smoke item."""
     api, _window, rows, _watcher = rename_api(tmp_path)
     old = rows["r0"].path
     gate = threading.Event()
@@ -575,7 +594,12 @@ def test_rename_leaves_every_store_untouched_when_it_fails(tmp_path):
 def test_a_case_only_rename_is_not_a_collision(tmp_path):
     """fight.mkv -> Fight.mkv is the rename a user is most likely to want,
     and on a case-insensitive filesystem the file IS its own destination.
-    Refusing it as a clash would be the validator arguing with itself."""
+    Refusing it as a clash would be the validator arguing with itself.
+
+    On Linux, where this suite runs, Fight.mkv simply does not exist and
+    the ordinary path succeeds -- so this pins that the normcase check
+    does not refuse it, not that NTFS accepts a case-only MoveFileExW.
+    That one is a smoke item, and a load-bearing one."""
     api, _window, _rows, _watcher = rename_api(tmp_path, names=("fight.mkv",))
 
     result = api.rename_recording("r0", "Fight")
@@ -686,3 +710,55 @@ def test_the_name_validator_is_pure_and_shared(tmp_path):
     assert library.rename_problem("Fight 12") is None
     assert library.rename_problem("") is not None
     assert library.rename_problem("CON") is not None
+
+
+def test_a_post_that_cannot_start_does_not_latch_the_button(tmp_path, monkeypatch):
+    """The claim is taken before the worker exists, so a thread that never
+    starts would leave it taken -- and nothing else clears it. The button
+    would then refuse for the rest of the process, which is the one failure
+    worse than the post not happening."""
+    api, _asked = logs_api(tmp_path, monkeypatch)
+    posts(monkeypatch)
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(api, "_spawn", refuse)
+    sent = fakes.record_pushes(api)
+
+    api.post_recent_logs()
+
+    assert api._logs_busy() is False
+    assert fakes.payloads(sent, "onLogPostRunning")[-1] == {"running": False}
+    assert fakes.payloads(sent, "onStatus")[-1]["kind"] == "WARNING"
+
+
+def test_a_list_rebuild_restates_the_flag(tmp_path, monkeypatch):
+    """The only repair available for a disarm lost into a hidden window.
+    _push swallows those, and a button the page has drawn as disabled takes
+    neither a click nor a keypress, so it cannot ask for its own repair. A
+    rebuild is what a watcher announcement, a delete and a folder change
+    all produce."""
+    api, _window, _rows = api_with(tmp_path)
+    del api.list_rows  # the fixture stubs it out; here it is the subject
+    api._state.settings["recording_dir"] = str(tmp_path)
+    sent = fakes.record_pushes(api)
+
+    api.list_rows()
+
+    assert fakes.payloads(sent, "onLogPostRunning") == [{"running": False}]
+
+
+def test_a_reserved_device_name_is_refused_whatever_follows_it(tmp_path):
+    """Windows reserves the device name before the first dot, so CON.foo
+    is refused as surely as CON -- and the whole point of validating here
+    rather than letting the filesystem answer is that the filesystem says
+    "the system cannot find the path specified"."""
+    assert library.rename_problem("CON.foo") is not None
+    assert library.rename_problem("lpt1.backup") is not None
+    # Not a device name, and must not be caught by the same rule.
+    assert library.rename_problem("CONVOY.2") is None
+
+    api, _window, rows = api_with(tmp_path)
+    assert api.rename_recording("r0", "CON.foo")["ok"] is False
+    assert rows["r0"].path.exists()

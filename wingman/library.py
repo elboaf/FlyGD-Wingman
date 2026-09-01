@@ -370,6 +370,13 @@ def rename_problem(stem: str) -> str | None:
         return "A name cannot end in a dot."
     if name.upper() in _RESERVED_STEMS:
         return f"{name} is a name Windows reserves. Choose another."
+    # Before the first dot, not the whole stem: Windows reserves the device
+    # name whatever follows it, so CON.foo is refused as surely as CON --
+    # and this validator exists to say WHICH rule was broken rather than
+    # leave the user with "the system cannot find the path specified".
+    head = name.split(".", 1)[0]
+    if head.upper() in _RESERVED_STEMS:
+        return f"{head} is a name Windows reserves. Choose another."
     return None
 
 

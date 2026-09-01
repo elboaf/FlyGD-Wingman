@@ -542,15 +542,16 @@ def test_the_upload_button_is_in_the_card_that_names_the_upload():
 
 
 def test_the_combat_log_card_is_last_so_upload_keeps_its_position():
-    """The panel is a fixed-width column with overflow-y: auto, so a second
-    card is what makes it scroll at the 840x625 floor. Uploader 9's whole
-    complaint was that the most-pressed control in the app was last in a
-    stack that overflowed the pane; ordering the new card AFTER the upload
-    card is what preserves that fix, because the control that may fall
-    below the fold is then the least-pressed one on the screen.
+    """Source order only -- nothing here renders the page or measures it.
 
-    Asserted rather than left to a comment: the ordering IS the argument,
-    and an edit moving the card up would look harmless."""
+    The reason the order matters: the panel is a fixed-width column with
+    overflow-y: auto, so a second card is what can make it scroll at the
+    840x625 floor. Uploader 9's complaint was that the most-pressed control
+    in the app sat last in a stack that overflowed the pane, so the new
+    card goes after the upload card and the control that may fall below the
+    fold is the least-pressed one on the screen. Whether it actually does
+    is a smoke item; the ordering IS the argument, and an edit moving the
+    card up would look harmless."""
     route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
     assert route.index('id="btn-upload"') < route.index('id="btn-post-logs"')
     assert route.index('id="destination"') < route.index("<h2>Combat logs</h2>")
@@ -567,16 +568,16 @@ def test_posting_the_last_hour_is_reachable_without_an_upload():
 
 
 def test_the_post_button_is_not_gated_on_the_webhook():
-    """The page cannot hold a current answer to "is a webhook configured":
-    get_settings is fetched once at page load and nothing pushes a settings
-    payload, so a control disabled on that fact stays dead for the rest of
-    the session after the user configures one. That is what WM.setEnabled's
-    rule forbids, and it is the bug _with_webhook_status exists because
-    Settings shipped once already.
+    """The page cannot be relied on to hold a current answer to "is a
+    webhook configured": nothing pushes a settings payload, and the only
+    refresh is list.js's own get_settings call, made at load and then only
+    when the list comes back EMPTY. A user who configures a webhook with
+    recordings on screen never triggers it, so a control disabled on that
+    fact would stay dead until the next launch -- which is what
+    WM.setEnabled's rule forbids.
 
-    So the ONLY thing that may disable this button is the pushed running
-    flag. The note beside it still states the fact; Python composes every
-    refusal."""
+    What is asserted is narrower than that argument: the ONLY thing that
+    may disable this button is the pushed running flag."""
     enabled = re.findall(r"WM\.setEnabled\('btn-post-logs',([^)]*)\)", PANEL_JS)
     assert enabled == [" !p.running"], enabled
     # The settings handler renders the note and must not reach the button.
@@ -588,19 +589,28 @@ def test_the_post_button_is_not_gated_on_the_webhook():
 def test_the_post_button_cannot_be_left_dead_by_a_lost_push():
     """_push swallows every evaluate_js failure, and a push into a HIDDEN
     window is swallowed outright -- this is a tray app whose window is
-    routinely closed. So the disarm needs both halves: a finally at the
-    outermost frame, and a re-statement on every call, so a click that
-    arrives against a stale render both works and repairs the display."""
+    routinely closed mid-work. So the disarm has three parts, and this
+    pins their structure rather than their effect: a finally at the
+    outermost frame of the worker, a re-statement on every call including
+    the refusals, and a re-statement on every list rebuild.
+
+    The last one is not redundant. A button the page has drawn as disabled
+    takes neither a click nor a keypress, so it cannot ask for its own
+    repair; a rebuild -- a watcher announcement, a delete, a folder change
+    -- is what arrives without the user's help."""
     method = API_PY[API_PY.index("def post_recent_logs") :]
     method = method[: method.index("def _recent_logs_worker")]
-    # Every exit states the flag: three refusals and the dispatch.
-    assert method.count('_push("onLogPostRunning"') == 4
+    # Three refusals, the dispatch, and the worker that would not start.
+    assert method.count('_push("onLogPostRunning"') == 5
     worker = API_PY[API_PY.index("def _recent_logs_worker") :]
     # To the end of that method, whatever follows it: the combat-log
     # section's order has moved before and the slice must not depend on it.
     worker = worker[: re.search(r"\n    def ", worker[1:]).end()]
     assert "finally:" in worker
     assert worker.index("finally:") < worker.index('_push("onLogPostRunning"')
+    rebuild = API_PY[API_PY.index("def list_rows") :]
+    rebuild = rebuild[: rebuild.index("def panel_text")]
+    assert '_push("onLogPostRunning", {"running": self._logs_busy()})' in rebuild
 
 
 def test_the_row_menu_separates_the_file_from_the_video():
@@ -650,9 +660,14 @@ def test_rename_asks_through_the_pages_own_dialog():
 
 
 def test_a_rename_repaints_one_row_rather_than_rebuilding_the_list():
-    """A rebuild re-mints every id (ui/rows.py) and the selection, focus
-    ring and sort position go with them. The machinery to avoid that
-    already exists, for a landing ffprobe result."""
+    """A rebuild mints fresh ids (ui/rows.py) and this file drops every
+    selection and focus id it no longer recognises, so the user's ticks and
+    keyboard position go with them. (The sort key survives -- it lives in
+    the page.) The machinery to repaint one row already exists, for a
+    landing ffprobe result.
+
+    Lexical, like everything here: what is asserted is that the handler
+    repaints and does not rebuild, not that the selection survived."""
     assert "WM.handle('onRowRenamed'" in LIST_JS
     handler = LIST_JS[LIST_JS.index("WM.handle('onRowRenamed'") :]
     handler = handler[: handler.index("});")]

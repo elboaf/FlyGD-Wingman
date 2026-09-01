@@ -856,6 +856,14 @@ class Api:
             self._rows.set_link(row_id, url)
 
         self._push("onRows", {"rows": self._rows.rows()})
+        # Restated on every rebuild, and this is the ONLY thing that can
+        # repair it. A disarming push lost into a hidden window (which
+        # _push swallows, by design) leaves the page drawing the button as
+        # disabled, and a disabled button takes neither a click nor a
+        # keypress -- so it cannot ask for its own repair. A rebuild is
+        # what a watcher announcement, a delete and a folder change all
+        # produce, so the wrong state cannot outlive the next recording.
+        self._push("onLogPostRunning", {"running": self._logs_busy()})
         work = [
             (row_id, info)
             for row_id, info in zip(ids, infos)
@@ -1022,23 +1030,31 @@ class Api:
         refusal re-opens that dialog with the typed text still in it, so a
         typo does not cost the whole name.
 
-        Runs on the BRIDGE THREAD deliberately. `Watcher` has no lock, and
-        the migration below is a pop-and-insert plus a save whose payload
-        iterates `seen` -- a concurrent `poll_once` is one
-        "dictionary changed size during iteration" away. The bridge thread
-        is the one thread that cannot be running the poll, the work is
-        milliseconds of metadata, and there is nothing to park on: the page
-        has already answered the prompt.
+        Runs on the BRIDGE THREAD deliberately, but not because that makes
+        it exclusive: `poll_tick` runs on the Scheduler's thread, so a poll
+        CAN land in the middle of this. The stores below tolerate that --
+        each mutation is a single dict operation and `Watcher._save` copies
+        before it walks -- and the alternative, a worker, would buy nothing:
+        the work is milliseconds of metadata with no dialog to park on,
+        because the page has already answered the prompt.
+
+        The one visible consequence of that race is benign. A rebuild
+        landing between `resolve` and `self._rows.rename` re-mints the ids,
+        so the repaint below finds nothing -- but that rebuild has just
+        re-scanned the folder and is already drawing the new name.
         """
-        # First, and not for tidiness. A STITCHED upload holds its handle on
-        # the merged temporary, not on the sources (_upload_worker), so
-        # Windows would allow this -- and _link() afterwards persists the
-        # URL against the path UploadJob captured BEFORE dispatch, which by
-        # then names nothing. The video publishes and its link is lost for
-        # good, because nothing rebuilds links.json. Refusing for the
-        # duration is one predicate and one sentence, and it covers the
-        # plain path too rather than depending on a sharing side-effect
-        # that only one of the two paths happens to have.
+        # First, and not for tidiness. The uploader reads a source path at
+        # the moment it opens it: on the plain path _upload_one is handed
+        # job.items[index].path per item, and _link persists against the
+        # same VideoInfo afterwards. Renaming underneath that is a race
+        # with no good outcome -- an item not yet started uploads under
+        # whichever name won, and an item already open fails the rename
+        # with a sharing violation the user reads as "that file could not
+        # be renamed" while an upload they can see is running fine.
+        # Refusing for the duration is one predicate and one sentence, and
+        # it covers the stitched path too, where the open handle is on the
+        # merged temporary rather than on the sources -- so Windows would
+        # otherwise allow the rename outright.
         if self._busy():
             return {
                 "ok": False,
@@ -1303,6 +1319,12 @@ class Api:
         exclude each other and nothing else about them is the same. Reads
         the claimed flag rather than a thread's liveness -- see the note
         beside `_logs_lock`.
+
+        "Exclude each other" is intent, not an atomic transition: this and
+        `_busy()` are read separately by two check-then-act callers,
+        exactly as start_upload's own upload-versus-upload guard has always
+        worked. Both are reached by clicking a button, and a human cannot
+        click two at once.
         """
         with self._logs_lock:
             return self._logs_running
@@ -1930,20 +1952,25 @@ class Api:
         `_probe_now`, and no "the time window cannot be worked out".
 
         Refusals are reported on the strip rather than gating the button.
-        The page CANNOT hold a current answer to "is a webhook configured":
-        `get_settings` is fetched once, at page load, and no endpoint pushes
-        a settings payload -- so a control disabled on that fact stays dead
-        for the rest of the session after the user configures one, which is
-        exactly what `WM.setEnabled`'s rule forbids. The button is live and
-        Python says why, the posture `Open folder` and `Delete selected`
-        already take.
+        The page CANNOT be relied on to hold a current answer to "is a
+        webhook configured": nothing pushes a settings payload, and the
+        only refresh is `list.js`'s own `get_settings` call, which it makes
+        at load and then only when the list comes back EMPTY. A user who
+        configures a webhook with recordings on screen never triggers it,
+        so a control disabled on that fact would stay dead until the next
+        launch -- which is what `WM.setEnabled`'s rule forbids. The button
+        is live and Python says why, the posture `Open folder` and `Delete
+        selected` already take.
 
-        Every exit re-states the running flag. That is the other half of a
-        defence against a lost push: `_push` swallows every `evaluate_js`
-        failure, and a push into a HIDDEN window is swallowed outright --
-        this is a tray app -- so a disarm can go missing and leave the
-        button inert. A click that arrives anyway, by keyboard or against a
-        stale render, both works and repairs the display.
+        Every exit re-states the running flag, and `list_rows` re-states it
+        too. That is a defence against a lost push: `_push` swallows every
+        `evaluate_js` failure, and a push into a HIDDEN window is swallowed
+        outright -- this is a tray app whose window is routinely closed
+        mid-work -- so a disarm can go missing and leave the button drawn
+        as disabled. The repair CANNOT come from the button itself, because
+        a disabled button takes neither a click nor a keypress. It comes
+        from the next list rebuild, which a watcher announcement, a delete
+        or a folder change all produce.
         """
         if self._logs_busy():
             self._push("onLogPostRunning", {"running": True})
@@ -1973,20 +2000,34 @@ class Api:
             if self._logs_running:
                 return
             self._logs_running = True
-        self._logs_thread = threading.Thread(
-            target=self._recent_logs_worker,
-            args=(target.hook, target.gamelogs_dir),
-            daemon=True,
-        )
-        self._logs_thread.start()
+        try:
+            self._logs_thread = self._spawn(
+                target=self._recent_logs_worker,
+                args=(target.hook, target.gamelogs_dir),
+                daemon=True,
+            )
+            self._logs_thread.start()
+        except RuntimeError:
+            # A claim taken and never released is the worst outcome this
+            # method has: nothing else clears it, so the button would
+            # refuse for the rest of the process. "can't start new thread"
+            # is rare, and it is exactly the failure that would latch it.
+            logger.exception("Could not start the combat-log post")
+            with self._logs_lock:
+                self._logs_running = False
+            self._push("onLogPostRunning", {"running": False})
+            self._status("Combat logs not posted: it could not start.", "WARNING")
 
     def _recent_logs_worker(self, hook, gamelogs_dir) -> None:
         """The standalone post, on its own thread.
 
-        The clock is read HERE rather than in the bridge method so the hour
-        ends where the work starts. The difference is microseconds; the
-        point is that one function decides the window and it is the one
-        that builds the archive.
+        The clock is read HERE rather than in the bridge method so that one
+        function decides the window and it is the one that builds the
+        archive. The hour therefore ends when the work starts rather than
+        when the click landed; thread scheduling puts no bound on that gap,
+        and combatlog.WINDOW_PADDING widens the selection by five minutes
+        each side anyway, so no fight sits near enough to the edge for the
+        difference to decide whether it is included.
         """
         try:
             end_utc = datetime.datetime.now(datetime.UTC)

@@ -219,9 +219,10 @@ class RowSnapshot:
         The id is the point. A rebuild would answer the same question --
         `list_rows` re-discovers the folder and would show the new name --
         but it mints fresh ids for every row, and the page drops its
-        selection, its focus ring and its sort position with them. A
-        rename is an incidental action on one row; the only other refresh
-        that clears a selection is Delete, which consumed that selection.
+        selection and its focus ring with them (web/list.js drops unknown
+        ids on every `onRows`; the sort key survives, being page state).
+        A rename is an incidental action on one row, where every other
+        rebuild follows something that changed the folder.
 
         Three things move together, and missing any one leaves the page
         disagreeing with the backend about the same row:
@@ -230,9 +231,10 @@ class RowSnapshot:
           (upload, delete, play) and which would otherwise name a file that
           no longer exists;
         - the in-memory link, keyed by PATH here so it can outlive a
-          rebuild -- this map is what the CELL renders from, so a rename
-          that migrates only the persisted store shows an unlinked row
-          until the next relaunch;
+          rebuild. It is NOT what the visible cell renders from -- the
+          Row's own `link` field is, and a rename leaves that untouched --
+          but a later bare `rebuild()` restores links from this map, so a
+          key left behind quietly drops the arrow at that point;
         - the Row's rendered name.
 
         Unknown id is a no-op, exactly as set_link and set_duration treat

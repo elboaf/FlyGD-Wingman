@@ -136,20 +136,22 @@
   // was posted.
   //
   // In particular this is NOT gated on the webhook the note above it
-  // describes. get_settings is fetched once, at page load, and nothing
-  // pushes a settings payload, so the page's copy of that fact is fixed
-  // for the session: a button disabled on it would stay dead after the
-  // user configured a webhook, which is precisely what WM.setEnabled's
-  // rule forbids.
+  // describes. Nothing pushes a settings payload, and the only refresh is
+  // this page's own get_settings call, made at load and then only when the
+  // list comes back empty -- so a user who configures a webhook with
+  // recordings on screen never triggers one. A button disabled on that
+  // stale fact would stay dead until the next launch, which is precisely
+  // what WM.setEnabled's rule forbids.
   WM.el('btn-post-logs').addEventListener('click', function () {
     WM.send('post_recent_logs');
   });
 
   // The one state the page cannot work out for itself, so Python pushes
   // it: a post is running, and a second one must not start on top of it.
-  // Every call to post_recent_logs re-states this, so a push lost into a
-  // hidden window (which _push swallows) cannot leave the button dead --
-  // a click that arrives anyway both works and repairs the display.
+  // Python re-states it on every call AND on every list rebuild, because
+  // a push lost into a hidden window (which _push swallows) would leave
+  // this button drawn as disabled -- and a disabled button cannot be
+  // clicked to ask for its own repair.
   WM.handle('onLogPostRunning', function (p) {
     WM.setEnabled('btn-post-logs', !p.running);
   });
