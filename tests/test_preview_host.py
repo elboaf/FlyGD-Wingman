@@ -621,7 +621,7 @@ def test_plan_merges_duplicate_chords():
     A multiboxer runs a different subset of their characters each session
     and wants one physical key to mean "go to whichever of these is up".
     One registration carries every name bound to it -- Windows only has
-    one to give -- and _on_hotkey picks among the names actually running.
+    one to give -- and _on_hotkeys picks among the names actually running.
     """
     plan = host.plan_registrations(
         {
@@ -947,17 +947,22 @@ def test_host_proc_coalesces_hotkeys_before_dispatch(monkeypatch):
     user32 = _FakeUser32()
     user32.PeekMessageW = lambda *_args: 0
     libs = _FakeLibs(user32)
+    coalesce_calls = []
     batches = []
     monkeypatch.setattr(host.win32, "bind", lambda: libs)
+
+    def fake_coalesce(peek, hwnd, ident):
+        coalesce_calls.append((peek, hwnd, ident))
+        return [int(ident), 22, 33]
+
+    monkeypatch.setattr(host, "coalesce_hotkey_ids", fake_coalesce)
     monkeypatch.setattr(
-        host,
-        "coalesce_hotkey_ids",
-        lambda peek, hwnd, ident: [int(ident), 22, 33],
+        h, "_on_hotkeys", lambda got_libs, ids: batches.append((got_libs, ids))
     )
-    monkeypatch.setattr(h, "_on_hotkeys", lambda got_libs, ids: batches.append(ids))
 
     assert h._host_proc(0x99, host.win32.WM_HOTKEY, 11, 0) == 0
-    assert batches == [[11, 22, 33]]
+    assert coalesce_calls == [(user32.PeekMessageW, 0x99, 11)]
+    assert batches == [(libs, [11, 22, 33])]
 
 
 def _batch_hotkey_host():
@@ -988,6 +993,19 @@ def test_three_focus_hotkeys_activate_only_the_last_target(monkeypatch):
     h._on_hotkeys(libs, [1, 2, 3])
 
     assert activated == [0x3333]
+
+
+def test_repeated_shared_focus_chord_uses_the_virtual_target(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("focus", ("Alice", "Bravo"))}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 1])
+
+    assert activated == [0x1111]
 
 
 def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch):
@@ -1084,9 +1102,38 @@ def test_coalesced_hotkeys_emit_one_debug_summary(monkeypatch, caplog):
         for record in caplog.records
         if "coalesced preview hotkeys" in record.message.lower()
     ]
-    assert len(summaries) == 1
-    assert "3" in summaries[0]
-    assert "Delta" in summaries[0]
+    assert summaries == ["Coalesced preview hotkeys: 3, final ('cycle', 1) -> Delta"]
+
+
+def test_offline_focus_batch_does_not_add_a_target_none_diagnostic(caplog):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._registered = {1: ("focus", ("Ghost",))}
+
+    with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
+        h._on_hotkeys(_FakeLibs(_FakeUser32(foreground=0)), [1])
+
+    messages = [record.message for record in caplog.records]
+    assert messages.count("Preview hotkey targets ('Ghost',) are not running") == 1
+    assert "Preview hotkey target None is not running" not in messages
+
+
+def test_empty_cycle_batch_does_not_add_a_target_none_diagnostic(monkeypatch, caplog):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1)}
+    monkeypatch.setattr(h, "_cycle_keys", list)
+
+    with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
+        h._on_hotkeys(libs, [1])
+
+    messages = [record.message for record in caplog.records]
+    assert (
+        messages.count(
+            "Cycle keybind had nothing to visit: every running character "
+            "is opted out of previews"
+        )
+        == 1
+    )
+    assert "Preview hotkey target None is not running" not in messages
 
 
 def test_hotkey_focuses_the_named_character(monkeypatch):
@@ -1358,7 +1405,7 @@ def test_a_raising_capture_callback_does_not_kill_the_pump():
 
 
 def test_hotkey_dispatch_is_logged_including_silent_early_returns(monkeypatch, caplog):
-    """_on_hotkey had no logging at all: an unknown id and a not-running
+    """Hotkey dispatch had no logging at all: an unknown id and a not-running
     target both returned silently, and a field report of 'my hotkey does
     nothing' had no dispatch line to distinguish 'never fired' from 'fired
     but the target was not running' from 'fired and worked'."""

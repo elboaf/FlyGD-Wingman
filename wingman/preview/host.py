@@ -143,7 +143,12 @@ def _animation_off(libs):
 
 
 def coalesce_hotkey_ids(peek, hwnd, first_ident) -> list[int]:
-    """Drain this host's queued hotkeys without disturbing other messages."""
+    """Drain this host's queued hotkeys without disturbing other messages.
+
+    There is deliberately no cap: every queued press contributes to the
+    sequential target, while folding keeps the cost to one final activation.
+    PeekMessageW stops as soon as this host's finite hotkey queue is caught up.
+    """
     ids = [int(first_ident)]
     message = wintypes.MSG()
     while peek(
@@ -185,7 +190,7 @@ def plan_registrations(table) -> list:
     characters on one chord is a supported setup: a multiboxer runs a
     different subset each session and wants one key to mean "go to
     whichever of these is up". Windows has only one registration per
-    chord to give, so the names ride together on it and _on_hotkey
+    chord to give, so the names ride together on it and _on_hotkeys
     resolves between them against who is actually running.
     """
     table = table if isinstance(table, dict) else {}
@@ -743,8 +748,6 @@ class PreviewHost:
     # ---- everything below runs ON the preview thread -------------------
 
     def _run(self) -> None:
-        from ctypes import wintypes
-
         libs = win32.bind()
 
         # First, before any window exists. Thread-local, so the process
@@ -789,7 +792,6 @@ class PreviewHost:
         nothing to signal and blocks until its timeout on exactly the
         paths that matter most.
         """
-        from ctypes import wintypes
 
         class WNDCLASSW(ctypes.Structure):
             _fields_ = [
@@ -1265,7 +1267,7 @@ class PreviewHost:
             final_action = action
             kind, value = action
             if kind == "focus":
-                target = self._pick_focus_target(libs, value)
+                target = self._pick_focus_target(value, target)
                 if target is None:
                     # An unavailable absolute request supersedes an earlier
                     # virtual target; a later action can establish a new one.
@@ -1299,13 +1301,18 @@ class PreviewHost:
         else:
             logger.debug("Preview hotkey fired: %s -> %s", final_action, target)
 
+        if target is None:
+            # The action-specific branch already explained why resolution
+            # failed; a second "target None is not running" line is noise.
+            return
         if cycle_seen and target == foreground_key:
+            # A folded cycle sequence can cancel back to its starting client,
+            # so activating would add work without changing sequential state.
+            # This intentionally also makes cycling a one-client roster a no-op.
             return
         client = self._clients.get(target)
         if client is None:
-            # Bound to a character that is not running, or no action in the
-            # batch resolved. Log it so this remains distinguishable from a
-            # chord that never reached the process.
+            # A concrete target can disappear between resolution and dispatch.
             logger.debug("Preview hotkey target %r is not running", target)
             return
         # Keep one final call: Task 3 owns pending restore and minimize policy.
@@ -1335,7 +1342,7 @@ class PreviewHost:
                 logger.exception("on_bind_captured callback raised")
         return True
 
-    def _pick_focus_target(self, libs, names):
+    def _pick_focus_target(self, names, current_target):
         """Which of the characters sharing this chord to switch to.
 
         Several names on one chord is the supported multibox setup (see
@@ -1343,21 +1350,20 @@ class PreviewHost:
         group is up. So offline names are not an error here, they are the
         normal case -- they are simply skipped.
 
-        Among the ones running, prefer any that is not already in the
-        foreground, so a press always moves you. It is a tie-break and not
-        a filter: with a single running match that happens to be in front,
-        that match is still the answer, or the key would go dead exactly
-        while the user is looking at that client.
+        Among the ones running, prefer any that is not the batch's virtual
+        target, so queued presses behave like sequential activations even
+        though only the final target is activated. It is a tie-break and not
+        a filter: with a single running match that is already the target, that
+        match is still the answer, or the key would go dead on that client.
 
-        Sorted, so with several running and none in front the choice is
+        Sorted, so with several running and no current match the choice is
         stable rather than dependent on discovery order.
         """
         running = sorted(name for name in names if name in self._clients)
         if not running:
             return None
-        foreground = libs.user32.GetForegroundWindow()
         for name in running:
-            if self._clients[name].hwnd != foreground:
+            if name != current_target:
                 return name
         return running[0]
 
@@ -1909,7 +1915,7 @@ class PreviewHost:
         """
         if libs is None or not foreground:
             return False
-        from ctypes import byref, wintypes
+        from ctypes import byref
 
         try:
             pid = wintypes.DWORD()
@@ -1987,7 +1993,7 @@ class PreviewHost:
         to keep showing an excluded character or there would be no row left
         to re-enable them from.
 
-        Note what this does NOT filter: the ANCHOR in _on_hotkey is still
+        Note what this does NOT filter: the ANCHOR in _on_hotkeys is still
         resolved against _clients, so cycling while an excluded character's
         own client holds the foreground finds an anchor that is not in this
         list. cycle.step then takes its documented "anchor has gone"
