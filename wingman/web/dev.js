@@ -33,6 +33,7 @@
   ['set_privacy', 'set_notify_mode', 'set_category',
    'set_discord_webhook', 'clear_discord_webhook',
    'set_alert_enabled', 'set_alert_pve_filter', 'set_alert_persist',
+   'set_alert_volume',
    // M3. Same three-key shape, and it belongs in this list rather than the
    // generic one for the same reason: the ABOUT card reverts its checkbox
    // on anything that is not `applied`.
@@ -484,14 +485,19 @@
             hide_on_lost_focus: true,
             alerts: { enabled: true, pve_filter: true,
               persist_until_selected: true,
+              // 70, against a shipped default of 100, for the same reason
+              // hide_on_lost_focus is true above: a fixture matching the
+              // default cannot show that the slider reads the payload
+              // rather than sitting where the markup left it.
+              volume: 70,
               events: {
-                combat: { enabled: true, cooldown_s: 1, duration_ms: 1200,
+                combat: { enabled: true, cooldown_s: 1, flash_rate: 'fast',
                   pulses: 3, color: '#ff4d4d', sound: 'alarm' },
                 warp_scramble: { enabled: true, cooldown_s: 8,
-                  duration_ms: 1200, pulses: 3, color: '#ffd24d',
+                  flash_rate: 'normal', pulses: 3, color: '#ffd24d',
                   sound: 'ring' },
-                decloak: { enabled: true, cooldown_s: 8, duration_ms: 1200,
-                  pulses: 3, color: '#4dd2ff', sound: 'notify' }
+                decloak: { enabled: true, cooldown_s: 8, flash_rate: 'slow',
+                  pulses: 5, color: '#4dd2ff', sound: 'notify' }
               }
             }
           },

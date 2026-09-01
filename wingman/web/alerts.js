@@ -134,9 +134,46 @@
       enabled: WM.el('alert-event-' + id + '-enabled'),
       colors: WM.el('alert-event-' + id + '-colors'),
       sound: WM.el('alert-event-' + id + '-sound'),
+      flashes: WM.el('alert-event-' + id + '-flashes'),
+      speed: WM.el('alert-event-' + id + '-speed'),
       test: WM.el('alert-event-' + id + '-test'),
       msg: WM.el('alert-event-' + id + '-msg')
     };
+  }
+
+  // How many flashes an event may be given. Built here rather than typed
+  // into index.html so the ceiling is one number rather than ten <option>
+  // elements, and kept well inside settings.validated_alerts' 1-16 clamp:
+  // past about eight the ring is still pulsing when the next event lands,
+  // and the count stops being something anyone counts.
+  // test_page_conventions.py checks this against the clamp.
+  var FLASH_COUNTS = [1, 2, 3, 4, 5, 6, 8, 10];
+
+  function paintFlashCounts(row, stored) {
+    if (!row.flashes) { return; }
+    var wanted = FLASH_COUNTS.slice();
+    // A stored count outside the offered set gets its own option rather
+    // than leaving the <select> blank. settings.validated_alerts keeps
+    // anything from 1 to 16, so a hand-edited 7 is a legitimate state --
+    // and a blank control would be the card failing to show a setting
+    // that is genuinely in force. Same reasoning, and same shape, as
+    // paintSwatches' out-of-palette colour above.
+    var extra = parseInt(stored, 10);
+    if (extra > 0 && wanted.indexOf(extra) === -1) {
+      wanted.push(extra);
+      wanted.sort(function (a, b) { return a - b; });
+    }
+    if (row.flashes.getAttribute('data-built') === wanted.join(',')) { return; }
+    row.flashes.textContent = '';
+    wanted.forEach(function (n) {
+      var opt = document.createElement('option');
+      opt.value = String(n);
+      // textContent, not innerHTML: the same DOM-text rule WM.choose's
+      // options are built under.
+      opt.textContent = String(n);
+      row.flashes.appendChild(opt);
+    });
+    row.flashes.setAttribute('data-built', wanted.join(','));
   }
 
   // Each event row reports its own outcome, beside the control that
@@ -288,9 +325,20 @@
       row.enabled.checked = !!spec.enabled;
       var color = spec.color || (lastGood[id] || {}).color || COLOURS[0];
       var sound = spec.sound || 'none';
+      // Absent means the shipped default, matching pve_filter's precedent
+      // above: an upgrading user's file predates both keys, and a blank
+      // <select> would read as "no flashes" for a feature that has always
+      // flashed three times.
+      var flashes = String(spec.pulses || 3);
+      var speed = spec.flash_rate || 'normal';
       paintSwatches(row, id, color);
+      paintFlashCounts(row, flashes);
       row.sound.value = sound;
-      lastGood[id] = {color: color, sound: sound};
+      row.flashes.value = flashes;
+      row.speed.value = speed;
+      lastGood[id] = {
+        color: color, sound: sound, flashes: flashes, speed: speed
+      };
     });
     // After the loop, not inside it: a collision is a fact about the
     // whole card, and checking mid-loop would read lastGood entries the
@@ -335,6 +383,62 @@
   writeFlag(enabledBox, 'set_alert_enabled', 'Alerts');
   writeFlag(pveBox, 'set_alert_pve_filter', 'The PvE filter');
   writeFlag(persistBox, 'set_alert_persist', 'Persisting alerts');
+
+  // ---- volume ---------------------------------------------------------
+  // One level for all three sounds. Modelled on settings.js's opacity
+  // slider, including the two halves that are easy to get wrong: the
+  // readout follows `input` so the number tracks the thumb, and the WRITE
+  // happens on `change` only -- a range fires `input` per pixel dragged,
+  // and DESIGN.md's "discrete controls commit on change" exists to stop a
+  // settings write per pixel.
+  var volumeBox = WM.el('alert-volume');
+  var volumeValue = WM.el('alert-volume-value');
+  var volumeStatus = WM.el('alert-volume-status');
+  var lastGoodVolume = null;
+
+  function showVolume() {
+    if (volumeValue) { volumeValue.textContent = volumeBox.value + '%'; }
+  }
+
+  function applyVolume(alerts) {
+    if (!volumeBox) { return; }
+    // Absent means full volume, matching settings.py's default: a missing
+    // key on an upgrading install must not render as a silent app.
+    var stored = (alerts && typeof alerts.volume === 'number')
+      ? alerts.volume : 100;
+    volumeBox.value = String(stored);
+    lastGoodVolume = volumeBox.value;
+    showVolume();
+  }
+
+  if (volumeBox) {
+    volumeBox.addEventListener('input', showVolume);
+    volumeBox.addEventListener('change', function () {
+      var wanted = parseInt(volumeBox.value, 10);
+      WM.send('set_alert_volume', wanted).then(function (res) {
+        // The same three-way answer every field on this page gives, and
+        // the same reason each is distinct: a refusal never took effect
+        // (put the thumb back), a failed write did (leave it, and say it
+        // will not survive a restart).
+        if (!res) {
+          volumeBox.value = lastGoodVolume;
+          showVolume();
+          setText(volumeStatus, 'Could not reach the app. Nothing was changed.');
+          return;
+        }
+        if (!res.applied) {
+          volumeBox.value = lastGoodVolume;
+          showVolume();
+          setText(volumeStatus, res.error || 'That value was not accepted.');
+          return;
+        }
+        lastGoodVolume = volumeBox.value;
+        setText(volumeStatus, res.persisted ? ''
+          : 'Volume ' + wanted + '% is set for this session, but could not '
+            + 'be written to settings — it will not survive a restart.');
+      });
+    });
+  }
 
   EVENTS.forEach(function (id) {
     var row = eventRow(id);
@@ -405,6 +509,44 @@
         }
       });
     });
+
+    // The two flash controls are the same write in both cases -- one
+    // <select>, one field, one revert -- so they share a closure rather
+    // than repeating it twice per event. Deliberately NOT extended to
+    // sound or colour above: those two carry their own copy because each
+    // has a revert that is not a `.value` assignment (colour repaints a
+    // radiogroup) or its own sentence.
+    function writeChoice(control, field, key, noun) {
+      if (!control) { return; }
+      control.addEventListener('change', function () {
+        var wanted = control.value;
+        // Numbers cross the bridge as numbers: settings.py's clamp checks
+        // isinstance(value, int), so a string "5" is silently dropped and
+        // the flash count would appear to revert on the next read with
+        // nothing said.
+        var value = field === 'pulses' ? parseInt(wanted, 10) : wanted;
+        WM.send('set_alert_event', id, field, value).then(function (res) {
+          if (!res || !res.applied) {
+            control.value = (lastGood[id] || {})[key] || wanted;
+            sayRow(row, (res && res.error)
+              || 'That could not be changed, so it has been put back.', 'err');
+            return;
+          }
+          lastGood[id] = lastGood[id] || {};
+          lastGood[id][key] = wanted;
+          if (!res.persisted) {
+            sayRow(row, 'The ' + noun + ' is set for this session, but could '
+              + 'not be written to settings — it will not survive a '
+              + 'restart.', 'warn');
+          } else {
+            sayRow(row, '');
+          }
+        });
+      });
+    }
+
+    writeChoice(row.flashes, 'pulses', 'flashes', 'flash count');
+    writeChoice(row.speed, 'flash_rate', 'speed', 'flash speed');
     row.test.addEventListener('click', function () {
       // Never persistent (api.py's test_alert docstring): nothing here
       // is looking at a preview to acknowledge it, so nothing is saved.
@@ -536,7 +678,12 @@
     // is what the user just clicked, and a refused or bridge-failed write
     // reverts it. This must describe what the app is actually doing.
     showDepends(!!(state.alerts && state.alerts.enabled));
-    if (controls) { applyAlerts(state.alerts); }
+    if (controls) {
+      applyAlerts(state.alerts);
+      // Under `controls` with the rest: the two-second status poll must
+      // not drag the thumb back under a hand that is still moving it.
+      applyVolume(state.alerts);
+    }
   }
 
   function read(controls) {
@@ -597,6 +744,7 @@
     pveBox.checked = alerts.pve_filter !== false;
     persistBox.checked = alerts.persist_until_selected !== false;
     applyAlerts(alerts);
+    applyVolume(alerts);
   });
 
   // Refreshed on section entry, same reasoning as previews.js and

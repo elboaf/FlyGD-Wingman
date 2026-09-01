@@ -1014,6 +1014,24 @@
           </select>
           <button class="btn" id="alert-event-combat-test"
             aria-label="Test the Combat alert">Test</button>
+          <!-- A SECOND LINE, not two more columns. The four tracks above
+               already overflowed the card at the 840 floor once (see
+               .alert-events in style.css, where the sound column is "the
+               only one allowed to give"), and grid tracks do not wrap: six
+               of them would be a horizontally scrolling page, which
+               DESIGN.md forbids outright. Spanning 1 / -1 is what
+               .field-msg already does one line below for the same
+               reason. -->
+          <span class="alert-flash">
+            <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
+            <select class="field" id="alert-event-combat-flashes"></select>
+            <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
+            <select class="field" id="alert-event-combat-speed">
+              <option value="slow">Slow</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+          </span>
           <span class="field-msg" id="alert-event-combat-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1032,6 +1050,18 @@
           </select>
           <button class="btn" id="alert-event-warp_scramble-test"
             aria-label="Test the Warp scramble alert">Test</button>
+          <span class="alert-flash">
+            <label class="flash-lab"
+              for="alert-event-warp_scramble-flashes">Flashes</label>
+            <select class="field" id="alert-event-warp_scramble-flashes"></select>
+            <label class="flash-lab"
+              for="alert-event-warp_scramble-speed">Speed</label>
+            <select class="field" id="alert-event-warp_scramble-speed">
+              <option value="slow">Slow</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+          </span>
           <span class="field-msg" id="alert-event-warp_scramble-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1050,6 +1080,16 @@
           </select>
           <button class="btn" id="alert-event-decloak-test"
             aria-label="Test the Decloak alert">Test</button>
+          <span class="alert-flash">
+            <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
+            <select class="field" id="alert-event-decloak-flashes"></select>
+            <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
+            <select class="field" id="alert-event-decloak-speed">
+              <option value="slow">Slow</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+          </span>
           <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
         </div>
         </div>
@@ -1100,6 +1140,30 @@
             Keep pulsing until you select the preview
           </label>
         </div>
+        <div class="row">
+          <label class="lab" for="alert-volume">Volume</label>
+          <!-- One volume for all three sounds. Which sound an event makes
+               is already its own choice a row above; a per-event level to
+               balance them against each other would be a mixing desk for
+               three cues.
+
+               PERCENT and nothing else, so the readout needs no unit
+               conversion -- round 5's C2 is about a control whose printed
+               number was not its own unit, which is a trap this one
+               avoids by storing what it shows. 0 is genuinely silent:
+               play_sound returns before it resolves anything. -->
+          <input type="range" id="alert-volume" min="0" max="100">
+          <span class="range-value" id="alert-volume-value"></span>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- The one thing the slider cannot show, and the reason the
+               feature was asked for: the client you are flying does not
+               need to be told out loud what you can already see. -->
+          <span class="hint">The client you are looking at flashes without
+            a sound &mdash; alerts only interrupt for a client you are
+            not.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alert-volume-status" role="status"></span></div>
         </div>
       </section>
 

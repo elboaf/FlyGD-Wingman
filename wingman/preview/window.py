@@ -718,13 +718,21 @@ class PreviewWindow:
         self._frames_dirty = True
 
     def arm_alert(self, event: str, spec: dict, now: float) -> None:
+        pulses = spec.get("pulses", 3)
         self._alert = alerts_state.arm(
             self._alert,
             event,
             spec.get("color", "#ff4d4d"),
             now,
-            duration_ms=spec.get("duration_ms", 1200),
-            pulses=spec.get("pulses", 3),
+            # DERIVED here, and only here. The spec carries how many
+            # flashes the event gets and how fast each one is; the
+            # duration is their product. Both paths that raise an alert --
+            # the poll thread through PreviewHost._apply_alerts, and
+            # api.test_alert -- arrive at this method, so deriving at this
+            # one site is what keeps the stored pair the only source of
+            # truth for how long a ring pulses.
+            duration_ms=alerts_state.duration_for(spec.get("flash_rate"), pulses),
+            pulses=pulses,
             # Global, not per-event: persist_until_selected lives beside
             # `events` in the alerts section, and AlertService merges it
             # into the spec it dispatches so this stays one dict.

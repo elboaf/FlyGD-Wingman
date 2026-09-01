@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import bookmarks, paths
 from .alerts import patterns as alert_patterns
+from .alerts import state as alert_state
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
 from .preview import roster as preview_roster
@@ -21,6 +22,11 @@ from .preview import roster as preview_roster
 # normalises to silence, which is indistinguishable from a broken alert --
 # so the two lists are checked against the assets folder in the sound task.
 VALID_SOUNDS = {"none", "alarm", "ring", "notify"}
+
+# The speed presets, owned by alerts/state.py because that is where a
+# preset becomes a duration. Named here only so the validators below read
+# in one place.
+VALID_FLASH_RATES = frozenset(alert_state.FLASH_MS)
 
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -56,6 +62,16 @@ def _alerts_defaults() -> dict:
         # An alert that expires while you are in a browser has told you
         # nothing, which is the whole case for the feature.
         "persist_until_selected": True,
+        # One volume for every alert sound, 0-100, applied by scaling the
+        # samples (alerts/sound.py). Global rather than per event: the
+        # sound each event makes is already its own choice, and a second
+        # per-event number to balance them against each other is a mixing
+        # desk for three cues.
+        #
+        # 100 by default, which is byte-for-byte the file that ships --
+        # scaled_wav returns the original at full volume -- so an
+        # upgrading install hears exactly what it heard before.
+        "volume": 100,
         # Carried from the start on TriffView's evidence: it needed exactly
         # this migration, and rewrote only values that still equalled the
         # previous default so a customised setting was never overwritten.
@@ -67,8 +83,25 @@ def _alerts_defaults() -> dict:
         "events": {
             name: {
                 "enabled": True,
-                "duration_ms": 1200,
+                # How many flashes one event gets, and how fast each one
+                # is. The duration is DERIVED from the pair by
+                # alerts.state.duration_for and deliberately not stored:
+                # three numbers that have to agree by hand is how a
+                # user-visible value drifts (CLAUDE.md's derive-don't-
+                # retype rule). `duration_ms` was stored until 4.6.0 but
+                # was never writable from the page, so every install that
+                # did not hand-edit settings.json held the default 1200ms,
+                # which normal x 3 reproduces exactly. A hand-edited value
+                # IS dropped -- deliberately, since keeping it would be
+                # the second source of truth this removes; the file simply
+                # reverts to the derived duration.
+                #
+                # No defaults_version bump: _normalize rebuilds this
+                # section from these defaults, so a removed key needs no
+                # migration, and the marker exists for a changed DEFAULT
+                # rather than a changed shape.
                 "pulses": 3,
+                "flash_rate": alert_state.DEFAULT_FLASH_RATE,
                 **_ALERT_EVENT_DEFAULTS[name],
             }
             for name in alert_patterns.EVENTS
@@ -455,7 +488,6 @@ def _validated_alert_event(raw, defaults: dict) -> dict:
         event["enabled"] = raw["enabled"]
     for key, low, high in (
         ("cooldown_s", 0, 120),
-        ("duration_ms", 250, 15000),
         ("pulses", 1, 16),
     ):
         value = raw.get(key)
@@ -472,6 +504,13 @@ def _validated_alert_event(raw, defaults: dict) -> dict:
     sound = raw.get("sound")
     if isinstance(sound, str):
         event["sound"] = sound if sound in VALID_SOUNDS else "none"
+    rate = raw.get("flash_rate")
+    if isinstance(rate, str) and rate in VALID_FLASH_RATES:
+        # Falls back to the default rather than to silence's equivalent:
+        # duration_for already tolerates an unknown rate, so this screen
+        # is about not PERSISTING one, and a rejected value leaves the
+        # event flashing at the speed it had.
+        event["flash_rate"] = rate
     return event
 
 
@@ -484,6 +523,12 @@ def validated_alerts(raw) -> dict:
     for key in ("enabled", "pve_filter", "persist_until_selected"):
         if isinstance(raw.get(key), bool):
             section[key] = raw[key]
+    volume = raw.get("volume")
+    # `not isinstance(volume, bool)` for the same reason cooldown_s does
+    # it: bool is an int in Python, and True would become a volume of 1 --
+    # a setting indistinguishable from silence.
+    if isinstance(volume, int) and not isinstance(volume, bool):
+        section["volume"] = max(0, min(100, volume))
     version = raw.get("defaults_version")
     if isinstance(version, int) and not isinstance(version, bool):
         section["defaults_version"] = max(1, version)
