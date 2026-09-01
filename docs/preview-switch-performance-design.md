@@ -20,11 +20,29 @@ sequence identifies synchronous minimize-first as the source: removing A
 exposes the z-order below it before B activates. Activate-first removes that
 known gap while retaining exact outgoing-HWND validation.
 
-`ShowWindowAsync(previous, SW_MINIMIZE)` is deliberately fire-and-forget. Its
-BOOL reports the previous show state, not asynchronous completion, and is never
+`ShowWindowAsync(previous, SW_SHOWMINNOACTIVE)` is deliberately fire-and-forget.
+The command minimizes without activating the next top-level window, so late
+async delivery after a rapid return is less able to steal foreground. Its BOOL
+reports the previous show state, not asynchronous completion, and is never
 treated as a success or failure verdict. A sufficiently rapid return to the
 outgoing client can still race a late minimize request; Windows/EVE smoke is the
 acceptance gate for that residual risk.
+
+### Hotkeys queue as synchronous messages
+
+`RegisterHotKey` delivers `WM_HOTKEY` to the preview host HWND.
+`_host_proc()` completes its switch before the pump dispatches another message,
+so distinct rapid hotkeys queue and would replay in arrival order without the
+host's action fold. `MOD_NOREPEAT` prevents one held chord from auto-repeating;
+it does not collapse several distinct presses or chords.
+
+### Refusal remains a normal result
+
+Windows can refuse a foreground change when Wingman lacks recent user input.
+Previews intentionally remain non-activating, so `GetForegroundWindow` is the
+activation verdict: a refusal leaves the source foreground and selection ring
+unchanged, and performs no outgoing minimize. The retained `SetFocus` only runs
+after an observed target foreground; it does not turn a refusal into success.
 
 ## Constraints
 
@@ -107,7 +125,8 @@ executed after `ActivationResult.ACTIVATED`:
 
 1. mark the target foreground and update focused/selected previews;
 2. re-resolve the saved previous key and require its HWND to match exactly;
-3. request `ShowWindowAsync(previous.hwnd, SW_MINIMIZE)`.
+3. request `ShowWindowAsync(previous.hwnd, SW_SHOWMINNOACTIVE)`, which
+   minimizes without activating the next top-level window.
 
 Pending restoration retains that same decision without minimizing anything. A
 retry that observes target activation marks it first and then requests the
@@ -133,7 +152,10 @@ Click acknowledgement remains guaranteed even when activation fails. If clearing
 - A drained action whose character is offline does not resurrect an older discarded request.
 - Pending restore leaves the outgoing EVE client alone until a retry observes the target foreground. A target or saved outgoing HWND that exits or changes is logged and dropped rather than reused.
 - Refused activation leaves the previous EVE client untouched.
-- `ShowWindowAsync` completion is intentionally not inferred. A rapid return to an outgoing client can race a late async minimize request; this is a documented Windows smoke risk, not a recovered generation.
+- `ShowWindowAsync` completion is intentionally not inferred. Its
+  `SW_SHOWMINNOACTIVE` command avoids activating the next top-level window, but
+  a rapid return to an outgoing client can still race a late async minimize
+  request; this is a documented Windows smoke risk, not a recovered generation.
 - Failure to attach an input queue does not raise by itself; the bounded attempt still runs and observed foreground remains authoritative.
 - Exceptions detach every successful input attachment before propagating.
 
@@ -172,7 +194,9 @@ All production changes are test-first.
 ### Binding and convention guards
 
 - Exactly one `SetFocus(HWND) -> HWND` declaration is bound; `tests/test_preview_wiring.py` enforces the exact single declaration on every platform, while the ctypes completeness and pointer-sized-return tests in `tests/test_preview_win32.py` run only on Windows.
-- `ShowWindowAsync` is the sole live-client minimize mechanism. Its return is ignored because it reports prior show state rather than completion.
+- `ShowWindowAsync(SW_SHOWMINNOACTIVE)` is the sole live-client minimize
+  mechanism. Its return is ignored because it reports prior show state rather
+  than completion.
 - Guards reject synchronous minimize sends and every geometry-capable API receiving an EVE HWND.
 
 ### Verification commands
@@ -194,10 +218,11 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 4. Attempt a switch while Windows Search and, separately, a browser retain the foreground after Windows refuses activation. Type immediately into the retained application; keyboard input must still reach it because Wingman skips `SetFocus` unless it observed the EVE target foreground.
 5. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
 6. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
-7. Enable **Minimize inactive clients** and switch while clients are idle and during grid/session load. The target must become foreground and selected before its exact outgoing client receives the async minimize request; record any desktop/preview gap, wrong foreground, or late minimize after a rapid return.
-8. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys; on success, target selection precedes an async minimize of only the exact saved outgoing HWND. With **Hide previews on lost focus** and **Minimize inactive clients** enabled, do browser -> EVE A, then the first EVE A -> EVE B: the browser stays visible until A takes foreground and B appears without a browser or desktop frame.
-9. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
-10. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
+7. Enable **Minimize inactive clients** and switch while clients are idle and during grid/session load. The target must become foreground and selected before its exact outgoing client receives the `SW_SHOWMINNOACTIVE` request; record any desktop/preview gap or wrong foreground.
+8. Rapidly return A -> B -> A while idle and during B's grid/session load, through both preview clicks and character hotkeys. Fail the smoke if A minimizes after return or foreground jumps to browser/desktop. With **Hide previews on lost focus** and **Minimize inactive clients** enabled, also do browser -> EVE A, then the first EVE A -> EVE B: the browser stays visible until A takes foreground and B appears without a browser or desktop frame.
+9. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys; on success, target selection precedes an async minimize of only the exact saved outgoing HWND.
+10. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
+11. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
 
 ## Probe results — 2026-09-01
 

@@ -32,9 +32,18 @@ WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TRANSPARENT = 0x00000020
 
 SW_HIDE = 0
+# `SW_RESTORE` and this command are the narrow, closed show-state-only
+# interactions permitted for a live EVE HWND. The latter minimizes without
+# activating the next top-level window, so late async delivery after a rapid
+# return is less able to take foreground away from the requested client.
+# They affect only show state, never a rect or size. Do not add geometry or
+# placement APIs here: EVE read one as a resolution change and overwrote three characters'
+# settings in the 2026-08-24 destructive incident. Keep
+# tests/test_preview_wiring.py::test_the_client_placement_win32_surface_is_not_declared
+# guarding that boundary when changing this surface.
+SW_SHOWMINNOACTIVE = 7
 SW_SHOWNOACTIVATE = 8
 SW_RESTORE = 9
-SW_MINIMIZE = 6
 
 HWND_MESSAGE = -3
 HWND_TOPMOST = -1

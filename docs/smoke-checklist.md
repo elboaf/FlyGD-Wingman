@@ -2266,8 +2266,9 @@ real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
 
 **Known risk:** **Minimize inactive clients** activates and marks the requested
-client before it asynchronously requests minimize for the exact outgoing EVE
-HWND. This removes the observed minimize-first browser/desktop gap. Windows does
+client before it asynchronously requests `SW_SHOWMINNOACTIVE` for the exact
+outgoing EVE HWND. That command minimizes without activating the next top-level
+window, removing the observed minimize-first browser/desktop gap. Windows does
 not report completion for `ShowWindowAsync`; a very rapid return to the outgoing
 client can still race a late minimize request. Record source, target, foreground,
 and any late minimize in that case.
@@ -2337,8 +2338,13 @@ and any late minimize in that case.
       front, switch to EVE A, then make the first EVE A -> EVE B switch. The
       browser remains visible until A takes foreground; on A -> B, B appears
       without a browser or desktop frame. Repeat through a preview click and a
-      character hotkey, then repeat switches rapidly and record any late async
-      minimize after returning to A.
+      character hotkey.
+- [ ] **LOAD-BEARING: no late minimize after a rapid return.** With **Minimize
+      inactive clients** on, rapidly switch EVE A -> EVE B -> EVE A, first while
+      idle and then while B is busy loading grid or changing session. Repeat by
+      preview click and character hotkey. **Fail** if A minimizes after the
+      return, or foreground jumps to the browser or desktop; either means a
+      delayed outgoing request still disrupted the client the user returned to.
 - [ ] **A minimized target restores without stalling later input.** Switch
       repeatedly to a target that Minimize inactive clients put down. It must
       either restore and become foreground within about 500ms (25 non-blocking
@@ -2348,7 +2354,12 @@ and any late minimize in that case.
       outgoing HWND; an exited or recreated outgoing client is logged and
       skipped. Start another click or hotkey immediately and confirm the newer
       request wins.
-
+- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize a
+      client with visible motion — undocked, drones out, or the camera spinning.
+      Do NOT use a docked ship on a static scene: it looks identical whether the
+      thumbnail is live or frozen on its last frame, so that scene cannot tell
+      you which one you saw. A frozen preview blocks the merge: minimize-inactive
+      is not compatible with the previews it sits next to.
 
 ### Opacity is translucency, not dimming
 

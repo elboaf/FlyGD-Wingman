@@ -1360,10 +1360,12 @@ class PreviewHost:
             self._pending_activation_timer = False
 
     def _minimize_after_activation(self, libs, pending: _PendingSwitch) -> None:
-        """Request a minimize only for the exact client this switch left.
+        """Request a nonactivating minimize only for the exact client left.
 
         ShowWindowAsync reports the prior show state, not whether its request
         has completed, so its BOOL is deliberately not an outcome to inspect.
+        SW_SHOWMINNOACTIVE minimizes without activating the next top-level
+        window, narrowing the late-delivery risk after a rapid return.
         """
         if not pending.minimize:
             return
@@ -1375,7 +1377,7 @@ class PreviewHost:
                 pending.previous_key,
             )
             return
-        libs.user32.ShowWindowAsync(previous.hwnd, win32.SW_MINIMIZE)
+        libs.user32.ShowWindowAsync(previous.hwnd, win32.SW_SHOWMINNOACTIVE)
 
     def _mark_client_activated(self, libs, client) -> None:
         """Commit foreground-derived host state after an observed success."""
@@ -1446,13 +1448,13 @@ class PreviewHost:
         # A newer click or hotkey supersedes an outstanding restored target.
         self._clear_pending_activation(libs)
         previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
-        previous_key, _previous = next(
+        previous_key = next(
             (
-                (key, value)
+                key
                 for key, value in self._clients.items()
                 if value.hwnd == previous_hwnd
             ),
-            (None, None),
+            None,
         )
         pending = _PendingSwitch(
             client.stable_key,
@@ -1466,7 +1468,16 @@ class PreviewHost:
                 never=[previous_key] if self._is_never_minimize(previous_key) else [],
             ),
         )
-        result = window_mod.activate(libs, client.hwnd)
+        try:
+            result = window_mod.activate(libs, client.hwnd)
+        except Exception:
+            # A preview click arrives through a ctypes WndProc, which swallows
+            # an uncaught traceback. No rollback is needed: activation runs
+            # before minimize, but the failure still needs a durable log line.
+            logger.exception(
+                "Activation of 0x%x raised; outgoing client left unchanged", client.hwnd
+            )
+            raise
         if result is window_mod.ActivationResult.PENDING_RESTORE:
             self._arm_pending_activation(libs, pending)
         elif result is window_mod.ActivationResult.ACTIVATED:

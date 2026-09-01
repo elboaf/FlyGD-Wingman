@@ -3166,7 +3166,7 @@ class _SwitchUser32(_FakeUser32):
 
     def ShowWindowAsync(self, hwnd, command):
         self._order.append(("show_async", hwnd, command))
-        if command == host.win32.SW_MINIMIZE:
+        if command == host.win32.SW_SHOWMINNOACTIVE:
             self.minimized.append(hwnd)
         return True
 
@@ -3209,7 +3209,9 @@ def _switching_host(
     return h, _FakeLibs(user32), order
 
 
-def test_successful_switch_marks_target_before_async_minimizing_previous(monkeypatch):
+def test_successful_switch_marks_target_before_nonactivating_async_minimize(
+    monkeypatch,
+):
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
 
     assert (
@@ -3221,7 +3223,7 @@ def test_successful_switch_marks_target_before_async_minimizing_previous(monkeyp
         ("foreground", 0x1111),
         ("activate", 0x2222),
         ("ring", "Bravo", True),
-        ("show_async", 0x1111, host.win32.SW_MINIMIZE),
+        ("show_async", 0x1111, host.win32.SW_SHOWMINNOACTIVE),
     ]
 
 
@@ -3242,8 +3244,59 @@ def test_unsuccessful_switch_never_requests_an_async_minimize(monkeypatch, activ
 
     assert h._activate_client(libs, h._clients["Bravo"]) is activation
 
-    assert [entry for entry in order if entry[0] in {"send", "show_async"}] == []
-    assert [entry for entry in order if entry[0] == "animation"] == []
+    # Target restore also uses ShowWindowAsync; only an outgoing minimize is
+    # forbidden before activation succeeds.
+    assert [
+        entry
+        for entry in order
+        if entry == ("show_async", 0x1111, host.win32.SW_SHOWMINNOACTIVE)
+    ] == []
+
+
+def test_refused_switch_keeps_foreground_and_selection_ring_unchanged(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.REFUSED,
+    )
+    h._foreground = 0x1111
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+
+    assert (
+        h._activate_client(libs, h._clients["Bravo"])
+        is host.window_mod.ActivationResult.REFUSED
+    )
+
+    assert h._foreground == 0x1111
+    assert h._selected_key == "Alice"
+    assert h._windows["Alice"].selected is True
+    assert h._windows["Bravo"].selected is False
+    assert [entry for entry in order if entry[0] == "ring"] == []
+
+
+def test_an_activation_exception_is_logged_without_minimizing_or_rollback(
+    monkeypatch, caplog
+):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+
+    def boom(_libs, hwnd):
+        order.append(("activate", hwnd))
+        raise RuntimeError("activation failed")
+
+    monkeypatch.setattr(host.window_mod, "activate", boom)
+
+    with (
+        caplog.at_level(logging.ERROR, logger="wingman.preview.host"),
+        pytest.raises(RuntimeError, match="activation failed"),
+    ):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert [entry for entry in order if entry[0] == "show_async"] == []
+    assert any(
+        "Activation of 0x2222 raised; outgoing client left unchanged" in record.message
+        for record in caplog.records
+    )
 
 
 def test_pending_success_marks_target_then_async_minimizes_validated_previous(
@@ -3281,7 +3334,7 @@ def test_pending_success_marks_target_then_async_minimizes_validated_previous(
         ("activate", 0x2222),
         ("ring", "Alice", False),
         ("ring", "Bravo", True),
-        ("show_async", 0x1111, host.win32.SW_MINIMIZE),
+        ("show_async", 0x1111, host.win32.SW_SHOWMINNOACTIVE),
     ]
 
 

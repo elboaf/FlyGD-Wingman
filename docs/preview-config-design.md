@@ -12,6 +12,13 @@ That is the headline, but three of the four settings below are already built
 and merely unreachable, so the slice is mostly wiring rather than new
 machinery.
 
+> **Superseded for switching behavior.** This document records the original
+> minimize-inactive proposal, including its synchronous minimize sequence.
+> The shipped activate-first, `SW_SHOWMINNOACTIVE` design and its Windows smoke
+> acceptance criteria live in `docs/preview-switch-performance-design.md`.
+> Its settings/storage decisions remain historical context; do not revive its
+> switching sequence or update this record in place.
+
 ## Intended outcome
 
 On the Previews section of Settings:

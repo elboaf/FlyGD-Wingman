@@ -951,8 +951,8 @@ def test_the_client_placement_win32_surface_is_not_declared():
     assert not re.findall(r"\bSPI_[A-Z]+\b", src)
 
 
-def test_async_minimize_is_the_only_live_client_show_state_surface():
-    """ShowWindowAsync preserves client geometry without blocking the pump.
+def test_nonactivating_async_minimize_is_the_only_live_client_show_state_surface():
+    """The narrow live-client command minimizes without activating another window.
 
     Its BOOL describes the window's former show state, not completion, so the
     host intentionally does not inspect it as an activation/minimize verdict.
@@ -963,6 +963,11 @@ def test_async_minimize_is_the_only_live_client_show_state_surface():
     src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
     host_src = (root / "wingman" / "preview" / "host.py").read_text(encoding="utf-8")
     assert '"ShowWindowAsync", BOOL, [HWND, ctypes.c_int]' in src
+    assert "SW_SHOWMINNOACTIVE = 7" in src
+    assert "SW_MINIMIZE" not in src
+    assert "show state" in src.lower()
+    assert "2026-08-24" in src
+    assert "test_the_client_placement_win32_surface_is_not_declared" in src
     for gone in (
         "WM_SYSCOMMAND",
         "SC_MINIMIZE",

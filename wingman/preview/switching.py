@@ -1,4 +1,9 @@
-"""Pure policy for minimizing an inactive EVE client after a successful switch."""
+"""Pure policy for minimizing an inactive EVE client after a successful switch.
+
+The preview subsystem's Win32 calls cannot be exercised against a real EVE
+client in CI. Keep the decision of whether an outgoing client qualifies here,
+where Linux tests can cover it; host.py owns only Win32 calls and their order.
+"""
 
 
 def should_minimize(*, enabled, previous_key, next_key, never) -> bool:

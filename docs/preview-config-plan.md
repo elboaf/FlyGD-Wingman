@@ -8,6 +8,12 @@ window. Tasks 13–14 gate the merge.
 
 Baseline on branch `worktree-preview-config-options`: 2205 passed, 6 skipped.
 
+> **Superseded for switching behavior.** Tasks 7, 8, 10, and the
+> minimize-related smoke steps record the original synchronous proposal.
+> Follow `docs/preview-switch-performance-design.md` for the shipped
+> activate-first, `SW_SHOWMINNOACTIVE` sequence and Windows smoke criteria.
+> This plan remains intact as a record of the configuration slice.
+
 ---
 
 ## Task 1 — Settings keys
