@@ -117,6 +117,10 @@ def activate(libs, hwnd) -> ActivationResult:
             ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
+        # EVE-O assigns keyboard focus in this slot. Live switching showed
+        # foreground-but-focusless clients losing their first input, so focus
+        # before detaching; GetForegroundWindow below remains the verdict.
+        libs.user32.SetFocus(hwnd)
         foreground = libs.user32.GetForegroundWindow()
     finally:
         for tid in reversed(attached):

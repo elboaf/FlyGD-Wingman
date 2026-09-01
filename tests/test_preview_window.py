@@ -144,6 +144,10 @@ def _activation_libs(
             calls.append(("set_foreground", h))
             return False
 
+        def SetFocus(self, h):
+            calls.append(("set_focus", h))
+            return 0
+
     class FakeLibs:
         user32 = FakeUser32()
         kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: OUR_TID})()
@@ -174,8 +178,9 @@ def test_iconic_target_activates_when_restore_lands_before_observation():
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, TARGET_TID, True),
     ]
-    assert calls[4:6] == [
+    assert calls[4:7] == [
         ("set_foreground", TARGET),
+        ("set_focus", TARGET),
         ("get_foreground", TARGET),
     ]
 
@@ -186,6 +191,27 @@ def test_non_iconic_target_already_foreground_skips_attachments():
 
     assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
     assert calls == [("get_foreground", TARGET)]
+
+
+def test_activation_focuses_target_before_verdict_and_detach():
+    """A live target can be foreground but focusless unless keyboard focus is
+    assigned while its queue remains attached. SetFocus's return is not a
+    verdict; only the following foreground observation classifies activation.
+    """
+    calls = []
+    libs = _activation_libs([FOREGROUND, TARGET], calls)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert calls == [
+        ("get_foreground", FOREGROUND),
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("set_foreground", TARGET),
+        ("set_focus", TARGET),
+        ("get_foreground", TARGET),
+        ("attach", OUR_TID, TARGET_TID, False),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
 
 
 def test_equal_foreground_and_target_threads_are_attached_once():

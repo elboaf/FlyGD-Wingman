@@ -21,7 +21,7 @@ Windows refuses a foreground change from a process that has not received recent 
 
 On the reporting machine, `0x30018` resolved to Windows Search (`Windows.UI.Core.CoreWindow`), not Wingman. A topmost preview remains visible when EVE activation is refused, making the preview look focused while another process still owns the foreground.
 
-Wingman already attaches its preview thread to both the foreground and target input queues before calling `SetForegroundWindow`. Staging those same attachments differently is not itself a fix. Current TriffView adds a second attempt and `SetFocus`, but evidence from that project does not prove those additions will fix Wingman's reports. Any activation change remains a hypothesis until the Windows/EVE smoke run confirms it.
+Wingman already attaches its preview thread to both the foreground and target input queues before calling `SetForegroundWindow`. Staging those same attachments differently is not itself a fix. Reviewed teammate commit `3f4466f` supplies a live Wingman symptom report: the target became foreground but remained focusless, losing roughly the first 0.5–1 seconds of input. It also identifies EVE-O Preview parity: `ActivateWindow` calls `SetFocus` immediately after `SetForegroundWindow` while the queues remain attached. That evidence supports the focus assignment in that exact slot, but it is not a controlled fallback-on/off experiment and does not show `SetFocus` converting an activation refusal. `GetForegroundWindow` therefore remains the only activation verdict.
 
 ### Hotkeys queue as synchronous messages
 
@@ -60,10 +60,11 @@ The current order avoids a different failure: a timed-out minimize can be delive
 4. Attach the foreground queue when distinct from the preview thread.
 5. Attach the target queue when distinct from the preview thread and the already-attached foreground thread.
 6. Call `SetForegroundWindow(target)`.
-7. Read the final foreground verdict.
-8. Detach the target queue, then foreground queue, in a `finally` block.
+7. Call `SetFocus(target)` while the target queue remains attached; ignore its return value.
+8. Read the final foreground verdict.
+9. Detach the target queue, then foreground queue, in a `finally` block.
 
-Task 4 removed the provisional `SetFocus` fallback and its ctypes binding: its required Windows/EVE comparison did not produce qualifying evidence that it converted a refusal. There is no retry, synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO.
+Task 4 retains one `SetFocus(HWND) -> HWND` binding in the EVE-O slot based on the reviewed live foreground-but-focusless symptom. It is an input-focus assignment, not another activation verdict or a refusal fallback. There is no retry, synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO.
 
 The design does **not** claim this will fix all recorded refusals. An activation approach that needs another bounded attempt must have a separately reproducible Windows/EVE justification rather than shipping ceremonial retries.
 
@@ -203,7 +204,7 @@ All production changes are test-first.
 
 ### Binding and convention guards
 
-- `SetFocus` is not bound: Task 4 did not establish that its provisional fallback changed an observed refusal.
+- Exactly one `SetFocus(HWND) -> HWND` declaration is bound and covered by the ctypes completeness and pointer-sized-return guards.
 - `ShowWindowAsync` is already bound and remains the only minimize candidate under consideration.
 - Guards continue to reject bare `SendMessageW` and every geometry-capable API receiving an EVE HWND.
 
@@ -222,9 +223,9 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 
 1. Record timestamped foreground HWND, process, class, and title transitions for every switch attempt.
 2. From EVE, Windows Search, a browser, and Wingman, click locked and unlocked previews. Requested EVE must become foreground; preview must never become foreground.
-3. A provisional `SetFocus` comparison was attempted. It produced no qualifying observed conversion, so the binding and fallback were removed.
-4. Press rapid direct-character hotkeys. Only the folded final target should appear.
-5. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed.
+3. After every successful switch, send keyboard input promptly. The foreground target must receive it without a focusless interval; `SetFocus` is retained for this symptom, not as proof of refusal conversion.
+4. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
+5. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
 6. Enable **Minimize inactive clients**. Switch while clients are idle and during grid/session load. Target must appear first and no desktop/preview gap may follow.
 7. During the recovery window, intentionally alt-tab to another EVE client and to an unrelated application. Wingman must not steal focus back.
 8. Switch to a minimized target repeatedly. Pending restore must resolve or expire without blocking hotkeys.
@@ -251,19 +252,29 @@ input. The seven `eve-online.exe` processes present before the attempt were
 left running. Disposable child processes were closed/terminated and a final
 process check found no remaining probe child.
 
-**Decisions.** `SetFocus` is dropped. It produced no qualifying conversion of
-an otherwise-identical observed refusal, so keeping a production binding and
-second foreground request would be unsupported. Task 5 is skipped: the EVE
-transition gate did not pass (it was not measured), so minimize-inactive
-clients retain the existing minimize-first order. This result does not claim
-that synthetic refusal behavior predicts EVE behavior; it records the
-instrumentation limitation and deliberately makes neither positive claim.
+**External probe decision.** The probe is inconclusive: it produced 0 qualifying
+runs and therefore no controlled activation-refusal conversion, timing,
+desktop-gap, or stale-focus result. The non-inject-input and
+no-foreground-policy-change constraints excluded manufacturing the user-input
+entitlement needed to make an arbitrary disposable process foreground. This
+result does not predict EVE behavior.
 
-**Limitation.** The non-inject-input and no-foreground-policy-change
-constraints exclude programmatically manufacturing the user-input entitlement
-needed to make an arbitrary disposable process foreground. A future probe
-needs a manually initiated source-window focus (or an in-process, user-driven
-Wingman run with DEBUG logging) before it can make the required EVE decision.
+**Accepted supplemental evidence and controller ruling.** Independent review of
+teammate commit `3f4466fdd2c3eeb482b88e84982c9b34bc2e6efb` accepted only its
+live foreground-but-focusless input-loss symptom, EVE-O `SetFocus` parity, and
+relevant smoke-check intent. The commit was neither cherry-picked nor merged.
+`SetFocus` is retained in the attached-queue slot, while
+`GetForegroundWindow` remains authoritative; this is not claimed to convert an
+activation refusal. The ruling preserves this branch's action-aware hotkey
+folding, exact-HWND drain, `ActivationResult`/pending restore, and deduplicated
+reverse detach.
+
+Task 5 remains skipped and minimize-first behavior remains unchanged. The
+teammate's posted `SC_MINIMIZE` was rejected: asynchronous delivery can occur
+after activation-refusal rollback and race the restored foreground, while the
+blocked probe supplied no safe-transition evidence. A future transition probe
+still needs a manually initiated source-window focus or an in-process,
+user-driven Wingman DEBUG run before changing minimize order.
 
 ## Non-goals
 

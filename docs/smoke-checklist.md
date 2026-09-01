@@ -2265,6 +2265,11 @@ size. None of this is covered by pytest — it needs a
 real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
 
+Task 5 remains skipped: the reviewed asynchronous-minimize candidate was
+rejected because a posted minimize can land after refusal rollback and race the
+restored foreground. The minimize-first behavior and checks below are therefore
+unchanged.
+
 - [ ] Labels off reclaims the character-name band and the mirrored video
       grows into it; labels on restores the band. Both take effect on
       already-open previews without a restart.
@@ -2485,6 +2490,17 @@ pytest.
   see risk 4 in `docs/history/eve-preview-hotkeys-design.md`.
 - [ ] A per-character chord switches to that client from another application
   (try it from a browser, not just from Wingman).
+- [ ] **LOAD-BEARING: a direct-character burst ends at its final absolute
+  target.** Alternate several character chords rapidly, finish on a known
+  character, then stop. Expected: at most one final switch after the keys stop,
+  it is to that last character, and no queued intermediate targets replay
+  afterward. Direct actions replace the virtual target; this is not a
+  newest-message-ID drain.
+- [ ] **Input lands promptly after foreground activation.** Switch with a
+  character hotkey and, separately, by clicking its preview, then immediately
+  type or click in EVE. Expected: the foreground target receives keyboard and
+  mouse input without the roughly 0.5–1s foreground-but-focusless loss observed
+  in the live report. Repeat with a previously minimized target.
 - [ ] **A state update mid-hotkey-capture does not orphan or hide the capture.**
   With the Previews tab open and a hotkey row showing "Press a key…", start
   or close an EVE client (which pushes new state from Python). Expected: the
@@ -2498,6 +2514,12 @@ pytest.
   it falls back to the last-cycled target. The browser case is the one a
   multiboxer actually uses, so it must be checked, not just the EVE-focused
   case.
+- [ ] **LOAD-BEARING: a cycle burst lands at its folded delta.** With four
+  clients in known name order and A foreground, press Cycle forward three
+  times rapidly and stop. Expected: the final target is D (the accumulated
+  `+3` from A), with no replay after the final switch. Repeat with mixed forward
+  and back presses and calculate the net delta first; cycle actions must not be
+  reduced to the newest ID.
 - [ ] **Holding a chord fires once, not at the key-repeat rate.** Hold it for
   three seconds; the client must not flicker through repeated activations.
 - [ ] **A chord another application already owns is visible on the Previews
