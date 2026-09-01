@@ -2226,3 +2226,102 @@ def test_make_group_select_has_generation_guard():
         "generation check. Add `if (pushes !== before) { return; }` "
         "before applying res.hotkeys, matching the setGroupBind pattern."
     )
+
+
+def test_rename_group_has_generation_guard():
+    """renameGroup's WM.send callback must use a generation guard.
+
+    Before the bridge call it must capture `var before = pushes`, and before
+    applying res.hotkeys it must check `pushes !== before`, matching the
+    makeGroupSelect and setGroupBind patterns.
+
+    Without the guard, an onPreviewHotkeys push arriving while
+    rename_preview_cycle_group is in flight will have its state.hotkeys
+    overwritten by the stale response payload.  groupBusy blocks concurrent
+    user writes but does NOT block Python-pushed state replacements.
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js, "no renameGroup function in previews.js"
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+
+    assert "before = pushes" in body, (
+        "renameGroup does not capture the push generation before the bridge "
+        "call.  Add `var before = pushes;` before WM.send(...)."
+    )
+    assert "pushes !== before" in body or "before !== pushes" in body, (
+        "renameGroup does not guard res.hotkeys with a generation check.  "
+        "Add `if (pushes !== before) { ... }` before applying res.hotkeys, "
+        "matching the setGroupBind / makeGroupSelect pattern."
+    )
+
+
+def test_delete_group_has_generation_guard():
+    """deleteGroup's WM.send callback must use a generation guard.
+
+    Before the bridge call it must capture `var before = pushes`, and the
+    hotkeys assignment must be skipped when `pushes !== before`.
+
+    Crucially, groupBusy = false, requestRender(), and focusGroupManager()
+    must all still execute even when a newer push has landed (the guard must
+    only gate the state.hotkeys assignment, not the cleanup/focus obligations).
+    """
+    js = _web("previews.js")
+    assert "function deleteGroup" in js, "no deleteGroup function in previews.js"
+    body = js.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+
+    assert "before = pushes" in body, (
+        "deleteGroup does not capture the push generation before the bridge "
+        "call.  Add `var before = pushes;` before WM.send(...)."
+    )
+    assert "pushes !== before" in body or "before !== pushes" in body, (
+        "deleteGroup does not guard res.hotkeys with a generation check.  "
+        "Add the guard matching the makeGroupSelect / setGroupBind pattern."
+    )
+    # groupBusy = false must appear in the then() callback
+    then_body = body.split(".then(function (res)")[1] if ".then(function (res)" in body else body
+    assert "groupBusy = false" in then_body, (
+        "groupBusy = false must appear inside deleteGroup's .then() callback "
+        "so busy state always clears, even when the guard skips the hotkeys update."
+    )
+    # focusGroupManager must be present (tested by earlier test too, but
+    # confirm it survives the guard refactor)
+    assert "focusGroupManager" in then_body or ".focus()" in then_body, (
+        "deleteGroup success path must still call focusGroupManager() (or "
+        "equivalent .focus()) even when a newer push won."
+    )
+
+
+def test_do_add_has_generation_guard():
+    """doAdd (inside makeGroupManager) must use a generation guard.
+
+    Before the WM.send call it must capture `var before = pushes`, and before
+    applying res.hotkeys it must check `pushes !== before`.
+
+    groupBusy = false must still execute in both the refusal and success paths.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js, "no makeGroupManager in previews.js"
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+
+    assert "function doAdd" in mgr_body, "no doAdd inside makeGroupManager"
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    # Trim to just the doAdd closure (next sibling closure at same indent ends it)
+    # doAdd is an inner function so it ends at the closing brace before addBtn etc.
+    # Use the click-handler registration as a natural end marker.
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+
+    assert "before = pushes" in do_add_body, (
+        "doAdd does not capture the push generation before the bridge call.  "
+        "Add `var before = pushes;` before WM.send(...)."
+    )
+    assert "pushes !== before" in do_add_body or "before !== pushes" in do_add_body, (
+        "doAdd does not guard res.hotkeys with a generation check.  "
+        "Add `if (pushes !== before) { ... }` before applying res.hotkeys."
+    )
+    # groupBusy must clear in the .then() body
+    then_body = do_add_body.split(".then(function (res)")[1] if ".then(function (res)" in do_add_body else do_add_body
+    assert "groupBusy = false" in then_body, (
+        "groupBusy = false must appear inside doAdd's .then() callback "
+        "so busy state always clears regardless of whether the guard fires."
+    )

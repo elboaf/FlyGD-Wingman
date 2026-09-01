@@ -1410,6 +1410,7 @@
       if (text === null || text.trim() === '') { return; }
       groupBusy = true;
       requestRender();
+      var before = pushes;
       WM.send('rename_preview_cycle_group', group.id, text.trim())
         .then(function (res) {
           groupBusy = false;
@@ -1418,7 +1419,10 @@
             requestRender();
             return;
           }
-          if (res.hotkeys) {
+          if (pushes !== before) {
+            // A newer push has already applied authoritative state; skip
+            // the stale response but still repaint with current data.
+          } else if (res.hotkeys) {
             state.hotkeys = res.hotkeys;
             state.hotkeys.groups = state.hotkeys.groups || [];
             state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
@@ -1471,6 +1475,7 @@
       if (!confirmed) { return; }
       groupBusy = true;
       requestRender();
+      var before = pushes;
       WM.send('delete_preview_cycle_group', group.id).then(function (res) {
         groupBusy = false;
         if (!res || !res.applied) {
@@ -1478,7 +1483,11 @@
           requestRender();
           return;
         }
-        if (res.hotkeys) {
+        if (pushes !== before) {
+          // A newer push has already applied authoritative state.
+          // Skip the stale hotkeys but still repaint and restore focus --
+          // the group is gone either way and focus must not fall to <body>.
+        } else if (res.hotkeys) {
           state.hotkeys = res.hotkeys;
           state.hotkeys.groups = state.hotkeys.groups || [];
           state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
@@ -1510,6 +1519,7 @@
       if (!name) { return; }
       groupBusy = true;
       requestRender();
+      var before = pushes;
       WM.send('create_preview_cycle_group', name).then(function (res) {
         groupBusy = false;
         if (!res || !res.applied) {
@@ -1517,7 +1527,10 @@
           requestRender();
           return;
         }
-        if (res.hotkeys) {
+        if (pushes !== before) {
+          // A newer push has already applied authoritative state; skip
+          // the stale response but still repaint.
+        } else if (res.hotkeys) {
           state.hotkeys = res.hotkeys;
           state.hotkeys.groups = state.hotkeys.groups || [];
           state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
