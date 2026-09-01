@@ -932,13 +932,9 @@ def test_the_client_placement_win32_surface_is_not_declared():
     The rule is about EVE's windows, and no EVE window's HWND reaches any
     of these calls any more.
 
-    `SystemParametersInfoW` used to be on the list too, as the placement
-    feature's work-area reader. It is bound again for exactly two actions,
-    SPI_GETANIMATION/SPI_SETANIMATION -- the minimize/restore animation the
-    switch suspends (host.py, _animation_off). Neither takes a window or
-    touches a rect, so it cannot reach the rewrite this guard exists to
-    prevent; the closed list of SPI_ constants below is what keeps the
-    binding from quietly growing back into the work-area reader.
+    `SystemParametersInfoW` is absent too. It was briefly bound to suppress
+    minimize animation, but an asynchronous request outlives that toggle, so
+    the context could restore the user's preference before EVE processed it.
     """
     import pathlib
     import re
@@ -952,28 +948,30 @@ def test_the_client_placement_win32_surface_is_not_declared():
         "SPI_GETWORKAREA",
     ):
         assert gone not in src, gone
-    assert sorted(set(re.findall(r"\bSPI_[A-Z]+\b", src))) == [
-        "SPI_GETANIMATION",
-        "SPI_SETANIMATION",
-    ]
+    assert not re.findall(r"\bSPI_[A-Z]+\b", src)
 
 
-def test_sc_minimize_is_present_and_documented():
-    """SC_MINIMIZE is the one Win32 surface allowed to reach a live EVE
-    client's window: it changes only show state (the same transition the
-    taskbar button and Alt-Tab already send), never position or size, so it
-    cannot trigger the resolution rewrite the guard above exists to prevent.
+def test_async_minimize_is_the_only_live_client_show_state_surface():
+    """ShowWindowAsync preserves client geometry without blocking the pump.
 
-    This asserts the constant is present and explained, so a future purge
-    that sweeps up "that Win32 thing near the dangerous ones" fails a test
-    instead of silently removing the minimize-inactive-clients feature.
+    Its BOOL describes the window's former show state, not completion, so the
+    host intentionally does not inspect it as an activation/minimize verdict.
     """
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
     src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
-    assert "SC_MINIMIZE = 0xF020" in src
-    assert "show state" in src.lower()
+    host_src = (root / "wingman" / "preview" / "host.py").read_text(encoding="utf-8")
+    assert '"ShowWindowAsync", BOOL, [HWND, ctypes.c_int]' in src
+    for gone in (
+        "WM_SYSCOMMAND",
+        "SC_MINIMIZE",
+        "SMTO_ABORTIFHUNG",
+        "SendMessageTimeoutW",
+    ):
+        assert gone not in src
+    assert "ShowWindowAsync(" in host_src
+    assert "SendMessageTimeoutW" not in host_src
 
 
 def test_the_preview_window_no_longer_owns_the_switch():
@@ -1020,21 +1018,14 @@ def test_setfocus_is_declared_once_for_attached_queue_focus_assignment():
     assert src.count('(user32, "SetFocus", HWND, [HWND])') == 1
 
 
-def test_sendmessagew_is_not_declared():
-    """Bare `SendMessageW` blocks until the target window's queue processes
-    the message, so a hung or still-loading EVE client would stall the
-    preview thread -- and with it hotkey dispatch, the alert pump, and the
-    sweep -- indefinitely. `SendMessageTimeoutW` with `SMTO_ABORTIFHUNG`
-    gets the ordering guarantee `PostMessageW` can't provide without that
-    unbounded stall, so `SendMessageW` should never appear in the bind list.
-    """
+def test_synchronous_minimize_sends_are_not_declared():
+    """The preview pump must not synchronously wait for a client minimize."""
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
     src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
-    assert "SendMessageTimeoutW" in src
-    assert '"SendMessageW"' not in src
-    assert "user32.SendMessageW" not in src
+    for gone in ("SendMessageW", "SendMessageTimeoutW"):
+        assert gone not in src
 
 
 def _web(name):

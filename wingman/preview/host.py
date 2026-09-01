@@ -11,7 +11,6 @@ records the identical discovery about webview.start() carrying none of
 the old event loop, and answers it with an owned loop.
 """
 
-import contextlib
 import ctypes
 import logging
 import threading
@@ -35,13 +34,6 @@ from .window import PreviewWindow
 logger = logging.getLogger(__name__)
 
 SWEEP_MS = 700  # TriffView uses the same interval
-# Upper bound on the minimize send. With SMTO_ABORTIFHUNG this is what
-# keeps a still-loading EVE client from stalling the preview thread --
-# see the SendMessageTimeoutW bind comment in win32.py. The send now goes
-# to a client that still holds the foreground (see _activate_client), the
-# case measured at 6-9ms; the budget is a ceiling for a hung one, not the
-# expected wait.
-MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
 ACTIVATE_RETRY_TIMER_ID = 3
 # A 20ms timer keeps each pump turn short. Twenty-five retries provide about
@@ -80,85 +72,6 @@ class _PendingSwitch:
     previous_hwnd: int
     minimize: bool
     attempts: int = 0
-
-
-@contextlib.contextmanager
-def _animation_off(libs):
-    """Suspend the minimize/restore window animation for the block.
-
-    Ported from EVE-O Preview (WindowManager.TurnOffAnimation /
-    RestoreAnimation), where it is the default. What it buys is the
-    VISIBLE zoom, and only that -- measured 2026-08-30, cross-thread
-    SendMessageTimeoutW(SC_MINIMIZE) against a synthetic top-level
-    window, n=7 each: 12.6ms median with the animation ON, 14.2ms with
-    it OFF. The animation is composited by DWM, not run inside the
-    target's message handler, so it delays neither the send nor the
-    switch. An earlier version of this comment claimed ~200-250ms and
-    called it "the bulk of the visible lag"; the blocking half of that
-    claim is measurably false, and the duration of the zoom itself has
-    never been measured here. It is also a no-op for anyone whose
-    animation is already off -- including this repo's maintainer, whose
-    desktop reads iMinAnimate=0 -- so it explains no part of the field
-    reports that motivated the switch reorder.
-
-    Kept anyway: for the Windows default (animation ON) the zoom is real
-    and on screen for every minimize and every restore of a minimized
-    client, which is perceived latency even when nothing is blocked.
-
-    Toggled for the switch only and put back in a finally, so a refused
-    activation or an exception cannot leave the user's desktop without
-    its animation. Left alone when it is already off: nothing to write,
-    and nothing to "restore" to a value the user never had.
-
-    fWinIni is 0 on both calls -- the live value changes, the user's
-    registry preference does not.
-
-    The restore of a target that was itself minimized is asynchronous
-    (ShowWindowAsync in window.activate), so the animation can come back
-    before the client processes it. EVE-O Preview carries the same race
-    and it is not visible in practice; a synchronous ShowWindow would
-    close it at the cost of blocking on a loading client, which is the
-    stall SendMessageTimeoutW exists to avoid.
-    """
-    if libs is None:
-        yield
-        return
-    info = win32.ANIMATIONINFO()
-    size = info.cbSize = ctypes.sizeof(info)
-    got = libs.user32.SystemParametersInfoW(
-        win32.SPI_GETANIMATION, size, ctypes.pointer(info), 0
-    )
-    if not got or not info.iMinAnimate:
-        yield
-        return
-    # Restored to what was read, not to a literal 1: the field is
-    # documented as a flag but it is the user's value, and it goes back
-    # exactly as it came.
-    original = info.iMinAnimate
-    info.iMinAnimate = 0
-    if not libs.user32.SystemParametersInfoW(
-        win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
-    ):
-        # Nothing changed, so nothing to put back -- and the zoom the
-        # user came to lose is still there, which is worth one line.
-        logger.info("Could not suspend the window animation for the switch")
-        yield
-        return
-    try:
-        yield
-    finally:
-        info.iMinAnimate = original
-        if not libs.user32.SystemParametersInfoW(
-            win32.SPI_SETANIMATION, size, ctypes.pointer(info), 0
-        ):
-            # The one outcome this block exists to prevent: the user's
-            # desktop left without its animation for the session. It
-            # cannot be retried usefully from here, but it must not be
-            # silent.
-            logger.warning(
-                "Could not restore the window animation after the switch; "
-                "it stays off until the next switch or logon"
-            )
 
 
 def coalesce_hotkey_ids(peek, hwnd, first_ident) -> list[int]:
@@ -1446,21 +1359,23 @@ class PreviewHost:
                 )
             self._pending_activation_timer = False
 
-    def _complete_pending_minimize(self, libs, pending: _PendingSwitch) -> None:
-        """Minimize the verified outgoing client after its iconic switch wins."""
+    def _minimize_after_activation(self, libs, pending: _PendingSwitch) -> None:
+        """Request a minimize only for the exact client this switch left.
+
+        ShowWindowAsync reports the prior show state, not whether its request
+        has completed, so its BOOL is deliberately not an outcome to inspect.
+        """
         if not pending.minimize:
             return
         previous = self._clients.get(pending.previous_key)
         if previous is None or previous.hwnd != pending.previous_hwnd:
             logger.info(
-                "Pending activation of %s: saved minimize skipped; previous %s "
-                "exited or changed",
+                "Activation of %s: saved minimize skipped; previous %s exited or changed",
                 pending.stable_key,
                 pending.previous_key,
             )
             return
-        with _animation_off(libs):
-            self._minimize(libs, previous.hwnd)
+        libs.user32.ShowWindowAsync(previous.hwnd, win32.SW_MINIMIZE)
 
     def _mark_client_activated(self, libs, client) -> None:
         """Commit foreground-derived host state after an observed success."""
@@ -1484,8 +1399,8 @@ class PreviewHost:
         result = window_mod.activate(libs, client.hwnd)
         if result is window_mod.ActivationResult.ACTIVATED:
             self._clear_pending_activation(libs)
-            self._complete_pending_minimize(libs, pending)
             self._mark_client_activated(libs, client)
+            self._minimize_after_activation(libs, pending)
             return
         if result is window_mod.ActivationResult.PENDING_RESTORE:
             attempts = pending.attempts + 1
@@ -1521,293 +1436,43 @@ class PreviewHost:
         self._clear_pending_activation(libs)
 
     def _activate_client(self, libs, client) -> window_mod.ActivationResult:
-        """Switch the foreground to *client* and report the observed result.
+        """Activate *client*, then asynchronously minimize the exact outgoing client.
 
-        The single owner of the switch. Both entry points land here -- a
-        hotkey, and a click on a preview (PreviewWindow classifies the
-        gesture and calls this through its on_activate callback, rather
-        than activating on its own as it used to). Keeping one sequence
-        is what lets the host read the outgoing foreground before it
-        moves; a later step in the switch added here applies to both.
-
-        The ActivationResult is window_mod.activate's observed
-        GetForegroundWindow verdict. It must be compared by identity: each
-        enum value is truthy, including refused and pending restore.
-
-        The order is EVE-O Preview's (ThumbnailManager.SwitchActiveClient:
-        MinimizeWindow, then ActivateWindow), and it replaced TriffView's
-        activate / settle 10ms / minimize / re-activate:
-
-        - The minimize goes to a client that still HAS the foreground.
-          It does NOT make the send reliably faster: measured on two
-          live clients 2026-08-30, both orders are quick when the
-          clients are quiet -- old order median 29.6ms, new order
-          40.0ms, and with this thread owning a DWM thumbnail of the
-          target (the app's real shape) the old order ran 9.1ms. None
-          of 26 probe sends came near the budget.
-
-          What it does buy is what happens when the send DOES exceed
-          the budget: a timed-out send is still delivered later, and in
-          the old order that late minimize landed on the window the
-          switch had just left, which is where the compensating
-          re-activation came from. Minimizing before the activation
-          means a late minimize lands on a window that is no longer
-          the foreground, so it cannot take focus off the client the
-          user just asked for.
-
-          An earlier version of this comment said the old send "timed
-          out for its full budget on every switch (166 consecutive
-          timeouts)". That is not supported: the code logs only the
-          FAILURES, never the successes, so the field log's 223 lines
-          have no denominator. The 44 of them that carry an elapsed
-          time are real waits clipped at the budget (min 102ms, median
-          114ms, max 231ms), spread across normal play, and no probe
-          has reproduced one -- the remaining candidate is the client's
-          own message-pump latency during a busy moment (grid load, a
-          jump, a session change), which is EVE-side and not ordering.
-        - No settle sleep remains. It used to stall this thread -- the pump
-          that handles hotkeys, alerts, sweeps, and preview mouse messages --
-          solely to separate a post-activation minimize and compensating
-          re-activation that this ordering removed.
-        - A pending restore normally does not minimize at all while Windows
-          catches up. The host's first IsIconic probe can lose a race to
-          activate()'s second probe, though: if that interval already sent the
-          outgoing client a minimize, the host revalidates and requests its
-          rollback before retaining pending state. The request can be refused,
-          so minimize-first still cannot promise no desktop gap. Its timer
-          retries from the pump; only an observed success after the target is
-          non-iconic applies the already-recorded outgoing minimize decision.
-          This is deliberately limited to the iconic/pending continuation:
-          minimizing after an ordinary activation can steal foreground from the
-          target. The external transition probe supplied no safe basis for
-          changing that general order, so only the pending-restore case differs.
-        - A refused non-iconic activation attempts to bring the outgoing
-          client back (switching.should_restore). An iconic rollback returns
-          pending without foregrounding, so its revalidated exact HWND takes
-          the same bounded timer with minimize=False; a newer user request
-          clears it. A refused or expired rollback still leaves the known
-          minimize-first desktop-gap risk.
-
-        Every decision about *whether* to minimize or restore lives in
-        switching.py so it can be tested off Windows; this function owns
-        only the Win32 calls and their order.
+        The host records the outgoing client before foreground changes. Pending
+        and refused activation leave that saved client alone. Only an observed
+        activation updates selection and requests its async minimize, which
+        prevents the minimize-first desktop gap found in Windows smoke.
         """
-        # Read BEFORE anything moves: once the foreground has changed
-        # there is nothing left to identify the outgoing client by. This
-        # ordering is the reason the switch has a single owner -- the
-        # click path used to activate inside window.py and tell the host
-        # afterwards, by which point this read was already too late.
-        # A newer click or hotkey is user intent too. It must supersede a
-        # restore still awaiting its first foreground verdict.
+        # A newer click or hotkey supersedes an outstanding restored target.
         self._clear_pending_activation(libs)
         previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
-        previous_key, previous = next(
-            ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
+        previous_key, _previous = next(
+            (
+                (key, value)
+                for key, value in self._clients.items()
+                if value.hwnd == previous_hwnd
+            ),
             (None, None),
-        )
-
-        minimize = switching.should_minimize(
-            enabled=self._minimizing_inactive(),
-            previous_key=previous_key,
-            next_key=client.stable_key,
-            # should_minimize only asks whether previous_key is in the
-            # roster, so the guarded per-key reader answers it exactly;
-            # there is no guarded reader for the whole list.
-            never=[previous_key] if self._is_never_minimize(previous_key) else [],
-        )
-
-        # PENDING_RESTORE is only possible for an iconic target. Preserve the
-        # existing minimize-first behavior for all other switches, but leave
-        # the outgoing client alone while this target's restoration races.
-        # window_mod.activate probes IsIconic again because it owns restoration
-        # and its verdict; this probe has to precede that external call so the
-        # host can choose its ordering. Sharing it would couple those layers
-        # and still race a window changing state between the two operations;
-        # the handled two-IsIconic transition race has a branch below.
-        target_was_iconic = (
-            bool(libs.user32.IsIconic(client.hwnd)) if libs is not None else False
         )
         pending = _PendingSwitch(
             client.stable_key,
             client.hwnd,
             previous_key,
             previous_hwnd,
-            minimize,
+            switching.should_minimize(
+                enabled=self._minimizing_inactive(),
+                previous_key=previous_key,
+                next_key=client.stable_key,
+                never=[previous_key] if self._is_never_minimize(previous_key) else [],
+            ),
         )
-        with _animation_off(libs):
-            if minimize and not target_was_iconic:
-                self._minimize(libs, previous.hwnd)
-            try:
-                result = window_mod.activate(libs, client.hwnd)
-            except Exception:
-                # The outgoing client is already down and the verdict was
-                # never reached. On the click path the caller is the
-                # ctypes WndProc, which prints an uncaught exception to
-                # stderr and swallows it -- so without this the user gets
-                # the empty desktop with no line in the log. Roll back,
-                # say so, and let the exception carry on to whoever logs
-                # it; the switch itself is still a failure.
-                if switching.should_restore(
-                    activated=False, attempted=minimize and not target_was_iconic
-                ):
-                    current_previous = self._clients.get(previous_key)
-                    if (
-                        current_previous is None
-                        or current_previous.hwnd != previous_hwnd
-                    ):
-                        logger.exception(
-                            "Switch to 0x%x raised; rollback skipped; previous %s "
-                            "exited or changed",
-                            client.hwnd,
-                            previous_key,
-                        )
-                    else:
-                        logger.exception(
-                            "Switch to 0x%x raised; restoring 0x%x",
-                            client.hwnd,
-                            current_previous.hwnd,
-                        )
-                        window_mod.activate(libs, current_previous.hwnd)
-                raise
-            if result is window_mod.ActivationResult.PENDING_RESTORE:
-                # The host's ordering probe can see a normal target just before
-                # activate() sees it iconic. Minimize-first has then already
-                # sent the outgoing client down, so roll it back before keeping
-                # the pending request. The saved decision stays on `pending`:
-                # a later observed success still minimizes this exact client.
-                if switching.should_restore(
-                    activated=False, attempted=minimize and not target_was_iconic
-                ):
-                    current_previous = self._clients.get(previous_key)
-                    if (
-                        current_previous is None
-                        or current_previous.hwnd != previous_hwnd
-                    ):
-                        logger.info(
-                            "Pending activation of 0x%x after minimizing 0x%x: "
-                            "rollback skipped; previous %s exited or changed",
-                            client.hwnd,
-                            previous_hwnd,
-                            previous_key,
-                        )
-                    else:
-                        restored = window_mod.activate(libs, current_previous.hwnd)
-                        if restored is window_mod.ActivationResult.ACTIVATED:
-                            outcome = "restored"
-                        elif restored is window_mod.ActivationResult.PENDING_RESTORE:
-                            outcome = "is still pending"
-                        else:
-                            outcome = "was refused"
-                        logger.info(
-                            "Pending activation of 0x%x after minimizing 0x%x: "
-                            "rollback %s",
-                            client.hwnd,
-                            current_previous.hwnd,
-                            outcome,
-                        )
-                self._arm_pending_activation(libs, pending)
-                return result
-            if result is window_mod.ActivationResult.ACTIVATED:
-                if target_was_iconic:
-                    self._complete_pending_minimize(libs, pending)
-                # The ring moves HERE, inline, the instant the switch is
-                # known to have taken -- not on the sweep the foreground
-                # hook asks for. The hook and the sweep stay exactly as
-                # they were: they are still the only thing that catches
-                # alt-tab, and the only thing that moves the ring off a
-                # client the user left by any route other than a switch
-                # Wingman performed itself. TriffView marks its highlight
-                # in the same place (TriffViewSubsystem.cs,
-                # TryActivateClient).
-                #
-                # Assigned rather than left for the hook to report:
-                # activate() read GetForegroundWindow to reach `ok`, so
-                # this IS the live foreground, and _apply_selection
-                # prefers _foreground over a syscall of its own. Leaving
-                # it stale would make the line below re-apply the
-                # OUTGOING client's ring.
-                self._mark_client_activated(libs, client)
-            elif switching.should_restore(
-                activated=False, attempted=minimize and not target_was_iconic
-            ):
-                # An iconic rollback starts asynchronous restoration and returns
-                # PENDING_RESTORE without foregrounding. Revalidate the client
-                # before targeting it, then let the bounded timer make the later
-                # foreground attempt; an obsolete HWND can belong to another
-                # window by the time the failed switch returns.
-                current_previous = self._clients.get(previous_key)
-                if current_previous is None or current_previous.hwnd != previous_hwnd:
-                    logger.info(
-                        "Switch to 0x%x refused; rollback skipped; previous %s "
-                        "exited or changed",
-                        client.hwnd,
-                        previous_key,
-                    )
-                else:
-                    restored = window_mod.activate(libs, current_previous.hwnd)
-                    if restored is window_mod.ActivationResult.ACTIVATED:
-                        outcome = f"restored 0x{current_previous.hwnd:x}"
-                    elif restored is window_mod.ActivationResult.PENDING_RESTORE:
-                        armed = self._arm_pending_activation(
-                            libs,
-                            _PendingSwitch(
-                                current_previous.stable_key,
-                                current_previous.hwnd,
-                                None,
-                                0,
-                                False,
-                            ),
-                        )
-                        state = "is pending" if armed else "was discarded"
-                        outcome = f"restore of 0x{current_previous.hwnd:x} {state}"
-                    else:
-                        outcome = f"restore of 0x{current_previous.hwnd:x} was refused"
-                    logger.info("Switch to 0x%x refused; %s", client.hwnd, outcome)
+        result = window_mod.activate(libs, client.hwnd)
+        if result is window_mod.ActivationResult.PENDING_RESTORE:
+            self._arm_pending_activation(libs, pending)
+        elif result is window_mod.ActivationResult.ACTIVATED:
+            self._mark_client_activated(libs, client)
+            self._minimize_after_activation(libs, pending)
         return result
-
-    def _minimize(self, libs, hwnd) -> None:
-        """Send SC_MINIMIZE to *hwnd*, logging a send that did not complete.
-
-        No verdict is returned on purpose: a timed-out send is still
-        delivered later, so the caller could not act on "it did not
-        minimize" even if told -- see switching.should_restore.
-        """
-        started = time.perf_counter()
-        sent = libs.user32.SendMessageTimeoutW(
-            hwnd,
-            win32.WM_SYSCOMMAND,
-            win32.SC_MINIMIZE,
-            0,
-            win32.SMTO_ABORTIFHUNG,
-            MINIMIZE_TIMEOUT_MS,
-            None,
-        )
-        if sent:
-            return
-        # Zero covers three cases the API does not separate: the send
-        # timed out, it was abandoned because the client was hung
-        # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
-        # client that exited between the foreground read and here. A timed-out
-        # send may still be delivered later, so the switch cannot infer the
-        # client's final show state from this return. INFO for
-        # the same reason window.py logs a refused activation at INFO:
-        # the root logger runs at INFO, and this is what "minimize
-        # sometimes does nothing" looks like in a user's log.
-        #
-        # The elapsed time is what separates those three, and it is the
-        # only one of them a user's log can ever tell us: a send that
-        # spent the whole budget waiting really did time out, while one
-        # that came back in under a millisecond was refused outright and
-        # never waited for anything. Without it the line reads
-        # identically either way -- which is how a live install could
-        # log 166 of these in a session and still leave the cause open.
-        logger.info(
-            "Minimize of 0x%x did not complete (timeout or abandoned) "
-            "after %.0fms of a %dms budget; leaving it as it is",
-            hwnd,
-            (time.perf_counter() - started) * 1000,
-            MINIMIZE_TIMEOUT_MS,
-        )
 
     def _apply_alerts(self, libs, pending) -> None:
         """Arm the preview each event names, then make sure the tick timer

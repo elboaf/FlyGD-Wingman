@@ -2265,11 +2265,12 @@ size. None of this is covered by pytest — it needs a
 real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
 
-**Known limitation:** **Minimize inactive clients** still minimizes the
-outgoing client before activating the requested client. A refused or delayed
-activation can briefly expose the desktop or a preview; the retained
-minimize-first ordering does not close that gap. Record the source client,
-target client, and what became foreground if it occurs.
+**Known risk:** **Minimize inactive clients** activates and marks the requested
+client before it asynchronously requests minimize for the exact outgoing EVE
+HWND. This removes the observed minimize-first browser/desktop gap. Windows does
+not report completion for `ShowWindowAsync`; a very rapid return to the outgoing
+client can still race a late minimize request. Record source, target, foreground,
+and any late minimize in that case.
 
 - [ ] Labels off reclaims the character-name band and the mirrored video
       grows into it; labels on restores the band. Both take effect on
@@ -2326,86 +2327,28 @@ target client, and what became foreground if it occurs.
       push-to-talk key used during play, click both a locked and an unlocked
       preview, and repeat with a character hotkey. Each accepted switch must
       reach the requested client while the key remains held.
-- [ ] Minimize-inactive: with the checkbox on, clicking a different preview
-      minimizes the client you were on, the new client ends up foreground
-      and stays there, and a character on the never-minimize list is skipped
-      entirely.
-- [ ] **LOAD-BEARING: minimize-inactive holds across repeated switches.**
-      Cycle A -> B -> A -> B -> A, at least five switches. The outgoing client
-      should minimize every time and the requested client should finish in the
-      foreground. Record any desktop/preview flash or wrong foreground; the
-      retained minimize-first behavior can still expose that known gap.
+- [ ] **Minimize inactive clients activates before minimizing.** With the
+      checkbox on, switch from EVE A to EVE B. B must become foreground and its
+      selection ring must move before A receives an asynchronous minimize. A
+      never-minimize outgoing client is skipped entirely; a refused or pending
+      activation minimizes nothing.
+- [ ] **LOAD-BEARING browser-flash regression:** enable **Hide previews on lost
+      focus** and **Minimize inactive clients**. Leave a maximized browser in
+      front, switch to EVE A, then make the first EVE A -> EVE B switch. The
+      browser remains visible until A takes foreground; on A -> B, B appears
+      without a browser or desktop frame. Repeat through a preview click and a
+      character hotkey, then repeat switches rapidly and record any late async
+      minimize after returning to A.
 - [ ] **A minimized target restores without stalling later input.** Switch
       repeatedly to a target that Minimize inactive clients put down. It must
       either restore and become foreground within about 500ms (25 non-blocking
-      20ms retries) or stop retrying while Wingman remains responsive. During a
-      pending restore, the outgoing client normally remains visible. The host
-      and activation `IsIconic` probes can race: if an outgoing client was
-      already minimized before the target became iconic, Wingman requests a
-      rollback; if the host saw iconic but activation saw non-iconic, a success
-      minimizes only the exact saved outgoing HWND. If an ordinary refused
-      switch finds its outgoing rollback still iconic, that rollback gets the
-      same bounded retry without another minimize. A refused or late rollback
-      can still flash the desktop. After a successful restore the outgoing
-      client must minimize. Start another click or hotkey immediately and
-      confirm the newer request wins rather than waiting behind either pending
-      target or rollback restore.
-- [ ] **Browser-to-minimized-client regression:** turn on **Hide previews on
-      lost focus** and **Minimize inactive clients**, leave a browser visible,
-      then switch to a minimized EVE client. The browser remains visible until
-      EVE takes foreground; there is no desktop frame while the client restores.
-      Repeat through a preview click and a character hotkey.
-- [ ] **No minimize/restore animation during the switch, and the user's
-      setting survives it.** The outgoing client should vanish and the
-      target should appear with no window-zoom. Note what this is and is
-      not: the animation is composited by DWM and blocks nothing —
-      measured, `SC_MINIMIZE` takes the same time either way (12.6 ms ON
-      vs 14.2 ms OFF) — so this item is about what the zoom looks like,
-      not about the switch finishing sooner. **This machine's own desktop
-      has the animation off (`iMinAnimate=0`), so the code path
-      early-returns here and the item cannot be walked without turning it
-      on first.** Windows' default is on, which is who it is for. Turn it
-      on under System > Accessibility > Visual effects (or
-      SystemPropertiesPerformance: "Animate windows when minimizing and
-      maximizing"), walk the switch, then confirm the setting is still on
-      afterwards — the switch toggles the LIVE value only, with
-      `fWinIni=0`, and puts it back in a `finally`.
-- [ ] A refused activation attempts to bring the outgoing client back. If
-      Windows refuses a switch after the outgoing client minimizes, it should
-      return to the foreground. A desktop/preview flash or failure to restore
-      remains a known limitation; record it rather than treating one successful
-      switch as proof that the gap is closed.
-- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
-      a client with visible motion — undocked, drones out, or the camera
-      spinning. Do NOT use a docked ship on a static scene: it looks
-      identical whether the thumbnail is live or frozen on its last frame,
-      so that scene cannot tell you which one you saw. This is the check
-      that decides whether minimize-inactive is compatible with the
-      previews it sits beside.
-- [ ] Note the `Minimize of 0x... did not complete` lines in the log, but
-      do **not** treat one as a defect on its own. Only failures are
-      logged — a successful minimize writes nothing — so those lines have
-      no denominator and never showed the rate anyone read into them. The
-      44 that carry an elapsed time are real waits clipped at the budget
-      (min 102 ms, median 114 ms, max 231 ms), and four separate probes
-      have failed to reproduce one: quiet clients answer in 7–57 ms in
-      both orders, including with the sending thread owning a DWM
-      thumbnail of the target. The open candidate is the client's own
-      message pump during a busy moment (grid load, a jump, a session
-      change). What IS worth filing: the elapsed figure separates a real
-      wait from an instant refusal, so a line reading well under a
-      millisecond means something new. Also file any later minimize that
-      takes foreground away from the requested client; the retained order
-      does not claim that gap is fixed.
-- [ ] Reader's note, not a defect to file on its own: the never-minimize
-      COLUMN sits in the card headed "Global keybinds" — right for its
-      adjacency to the character rows, but that card's intro tells the
-      user everything in it is a global keybind, and a per-character
-      minimize exemption is not one. Worth noticing during the walk.
-      (The Minimize-inactive CHECKBOX used to sit there too and this note
-      used to say so; round 5's C4 moved it up to "EVE client previews",
-      beside the other window-behaviour settings, which is where the
-      Previews checklist item above expects to find it.)
+      20ms retries) or stop retrying while Wingman remains responsive. Pending
+      restoration minimizes nothing. After a successful retry, the target ring
+      moves before Wingman asynchronously minimizes only the exact saved
+      outgoing HWND; an exited or recreated outgoing client is logged and
+      skipped. Start another click or hotkey immediately and confirm the newer
+      request wins.
+
 
 ### Opacity is translucency, not dimming
 

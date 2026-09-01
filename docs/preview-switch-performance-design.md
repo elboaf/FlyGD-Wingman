@@ -4,36 +4,27 @@ Design. Base: `main` (`5eac83d`), 2026-09-01. Revised after independent review.
 
 ## Outcome
 
-Clicking a preview or using a preview hotkey should put the requested EVE client in the foreground promptly and reliably. Rapid hotkeys should resolve to one final requested client instead of replaying every intermediate switch. **Minimize inactive clients** remains minimize-first: the evidence did not justify changing its order, so the retained ordering does not close the known desktop-gap risk.
-
-The change stays inside the existing preview subsystem. It does not add settings, alter persisted data, move or resize an EVE client, change system-wide foreground policy, or inject synthetic keyboard input.
+Clicking a preview or using a preview hotkey puts the requested EVE client in
+front promptly and reliably. Rapid hotkeys resolve to one final requested
+client instead of replaying every intermediate switch. With **Minimize inactive
+clients** enabled, the exact outgoing EVE client is minimized asynchronously
+only after the target is observed foreground and the host has updated its
+foreground-derived selection state.
 
 ## Evidence and current diagnosis
 
-### The preview does not intentionally activate
+Windows smoke clarified the visible browser flash: browser -> EVE A is clean,
+but the first EVE A -> EVE B switch flashes the maximized browser; later
+switches do not. Because browser is not the outgoing EVE minimize target, that
+sequence identifies synchronous minimize-first as the source: removing A
+exposes the z-order below it before B activates. Activate-first removes that
+known gap while retaining exact outgoing-HWND validation.
 
-Preview windows are created with `WS_EX_NOACTIVATE` and shown with `SW_SHOWNOACTIVATE` (`wingman/preview/window.py`). The application log instead contains repeated failures from `window.activate()`:
-
-```text
-Activation of 0x61022 did not take; foreground is 0x30018.
-Windows refuses a foreground change from a process that has not received recent user input.
-```
-
-On the reporting machine, `0x30018` resolved to Windows Search (`Windows.UI.Core.CoreWindow`), not Wingman. A topmost preview remains visible when EVE activation is refused, making the preview look focused while another process still owns the foreground.
-
-Wingman already attaches its preview thread to both the foreground and target input queues before calling `SetForegroundWindow`. Staging those same attachments differently is not itself a fix. Reviewed teammate commit `3f4466f` supplies a live Wingman symptom report: the target became foreground but remained focusless, losing roughly the first 0.5–1 seconds of input. It also identifies EVE-O Preview parity: `ActivateWindow` calls `SetFocus` immediately after `SetForegroundWindow` while the queues remain attached. That evidence supports the focus assignment in that exact slot, but it is not a controlled fallback-on/off experiment and does not show `SetFocus` converting an activation refusal. `GetForegroundWindow` therefore remains the only activation verdict.
-
-### Hotkeys queue as synchronous messages
-
-`RegisterHotKey` delivers `WM_HOTKEY` to the preview host HWND. `_host_proc()` calls `_on_hotkey()` synchronously, and `_on_hotkey()` completes the switch before the pump can dispatch another message. Distinct rapid hotkeys therefore accumulate and replay in arrival order.
-
-`MOD_NOREPEAT` prevents one held chord from auto-repeating. It does not collapse several distinct presses or chords.
-
-### Minimize-first necessarily creates a visible gap
-
-With **Minimize inactive clients** enabled, `_activate_client()` minimizes the outgoing EVE client before activating the target. The minimize uses `SendMessageTimeoutW` with a 100 ms budget and has exceeded that budget in real logs. If the outgoing client disappears first, Windows can expose the shell and topmost previews before target activation.
-
-The current order avoids a different failure: a timed-out minimize can be delivered after `SendMessageTimeoutW` returns, so reasserting the target immediately after the timeout cannot defend against that later delivery. A safe replacement must avoid both gaps and late focus theft.
+`ShowWindowAsync(previous, SW_MINIMIZE)` is deliberately fire-and-forget. Its
+BOOL reports the previous show state, not asynchronous completion, and is never
+treated as a success or failure verdict. A sufficiently rapid return to the
+outgoing client can still race a late minimize request; Windows/EVE smoke is the
+acceptance gate for that residual risk.
 
 ## Constraints
 
@@ -108,23 +99,31 @@ While bind capture is armed, normal action folding is bypassed: the newest queue
 
 A DEBUG line records the number of coalesced messages and the final resolved action/target. It does not log every normal single press. The design acknowledges that `PeekMessageW` is called from a WndProc; the existing mouse-move coalescer establishes this pattern, and the foreground WinEvent callback remains record-and-post only.
 
-### 3. Retain minimize-first after an inconclusive transition probe
+### 3. Activate first, then request the exact outgoing minimize
 
-The activate-first/asynchronous-minimize candidate required independent transition observations and real EVE smoke evidence. The external probe established neither: it had zero qualifying synthetic runs and zero EVE runs. The candidate therefore did not ship.
+The host resolves the previous stable key/HWND and `should_minimize` decision
+before it asks `window.activate()` to change foreground. That decision is only
+executed after `ActivationResult.ACTIVATED`:
 
-General non-iconic switching remains minimize-first. If activation is refused after the outgoing client was minimized, Wingman attempts to restore that outgoing client. This preserves the previous rollback behavior but cannot guarantee that the desktop or a preview is never exposed between those operations. A timed-out synchronous minimize may also be delivered later, which is why an unvalidated asynchronous replacement would not be a safe cleanup.
+1. mark the target foreground and update focused/selected previews;
+2. re-resolve the saved previous key and require its HWND to match exactly;
+3. request `ShowWindowAsync(previous.hwnd, SW_MINIMIZE)`.
 
-An iconic target is the narrow exception required by pending restoration: Wingman normally leaves the outgoing client alone while the target restore is pending, then minimizes the exact saved outgoing HWND only after the target is observed in the foreground. Windows smoke found why the foreground work itself must also wait: with **Hide previews on lost focus** and **Minimize inactive clients** enabled, switching from a browser to an iconic target briefly flashed the desktop. A browser is not an outgoing EVE minimize target, so the flash came from calling `SetForegroundWindow` while the target was still iconic. `activate()` therefore restores and deterministically returns pending in that first turn; only a later retry that observes `IsIconic == false` performs the attached foreground/focus sequence.
+Pending restoration retains that same decision without minimizing anything. A
+retry that observes target activation marks it first and then requests the
+validated minimize. A pending target whose saved outgoing client exited or
+recreated its HWND logs a skip. Refused activation minimizes nothing.
 
-The host's initial `IsIconic` probe can still race `activate()`'s probe in both directions. In the non-iconic-to-iconic direction, ordinary minimize-first may already have sent the outgoing client down; Wingman revalidates its saved stable key and HWND and requests rollback before retaining the target pending state. In the iconic-to-non-iconic direction, the host leaves the outgoing client up, then the normal activation path can observe success and minimizes the same revalidated saved HWND. If either exact HWND was recreated during activation, it is skipped rather than targeted.
-
-A refused ordinary switch can also find its outgoing rollback iconic. That rollback now returns pending without foregrounding; Wingman revalidates the outgoing stable key/HWND and arms the existing 20ms/25-turn bounded retry for it with `minimize=False`. A later click or hotkey clears that rollback request just like any other pending activation. A refused rollback or a minimize delivered late can still expose the desktop briefly, so these narrow recoveries do not close the retained minimize-first gap. Neither exception establishes that activate-first is safe for ordinary switches.
-
-No minimize-recovery generation, foreground observer recovery, or asynchronous minimize was added. `switching.should_minimize()` remains a before-switch decision, `switching.should_restore()` remains the refusal and pending-transition rollback decision, and desktop-animation suppression remains scoped around the existing switch operation. Pending retry activation does not enter `_animation_off`: toggling a system-wide animation preference every 20ms would create setting thrash, while only the successful saved minimize needs animation suppression. No `SetWindowPos` fallback exists.
+This removes minimize-first rollback, the host/window two-`IsIconic` ordering
+race, synchronous `SendMessageTimeoutW(SC_MINIMIZE)`, and temporary desktop
+animation suppression. The animation context cannot safely bracket an async
+request because it restores before the target processes that request. No
+foreground-observer recovery is added: the current architecture and focused
+smoke evidence do not justify one.
 
 ### 4. Selection and alerts
 
-The host updates `_foreground`, focused state, and the sticky selection ring only after activation is observed to succeed. `_last_cycled` records a cycle action's virtual target during folding, so a later direct focus does not rewrite cycle fallback state. Pending or refused activation leaves foreground-derived state unchanged, except that a refused target whose pending rollback later succeeds updates that state to the restored outgoing client.
+The host updates `_foreground`, focused state, and the sticky selection ring only after activation is observed to succeed, before requesting any outgoing minimize. `_last_cycled` records a cycle action's virtual target during folding, so a later direct focus does not rewrite cycle fallback state. Pending or refused activation leaves foreground-derived state unchanged.
 
 Click acknowledgement remains guaranteed even when activation fails. If clearing a persistent alert performs visible rendering before focus is requested, acknowledgement may move after the first focus attempt, but it still runs regardless of the verdict. This is not otherwise an alert redesign.
 
@@ -132,11 +131,11 @@ Click acknowledgement remains guaranteed even when activation fails. If clearing
 
 - Unknown hotkey IDs remain logged no-ops.
 - A drained action whose character is offline does not resurrect an older discarded request.
-- A pending restore normally minimizes nothing until the target is observed in the foreground. The host/activation `IsIconic` probes can race in either direction: a prior minimize is revalidated and rolled back for non-iconic-to-iconic, while iconic-to-non-iconic success completes the saved minimize only for its exact outgoing HWND.
-- A refused non-iconic switch attempts to restore the outgoing client after the existing minimize-first operation. If that rollback is iconic, its exact current stable key/HWND receives the same bounded pending retry with `minimize=False`; a newer request supersedes it. A visible desktop gap remains possible.
+- Pending restore leaves the outgoing EVE client alone until a retry observes the target foreground. A target or saved outgoing HWND that exits or changes is logged and dropped rather than reused.
+- Refused activation leaves the previous EVE client untouched.
+- `ShowWindowAsync` completion is intentionally not inferred. A rapid return to an outgoing client can race a late async minimize request; this is a documented Windows smoke risk, not a recovered generation.
 - Failure to attach an input queue does not raise by itself; the bounded attempt still runs and observed foreground remains authoritative.
 - Exceptions detach every successful input attachment before propagating.
-- A client that exits or changes HWND during pending restore becomes a logged no-op.
 
 ## Testing
 
@@ -161,21 +160,20 @@ All production changes are test-first.
 - Capture receives only the newest queued chord.
 - Coalescing emits one DEBUG summary when messages were discarded.
 - Pending restore retains only the newest target when its host timer is live, validates stable key and HWND, retries exactly 25 times at 20ms, logs a dropped saved minimize on expiry, and is bounded.
-- An iconic pending target leaves the outgoing client alone until activation succeeds; both host/activation `IsIconic` race directions preserve the saved minimize only for an exact outgoing HWND.
-- A refused non-iconic activation exercises the retained minimize-first rollback, including bounded, minimize-free retry when its outgoing client is still iconic.
-- With minimization disabled, minimize APIs are untouched.
+- Pending activation leaves the outgoing client alone until activation succeeds, then marks the target before asynchronously minimizing only an exact saved outgoing HWND.
+- Refused activation and minimization-disabled/no-previous/same-target switches leave minimize APIs untouched.
 
 ### `tests/test_preview_switching.py`
 
 - Minimize policy remains a before-switch decision.
 - Existing disabled, no-previous, same-client, and never-minimize cases remain false.
-- Refusal rollback remains covered by `should_restore`.
+- Refused and pending activation request no minimize; successful pending retries mark first, then async-minimize only an exact saved outgoing HWND.
 
 ### Binding and convention guards
 
 - Exactly one `SetFocus(HWND) -> HWND` declaration is bound; `tests/test_preview_wiring.py` enforces the exact single declaration on every platform, while the ctypes completeness and pointer-sized-return tests in `tests/test_preview_win32.py` run only on Windows.
-- `ShowWindowAsync` is already bound and remains the only minimize candidate under consideration.
-- Guards continue to reject bare `SendMessageW` and every geometry-capable API receiving an EVE HWND.
+- `ShowWindowAsync` is the sole live-client minimize mechanism. Its return is ignored because it reports prior show state rather than completion.
+- Guards reject synchronous minimize sends and every geometry-capable API receiving an EVE HWND.
 
 ### Verification commands
 
@@ -196,8 +194,8 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 4. Attempt a switch while Windows Search and, separately, a browser retain the foreground after Windows refuses activation. Type immediately into the retained application; keyboard input must still reach it because Wingman skips `SetFocus` unless it observed the EVE target foreground.
 5. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
 6. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
-7. Enable **Minimize inactive clients** and switch while clients are idle and during grid/session load. Record any desktop/preview gap or wrong foreground; these remain known risks of the retained minimize-first order, not a fixed behavior.
-8. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys, and after a successful restore the outgoing client must minimize. With **Hide previews on lost focus** and **Minimize inactive clients** enabled, start from a browser and switch to that minimized target: the browser remains visible until EVE takes foreground, with no desktop frame.
+7. Enable **Minimize inactive clients** and switch while clients are idle and during grid/session load. The target must become foreground and selected before its exact outgoing client receives the async minimize request; record any desktop/preview gap, wrong foreground, or late minimize after a rapid return.
+8. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys; on success, target selection precedes an async minimize of only the exact saved outgoing HWND. With **Hide previews on lost focus** and **Minimize inactive clients** enabled, do browser -> EVE A, then the first EVE A -> EVE B: the browser stays visible until A takes foreground and B appears without a browser or desktop frame.
 9. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
 10. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
 
@@ -238,12 +236,19 @@ activation refusal. The ruling preserves this branch's action-aware hotkey
 folding, exact-HWND drain, `ActivationResult`/pending restore, and deduplicated
 reverse detach.
 
-Task 5 remains skipped and minimize-first behavior remains unchanged. The
-teammate's posted `SC_MINIMIZE` was rejected: asynchronous delivery can occur
-after activation-refusal rollback and race the restored foreground, while the
-blocked probe supplied no safe-transition evidence. A future transition probe
-still needs a manually initiated source-window focus or an in-process,
-user-driven Wingman DEBUG run before changing minimize order.
+Historical Task 5 ruling (superseded by the smoke clarification below):
+minimize-first remained because the earlier probe did not establish a safe
+transition.
+
+### Smoke clarification and Task 5 ruling — 2026-09-01
+
+The confirmed browser -> EVE A -> EVE B sequence supersedes the inconclusive
+probe gate for this narrowly diagnosed regression. The clean browser -> A leg
+excludes browser as a minimize target; the first A -> B flash directly matches
+synchronous minimize-first exposing the z-order beneath A. Task 5 therefore
+ships activate/mark/async-minimize without recovery generation. The next Windows
+smoke pass must verify B appears without a browser or desktop frame and assess
+the residual rapid-return/late-async-minimize risk.
 
 ## Non-goals
 
@@ -253,5 +258,5 @@ user-driven Wingman DEBUG run before changing minimize order.
 - Passing an EVE HWND to `SetWindowPos`, `SetWindowPlacement`, `MoveWindow`, or another geometry API.
 - Changing Windows foreground-lock settings.
 - Injecting keyboard input.
-- Guaranteeing cancellation of a Win32 call already executing.
+- Guaranteeing cancellation of an asynchronous minimize once Windows has accepted it.
 - Refactoring unrelated rendering, alerts, discovery, or settings code.
