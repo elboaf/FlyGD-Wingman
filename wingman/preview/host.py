@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 from ctypes import wintypes
+from dataclasses import dataclass
 
 from . import (
     cycle,
@@ -42,6 +43,9 @@ SWEEP_MS = 700  # TriffView uses the same interval
 # expected wait.
 MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
+ACTIVATE_RETRY_TIMER_ID = 3
+ACTIVATE_RETRY_MS = 20
+ACTIVATE_RETRY_MAX = 5
 # How long an armed bind capture survives without being disarmed. Long
 # enough that nobody meets it while deciding which key to press; short
 # enough that a page which died mid-capture cannot leave the preview
@@ -61,6 +65,18 @@ PENDING_ALERTS_MAX = 10
 COPY_OK = "ok"
 COPY_MISSING = "missing"
 COPY_PERSIST_FAILED = "persist_failed"
+
+
+@dataclass(frozen=True)
+class _PendingSwitch:
+    """The one restore still awaiting Windows' foreground verdict."""
+
+    stable_key: str
+    hwnd: int
+    previous_key: str | None
+    previous_hwnd: int
+    minimize: bool
+    attempts: int = 0
 
 
 @contextlib.contextmanager
@@ -425,6 +441,10 @@ class PreviewHost:
         # rather than derived so KillTimer is called exactly once when the
         # last alert clears, and only ever from the preview thread.
         self._alert_timer = False
+        # A restored EVE client can briefly remain iconic after activation.
+        # Retain the outgoing decision so a later observed success completes
+        # the same switch, but never block this thread waiting for Windows.
+        self._pending_switch = None
         # Recorded by the foreground hook (an arbitrary thread) and
         # resolved by _sweep, never the other way around -- see
         # _install_hook and _apply_selection.
@@ -831,6 +851,9 @@ class PreviewHost:
 
     def _host_proc(self, hwnd, msg, wparam, lparam):
         libs = win32.bind()
+        if msg == win32.WM_TIMER and wparam == ACTIVATE_RETRY_TIMER_ID:
+            self._retry_pending_activation(libs)
+            return 0
         if msg == win32.WM_TIMER and wparam == SWEEP_TIMER_ID:
             self._sweep(libs)
             return 0
@@ -1367,8 +1390,78 @@ class PreviewHost:
                 return name
         return running[0]
 
-    def _activate_client(self, libs, client) -> bool:
-        """Switch the foreground to *client*. Returns whether it took.
+    def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> None:
+        """Retain the newest restore request and arrange its next pump turn."""
+        self._pending_switch = pending
+        if self._hwnd and libs is not None:
+            libs.user32.SetTimer(
+                self._hwnd,
+                ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID),
+                ACTIVATE_RETRY_MS,
+                None,
+            )
+
+    def _clear_pending_activation(self, libs) -> None:
+        """Forget an outstanding restore and stop its timer exactly once."""
+        if self._pending_switch is None:
+            return
+        self._pending_switch = None
+        if self._hwnd and libs is not None:
+            libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID))
+
+    def _mark_client_activated(self, libs, client) -> None:
+        """Commit foreground-derived host state after an observed success."""
+        self._foreground = client.hwnd
+        self._apply_selection(libs)
+
+    def _retry_pending_activation(self, libs) -> None:
+        """Retry one restored target without ever waiting inside the pump."""
+        pending = self._pending_switch
+        if pending is None:
+            return
+        client = self._clients.get(pending.stable_key)
+        if client is None or client.hwnd != pending.hwnd:
+            logger.info(
+                "Pending activation of %s discarded; its window exited or changed",
+                pending.stable_key,
+            )
+            self._clear_pending_activation(libs)
+            return
+
+        result = window_mod.activate(libs, client.hwnd)
+        if result is window_mod.ActivationResult.ACTIVATED:
+            self._clear_pending_activation(libs)
+            if pending.minimize:
+                with _animation_off(libs):
+                    self._minimize(libs, pending.previous_hwnd)
+            self._mark_client_activated(libs, client)
+            return
+        if result is window_mod.ActivationResult.PENDING_RESTORE:
+            attempts = pending.attempts + 1
+            if attempts < ACTIVATE_RETRY_MAX:
+                self._arm_pending_activation(
+                    libs,
+                    _PendingSwitch(
+                        pending.stable_key,
+                        pending.hwnd,
+                        pending.previous_key,
+                        pending.previous_hwnd,
+                        pending.minimize,
+                        attempts,
+                    ),
+                )
+                return
+            logger.info(
+                "Activation of %s did not complete after %d restore retries",
+                pending.stable_key,
+                ACTIVATE_RETRY_MAX,
+            )
+        else:
+            logger.info("Pending activation of %s was refused", pending.stable_key)
+        self._clear_pending_activation(libs)
+
+    def _activate_client(self, libs, client) -> window_mod.ActivationResult:
+        """Switch the foreground to *client* and report the observed result.
 
         The single owner of the switch. Both entry points land here -- a
         hotkey, and a click on a preview (PreviewWindow classifies the
@@ -1377,9 +1470,9 @@ class PreviewHost:
         is what lets the host read the outgoing foreground before it
         moves; a later step in the switch added here applies to both.
 
-        The bool is window_mod.activate's verdict, read from
-        GetForegroundWindow -- callers that do more work after the switch
-        need to know it actually happened.
+        The ActivationResult is window_mod.activate's observed
+        GetForegroundWindow verdict. It must be compared by identity: each
+        enum value is truthy, including refused and pending restore.
 
         The order is EVE-O Preview's (ThumbnailManager.SwitchActiveClient:
         MinimizeWindow, then ActivateWindow), and it replaced TriffView's
@@ -1412,15 +1505,13 @@ class PreviewHost:
           has reproduced one -- the remaining candidate is the client's
           own message-pump latency during a busy moment (grid load, a
           jump, a session change), which is EVE-side and not ordering.
-        - Nothing is minimized after the activate, so there is no
-          foreground theft to undo: the settle and the second activation
-          are gone. This function no longer sleeps on the preview thread
-          -- the thread that also pumps hotkeys, alerts, the sweep and
-          every preview's mouse messages.
-        - A refused activation now has to bring the outgoing client back
-          (switching.should_restore); that is the old "never minimize
-          after a refused switch" safety property in the only shape
-          minimize-first allows.
+        - A pending restore does not minimize at all while Windows catches
+          up. Its timer retries from the pump; only an observed later success
+          applies the already-recorded outgoing minimize decision.
+        - A refused non-iconic activation brings the outgoing client back
+          (switching.should_restore); that is the old "never minimize after
+          a refused switch" safety property in the only shape minimize-first
+          allows.
 
         Every decision about *whether* to minimize or restore lives in
         switching.py so it can be tested off Windows; this function owns
@@ -1431,6 +1522,9 @@ class PreviewHost:
         # ordering is the reason the switch has a single owner -- the
         # click path used to activate inside window.py and tell the host
         # afterwards, by which point this read was already too late.
+        # A newer click or hotkey is user intent too. It must supersede a
+        # restore still awaiting its first foreground verdict.
+        self._clear_pending_activation(libs)
         previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
         previous_key, previous = next(
             ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
@@ -1447,11 +1541,15 @@ class PreviewHost:
             never=[previous_key] if self._is_never_minimize(previous_key) else [],
         )
 
+        # PENDING_RESTORE is only possible for an iconic target. Preserve the
+        # existing minimize-first behavior for all other switches, but leave
+        # the outgoing client alone while this target's restoration races.
+        target_was_iconic = bool(libs.user32.IsIconic(client.hwnd)) if libs else False
         with _animation_off(libs):
-            if minimize:
+            if minimize and not target_was_iconic:
                 self._minimize(libs, previous.hwnd)
             try:
-                ok = window_mod.activate(libs, client.hwnd)
+                result = window_mod.activate(libs, client.hwnd)
             except Exception:
                 # The outgoing client is already down and the verdict was
                 # never reached. On the click path the caller is the
@@ -1460,7 +1558,9 @@ class PreviewHost:
                 # the empty desktop with no line in the log. Roll back,
                 # say so, and let the exception carry on to whoever logs
                 # it; the switch itself is still a failure.
-                if switching.should_restore(activated=False, attempted=minimize):
+                if switching.should_restore(
+                    activated=False, attempted=minimize and not target_was_iconic
+                ):
                     logger.exception(
                         "Switch to 0x%x raised; restoring 0x%x",
                         client.hwnd,
@@ -1468,7 +1568,19 @@ class PreviewHost:
                     )
                     window_mod.activate(libs, previous.hwnd)
                 raise
-            if ok:
+            if result is window_mod.ActivationResult.PENDING_RESTORE:
+                self._arm_pending_activation(
+                    libs,
+                    _PendingSwitch(
+                        client.stable_key,
+                        client.hwnd,
+                        previous_key,
+                        previous_hwnd,
+                        minimize,
+                    ),
+                )
+                return result
+            if result is window_mod.ActivationResult.ACTIVATED:
                 # The ring moves HERE, inline, the instant the switch is
                 # known to have taken -- not on the sweep the foreground
                 # hook asks for. The hook and the sweep stay exactly as
@@ -1485,9 +1597,10 @@ class PreviewHost:
                 # prefers _foreground over a syscall of its own. Leaving
                 # it stale would make the line below re-apply the
                 # OUTGOING client's ring.
-                self._foreground = client.hwnd
-                self._apply_selection(libs)
-            elif switching.should_restore(activated=ok, attempted=minimize):
+                self._mark_client_activated(libs, client)
+            elif switching.should_restore(
+                activated=False, attempted=minimize and not target_was_iconic
+            ):
                 # activate() restores an iconic window before raising it,
                 # so this one call undoes the minimize AND hands the
                 # foreground back. Its verdict does not reach the caller
@@ -1502,10 +1615,14 @@ class PreviewHost:
                 logger.info(
                     "Switch to 0x%x refused; %s 0x%x",
                     client.hwnd,
-                    "restored" if restored else "could not restore",
+                    (
+                        "restored"
+                        if restored is window_mod.ActivationResult.ACTIVATED
+                        else "could not restore"
+                    ),
                     previous.hwnd,
                 )
-        return ok
+        return result
 
     def _minimize(self, libs, hwnd) -> None:
         """Send SC_MINIMIZE to *hwnd*, logging a send that did not complete.
@@ -2183,6 +2300,7 @@ class PreviewHost:
         # a reader on another thread must never observe a half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
+        self._clear_pending_activation(libs)
         # Same reasoning, for the state the render path reads: an hour-old
         # batch queued between stop() and the next enable would arm every
         # preview at once with a stale fight (raise_alert is safe from any
