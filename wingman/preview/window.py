@@ -23,9 +23,6 @@ logger = logging.getLogger(__name__)
 # .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
 # trailing space, so an exact match silently disables this for anyone
 # who sets it the obvious way.
-# .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
-# trailing space, so an exact match silently disables this for anyone
-# who sets it the obvious way.
 PERF = os.environ.get("WINGMAN_PREVIEW_PERF", "").strip() == "1"
 
 MIN_SIZE = (120, 90)
@@ -80,9 +77,9 @@ class ActivationResult(Enum):
 def activate(libs, hwnd) -> ActivationResult:
     """Bring *hwnd* to the foreground and report the observed outcome.
 
-    SetForegroundWindow alone does not work: Windows refuses it from a
-    process that does not own the foreground. The two-stage
-    AttachThreadInput dance is what makes it succeed.
+    SetForegroundWindow alone is often refused from a process that does not
+    own the foreground. Attaching the relevant input queues gives the request
+    its best supported chance, but the observed foreground remains authoritative.
 
     The verdict is read from GetForegroundWindow, never from
     SetForegroundWindow's return value -- that reports the request was
@@ -306,12 +303,12 @@ class PreviewWindow:
         # user locked must still be locked after a restart, and reporting
         # locked=False on the next drag would erase the flag.
         self.locked = locked
-        # Set once from the host at creation; Task 4 wires the live-update
-        # path that lets this change on an already-open window.
+        # Set once from the host at creation; the live restyle path lets this
+        # change on an already-open window.
         self.show_labels = show_labels
         # A DWM thumbnail property, not a bitmap one -- see the note on
-        # _chrome_key() below. Set once at creation; Task 4 wires the
-        # live-update path that lets this change on an already-open window.
+        # _chrome_key() below. Set once at creation; the live restyle path lets
+        # this change on an already-open window.
         self.opacity = opacity
         # Set once from the host at creation; PreviewHost._restyle pushes
         # live updates, like show_labels and locked.

@@ -41,12 +41,11 @@ def should_restore(*, activated, attempted) -> bool:
     """Whether a refused switch must bring the outgoing client back.
 
     TriffView's safety property was "a failed switch minimizes nothing",
-    kept by activating first. Minimizing first keeps the property in a
-    different shape: the outgoing client is already down when the refusal
-    is learned, so the refusal restores it. Without this, a refused
-    activation leaves the user on an empty desktop with nothing focused --
-    their old client gone and the new one never arrived, strictly worse
-    than the switch simply not working.
+    kept by activating first. With minimize-first the outgoing client is
+    already down when the refusal is learned, so this policy requests its
+    restoration. Windows can refuse that request too; without the attempt,
+    however, a refused activation necessarily leaves the old client down and
+    the new one absent, strictly worse than the switch simply not working.
 
     `attempted`, not "minimized": the send's verdict is not trusted here.
     A send that timed out is still delivered and processed later, so a

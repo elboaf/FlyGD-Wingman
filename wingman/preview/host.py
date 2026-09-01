@@ -613,10 +613,9 @@ class PreviewHost:
         the lock: the callables themselves are the live state, so this
         only has to post the signal.
 
-        The single live-update entry point for all five settings this
-        task wires (minimize_inactive_clients included): there is no
-        separate "minimize changed" message, because minimize is read per
-        switch (Task 7), not per window.
+        The single live-update entry point for these settings
+        (minimize_inactive_clients included): there is no separate "minimize
+        changed" message, because minimize is read per switch, not per window.
         """
         self._post(win32.WM_APP_RESTYLE)
 
@@ -1342,7 +1341,8 @@ class PreviewHost:
             # A concrete target can disappear between resolution and dispatch.
             logger.debug("Preview hotkey target %r is not running", target)
             return
-        # Keep one final call: Task 3 owns pending restore and minimize policy.
+        # Folding ends in one host-owned switch, including its pending-restore
+        # and minimize decisions.
         self._activate_client(libs, client)
 
     def _take_capture(self, text) -> bool:
@@ -1535,13 +1535,12 @@ class PreviewHost:
           including an iconic target that succeeds immediately, applies the
           already-recorded outgoing minimize decision. This is deliberately
           limited to the iconic/pending continuation: minimizing after an
-          ordinary activation can steal foreground from the target. Task 5's
-          probe gate owns that general ordering hazard; this temporary shape
-          preserves the pending-switch contract without pre-empting it.
-        - A refused non-iconic activation brings the outgoing client back
-          (switching.should_restore); that is the old "never minimize after
-          a refused switch" safety property in the only shape minimize-first
-          allows.
+          ordinary activation can steal foreground from the target. The
+          external transition probe supplied no safe basis for changing that
+          general order, so only the pending-restore case differs.
+        - A refused non-iconic activation attempts to bring the outgoing
+          client back (switching.should_restore); the restore can itself be
+          refused, so the desktop-gap risk remains with minimize-first.
 
         Every decision about *whether* to minimize or restore lives in
         switching.py so it can be tested off Windows; this function owns
@@ -1682,9 +1681,9 @@ class PreviewHost:
         # Zero covers three cases the API does not separate: the send
         # timed out, it was abandoned because the client was hung
         # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
-        # client that exited between the foreground read and here. In
-        # all of them the client never processed the message and is
-        # still where it was; the switch goes ahead without it. INFO for
+        # client that exited between the foreground read and here. A timed-out
+        # send may still be delivered later, so the switch cannot infer the
+        # client's final show state from this return. INFO for
         # the same reason window.py logs a refused activation at INFO:
         # the root logger runs at INFO, and this is what "minimize
         # sometimes does nothing" looks like in a user's log.
@@ -2019,9 +2018,8 @@ class PreviewHost:
         """Whether an unfocused client's real window should be minimized,
         read live. Same guard as _labels_shown.
 
-        Not consulted anywhere in this task -- Task 7's switching logic
-        is the first caller -- but stored and guarded now so
-        build_preview_host wires all five settings in one pass.
+        Consulted for each switch rather than cached on a preview, so a
+        settings change applies immediately without rebuilding windows.
         """
         if self._minimize_inactive_clients is None:
             return False
@@ -2162,9 +2160,8 @@ class PreviewHost:
         """Push live show_labels/opacity/locked onto every open preview,
         and re-run the visibility pass.
 
-        minimize_inactive_clients and never_minimize are read per switch
-        (Task 7), not walked here -- there is no per-window state for
-        them to update.
+        minimize_inactive_clients and never_minimize are read per switch,
+        not walked here -- there is no per-window state for them to update.
 
         hide_on_lost_focus IS walked here, unlike those two, because there
         is per-window state: unticking the box has to put the previews back

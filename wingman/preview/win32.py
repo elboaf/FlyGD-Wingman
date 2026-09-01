@@ -71,12 +71,12 @@ SMTO_ABORTIFHUNG = 0x0002
 
 # SystemParametersInfo actions for the minimize/restore animation. The
 # switch turns it off for its own duration and puts it back (host.py,
-# _animation_off): a minimize plus a restore is ~200-250ms of window-zoom
-# with it on, which is the bulk of the visible lag between clicking a
-# preview and seeing the client -- EVE-O Preview does the same, and
-# defaults to it (ThumbnailConfiguration.WindowsAnimationStyle). fWinIni
-# is always 0 so the user's own preference is never written to the
-# registry; it is only the live value that is toggled.
+# _animation_off). This suppresses the visible DWM zoom; measurements found
+# no reduction in the blocking minimize send, so it is not an activation-speed
+# mechanism. EVE-O Preview does the same and defaults to it
+# (ThumbnailConfiguration.WindowsAnimationStyle). fWinIni is always 0 so the
+# user's own preference is never written to the registry; only the live value
+# is toggled.
 SPI_GETANIMATION = 0x0048
 SPI_SETANIMATION = 0x0049
 

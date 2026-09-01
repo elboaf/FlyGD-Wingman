@@ -2265,9 +2265,11 @@ size. None of this is covered by pytest — it needs a
 real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
 
-**Minimize inactive clients** still minimizes the outgoing client before
-activating the requested client. The checks below verify that this order does
-not expose an empty desktop or leave the wrong window active.
+**Known limitation:** **Minimize inactive clients** still minimizes the
+outgoing client before activating the requested client. A refused or delayed
+activation can briefly expose the desktop or a preview, and this change does
+not claim to fix that gap. Record the source client, target client, and what
+became foreground if it occurs.
 
 - [ ] Labels off reclaims the character-name band and the mirrored video
       grows into it; labels on restores the band. Both take effect on
@@ -2312,27 +2314,34 @@ not expose an empty desktop or leave the wrong window active.
       saved position — that is the case the lock's own storage list
       exists for, since `locked` cannot ride in `preview.layouts`
       without a saved rect.
-- [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
-      Activation ownership moved from the preview window into the host as
-      part of this slice; this is a pure regression check on the
-      subsystem's primary interaction, and nothing in the suite executes
-      Win32 to catch it failing.
+- [ ] **LOAD-BEARING: locked and unlocked clicks focus the requested client.**
+      Test one locked preview and one unlocked preview from each starting
+      foreground: another EVE client, Windows Search, a browser text field,
+      and Wingman. A click (on release when unlocked, on press when locked)
+      must either put the requested EVE client in the foreground or leave the
+      source application in the foreground if Windows refuses the switch; the
+      preview itself must never become foreground. Type immediately after each
+      attempt. The application that remains foreground must receive the input.
+- [ ] **A held push-to-talk key does not prevent switching.** Hold the actual
+      push-to-talk key used during play, click both a locked and an unlocked
+      preview, and repeat with a character hotkey. Each accepted switch must
+      reach the requested client while the key remains held.
 - [ ] Minimize-inactive: with the checkbox on, clicking a different preview
       minimizes the client you were on, the new client ends up foreground
       and stays there, and a character on the never-minimize list is skipped
       entirely.
-- [ ] **LOAD-BEARING: minimize-inactive holds across REPEATED switches.**
-      Cycle A -> B -> A -> B -> A, at least five switches, and confirm the
-      outgoing client minimizes EVERY time. A single successful switch does
-      not satisfy this item. The switch is minimize-first (EVE-O Preview's
-      order): the outgoing client is minimized while it still holds the
-      foreground, THEN the target is activated. Switching BACK to a client
-      this feature just minimized goes through `activate()`'s
-      `ShowWindowAsync(SW_RESTORE)`, which is asynchronous; the
-      `GetForegroundWindow()` verdict is read a few instructions later.
-      The user-visible shape of a problem there is "works the first time,
-      then intermittently", which the single-switch item above passes
-      straight through.
+- [ ] **LOAD-BEARING: minimize-inactive holds across repeated switches.**
+      Cycle A -> B -> A -> B -> A, at least five switches. The outgoing client
+      should minimize every time and the requested client should finish in the
+      foreground. Record any desktop/preview flash or wrong foreground; the
+      retained minimize-first behavior can still expose that known gap.
+- [ ] **A minimized target restores without stalling later input.** Switch
+      repeatedly to a target that Minimize inactive clients put down. It must
+      either restore and become foreground within the bounded retry period or
+      stop retrying while Wingman remains responsive. During a pending restore,
+      the outgoing client must remain visible; after success it may minimize.
+      Start another click or hotkey immediately and confirm the newer request
+      wins rather than waiting behind the older restore.
 - [ ] **No minimize/restore animation during the switch, and the user's
       setting survives it.** The outgoing client should vanish and the
       target should appear with no window-zoom. Note what this is and is
@@ -2348,13 +2357,11 @@ not expose an empty desktop or leave the wrong window active.
       maximizing"), walk the switch, then confirm the setting is still on
       afterwards — the switch toggles the LIVE value only, with
       `fWinIni=0`, and puts it back in a `finally`.
-- [ ] A refused activation brings the outgoing client BACK. Windows refuses
-      a foreground change from a process without recent input; with
-      minimize-first the outgoing client is already down when that refusal
-      is learned, so the host re-activates it (`switching.should_restore`).
-      The visible shape of a failure is the old TriffView complaint: an
-      empty desktop with nothing focused. Hard to force deliberately; watch
-      for it rather than staging it.
+- [ ] A refused activation attempts to bring the outgoing client back. If
+      Windows refuses a switch after the outgoing client minimizes, it should
+      return to the foreground. A desktop/preview flash or failure to restore
+      remains a known limitation; record it rather than treating this release
+      as proof that the gap is closed.
 - [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
       a client with visible motion — undocked, drones out, or the camera
       spinning. Do NOT use a docked ship on a static scene: it looks
@@ -2372,11 +2379,11 @@ not expose an empty desktop or leave the wrong window active.
       both orders, including with the sending thread owning a DWM
       thumbnail of the target. The open candidate is the client's own
       message pump during a busy moment (grid load, a jump, a session
-      change), which no ordering change here can fix. What IS worth
-      filing: the elapsed figure separates a real wait from an instant
-      refusal, so a line reading well under a millisecond means something
-      new. The reorder's payoff is that a late-landing minimize can no
-      longer drop focus, so watch for THAT instead — see the item above.
+      change). What IS worth filing: the elapsed figure separates a real
+      wait from an instant refusal, so a line reading well under a
+      millisecond means something new. Also file any later minimize that
+      takes foreground away from the requested client; the retained order
+      does not claim that gap is fixed.
 - [ ] Reader's note, not a defect to file on its own: the never-minimize
       COLUMN sits in the card headed "Global keybinds" — right for its
       adjacency to the character rows, but that card's intro tells the
@@ -2604,8 +2611,13 @@ pytest.
   Expected: both the offline character and the latent-collision row read
   noticeably quieter than normal rows, not more prominent. A visual regression
   here reverses the hierarchy.
-- [ ] Quitting Wingman with chords bound leaves them released: the owning
-  application gets them back without a reboot.
+- [ ] **Quitting leaves input queues and hotkeys released.** After several
+  click, direct-hotkey, cycle, refused, and minimized-target attempts, quit
+  Wingman from the tray. Type in the foreground EVE client and in another
+  application; input must stay with the focused window, with no stuck keys or
+  keystrokes arriving in a different client. The preview chords must be
+  available to another application without a reboot. Relaunch Wingman and
+  confirm the chords register and switch normally again.
 
 ## Shared preview keybinds
 
