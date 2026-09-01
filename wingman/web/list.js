@@ -389,6 +389,8 @@
   var menu = WM.el('ctxmenu');
   var ctxCopy = WM.el('ctx-copy');
   var ctxOpen = WM.el('ctx-open');
+  var ctxPlay = WM.el('ctx-play');
+  var ctxRename = WM.el('ctx-rename');
 
   function hideMenu() { menu.hidden = true; ctxId = null; }
 
@@ -399,8 +401,17 @@
     ctxId = node.dataset.id;
     setFocus(ctxId);
     var row = byId(ctxId);
-    // Both items act on the YouTube link (app._copy / app._open), so both
-    // are dead without one.
+    // Copy link and Open in browser act on the YouTube link (app._copy /
+    // app._open), so both are dead without one.
+    //
+    // Play and Rename are NOT gated, and that follows the same rule rather
+    // than excepting it: WM.setEnabled disables a control when the app
+    // ALREADY KNOWS the action cannot be carried out. Whether the file is
+    // still on disk is a fact about the disk that goes stale, and the row
+    // payload carries no such field -- adding one would be worse, because
+    // rebuild() only ever emits rows for files that existed at scan time,
+    // so it would read true for every row forever. Python runs them and
+    // reports on the strip.
     var has = !!(row && row.link);
     ctxCopy.disabled = !has;
     ctxOpen.disabled = !has;
@@ -427,6 +438,54 @@
   ctxOpen.addEventListener('click', function () {
     if (ctxId) WM.send('open_path', ctxId);
     hideMenu();
+  });
+
+  // Play opens the RECORDING, where the two items above open the video it
+  // became. The screen is about a folder's contents and every affordance
+  // on it used to act on the link instead; "is this the fight I think it
+  // is" is answered by watching two seconds of it.
+  ctxPlay.addEventListener('click', function () {
+    if (ctxId) WM.send('play_recording', ctxId);
+    hideMenu();
+  });
+
+  // Rename prompts for the STEM and Python reappends the extension, so a
+  // user cannot turn .mkv into .mp4 by typing -- that would be a rename
+  // claiming a remux happened.
+  //
+  // WM.prompt, never window.prompt: WebView2 renders the native one as
+  // browser chrome captioned with the page origin. Python's _confirm
+  // cannot serve this either -- it blocks until dialog_response arrives,
+  // on the very bridge thread that would have to deliver it (DESIGN.md,
+  // "Which confirmation").
+  //
+  // The id is captured BEFORE the dialog opens, because hideMenu() nulls
+  // ctxId and the answer arrives seconds later -- the same local-copy the
+  // Copy handler above takes for the same reason.
+  //
+  // A refusal re-opens the prompt with the typed text still in it, so a
+  // typo costs a keystroke rather than the whole name. Every sentence in
+  // it is composed in Python: the page does not know that CON is
+  // reserved, that a name cannot end in a dot, or that an upload is
+  // running.
+  function promptRename(id, name, message) {
+    var dot = name.lastIndexOf('.');
+    var stem = dot > 0 ? name.slice(0, dot) : name;
+    WM.prompt('Rename recording', message || 'New name:', stem)
+      .then(function (answer) {
+        if (answer === null) return;
+        WM.send('rename_recording', id, answer).then(function (result) {
+          if (!result || result.ok) return;
+          promptRename(id, name, result.error);
+        });
+      });
+  }
+
+  ctxRename.addEventListener('click', function () {
+    var id = ctxId;
+    var row = id && byId(id);
+    hideMenu();
+    if (row) promptRename(id, row.name);
   });
   document.addEventListener('mousedown', function (ev) {
     if (!menu.hidden && !menu.contains(ev.target)) hideMenu();
@@ -536,6 +595,19 @@
     // payload.video_id, which made it the third place in the app that knew
     // what a YouTube watch URL looks like -- see uploader.watch_url.
     row.link = payload.url;
+    repaint(payload.id);
+  });
+
+  // One row, repainted in place. NOT a rebuild: list_rows re-mints every
+  // id (ui/rows.py), and this file drops every selection and focus id it
+  // no longer recognises on each onRows -- so a rebuild would cost the
+  // user's ticks and their keyboard position. (The sort key survives; it
+  // lives here, not in Python.) Every other rebuild follows something
+  // that changed the folder; a rename changes one row's text.
+  WM.handle('onRowRenamed', function (payload) {
+    var row = byId(payload.id);
+    if (!row) return;
+    row.name = payload.name;
     repaint(payload.id);
   });
 

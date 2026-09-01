@@ -151,3 +151,47 @@ def test_an_empty_url_is_never_stored():
     store = {}
     links.remember(store, Path("/a.mkv"), 10, 100.0, "")
     assert store == {}
+
+
+# --- rename ----------------------------------------------------------------
+# A rename changes the path a link is keyed under, and NOTHING rebuilds this
+# file (see the module docstring). Losing the key here loses the answer the
+# Link column exists to give, permanently.
+
+
+def test_rename_moves_a_link_to_the_new_path():
+    store = {}
+    links.remember(store, Path("/a.mkv"), 10, 100.0, URL)
+    links.rename(store, Path("/a.mkv"), Path("/b.mkv"))
+    assert links.lookup(store, Path("/b.mkv"), 10, 100.0) == URL
+    assert links.lookup(store, Path("/a.mkv"), 10, 100.0) is None
+
+
+def test_rename_preserves_the_identity_the_link_was_recorded_against():
+    """The (size, mtime) pair is untouched by a rename, so the moved entry
+    must still refuse a re-recording at the NEW path."""
+    store = {}
+    links.remember(store, Path("/a.mkv"), 10, 100.0, URL)
+    links.rename(store, Path("/a.mkv"), Path("/b.mkv"))
+    assert links.lookup(store, Path("/b.mkv"), 4096, 200.0) is None
+
+
+def test_rename_of_an_unknown_path_does_nothing():
+    """Not every recording has been uploaded. Renaming one that has not
+    must not invent an entry, or the Link column grows a glyph for a video
+    that does not exist."""
+    store = {}
+    links.rename(store, Path("/a.mkv"), Path("/b.mkv"))
+    assert store == {}
+
+
+def test_rename_overwrites_an_orphan_at_the_destination():
+    """Nothing prunes this file, so an entry for a long-gone file can be
+    sitting on the destination key. It cannot match anyway -- lookup
+    validates (size, mtime) -- but leaving it would keep a stale URL under
+    a name the user just chose."""
+    store = {}
+    links.remember(store, Path("/b.mkv"), 1, 1.0, "https://youtu.be/old")
+    links.remember(store, Path("/a.mkv"), 10, 100.0, URL)
+    links.rename(store, Path("/a.mkv"), Path("/b.mkv"))
+    assert links.lookup(store, Path("/b.mkv"), 10, 100.0) == URL

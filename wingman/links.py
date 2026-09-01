@@ -130,3 +130,32 @@ def remember(
     if not url:
         return
     store[str(video_path)] = LinkEntry(size=size, mtime=mtime, url=url)
+
+
+def rename(store: dict[str, LinkEntry], old_path, new_path) -> None:
+    """Follow a renamed recording, carrying its link with it.
+
+    A rename changes the key and nothing else -- size and mtime are
+    untouched by ``MoveFileExW`` -- so this is a key move with the entry
+    preserved, NOT a re-remember. Re-remembering would need the caller to
+    re-stat the file, and a stat that disagreed by a byte would silently
+    drop the link instead of moving it.
+
+    Missing source is a no-op: most recordings have never been uploaded,
+    and inventing an entry here would draw a Link glyph for a video that
+    does not exist.
+
+    An entry already at the destination is OVERWRITTEN. Nothing prunes this
+    file (see the module docstring), so an orphan for a long-deleted file
+    can be sitting on the name the user just chose. It is very unlikely to
+    match -- ``lookup`` validates ``(size, mtime)``, which must agree to
+    the byte and the timestamp -- but "unlikely" is not "never": two
+    recordings CAN share both, which is why ui/api.py zips ids to infos
+    rather than looking a row up by its identity. Leaving the orphan would
+    keep a stale URL keyed to a live name, the one thing this module is
+    careful never to do.
+    """
+    entry = store.pop(str(old_path), None)
+    if entry is None:
+        return
+    store[str(new_path)] = entry

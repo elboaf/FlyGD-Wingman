@@ -19,10 +19,29 @@
   var api = {};
   ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
+   // The Uploader's three quick actions. Doubled rather than added to
+   // test_dev_harness.py's known-gaps list because ?dev=1 is the only way
+   // any of them is seen outside Windows: play_recording and
+   // post_recent_logs both end in a Python-side shell or network call the
+   // harness cannot model, but the CONTROLS -- a menu item that acts and
+   // closes, a button that goes inert while a post runs -- are exactly
+   // what needs eyeballing. rename_recording answers below, because it
+   // has a return value the page renders.
+   'play_recording', 'post_recent_logs',
    'connect_google', 'dialog_response', 'minimize', 'close',
    'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
    'skills_reload_plans', 'skills_open_plans_folder'
   ].forEach(function (name) { api[name] = log(name); });
+
+  // Answers {ok, error}, which is the shape list.js branches on: a
+  // refusal re-opens the prompt with the typed text still in it. The
+  // double accepts everything, so the harness shows the accepting path;
+  // the refusing path is Python's, and every sentence in it is composed
+  // there (an upload running, a reserved device name, a collision).
+  api.rename_recording = function (rowId, stem) {
+    console.log('DEV api.rename_recording(', rowId, stem, ')');
+    return Promise.resolve({ ok: true, error: '' });
+  };
 
   // NOT generic stubs. The per-field endpoints return
   // {applied, persisted, error} and the page reads all three, so the

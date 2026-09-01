@@ -402,3 +402,75 @@ def test_a_row_cannot_be_mutated_in_place(tmp_path):
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         row.name = "b.mkv"
+
+
+# --- rename ----------------------------------------------------------------
+# The fourth path-keyed store. _links here is keyed by PATH and survives
+# rebuild on purpose, and it is what the CELL renders from -- so a rename
+# that migrates the two persisted stores and forgets this one still shows a
+# row with no link until the next relaunch.
+
+
+def test_rename_reports_the_new_name_in_the_row(tmp_path):
+    snap = rows_mod.RowSnapshot()
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    snap.rebuild(tmp_path)
+    row_id = snap.rows()[0]["id"]
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    snap.rename(row_id, new)
+    assert snap.rows()[0]["name"] == "b.mkv"
+
+
+def test_rename_keeps_the_row_id(tmp_path):
+    """The whole reason this exists rather than a rebuild: the page keeps
+    its selection, focus ring and sort position because the ids do not
+    move."""
+    snap = rows_mod.RowSnapshot()
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    snap.rebuild(tmp_path)
+    row_id = snap.rows()[0]["id"]
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    snap.rename(row_id, new)
+    assert snap.rows()[0]["id"] == row_id
+
+
+def test_rename_moves_the_in_memory_link(tmp_path):
+    snap = rows_mod.RowSnapshot()
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    snap.rebuild(tmp_path)
+    row_id = snap.rows()[0]["id"]
+    snap.set_link(row_id, WATCH)
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    snap.rename(row_id, new)
+    assert snap.rows()[0]["link"] == WATCH
+    # Keyed by the NEW path, so the next rebuild finds it there.
+    assert snap._links.get(new) == WATCH
+    assert old not in snap._links
+
+
+def test_rename_repoints_the_resolved_info(tmp_path):
+    """resolve() is what every later action reads -- delete, upload, play.
+    Leaving it on the old path would act on a file that no longer exists."""
+    snap = rows_mod.RowSnapshot()
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    snap.rebuild(tmp_path)
+    row_id = snap.rows()[0]["id"]
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    snap.rename(row_id, new)
+    assert snap.resolve(row_id).path == new
+
+
+def test_rename_of_an_unknown_id_is_a_no_op(tmp_path):
+    """Every other mutator here treats a stale id as "do nothing"; a
+    rename that raised would take down the bridge thread instead."""
+    snap = rows_mod.RowSnapshot()
+    snap.rename("r404", tmp_path / "b.mkv")
+    assert snap.rows() == []
