@@ -6,7 +6,10 @@ publish = false
 
 [dependencies]
 blue-marshal = "=1.0.1"
-serde_json = "1"
+# EVE carries f64 values whose shortest decimal needs exact parsing; the
+# default fast path can move them by one ULP and make Python's safety check
+# refuse every write containing one.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [profile.release]
 opt-level = "s"

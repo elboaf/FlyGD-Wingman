@@ -58,3 +58,22 @@ fn encode(text: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     };
     Ok(blue_marshal::encode(&value, &opts)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{decode, encode};
+
+    #[test]
+    fn large_float_survives_the_json_and_marshal_round_trip_exactly() {
+        let input = br#"{"had_crc":false,"doc":{"bytes:ui":{"bytes:plex_value":{"tuple":["long:134251880277573607",93668995514.40001]}}}}"#;
+
+        let encoded = encode(input).unwrap();
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&decode(&encoded).unwrap()).unwrap();
+        let value = decoded["doc"]["bytes:ui"]["bytes:plex_value"]["tuple"][1]
+            .as_f64()
+            .unwrap();
+
+        assert_eq!(value.to_bits(), 93668995514.40001_f64.to_bits());
+    }
+}
