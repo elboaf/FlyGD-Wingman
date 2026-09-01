@@ -461,8 +461,12 @@ def test_preview_group_stages_are_present():
     assert "settings-previews-narrow" in keys, (
         "settings-previews-narrow stage missing from SCREENS"
     )
-    groups_screen = next(s for s in shoot.SCREENS if s.key == "settings-previews-groups")
-    narrow_screen = next(s for s in shoot.SCREENS if s.key == "settings-previews-narrow")
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
     assert groups_screen.gated, "settings-previews-groups must be gated (EVE required)"
     assert narrow_screen.gated, "settings-previews-narrow must be gated (EVE required)"
     assert groups_screen.section == "previews"
@@ -471,8 +475,8 @@ def test_preview_group_stages_are_present():
 
 def test_preview_group_stage_setup_scripts():
     """The staging scripts for the two new stages must follow the existing
-    pattern: scroll the pane to reveal groups, and use a narrow viewport
-    for the 840x625 stage.
+    pattern: scroll the pane to reveal groups, and use scroll-only JS for
+    the 840x625 stage (viewport is now set via CDP, not window.resizeTo).
     """
     scripts = {
         s.key: shoot.screen_setup_script(s)
@@ -488,13 +492,15 @@ def test_preview_group_stage_setup_scripts():
     assert "scrollTop" in groups_script or "scrollHeight" in groups_script, (
         "groups stage setup must scroll the pane"
     )
-    # The narrow stage must set a viewport width of 840.
+    # The narrow stage must scroll (not resize via window.resizeTo --
+    # that is a no-op in WebView2; the viewport is set through CDP instead).
     assert narrow_script is not None, "settings-previews-narrow needs a setup script"
-    assert "840" in narrow_script, (
-        "narrow stage must target the 840px floor width"
+    assert "resizeTo" not in narrow_script, (
+        "narrow stage must NOT use window.resizeTo (it is a no-op in WebView2); "
+        "use Emulation.setDeviceMetricsOverride via CDP instead"
     )
-    assert "625" in narrow_script, (
-        "narrow stage must target the 625px floor height"
+    assert "scrollTop" in narrow_script, (
+        "narrow stage must scroll the pane into position"
     )
 
 
@@ -503,3 +509,185 @@ def test_gate_on_shoots_every_screen_including_new_group_stages():
     to_shoot, skipped = shoot.screens_for_gate(True)
     assert len(to_shoot) == 16
     assert skipped == []
+
+
+# ---------------------------------------------------------------------------
+# CDP viewport-override tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeWS:
+    """Minimal websocket stand-in that speaks just enough CDP to satisfy CDP."""
+
+    def __init__(self):
+        self._sent = []
+        self._id = 0
+        self._queue = []
+
+    def send(self, text):
+        import json as _json
+
+        msg = _json.loads(text)
+        self._sent.append(msg)
+        # Prepare a matching reply so _call() sees its id immediately.
+        self._queue.append({"id": msg["id"], "result": {"data": ""}})
+
+    def recv(self):
+        import json as _json
+
+        return _json.dumps(self._queue.pop(0))
+
+
+def test_cdp_set_device_metrics_override_sends_correct_params():
+    """Emulation.setDeviceMetricsOverride must be sent with width=840,
+    height=625, deviceScaleFactor=1, mobile=False.
+
+    These are the only parameters that meet the brief: width/height match
+    the documented minimum viewport, scale factor 1 keeps CSS pixels equal
+    to physical pixels (no DPI scaling artefacts), and mobile=False avoids
+    viewport-meta side-effects that could widen the layout.
+    """
+    ws = _FakeWS()
+    cdp = shoot.CDP(ws)
+    cdp.set_device_metrics_override(width=840, height=625)
+    methods = [m["method"] for m in ws._sent]
+    assert "Emulation.setDeviceMetricsOverride" in methods, (
+        "CDP must send Emulation.setDeviceMetricsOverride for the narrow viewport"
+    )
+    call = next(
+        m for m in ws._sent if m["method"] == "Emulation.setDeviceMetricsOverride"
+    )
+    params = call["params"]
+    assert params["width"] == 840
+    assert params["height"] == 625
+    assert params["deviceScaleFactor"] == 1
+    assert params["mobile"] is False
+
+
+def test_cdp_clear_device_metrics_override_sends_correct_method():
+    """Emulation.clearDeviceMetricsOverride must be sent with no params
+    (or empty params) to restore the real viewport after the narrow shot.
+    """
+    ws = _FakeWS()
+    cdp = shoot.CDP(ws)
+    cdp.clear_device_metrics_override()
+    methods = [m["method"] for m in ws._sent]
+    assert "Emulation.clearDeviceMetricsOverride" in methods, (
+        "CDP must send Emulation.clearDeviceMetricsOverride after the narrow shot"
+    )
+
+
+class _TrackedCDP:
+    """A traceable fake CDP that records protocol operations in order.
+
+    Used to verify that walk() applies device metrics before capturing
+    the narrow screenshot and clears them afterward in a finally-safe
+    manner, including when the screenshot itself raises an exception.
+    """
+
+    def __init__(self, *, fail_narrow_screenshot: bool = False):
+        self._ops: list[str] = []  # ordered record of operations
+        self._fail_narrow = fail_narrow_screenshot
+        self._override_active = False
+
+    def evaluate(self, expression: str):
+        if "WM.eve_shown" in expression:
+            return True
+        return None
+
+    def screenshot(self) -> bytes:
+        if self._fail_narrow and self._override_active:
+            # Simulate a CDP capture failure while the narrow override is set.
+            raise RuntimeError("screenshot failed during narrow override")
+        # Minimal valid PNG header so write_bytes() succeeds.
+        import base64 as _b64
+
+        return _b64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+            "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        )
+
+    def set_device_metrics_override(self, *, width: int, height: int) -> None:
+        self._ops.append(f"set:{width}x{height}")
+        self._override_active = True
+
+    def clear_device_metrics_override(self) -> None:
+        self._ops.append("clear")
+        self._override_active = False
+
+    def close(self) -> None:
+        pass
+
+
+def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
+    tmp_path, monkeypatch
+):
+    """walk() must call set_device_metrics_override before capturing the
+    narrow screen and clear_device_metrics_override after it -- in that
+    order -- so the screenshot is taken at 840x625 and the real viewport
+    is restored for every subsequent capture.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _TrackedCDP()
+    shots, skipped, eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    assert eve_shown is True
+    assert not skipped
+
+    # The narrow screen must have been shot successfully.
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None, "narrow screen not found in shots"
+    assert narrow["error"] is None, f"narrow screen failed: {narrow['error']}"
+
+    # Verify exact operation ordering: set -> screenshot -> clear.
+    # The ops list records set:WxH and clear; screenshots do not write to ops
+    # so we verify set comes before clear and that both are present.
+    assert "set:840x625" in cdp._ops, (
+        "walk() must call set_device_metrics_override(width=840, height=625) "
+        "before the narrow screenshot"
+    )
+    assert "clear" in cdp._ops, (
+        "walk() must call clear_device_metrics_override() after the narrow screenshot"
+    )
+    set_idx = cdp._ops.index("set:840x625")
+    clear_idx = cdp._ops.index("clear")
+    assert set_idx < clear_idx, (
+        "set_device_metrics_override must be called before clear_device_metrics_override"
+    )
+    # No stray set/clear for non-narrow screens.
+    assert cdp._ops.count("clear") == 1, "clear must only be called once (for narrow)"
+    assert cdp._ops.count("set:840x625") == 1, (
+        "set must only be called once (for narrow)"
+    )
+
+
+def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
+    tmp_path, monkeypatch
+):
+    """clear_device_metrics_override() must be called even if the narrow
+    screenshot raises an exception (finally-safe ordering).
+
+    A viewport stuck at 840x625 would distort every subsequent capture
+    in the same session, which is silently wrong and harder to diagnose
+    than a single recorded failure.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _TrackedCDP(fail_narrow_screenshot=True)
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    # The narrow screen should be recorded as failed, not silently absent.
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None, "narrow screen must appear in shots even on failure"
+    assert narrow["error"] is not None, (
+        "narrow screen must record the error, not succeed silently"
+    )
+
+    # Clearing must still have happened despite the screenshot failure.
+    assert "clear" in cdp._ops, (
+        "clear_device_metrics_override() must run in a finally block "
+        "even when the narrow screenshot raises an exception"
+    )
+    # The override must not still be active after walk() returns.
+    assert not cdp._override_active, (
+        "device metrics override must be inactive after walk() returns"
+    )

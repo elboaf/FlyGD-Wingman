@@ -187,12 +187,12 @@ def screen_setup_script(screen: Screen) -> str | None:
           if (pane) { pane.scrollTop = pane.scrollHeight; }
         }())"""
     if screen.key == "settings-previews-narrow":
-        # Resize to the 840x625 viewport floor (logical pixels, as
-        # MIN_WIDTH/MIN_HEIGHT in ui/window.py are measured, not derived),
-        # then scroll the table into view so long character and group names
-        # are visible in a horizontally-constrained column.
+        # Scroll the character table into view so long character and group
+        # names are visible.  The 840x625 viewport floor is applied through
+        # CDP (Emulation.setDeviceMetricsOverride) in walk(), NOT here:
+        # window.resizeTo is a no-op inside a WebView2 target controlled by
+        # pywebview, so it must never appear in this script.
         return """(function () {
-          window.resizeTo(840, 625);
           var pane = document.querySelector('.settings-pane');
           if (pane) { pane.scrollTop = 0; }
         }())"""
@@ -471,6 +471,27 @@ class CDP:
     def screenshot(self) -> bytes:
         return base64.b64decode(self._call("Page.captureScreenshot")["data"])
 
+    def set_device_metrics_override(self, *, width: int, height: int) -> None:
+        """Pin the page viewport to the given logical pixel size.
+
+        deviceScaleFactor=1 keeps CSS pixels equal to physical pixels (no
+        DPI scaling artefacts).  mobile=False avoids viewport-meta
+        side-effects that could widen the layout beyond the requested width.
+        """
+        self._call(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
+        )
+
+    def clear_device_metrics_override(self) -> None:
+        """Restore the real viewport after a pinned-viewport capture."""
+        self._call("Emulation.clearDeviceMetricsOverride")
+
     def close(self) -> None:
         self._ws.close()
 
@@ -569,7 +590,18 @@ def walk(
             if setup:
                 cdp.evaluate(setup)
                 time.sleep(0.25)
-            (out_dir / name).write_bytes(cdp.screenshot())
+            if screen.key == "settings-previews-narrow":
+                # window.resizeTo is a no-op in a WebView2 target; use
+                # CDP emulation instead.  The clear runs in a finally so
+                # the real viewport is restored even when the capture
+                # fails, preventing distorted captures of all later screens.
+                cdp.set_device_metrics_override(width=840, height=625)
+                try:
+                    (out_dir / name).write_bytes(cdp.screenshot())
+                finally:
+                    cdp.clear_device_metrics_override()
+            else:
+                (out_dir / name).write_bytes(cdp.screenshot())
             if screen.key in {"dialog", "settings-previews-copy"}:
                 # Dismiss every staged overlay before the next screen. Cancel
                 # is side-effect free for both the Python-shaped confirm and
