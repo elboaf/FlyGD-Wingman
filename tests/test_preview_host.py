@@ -3058,7 +3058,7 @@ def test_pending_restore_expires_after_exactly_25_retries_and_logs_dropped_minim
     )
 
 
-def test_pending_rollback_expiry_is_labelled_distinctly(monkeypatch, caplog):
+def test_pending_activation_expiry_uses_the_generic_label(monkeypatch, caplog):
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
@@ -3076,7 +3076,7 @@ def test_pending_rollback_expiry_is_labelled_distinctly(monkeypatch, caplog):
             h._retry_pending_activation(libs)
 
     assert any(
-        "Rollback activation of Alice expired after 25 restore retries"
+        "Activation of Alice did not complete after 25 restore retries"
         in record.message
         for record in caplog.records
     )

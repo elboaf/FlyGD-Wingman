@@ -1510,12 +1510,6 @@ class PreviewHost:
                     ACTIVATE_RETRY_MAX,
                     pending.previous_hwnd,
                 )
-            elif pending.previous_key is None and not pending.previous_hwnd:
-                logger.info(
-                    "Rollback activation of %s expired after %d restore retries",
-                    pending.stable_key,
-                    ACTIVATE_RETRY_MAX,
-                )
             else:
                 logger.info(
                     "Activation of %s did not complete after %d restore retries",
