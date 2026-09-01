@@ -122,6 +122,9 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
         def SetForegroundWindow(self, h):
             return True
 
+        def SetFocus(self, h):
+            return h
+
     class FakeLibs:
         user32 = FakeUser32()
         kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: 1})()
@@ -1073,3 +1076,51 @@ def test_close_destroys_the_overlay(monkeypatch):
 
     assert 0x9001 in libs.destroyed
     assert w._label_hwnd is None
+
+
+def test_setfocus_is_called_while_the_queues_are_still_attached():
+    """EVE-O Preview's ActivateWindow does SetForegroundWindow then
+    SetFocus while its input queues are attached; we only did the
+    foreground, and the target came up foreground-but-focusless -- the
+    first ~0.5-1s of clicks and keys went nowhere. The order matters:
+    after detaching, SetFocus has no rights to the foreground."""
+    calls = []
+    foreground = [999]
+
+    class FakeUser32:
+        def IsIconic(self, h):
+            return False
+
+        def GetForegroundWindow(self):
+            # The foreground only moves when SetForegroundWindow does it.
+            return foreground[0]
+
+        def GetWindowThreadProcessId(self, h, p):
+            return 7
+
+        def AttachThreadInput(self, a, b, c):
+            calls.append(("attach", c))
+            return True
+
+        def SetForegroundWindow(self, h):
+            foreground[0] = h
+            calls.append(("foreground", h))
+
+        def SetFocus(self, h):
+            calls.append(("focus", h))
+
+    class FakeLibs:
+        user32 = FakeUser32()
+        kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: 1})()
+
+    assert window.activate(FakeLibs(), 123) is True
+
+    kinds = [c[0] for c in calls]
+    assert kinds == [
+        "attach",  # True: attach outgoing
+        "attach",  # True: attach target
+        "foreground",
+        "focus",  # BEFORE the detach below
+        "attach",  # False: detach
+        "attach",  # False: detach
+    ]

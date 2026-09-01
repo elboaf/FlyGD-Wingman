@@ -2440,6 +2440,23 @@ pytest.
 - [ ] **With both running, a press always moves you.** Press it repeatedly
   from one of the two clients. Expected: it goes to the OTHER one rather
   than re-focusing the client already in front.
+- [ ] **LOAD-BEARING: a burst of presses ends when the keys stop.** With
+  two clients running, alternate their character chords as fast as you
+  can for a couple of seconds, then STOP and hold still. Expected: at
+  most ONE more switch happens — to whichever client you pressed LAST —
+  and then the desktop is still. The bug this pins: every press used to
+  be a queued, fully-executed switch, so after a burst the clients kept
+  trading places on their own. Also check the press for the client you
+  are ALREADY on costs nothing: no minimize, no visible flicker, no
+  delay — it is a recognised no-op now.
+- [ ] **Input lands immediately after a switch.** Switch to a client
+  with a hotkey (and separately, by clicking its preview) and
+  immediately — within a fraction of a second — type a character or
+  click a UI button in the game. Expected: the input goes to that
+  client at once. The bug this pins: the switch left the client
+  foreground but focusless, and roughly the first 0.5-1s of input was
+  swallowed. Try it on a client that was MINIMIZED before the switch —
+  the async restore is the likeliest moment for a relapse.
 - [ ] **A character chord that collides with a cycle chord is still a
   clash.** Bind `Ctrl+Alt+Right` to a character while it is also Cycle
   forward. Expected: both rows go red and the tooltip says the cycle keybind

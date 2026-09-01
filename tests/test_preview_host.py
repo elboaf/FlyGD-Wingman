@@ -695,6 +695,10 @@ class _FakeUser32:
     def GetForegroundWindow(self):
         return self._foreground
 
+    def PeekMessageW(self, ptr, hwnd, lo, hi, remove):
+        # No queued messages: each hotkey test drives exactly one press.
+        return 0
+
     def GetClientRect(self, hwnd, rect_ptr):
         # Falsy: these tests are about selection and hotkeys, not sizing,
         # so declining to sample is the least assumption. A real rect is
@@ -1018,7 +1022,11 @@ def test_shared_hotkey_refocuses_the_only_running_match(monkeypatch):
 
     h._on_hotkey(libs, next(iter(user32.registered)))
 
-    assert activated == [0x1111]
+    # The target is ALREADY the foreground: the switch short-circuits to
+    # True without paying the minimize/activate dance (EVE-O Preview's
+    # "check if any actions are needed" head), so nothing is activated.
+    assert activated == []
+    assert h._foreground == 0x1111
 
 
 def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
@@ -2438,19 +2446,19 @@ class _SwitchUser32(_FakeUser32):
     toggles into a shared order log, so a test can assert the SEQUENCE and
     not just the calls -- the ordering is the whole feature here."""
 
-    def __init__(self, order, foreground=0, send_result=1, animation=1):
+    def __init__(self, order, foreground=0, post_result=1, animation=1):
         super().__init__(foreground=foreground)
         self._order = order
-        self._send_result = send_result
+        self._post_result = post_result
         self.animation = animation
 
     def GetForegroundWindow(self):
         self._order.append(("foreground", self._foreground))
         return self._foreground
 
-    def SendMessageTimeoutW(self, hwnd, msg, wparam, lparam, flags, timeout, result):
-        self._order.append(("send", hwnd, msg, wparam, lparam, flags, timeout))
-        return self._send_result
+    def PostMessageW(self, hwnd, msg, wparam, lparam):
+        self._order.append(("post", hwnd, msg, wparam, lparam))
+        return self._post_result
 
     def SystemParametersInfoW(self, action, size, info, winini):
         # SPI_GETANIMATION fills the struct; SPI_SETANIMATION reads it. The
@@ -2472,7 +2480,7 @@ def _switching_host(
     *,
     foreground,
     activated=True,
-    send_result=1,
+    post_result=1,
     minimize=True,
     never=(),
     animation=1,
@@ -2488,7 +2496,7 @@ def _switching_host(
     )
     monkeypatch.setattr(host.time, "sleep", lambda s: order.append(("sleep", s)))
     user32 = _SwitchUser32(
-        order, foreground=foreground, send_result=send_result, animation=animation
+        order, foreground=foreground, post_result=post_result, animation=animation
     )
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None,
@@ -2507,13 +2515,11 @@ def _switching_host(
 
 
 MINIMIZE_ALICE = (
-    "send",
+    "post",
     0x1111,
     host.win32.WM_SYSCOMMAND,
     host.win32.SC_MINIMIZE,
     0,
-    host.win32.SMTO_ABORTIFHUNG,
-    host.MINIMIZE_TIMEOUT_MS,
 )
 
 
@@ -2701,7 +2707,7 @@ def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
     the send really did fail -- activate() on the window that still
     holds the foreground is its own early return."""
     h, libs, order = _switching_host(
-        monkeypatch, foreground=0x1111, activated=False, send_result=0
+        monkeypatch, foreground=0x1111, activated=False, post_result=0
     )
 
     assert h._activate_client(libs, h._clients["Bravo"]) is False
@@ -2751,31 +2757,30 @@ def test_a_failed_animation_restore_is_not_silent(monkeypatch, caplog):
 
 def test_a_failed_minimize_still_activates(monkeypatch):
     """The minimize is a side effect of the switch, not a precondition:
-    a client slow to minimize must not cost the user the switch itself."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+    a minimize that never posts must not cost the user the switch itself."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, post_result=0)
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     kinds = [entry[0] for entry in order]
-    assert kinds == ["foreground", "animation", "send", "activate", "ring", "animation"]
+    assert kinds == ["foreground", "animation", "post", "activate", "ring", "animation"]
 
 
-def test_a_failed_minimize_logs_how_long_it_actually_waited(monkeypatch, caplog):
-    """A zero return has three causes the API does not separate, and the
-    elapsed time is the only one of them that survives into a user's log:
-    a send that spent the whole budget timed out, one that came back
-    instantly was refused. The line used to read identically either way,
-    which is how a live install logged 166 of them in one session and left
-    the cause open."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, send_result=0)
+def test_a_failed_post_is_logged_and_costs_the_switch_nothing(monkeypatch, caplog):
+    """A False return from PostMessageW is a failure before delivery --
+    an invalid hwnd, or a client that exited between the foreground read
+    and here. Unlike the old timed-out send there is no elapsed time to
+    report, but the line still exists: it is what "minimize sometimes
+    does nothing" looks like in a user's log, and a live install logged
+    166 of those in one session."""
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, post_result=0)
 
     with caplog.at_level("INFO", logger="wingman.preview.host"):
         assert h._activate_client(libs, h._clients["Bravo"]) is True
 
     line = "".join(r.message for r in caplog.records if "Minimize of" in r.message)
     assert line, "the failed minimize logged nothing"
-    assert f"of a {host.MINIMIZE_TIMEOUT_MS}ms budget" in line
-    assert "did not complete" in line
+    assert "was not posted" in line
 
 
 NO_MINIMIZE = [
@@ -2807,14 +2812,16 @@ def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
 def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
     monkeypatch,
 ):
-    """Previous and next are the same client. Minimizing on it would
-    minimize the very client just clicked -- and with minimize-first,
-    before the activate() early-return that used to catch this."""
+    """Previous and next are the same client. The switch short-circuits
+    to True before anything moves -- no minimize of the very client just
+    clicked (the original bug), and under the 2026-08-31 queueing fix
+    not even an activation round-trip: EVE-O Preview's "check if any
+    actions are needed" head."""
     h, libs, order = _switching_host(monkeypatch, foreground=0x2222)
 
     assert h._activate_client(libs, h._clients["Bravo"]) is True
 
-    assert order == [("foreground", 0x2222), *NO_MINIMIZE]
+    assert order == [("foreground", 0x2222)]
 
 
 def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
@@ -3299,3 +3306,91 @@ def test_a_newly_created_preview_is_born_with_the_current_lock_aspect(monkeypatc
     h._sweep(libs=None)
 
     assert seen["lock_aspect"] is False
+
+
+# --- hotkey coalescing: a burst ends in the switch the user asked for ------
+#
+# A switch is tens of milliseconds on the same pump that reads WM_HOTKEY,
+# so rapid pressing posts faster than switches drain, and every posted
+# press is a REAL switch waiting to run -- the sequence kept replaying
+# long after the keys went quiet, each switch undoing the last. Draining
+# to the newest press is the fix.
+
+
+def test_the_drain_keeps_only_the_newest_queued_press(monkeypatch):
+    """PeekMessageW hands back every WM_HOTKEY queued behind the one being
+    handled; the LAST of them is the only one still true when the switch
+    runs."""
+    from ctypes import wintypes as wt
+
+    queued = [7, 11, 13]  # two older presses queued behind this one (13)
+
+    def peek(ptr, hwnd, lo, hi, remove):
+        if not queued:
+            return 0
+        msg = wt.MSG.from_address(ctypes.addressof(ptr._obj))
+        msg.wParam = queued.pop(0)
+        return 1
+
+    libs = type("L", (), {})()
+    libs.user32 = type("U", (), {"PeekMessageW": staticmethod(peek)})()
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._drain_stale_hotkeys(libs, 5) == 13
+    assert queued == []  # drained, not left for the next press
+
+
+def test_the_drain_is_a_no_op_without_libs():
+    """The tests drive _on_hotkey with libs=None on the hotkey-free paths;
+    draining must not be the thing that starts requiring a pump."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._drain_stale_hotkeys(None, 5) == 5
+
+
+def test_a_burst_of_presses_switches_once(monkeypatch):
+    """Six rapid presses alternating Alice/Bravo, with five of them still
+    queued when the first is handled: exactly ONE activation -- to Bravo,
+    the newest press -- instead of six switches replaying the sequence."""
+    from ctypes import wintypes as wt
+
+    # Idents are not knowable before registration, so the queue is
+    # filled after _apply_hotkeys: alternating presses ending on Bravo.
+    queued = []
+
+    def peek(ptr, hwnd, lo, hi, remove):
+        if not queued:
+            return 0
+        msg = wt.MSG.from_address(ctypes.addressof(ptr._obj))
+        msg.wParam = queued.pop(0)
+        return 1
+
+    activated = []
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0
+    user32.PeekMessageW = peek
+    libs = _FakeLibs(user32)
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
+            "cycle_next": "",
+            "cycle_prev": "",
+        },
+    )
+
+    ident_by_vk = {vk: ident for ident, (mods, vk) in user32.registered.items()}
+    alice = ident_by_vk[0x70]  # Ctrl+F1
+    bravo = ident_by_vk[0x71]  # Ctrl+F2
+    queued.extend([bravo, alice, bravo, alice, bravo])
+
+    h._on_hotkey(libs, alice)  # the press being handled
+
+    assert activated == [0x2222]  # one switch, to the newest press

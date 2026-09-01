@@ -390,10 +390,16 @@ def bind() -> Libs:
         (user32, "GetCursorPos", BOOL, [ctypes.POINTER(POINT)]),
         # --- focus
         (user32, "SetForegroundWindow", BOOL, [HWND]),
+        # EVE-O Preview's ActivateWindow calls SetFocus right after
+        # SetForegroundWindow, while the input queues are still attached:
+        # without it the target ends up foreground-but-focusless and eats
+        # the first several hundred milliseconds of input.
+        (user32, "SetFocus", HWND, [HWND]),
         (user32, "GetForegroundWindow", HWND, []),
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
         (user32, "IsIconic", BOOL, [HWND]),
         (user32, "GetWindowThreadProcessId", DWORD, [HWND, ctypes.POINTER(DWORD)]),
+        (user32, "PostMessageW", BOOL, [HWND, UINT, ctypes.c_void_p, ctypes.c_void_p]),
         # The two animation actions only (see the constants). The pvParam is
         # declared void* rather than POINTER(ANIMATIONINFO) because the
         # function is generic; the host passes byref(ANIMATIONINFO).

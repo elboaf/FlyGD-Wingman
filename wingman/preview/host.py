@@ -39,7 +39,6 @@ SWEEP_MS = 700  # TriffView uses the same interval
 # to a client that still holds the foreground (see _activate_client), the
 # case measured at 6-9ms; the budget is a ceiling for a hung one, not the
 # expected wait.
-MINIMIZE_TIMEOUT_MS = 100
 SWEEP_TIMER_ID = 1
 # How long an armed bind capture survives without being disarmed. Long
 # enough that nobody meets it while deciding which key to press; short
@@ -1198,6 +1197,7 @@ class PreviewHost:
                 logger.exception("on_hotkey_status callback raised")
 
     def _on_hotkey(self, libs, ident) -> None:
+        ident = self._drain_stale_hotkeys(libs, ident)
         action = self._registered.get(ident)
         if action is None:
             # Not silent by accident: this is the one case Risk 4 (does
@@ -1251,6 +1251,33 @@ class PreviewHost:
             logger.debug("Preview hotkey target %r is not running", target)
             return
         self._activate_client(libs, client)
+
+    def _drain_stale_hotkeys(self, libs, ident) -> int:
+        """Drop every WM_HOTKEY queued behind this one, keep the newest.
+
+        A switch is not free: between the minimize round-trip and the
+        foreground dance it costs tens of milliseconds on the same pump
+        that reads these messages. Rapid pressing posts faster than that,
+        and every posted press is a REAL switch waiting to run -- so the
+        sequence pressed kept executing long after the keys went quiet,
+        one full switch per press, each undoing the last. Draining to the
+        newest press makes a burst end in exactly the switch the user
+        asked for last, which is the only one still true when it runs.
+
+        Returns the ident to act on: the drained one if any arrived
+        behind this call, else the one that triggered us.
+        """
+        if libs is None:
+            return ident
+        from ctypes import wintypes
+
+        newest = ident
+        msg = wintypes.MSG()
+        while libs.user32.PeekMessageW(
+            ctypes.byref(msg), None, win32.WM_HOTKEY, win32.WM_HOTKEY, win32.PM_REMOVE
+        ):
+            newest = msg.wParam
+        return newest
 
     def _take_capture(self, text) -> bool:
         """Hand *text* to an armed capture. Returns whether it was taken.
@@ -1367,6 +1394,18 @@ class PreviewHost:
         # click path used to activate inside window.py and tell the host
         # afterwards, by which point this read was already too late.
         previous_hwnd = libs.user32.GetForegroundWindow() if libs is not None else 0
+
+        # Already there: EVE-O Preview's SwitchActiveClient opens with the
+        # same check and returns. Without it, a hotkey for the client you
+        # are ALREADY ON still pays the minimize-and-foreground dance -- and
+        # under rapid pressing the queue drains into a storm of expensive
+        # no-ops. Returns True: the switch's goal state is reached. The
+        # ring assignment mirrors the success path below, so the sticky
+        # selection still moves to the client the user named.
+        if previous_hwnd == client.hwnd:
+            self._foreground = client.hwnd
+            return True
+
         previous_key, previous = next(
             ((k, c) for k, c in self._clients.items() if c.hwnd == previous_hwnd),
             (None, None),
@@ -1443,48 +1482,37 @@ class PreviewHost:
         return ok
 
     def _minimize(self, libs, hwnd) -> None:
-        """Send SC_MINIMIZE to *hwnd*, logging a send that did not complete.
+        """POST SC_MINIMIZE to *hwnd*, logging a post that failed outright.
 
-        No verdict is returned on purpose: a timed-out send is still
-        delivered later, so the caller could not act on "it did not
-        minimize" even if told -- see switching.should_restore.
+        Posted, not sent -- this is the one deliberate divergence from
+        EVE-O Preview's MinimizeWindow, which SendMessage-blocks. A send
+        holds THIS pump for as long as the target's UI thread is busy,
+        up to the timeout budget; EVE clients are busiest exactly when
+        people are switching (grid load, a jump), which is when rapid
+        hotkeys arrive -- so the stall fed the very queue it was serving,
+        and switches kept executing long after the keys went quiet. A
+        posted SC_MINIMIZE is delivered whenever the client gets to it,
+        which is all anyone needs: the switch proceeds without waiting,
+        and nothing downstream wants the minimize confirmed --
+        switching.should_restore only asks what to do when the
+        activation is refused, and a minimized-or-not window either way
+        does not change that answer.
+
+        No verdict is returned on purpose, same contract as the send
+        version: a posted message that the client never processes
+        leaves the window where it was.
         """
-        started = time.perf_counter()
-        sent = libs.user32.SendMessageTimeoutW(
-            hwnd,
-            win32.WM_SYSCOMMAND,
-            win32.SC_MINIMIZE,
-            0,
-            win32.SMTO_ABORTIFHUNG,
-            MINIMIZE_TIMEOUT_MS,
-            None,
-        )
-        if sent:
-            return
-        # Zero covers three cases the API does not separate: the send
-        # timed out, it was abandoned because the client was hung
-        # (ABORTIFHUNG), or it simply failed -- an invalid hwnd, or a
-        # client that exited between the foreground read and here. In
-        # all of them the client never processed the message and is
-        # still where it was; the switch goes ahead without it. INFO for
-        # the same reason window.py logs a refused activation at INFO:
-        # the root logger runs at INFO, and this is what "minimize
-        # sometimes does nothing" looks like in a user's log.
-        #
-        # The elapsed time is what separates those three, and it is the
-        # only one of them a user's log can ever tell us: a send that
-        # spent the whole budget waiting really did time out, while one
-        # that came back in under a millisecond was refused outright and
-        # never waited for anything. Without it the line reads
-        # identically either way -- which is how a live install could
-        # log 166 of these in a session and still leave the cause open.
-        logger.info(
-            "Minimize of 0x%x did not complete (timeout or abandoned) "
-            "after %.0fms of a %dms budget; leaving it as it is",
-            hwnd,
-            (time.perf_counter() - started) * 1000,
-            MINIMIZE_TIMEOUT_MS,
-        )
+        if not libs.user32.PostMessageW(
+            hwnd, win32.WM_SYSCOMMAND, win32.SC_MINIMIZE, 0
+        ):
+            # A False return is a failure before delivery -- an invalid
+            # hwnd, or a client that exited between the foreground read
+            # and here. Unlike a send timeout there is no elapsed time
+            # to report: the post did not wait for anything. INFO for
+            # the same reason window.py logs a refused activation at
+            # INFO -- this is what "minimize sometimes does nothing"
+            # looks like in a user's log.
+            logger.info("Minimize of 0x%x was not posted; leaving it as it is", hwnd)
 
     def _apply_alerts(self, libs, pending) -> None:
         """Arm the preview each event names, then make sure the tick timer

@@ -107,6 +107,15 @@ def activate(libs, hwnd) -> bool:
             ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
+        # EVE-O Preview's ActivateWindow does this and we did not: with
+        # the queues still attached, SetFocus hands the target the
+        # KEYBOARD focus, not just the foreground. Detaching without it
+        # raced the focus transition -- the window came up foreground
+        # but focusless, and the first ~0.5-1s of clicks and keys went
+        # nowhere. It must sit between SetForegroundWindow and the
+        # detach below; called after detaching it has no rights to the
+        # foreground and does nothing.
+        libs.user32.SetFocus(hwnd)
     finally:
         for tid in attached:
             libs.user32.AttachThreadInput(our_tid, tid, False)
