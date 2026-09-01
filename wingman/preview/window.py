@@ -118,15 +118,6 @@ def activate(libs, hwnd) -> ActivationResult:
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
         foreground = libs.user32.GetForegroundWindow()
-        if foreground != hwnd:
-            logger.debug(
-                "Retrying activation of 0x%x with SetFocus; attached queues: %s",
-                hwnd,
-                attached,
-            )
-            libs.user32.SetFocus(hwnd)
-            libs.user32.SetForegroundWindow(hwnd)
-            foreground = libs.user32.GetForegroundWindow()
     finally:
         for tid in reversed(attached):
             libs.user32.AttachThreadInput(our_tid, tid, False)

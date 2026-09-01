@@ -60,15 +60,12 @@ The current order avoids a different failure: a timed-out minimize can be delive
 4. Attach the foreground queue when distinct from the preview thread.
 5. Attach the target queue when distinct from the preview thread and the already-attached foreground thread.
 6. Call `SetForegroundWindow(target)`.
-7. Observe `GetForegroundWindow`. If it is still not the target, call `SetFocus(target)` while the target queue is attached, then retry `SetForegroundWindow(target)` once.
-8. Read the final foreground verdict.
-9. Detach the target queue, then foreground queue, in a `finally` block.
+7. Read the final foreground verdict.
+8. Detach the target queue, then foreground queue, in a `finally` block.
 
-`SetFocus` is only called while the target window's thread shares the caller's input queue. It is a fallback after an observed failed attempt, not an unconditional first-stage call. It is added to the ctypes surface only if a Windows probe shows that the fallback changes a failed result; otherwise the fallback and binding are dropped.
+Task 4 removed the provisional `SetFocus` fallback and its ctypes binding: its required Windows/EVE comparison did not produce qualifying evidence that it converted a refusal. There is no retry, synthetic input, foreground-policy change, or unbounded wait. Failure remains logged at INFO.
 
-No sleep, unbounded retry, synthetic input, or foreground-policy change is permitted. Failure remains logged at INFO. DEBUG diagnostics record whether the fallback ran and which attachments succeeded, without logging successful ordinary switches.
-
-The design does **not** claim this will fix all recorded refusals. If the live Windows/EVE probe still reproduces them with both queues attached and the fallback adds no value, implementation stops for a new activation design rather than shipping ceremonial retries.
+The design does **not** claim this will fix all recorded refusals. An activation approach that needs another bounded attempt must have a separately reproducible Windows/EVE justification rather than shipping ceremonial retries.
 
 #### Iconic target verdict
 
@@ -176,8 +173,6 @@ All production changes are test-first.
 ### `tests/test_preview_window.py`
 
 - Both distinct queues are attached before focus manipulation.
-- `SetFocus` is called only after an observed failed foreground attempt and while the target queue is attached.
-- The fallback retries `SetForegroundWindow` once.
 - A target thread equal to the foreground thread is attached only once.
 - Attachments detach once each in reverse order on success, refusal, and exception.
 - `SetForegroundWindow` return values are ignored in favor of observed foreground.
@@ -208,8 +203,8 @@ All production changes are test-first.
 
 ### Binding and convention guards
 
-- `SetFocus` is included only if retained by the Windows probe.
-- `ShowWindowAsync` is already bound and remains the only new minimize candidate.
+- `SetFocus` is not bound: Task 4 did not establish that its provisional fallback changed an observed refusal.
+- `ShowWindowAsync` is already bound and remains the only minimize candidate under consideration.
 - Guards continue to reject bare `SendMessageW` and every geometry-capable API receiving an EVE HWND.
 
 ### Verification commands
@@ -227,7 +222,7 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 
 1. Record timestamped foreground HWND, process, class, and title transitions for every switch attempt.
 2. From EVE, Windows Search, a browser, and Wingman, click locked and unlocked previews. Requested EVE must become foreground; preview must never become foreground.
-3. Repeat with and without the `SetFocus` fallback. Retain it only when it converts an observed failure to success.
+3. A provisional `SetFocus` comparison was attempted. It produced no qualifying observed conversion, so the binding and fallback were removed.
 4. Press rapid direct-character hotkeys. Only the folded final target should appear.
 5. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed.
 6. Enable **Minimize inactive clients**. Switch while clients are idle and during grid/session load. Target must appear first and no desktop/preview gap may follow.
@@ -235,6 +230,40 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 8. Switch to a minimized target repeatedly. Pending restore must resolve or expire without blocking hotkeys.
 9. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
 10. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
+
+## Probe results — 2026-09-01
+
+**Status: BLOCKED for the Task 5 transition gate.** The independent observer
+hook installed successfully, but the disposable synthetic setup could not
+establish the required source-foreground precondition under this desktop's
+foreground policy. Three warmup target-activation attempts all remained
+refused (0/3 final target foreground); two earlier IPC diagnostic attempts
+were terminated after timing out and are not counted as runs. Therefore the
+required 100-run fallback-off and fallback-on synthetic comparison has **zero
+qualifying runs**, and the observer never saw a target transition to validate
+its gap classification.
+
+No EVE sequence was started: without a validated independent observer and a
+valid synthetic baseline, comparing a different caller process against live
+clients would not prove the production preview-thread result. Consequently,
+EVE runs are 0; no EVE HWND was minimized, restored, moved, resized, or sent
+input. The seven `eve-online.exe` processes present before the attempt were
+left running. Disposable child processes were closed/terminated and a final
+process check found no remaining probe child.
+
+**Decisions.** `SetFocus` is dropped. It produced no qualifying conversion of
+an otherwise-identical observed refusal, so keeping a production binding and
+second foreground request would be unsupported. Task 5 is skipped: the EVE
+transition gate did not pass (it was not measured), so minimize-inactive
+clients retain the existing minimize-first order. This result does not claim
+that synthetic refusal behavior predicts EVE behavior; it records the
+instrumentation limitation and deliberately makes neither positive claim.
+
+**Limitation.** The non-inject-input and no-foreground-policy-change
+constraints exclude programmatically manufacturing the user-input entitlement
+needed to make an arbitrary disposable process foreground. A future probe
+needs a manually initiated source-window focus (or an in-process, user-driven
+Wingman run with DEBUG logging) before it can make the required EVE decision.
 
 ## Non-goals
 

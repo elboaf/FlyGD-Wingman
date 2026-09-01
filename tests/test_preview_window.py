@@ -8,8 +8,6 @@ and must not steal focus on the way past. There is no click-versus-drag
 classification any more -- the thing that used to make a one-pixel
 wobble still count as a click."""
 
-import pytest
-
 from wingman.preview import window
 from wingman.preview.geometry import Rect
 
@@ -118,7 +116,6 @@ def _activation_libs(
     foreground_tid=FOREGROUND_TID,
     target_tid=TARGET_TID,
     attached_tids=(FOREGROUND_TID, TARGET_TID),
-    raise_on_focus=False,
 ):
     class FakeUser32:
         def __init__(self):
@@ -147,38 +144,11 @@ def _activation_libs(
             calls.append(("set_foreground", h))
             return False
 
-        def SetFocus(self, h):
-            calls.append(("set_focus", h))
-            if raise_on_focus:
-                raise RuntimeError("focus failed")
-            return h
-
     class FakeLibs:
         user32 = FakeUser32()
         kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: OUR_TID})()
 
     return FakeLibs()
-
-
-def test_activation_retries_focus_only_after_the_first_observed_failure():
-    calls = []
-    libs = _activation_libs([FOREGROUND, FOREGROUND, TARGET], calls)
-
-    result = window.activate(libs, TARGET)
-
-    assert result is window.ActivationResult.ACTIVATED
-    assert calls == [
-        ("get_foreground", FOREGROUND),
-        ("attach", OUR_TID, FOREGROUND_TID, True),
-        ("attach", OUR_TID, TARGET_TID, True),
-        ("set_foreground", TARGET),
-        ("get_foreground", FOREGROUND),
-        ("set_focus", TARGET),
-        ("set_foreground", TARGET),
-        ("get_foreground", TARGET),
-        ("attach", OUR_TID, TARGET_TID, False),
-        ("attach", OUR_TID, FOREGROUND_TID, False),
-    ]
 
 
 def test_iconic_target_reported_foreground_is_restored_and_pending():
@@ -227,26 +197,13 @@ def test_equal_foreground_and_target_threads_are_attached_once():
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, FOREGROUND_TID, False),
     ]
-    assert not any(call[0] == "set_focus" for call in calls)
 
 
 def test_activation_refusal_detaches_in_reverse_order():
     calls = []
-    libs = _activation_libs([FOREGROUND, FOREGROUND, FOREGROUND], calls)
+    libs = _activation_libs([FOREGROUND, FOREGROUND], calls)
 
     assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
-    assert calls[-2:] == [
-        ("attach", OUR_TID, TARGET_TID, False),
-        ("attach", OUR_TID, FOREGROUND_TID, False),
-    ]
-
-
-def test_activation_exception_detaches_in_reverse_order():
-    calls = []
-    libs = _activation_libs([FOREGROUND, FOREGROUND], calls, raise_on_focus=True)
-
-    with pytest.raises(RuntimeError, match="focus failed"):
-        window.activate(libs, TARGET)
     assert calls[-2:] == [
         ("attach", OUR_TID, TARGET_TID, False),
         ("attach", OUR_TID, FOREGROUND_TID, False),
@@ -268,7 +225,7 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     failed activation is therefore invisible in the only log a user will
     ever send -- which defeats the point of logging it at all."""
     calls = []
-    libs = _activation_libs([FOREGROUND, FOREGROUND, FOREGROUND], calls)
+    libs = _activation_libs([FOREGROUND, FOREGROUND], calls)
 
     with caplog.at_level("INFO"):
         assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
