@@ -2467,6 +2467,27 @@ pytest.
 Nothing in the suite can open a second window, so every item here is a
 manual check by construction.
 
+- [ ] **The bar has no taskbar presence.** With the bar open, hover
+      Wingman's taskbar icon: only the main window's preview appears.
+      Expected: no second entry, no aero preview for the bar, and
+      therefore no X to close it with. (The bar now carries
+      WS_EX_TOOLWINDOW; before this it shipped a taskbar button like a
+      real window.)
+- [ ] **Toggling cannot be desynced by a repaint.** Toggle the bar off
+      from Wingman, then hover/minimise/restore windows and click
+      around the desktop. Expected: the bar stays hidden. The bug this
+      pins: the toggle wrote its state at a window object that an
+      external close had already killed, and any repaint resurrected a
+      bar the GUI believed hidden.
+- [ ] **The GUI toggle is the only way the bar changes, and it always
+      recovers.** With the bar open, toggle it off and on from
+      Settings/strip: it reappears at its last position. (Historical:
+      an externally-closed bar used to stay dead until Wingman was
+      restarted; the toggle now detects the dead window and rebuilds
+      it. The aero-preview close that triggered this no longer exists,
+      so the recovery path is exercised by toggling rapidly while the
+      bar is still initialising.)
+
 - [ ] **The bar opens, floats, and stays on top.** Click the `⌒`-style
       toggle at the right end of the status strip with the bookmark engine
       running. Expected: a small bar reading `SIG ... ROOT ... NEXT ...`

@@ -18,6 +18,7 @@ WebView2 host, which the already-running previews subsystem dwarfs.
 """
 
 import logging
+import sys
 import threading
 
 from wingman.ui import window as window_mod
@@ -96,6 +97,12 @@ def create(api, hidden: bool = True):
         # it does on the main window.
         easy_drag=False,
         on_top=True,
+        # The bar is dragged by its body and must never steal focus from
+        # the client being flown. focus=False also buys the style-patch
+        # moment below: pywebview itself patches ex-styles after creation
+        # in its `not focus` branch, so a post-creation SetWindowLongW is
+        # an established shape in this backend, not a hack of ours.
+        focus=False,
         # The native surface paints before the first HTML frame; a mismatch
         # is a white flash, same as the main window's BACKGROUND note.
         background_color=window_mod.BACKGROUND,
@@ -103,7 +110,45 @@ def create(api, hidden: bool = True):
         hidden=hidden,
     )
     api._sigbar_window = bar
+
+    # WS_EX_TOOLWINDOW, applied after creation. pywebview's WinForms
+    # backend sets no ex-styles of its own, so the bar shipped with a
+    # taskbar button and an aero preview: a second "window" beside
+    # Wingman for what is chrome on the strip's behalf, and an aero X
+    # whose close destroyed the form while the GUI kept reporting it
+    # enabled. The tool-window style removes the taskbar button, the
+    # aero preview and the X together -- what floating chrome is
+    # supposed to be. NOACTIVATE rides along so hovering can never
+    # activate the bar either. The handle only exists once the form is
+    # materialised on the UI thread, hence the timer -- the same cadence
+    # restore() uses for its reveal.
+    if sys.platform == "win32":
+        threading.Timer(0.3, lambda: _apply_tool_style(bar)).start()
     return bar
+
+
+def _apply_tool_style(bar) -> None:
+    """Add WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE to the bar's window.
+
+    Runs on a timer thread, but SetWindowLongW is safe from any thread
+    (it does not pump, unlike the property sets that hung the drag --
+    see the block comment at the bottom of this file). Logged, not
+    raised: a bar without the style is the old cosmetic bug, not a
+    reason to lose the bar.
+    """
+    from ctypes import windll
+
+    try:
+        handle = bar.native.Handle.ToInt32()
+        GWL_EXSTYLE = -20
+        WS_EX_TOOLWINDOW = 0x80
+        WS_EX_NOACTIVATE = 0x08000000
+        style = windll.user32.GetWindowLongW(handle, GWL_EXSTYLE)
+        windll.user32.SetWindowLongW(
+            handle, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        )
+    except Exception:
+        logger.exception("sig bar tool-window style could not be applied")
 
 
 def restore(api) -> None:

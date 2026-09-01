@@ -204,3 +204,63 @@ def test_restore_is_a_noop_while_disabled(api, monkeypatch):
 
     monkeypatch.setattr(sigbar, "create", boom)
     sigbar.restore(api)  # settings default to enabled=False
+
+
+# ---- a window destroyed out from under the GUI ----------------------------
+#
+# pywebview's WinForms FormClosed handler deletes the window from its
+# registry and sets its `closed` event, but the Python object survives
+# with all its attributes -- show()/hide() on it report success at a
+# corpse. Before the liveness check, closing the bar from its aero
+# preview desynced the GUI forever: the toggle wrote enabled=False at a
+# dead object, and any repaint resurrected a bar the GUI believed
+# hidden.
+
+
+class _ClosedSigBarWindow(SigBarWindow):
+    """A SigBarWindow whose pywebview `closed` event has fired."""
+
+    def __init__(self):
+        super().__init__()
+        import threading
+
+        closed = threading.Event()
+        closed.set()
+        self.events = type("E", (), {"closed": closed})()
+
+
+def test_toggle_recreates_the_window_after_an_external_close(api, monkeypatch):
+    """Toggle ON after the window was destroyed externally must rebuild
+    it, not report success at the corpse."""
+    from wingman.ui import sigbar
+
+    created = []
+
+    def fake_create(inner, hidden=True):
+        created.append(hidden)
+        win = SigBarWindow()
+        inner._sigbar_window = win
+        return win
+
+    monkeypatch.setattr(sigbar, "create", fake_create)
+    api._sigbar_window = _ClosedSigBarWindow()
+
+    assert api.toggle_sig_bar(True)["applied"] is True
+    assert created == [False]  # rebuilt, shown
+    assert api._sig_bar_alive(api._sigbar_window) is True
+
+
+def test_toggle_off_ignores_a_dead_window_without_error(api):
+    """Hiding a corpse is skipped rather than performed: the persisted
+    state still goes False, and the next ON rebuilds."""
+    api._sigbar_window = _ClosedSigBarWindow()
+    api.toggle_sig_bar(False)
+    assert api._state.settings["sig_bar"]["enabled"] is False
+    assert api._sigbar_window.hidden is False  # never touched
+
+
+def test_a_live_window_still_counts_as_alive(api):
+    """The fakes carry no events; the liveness check must treat a window
+    without them as alive, not dead -- or every toggle would rebuild."""
+    api.toggle_sig_bar(True)
+    assert api._sig_bar_alive(api._sigbar_window) is True

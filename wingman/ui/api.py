@@ -2311,7 +2311,8 @@ class Api:
 
         The window is created on first enable and kept hidden afterwards
         (ui/sigbar.py's docstring holds the cost argument), so this only
-        ever shows or hides -- except the first time, which builds it.
+        ever shows or hides -- except the first time, and except after
+        the window was destroyed out from under us (see _sig_bar_alive).
         """
         from wingman.ui import sigbar
 
@@ -2325,7 +2326,7 @@ class Api:
         )
         try:
             if on:
-                if bar is None:
+                if not self._sig_bar_alive(bar):
                     sigbar.create(self, hidden=False)
                 else:
                     bar.show()
@@ -2333,7 +2334,7 @@ class Api:
                 # 3s reads as broken. The page pulls nothing at load, so
                 # this push is its content.
                 self._push_eve_status()
-            elif bar is not None:
+            elif self._sig_bar_alive(bar):
                 bar.hide()
         except Exception:
             # A bar that cannot appear is degraded chrome, not a failed
@@ -2347,6 +2348,25 @@ class Api:
         )
         self._push_sig_bar_state()
         return self._field_ok()
+
+    @staticmethod
+    def _sig_bar_alive(bar) -> bool:
+        """Whether the bar window can still be shown or hidden.
+
+        A closed pywebview window is a corpse with the same attributes:
+        show()/hide() go through a `shown`-event wait against a form the
+        WinForms backend has already deleted from its registry. Before
+        the liveness check, closing the bar from its aero preview left
+        every later toggle reporting success at a dead object -- and
+        since the toggle then did nothing, hovering the taskbar (or any
+        other repaint) resurrected a window the GUI believed hidden.
+        The getattr keeps the test fakes, which carry no events, on the
+        alive path.
+        """
+        if bar is None:
+            return False
+        closed = getattr(getattr(bar, "events", None), "closed", None)
+        return not (closed is not None and closed.is_set())
 
     def _sig_bar_visible(self):
         """Best-effort visibility readback, for the toggle log line only."""
