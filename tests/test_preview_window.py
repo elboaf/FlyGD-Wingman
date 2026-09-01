@@ -8,6 +8,8 @@ and must not steal focus on the way past. There is no click-versus-drag
 classification any more -- the thing that used to make a one-pixel
 wobble still count as a click."""
 
+import pytest
+
 from wingman.preview import window
 from wingman.preview.geometry import Rect
 
@@ -101,33 +103,142 @@ def test_resize_believes_the_axis_the_user_actually_dragged():
     assert horizontal.w == LOCKED.w + 200
 
 
+TARGET = 123
+FOREGROUND = 999
+OUR_TID = 1
+FOREGROUND_TID = 2
+TARGET_TID = 3
+
+
+def _activation_libs(
+    foregrounds,
+    calls,
+    *,
+    iconic=False,
+    foreground_tid=FOREGROUND_TID,
+    target_tid=TARGET_TID,
+    attached_tids=(FOREGROUND_TID, TARGET_TID),
+    raise_on_focus=False,
+):
+    class FakeUser32:
+        def __init__(self):
+            self._foregrounds = iter(foregrounds)
+            self._foreground_reads = 0
+
+        def IsIconic(self, h):
+            return iconic
+
+        def ShowWindowAsync(self, h, command):
+            calls.append(("show", h, command))
+            return True
+
+        def GetForegroundWindow(self):
+            value = next(self._foregrounds)
+            # The first read identifies the queue to attach. The assertions
+            # below name the bounded post-attempt observations separately.
+            if self._foreground_reads:
+                calls.append(("get_foreground", value))
+            self._foreground_reads += 1
+            return value
+
+        def GetWindowThreadProcessId(self, h, p):
+            return target_tid if h == TARGET else foreground_tid
+
+        def AttachThreadInput(self, source, destination, attach):
+            calls.append(("attach", source, destination, attach))
+            return destination in attached_tids
+
+        def SetForegroundWindow(self, h):
+            calls.append(("set_foreground", h))
+            return False
+
+        def SetFocus(self, h):
+            calls.append(("set_focus", h))
+            if raise_on_focus:
+                raise RuntimeError("focus failed")
+            return h
+
+    class FakeLibs:
+        user32 = FakeUser32()
+        kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: OUR_TID})()
+
+    return FakeLibs()
+
+
+def test_activation_retries_focus_only_after_the_first_observed_failure():
+    calls = []
+    libs = _activation_libs([FOREGROUND, FOREGROUND, TARGET], calls)
+
+    result = window.activate(libs, TARGET)
+
+    assert result is window.ActivationResult.ACTIVATED
+    assert calls == [
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("set_foreground", TARGET),
+        ("get_foreground", FOREGROUND),
+        ("set_focus", TARGET),
+        ("set_foreground", TARGET),
+        ("get_foreground", TARGET),
+        ("attach", OUR_TID, TARGET_TID, False),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+
+
+def test_iconic_target_reported_foreground_is_restored_and_pending():
+    calls = []
+    iconic_libs = _activation_libs([TARGET, FOREGROUND, FOREGROUND], calls, iconic=True)
+
+    assert (
+        window.activate(iconic_libs, TARGET) is window.ActivationResult.PENDING_RESTORE
+    )
+    assert ("show", TARGET, window.win32.SW_RESTORE) in calls
+
+
+def test_equal_foreground_and_target_threads_are_attached_once():
+    calls = []
+    libs = _activation_libs([FOREGROUND, TARGET], calls, target_tid=FOREGROUND_TID)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert [call for call in calls if call[0] == "attach"] == [
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+    assert not any(call[0] == "set_focus" for call in calls)
+
+
+def test_activation_refusal_detaches_in_reverse_order():
+    calls = []
+    libs = _activation_libs([FOREGROUND, FOREGROUND, FOREGROUND], calls)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
+    assert calls[-2:] == [
+        ("attach", OUR_TID, TARGET_TID, False),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+
+
+def test_activation_exception_detaches_in_reverse_order():
+    calls = []
+    libs = _activation_libs([FOREGROUND, FOREGROUND], calls, raise_on_focus=True)
+
+    with pytest.raises(RuntimeError, match="focus failed"):
+        window.activate(libs, TARGET)
+    assert calls[-2:] == [
+        ("attach", OUR_TID, TARGET_TID, False),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+
+
 def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     """__main__.py:64 sets the root logger to INFO. A DEBUG line about a
     failed activation is therefore invisible in the only log a user will
     ever send -- which defeats the point of logging it at all."""
-
-    class FakeUser32:
-        def IsIconic(self, h):
-            return False
-
-        def GetForegroundWindow(self):
-            return 999  # never becomes the target
-
-        def GetWindowThreadProcessId(self, h, p):
-            return 0
-
-        def AttachThreadInput(self, a, b, c):
-            return False
-
-        def SetForegroundWindow(self, h):
-            return True
-
-    class FakeLibs:
-        user32 = FakeUser32()
-        kernel32 = type("K", (), {"GetCurrentThreadId": lambda self: 1})()
+    calls = []
+    libs = _activation_libs([FOREGROUND, FOREGROUND, FOREGROUND], calls)
 
     with caplog.at_level("INFO"):
-        assert window.activate(FakeLibs(), 123) is False
+        assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
     assert any("Activation of" in r.message for r in caplog.records)
 
 

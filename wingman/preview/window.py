@@ -7,6 +7,7 @@ below it touches HWNDs and therefore may only run on the preview thread.
 import logging
 import os
 import time
+from enum import Enum, auto
 
 from ..alerts import state as alerts_state
 from . import alertframes, chrome, geometry, layered, win32
@@ -70,8 +71,14 @@ def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(
     return rect._replace(w=max(min_size[0], w), h=max(min_size[1], h))
 
 
-def activate(libs, hwnd) -> bool:
-    """Bring *hwnd* to the foreground. Returns whether it actually worked.
+class ActivationResult(Enum):
+    ACTIVATED = auto()
+    PENDING_RESTORE = auto()
+    REFUSED = auto()
+
+
+def activate(libs, hwnd) -> ActivationResult:
+    """Bring *hwnd* to the foreground and report the observed outcome.
 
     SetForegroundWindow alone does not work: Windows refuses it from a
     process that does not own the foreground. The two-stage
@@ -86,12 +93,13 @@ def activate(libs, hwnd) -> bool:
     the life of the process, and the symptom is EVE's keyboard input
     arriving in the wrong client.
     """
-    if libs.user32.IsIconic(hwnd):
+    was_iconic = bool(libs.user32.IsIconic(hwnd))
+    if was_iconic:
         libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
 
     current = libs.user32.GetForegroundWindow()
-    if current == hwnd:
-        return True
+    if current == hwnd and not was_iconic:
+        return ActivationResult.ACTIVATED
 
     our_tid = libs.kernel32.GetCurrentThreadId()
     fg_tid = libs.user32.GetWindowThreadProcessId(current, None)
@@ -99,7 +107,7 @@ def activate(libs, hwnd) -> bool:
 
     attached = []
     try:
-        for tid in (fg_tid, target_tid):
+        for tid in dict.fromkeys((fg_tid, target_tid)):
             if (
                 tid
                 and tid != our_tid
@@ -107,25 +115,38 @@ def activate(libs, hwnd) -> bool:
             ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
+        foreground = libs.user32.GetForegroundWindow()
+        if foreground != hwnd:
+            logger.debug(
+                "Retrying activation of 0x%x with SetFocus; attached queues: %s",
+                hwnd,
+                attached,
+            )
+            libs.user32.SetFocus(hwnd)
+            libs.user32.SetForegroundWindow(hwnd)
+            foreground = libs.user32.GetForegroundWindow()
     finally:
-        for tid in attached:
+        for tid in reversed(attached):
             libs.user32.AttachThreadInput(our_tid, tid, False)
 
-    ok = libs.user32.GetForegroundWindow() == hwnd
-    if not ok:
-        # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
-        # so a debug line here is invisible in the only log a user will
-        # ever send us -- for the single most likely field complaint,
-        # "clicking a preview does nothing". It cannot spam either: this
-        # fires once per click, and only when the click failed.
-        logger.info(
-            "Activation of 0x%x did not take; foreground is 0x%x. "
-            "Windows refuses a foreground change from a process "
-            "that has not received recent user input.",
-            hwnd,
-            libs.user32.GetForegroundWindow() or 0,
-        )
-    return ok
+    if foreground == hwnd:
+        return ActivationResult.ACTIVATED
+
+    # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
+    # so a debug line here is invisible in the only log a user will
+    # ever send us -- for the single most likely field complaint,
+    # "clicking a preview does nothing". It cannot spam either: this
+    # fires once per click, and only when the click failed.
+    logger.info(
+        "Activation of 0x%x did not take; foreground is 0x%x. "
+        "Windows refuses a foreground change from a process "
+        "that has not received recent user input.",
+        hwnd,
+        foreground or 0,
+    )
+    if was_iconic:
+        return ActivationResult.PENDING_RESTORE
+    return ActivationResult.REFUSED
 
 
 _CLASS_REGISTERED = False

@@ -1009,6 +1009,16 @@ def test_the_preview_window_no_longer_owns_the_switch():
     assert "self._on_activate(" in code
 
 
+def test_setfocus_is_declared_for_the_bounded_activation_fallback():
+    """Linux CI cannot bind user32, so keep the temporary probe surface
+    covered where the rest of the ctypes declaration guards can run."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "wingman" / "preview" / "win32.py").read_text(encoding="utf-8")
+    assert '(user32, "SetFocus", HWND, [HWND])' in src
+
+
 def test_sendmessagew_is_not_declared():
     """Bare `SendMessageW` blocks until the target window's queue processes
     the message, so a hung or still-loading EVE client would stall the
