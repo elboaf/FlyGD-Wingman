@@ -349,3 +349,66 @@ def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusiv
         {"id": "logi", "name": "Logistics", "cycle": ""},
     ]
     assert hotkeys["group_by_character"] == {"Alice": "dps", "Bob": "logi"}
+
+
+def test_preview_cycle_groups_repeated_ids_keeps_first_valid():
+    """Explicit: repeated IDs accept only first valid occurrence."""
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "groups": [
+                    {"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"},
+                    {"id": "dps", "name": "DPS-renamed", "cycle": "Ctrl+F3"},
+                ],
+            }
+        }
+    )["hotkeys"]
+    # Second entry with same ID is silently rejected; first wins
+    assert len(hotkeys["groups"]) == 1
+    assert hotkeys["groups"][0]["id"] == "dps"
+    assert hotkeys["groups"][0]["name"] == "DPS"
+    assert hotkeys["groups"][0]["cycle"] == "Ctrl+F2"
+
+
+def test_preview_cycle_groups_non_list_groups_rejected():
+    """Explicit: non-list groups field is rejected without error; unrelated fields intact."""
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "characters": {"Alice": "Ctrl+F1"},
+                "cycle_next": "Ctrl+Alt+Right",
+                "cycle_prev": "Ctrl+Alt+Left",
+                "groups": "not-a-list",  # Malformed
+            }
+        }
+    )["hotkeys"]
+    # Non-list groups is silently rejected, groups stays empty
+    assert hotkeys["groups"] == []
+    # Unrelated fields are preserved
+    assert hotkeys["characters"] == {"Alice": "Ctrl+F1"}
+    assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
+    assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"
+
+
+def test_preview_cycle_groups_non_dict_group_by_character_rejected():
+    """Explicit: non-dict group_by_character field is rejected without error; unrelated fields intact."""
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "characters": {"Bob": "Ctrl+F1"},
+                "cycle_next": "Ctrl+Alt+Right",
+                "cycle_prev": "Ctrl+Alt+Left",
+                "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}],
+                "group_by_character": "not-a-dict",  # Malformed
+            }
+        }
+    )["hotkeys"]
+    # Non-dict group_by_character is silently rejected, stays empty
+    assert hotkeys["group_by_character"] == {}
+    # Groups are intact
+    assert len(hotkeys["groups"]) == 1
+    assert hotkeys["groups"][0]["id"] == "dps"
+    # Unrelated fields are preserved
+    assert hotkeys["characters"] == {"Bob": "Ctrl+F1"}
+    assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
+    assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"
