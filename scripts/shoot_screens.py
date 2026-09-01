@@ -145,6 +145,64 @@ def dialog_payload() -> dict:
     }
 
 
+def load_dev_preview_fixture(checkout: str | None = None) -> dict:
+    """Parse DEV_PREVIEW_HOTKEYS_FIXTURE from wingman/web/dev.js.
+
+    The fixture is a strict JSON-compatible object literal (double-quoted
+    keys and strings, no JS-specific syntax inside the literal body), so
+    json.loads works directly on the extracted block.
+
+    checkout defaults to the directory containing this script's parent.
+    Raises ValueError with a clear message if the marker is absent or
+    the braces are unbalanced.
+    """
+    if checkout is None:
+        checkout = str(pathlib.Path(__file__).resolve().parent.parent)
+    dev_js_path = pathlib.Path(checkout) / "wingman" / "web" / "dev.js"
+    source = dev_js_path.read_text(encoding="utf-8")
+
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    if marker not in source:
+        raise ValueError(
+            f"{marker} not found in {dev_js_path} -- "
+            "the fixture declaration may have been renamed or removed"
+        )
+
+    raw = source[source.index(marker) :]
+    # Locate the opening brace of the object literal
+    try:
+        brace_start = raw.index("{")
+    except ValueError:
+        raise ValueError(f"{marker} found in {dev_js_path} but has no opening brace")
+
+    # Walk the source character by character to find the matching closing brace.
+    # Bounded by the length of the source -- never infinite.
+    depth = 0
+    end = brace_start
+    found = False
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                found = True
+                break
+    if not found:
+        raise ValueError(
+            f"{marker} object literal in {dev_js_path} has unbalanced braces"
+        )
+
+    body = raw[brace_start : end + 1]
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{marker} body in {dev_js_path} is not valid JSON: {exc}"
+        ) from exc
+
+
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
     if screen.key == "settings-previews":
@@ -178,24 +236,54 @@ def screen_setup_script(screen: Screen) -> str | None:
           ],
           'Copy')"""
     if screen.key == "settings-previews-groups":
-        # Scroll to the bottom of the pane so the Manage groups disclosure
-        # is visible, with all three seeded groups and their keybind rows
-        # rendered. pane.scrollHeight ensures the full table plus the
-        # disclosure are in frame even when the viewport is at its floor.
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = pane.scrollHeight; }
-        }())"""
+        # Load the authoritative dev fixture via onPreviewHotkeys (read-only;
+        # never calls a write API) so the page shows deterministic group state
+        # regardless of what the real user's settings contain.
+        # Then scroll directly to .preview-group-manager (the Manage groups
+        # disclosure) rather than pane.scrollHeight (absolute bottom): the
+        # manager is rendered after the group keybind rows and before the
+        # character rows, so absolute-bottom scrolling does not guarantee it
+        # is in frame.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
+            "  var mgr = document.querySelector('.preview-group-manager');\n"
+            "  if (mgr) {\n"
+            "    mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "  } else {\n"
+            "    var pane = document.querySelector('.settings-pane');\n"
+            "    if (pane) { pane.scrollTop = pane.scrollHeight; }\n"
+            "  }\n"
+            "}())"
+        )
     if screen.key == "settings-previews-narrow":
-        # Scroll the character table into view so long character and group
-        # names are visible.  The 840x625 viewport floor is applied through
-        # CDP (Emulation.setDeviceMetricsOverride) in walk(), NOT here:
-        # window.resizeTo is a no-op inside a WebView2 target controlled by
-        # pywebview, so it must never appear in this script.
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = 0; }
-        }())"""
+        # Load the authoritative dev fixture via onPreviewHotkeys so the
+        # page has deterministic group state.  The 840x625 viewport override
+        # is applied through CDP (Emulation.setDeviceMetricsOverride) in
+        # walk(), NOT here: window.resizeTo is a no-op inside a WebView2
+        # target controlled by pywebview, so it must never appear in this
+        # script.
+        # Scroll to the first .preview-group-select element (the character
+        # row dropdown for a long-named character).  This is the target that
+        # shows long character and group names at the 840px floor.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
+            "  var sel = document.querySelector('.preview-group-select');\n"
+            "  if (sel) {\n"
+            "    sel.scrollIntoView({block: 'center', behavior: 'instant'});\n"
+            "  } else {\n"
+            "    var pane = document.querySelector('.settings-pane');\n"
+            "    if (pane) { pane.scrollTop = pane.scrollHeight / 2; }\n"
+            "  }\n"
+            "}())"
+        )
     return None
 
 

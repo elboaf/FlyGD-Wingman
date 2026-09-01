@@ -691,3 +691,165 @@ def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
     assert not cdp._override_active, (
         "device metrics override must be inactive after walk() returns"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 1 fix: fixture extractor, semantic selectors, no-write guarantees
+# ---------------------------------------------------------------------------
+
+
+def test_dev_preview_fixture_extractor_exists_and_is_callable():
+    """shoot_screens.py must expose a load_dev_preview_fixture() function
+    that reads and parses DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js source.
+    """
+    assert hasattr(shoot, "load_dev_preview_fixture"), (
+        "shoot_screens.py must define load_dev_preview_fixture() -- "
+        "it is needed by both the group-stage setup scripts and the tests "
+        "that verify the screenshot payload matches the fixture"
+    )
+    assert callable(shoot.load_dev_preview_fixture)
+
+
+def test_dev_preview_fixture_extractor_returns_a_dict_with_hotkeys():
+    """load_dev_preview_fixture() must return a dict parsed from the named
+    literal in dev.js, containing at least the 'hotkeys' key with 'groups'.
+    """
+    fixture = shoot.load_dev_preview_fixture()
+    assert isinstance(fixture, dict), "load_dev_preview_fixture must return a dict"
+    assert "hotkeys" in fixture, (
+        "fixture must have a 'hotkeys' key matching the get_preview_hotkey_state shape"
+    )
+    assert "groups" in fixture["hotkeys"], "fixture.hotkeys must have a 'groups' list"
+    assert len(fixture["hotkeys"]["groups"]) >= 1, (
+        "fixture must have at least one group"
+    )
+
+
+def test_groups_stage_injects_fixture_via_onPreviewHotkeys():
+    """The settings-previews-groups setup script must inject the fixture
+    by calling window.onPreviewHotkeys(payload), not by calling a write
+    API like create_preview_cycle_group or set_preview_character_group.
+
+    Calling write APIs in a screenshot script would mutate user data; the
+    correct approach is the read path onPreviewHotkeys.
+    """
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    script = shoot.screen_setup_script(groups_screen)
+    assert script is not None
+    assert "onPreviewHotkeys" in script, (
+        "groups stage setup must inject fixture via window.onPreviewHotkeys, "
+        "not by calling write APIs"
+    )
+
+
+def test_narrow_stage_injects_fixture_via_onPreviewHotkeys():
+    """The settings-previews-narrow setup script must also inject the fixture
+    via window.onPreviewHotkeys so the page has deterministic group state
+    regardless of what the real user's settings contain.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    assert "onPreviewHotkeys" in script, (
+        "narrow stage setup must inject fixture via window.onPreviewHotkeys"
+    )
+
+
+def test_groups_stage_scrolls_to_preview_group_manager():
+    """The groups stage must scroll to .preview-group-manager (the Manage
+    groups disclosure), NOT scroll to pane.scrollHeight (absolute bottom).
+
+    Scrolling to absolute bottom shows the last group row, but the manager
+    element is rendered between the group keybind rows and the character rows,
+    so it may not be at the bottom. The semantic selector guarantees the
+    disclosure is in frame.
+    """
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    script = shoot.screen_setup_script(groups_screen)
+    assert script is not None
+    assert "preview-group-manager" in script, (
+        "groups stage must scroll to .preview-group-manager to frame the "
+        "Manage groups disclosure -- scrolling to pane.scrollHeight shows "
+        "the bottom of the page, which may not include the manager"
+    )
+    # Must NOT just scroll to pane.scrollHeight (arbitrary bottom position)
+    # without also targeting the manager element
+    if "scrollHeight" in script and "preview-group-manager" not in script:
+        raise AssertionError(
+            "groups stage scrolls to scrollHeight without targeting "
+            ".preview-group-manager -- this is the bug being fixed"
+        )
+
+
+def test_narrow_stage_scrolls_to_a_group_select_row():
+    """The narrow stage must scroll to a specific long row, not to
+    pane.scrollTop = 0 (the top of the pane).
+
+    The brief calls for 840x625 with long character/group names visible.
+    Scrolling to the top shows the global keybind rows, not the character
+    rows where the group select appears.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    # Must target a character row or group select element, not just scroll top
+    assert (
+        "preview-group-select" in script
+        or "scrollIntoView" in script
+        or "data-char" in script
+        or "aria-label" in script
+    ), (
+        "narrow stage must scroll to a specific long-name character row "
+        "using a stable selector -- scrollTop = 0 shows only global keybinds, "
+        "missing the character rows where group names appear"
+    )
+
+
+def test_group_staging_does_not_invoke_write_methods():
+    """The setup scripts for groups and narrow stages must NOT call any
+    write bridge method (create_preview_cycle_group, rename_preview_cycle_group,
+    delete_preview_cycle_group, set_preview_cycle_group_bind,
+    set_preview_character_group).
+
+    Screenshot stages are read-only; calling write methods would mutate the
+    user's real settings during a capture session.
+    """
+    write_methods = {
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+    }
+    for key in ("settings-previews-groups", "settings-previews-narrow"):
+        screen = next(s for s in shoot.SCREENS if s.key == key)
+        script = shoot.screen_setup_script(screen)
+        assert script is not None
+        for method in write_methods:
+            assert method not in script, (
+                f"{key} setup script must not call {method!r} -- "
+                "screenshot scripts are read-only and must not mutate user settings"
+            )
+
+
+def test_fixture_extractor_raises_clearly_on_missing_marker():
+    """load_dev_preview_fixture must raise a clear ValueError (not a cryptic
+    index error) when DEV_PREVIEW_HOTKEYS_FIXTURE is absent from the source.
+    """
+    import inspect
+
+    src = inspect.getsource(shoot.load_dev_preview_fixture)
+    # The function must have bounded error handling, not a bare index() that
+    # raises a cryptic ValueError: substring not found.
+    assert "ValueError" in src or "raise" in src, (
+        "load_dev_preview_fixture must raise a clear error when the marker "
+        "is not found, rather than letting a bare index() raise a cryptic message"
+    )

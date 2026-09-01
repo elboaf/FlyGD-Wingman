@@ -460,6 +460,33 @@ def test_profiles_delayed_mutation_logs_every_received_argument():
     )
 
 
+def _dev_preview_fixture() -> dict:
+    """Parse DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js as a Python dict.
+
+    The fixture is a strict JSON-compatible object literal (double-quoted
+    keys/strings, no JS-specific syntax inside the body), so json.loads
+    works directly on the extracted block.
+    """
+    import json as _json
+
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    assert marker in DEV_JS, f"{marker} not found in dev.js"
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    brace_start = raw.index("{")
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = raw[brace_start : end + 1]
+    return _json.loads(body)
+
+
 def test_the_preview_fixture_uses_real_gesture_strings():
     """Previews store `preview/gestures.py` display strings
     ("Ctrl+Alt+Right"), NOT the AHK that Bookmarks stores ("^!Right"). The
@@ -472,13 +499,25 @@ def test_the_preview_fixture_uses_real_gesture_strings():
     wrong double. Round-tripped through the real parser rather than
     compared to a literal, so a change to the format fails here instead of
     being invisibly re-fabricated.
+
+    The fixture is now a named JSON literal (DEV_PREVIEW_HOTKEYS_FIXTURE);
+    gestures are extracted by parsing the JSON rather than regex-scanning
+    the getter body.
     """
     from wingman.preview import gestures as preview_gestures
 
-    block = _fixture_body("api.get_preview_hotkey_state")
-    gestures = {g for g in re.findall(r"'([^']+)'", block) if "+" in g}
-    assert gestures, "the preview fixture declares no gesture strings"
-    for gesture in sorted(gestures):
+    fixture = _dev_preview_fixture()
+    hotkeys = fixture.get("hotkeys", {})
+    # Collect all gesture strings: character binds + cycle_next/prev + group cycles
+    all_gestures: set[str] = set()
+    all_gestures.update(v for v in hotkeys.get("characters", {}).values() if v)
+    if hotkeys.get("cycle_next"):
+        all_gestures.add(hotkeys["cycle_next"])
+    if hotkeys.get("cycle_prev"):
+        all_gestures.add(hotkeys["cycle_prev"])
+    all_gestures.update(g["cycle"] for g in hotkeys.get("groups", []) if g.get("cycle"))
+    assert all_gestures, "the preview fixture declares no gesture strings"
+    for gesture in sorted(all_gestures):
         parsed = preview_gestures.parse(gesture)
         assert parsed is not None, (
             f"dev.js's preview fixture holds {gesture!r}, which "
@@ -491,10 +530,19 @@ def test_the_preview_fixture_uses_real_gesture_strings():
 
 
 def test_the_preview_fixture_carries_online_and_offline_layout_sources():
-    block = _fixture_body("api.get_preview_hotkey_state")
-    assert "layout_sources" in block
-    assert re.search(r"name:\s*'[^']+',\s*online:\s*true", block)
-    assert re.search(r"name:\s*'[^']+',\s*online:\s*false", block)
+    """The fixture must carry both an online and an offline layout source.
+
+    The fixture is now a named JSON literal; check via JSON parse.
+    """
+    fixture = _dev_preview_fixture()
+    sources = fixture.get("layout_sources", [])
+    assert sources, "fixture must have layout_sources"
+    assert any(s.get("online") for s in sources), (
+        "fixture must have at least one online layout source"
+    )
+    assert any(not s.get("online") for s in sources), (
+        "fixture must have at least one offline layout source"
+    )
     assert "copy_preview_layout" in _stubbed()
 
 
@@ -591,16 +639,20 @@ def test_the_preview_groups_fixture_covers_real_states():
 
     The five group-mutation methods are no longer known gaps -- dev.js now
     doubles them.  This test pins the fixture data those stubs read from.
+
+    The fixture is now a named JSON literal (DEV_PREVIEW_HOTKEYS_FIXTURE);
+    assertions use the JSON parse helper.
     """
     from wingman.preview import gestures as preview_gestures
 
-    block = _fixture_body("api.get_preview_hotkey_state")
-    assert "groups:" in block, "preview fixture lacks groups array"
-    assert "group_by_character:" in block, "preview fixture lacks group_by_character map"
+    fixture = _dev_preview_fixture()
+    hotkeys = fixture.get("hotkeys", {})
+    assert hotkeys.get("groups"), "preview fixture lacks groups array"
+    assert hotkeys.get("group_by_character"), (
+        "preview fixture lacks group_by_character map"
+    )
     # At least one group must carry a real parseable cycle gesture.
-    gestures_in_groups = [
-        g for g in re.findall(r"cycle:\s*'([^']+)'", block) if g
-    ]
+    gestures_in_groups = [g["cycle"] for g in hotkeys["groups"] if g.get("cycle")]
     assert gestures_in_groups, "no group has a cycle gesture in the fixture"
     for gesture in gestures_in_groups:
         parsed = preview_gestures.parse(gesture)
@@ -611,7 +663,7 @@ def test_the_preview_groups_fixture_covers_real_states():
             f"preview fixture group holds {gesture!r}, not canonical spelling"
         )
     # Named groups must include at least a DPS group and an empty group.
-    names = re.findall(r"name:\s*'([^']+)'", block)
+    names = [g["name"] for g in hotkeys["groups"]]
     assert any("DPS" in n for n in names), (
         "preview fixture lacks a group with 'DPS' in its name"
     )
@@ -619,7 +671,9 @@ def test_the_preview_groups_fixture_covers_real_states():
         "preview fixture lacks an empty group"
     )
     # The UI label 'All only' is derived by the page, not persisted.
-    assert "All only" not in block, "'All only' is a UI label and must not appear in the fixture"
+    assert "All only" not in str(fixture), (
+        "'All only' is a UI label and must not appear in the fixture"
+    )
 
 
 def test_the_preview_group_dev_methods_are_no_longer_known_gaps():
@@ -638,3 +692,238 @@ def test_the_preview_group_dev_methods_are_no_longer_known_gaps():
         assert method in stubbed, (
             f"dev.js does not stub {method!r} -- it is still a known gap"
         )
+
+
+# ---------------------------------------------------------------------------
+# Round 1 fix: fixture consolidation, data correctness, async push, contracts
+# ---------------------------------------------------------------------------
+
+
+def test_preview_fixture_is_consolidated_into_named_literal():
+    """dev.js must declare a single named object literal DEV_PREVIEW_HOTKEYS_FIXTURE
+    that is strict JSON-compatible (no JS-specific syntax like single quotes,
+    trailing commas, or unquoted keys inside the literal body).
+
+    Both the dev getter and the mutable _devPreviewHotkeys must derive from it.
+    """
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in DEV_JS, (
+        "dev.js must declare a top-level var DEV_PREVIEW_HOTKEYS_FIXTURE "
+        "so shoot_screens.py can parse it as the screenshot payload"
+    )
+    # The named literal must be the source for the getter and mutable state.
+    getter_block = DEV_JS[DEV_JS.index("api.get_preview_hotkey_state") :]
+    getter_block = getter_block[: getter_block.index("\n  };")]
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in getter_block, (
+        "get_preview_hotkey_state must deep-copy from DEV_PREVIEW_HOTKEYS_FIXTURE, "
+        "not maintain a separate inline literal"
+    )
+
+
+def test_preview_fixture_excluded_character_is_also_assigned_to_a_group():
+    """The fixture must contain at least one character who is BOTH in
+    excluded[] AND in group_by_character, proving the page handles the
+    opted-out-but-still-assigned state correctly.
+
+    The current fixture only excludes Zuelo (who has no group assignment)
+    and omits this combination entirely.
+    """
+    import json as _json
+
+    # Extract the canonical fixture from the named literal
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    assert marker in DEV_JS, "DEV_PREVIEW_HOTKEYS_FIXTURE must be declared"
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    # Find the JSON body: from the opening { to the matching }
+    brace_start = raw.index("{")
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = raw[brace_start : end + 1]
+    fixture = _json.loads(body)
+
+    excluded = fixture.get("excluded", [])
+    group_by_character = fixture.get("hotkeys", {}).get("group_by_character", {})
+
+    excluded_and_assigned = [c for c in excluded if c in group_by_character]
+    assert excluded_and_assigned, (
+        "fixture must have at least one character who is both excluded[] "
+        "and in group_by_character — currently no such character exists, "
+        "so the opted-out-but-assigned state is never exercised"
+    )
+
+
+def test_preview_fixture_nonexcluded_character_without_group_assignment():
+    """The fixture must contain at least one character who is NOT excluded
+    AND NOT in group_by_character (the All-only path for an opted-in character).
+
+    The current fixture has Zuelo as excluded + unassigned, but needs a
+    distinct non-excluded unassigned character to exercise the All-only
+    path separately from the excluded path.
+    """
+    import json as _json
+
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    assert marker in DEV_JS
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    brace_start = raw.index("{")
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = raw[brace_start : end + 1]
+    fixture = _json.loads(body)
+
+    roster = fixture.get("roster", [])
+    excluded = set(fixture.get("excluded", []))
+    group_by_character = fixture.get("hotkeys", {}).get("group_by_character", {})
+
+    nonexcluded_unassigned = [
+        c for c in roster if c not in excluded and c not in group_by_character
+    ]
+    assert nonexcluded_unassigned, (
+        "fixture must have at least one roster member who is neither excluded "
+        "nor in group_by_character -- the All-only path for an opted-in character "
+        "is not exercised otherwise"
+    )
+
+
+def test_preview_dev_push_is_asynchronous():
+    """_devPushHotkeys must use setTimeout(..., 0) to defer the push.
+
+    A synchronous push during a mutation response means the handler runs
+    inside the promise resolution, which can cause re-entrant renders and
+    makes the push timing non-deterministic with respect to callers.
+    Production Api._push is fired from a worker thread (effectively async);
+    the dev harness must match that behaviour.
+    """
+    # Find the _devPushHotkeys function body
+    marker = "function _devPushHotkeys"
+    assert marker in DEV_JS, "_devPushHotkeys must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    # Find the matching closing brace of this function
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    assert "setTimeout" in body, (
+        "_devPushHotkeys must use setTimeout(..., 0) to match the async "
+        "behaviour of production Api._push -- currently it calls "
+        "onPreviewHotkeys synchronously"
+    )
+
+
+def test_preview_group_result_shape_has_all_four_required_fields():
+    """_devGroupResult must return an object with exactly the four fields
+    the page contracts on: applied (bool), persisted (bool), error (str|null),
+    hotkeys (object).
+
+    A partial result silently breaks the page's mutation handlers, which
+    check res.applied and res.hotkeys but also pass res.error to alert_bookmarks.
+    """
+    marker = "function _devGroupResult"
+    assert marker in DEV_JS, "_devGroupResult must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    for field in ("applied", "persisted", "error", "hotkeys"):
+        assert field in body, (
+            f"_devGroupResult must include the '{field}' field "
+            "to match the production Api._preview_group_result shape"
+        )
+
+
+def test_preview_group_delete_cleans_up_group_by_character():
+    """delete_preview_cycle_group must remove all group_by_character entries
+    that reference the deleted group.
+
+    Leaving stale entries means characters appear assigned to a non-existent
+    group, which the page cannot recover from gracefully.
+    """
+    marker = "api.delete_preview_cycle_group"
+    assert marker in DEV_JS, "delete_preview_cycle_group must be stubbed"
+    start = DEV_JS.index(marker)
+    # Find the function body (the assigned function)
+    fn_start = DEV_JS.index("function", start)
+    brace_start = DEV_JS.index("{", fn_start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    assert "group_by_character" in body, (
+        "delete_preview_cycle_group must clean up group_by_character entries "
+        "for the deleted group -- stale references break the character-row selects"
+    )
+    # Must remove entries (delete or reassign)
+    assert "delete" in body or "splice" in body, (
+        "delete_preview_cycle_group must remove stale group_by_character entries"
+    )
+
+
+def test_preview_dev_push_sends_full_state_not_just_hotkeys():
+    """_devPushHotkeys must push the full state payload (with enabled, roster,
+    excluded, etc.) not just the hotkeys sub-object.
+
+    onPreviewHotkeys replaces state wholesale, so a push with only the
+    hotkeys sub-keys as top-level fields loses enabled, roster, excluded,
+    and other required state, breaking the full re-render after a mutation.
+    """
+    marker = "function _devPushHotkeys"
+    assert marker in DEV_JS, "_devPushHotkeys must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    # Must reference the full fixture (not just _devPreviewHotkeys directly)
+    # to build the full state payload before pushing it to onPreviewHotkeys.
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in body, (
+        "_devPushHotkeys must build the full state from DEV_PREVIEW_HOTKEYS_FIXTURE "
+        "so onPreviewHotkeys receives enabled, roster, excluded, etc. -- "
+        "currently it pushes only the hotkeys sub-object"
+    )
