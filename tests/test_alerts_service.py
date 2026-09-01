@@ -18,6 +18,7 @@ def _config(**over):
         "enabled": True,
         "pve_filter": True,
         "persist_until_selected": True,
+        "volume": 100,
         "defaults_version": 1,
         "events": {
             "combat": {
@@ -25,24 +26,24 @@ def _config(**over):
                 "cooldown_s": 1,
                 "color": "#ff4d4d",
                 "sound": "alarm",
-                "duration_ms": 1200,
                 "pulses": 3,
+                "flash_rate": "normal",
             },
             "warp_scramble": {
                 "enabled": True,
                 "cooldown_s": 8,
                 "color": "#ffd24d",
                 "sound": "ring",
-                "duration_ms": 1200,
                 "pulses": 3,
+                "flash_rate": "normal",
             },
             "decloak": {
                 "enabled": True,
                 "cooldown_s": 8,
                 "color": "#4dd2ff",
                 "sound": "alarm",
-                "duration_ms": 1200,
                 "pulses": 3,
+                "flash_rate": "normal",
             },
         },
     }
@@ -50,13 +51,20 @@ def _config(**over):
     return cfg
 
 
-def _service(config=None, sounds=None):
+def _service(config=None, sounds=None, focused=None):
+    """*sounds*, when given, records (sound id, volume) per play -- the
+    volume is half of what the sink is now told."""
     cfg = config or _config()
     return service.AlertService(
         config=lambda: cfg,
         folder=lambda: None,
         on_alert=lambda *a: None,
-        sound=(sounds.append if sounds is not None else lambda _id: None),
+        sound=(
+            (lambda sid, vol: sounds.append((sid, vol)))
+            if sounds is not None
+            else lambda _id, _vol: None
+        ),
+        focused=focused,
     )
 
 
@@ -126,7 +134,7 @@ def test_a_suppressed_event_plays_no_sound():
     ev = tailer.Event("Alice", "combat", PLAYER)
     s._handle([ev], 0.0)
     s._handle([ev], 0.5)
-    assert sounds == ["alarm"]
+    assert sounds == [("alarm", 100)]
 
 
 def test_a_sound_of_none_is_not_played():
@@ -148,7 +156,7 @@ def test_config_is_read_per_event_not_captured():
         config=lambda: holder["cfg"],
         folder=lambda: None,
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     assert len(s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)) == 1
     replacement = _config()
@@ -184,7 +192,7 @@ def test_reconcile_twice_with_an_unchanged_str_folder_does_not_restart(tmp_path)
         config=lambda: cfg,
         folder=lambda: str(tmp_path),
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     try:
         s.reconcile()
@@ -211,7 +219,7 @@ def test_run_stops_on_the_event_it_was_given_not_a_later_generation(tmp_path):
         config=lambda: cfg,
         folder=lambda: str(tmp_path),
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     s._tailer = tailer.Tailer(tmp_path)
     my_generation = threading.Event()
@@ -256,7 +264,7 @@ def test_run_only_touches_the_tailer_it_was_given(tmp_path):
         config=lambda: cfg,
         folder=lambda: str(tmp_path),
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     stop_event = threading.Event()
     thread = threading.Thread(target=s._run, args=(stop_event, own_tailer))
@@ -297,7 +305,7 @@ def test_reconcile_does_not_replace_a_wedged_thread(tmp_path):
         config=lambda: cfg,
         folder=lambda: str(other_folder),
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     s._thread = stuck_thread
     s._tailer = old_tailer
@@ -321,7 +329,7 @@ def test_a_timed_out_join_is_logged_not_silent(monkeypatch, tmp_path, caplog):
         config=lambda: cfg,
         folder=lambda: str(tmp_path),
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     stuck = threading.Event()  # never set -- stands in for a wedged thread
     stuck_thread = threading.Thread(target=stuck.wait, daemon=True)
@@ -350,7 +358,7 @@ def test_wanted_is_false_when_the_folder_no_longer_exists(tmp_path):
         config=lambda: _config(),
         folder=lambda: str(missing),
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     assert s._wanted() is False
 
@@ -365,7 +373,7 @@ def test_reconcile_stops_the_thread_when_the_folder_disappears(tmp_path):
         config=lambda: _config(),
         folder=lambda: folder["path"],
         on_alert=lambda *a: None,
-        sound=lambda _id: None,
+        sound=lambda _id, _vol: None,
     )
     try:
         s.reconcile()
@@ -375,3 +383,82 @@ def test_reconcile_stops_the_thread_when_the_folder_disappears(tmp_path):
         assert s.health().running is False
     finally:
         s.stop()
+
+
+# ---- the client you are already looking at ---------------------------------
+# The sound is what makes an alert an interruption, and an interruption
+# about the client already filling your screen is noise: you can see the
+# fight. The flash still happens -- it is free, it is where the event is,
+# and PreviewWindow.arm_alert already makes a focused client's alert timed
+# rather than persistent, so it fades on its own rather than waiting to be
+# acknowledged by a client you never left.
+
+
+def test_the_focused_character_gets_no_sound():
+    sounds = []
+    s = _service(sounds=sounds, focused=lambda: "Alice")
+    s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert sounds == []
+
+
+def test_the_focused_character_still_gets_its_flash():
+    """Suppressing the sound must not suppress the alert: the ring is
+    what the preview is for, and an event that dispatched nothing would
+    also skip its cooldown and re-fire on the next poll."""
+    s = _service(focused=lambda: "Alice")
+    out = s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert [e[1] for e in out] == ["combat"]
+
+
+def test_another_character_still_makes_a_noise_while_you_fly_alice():
+    """The whole point of the feature: an alert on a client you are NOT
+    looking at is exactly the one that has to reach you."""
+    sounds = []
+    s = _service(sounds=sounds, focused=lambda: "Alice")
+    s._handle([tailer.Event("Bravo", "combat", PLAYER)], 0.0)
+    assert sounds == [("alarm", 100)]
+
+
+def test_no_focused_client_means_every_alert_sounds():
+    """Focus is None the instant you click a browser or Wingman itself
+    (host.py's _focused_key), which must not be read as "everything is
+    focused" and silence the feature."""
+    sounds = []
+    s = _service(sounds=sounds, focused=lambda: None)
+    s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert sounds == [("alarm", 100)]
+
+
+def test_a_focus_callable_that_raises_does_not_lose_the_alert(caplog):
+    """It reaches across to the preview thread's host. A failure there
+    must cost the suppression, not the alert."""
+
+    def boom():
+        raise RuntimeError("host gone")
+
+    sounds = []
+    s = _service(sounds=sounds, focused=boom)
+    out = s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert [e[1] for e in out] == ["combat"]
+    assert sounds == [("alarm", 100)]
+
+
+# ---- volume ----------------------------------------------------------------
+
+
+def test_the_configured_volume_reaches_the_sink():
+    sounds = []
+    s = _service(_config(volume=40), sounds=sounds)
+    s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert sounds == [("alarm", 40)]
+
+
+def test_a_missing_volume_key_plays_at_full_volume():
+    """An upgrading install's settings.json predates the key, and a
+    default of 0 there would silence alerts for everyone who had them."""
+    cfg = _config()
+    del cfg["volume"]
+    sounds = []
+    s = _service(cfg, sounds=sounds)
+    s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert sounds == [("alarm", 100)]

@@ -3,6 +3,7 @@ import json
 import pytest
 
 from wingman import bookmarks, settings
+from wingman.alerts import state as alert_state
 
 
 def test_defaults_are_the_documented_values():
@@ -53,28 +54,29 @@ def test_defaults_are_the_documented_values():
                 "enabled": False,
                 "pve_filter": True,
                 "persist_until_selected": True,
+                "volume": 100,
                 "defaults_version": 1,
                 "events": {
                     "combat": {
                         "enabled": True,
-                        "duration_ms": 1200,
                         "pulses": 3,
+                        "flash_rate": "normal",
                         "cooldown_s": 1,
                         "color": "#ff4d4d",
                         "sound": "alarm",
                     },
                     "warp_scramble": {
                         "enabled": True,
-                        "duration_ms": 1200,
                         "pulses": 3,
+                        "flash_rate": "normal",
                         "cooldown_s": 8,
                         "color": "#ffd24d",
                         "sound": "ring",
                     },
                     "decloak": {
                         "enabled": True,
-                        "duration_ms": 1200,
                         "pulses": 3,
+                        "flash_rate": "normal",
                         "cooldown_s": 8,
                         "color": "#4dd2ff",
                         "sound": "notify",
@@ -498,3 +500,48 @@ def test_validated_preview_takes_a_good_selection_colour_and_drops_a_bad_one():
     for bad in ("purple", "00c8dc", "#00c8d", 42, None):
         section = settings.validated_preview({"selection_color": bad})
         assert section["selection_color"] == "#00c8dc"
+
+
+# ---- alerts: volume, flash speed, and the duration that is no longer stored --
+
+
+def test_the_alert_volume_is_clamped_to_the_slider_range():
+    out = settings.validated_alerts({"volume": 400})
+    assert out["volume"] == 100
+    assert settings.validated_alerts({"volume": -20})["volume"] == 0
+
+
+def test_a_true_volume_is_not_read_as_a_volume_of_one():
+    """bool is an int in Python, so an unguarded isinstance check turns a
+    hand-edited `true` into a setting indistinguishable from silence."""
+    assert settings.validated_alerts({"volume": True})["volume"] == 100
+
+
+def test_an_unusable_flash_rate_falls_back_to_the_default():
+    out = settings.validated_alerts(
+        {"events": {"combat": {"flash_rate": "blistering"}}}
+    )
+    assert out["events"]["combat"]["flash_rate"] == "normal"
+
+
+def test_every_flash_rate_the_page_can_offer_is_accepted():
+    for rate in settings.VALID_FLASH_RATES:
+        out = settings.validated_alerts({"events": {"combat": {"flash_rate": rate}}})
+        assert out["events"]["combat"]["flash_rate"] == rate
+
+
+def test_a_stored_duration_is_dropped_rather_than_honoured():
+    """`duration_ms` was a stored field until the flash controls landed
+    and was never writable from the page, so the only files carrying a
+    non-default value are hand-edited ones. It is derived from
+    flash_rate x pulses now, and keeping a stale copy alongside would be
+    the second source of truth this change exists to remove."""
+    out = settings.validated_alerts(
+        {"events": {"combat": {"duration_ms": 9000, "pulses": 3}}}
+    )
+    assert "duration_ms" not in out["events"]["combat"]
+
+
+def test_the_default_flash_settings_reproduce_the_duration_that_shipped():
+    combat = settings.validated_alerts({})["events"]["combat"]
+    assert alert_state.duration_for(combat["flash_rate"], combat["pulses"]) == 1200

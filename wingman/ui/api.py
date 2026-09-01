@@ -98,10 +98,13 @@ QUIT_CONFIRM_TIMEOUT_S = 60.0
 
 # set_alert_event's writable fields. Kept as a set to check against rather
 # than duplicated per-field range checks -- settings.validated_alerts owns
-# the ranges (cooldown_s/duration_ms/pulses clamping, color/sound
+# the ranges (cooldown_s/pulses clamping, color/sound/flash_rate
 # validation) and this is the only other place event shape is named.
+#
+# No `duration_ms`: it is derived from pulses x flash_rate at the one site
+# that arms a ring (preview/window.py), so there is nothing here to write.
 _ALERT_EVENT_FIELDS = frozenset(
-    {"enabled", "cooldown_s", "duration_ms", "pulses", "color", "sound"}
+    {"enabled", "cooldown_s", "pulses", "flash_rate", "color", "sound"}
 )
 
 
@@ -3335,6 +3338,19 @@ class Api:
         than only for its configured duration."""
         return self._write_alert_setting(("persist_until_selected",), bool(enabled))
 
+    def set_alert_volume(self, value) -> dict:
+        """Persist how loud every alert sound is, 0-100.
+
+        Read live by the poll thread through the same config callable on
+        its next alert -- no reconcile() and no push: nothing is playing
+        between two alerts, so there is no live state to correct.
+
+        Deliberately does NOT clamp here, matching set_preview_opacity and
+        set_alert_event: settings.validated_alerts owns the 0-100 range,
+        in one place.
+        """
+        return self._write_alert_setting(("volume",), value)
+
     def set_alert_event(self, event, field, value) -> dict:
         """Persist one field of one event's alert spec.
 
@@ -3395,7 +3411,19 @@ class Api:
         spec["persist_until_selected"] = False
         sound = spec.get("sound") or "none"
         if sound != "none":
-            alert_service.play_sound(sound)
+            # At the configured volume, like a real alert -- Test exists to
+            # show what one is like, and a Test that ignored the slider
+            # would be the one place in the card that lies about it.
+            #
+            # Never suppressed by focus, unlike the poll path: you are
+            # looking at Wingman when you press this, so no EVE client
+            # holds the foreground and there is nothing to suppress.
+            alert_service.play_sound(
+                sound,
+                self._state.settings.get("preview", {})
+                .get("alerts", {})
+                .get("volume", 100),
+            )
         if self._preview_host is None:
             return {
                 "applied": True,

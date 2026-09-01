@@ -583,6 +583,10 @@ def build_alert_service(state, host):
             config=lambda: state.settings.get("preview", {}).get("alerts", {}),
             folder=folder,
             on_alert=host.raise_alert,
+            # What makes an alert on the client you are already looking at
+            # silent. Read live, never captured: the foreground changes
+            # constantly and the host is the only thing that knows.
+            focused=host.focused_character,
         )
     except Exception:
         # Same posture as build_preview_host: alerts are secondary, and a

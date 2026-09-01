@@ -102,3 +102,39 @@ def test_frame_index_is_in_range():
     a = _arm(None, "combat", 0.0, persist=True)
     for i in range(60):
         assert 0 <= state.frame_index(a, i * 0.08) < len(state.FRAME_ALPHAS)
+
+
+# ---- flash speed -----------------------------------------------------------
+# `duration_ms` is derived, not stored: an event holds how many flashes it
+# gets (`pulses`) and how fast they go (`flash_rate`), and the duration is
+# whatever those two multiply out to. Storing the duration as well would
+# be a third number that has to agree with the other two by hand, which is
+# exactly the drift CLAUDE.md's derive-don't-retype rule is about.
+
+
+def test_the_default_rate_reproduces_the_duration_that_shipped():
+    """1200ms over 3 pulses is what every install has had since alerts
+    landed. Normal has to BE that, or this change silently retimes every
+    existing alert."""
+    assert state.duration_for("normal", 3) == 1200
+
+
+def test_a_faster_rate_is_a_shorter_flash_not_a_shorter_alert():
+    """Speed and count are independent knobs: raising the speed must not
+    quietly drop flashes, and each flash keeps its own length."""
+    assert state.duration_for("fast", 3) < state.duration_for("normal", 3)
+    assert state.duration_for("slow", 3) > state.duration_for("normal", 3)
+    assert state.duration_for("normal", 6) == 2 * state.duration_for("normal", 3)
+
+
+def test_an_unknown_rate_falls_back_rather_than_raising():
+    """This is read on the preview thread inside arm_alert. A hand-edited
+    settings.json must cost a wrong-speed flash, not a dead pump."""
+    assert state.duration_for("blistering", 3) == state.duration_for("normal", 3)
+    assert state.duration_for(None, 3) == state.duration_for("normal", 3)
+
+
+def test_a_pulse_count_below_one_still_produces_a_visible_alert():
+    """progress() divides by the duration, so a zero here would be a
+    zero-length alert -- armed, never drawn, and impossible to explain."""
+    assert state.duration_for("normal", 0) > 0

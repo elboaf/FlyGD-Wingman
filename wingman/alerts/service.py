@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .. import paths
-from . import patterns, tailer
+from . import patterns, sound, tailer
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,27 @@ class Health(NamedTuple):
 
 
 class AlertService:
-    def __init__(self, config, folder, on_alert, *, sound=None, clock=time.monotonic):
+    def __init__(
+        self,
+        config,
+        folder,
+        on_alert,
+        *,
+        sound=None,
+        focused=None,
+        clock=time.monotonic,
+    ):
         self._config = config
         self._folder = folder
         self._on_alert = on_alert
         self._sound = sound if sound is not None else play_sound
+        # Which character owns the foreground RIGHT NOW, or None. A
+        # callable for the same reason `config` is one -- it answers from
+        # the preview thread's live state, which this thread must never
+        # cache -- and defaulted to "nobody" so a build with no host (off
+        # Windows, and every test that does not care) behaves as it always
+        # did.
+        self._focused = focused if focused is not None else lambda: None
         self._clock = clock
 
         self._thread = None
@@ -222,6 +238,26 @@ class AlertService:
 
     # ---- the decision core -----------------------------------------------
 
+    def _focused_character(self):
+        """The foreground client's character, or None if it cannot be had.
+
+        Guarded because it crosses to the preview host: a raise here would
+        cost the whole poll -- every alert in it, for every character --
+        to spare one client a sound it did not need. Swallowed at debug
+        level rather than warning: this runs once a second, and a host
+        that has gone away would otherwise fill the log a user sends us
+        with the least interesting line in it.
+        """
+        try:
+            return self._focused()
+        except Exception:
+            # Caught broadly on purpose (no noqa needed -- logging the
+            # exception satisfies BLE001, the same way alertframes.push
+            # does it): losing the suppression is recoverable, losing the
+            # poll is not.
+            logger.debug("Could not read the focused client", exc_info=True)
+            return None
+
     def _handle(self, events, now: float) -> list[tuple[str, str, str]]:
         """Filter, apply cooldowns, play sound, dispatch.
 
@@ -231,6 +267,14 @@ class AlertService:
         cfg = self._config() or {}
         table = cfg.get("events") or {}
         pve = bool(cfg.get("pve_filter"))
+        # Absent means full volume: an upgrading install's settings.json
+        # predates the key, and defaulting to anything else would silence
+        # alerts for everyone who already had them.
+        volume = cfg.get("volume", 100)
+        # Read once per poll rather than once per event. The foreground
+        # cannot meaningfully change between two lines of the same poll,
+        # and this is a cross-thread read.
+        focused = self._focused_character()
         dispatched = []
         for event in events:
             spec = table.get(event.event)
@@ -249,9 +293,18 @@ class AlertService:
                 # is invisible everywhere, sound included.
                 continue
             self._cooldowns[key] = now
-            sound = spec.get("sound") or "none"
-            if sound != "none":
-                self._sound(sound)
+            sound_id = spec.get("sound") or "none"
+            # The client you are already looking at gets the flash and not
+            # the noise. The sound is the part that INTERRUPTS, and there
+            # is nothing to interrupt you from when the fight is already
+            # filling your screen -- while the ring is free, is where the
+            # event happened, and is what tells you which of the three
+            # things just fired. arm_alert makes a focused client's alert
+            # timed rather than persistent (window.py), so it fades on its
+            # own instead of waiting to be acknowledged by a client you
+            # never left.
+            if sound_id != "none" and event.character != focused:
+                self._sound(sound_id, volume)
             # persist_until_selected is global but travels merged into the
             # per-event spec, so PreviewWindow.arm_alert reads one dict and
             # the host does not have to know the section's shape.
@@ -288,7 +341,39 @@ def sound_path(sound_id: str) -> Path | None:
     return None
 
 
-def play_sound(sound_id: str) -> None:
+def _play_bytes(data: bytes) -> None:
+    """Hand a complete WAV to the audio device. Windows only.
+
+    SND_MEMORY rather than SND_FILENAME, because the buffer is what
+    carries the volume (sound.py): there is no scaled file on disk to
+    name. One code path for every volume including 100, so the quiet
+    case cannot behave differently from the loud one in any way except
+    amplitude.
+    """
+    try:
+        import winsound  # Deferred: CI is ubuntu-latest.
+    except ImportError:
+        return
+    try:
+        winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_ASYNC)
+    except RuntimeError:
+        logger.exception("Could not play an alert sound")
+
+
+def play_sound(sound_id: str, volume: int = 100) -> None:
+    """Play *sound_id* at *volume* (0-100).
+
+    Volume 0 returns before resolving anything at all. A silent buffer
+    would still open the device and still cost a decode, for a setting
+    whose entire meaning is "make no noise" -- and PlaySound replaces
+    whatever is still playing, so a silent buffer would also cut short
+    an alert that had been raised a moment earlier at an audible volume.
+
+    The default is 100 so every caller that does not care about volume --
+    and every test double that never did -- keeps working unchanged.
+    """
+    if volume <= 0:
+        return
     path = sound_path(sound_id)
     if path is None:
         # Logged, not silent: a missing file looks exactly like a broken
@@ -296,10 +381,8 @@ def play_sound(sound_id: str) -> None:
         logger.warning("No sound file for id %r; alert will be silent", sound_id)
         return
     try:
-        import winsound  # Deferred: CI is ubuntu-latest.
-    except ImportError:
+        raw = path.read_bytes()
+    except OSError:
+        logger.exception("Could not read alert sound %s", path)
         return
-    try:
-        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
-    except RuntimeError:
-        logger.exception("Could not play alert sound %s", path)
+    _play_bytes(sound.scaled_for(sound_id, raw, volume))

@@ -2486,6 +2486,34 @@ headless.
 - [ ] **Confirm sounds play in the frozen build.** This is the only place
       the winsound module's packaging entry can be verified. Launch the
       installed build, trigger an alert, and confirm you hear the sound.
+      The sound is played from memory now (SND_MEMORY, so the volume can be
+      applied to the samples), which is a different winsound call path from
+      the one that shipped through 4.5.0 — a frozen build is the only place
+      it can be proven.
+- [ ] **An alert on the client you are flying is silent but visible.** With
+      two clients logged in and previews on, be in client A and have client
+      B shoot at A (or run a site so A takes fire). Expected: A's preview
+      flashes and NO sound plays. The flash fades on its own even with
+      "Keep pulsing until you select the preview" ticked — you are already
+      on that client, so there is nothing left to acknowledge.
+- [ ] **The same alert on a client you are NOT flying still makes a noise.**
+      From client A, have B take fire. Expected: B's preview flashes and the
+      sound plays. This is the half of the pair that must not regress —
+      silence here is the feature failing.
+- [ ] **Alt-tab to a browser, then take fire on the client you just left.**
+      Expected: the sound plays. Focus is nobody once you leave EVE, so the
+      client you last flew is no longer exempt.
+- [ ] **Alert volume.** Settings > Alerts, drag Volume. Expected: the
+      readout tracks the thumb while dragging, and nothing is written until
+      you release. Press Test at 100, 40 and 0. Expected: audibly quieter at
+      40, completely silent at 0, and the difference between 100 and 40 is
+      obvious rather than marginal. Restart and confirm the level survived.
+- [ ] **Flashes and Speed.** Set Combat to 8 flashes / Slow and press Test.
+      Expected: a visibly longer, slower pulse than the default. Set it to
+      1 flash / Fast: a single quick blip. Both controls commit on change
+      and survive a restart. An alert already pulsing when you change them
+      finishes at its old rate — the values are read when an alert is
+      armed, not per frame.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
       Alerts. Each event offers the same five named swatches: Red, Amber,
       Green, Cyan, and Magenta. They render as dark-theme controls rather than

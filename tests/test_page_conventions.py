@@ -2563,3 +2563,85 @@ def test_the_formation_editor_guards_both_of_its_async_windows():
         "the completion push clears `dirty` without checking whether an "
         "edit landed since the send"
     )
+
+
+def test_the_alert_rows_offer_exactly_the_flash_speeds_that_exist():
+    """The same trap as the sound options above, one column over.
+
+    alerts.state.FLASH_MS is what turns a speed into a duration, and
+    settings.validated_alerts refuses anything not in it. A preset the
+    page offers and the backend drops leaves the <select> showing a speed
+    the alert does not flash at, with nothing said.
+    """
+    from wingman.alerts.state import FLASH_MS
+
+    for event in _ALERT_EVENT_IDS:
+        select = re.search(
+            rf'<select[^>]*id="alert-event-{event}-speed".*?</select>',
+            HTML,
+            re.DOTALL,
+        )
+        assert select, f"no speed select for {event!r}"
+        offered = set(re.findall(r'<option value="([^"]+)"', select.group(0)))
+        assert offered == set(FLASH_MS), (
+            f"the {event} speed options are {sorted(offered)}, but "
+            f"alerts.state.FLASH_MS is {sorted(FLASH_MS)}"
+        )
+
+
+def test_every_flash_count_the_page_offers_survives_the_settings_clamp():
+    """alerts.js builds the Flashes options from FLASH_COUNTS. An entry
+    outside settings.validated_alerts' 1-16 range would be clamped on
+    write and read back as a different number than the one clicked."""
+    from wingman import settings
+
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    listed = re.search(r"var FLASH_COUNTS = \[(.*?)\];", js, re.DOTALL)
+    assert listed, "alerts.js no longer declares a FLASH_COUNTS list"
+    counts = [int(n) for n in re.findall(r"\d+", listed.group(1))]
+    assert counts, "FLASH_COUNTS is empty; the Flashes control offers nothing"
+    for count in counts:
+        out = settings.validated_alerts({"events": {"combat": {"pulses": count}}})
+        assert out["events"]["combat"]["pulses"] == count, (
+            f"the page offers {count} flashes and settings clamps it to "
+            f"{out['events']['combat']['pulses']}"
+        )
+
+
+def test_the_volume_slider_spans_exactly_what_settings_will_keep():
+    """Round 5's C2 rule, applied to a new slider: the control's units are
+    the stored units, and its ends are the clamp's ends. A slider that can
+    reach past the clamp reports a value the app silently changed."""
+    from wingman import settings
+
+    tag = re.search(r'<input[^>]*id="alert-volume"[^>]*>', HTML)
+    assert tag, "the alert volume slider is gone"
+    assert 'type="range"' in tag.group(0)
+    low = int(re.search(r'min="(\d+)"', tag.group(0)).group(1))
+    high = int(re.search(r'max="(\d+)"', tag.group(0)).group(1))
+    kept = settings.validated_alerts({"volume": low})["volume"]
+    assert kept == low, f"the slider floor {low} is clamped to {kept}"
+    assert settings.validated_alerts({"volume": high})["volume"] == high
+    assert settings.validated_alerts({"volume": high + 1})["volume"] == high, (
+        "the slider can reach the top of the stored range, but the range "
+        "does not end there"
+    )
+
+
+def test_the_volume_slider_commits_on_change_not_on_input():
+    """A range fires `input` per pixel dragged. settings.js's opacity
+    slider carries the same split for the same reason: one settings write
+    per pixel is what this rule exists to prevent."""
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    body = js[js.index("var volumeBox = WM.el('alert-volume')") :]
+    input_handler = re.search(
+        r"volumeBox\.addEventListener\('input', ([A-Za-z]+)\)", body
+    )
+    assert input_handler, "the volume readout no longer follows the thumb"
+    assert input_handler.group(1) == "showVolume", (
+        "the `input` handler does something other than update the readout"
+    )
+    assert "set_alert_volume" not in body[: body.index("'change'")], (
+        "the volume commits before `change`, which is a settings write per "
+        "pixel dragged"
+    )

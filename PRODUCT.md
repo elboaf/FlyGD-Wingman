@@ -139,6 +139,14 @@ is a specific power and a specific hazard, and it decides two arguments:
   tuning knobs that happened to get added; they exist because the feature
   is worthless the moment it cries wolf. Anything that makes alerts fire
   more readily needs to answer this.
+- **An alert must not interrupt you about something you can already see.**
+  The sound is the part that interrupts; the flash is the part that says
+  which client and which event. So the client holding the foreground gets
+  the flash and no sound, and its alert is timed rather than persistent —
+  there is nothing to acknowledge on a client you never left. This is the
+  same argument as the PvE filter one row up, pointed at attention rather
+  than at accuracy: an alert you did not need is what teaches you to
+  ignore the next one.
 - **A new alert event has to change what you do in the next few seconds.**
   That is the bar, and it is why the list is three and not thirty: a
   gamelog carries a great deal that is interesting later and almost
