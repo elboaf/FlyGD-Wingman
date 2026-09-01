@@ -1133,6 +1133,88 @@ behavior that only shows up at size.
 - [ ] **Open in browser via the context menu opens the video's YouTube
       page** — not the local video file. Confirm it is greyed out on a row
       with no link yet.
+
+### Uploader — Play, Rename, and Post the last hour
+
+Nothing in the suite renders this page, and two of these three write to
+the user's own files, so this section is the verification rather than a
+report of it.
+
+- [ ] **The row menu reads Play, Rename…, separator, Copy link, Open in
+      browser.** The first two act on the recording on disk, the last two
+      on the video it became; the rule between them is what says so.
+- [ ] **Play opens the recording in the default player.** Not the YouTube
+      page — that is what double-click and Open in browser do, and both
+      must still behave exactly as they did.
+- [ ] **Play is live on a row with no link.** It acts on the file, so it
+      has nothing to do with whether the recording was uploaded.
+- [ ] **Play on a recording deleted behind the app's back** (delete it in
+      Explorer without refreshing) reports it on the status strip and
+      names the file. No dialog.
+- [ ] **Play on a recording OBS is still writing** opens and plays. Then
+      confirm the known consequence: while the player holds the file, that
+      recording's announcement is deferred — `watcher.file_is_closed`
+      reads the player's handle as "still being written" — so a
+      not-yet-announced recording appears in the list a poll or two later
+      than it otherwise would. Expected, not a bug.
+- [ ] **Rename… prefills the STEM only, with no extension**, and the
+      renamed file keeps its original extension. Type `fight.mp4` and
+      confirm you get `fight.mp4.mkv` rather than a file claiming to be an
+      MP4.
+- [ ] **LOAD-BEARING: rename to a CASE-ONLY variant.** `fight.mkv` →
+      `Fight.mkv`. This is the rename a user is most likely to want and it
+      is the one that could not be verified off Windows: the pre-check
+      treats the file as its own destination, but whether `MoveFileExW`
+      accepts a case-only change on NTFS was never established. If this
+      fails, the fix is a two-step rename through a temporary name and it
+      needs its own decision, not an improvisation.
+- [ ] **Rename to a name already in the folder is refused, and the file it
+      would have replaced is untouched.** Check its size and timestamp
+      afterwards. A silent overwrite here destroys a fight.
+- [ ] **Rename keeps the selection, the focus ring and the sort order.**
+      Tick three rows, sort by Size, right-click a fourth and rename it.
+      Expected: the three stay ticked, the ring stays where it was, the
+      sort does not reset, and only the renamed row's text changes.
+- [ ] **Rename keeps the ↗.** Upload a recording, rename it, and confirm
+      the Link column still carries its arrow and still opens the right
+      video. Then restart the app and confirm it survived — that is the
+      persisted store, and nothing can rebuild it.
+- [ ] **LOAD-BEARING: a renamed recording is not announced again.** Rename
+      one, then leave the app running for two or three watcher polls
+      (~10s). Expected: no toast, and the row does not arrive ticked as a
+      newly finished recording. This is the failure that would otherwise
+      surface days later and read as a bug about OBS.
+- [ ] **Rename is refused while an upload is running**, including a
+      STITCHED upload of that very recording — the case where Windows
+      would otherwise allow it, because the open handle is on the merged
+      temporary rather than on the source.
+- [ ] **Rename refusals re-open the prompt with the typed text still in
+      it.** Try `CON`, a name ending in a dot, and one containing `:`.
+      Each gets its own sentence, and none costs the whole name.
+- [ ] **Post the last hour posts to Discord with no video involved.** No
+      selection, no upload, no Google account touched. The archive lands
+      in the channel and the strip names it.
+- [ ] **The button goes inert while the post runs and comes back
+      afterwards** — including when the post fails.
+- [ ] **With no webhook configured**, the note in the Combat logs card is
+      showing AND the button is still live; clicking it reports the reason
+      on the strip. Then configure a webhook in Settings › Uploading,
+      return to the Uploader **without restarting**, and confirm the
+      button posts. (The note itself will still be showing — see the known
+      issue below; the button must not be dead.)
+- [ ] **Post the last hour while an upload is running is refused**, and
+      the sentence is about the upload rather than about combat logs.
+      Then the reverse: start a post, click Upload while it runs, and
+      confirm that refusal says combat logs are being posted rather than
+      "An upload is already in progress".
+- [ ] **An hour with no logs in it** reports "No combat logs found." on
+      its own — with no sentence about an upload in front of it, because
+      no upload happened.
+- [ ] **The panel at the window floor.** Resize to the minimum (840×625)
+      and confirm the Upload button is fully visible without scrolling,
+      with the Combat logs card below it. Repeat at 200% display scaling,
+      where the panel is 248px wide. The second card may need a scroll;
+      Upload may not.
 - [ ] **Double-clicking a row with a completed upload opens its YouTube
       link**, same destination as the context menu, and leaves the row's
       tick state unchanged. Double-clicking a row with no link does

@@ -123,6 +123,37 @@
     WM.send('retry');
   });
 
+  // ---- the standalone combat-log post ---------------------------------
+  // Combat logs are otherwise the tail of an upload, so the only way to
+  // send them was to publish a video. This is the fight that was not
+  // recorded, or was recorded and is not worth uploading.
+  //
+  // Sends unconditionally, like Open folder and Delete selected, and for
+  // the reason list.js states twice: every refusal -- no webhook, a
+  // webhook that will not parse, no Gamelogs folder, no logs in the hour,
+  // a Discord rejection -- is a specific sentence composed in Python, and
+  // a page-side early return would swallow the one that says why nothing
+  // was posted.
+  //
+  // In particular this is NOT gated on the webhook the note above it
+  // describes. get_settings is fetched once, at page load, and nothing
+  // pushes a settings payload, so the page's copy of that fact is fixed
+  // for the session: a button disabled on it would stay dead after the
+  // user configured a webhook, which is precisely what WM.setEnabled's
+  // rule forbids.
+  WM.el('btn-post-logs').addEventListener('click', function () {
+    WM.send('post_recent_logs');
+  });
+
+  // The one state the page cannot work out for itself, so Python pushes
+  // it: a post is running, and a second one must not start on top of it.
+  // Every call to post_recent_logs re-states this, so a push lost into a
+  // hidden window (which _push swallows) cannot leave the button dead --
+  // a click that arrives anyway both works and repairs the display.
+  WM.handle('onLogPostRunning', function (p) {
+    WM.setEnabled('btn-post-logs', !p.running);
+  });
+
   // D5. Cancel and Retry share the one slot beside Upload and are never
   // live together: Python arms exactly one of them, and each of its own
   // handlers below turns the other off implicitly by never being on at the

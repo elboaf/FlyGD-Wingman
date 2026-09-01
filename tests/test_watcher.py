@@ -440,3 +440,77 @@ def test_a_flushing_writer_is_not_announced_at_all_while_it_is_open(tmp_path):
     assert _poll_a_flushing_writer(w, f) == 0
     states["recording.mkv"] = True  # OBS stopped
     assert [p.name for p in w.poll_once()] == ["recording.mkv"]
+
+
+# --- rename ----------------------------------------------------------------
+# THE regression this method exists to prevent: a renamed recording is the
+# same file, and the seen-set is keyed by path. Without the migration the
+# next poll finds a path it has never seen, announces it as a finished
+# recording and preselects it -- days after the rename, reading as a bug
+# about OBS rather than about the rename.
+
+
+def test_rename_moves_the_seen_entry(tmp_path):
+    seen_path = tmp_path / "seen.json"
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    w = watcher.Watcher(tmp_path, seen_path)
+    w.baseline()
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    w.rename(old, new)
+    assert str(old) not in w.seen
+    assert str(new) in w.seen
+    assert str(new) in watcher.load_seen(seen_path)
+
+
+def test_a_renamed_recording_is_not_announced_as_new(tmp_path):
+    """The whole point. poll_once must stay silent about a file that has
+    only changed its name."""
+    seen_path = tmp_path / "seen.json"
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    w = watcher.Watcher(tmp_path, seen_path, stable_polls=1)
+    w.baseline()
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    w.rename(old, new)
+    assert w.poll_once() == []
+
+
+def test_rename_without_the_migration_would_announce_it(tmp_path):
+    """The control for the test above: same steps, no rename() call. If
+    this ever stops announcing, the test above proves nothing."""
+    seen_path = tmp_path / "seen.json"
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    w = watcher.Watcher(tmp_path, seen_path, stable_polls=1)
+    w.baseline()
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    assert w.poll_once() == [new]
+
+
+def test_rename_carries_a_pending_entry(tmp_path):
+    """A file part-way through its settle must not have its stability
+    count reset by a rename, or it waits out another full settle."""
+    seen_path = tmp_path / "seen.json"
+    old = tmp_path / "a.mkv"
+    old.write_bytes(b"x" * 10)
+    w = watcher.Watcher(tmp_path, seen_path, stable_polls=3)
+    w.poll_once()
+    assert str(old) in w._pending
+    new = tmp_path / "b.mkv"
+    old.rename(new)
+    w.rename(old, new)
+    assert str(old) not in w._pending
+    assert str(new) in w._pending
+
+
+def test_rename_of_an_unseen_path_does_not_invent_an_entry(tmp_path):
+    """Renaming a recording the watcher has never seen must not add one --
+    that would suppress the announcement of a genuinely new file."""
+    seen_path = tmp_path / "seen.json"
+    w = watcher.Watcher(tmp_path, seen_path)
+    w.rename(tmp_path / "a.mkv", tmp_path / "b.mkv")
+    assert w.seen == {}

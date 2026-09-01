@@ -1338,6 +1338,14 @@ button.btn:disabled,
   cursor: pointer;
 }
 .ctxmenu button:hover:not(:disabled) { background: var(--hover); }
+/* The menu holds two object classes now -- the recording on disk (Play,
+   Rename) and the video it became (Copy link, Open in browser) -- and
+   until the first pair arrived it read entirely as the second. A 1px rule
+   is the whole of the distinction; it sets no display, so it needs no
+   [hidden] override. */
+.ctxsep {
+  height: 1px; margin: 4px 6px; background: var(--panel-border);
+}
 
 /* ---- tooltips (replaces tooltip.py's borderless Toplevel) -----------
    DELAY_MS 450 is preserved as a transition-delay: long enough not to fire

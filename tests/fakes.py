@@ -68,12 +68,19 @@ class FakeRows:
     def rebuild(self, directory, preselect=None):
         return self.rows()
 
+    def rename(self, row_id, new_path):
+        info = self.infos.get(row_id)
+        if info is None:
+            return
+        info.path = Path(new_path)
+
 
 class FakeWatcher:
     def __init__(self, directory):
         self.directory = Path(directory)
         self.rebound = []
         self.forgotten = []
+        self.renamed = []
 
     def rebind(self, directory):
         self.rebound.append(Path(directory))
@@ -81,6 +88,9 @@ class FakeWatcher:
 
     def forget(self, path):
         self.forgotten.append(Path(path))
+
+    def rename(self, old_path, new_path):
+        self.renamed.append((Path(old_path), Path(new_path)))
 
 
 class FakeYouTube:

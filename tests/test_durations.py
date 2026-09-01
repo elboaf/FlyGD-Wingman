@@ -230,3 +230,30 @@ def test_save_failure_is_logged(tmp_path, monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         durations.save(tmp_path / "d.json", {})
     assert "duration cache" in caplog.text
+
+
+# --- rename ----------------------------------------------------------------
+
+
+def test_rename_moves_a_cached_duration_to_the_new_path():
+    cache = {}
+    durations.remember(cache, Path("/a.mkv"), 10, 100.0, 61.0)
+    durations.rename(cache, Path("/a.mkv"), Path("/b.mkv"))
+    assert durations.lookup(cache, Path("/b.mkv"), 10, 100.0) == (True, 61.0)
+    assert durations.lookup(cache, Path("/a.mkv"), 10, 100.0) == (False, None)
+
+
+def test_rename_carries_a_definitive_unreadable_verdict():
+    """remember() stores None for a file ffprobe read and could not
+    measure. Dropping that on a rename buys a fresh subprocess per refresh
+    for a file already known to be unreadable."""
+    cache = {}
+    durations.remember(cache, Path("/a.mkv"), 10, 100.0, None)
+    durations.rename(cache, Path("/a.mkv"), Path("/b.mkv"))
+    assert durations.lookup(cache, Path("/b.mkv"), 10, 100.0) == (True, None)
+
+
+def test_rename_of_an_unknown_path_does_nothing():
+    cache = {}
+    durations.rename(cache, Path("/a.mkv"), Path("/b.mkv"))
+    assert cache == {}

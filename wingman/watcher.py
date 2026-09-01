@@ -272,6 +272,39 @@ class Watcher:
         self._pending.pop(key, None)
         self._save()
 
+    def rename(self, old_path, new_path) -> None:
+        """Follow a renamed recording, so it is not announced a second time.
+
+        The seen-set is keyed by path, and a rename produces a path this
+        watcher has never seen. Without this, the next poll finds a
+        settled, closed, unknown file and announces it as a finished
+        recording -- preselected, ready to upload, for the second time.
+        The user renamed a file and Wingman reported a new one, which reads
+        as a bug about OBS rather than about the rename.
+
+        NOT ``forget(old)`` plus a poll: forget is precisely what makes the
+        file look new. The entry has to arrive at the new key intact, and
+        it is still accurate there -- a rename changes neither size nor
+        mtime.
+
+        The pending entry moves too. A file part-way through its stability
+        count would otherwise start its settle again, deferring a genuine
+        announcement by up to ``stable_polls`` polls for no reason.
+
+        A path with no entry is a no-op in both maps. Renaming a recording
+        the watcher has never seen must not invent one, or the announcement
+        of a genuinely new file is suppressed.
+        """
+        old_key, new_key = str(old_path), str(new_path)
+        entry = self.seen.pop(old_key, None)
+        if entry is not None:
+            self.seen[new_key] = entry
+        pending = self._pending.pop(old_key, None)
+        if pending is not None:
+            self._pending[new_key] = pending
+        if entry is not None:
+            self._save()
+
     def prune(self) -> int:
         """Drop entries whose files no longer exist. Returns the count."""
         gone = [k for k in self.seen if not Path(k).exists()]

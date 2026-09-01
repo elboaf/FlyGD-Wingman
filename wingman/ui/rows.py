@@ -213,6 +213,42 @@ class RowSnapshot:
         self._replace(row_id, duration=info.duration_str)
         return info.duration_str
 
+    def rename(self, row_id: str, new_path) -> None:
+        """Point one row at a renamed file, keeping its id.
+
+        The id is the point. A rebuild would answer the same question --
+        `list_rows` re-discovers the folder and would show the new name --
+        but it mints fresh ids for every row, and the page drops its
+        selection, its focus ring and its sort position with them. A
+        rename is an incidental action on one row; the only other refresh
+        that clears a selection is Delete, which consumed that selection.
+
+        Three things move together, and missing any one leaves the page
+        disagreeing with the backend about the same row:
+
+        - the VideoInfo's path, which every later action resolves through
+          (upload, delete, play) and which would otherwise name a file that
+          no longer exists;
+        - the in-memory link, keyed by PATH here so it can outlive a
+          rebuild -- this map is what the CELL renders from, so a rename
+          that migrates only the persisted store shows an unlinked row
+          until the next relaunch;
+        - the Row's rendered name.
+
+        Unknown id is a no-op, exactly as set_link and set_duration treat
+        one: a stale id must mean "do nothing", never an exception on the
+        bridge thread.
+        """
+        info = self._infos.get(row_id)
+        if info is None:
+            return
+        new_path = Path(new_path)
+        url = self._links.pop(info.path, None)
+        if url is not None:
+            self._links[new_path] = url
+        info.path = new_path
+        self._replace(row_id, name=new_path.name)
+
     def _replace(self, row_id: str, **changes) -> None:
         for index, row in enumerate(self._rows):
             if row.id == row_id:

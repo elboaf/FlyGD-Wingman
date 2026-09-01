@@ -518,12 +518,146 @@ def test_the_upload_button_is_in_the_card_that_names_the_upload():
     """Uploader 2. Two cards, UPLOAD and PUBLISH: one concept under two
     names on one screen, with the Upload button in the one not called
     Upload. The route is also named Uploader, and DESIGN.md forbids a
-    screen repeating its own tab name as its first card heading."""
+    screen repeating its own tab name as its first card heading.
+
+    This asserted `len(headings) == 1` until the panel grew a `Combat
+    logs` card, and the change is deliberate rather than a relaxation.
+    Uploader 2's finding is that one CONCEPT must not appear under two
+    names; combat logs are a second concept, going to a different service,
+    reachable with no Google account at all -- the independence PRODUCT.md
+    requires the two halves of this app to keep. What the finding actually
+    forbids is still asserted here: the upload card is one card, it does
+    not echo the tab name, and the Upload button is inside it.
+    """
     route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
     headings = re.findall(r"<h2>(.*?)</h2>", route)
-    assert len(headings) == 1, f"the panel should be one card, got {headings}"
+    assert headings == ["This upload", "Combat logs"], (
+        f"the panel is the upload card then the combat-log card; got {headings}"
+    )
     assert headings[0].strip().lower() != "upload", "must not echo the tab name"
     assert route.index("<h2>") < route.index('id="btn-upload"')
+    # Upload belongs to the FIRST heading, so it sits above the second one
+    # rather than after it.
+    assert route.index('id="btn-upload"') < route.index("<h2>Combat logs</h2>")
+
+
+def test_the_combat_log_card_is_last_so_upload_keeps_its_position():
+    """The panel is a fixed-width column with overflow-y: auto, so a second
+    card is what makes it scroll at the 840x625 floor. Uploader 9's whole
+    complaint was that the most-pressed control in the app was last in a
+    stack that overflowed the pane; ordering the new card AFTER the upload
+    card is what preserves that fix, because the control that may fall
+    below the fold is then the least-pressed one on the screen.
+
+    Asserted rather than left to a comment: the ordering IS the argument,
+    and an edit moving the card up would look harmless."""
+    route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
+    assert route.index('id="btn-upload"') < route.index('id="btn-post-logs"')
+    assert route.index('id="destination"') < route.index("<h2>Combat logs</h2>")
+
+
+def test_posting_the_last_hour_is_reachable_without_an_upload():
+    """Combat logs were the TAIL of an upload -- the only way to send them
+    was to publish a video. The button, its handler and the bridge method
+    are three files that have to agree, and WM.send reports a wrong name
+    only to a console nobody is reading."""
+    assert 'id="btn-post-logs"' in HTML
+    assert "WM.send('post_recent_logs')" in PANEL_JS
+    assert "def post_recent_logs(self)" in API_PY
+
+
+def test_the_post_button_is_not_gated_on_the_webhook():
+    """The page cannot hold a current answer to "is a webhook configured":
+    get_settings is fetched once at page load and nothing pushes a settings
+    payload, so a control disabled on that fact stays dead for the rest of
+    the session after the user configures one. That is what WM.setEnabled's
+    rule forbids, and it is the bug _with_webhook_status exists because
+    Settings shipped once already.
+
+    So the ONLY thing that may disable this button is the pushed running
+    flag. The note beside it still states the fact; Python composes every
+    refusal."""
+    enabled = re.findall(r"WM\.setEnabled\('btn-post-logs',([^)]*)\)", PANEL_JS)
+    assert enabled == [" !p.running"], enabled
+    # The settings handler renders the note and must not reach the button.
+    handler = PANEL_JS[PANEL_JS.index("wm:settings") :]
+    handler = handler[: handler.index("// ---- status strip")]
+    assert "btn-post-logs" not in handler
+
+
+def test_the_post_button_cannot_be_left_dead_by_a_lost_push():
+    """_push swallows every evaluate_js failure, and a push into a HIDDEN
+    window is swallowed outright -- this is a tray app whose window is
+    routinely closed. So the disarm needs both halves: a finally at the
+    outermost frame, and a re-statement on every call, so a click that
+    arrives against a stale render both works and repairs the display."""
+    method = API_PY[API_PY.index("def post_recent_logs") :]
+    method = method[: method.index("def _recent_logs_worker")]
+    # Every exit states the flag: three refusals and the dispatch.
+    assert method.count('_push("onLogPostRunning"') == 4
+    worker = API_PY[API_PY.index("def _recent_logs_worker") :]
+    # To the end of that method, whatever follows it: the combat-log
+    # section's order has moved before and the slice must not depend on it.
+    worker = worker[: re.search(r"\n    def ", worker[1:]).end()]
+    assert "finally:" in worker
+    assert worker.index("finally:") < worker.index('_push("onLogPostRunning"')
+
+
+def test_the_row_menu_separates_the_file_from_the_video():
+    """The menu was two items, both acting on the YouTube link. Play and
+    Rename act on the recording on disk, which is a different object, and
+    the file actions come first because the row's subject is the
+    recording."""
+    menu = HTML[HTML.index('id="ctxmenu"') :]
+    menu = menu[: menu.index("</div>", menu.index('id="ctx-open"'))]
+    assert re.findall(r'id="(ctx-[a-z]+)"', menu) == [
+        "ctx-play",
+        "ctx-rename",
+        "ctx-copy",
+        "ctx-open",
+    ]
+    assert 'class="ctxsep"' in menu
+    # It sets no display, so it needs no [hidden] override -- but it does
+    # need to be drawn, or it is an empty div nobody can see.
+    assert re.search(r"\.ctxsep\s*\{[^}]*background:", CSS)
+
+
+def test_play_and_rename_reach_python_by_their_real_names():
+    """Three files agree per action, and nothing in the suite renders the
+    page: a wrong name here is a menu item that does nothing."""
+    assert "WM.send('play_recording', ctxId)" in LIST_JS
+    assert "def play_recording(self, row_id" in API_PY
+    assert re.search(r"WM\.send\('rename_recording', id, answer\)", LIST_JS)
+    signature = re.search(r"def rename_recording\(self,([^)]*)\)", API_PY)
+    assert signature
+    params = [p.strip().split(":")[0] for p in signature.group(1).split(",")]
+    assert [p for p in params if p] == ["row_id", "stem"]
+
+
+def test_rename_asks_through_the_pages_own_dialog():
+    """window.prompt renders as WebView2 browser chrome captioned with the
+    page origin, and Python's _confirm would deadlock the bridge thread it
+    is called on (DESIGN.md, "Which confirmation"). The page owns this
+    dialog, so it is WM.prompt."""
+    assert "WM.prompt('Rename recording'" in LIST_JS
+    # Comments stripped first: the note at the call site NAMES the banned
+    # call in order to say why it is banned, and a bare substring check
+    # reads that as the violation it is warning about.
+    assert "window.prompt" not in re.sub(r"(?m)^\s*//.*$", "", LIST_JS)
+    # Prefilled with the STEM: Python reappends the extension, so a user
+    # cannot turn .mkv into .mp4 by typing.
+    assert "lastIndexOf('.')" in LIST_JS
+
+
+def test_a_rename_repaints_one_row_rather_than_rebuilding_the_list():
+    """A rebuild re-mints every id (ui/rows.py) and the selection, focus
+    ring and sort position go with them. The machinery to avoid that
+    already exists, for a landing ffprobe result."""
+    assert "WM.handle('onRowRenamed'" in LIST_JS
+    handler = LIST_JS[LIST_JS.index("WM.handle('onRowRenamed'") :]
+    handler = handler[: handler.index("});")]
+    assert "repaint(payload.id)" in handler
+    assert "list_rows" not in handler
 
 
 def test_deleting_files_lives_with_the_files():

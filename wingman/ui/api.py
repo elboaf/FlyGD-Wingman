@@ -239,6 +239,43 @@ def _folder_note(folder: Path, suppressed: int) -> str:
     return f"{where} {suppressed} recordings already there were not announced."
 
 
+@dataclass(frozen=True)
+class LogTarget:
+    """Where a combat-log post would go, or why it cannot go anywhere.
+
+    Resolving this was inline in `_post_combat_logs` until the Uploader
+    grew a standalone `Post the last hour`. Two callers needing the same
+    three answers -- parse the webhook, tell absent from unusable, find the
+    Gamelogs folder -- is exactly the shape that drifts when it is written
+    twice, and one of the two copies would be the one a user reads.
+
+    `problem` is a CLAUSE, not a sentence, because the two callers frame it
+    differently: "Combat logs skipped: ..." after an upload that succeeded,
+    "Combat logs not posted: ..." when the post was the whole action.
+
+    `configured` is the one case the callers must disagree about. No
+    webhook at all is a fact about the INSTALL rather than a failure: the
+    upload tail stays silent (a WARNING strip on every upload forever is
+    the recurring-failure pattern `format_upload_confirm`'s docstring
+    records, and the panel states the fact instead), while a standalone
+    post has to say it -- the user asked for exactly this, and nothing else
+    would answer them.
+    """
+
+    hook: object | None
+    gamelogs_dir: Path | None
+    problem: str
+    configured: bool
+
+
+# The standalone post's window. One hour, ending at the click: it is not
+# derived from any recording, which is the whole point of the control --
+# the fight that was not recorded, or was recorded and is not worth
+# uploading. combatlog.WINDOW_PADDING widens what actually gets selected by
+# five minutes each side, as it does for the upload tail.
+RECENT_LOG_WINDOW = datetime.timedelta(hours=1)
+
+
 @dataclass
 class UploadJob:
     """Every value the upload worker needs, captured before dispatch.
@@ -430,6 +467,22 @@ class Api:
 
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
+        # The standalone combat-log post, and Play. Separate handles rather
+        # than one "work" slot because each answers a different question:
+        # _busy() (an upload, which a list rebuild would damage and Quit
+        # must ask about) is deliberately NOT widened to cover a log post,
+        # and Play is fire-and-forget with nothing to guard at all.
+        self._logs_thread: threading.Thread | None = None
+        self._play_thread: threading.Thread | None = None
+        # The log post's guard is a CLAIMED FLAG, not `thread.is_alive()`
+        # like _busy(). is_alive() answers False for a thread that has been
+        # created and not yet started, so assigning the handle before
+        # .start() -- which is what makes the upload guard safe enough --
+        # leaves a window where a second call sees "idle" and dispatches a
+        # second post. pywebview serves each bridge call on its own thread,
+        # so two fast clicks really can arrive concurrently.
+        self._logs_lock = threading.Lock()
+        self._logs_running = False
         self._retry_state: RetryState | None = None
         self._links: dict[str, str] = {}
         self._last_pct: float = 0.0
@@ -902,6 +955,174 @@ class Api:
         if url:
             webbrowser.open(url)
 
+    def play_recording(self, row_id: str) -> None:
+        """Open one recording in the Windows default player.
+
+        The Uploader is the screen about a folder's contents, and until
+        `Open folder` landed every affordance on it acted on the YouTube
+        link rather than on the file (`open_path` resolves a row to a URL,
+        despite the name). "Is this the fight I think it is" is answered by
+        watching two seconds of it, and answering it meant leaving the app.
+
+        Never disabled, and that follows `WM.setEnabled`'s rule rather than
+        excepting it: whether the file exists is a fact about the disk that
+        goes stale, and the page cannot know it -- the row payload carries
+        no such field, and adding one would be worse, because `rebuild()`
+        only ever emits rows for files that existed at scan time, so it
+        would read `true` for every row forever. The app does NOT already
+        know this cannot be carried out, so it runs and reports.
+
+        On a worker because `os.startfile` blocks while the shell resolves
+        an association -- seconds on a slow handler or a disconnected share
+        -- and the bridge thread has to keep painting.
+        """
+        info = self._rows.resolve(row_id)
+        if info is None:
+            # A stale id means "do nothing" everywhere else, silently. Here
+            # the row is still on screen under the user's pointer, so
+            # silence would read as a dead menu item.
+            self._status("That list is out of date. Refresh and try again.", "WARNING")
+            return
+        self._play_thread = self._spawn(
+            target=self._play_worker, args=(info.path,), daemon=True
+        )
+        self._play_thread.start()
+
+    def _play_worker(self, path: Path) -> None:
+        """Hand one path to the shell, reporting on the strip.
+
+        A player holding a handle on a still-growing recording is a real
+        and accepted consequence: `watcher.file_is_closed` will read that
+        handle as "still being written" and defer the announcement of a
+        not-yet-seen recording by a poll or two. Watching a file mid-write
+        is exactly what this control is for, so the cost is named rather
+        than designed out.
+        """
+        if not path.exists():
+            self._status(f"That recording is no longer there: {path.name}", "WARNING")
+            return
+        try:
+            # Same posture as open_recording_dir: os.startfile exists only
+            # on Windows, so it is reached through an attribute lookup
+            # behind the platform check rather than at import. Off Windows
+            # this is a no-op that reports nothing -- a dev box has no shell
+            # to ask, and the file is there.
+            if sys.platform == "win32":
+                os.startfile(str(path))
+        except OSError:
+            logger.exception("Could not play %s", path)
+            self._status(f"That file could not be opened: {path.name}", "WARNING")
+
+    def rename_recording(self, row_id: str, stem: str) -> dict:
+        """Rename one recording on disk, keeping its extension.
+
+        Returns `{ok, error}` for the page to render rather than pushing a
+        status line: the page owns the dialog this answers (`WM.prompt` --
+        `_confirm` would deadlock the bridge thread it is called on), and a
+        refusal re-opens that dialog with the typed text still in it, so a
+        typo does not cost the whole name.
+
+        Runs on the BRIDGE THREAD deliberately. `Watcher` has no lock, and
+        the migration below is a pop-and-insert plus a save whose payload
+        iterates `seen` -- a concurrent `poll_once` is one
+        "dictionary changed size during iteration" away. The bridge thread
+        is the one thread that cannot be running the poll, the work is
+        milliseconds of metadata, and there is nothing to park on: the page
+        has already answered the prompt.
+        """
+        # First, and not for tidiness. A STITCHED upload holds its handle on
+        # the merged temporary, not on the sources (_upload_worker), so
+        # Windows would allow this -- and _link() afterwards persists the
+        # URL against the path UploadJob captured BEFORE dispatch, which by
+        # then names nothing. The video publishes and its link is lost for
+        # good, because nothing rebuilds links.json. Refusing for the
+        # duration is one predicate and one sentence, and it covers the
+        # plain path too rather than depending on a sharing side-effect
+        # that only one of the two paths happens to have.
+        if self._busy():
+            return {
+                "ok": False,
+                "error": (
+                    "That upload is still running. It records the YouTube link "
+                    "against the current name, so renaming now would lose it."
+                ),
+            }
+
+        info = self._rows.resolve(row_id)
+        if info is None:
+            # NOT "that recording is gone". A watcher poll landing while the
+            # prompt was open re-mints every id (list_rows), and the file is
+            # sitting on screen in front of the user. Two states, two
+            # sentences.
+            return {
+                "ok": False,
+                "error": "The list refreshed while that dialog was open. Try again.",
+            }
+
+        problem = library.rename_problem(stem)
+        if problem is not None:
+            return {"ok": False, "error": problem}
+
+        old_path = info.path
+        if not old_path.exists():
+            return {
+                "ok": False,
+                "error": f"That recording is no longer there: {old_path.name}",
+            }
+
+        new_path = old_path.with_name(stem.strip() + old_path.suffix)
+        if new_path == old_path:
+            return {"ok": True, "error": ""}
+
+        # normcase rather than a bare exists(): on a case-insensitive
+        # filesystem fight.mkv IS its own destination, so an existence check
+        # alone refuses `fight` -> `Fight` as a clash with itself -- the
+        # rename a user is most likely to want. samefile() is not used
+        # because it raises FileNotFoundError in the normal case, where the
+        # destination does not exist yet.
+        same_file = os.path.normcase(str(new_path)) == os.path.normcase(str(old_path))
+        if not same_file and new_path.exists():
+            return {"ok": False, "error": f"{new_path.name} is already in that folder."}
+
+        try:
+            # Path.rename, NEVER os.replace. os.replace is MoveFileExW with
+            # MOVEFILE_REPLACE_EXISTING, which silently destroys the file at
+            # the destination -- another recording. The check above exists
+            # only to produce a better sentence than the exception would;
+            # this call is what actually protects the data.
+            old_path.rename(new_path)
+        except OSError as exc:
+            logger.warning("Could not rename %s", old_path, exc_info=True)
+            return {"ok": False, "error": f"That file could not be renamed: {exc}"}
+
+        # ONLY after the rename succeeded. Four stores are keyed by path,
+        # and moving keys first would leave every one of them describing a
+        # file that does not exist. A rename changes neither size nor mtime,
+        # so each is a key move with the entry intact.
+        #
+        # The watcher is the one that fails quietly: its seen-set is keyed
+        # by path, so without this the next poll finds a settled, closed,
+        # unknown file and announces it as a newly finished recording --
+        # preselected, ready to upload, for the second time.
+        if self._watcher is not None:
+            self._watcher.rename(old_path, new_path)
+        # links cannot be rebuilt by anything (links.py's docstring), so
+        # losing this key loses the Link column's answer permanently.
+        links.rename(self._link_store, old_path, new_path)
+        links.save(self._links_file, self._link_store)
+        # Cheap rather than critical: a lost duration costs one ffprobe.
+        durations.rename(self._cache, old_path, new_path)
+        durations.save(self._durations_file, self._cache)
+        # The fourth store, and the one the CELL renders from.
+        self._rows.rename(row_id, new_path)
+
+        # A targeted repaint, not list_rows(). A rebuild re-mints every id
+        # and the page's selection, focus ring and sort position go with
+        # them -- and a rename is an incidental action on one row, unlike
+        # the delete that is the only other refresh to clear a selection.
+        self._push("onRowRenamed", {"id": row_id, "name": new_path.name})
+        return {"ok": True, "error": ""}
+
     def open_recording_dir(self) -> bool:
         """Open the watched folder in the shell.
 
@@ -1053,7 +1274,38 @@ class Api:
     # ----- upload -----------------------------------------------------------
 
     def _busy(self) -> bool:
+        """Is a VIDEO UPLOAD running?
+
+        Deliberately not widened to cover the standalone combat-log post,
+        and that is a decision rather than an omission. Three callers write
+        three different sentences from this one predicate, and each would
+        become false for a log post:
+
+        - `_confirm_quit_if_busy` renders `format_quit_confirm(_last_pct)`,
+          which says "An upload is N% complete" -- during a log post there
+          is no upload and `_last_pct` is a stale number from a previous
+          job. A log post is seconds long and loses a Discord post, not a
+          multi-gigabyte transfer, so Quit does not ask about it at all.
+        - `start_upload` says "An upload is already in progress", which a
+          log post is not. It refuses on `_logs_busy` separately, in its own
+          words.
+        - `__main__.poll_tick` defers a list rebuild because one would drop
+          the links and progress of a running upload. A log post touches no
+          rows, so deferring for it would make the list go stale for
+          nothing.
+        """
         return self._upload_thread is not None and self._upload_thread.is_alive()
+
+    def _logs_busy(self) -> bool:
+        """Is a standalone combat-log post claimed or running?
+
+        Its own predicate for the reason above: the two kinds of work
+        exclude each other and nothing else about them is the same. Reads
+        the claimed flag rather than a thread's liveness -- see the note
+        beside `_logs_lock`.
+        """
+        with self._logs_lock:
+            return self._logs_running
 
     def _confirm_quit_if_busy(self) -> bool:
         """Answer "may the app exit now?" for the tray's Quit item.
@@ -1143,6 +1395,16 @@ class Api:
             return
         if self._busy():
             self._alert("warning", "Busy", "An upload is already in progress.")
+            return
+        if self._logs_busy():
+            # Its own sentence. Reusing the line above would say an upload
+            # is running when none is, on the one screen where the user can
+            # see that nothing is uploading.
+            self._alert(
+                "warning",
+                "Busy",
+                "Combat logs are being posted. Try again in a moment.",
+            )
             return
         job = UploadJob(
             items=[i for _, i in pairs],
@@ -1619,6 +1881,126 @@ class Api:
 
     # ----- combat logs --------------------------------------------------------
 
+    def _log_target(self) -> LogTarget:
+        """Resolve the webhook and the Gamelogs folder, or say what is wrong.
+
+        Read live rather than snapshotted, for the reason `start_upload`
+        records about `job.logs`: Settings is reachable between a dispatch
+        and the post, so the answer has to describe what the post will
+        actually find.
+
+        Reports, never acts. Both clauses are handed back for the caller to
+        frame, because the same fact reads differently after a successful
+        upload than it does on its own.
+        """
+        cfg = self._state.settings
+        raw = cfg.get("discord_webhook") or ""
+        configured = bool(raw.strip())
+        hook, error = discord.parse_webhook(raw)
+        if hook is None:
+            problem = (
+                f"{error} Set it up in Settings."
+                if configured
+                else "no Discord webhook is configured. Set one in Settings."
+            )
+            return LogTarget(None, None, problem, configured)
+
+        gamelogs = cfg.get("gamelogs_dir")
+        gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+        if gamelogs_dir is None or not gamelogs_dir.is_dir():
+            return LogTarget(
+                None,
+                None,
+                "your EVE Gamelogs folder was not found. Set it in Settings.",
+                configured,
+            )
+        return LogTarget(hook, gamelogs_dir, "", configured)
+
+    def post_recent_logs(self) -> None:
+        """Post the last hour's combat logs to Discord. No video involved.
+
+        Combat logs are otherwise the TAIL of an upload, so the only way to
+        send them was to publish a video -- and the case this exists for is
+        the fight that was not recorded, or was recorded and is not worth
+        uploading. It also keeps PRODUCT.md's independence rule whole: no
+        Google account is touched here.
+
+        The window is wall-clock and owes nothing to the list, so none of
+        `_post_combat_logs`'s selection machinery applies: no ids, no
+        `_probe_now`, and no "the time window cannot be worked out".
+
+        Refusals are reported on the strip rather than gating the button.
+        The page CANNOT hold a current answer to "is a webhook configured":
+        `get_settings` is fetched once, at page load, and no endpoint pushes
+        a settings payload -- so a control disabled on that fact stays dead
+        for the rest of the session after the user configures one, which is
+        exactly what `WM.setEnabled`'s rule forbids. The button is live and
+        Python says why, the posture `Open folder` and `Delete selected`
+        already take.
+
+        Every exit re-states the running flag. That is the other half of a
+        defence against a lost push: `_push` swallows every `evaluate_js`
+        failure, and a push into a HIDDEN window is swallowed outright --
+        this is a tray app -- so a disarm can go missing and leave the
+        button inert. A click that arrives anyway, by keyboard or against a
+        stale render, both works and repairs the display.
+        """
+        if self._logs_busy():
+            self._push("onLogPostRunning", {"running": True})
+            self._status("Combat logs are already being posted.", "WARNING")
+            return
+        if self._busy():
+            self._push("onLogPostRunning", {"running": False})
+            self._status(
+                "An upload is running. Post the logs when it finishes.", "WARNING"
+            )
+            return
+
+        target = self._log_target()
+        if target.hook is None or target.gamelogs_dir is None:
+            self._push("onLogPostRunning", {"running": False})
+            # "not posted", never "skipped": nothing else ran, so there is no
+            # successful half for this to be a footnote to.
+            self._status(f"Combat logs not posted: {target.problem}", "WARNING")
+            return
+
+        self._push("onLogPostRunning", {"running": True})
+        # Claimed under the lock, and the claim is what makes this safe:
+        # pywebview serves each bridge call on its own thread, and a guard
+        # written against thread.is_alive() would answer False for the
+        # handle assigned a microsecond ago and let a second post through.
+        with self._logs_lock:
+            if self._logs_running:
+                return
+            self._logs_running = True
+        self._logs_thread = threading.Thread(
+            target=self._recent_logs_worker,
+            args=(target.hook, target.gamelogs_dir),
+            daemon=True,
+        )
+        self._logs_thread.start()
+
+    def _recent_logs_worker(self, hook, gamelogs_dir) -> None:
+        """The standalone post, on its own thread.
+
+        The clock is read HERE rather than in the bridge method so the hour
+        ends where the work starts. The difference is microseconds; the
+        point is that one function decides the window and it is the one
+        that builds the archive.
+        """
+        try:
+            end_utc = datetime.datetime.now(datetime.UTC)
+            start_utc = end_utc - RECENT_LOG_WINDOW
+            self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc, None)
+        finally:
+            # A finally at the outermost frame. _combat_log_worker swallows
+            # its own failures, so this is belt and braces -- and it is the
+            # brace that matters, because the alternative is a post nothing
+            # can start again and a button that is dead for the session.
+            with self._logs_lock:
+                self._logs_running = False
+            self._push("onLogPostRunning", {"running": False})
+
     def _skip_logs(self, summary: str, reason: str) -> None:
         """Report a log half that could not run, without unwinning the video.
 
@@ -1648,11 +2030,9 @@ class Api:
         Runs on the upload worker thread, not the bridge thread, so the
         window keeps painting through the probe below.
         """
-        cfg = self._state.settings
-        raw = cfg.get("discord_webhook") or ""
-        hook, error = discord.parse_webhook(raw)
-        if hook is None:
-            if not raw.strip():
+        target = self._log_target()
+        if target.hook is None or target.gamelogs_dir is None:
+            if not target.configured:
                 # NOT configured is not the same as configured-and-broken,
                 # and since Uploader 8 removed the checkbox the difference
                 # decides whether saying anything is honest. Nobody asked
@@ -1666,19 +2046,18 @@ class Api:
                 # The no-webhook case is a fact about the install, and it
                 # belongs on the panel where it is true all the time, not
                 # on the strip once per upload. R1 renders it there.
+                #
+                # `post_recent_logs` takes the opposite decision on this
+                # same LogTarget, and both are right: there the post is the
+                # whole action, so silence would leave a click that did
+                # nothing and said nothing.
                 return
             # Configured and unusable IS worth a strip: the user set
             # something, it does not parse, and nothing else will say so.
-            self._skip_logs(summary, f"{error} Set it up in Settings.")
+            # Same for a Gamelogs folder that cannot be found.
+            self._skip_logs(summary, target.problem)
             return
-
-        gamelogs = cfg.get("gamelogs_dir")
-        gamelogs_dir = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
-        if gamelogs_dir is None or not gamelogs_dir.is_dir():
-            self._skip_logs(
-                summary, "your EVE Gamelogs folder was not found. Set it in Settings."
-            )
-            return
+        gamelogs_dir = target.gamelogs_dir
 
         # Resolve any still-pending probe for THIS selection first: an
         # unprobed recording also leaves duration None, and refusing on that
@@ -1708,7 +2087,7 @@ class Api:
             datetime.datetime.fromtimestamp(i.mtime, datetime.UTC) for i in infos
         )
 
-        self._combat_log_worker(hook, gamelogs_dir, start_utc, end_utc, summary)
+        self._combat_log_worker(target.hook, gamelogs_dir, start_utc, end_utc, summary)
 
     def _probe_now(self, pairs) -> None:
         """Resolve a selection's durations synchronously, in place.
@@ -1745,13 +2124,13 @@ class Api:
             durations.save(self._durations_file, self._cache)
 
     def _combat_log_worker(
-        self, hook, gamelogs_dir, start_utc, end_utc, summary: str
+        self, hook, gamelogs_dir, start_utc, end_utc, summary: str | None
     ) -> None:
         """Collect, zip, and post the logs. Runs on the upload thread.
 
         No longer a thread target of its own: it is the tail of the upload
         the user confirmed, which is what keeps one busy guard covering both
-        halves.
+        halves. `post_recent_logs` is the exception and passes summary=None.
 
         Every line this leaves BEHIND leads with `summary`, the sentence
         naming the upload that succeeded. Round 3's finding 13 caught the
@@ -1760,7 +2139,17 @@ class Api:
         secondary side-effect standing in for the primary action. The
         in-flight lines below do not, because they are not terminal: they
         are replaced within seconds by one that is.
+
+        `summary` is None when the post IS the primary action, and then the
+        terminal lines stand alone. That does not weaken finding 13, it
+        satisfies it: the rule is that the primary action is said first,
+        and here there is no upload to name -- leading with one would be
+        reporting something that never happened.
         """
+
+        def terminal(sentence: str) -> str:
+            return f"{summary}. {sentence}" if summary else sentence
+
         archive = None
         try:
             self._status("Collecting combat logs…", busy=True)
@@ -1780,7 +2169,7 @@ class Api:
                 # SUCCESS, where the bare "No combat logs found." was
                 # neutral: the sentence now leads with an upload that did
                 # work, and leaving it FG would repaint a success grey.
-                self._status(f"{summary}. No combat logs found.", "SUCCESS", busy=False)
+                self._status(terminal("No combat logs found."), "SUCCESS", busy=False)
                 return
 
             stamp = start_utc.strftime("%Y-%m-%d_%H-%M")
@@ -1803,7 +2192,7 @@ class Api:
                 note = combatlog.dropped_note(archive.dropped)
                 if note:
                     status_text += f" ({note})"
-                self._status(f"{summary}. {status_text}", "SUCCESS", busy=False)
+                self._status(terminal(status_text), "SUCCESS", busy=False)
             else:
                 # Keep the archive: the window is fixed by the recording and
                 # there is no UI for selecting fewer logs, so a user told
@@ -1820,7 +2209,7 @@ class Api:
                 # attempted and failed with an archive left on disk for the
                 # user to act on, which is a different thing from a half
                 # that never ran. The upload still gets said first.
-                self._status(f"{summary}. {result.message}", "ERROR", busy=False)
+                self._status(terminal(result.message), "ERROR", busy=False)
         except Exception as exc:  # noqa: BLE001 - reported, and the archive is kept on disk
             # post_archive never raises, but build_archive and
             # summarize_archive can -- and by then the archive may already be
@@ -1834,7 +2223,7 @@ class Api:
                     f"by hand:\n{archive.path}"
                 )
             self._alert("error", "Combat log upload failed", detail)
-            self._status(f"{summary}. Error: {exc}", "ERROR", busy=False)
+            self._status(terminal(f"Error: {exc}"), "ERROR", busy=False)
 
     # ----- settings and account ------------------------------------------
 

@@ -212,16 +212,10 @@
                #lab-stitch is the whole explanation, and DESIGN.md's "one
                disabled state" does not ask for a sentence beside it. -->
 
-          <!-- Uploader 8's sentence, which outlives the control it used to
-               footnote. With no checkbox this is a fact about the install
-               rather than a caveat on an option, so it is stated whenever
-               it is true. The text comes from the payload
-               (INERT_NOTES["no_webhook"]) and is NOT typed here: S3 put
-               the app's one voice for an unmet precondition in copy.py so
-               two screens cannot drift, and Api._post_combat_logs stays
-               silent in exactly this case precisely because the panel says
-               it instead. -->
-          <p class="hint" id="logs-note" hidden></p>
+          <!-- Uploader 8's sentence now lives in the Combat logs card
+               below, beside the control it is a precondition for. It sat
+               here while there was no such control and it was a standing
+               fact about the install with nothing to attach to. -->
 
           <!-- U4: hidden until something is selected. The line is NOT
                deleted -- it carries "3 selected · 1.2 GB · 2:04:35", and
@@ -271,12 +265,74 @@
           <p class="destination" id="destination">Channel confirmed after the first upload</p>
         </section>
 
+        <!-- A SECOND card, and the first thing to say is that it is not a
+             second name for the one above. Uploader 2's finding was one
+             CONCEPT under two names (UPLOAD and PUBLISH, with the Upload
+             button in the card not called Upload); combat logs are a
+             different concept, going to a different service, reachable
+             with no Google account at all -- which is the independence
+             PRODUCT.md requires the two halves to keep.
+
+             Until this landed, logs were the TAIL of an upload: the only
+             way to send them was to publish a video, so the fight that was
+             not recorded -- or was recorded and is not worth uploading --
+             had no route at all.
+
+             It sits LAST on purpose, and that placement is the whole
+             answer to the height question. The panel is a fixed 320px
+             column (248px at the 839px floor) with overflow-y: auto, so a
+             second card is what makes the pane scroll at the window floor.
+             Ordering it after the upload card means Upload and everything
+             above it keep the position Uploader 9 fought for, and the
+             control that may need a scroll is the least-pressed one on the
+             screen.
+
+             The heading names the subject and the button names the action,
+             sharing no word: "Post last hour's logs" under a heading
+             reading "Combat logs" would be the restated heading PRODUCT.md
+             forbids. No trailing ellipsis -- it opens nothing (DESIGN.md).
+             .btn and not .btn.acc: one accent per screen, and this
+             screen's is Upload. -->
+        <section class="card">
+          <h2>Combat logs</h2>
+
+          <!-- Uploader 8's sentence, which outlived the control it used to
+               footnote and now has a new one to stand beside. The text
+               comes from the payload (INERT_NOTES["no_webhook"]) and is
+               NOT typed here: S3 put the app's one voice for an unmet
+               precondition in copy.py so two screens cannot drift, and
+               Api._post_combat_logs stays silent in exactly this case
+               precisely because the panel says it instead.
+
+               It does NOT gate the button below it. get_settings is
+               fetched once, at page load, and nothing pushes a settings
+               payload -- so a control disabled on this fact would stay
+               dead for the rest of the session after the user configured a
+               webhook, which is what WM.setEnabled's own rule forbids. The
+               note informs; Python refuses, in its own words, on the
+               strip. -->
+          <p class="hint" id="logs-note" hidden></p>
+
+          <div class="actions">
+            <button class="btn" id="btn-post-logs">Post the last hour</button>
+          </div>
+        </section>
+
       </div>
     </div>
 
   </div>
 
+  <!-- Two file actions, then the two link actions this menu used to be
+       made entirely of. The separator earns its markup: the pairs act on
+       different objects -- the recording on disk, and the video it became
+       -- and until Play and Rename arrived the whole menu read as "things
+       you can do with the YouTube video". It sets no display, so it needs
+       no [hidden] override (DESIGN.md). -->
   <div class="ctxmenu" id="ctxmenu" hidden>
+    <button id="ctx-play">Play</button>
+    <button id="ctx-rename">Rename&hellip;</button>
+    <div class="ctxsep"></div>
     <button id="ctx-copy">Copy link</button>
     <button id="ctx-open">Open in browser</button>
   </div>

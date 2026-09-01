@@ -313,6 +313,66 @@ def build_info(path: Path, ffprobe_bin: str | None, runner=subprocess.run) -> Vi
     )
 
 
+# ---- renaming -------------------------------------------------------------
+# The rules below are Windows', and they are checked HERE rather than left
+# to the filesystem for one reason: an OSError for a name containing a
+# colon says "the system cannot find the path specified", which tells the
+# user nothing about which character it objected to. Every rule gets its
+# own sentence instead.
+#
+# This does NOT replace the filesystem's own refusal, which is what
+# protects the data -- see Api.rename_recording, where Path.rename's
+# FileExistsError is the guard and the pre-check merely produces a better
+# message than the exception would.
+
+# Reserved by Win32 in a filename. The separators are excluded separately
+# because they mean something worse (a rename that MOVES the file), and the
+# control range because a name carrying one differs invisibly from one that
+# does not.
+_ILLEGAL_NAME_CHARS = '<>:"|?*'
+
+# Reserved DEVICE names. Windows refuses these whatever the extension, so
+# CON.mkv is refused as surely as CON -- which is why this is checked
+# against the stem the user typed rather than the finished filename. COM0
+# and LPT0 are included: they are reserved on current Windows even though
+# older documentation lists only 1-9.
+_RESERVED_STEMS = frozenset(
+    ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
+    + [f"COM{n}" for n in range(10)]
+    + [f"LPT{n}" for n in range(10)]
+)
+
+
+def rename_problem(stem: str) -> str | None:
+    """Why *stem* cannot be a filename, or None if it can.
+
+    Takes the STEM, not a filename: the caller reappends the original
+    extension, so a user cannot turn .mkv into .mp4 by typing -- that would
+    be a rename claiming a remux happened.
+
+    Surrounding whitespace is trimmed rather than refused. A name cannot
+    end in a space on Windows (it is stripped silently, so the name you get
+    is not the name you typed), and typing one is an accident rather than a
+    decision. A trailing DOT is refused rather than trimmed, because
+    trimming it is how "fight.." would quietly become "fight".
+    """
+    name = stem.strip()
+    if not name:
+        return "A name cannot be empty."
+    if "/" in name or "\\" in name:
+        return "A name cannot contain \\ or /, which would move the file."
+    bad = sorted({c for c in name if c in _ILLEGAL_NAME_CHARS})
+    if bad:
+        return f"A name cannot contain {' '.join(bad)}."
+    if any(ord(c) < 32 for c in name):
+        return "A name cannot contain control characters."
+    if name.endswith("."):
+        return "A name cannot end in a dot."
+    if name.upper() in _RESERVED_STEMS:
+        return f"{name} is a name Windows reserves. Choose another."
+    return None
+
+
 def delete(items: list[Path]) -> tuple[int, list[tuple[Path, str]]]:
     """Permanently delete *items*.
 
