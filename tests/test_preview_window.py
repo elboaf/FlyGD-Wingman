@@ -123,7 +123,6 @@ def _activation_libs(
     class FakeUser32:
         def __init__(self):
             self._foregrounds = iter(foregrounds)
-            self._foreground_reads = 0
 
         def IsIconic(self, h):
             return iconic
@@ -134,11 +133,7 @@ def _activation_libs(
 
         def GetForegroundWindow(self):
             value = next(self._foregrounds)
-            # The first read identifies the queue to attach. The assertions
-            # below name the bounded post-attempt observations separately.
-            if self._foreground_reads:
-                calls.append(("get_foreground", value))
-            self._foreground_reads += 1
+            calls.append(("get_foreground", value))
             return value
 
         def GetWindowThreadProcessId(self, h, p):
@@ -173,6 +168,7 @@ def test_activation_retries_focus_only_after_the_first_observed_failure():
 
     assert result is window.ActivationResult.ACTIVATED
     assert calls == [
+        ("get_foreground", FOREGROUND),
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, TARGET_TID, True),
         ("set_foreground", TARGET),
@@ -192,7 +188,34 @@ def test_iconic_target_reported_foreground_is_restored_and_pending():
     assert (
         window.activate(iconic_libs, TARGET) is window.ActivationResult.PENDING_RESTORE
     )
-    assert ("show", TARGET, window.win32.SW_RESTORE) in calls
+    assert calls.index(("show", TARGET, window.win32.SW_RESTORE)) < calls.index(
+        ("set_foreground", TARGET)
+    )
+
+
+def test_iconic_target_activates_when_restore_lands_before_observation():
+    calls = []
+    libs = _activation_libs([FOREGROUND, TARGET], calls, iconic=True)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert calls[:4] == [
+        ("show", TARGET, window.win32.SW_RESTORE),
+        ("get_foreground", FOREGROUND),
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+    ]
+    assert calls[4:6] == [
+        ("set_foreground", TARGET),
+        ("get_foreground", TARGET),
+    ]
+
+
+def test_non_iconic_target_already_foreground_skips_attachments():
+    calls = []
+    libs = _activation_libs([TARGET], calls)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert calls == [("get_foreground", TARGET)]
 
 
 def test_equal_foreground_and_target_threads_are_attached_once():
@@ -228,6 +251,16 @@ def test_activation_exception_detaches_in_reverse_order():
         ("attach", OUR_TID, TARGET_TID, False),
         ("attach", OUR_TID, FOREGROUND_TID, False),
     ]
+
+
+def test_pending_restore_does_not_log_a_foreground_refusal(caplog):
+    calls = []
+    libs = _activation_libs([TARGET, FOREGROUND, FOREGROUND], calls, iconic=True)
+
+    with caplog.at_level("INFO"):
+        assert window.activate(libs, TARGET) is window.ActivationResult.PENDING_RESTORE
+
+    assert not any("Windows refuses" in record.message for record in caplog.records)
 
 
 def test_activation_failure_is_visible_at_the_apps_log_level(caplog):

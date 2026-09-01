@@ -107,6 +107,8 @@ def activate(libs, hwnd) -> ActivationResult:
 
     attached = []
     try:
+        # Foreground and target HWNDs can share an input queue; attaching the
+        # same thread twice would require matching duplicate detach calls.
         for tid in dict.fromkeys((fg_tid, target_tid)):
             if (
                 tid
@@ -132,11 +134,14 @@ def activate(libs, hwnd) -> ActivationResult:
     if foreground == hwnd:
         return ActivationResult.ACTIVATED
 
+    if was_iconic:
+        return ActivationResult.PENDING_RESTORE
+
     # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
     # so a debug line here is invisible in the only log a user will
     # ever send us -- for the single most likely field complaint,
     # "clicking a preview does nothing". It cannot spam either: this
-    # fires once per click, and only when the click failed.
+    # fires once per click, and only when Windows refused the click.
     logger.info(
         "Activation of 0x%x did not take; foreground is 0x%x. "
         "Windows refuses a foreground change from a process "
@@ -144,8 +149,6 @@ def activate(libs, hwnd) -> ActivationResult:
         hwnd,
         foreground or 0,
     )
-    if was_iconic:
-        return ActivationResult.PENDING_RESTORE
     return ActivationResult.REFUSED
 
 

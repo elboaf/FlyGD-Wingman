@@ -390,6 +390,8 @@ def bind() -> Libs:
         (user32, "GetCursorPos", BOOL, [ctypes.POINTER(POINT)]),
         # --- focus
         (user32, "SetForegroundWindow", BOOL, [HWND]),
+        # Provisional fallback: Task 4's Windows/EVE probe gates whether this
+        # binding and its activation call ship.
         (user32, "SetFocus", HWND, [HWND]),
         (user32, "GetForegroundWindow", HWND, []),
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
