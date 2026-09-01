@@ -1154,6 +1154,17 @@ class PreviewHost:
         # Snapshot the table so dispatch reads consistent membership even if
         # a new rebind signal arrives before the next WM_HOTKEY.
         self._active_hotkeys = dict(table) if isinstance(table, dict) else {}
+        # Remove history for groups that no longer exist in the applied table.
+        # A stale entry is harmless to dispatch (.get returns None for unknown
+        # IDs) but wastes memory and can confuse diagnostics for long sessions.
+        live_groups = {
+            g["id"]
+            for g in (table.get("groups") or [])
+            if isinstance(g, dict) and g.get("id") is not None
+        }
+        for gid in list(self._last_group_cycled):
+            if gid not in live_groups:
+                del self._last_group_cycled[gid]
         # One line per pass, not per chord: this is the only place that
         # would tell "nothing is bound" from "everything failed" from
         # "some chord lost the fight" if a field report ever needed it.

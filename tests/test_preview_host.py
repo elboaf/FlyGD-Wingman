@@ -1499,6 +1499,54 @@ def test_group_cycle_keys_reads_active_not_desired():
     assert h._group_cycle_keys("dps") == ["Alice"]
 
 
+def test_apply_hotkeys_prunes_last_group_cycled_to_active_groups():
+    """Applying a table that removes a group must evict its stale history.
+    Before pruning, _last_group_cycled retained ghost entries for removed
+    groups -- this test was the failing proof before the fix.
+    """
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    libs = _FakeLibs(_FakeUser32())
+    # Seed history with two groups.
+    h._last_group_cycled = {"dps": "Alice", "logi": "Carol"}
+    # Apply a table that no longer contains "logi".
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        },
+    )
+    # "logi" is gone; "dps" history must be preserved.
+    assert h._last_group_cycled == {"dps": "Alice"}
+
+
+def test_apply_hotkeys_installs_active_membership_table():
+    """_apply_hotkeys must write _active_hotkeys from the applied table so
+    dispatch can read group membership without touching _desired_hotkeys.
+    This integration path was untested -- the prior Step-4 tests set
+    _active_hotkeys directly instead of driving through _apply_hotkeys.
+    """
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    libs = _FakeLibs(_FakeUser32())
+    table = {
+        "characters": {},
+        "cycle_next": "Ctrl+F1",
+        "cycle_prev": "Ctrl+F2",
+        "groups": [
+            {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+        ],
+        "group_by_character": {"Alice": "dps", "Bob": "dps"},
+    }
+    h._apply_hotkeys(libs, table)
+    assert h._active_hotkeys.get("group_by_character") == {"Alice": "dps", "Bob": "dps"}
+
+
 def test_hotkey_focuses_the_named_character(monkeypatch):
     activated = []
     monkeypatch.setattr(
