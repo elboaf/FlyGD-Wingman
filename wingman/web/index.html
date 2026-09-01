@@ -705,10 +705,36 @@
               Show live previews of running EVE clients
             </label>
           </div>
-          <div class="row"><span class="lab"></span>
-            <span class="hint">Click a preview to switch to that client.
-              Right-drag to move it, drag the bottom-right corner to resize.
-              Positions are remembered per character.</span></div>
+          <div class="row">
+            <!-- HOW TO FLY IT, not what this switch does, which is the
+                 whole reason it is the one block on this card that got
+                 folded away. Three lines of gestures at the top of a card
+                 whose complaint is its height, describing a feature that
+                 is not on yet -- read once, on the visit where previews
+                 are switched on, and then re-read on every visit
+                 afterwards because prose has no off switch.
+
+                 Nothing here was cut. The distinction being drawn is
+                 between a sentence that states the COST or the
+                 non-obvious behaviour of the control beside it (those all
+                 stay resting -- "Applies the next time a client is
+                 switched away from", "one raised while you are away is
+                 still waiting") and a sentence that teaches the product.
+                 Only the second kind is behind a click, because only the
+                 second kind stops being news.
+
+                 "Positions are remembered per character" left with it and
+                 did not come back: #restore-preview-positions-status says
+                 the same thing 200px below, next to the switch that
+                 governs it, which is where a reader asking the question
+                 is looking. -->
+            <details class="hint-more">
+              <summary>How previews behave</summary>
+              <span class="hint">Click a preview to switch to that client.
+                Right-drag to move it, drag the bottom-right corner to
+                resize.</span>
+            </details>
+          </div>
           <!-- ONE line for the whole block, not one per control. Alerts
                already does this (alerts.js's DEPENDS): twelve controls under
                a switch that turns them all off, and one sentence saying so
@@ -846,10 +872,28 @@
           <span class="hint" id="preview-apply-size-status"></span></div>
         <div class="row">
           <!-- The ring a selected preview wears. #rrggbb in and out; the
-               page never unpacks the string, Python owns the format. -->
-          <label class="lab" for="preview-selection-color">Selection ring
-            colour</label>
-          <input type="color" id="preview-selection-color">
+               page never unpacks the string, Python owns the format.
+
+               A fixed palette, NOT <input type="color">. That control was
+               the last unstyled system chrome reachable from this app --
+               a 50x26 white UA widget on a dark card, opening the native
+               Win32 ChooseColor dialog in a frameless window -- and
+               style.css has described it as removed since alerts.js
+               replaced it there -- see the `.swatches` block, "the last
+               unstyled system chrome reachable from this app". It was
+               still here, one rail item away
+               from its own replacement, which is the tell: a thing
+               documented as removed but only removed from the screen
+               someone was working on.
+
+               A radiogroup rather than a labelled control, so the .lab is
+               a span and the association is aria-labelledby: there is no
+               single input for a `for` to point at. -->
+          <span class="lab" id="preview-selection-color-label">Selection
+            ring colour</span>
+          <div class="swatches" id="preview-selection-color"
+               role="radiogroup"
+               aria-labelledby="preview-selection-color-label"></div>
           <span class="hint" id="preview-selection-color-status">The ring
             on the preview you last clicked.</span></div>
 

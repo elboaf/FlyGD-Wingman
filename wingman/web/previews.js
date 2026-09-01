@@ -522,11 +522,25 @@
 
   function makeGeometryActions(name, off) {
     var actions = WM.make('span', 'geometry-actions');
-    if (isSizable(name)) { actions.appendChild(makeSizeButton(name, off)); }
+    // The filler goes in whenever Size... does NOT, not only when the cell
+    // would otherwise be empty. With Copy... present and Size... absent the
+    // old shape appended one control that took Size...'s position, so a
+    // single un-sizable character silently moved Copy... one column left
+    // while every row around it kept the pair -- a ragged edge in the one
+    // column of this table that is read by scanning down it.
+    //
+    // The dash still means what it says for this row: a size cannot be set
+    // until the preview exists. That is true whether or not the row also
+    // has something to copy from, which is why the same filler serves both
+    // cases rather than needing a second, quieter one.
+    if (isSizable(name)) {
+      actions.appendChild(makeSizeButton(name, off));
+    } else {
+      actions.appendChild(makeSizeFiller());
+    }
     if (copySources(name).length) {
       actions.appendChild(makeCopyButton(name, off));
     }
-    if (!actions.children.length) { actions.appendChild(makeSizeFiller()); }
     return actions;
   }
 

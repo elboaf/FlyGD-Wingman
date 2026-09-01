@@ -254,6 +254,53 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
         )
 
 
+def test_the_empty_continuation_collapse_never_swallows_a_control():
+    """The blank-continuation-row rule hid a button for an entire release.
+
+    `.settings .row:has(> .lab:empty)...:has(> .hint:empty)` exists to stop
+    a status slot that is blank on most installs from spending a line. The
+    row holding `Apply to open previews` has exactly that shape -- an empty
+    `.lab`, and a `.hint` that settings.js only fills in AFTER the button
+    has been clicked -- so the rule hid the control until you had performed
+    the action the control was the only route to.
+
+    Both halves were individually correct, which is why nothing caught it:
+    the CSS is right about blank rows, the markup is right about a silent
+    status slot, and nothing in this suite renders the page, so the two
+    only met on a real machine. This is the failure class DESIGN.md opens
+    with, arriving through CSS rather than through a handler name.
+
+    The predicate is pinned rather than the one row, because the row is not
+    special -- any future pairing of a control with a status slot that
+    starts empty walks into the same rule.
+    """
+    collapse = [
+        part.strip()
+        for sel in re.findall(r"([^{}]*\.lab:empty[^{}]*)\{[^{}]*display:\s*none", CSS)
+        for part in sel.split(",")
+        # The ROW collapse only. `.settings .row > .lab:empty` hides the
+        # empty label itself and is a different rule with a different job:
+        # it takes a label out of the layout, never a control.
+        if ".row:has(> .lab:empty)" in part
+    ]
+    assert collapse, "the empty-continuation collapse rule is gone entirely"
+
+    for sel in collapse:
+        for control in ("button", "input", "select"):
+            assert f":not(:has(> {control}))" in sel, (
+                f"the collapse selector {sel.strip()!r} does not exclude "
+                f"<{control}>, so a row pairing a control with a status "
+                f"slot that starts empty is hidden until it is used"
+            )
+
+    # The subject the rule was written against, so this test keeps a
+    # reason to exist rather than guarding a shape nothing has any more.
+    assert 'id="btn-preview-apply-size"' in HTML, (
+        "Apply to open previews is gone; if that was deliberate, this "
+        "test needs a new subject, not deleting"
+    )
+
+
 def test_each_keybind_list_declares_a_deliberate_first_track():
     """Round 3's B1 made both bind lists stack the name above its controls,
     because each list's first track was `max-content` over ITS OWN labels
@@ -1456,6 +1503,80 @@ def test_every_default_alert_colour_is_offered_by_the_swatches():
     assert not missing, (
         f"settings defaults {sorted(missing)} are not in the swatch palette "
         f"{sorted(palette)}, so a fresh install shows an extra swatch"
+    )
+
+
+def test_no_native_colour_input_survives_anywhere():
+    """style.css has called this control removed since round 5; it wasn't.
+
+    <input type="color"> opens the native Win32 ChooseColor dialog -- the
+    last unstyled system chrome reachable from a frameless dark app that
+    restyled its own scrollbar precisely because native chrome was a tell.
+    Alerts replaced it with a fixed palette and wrote that up in the sheet
+    ("the last unstyled system chrome reachable from this app"), and the
+    Previews selection ring went on shipping one for two more releases, one
+    rail item away from its own replacement.
+
+    The general failure is worth the test more than the one control is: a
+    thing documented as removed, but only removed from the screen someone
+    happened to be working on.
+    """
+    assert 'type="color"' not in _strip_html_comments(HTML), (
+        "a native colour input is back; the swatch palette in alerts.js / "
+        "settings.js is what replaced it, and style.css's .swatches block "
+        "has the reason"
+    )
+    for path in sorted(WEB.glob("*.js")):
+        src = _strip_js_comments(path.read_text(encoding="utf-8"))
+        assert not re.search(r"""\.type\s*=\s*['"]color['"]""", src), (
+            f"{path.name} builds a native colour input in JS, which the "
+            f"markup guard above cannot see"
+        )
+
+
+def test_the_selection_ring_default_is_offered_by_its_swatches():
+    """Same rule as the alert palette above, for the other palette.
+
+    paint() appends any stored colour it does not recognise, so that a
+    hand-edited settings.json is not silently rewritten. A shipped default
+    outside the palette would turn that escape hatch into the normal case:
+    every fresh install would draw an unlabelled sixth swatch.
+
+    Also pins the pairing of hexes to names, because the name is the
+    accessible one -- an unnamed colour falls back to its hex by design,
+    and a palette one entry longer than its name list would do that
+    silently for the last swatch.
+    """
+    from wingman.settings import _preview_defaults
+
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    block = js.split("set_preview_selection_color", 1)[0]
+    listed = re.search(r"var COLOURS = \[(.*?)\]", block, re.DOTALL)
+    assert listed, "settings.js no longer declares a ring COLOURS palette"
+    palette = re.findall(r"'(#[0-9a-fA-F]{6})'", listed.group(1))
+
+    named = re.search(r"var COLOUR_NAMES = \[(.*?)\]", block, re.DOTALL)
+    assert named, "settings.js no longer declares COLOUR_NAMES"
+    assert len(re.findall(r"'([^']+)'", named.group(1))) == len(palette), (
+        "the ring palette and its names are different lengths, so a swatch "
+        "announces its hex instead of its name"
+    )
+
+    # Round 6's P2-5 for the other palette: the swatches carried their HEX
+    # as the accessible name, which does not read aloud as anything and
+    # tells a sighted user nothing about what they are picking. The name is
+    # what identifies the choice; the hex identifies the pixel and belongs
+    # in the tooltip. Without this the length check above passes while the
+    # names go unused.
+    assert "input.setAttribute('aria-label', name)" in block, (
+        "a ring swatch must announce its NAME, not its hex -- the hex is "
+        "the fallback for an out-of-palette colour only"
+    )
+
+    default = _preview_defaults()["selection_color"]
+    assert default in palette, (
+        f"settings.py's default ring colour {default} is not in the swatch "
+        f"palette {palette}, so a fresh install shows an extra swatch"
     )
 
 

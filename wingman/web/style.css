@@ -566,13 +566,20 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    "the two uppercase tracked section labels ... above --text-faint
    BECAUSE THEY ARE HEADINGS", and both carry weight 600. Those two move
    together. The remaining two are subordinate and stay at --fs-label --
-   .bind-group-name is a divider INSIDE a card (--text-dim, and its own
-   comment asks to be one step quieter than a card heading) and
-   .alert-head > span is a column header (--text-faint, which the :root
-   note defends at length as below the data it labels). The four still
-   agree on the TREATMENT -- uppercase, .14em -- and now differ on size
-   along the split the colour tokens were already making. Do not
-   "restore" them to one size. */
+   .bind-group-name is a divider INSIDE a card and .alert-head > span is a
+   column header (--text-faint, which the :root note defends at length as
+   below the data it labels). The four still agree on the TREATMENT --
+   uppercase, .14em -- and now differ on size. Do not "restore" them to one
+   size.
+
+   This paragraph used to add that .bind-group-name was --text-dim and to
+   rest its argument on "the split the colour tokens were already making".
+   Both halves are gone because the first was a bug: --text-dim (#9aa2b1)
+   is BRIGHTER than --text-label (#8b93a1), so the dividers out-ranked the
+   headings they sit under and there was no split to appeal to. The
+   divider is --text-label now and the rank is carried by size alone --
+   which is the dimension that cannot invert when a token moves
+   underneath it. See .bind-group-name's own note. */
 .card > h2 {
   font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); margin-bottom: 12px; font-weight: 600;
@@ -1568,6 +1575,62 @@ button.btn:disabled,
 .pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
 .pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
+/* Prose that TEACHES rather than prose that warns, folded away.
+
+   The card carried 1706 characters of resting hint -- 6.3x Alerts, 2.6x a
+   Bookmarks card holding eighteen keybinds -- which is what made a section
+   only 156px taller than Bookmarks read as substantially longer. Every
+   sentence had been argued for individually; nothing had ever counted
+   them, which is the same failure DESIGN.md records one level down for
+   per-control dependence notes.
+
+   The line this draws is deliberately narrow, because most of that prose
+   is load-bearing and stays exactly where it is: a sentence that states a
+   COST or a behaviour the control's own label does not imply is resting
+   text. A sentence that teaches the product -- which gesture moves a
+   preview -- is read on the visit where the feature is switched on and is
+   noise on every visit after it. Only that kind goes behind a summary.
+
+   Sized and coloured like .pv-exc's summary rather than as a new
+   vocabulary: this card already has a disclosure pattern and a second one
+   that looked different would read as a different KIND of thing. It is not
+   .pv-exc itself because that class carries a 24px indent and a 20px
+   tail for a checkbox list, neither of which a paragraph wants. */
+.hint-more { font-size: var(--fs-muted); }
+.hint-more summary { cursor: pointer; color: var(--text-dim); }
+.hint-more summary:hover { color: var(--text); }
+/* The .hint inside is already --fs-muted and --text-faint; it only needs
+   taking off the summary's own line and indenting to the summary's text,
+   clear of the disclosure triangle.
+
+   The [hidden] override is the trap this sheet documents in six other
+   places: an author rule that sets a display beats the UA stylesheet's
+   `[hidden] { display: none }` at any specificity. Nothing hides this hint
+   today; the pairing is the convention, and the guard that checks it
+   cannot see a compound selector like this one. */
+.hint-more > .hint { display: block; margin: 6px 0 0 16px; }
+.hint-more > .hint[hidden] { display: none; }
+
+/* Two controls on this card were full-measure because nothing said
+   otherwise: `.settings .row > .field { flex: 1 }` and
+   `input[type=range] { flex: 1 }` make full-measure the default once the
+   label stacks above the row.
+
+   Measured at the 840 floor. The size field was 586px holding a value like
+   `480x300` -- seven characters in a box wide enough for a URL, which
+   reads as an empty field rather than a filled one, and was the second
+   thing on this card that looked broken without being broken. 12ch holds
+   `1920x1080` with slack; the field is free text, so the floor is the
+   longest value it can take, not the longest it usually shows.
+
+   The slider is capped for a different reason: its readout is `flex: none`
+   at the end of the row, so a 546px track parked `100%` at x=765 -- 556px
+   from the label it belongs to, nearly against the card edge, with the one
+   number saying what the slider is set to as far as it can get from the
+   hand setting it. 260px keeps the pair readable together. */
+#preview-default-size { flex: 0 1 12ch; }
+#preview-opacity { flex: 0 1 260px; }
+
 /* The Previews master switch owns the block under it instead of sitting in
    it. Seven of the nine controls below are gated on this one, and the card
    used to say so in prose -- the same sentence in six blocks, plus a
@@ -1654,9 +1717,25 @@ button.btn:disabled,
 
    `:empty` and `[hidden]` both re-evaluate when settings.js writes a
    message in, so the row returns on its own. That is why this is a
-   display rule and not a `hidden` attribute somebody has to clear. */
-.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty),
-.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]) {
+   display rule and not a `hidden` attribute somebody has to clear.
+
+   AND THE ROW MUST HOLD NO CONTROL. That is what the three `:not()`s on
+   the end are for, and they are not defensive: without them this rule hid
+   `Apply to open previews` -- an empty `.lab`, a `<button>`, and a status
+   slot that only ever fills in AFTER the button has been clicked. The
+   control appeared once you had performed the action it was the only
+   route to, which is to say never. It shipped that way, and nothing could
+   see it: the rule is correct in isolation, the markup is correct in
+   isolation, and pytest reads this page without rendering it, so the two
+   only met on a real machine.
+
+   Fixing it by giving the status a default sentence was the first idea
+   and is the wrong one twice over -- it re-adds the line this rule exists
+   to remove, and it leaves the trap armed for the next row that pairs a
+   control with a silent status slot.
+   tests/test_page_conventions.py pins the predicate instead. */
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty):not(:has(> button)):not(:has(> input)):not(:has(> select)),
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]):not(:has(> button)):not(:has(> input)):not(:has(> select)) {
   display: none;
 }
 
@@ -2155,7 +2234,19 @@ button.btn:disabled,
    a divider inside a card rather than a second card heading. It was one
    step quieter in COLOUR only -- both were --fs-label -- until round 5's
    G3 raised .card > h2 to --fs-body and left this at --fs-label, which is
-   the same claim now made in two dimensions instead of one. */
+   the same claim now made in two dimensions instead of one.
+
+   AND ONE OF THOSE TWO DIMENSIONS POINTED THE WRONG WAY. This was
+   --text-dim (#9aa2b1) under a heading at --text-label (#8b93a1): the
+   subhead was BRIGHTER than the heading it is subordinate to, so Previews'
+   four dividers out-ranked the card title above them and the card read as
+   five peer bands rather than one card with sections. The comment above
+   describing this as "one step quieter" had been false since G3 and is
+   left standing because it is the argument, not the measurement.
+
+   The rank is now carried by SIZE alone -- --fs-label under the heading's
+   --fs-body -- with both at --text-label. Size is the dimension that
+   cannot invert by a token moving underneath it. */
 .bind-group {
   grid-column: 1 / -1;
   display: flex; align-items: baseline; gap: 9px;
@@ -2164,7 +2255,7 @@ button.btn:disabled,
 }
 .bind-group-name {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text-label);
 }
 /* No producer. The offline legend it once qualified became a per-row
    `.off-tag`, and round 6 made it a sticky group heading instead. Kept
@@ -3612,6 +3703,53 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    indent with nothing above it. */
 .settings .check + .hint,
 .settings .row:has(> .check) + .row > .hint { margin-left: 24px; }
+
+/* PROXIMITY, which this card had spent uniformly. Every gap in a settings
+   card was 10px: between a checkbox and its own hint, and between that
+   hint and the next unrelated setting. Proximity is the only grouping
+   signal a flat list has, and at one value it signals nothing -- measured
+   on Previews, 22 blocks in a single undifferentiated 10px column, which
+   is why that section read as a wall of prose rather than as nine
+   settings. It is also why it FELT longer than Bookmarks while being only
+   156px taller.
+
+   A continuation row belongs to the control above it, so the pair closes
+   to 4px and the 10px step is left to mean "next setting". Three tiers
+   now, cheapest first: 4px inside a control, 10px between controls, the
+   .bind-group hairline between groups.
+
+   Keyed on the NEXT row holding an empty .lab, because that is what a
+   continuation row IS on this page -- the shape the collapse rule at
+   `.settings .row:has(> .lab:empty)...` is written against, and the same
+   shape `.settings .row:has(> .check) + .row > .hint` indents. A hint that
+   shares its control's row (Snap, Lock) needs none of this: it is already
+   adjacent.
+
+   AND THAT ROW HAS TO ACTUALLY RENDER, which the first draft did not say.
+   Most continuation rows are blank in the resting state and are removed by
+   the collapse rule -- its own note calls that "blank until a write fails,
+   which for most installs is never" -- and `display: none` takes the row
+   AND its margin out of layout with nothing to restore the 10px. So the
+   tier reserved for "inside a control" was landing between two unrelated
+   settings on exactly the rows a healthy install shows: measured, `Show
+   the character name on each preview` sat 4px above `Opacity`, and
+   Bookmarks and Alerts had the same inversion at their first control. The
+   second `:has()` is the collapse predicate negated, so this rule and that
+   one cannot both claim the same row.
+
+   `.card >`, so this reaches the card's own column and nothing nested in
+   it. Written as `.settings .row` first, it out-specified
+   `.pv-master > .row { margin-bottom: 0 }` and put 4px back under two rows
+   of a block that spaces itself with flex `gap` -- 14px gaps inside the
+   one block on this card whose height is deliberately fixed against the
+   state of the switch in it. Measured, then scoped.
+
+   This REMOVES height rather than adding it, so the grouping and the
+   scrolling complaint are answered by one declaration rather than trading
+   against each other. */
+.settings .card > .row:has(+ .row > .lab:empty):has(+ .row > .hint:not(:empty):not([hidden])) {
+  margin-bottom: 4px;
+}
 
 /* "Connected" as a status PILL, not an oversized button.
 
