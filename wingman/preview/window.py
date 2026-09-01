@@ -90,12 +90,17 @@ def activate(libs, hwnd) -> ActivationResult:
     the life of the process, and the symptom is EVE's keyboard input
     arriving in the wrong client.
     """
-    was_iconic = bool(libs.user32.IsIconic(hwnd))
-    if was_iconic:
+    if libs.user32.IsIconic(hwnd):
+        # ShowWindowAsync only requests restoration. On Windows smoke, raising
+        # the still-iconic EVE window immediately afterward briefly left a
+        # browser with no usable foreground under hide-on-lost-focus, flashing
+        # the desktop. Let the host's 20ms retry attempt foreground work only
+        # after IsIconic is false.
         libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
+        return ActivationResult.PENDING_RESTORE
 
     current = libs.user32.GetForegroundWindow()
-    if current == hwnd and not was_iconic:
+    if current == hwnd:
         return ActivationResult.ACTIVATED
 
     our_tid = libs.kernel32.GetCurrentThreadId()
@@ -128,9 +133,6 @@ def activate(libs, hwnd) -> ActivationResult:
 
     if foreground == hwnd:
         return ActivationResult.ACTIVATED
-
-    if was_iconic:
-        return ActivationResult.PENDING_RESTORE
 
     # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
     # so a debug line here is invisible in the only log a user will

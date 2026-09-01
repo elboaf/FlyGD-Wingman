@@ -2997,28 +2997,6 @@ def test_pending_transition_rollback_refusal_is_logged_and_keeps_newest_request_
     ]
 
 
-def test_an_iconic_target_that_activates_immediately_completes_its_minimize(
-    monkeypatch,
-):
-    """An iconic target can become foreground in activate()'s first pass.
-
-    If that success loses the saved outgoing decision, the old client stays
-    open only in this timing branch, unlike a pending retry that later wins.
-    """
-    h, libs, order = _switching_host(
-        monkeypatch,
-        foreground=0x1111,
-        activation=host.window_mod.ActivationResult.ACTIVATED,
-        iconic=True,
-    )
-
-    result = h._activate_client(libs, h._clients["Bravo"])
-
-    assert result is host.window_mod.ActivationResult.ACTIVATED
-    assert libs.user32.minimized == [0x1111]
-    assert order.index(("activate", 0x2222)) < order.index(MINIMIZE_ALICE)
-
-
 def test_a_newer_pending_target_replaces_the_old_one_and_resets_its_timer(monkeypatch):
     """A later request owns the one periodic retry timer.
 
@@ -3201,34 +3179,6 @@ def test_pending_restore_success_skips_a_recreated_outgoing_window(monkeypatch, 
 
     with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
         h._retry_pending_activation(libs)
-
-    assert libs.user32.minimized == []
-    assert any("saved minimize skipped" in record.message for record in caplog.records)
-
-
-def test_iconic_immediate_success_skips_a_recreated_outgoing_window(
-    monkeypatch, caplog
-):
-    """Even an immediately observed iconic activation can replace the old HWND.
-
-    The activation call is external Win32 work, so reusing its pre-call HWND
-    decision can minimize a new client record created while it ran.
-    """
-    h, libs, _ = _switching_host(
-        monkeypatch,
-        foreground=0x1111,
-        activation=host.window_mod.ActivationResult.ACTIVATED,
-        iconic=True,
-    )
-
-    def activate_and_replace(_libs, _hwnd):
-        h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
-        return host.window_mod.ActivationResult.ACTIVATED
-
-    monkeypatch.setattr(host.window_mod, "activate", activate_and_replace)
-
-    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
-        h._activate_client(libs, h._clients["Bravo"])
 
     assert libs.user32.minimized == []
     assert any("saved minimize skipped" in record.message for record in caplog.records)
@@ -3439,6 +3389,100 @@ MINIMIZE_ALICE = (
     host.win32.SMTO_ABORTIFHUNG,
     host.MINIMIZE_TIMEOUT_MS,
 )
+
+
+def test_pending_restore_retries_foreground_work_after_the_target_is_non_iconic():
+    """The first iconic attempt restores only; the timer retry owns focus.
+
+    This is the browser-flash regression: with previews hidden away from EVE,
+    calling foreground APIs before the minimized target has restored leaves a
+    desktop frame. The browser is not an outgoing EVE client, so it must stay
+    visible until the retry observes EVE foreground.
+    """
+    browser = 0xDEAD
+    calls = []
+
+    class TwoPhaseUser32(_SwitchUser32):
+        def __init__(self):
+            super().__init__(calls, foreground=browser, iconic=False)
+            # Host probe, first activate() entry, then retry activate() entry.
+            self._iconic = iter((True, True, False))
+
+        def IsIconic(self, hwnd):
+            calls.append(("is_iconic", hwnd))
+            return next(self._iconic)
+
+        def ShowWindowAsync(self, hwnd, command):
+            calls.append(("show", hwnd, command))
+            return True
+
+        def GetWindowThreadProcessId(self, hwnd, _process):
+            calls.append(("thread", hwnd))
+            return 3 if hwnd == 0x2222 else 2
+
+        def AttachThreadInput(self, source, destination, attach):
+            calls.append(("attach", source, destination, attach))
+            return True
+
+        def SetForegroundWindow(self, hwnd):
+            calls.append(("set_foreground", hwnd))
+            self._foreground = hwnd
+            return True
+
+        def SetFocus(self, hwnd):
+            calls.append(("set_focus", hwnd))
+            return 0
+
+    user32 = TwoPhaseUser32()
+    libs = _FakeLibs(user32)
+    libs.kernel32 = type("Kernel32", (), {"GetCurrentThreadId": lambda _self: 1})()
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        minimize_inactive_clients=lambda: True,
+    )
+    h._hwnd = 0x99
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    h._windows = {key: _RingWindow(key, calls) for key in h._clients}
+
+    assert (
+        h._activate_client(libs, h._clients["Bravo"])
+        is host.window_mod.ActivationResult.PENDING_RESTORE
+    )
+    first_attempt = [
+        call
+        for call in calls
+        if call[0]
+        in {"is_iconic", "show", "thread", "attach", "set_foreground", "set_focus"}
+    ]
+    assert first_attempt == [
+        ("is_iconic", 0x2222),
+        ("is_iconic", 0x2222),
+        ("show", 0x2222, host.win32.SW_RESTORE),
+    ]
+    assert user32.minimized == []
+
+    first_attempt_end = len(calls)
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert user32.minimized == []
+    assert calls[first_attempt_end:] == [
+        ("is_iconic", 0x2222),
+        ("foreground", browser),
+        ("thread", browser),
+        ("thread", 0x2222),
+        ("attach", 1, 2, True),
+        ("attach", 1, 3, True),
+        ("set_foreground", 0x2222),
+        ("foreground", 0x2222),
+        ("set_focus", 0x2222),
+        ("attach", 1, 3, False),
+        ("attach", 1, 2, False),
+        ("ring", "Bravo", True),
+    ]
 
 
 def test_the_switch_reads_the_foreground_minimizes_then_activates(monkeypatch):

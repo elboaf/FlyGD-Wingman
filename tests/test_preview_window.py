@@ -155,38 +155,30 @@ def _activation_libs(
     return FakeLibs()
 
 
-def test_iconic_target_reported_foreground_is_restored_and_pending():
-    calls = []
-    iconic_libs = _activation_libs([TARGET, FOREGROUND], calls, iconic=True)
+def test_iconic_target_defers_foreground_work_until_restore():
+    """A browser must retain foreground while a minimized EVE client restores.
 
-    assert (
-        window.activate(iconic_libs, TARGET) is window.ActivationResult.PENDING_RESTORE
-    )
+    Calling SetForegroundWindow before the restore lands briefly leaves no
+    usable foreground under hide-on-lost-focus, which flashed the desktop in
+    Windows smoke. The timer retry owns foreground work once IsIconic is false.
+    """
+    calls = []
+
+    class FakeUser32:
+        def IsIconic(self, hwnd):
+            calls.append(("is_iconic", hwnd))
+            return True
+
+        def ShowWindowAsync(self, hwnd, command):
+            calls.append(("show", hwnd, command))
+            return True
+
+    libs = type("Libs", (), {"user32": FakeUser32()})()
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.PENDING_RESTORE
     assert calls == [
+        ("is_iconic", TARGET),
         ("show", TARGET, window.win32.SW_RESTORE),
-        ("get_foreground", TARGET),
-        ("attach", OUR_TID, TARGET_TID, True),
-        ("set_foreground", TARGET),
-        ("get_foreground", FOREGROUND),
-        ("attach", OUR_TID, TARGET_TID, False),
-    ]
-
-
-def test_iconic_target_activates_when_restore_lands_before_observation():
-    calls = []
-    libs = _activation_libs([FOREGROUND, TARGET], calls, iconic=True)
-
-    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
-    assert calls[:4] == [
-        ("show", TARGET, window.win32.SW_RESTORE),
-        ("get_foreground", FOREGROUND),
-        ("attach", OUR_TID, FOREGROUND_TID, True),
-        ("attach", OUR_TID, TARGET_TID, True),
-    ]
-    assert calls[4:7] == [
-        ("set_foreground", TARGET),
-        ("get_foreground", TARGET),
-        ("set_focus", TARGET),
     ]
 
 

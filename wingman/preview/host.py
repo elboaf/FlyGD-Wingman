@@ -1574,9 +1574,9 @@ class PreviewHost:
           outgoing client a minimize, the host revalidates and requests its
           rollback before retaining pending state. The request can be refused,
           so minimize-first still cannot promise no desktop gap. Its timer
-          retries from the pump; only an observed success, including an iconic
-          target that succeeds immediately, applies the already-recorded
-          outgoing minimize decision. This is deliberately limited to the
+          retries from the pump; only an observed success after the target is
+          non-iconic applies the already-recorded outgoing minimize decision.
+          This is deliberately limited to the
           iconic/pending continuation: minimizing after an ordinary activation
           can steal foreground from the target. The external transition probe
           supplied no safe basis for changing that general order, so only the

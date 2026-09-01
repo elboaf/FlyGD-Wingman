@@ -54,8 +54,8 @@ The current order avoids a different failure: a timed-out minimize can be delive
 
 `wingman/preview/window.py:activate()` keeps the existing principle of attaching the preview thread to both the current foreground thread and the target thread before manipulating focus. The retained sequence is:
 
-1. If the target is iconic, request `ShowWindowAsync(target, SW_RESTORE)`; do not return early merely because an iconic target is transiently still reported as foreground.
-2. Read the foreground HWND and return only when it is already the target **and** the target is not iconic.
+1. If the target is iconic, request `ShowWindowAsync(target, SW_RESTORE)` and return `PENDING_RESTORE` immediately. Do not read or manipulate foreground/focus until a timer retry sees it non-iconic.
+2. Read the foreground HWND and return only when it is already the target.
 3. Resolve the preview, foreground, and target thread IDs.
 4. Attach the foreground queue when distinct from the preview thread.
 5. Attach the target queue when distinct from the preview thread and the already-attached foreground thread.
@@ -70,10 +70,10 @@ The design does **not** claim this will fix all recorded refusals. An activation
 
 #### Iconic target verdict
 
-`ShowWindowAsync` makes an immediate foreground verdict inherently racy. The switch result therefore distinguishes:
+Because `ShowWindowAsync` restores asynchronously, foreground work in that same turn is inherently racy. The switch result therefore distinguishes:
 
 - **activated** — target is observed foreground;
-- **pending restore** — target was iconic, restore was requested, but it is not foreground yet;
+- **pending restore** — target was iconic at activation entry and restoration was requested; foreground work is deferred until the retry sees it restored;
 - **refused** — target was not iconic and remains outside the foreground after the bounded attempts.
 
 A pending restore is completed by posting a dedicated host message after a 20ms timer turn, not by sleeping in the preview WndProc. Only the newest pending target is retained. The retry re-resolves the client by stable key and HWND, so a client that exits or recreates its window becomes a logged no-op rather than targeting a stale handle. Twenty-five retries provide about 500ms of wall-clock opportunity without blocking the pump; expiry drops and logs any saved outgoing minimize decision. If no live host HWND or retry timer can be armed, the pending request is logged and discarded instead of becoming unserviceable state.
@@ -114,7 +114,7 @@ The activate-first/asynchronous-minimize candidate required independent transiti
 
 General non-iconic switching remains minimize-first. If activation is refused after the outgoing client was minimized, Wingman attempts to restore that outgoing client. This preserves the previous rollback behavior but cannot guarantee that the desktop or a preview is never exposed between those operations. A timed-out synchronous minimize may also be delivered later, which is why an unvalidated asynchronous replacement would not be a safe cleanup.
 
-An iconic target is the narrow exception required by pending restoration: Wingman normally leaves the outgoing client alone while the target restore is pending, then minimizes the exact saved outgoing HWND only after the target is observed in the foreground. The host's initial `IsIconic` probe can lose a race to `activate()`'s own probe, however. If the first probe chose ordinary minimize-first and `activate()` subsequently returns pending restore, Wingman revalidates the saved stable key and HWND and requests rollback before retaining pending state; the saved minimize decision remains for a later successful retry. A refused rollback or a minimize delivered late can still expose the desktop briefly, so this narrow recovery does not close the retained minimize-first gap. This exception does not establish that activate-first is safe for ordinary switches.
+An iconic target is the narrow exception required by pending restoration: Wingman normally leaves the outgoing client alone while the target restore is pending, then minimizes the exact saved outgoing HWND only after the target is observed in the foreground. Windows smoke found why the foreground work itself must also wait: with **Hide previews on lost focus** and **Minimize inactive clients** enabled, switching from a browser to an iconic target briefly flashed the desktop. A browser is not an outgoing EVE minimize target, so the flash came from calling `SetForegroundWindow` while the target was still iconic. `activate()` therefore restores and returns pending in that first turn; the 20ms retry performs the attached foreground/focus sequence only after `IsIconic` becomes false. The host's initial `IsIconic` probe can still lose a race to `activate()`'s own probe, however. If the first probe chose ordinary minimize-first and `activate()` subsequently returns pending restore, Wingman revalidates the saved stable key and HWND and requests rollback before retaining pending state; the saved minimize decision remains for a later successful retry. A refused rollback or a minimize delivered late can still expose the desktop briefly, so this narrow recovery does not close the retained minimize-first gap. This exception does not establish that activate-first is safe for ordinary switches.
 
 No minimize-recovery generation, foreground observer recovery, or asynchronous minimize was added. `switching.should_minimize()` remains a before-switch decision, `switching.should_restore()` remains the refusal and pending-transition rollback decision, and desktop-animation suppression remains scoped around the existing switch operation. Pending retry activation does not enter `_animation_off`: toggling a system-wide animation preference every 20ms would create setting thrash, while only the successful saved minimize needs animation suppression. No `SetWindowPos` fallback exists.
 
@@ -144,8 +144,8 @@ All production changes are test-first.
 - A target thread equal to the foreground thread is attached only once.
 - Attachments detach once each in reverse order on success, refusal, and exception.
 - `SetForegroundWindow` return values are ignored in favor of observed foreground.
-- An iconic target is restored even when initially reported foreground.
-- An iconic target not yet restored returns pending rather than a false refusal.
+- An iconic target requests restore and returns pending without reading or manipulating foreground/focus.
+- The timer retry performs the normal attached foreground/focus sequence only after the target is non-iconic.
 
 ### `tests/test_preview_host.py`
 
@@ -193,7 +193,7 @@ The probe uses a separate observer thread or the foreground WinEvent hook so it 
 5. Press rapid direct-character hotkeys. The burst must end at its final absolute target.
 6. Press repeated and mixed cycle chords. The final client must match folded deltas, with no intermediate clients displayed after the folded switch.
 7. Enable **Minimize inactive clients** and switch while clients are idle and during grid/session load. Record any desktop/preview gap or wrong foreground; these remain known risks of the retained minimize-first order, not a fixed behavior.
-8. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys, and after a successful restore the outgoing client must minimize.
+8. Switch to a minimized target repeatedly. Pending restore must resolve or expire within about 500ms without blocking hotkeys, and after a successful restore the outgoing client must minimize. With **Hide previews on lost focus** and **Minimize inactive clients** enabled, start from a browser and switch to that minimized target: the browser remains visible until EVE takes foreground, with no desktop frame.
 9. Hold push-to-talk or another repeating key while clicking a preview. The switch must still take.
 10. Exit Wingman and verify keyboard input remains with the correct EVE client, guarding against leaked `AttachThreadInput` state.
 

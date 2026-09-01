@@ -2346,6 +2346,11 @@ target client, and what became foreground if it occurs.
       desktop. After a successful restore the outgoing client must minimize.
       Start another click or hotkey immediately and confirm the newer request
       wins rather than waiting behind the older restore.
+- [ ] **Browser-to-minimized-client regression:** turn on **Hide previews on
+      lost focus** and **Minimize inactive clients**, leave a browser visible,
+      then switch to a minimized EVE client. The browser remains visible until
+      EVE takes foreground; there is no desktop frame while the client restores.
+      Repeat through a preview click and a character hotkey.
 - [ ] **No minimize/restore animation during the switch, and the user's
       setting survives it.** The outgoing client should vanish and the
       target should appear with no window-zoom. Note what this is and is
