@@ -1593,6 +1593,13 @@ only ever checked by hand.
       spacing: it spaces itself with flex `gap` so its height cannot move
       with the state of the switch inside it, and the first draft of the
       4px rule out-specified that and put 14px gaps in it.
+      Check the tier lands on a RENDERED hint only: most status slots are
+      blank on a healthy install and collapse to nothing, and the first
+      draft of this rule keyed on markup rather than on what renders, so
+      `Show the character name on each preview` sat 4px above `Opacity` --
+      the "inside a control" tier between two unrelated settings. Bookmarks
+      and Alerts had the same inversion at their first control, so check
+      all three sections rather than Previews alone.
 - [ ] **`How previews behave` is a disclosure, and it is the only prose
       that moved.** Settings > Previews, under the master switch. Expected:
       a closed summary, opening to the click/right-drag/resize gestures.
@@ -1604,14 +1611,19 @@ only ever checked by hand.
       except `Positions are remembered per character`, which
       `Reopen previews where you last put them` already says beside the
       switch that governs it.
-- [ ] **The Geometry column keeps its shape on a row that cannot be
+- [ ] **The Geometry column keeps the Size slot on a row that cannot be
       sized.** Settings > Previews, character list, with a character that
       has never been previewed (so `Size…` is unavailable) but has another
-      character to copy from. Expected: the em dash filler holds the
-      `Size…` position and `Copy…` stays in its own place. Before this,
-      `Copy…` slid one column left on exactly those rows, so a single
-      un-sizable character ragged the one column that is read by scanning
-      down it.
+      character to copy from. Expected: the em dash marks the empty Size
+      slot and `Copy…` follows it, instead of `Copy…` sliding into
+      `Size…`'s position as it did before. Measured at the 840 floor, that
+      shift drops from 55px to 34px — it does NOT fully align, because the
+      dash is 13px against `Size…`'s 46px and `.geometry-actions` is a flex
+      cell with no track of its own. Closing the last 34px means giving the
+      two controls real tracks in `#preview-binds`, which changes the
+      per-row cell count every guard in test_page_conventions.py derives
+      from makeRow; deliberately not done here. The dash also restores the
+      hover sentence explaining why a size cannot be set on that row.
 - [ ] **Two controls stop claiming a width they have no use for.**
       Settings > Previews. Expected: `Default preview size` is a short
       field (~12 characters), not a 586px box holding `480x300` — which

@@ -1523,7 +1523,8 @@ def test_no_native_colour_input_survives_anywhere():
     """
     assert 'type="color"' not in _strip_html_comments(HTML), (
         "a native colour input is back; the swatch palette in alerts.js / "
-        "settings.js is what replaced it, and style.css:2681 has the reason"
+        "settings.js is what replaced it, and style.css's .swatches block "
+        "has the reason"
     )
     for path in sorted(WEB.glob("*.js")):
         src = _strip_js_comments(path.read_text(encoding="utf-8"))
@@ -1559,6 +1560,17 @@ def test_the_selection_ring_default_is_offered_by_its_swatches():
     assert len(re.findall(r"'([^']+)'", named.group(1))) == len(palette), (
         "the ring palette and its names are different lengths, so a swatch "
         "announces its hex instead of its name"
+    )
+
+    # Round 6's P2-5 for the other palette: the swatches carried their HEX
+    # as the accessible name, which does not read aloud as anything and
+    # tells a sighted user nothing about what they are picking. The name is
+    # what identifies the choice; the hex identifies the pixel and belongs
+    # in the tooltip. Without this the length check above passes while the
+    # names go unused.
+    assert "input.setAttribute('aria-label', name)" in block, (
+        "a ring swatch must announce its NAME, not its hex -- the hex is "
+        "the fallback for an out-of-palette colour only"
     )
 
     default = _preview_defaults()["selection_color"]

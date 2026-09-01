@@ -1184,7 +1184,8 @@
 
 // ---- Selection ring colour ----------------------------------------------
 // A fixed palette of radios, not <input type="color">. alerts.js made this
-// argument first and style.css:2681 records it: the native control opened
+// argument first and style.css's `.swatches` block records it: the native
+// control opened
 // the Win32 ChooseColor dialog and offered 16.7 million answers to a
 // question with about five. Everything below is that decision applied to
 // the one site it had not reached.
@@ -1273,7 +1274,11 @@
     WM.send('set_preview_selection_color', wanted).then(function (res) {
       if (!res || !res.applied) {
         // Never took effect, so the control must not go on showing it.
-        paint(lastGood);
+        // `|| COLOURS[0]` for the same reason alerts.js keeps `|| wanted`
+        // on its revert: paint('') would uncheck every swatch and leave a
+        // palette with no selection, which is a state the setting cannot
+        // actually be in.
+        paint(lastGood || COLOURS[0]);
         say((res && res.error) || 'Could not save this.');
         return;
       }
@@ -1285,12 +1290,18 @@
 
   document.addEventListener('wm:settings', function (ev) {
     var p = ((ev.detail || {}).settings || {}).preview || {};
-    if (!p.selection_color) { return; }
-    lastGood = p.selection_color;
+    // Falls back rather than returning, which alerts.js (applyAlerts) also
+    // does and for a sharper reason here: this listener is the ONLY thing
+    // that ever builds these swatches, so a payload without the key would
+    // leave a labelled row with no control in it at all -- silently, since
+    // an empty container throws nothing. Unreachable today, because
+    // validated_preview starts from _preview_defaults(); one `||` is
+    // cheaper than depending on that staying true.
+    lastGood = p.selection_color || COLOURS[0];
     // Unlike the old picker this cannot be "open", so there is no focused
-    // state to protect -- and data-built makes an unchanged repaint a
-    // no-op, which is what keeps focus where it was.
-    paint(p.selection_color);
+    // state to protect -- and data-built makes a repaint a no-op unless the
+    // palette SET changed, which is what keeps focus where it was.
+    paint(lastGood);
   });
 }());
 
