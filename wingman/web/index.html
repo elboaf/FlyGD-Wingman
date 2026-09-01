@@ -705,10 +705,36 @@
               Show live previews of running EVE clients
             </label>
           </div>
-          <div class="row"><span class="lab"></span>
-            <span class="hint">Click a preview to switch to that client.
-              Right-drag to move it, drag the bottom-right corner to resize.
-              Positions are remembered per character.</span></div>
+          <div class="row">
+            <!-- HOW TO FLY IT, not what this switch does, which is the
+                 whole reason it is the one block on this card that got
+                 folded away. Three lines of gestures at the top of a card
+                 whose complaint is its height, describing a feature that
+                 is not on yet -- read once, on the visit where previews
+                 are switched on, and then re-read on every visit
+                 afterwards because prose has no off switch.
+
+                 Nothing here was cut. The distinction being drawn is
+                 between a sentence that states the COST or the
+                 non-obvious behaviour of the control beside it (those all
+                 stay resting -- "Applies the next time a client is
+                 switched away from", "one raised while you are away is
+                 still waiting") and a sentence that teaches the product.
+                 Only the second kind is behind a click, because only the
+                 second kind stops being news.
+
+                 "Positions are remembered per character" left with it and
+                 did not come back: #restore-preview-positions-status says
+                 the same thing 200px below, next to the switch that
+                 governs it, which is where a reader asking the question
+                 is looking. -->
+            <details class="hint-more">
+              <summary>How previews behave</summary>
+              <span class="hint">Click a preview to switch to that client.
+                Right-drag to move it, drag the bottom-right corner to
+                resize.</span>
+            </details>
+          </div>
           <!-- ONE line for the whole block, not one per control. Alerts
                already does this (alerts.js's DEPENDS): twelve controls under
                a switch that turns them all off, and one sentence saying so

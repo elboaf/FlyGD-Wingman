@@ -1568,6 +1568,55 @@ button.btn:disabled,
 .pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
 .pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
+/* Prose that TEACHES rather than prose that warns, folded away.
+
+   The card carried 1706 characters of resting hint -- 6.3x Alerts, 2.6x a
+   Bookmarks card holding eighteen keybinds -- which is what made a section
+   only 156px taller than Bookmarks read as substantially longer. Every
+   sentence had been argued for individually; nothing had ever counted
+   them, which is the same failure DESIGN.md records one level down for
+   per-control dependence notes.
+
+   The line this draws is deliberately narrow, because most of that prose
+   is load-bearing and stays exactly where it is: a sentence that states a
+   COST or a behaviour the control's own label does not imply is resting
+   text. A sentence that teaches the product -- which gesture moves a
+   preview -- is read on the visit where the feature is switched on and is
+   noise on every visit after it. Only that kind goes behind a summary.
+
+   Sized and coloured like .pv-exc's summary rather than as a new
+   vocabulary: this card already has a disclosure pattern and a second one
+   that looked different would read as a different KIND of thing. It is not
+   .pv-exc itself because that class carries a 24px indent and a 20px
+   tail for a checkbox list, neither of which a paragraph wants. */
+.hint-more { font-size: var(--fs-muted); }
+.hint-more summary { cursor: pointer; color: var(--text-dim); }
+.hint-more summary:hover { color: var(--text); }
+/* The .hint inside is already --fs-muted and --text-faint; it only needs
+   taking off the summary's own line and indenting to the summary's text,
+   clear of the disclosure triangle. */
+.hint-more > .hint { display: block; margin: 6px 0 0 16px; }
+
+/* Two controls on this card were full-measure because nothing said
+   otherwise: `.settings .row > .field { flex: 1 }` and
+   `input[type=range] { flex: 1 }` make full-measure the default once the
+   label stacks above the row.
+
+   Measured at the 840 floor. The size field was 586px holding a value like
+   `480x300` -- seven characters in a box wide enough for a URL, which
+   reads as an empty field rather than a filled one, and was the second
+   thing on this card that looked broken without being broken. 12ch holds
+   `1920x1080` with slack; the field is free text, so the floor is the
+   longest value it can take, not the longest it usually shows.
+
+   The slider is capped for a different reason: its readout is `flex: none`
+   at the end of the row, so a 546px track parked `100%` at x=765 -- 556px
+   from the label it belongs to, nearly against the card edge, with the one
+   number saying what the slider is set to as far as it can get from the
+   hand setting it. 260px keeps the pair readable together. */
+#preview-default-size { flex: 0 1 12ch; }
+#preview-opacity { flex: 0 1 260px; }
+
 /* The Previews master switch owns the block under it instead of sitting in
    it. Seven of the nine controls below are gated on this one, and the card
    used to say so in prose -- the same sentence in six blocks, plus a

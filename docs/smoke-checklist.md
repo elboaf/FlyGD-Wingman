@@ -1579,6 +1579,46 @@ only ever checked by hand.
       printed "(running)" thirteen times; round 5's C9 keeps what R4 was
       protecting — silence has to be defined, not inferred — and defines it
       once in the hint instead.
+- [ ] **The card has three spacing tiers, and the dividers rank below the
+      heading.** Settings > Previews. Expected: a hint sits noticeably
+      closer to the control it explains (4px) than one setting sits to the
+      next (10px), with the `.bind-group` hairline wider again between
+      groups. Every gap on this card was 10px, which is why nine settings
+      and twelve paragraphs read as one wall. Also check `APPEARANCE`,
+      `PLACEMENT`, `SIZE AND SHAPE` and `WHEN YOU SWITCH AWAY` are not
+      BRIGHTER than `EVE CLIENT PREVIEWS` above them: they were
+      `--text-dim` under a heading at `--text-label`, so every divider
+      out-ranked the card title and the card read as five peer bands.
+      Rank is size only now. Check the master switch block has not gained
+      spacing: it spaces itself with flex `gap` so its height cannot move
+      with the state of the switch inside it, and the first draft of the
+      4px rule out-specified that and put 14px gaps in it.
+- [ ] **`How previews behave` is a disclosure, and it is the only prose
+      that moved.** Settings > Previews, under the master switch. Expected:
+      a closed summary, opening to the click/right-drag/resize gestures.
+      The line between kinds is deliberate — a sentence stating a COST or
+      a non-obvious behaviour stays resting text (`Applies the next time a
+      client is switched away from`, `one raised while you are away is
+      still waiting`), and only prose that TEACHES the product is behind a
+      click, because only that kind stops being news. Nothing was deleted
+      except `Positions are remembered per character`, which
+      `Reopen previews where you last put them` already says beside the
+      switch that governs it.
+- [ ] **The Geometry column keeps its shape on a row that cannot be
+      sized.** Settings > Previews, character list, with a character that
+      has never been previewed (so `Size…` is unavailable) but has another
+      character to copy from. Expected: the em dash filler holds the
+      `Size…` position and `Copy…` stays in its own place. Before this,
+      `Copy…` slid one column left on exactly those rows, so a single
+      un-sizable character ragged the one column that is read by scanning
+      down it.
+- [ ] **Two controls stop claiming a width they have no use for.**
+      Settings > Previews. Expected: `Default preview size` is a short
+      field (~12 characters), not a 586px box holding `480x300` — which
+      read as an empty field and was the second thing on this card that
+      looked broken without being broken. The opacity readout sits just
+      after its slider rather than parked at the far card edge ~556px from
+      its label.
 - [ ] **Opacity is a percentage, and it still reaches the floor.**
       Settings > Previews. Expected: the readout reads `100%`, not `255`,
       and dragging the slider fully left reads `8%` rather than `20`.
@@ -1793,7 +1833,16 @@ only ever checked by hand.
         These two keys were read once at host construction until this
         change, so a restart-to-apply bug here would look exactly like
         the field working.
-      - `Apply to open previews` (beside the field) resizes every open
+      - `Apply to open previews` (beside the field) **is on screen before
+        you touch anything** — check this first, it is the whole of the
+        bug. Its row holds an empty label, the button, and a status slot
+        that only fills in once the button has been used, which is exactly
+        the shape `.settings .row:has(> .lab:empty)…` collapses to
+        `display: none`. It shipped invisible until clicked, i.e. never.
+        A lexical guard now pins the collapse selector against controls,
+        but the guard cannot see a render: if the button is missing here,
+        the selector has been widened again.
+        It resizes every open
         preview to the pair the field holds, **including previews with a
         custom size** — that is the point: it is the "make them all this
         size" action, and honouring per-character exceptions would make
@@ -1802,10 +1851,19 @@ only ever checked by hand.
         Refused with a sentence while previews are stopped. Check the
         sizes survive a restart: the apply records layouts like a drag,
         unlike Reset.
-      - `Selection ring colour` recolours the ring on the preview you
+      - `Selection ring colour` is **five named swatches, not a colour
+        input**: no white 50x26 UA box, and clicking one must not open the
+        Win32 ChooseColor dialog. Hover reads `Teal (#00c8dc)` and so on;
+        the checked one wears a halo in the page's own colours. There is
+        deliberately no red — alerts own that hue, and a steady red ring
+        beside a red combat pulse is the one confusion here that costs
+        something. A `settings.json` hand-edited to an off-palette hex
+        shows a SIXTH swatch labelled with its hex rather than being
+        silently rewritten (the `?dev=1` harness ships `#ff5a00`, so the
+        harness shows six by design).
+        It recolours the ring on the preview you
         last clicked, live, on every open preview at once — no restart,
-        no re-click. Reload Settings: the picker still holds the chosen
-        colour.
+        no re-click. Reload Settings: the chosen swatch is still checked.
       - The button grammar, with `Lock previews in place` off:
         a plain left click switches; a left drag moves; a right drag
         resizes that preview (still works under the lock, like the
