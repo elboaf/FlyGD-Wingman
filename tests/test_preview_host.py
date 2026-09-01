@@ -2740,6 +2740,7 @@ def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatc
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
     )
     h._hwnd = 0x99
 
@@ -2760,11 +2761,39 @@ def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatc
     assert [entry for entry in order if entry[0] == "ring"] == []
 
 
-def test_a_newer_pending_target_replaces_the_old_one(monkeypatch):
+def test_an_iconic_target_that_activates_immediately_completes_its_minimize(
+    monkeypatch,
+):
+    """An iconic target can become foreground in activate()'s first pass.
+
+    If that success loses the saved outgoing decision, the old client stays
+    open only in this timing branch, unlike a pending retry that later wins.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.ACTIVATED,
+        iconic=True,
+    )
+
+    result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.ACTIVATED
+    assert libs.user32.minimized == [0x1111]
+    assert order.index(("activate", 0x2222)) < order.index(MINIMIZE_ALICE)
+
+
+def test_a_newer_pending_target_replaces_the_old_one_and_resets_its_timer(monkeypatch):
+    """A later request owns the one periodic retry timer.
+
+    Resetting it gives the new target its full restore interval; tracking it
+    makes the replacement kill the old timer before it arms the new one.
+    """
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
     )
     h._hwnd = 0x99
     h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
@@ -2774,14 +2803,22 @@ def test_a_newer_pending_target_replaces_the_old_one(monkeypatch):
 
     assert h._pending_switch.stable_key == "Carol"
     assert h._pending_switch.hwnd == 0x3333
+    assert h._pending_activation_timer is True
     assert len(libs.user32.timers) == 2
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
 
 
 def test_pending_restore_expires_after_the_bounded_attempt_count(monkeypatch, caplog):
+    """A restore that never becomes foreground must stop retrying.
+
+    Without the bound, an EVE client stuck restoring leaves a permanent pump
+    wakeup that can eventually activate stale intent.
+    """
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
     )
     h._hwnd = 0x99
     h._activate_client(libs, h._clients["Bravo"])
@@ -2791,15 +2828,24 @@ def test_pending_restore_expires_after_the_bounded_attempt_count(monkeypatch, ca
             h._retry_pending_activation(libs)
 
     assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert len(libs.user32.timers) == 1
     assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
     assert any("did not complete after" in record.message for record in caplog.records)
 
 
 def test_pending_restore_success_moves_the_selection_once(monkeypatch):
+    """A delayed restore must commit its saved minimize and selection once.
+
+    Without the completion path, a restored target gets a ring but leaves the
+    outgoing client visible; without clearing first, later timer ticks repeat
+    both effects.
+    """
     h, libs, order = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
     )
     h._hwnd = 0x99
     h._selected_key = "Alice"
@@ -2827,11 +2873,131 @@ def test_pending_restore_success_moves_the_selection_once(monkeypatch):
     assert libs.user32.minimized == [0x1111]
 
 
+def test_pending_restore_refusal_discards_the_saved_minimize(monkeypatch, caplog):
+    """A refused retry must not minimize the old client after its target fails.
+
+    Completing the saved decision on refusal would hide the only usable EVE
+    window even though Windows never brought the requested one forward.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, _hwnd: host.window_mod.ActivationResult.REFUSED,
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.minimized == []
+    assert any("was refused" in record.message for record in caplog.records)
+
+
+def test_a_direct_success_supersedes_a_pending_restore(monkeypatch):
+    """A newer success must cancel an older target's retry timer.
+
+    Otherwise its later WM_TIMER can revive stale user intent and minimize the
+    outgoing client after the user already switched somewhere else.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._activate_client(libs, h._clients["Bravo"])
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, _hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
+
+    result = h._activate_client(libs, h._clients["Carol"])
+
+    assert result is host.window_mod.ActivationResult.ACTIVATED
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
+def test_pending_restore_success_skips_a_recreated_outgoing_window(monkeypatch, caplog):
+    """A retry may outlive the outgoing client's HWND.
+
+    Minimizing the replacement would hide a newly discovered client that did
+    not participate in the switch which recorded the saved decision.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, _hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
+
+    assert libs.user32.minimized == []
+    assert any("saved minimize skipped" in record.message for record in caplog.records)
+
+
+def test_iconic_immediate_success_skips_a_recreated_outgoing_window(
+    monkeypatch, caplog
+):
+    """Even an immediately observed iconic activation can replace the old HWND.
+
+    The activation call is external Win32 work, so reusing its pre-call HWND
+    decision can minimize a new client record created while it ran.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.ACTIVATED,
+        iconic=True,
+    )
+
+    def activate_and_replace(_libs, _hwnd):
+        h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+        return host.window_mod.ActivationResult.ACTIVATED
+
+    monkeypatch.setattr(host.window_mod, "activate", activate_and_replace)
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._activate_client(libs, h._clients["Bravo"])
+
+    assert libs.user32.minimized == []
+    assert any("saved minimize skipped" in record.message for record in caplog.records)
+
+
 def test_pending_restore_client_replacement_cancels_the_request(monkeypatch):
+    """The target can exit and reappear before its retry fires.
+
+    Retrying the saved HWND would send foreground work to an unrelated window
+    after Windows has recycled the handle or EVE has recreated its client.
+    """
     h, libs, order = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
     )
     h._hwnd = 0x99
 
@@ -2847,10 +3013,16 @@ def test_pending_restore_client_replacement_cancels_the_request(monkeypatch):
 
 
 def test_teardown_kills_the_pending_restore_timer_and_clears_the_request(monkeypatch):
+    """Stopping the host must not leave a timer targeting its dead HWND.
+
+    A surviving timer is a use-after-teardown callback when the next preview
+    host starts, with a saved minimize decision from the prior session.
+    """
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
         activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
     )
     h._hwnd = 0x99
     h._activate_client(libs, h._clients["Bravo"])
@@ -2976,7 +3148,7 @@ def _switching_host(
     minimize=True,
     never=(),
     animation=1,
-    iconic=None,
+    iconic=False,
 ):
     """A host with two clients, Alice on 0x1111 and Bravo on 0x2222, whose
     activation, minimize send and animation toggles are all recorded in
@@ -2993,11 +3165,7 @@ def _switching_host(
         foreground=foreground,
         send_result=send_result,
         animation=animation,
-        iconic=(
-            activation is host.window_mod.ActivationResult.PENDING_RESTORE
-            if iconic is None
-            else iconic
-        ),
+        iconic=iconic,
     )
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None,

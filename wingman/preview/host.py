@@ -445,6 +445,10 @@ class PreviewHost:
         # Retain the outgoing decision so a later observed success completes
         # the same switch, but never block this thread waiting for Windows.
         self._pending_switch = None
+        # Like _alert_timer, track the OS timer rather than inferring it from
+        # the request: a newer pending target replaces the request but shares
+        # its periodic timer, which must be killed exactly once on any exit.
+        self._pending_activation_timer = False
         # Recorded by the foreground hook (an arbitrary thread) and
         # resolved by _sweep, never the other way around -- see
         # _install_hook and _apply_selection.
@@ -1393,21 +1397,40 @@ class PreviewHost:
     def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> None:
         """Retain the newest restore request and arrange its next pump turn."""
         self._pending_switch = pending
-        if self._hwnd and libs is not None:
+        if self._hwnd and libs is not None and not self._pending_activation_timer:
             libs.user32.SetTimer(
                 self._hwnd,
                 ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID),
                 ACTIVATE_RETRY_MS,
                 None,
             )
+            self._pending_activation_timer = True
 
     def _clear_pending_activation(self, libs) -> None:
         """Forget an outstanding restore and stop its timer exactly once."""
-        if self._pending_switch is None:
-            return
         self._pending_switch = None
-        if self._hwnd and libs is not None:
-            libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID))
+        if self._pending_activation_timer:
+            if self._hwnd and libs is not None:
+                libs.user32.KillTimer(
+                    self._hwnd, ctypes.c_void_p(ACTIVATE_RETRY_TIMER_ID)
+                )
+            self._pending_activation_timer = False
+
+    def _complete_pending_minimize(self, libs, pending: _PendingSwitch) -> None:
+        """Minimize the verified outgoing client after its iconic switch wins."""
+        if not pending.minimize:
+            return
+        previous = self._clients.get(pending.previous_key)
+        if previous is None or previous.hwnd != pending.previous_hwnd:
+            logger.info(
+                "Pending activation of %s: saved minimize skipped; previous %s "
+                "exited or changed",
+                pending.stable_key,
+                pending.previous_key,
+            )
+            return
+        with _animation_off(libs):
+            self._minimize(libs, previous.hwnd)
 
     def _mark_client_activated(self, libs, client) -> None:
         """Commit foreground-derived host state after an observed success."""
@@ -1431,9 +1454,7 @@ class PreviewHost:
         result = window_mod.activate(libs, client.hwnd)
         if result is window_mod.ActivationResult.ACTIVATED:
             self._clear_pending_activation(libs)
-            if pending.minimize:
-                with _animation_off(libs):
-                    self._minimize(libs, pending.previous_hwnd)
+            self._complete_pending_minimize(libs, pending)
             self._mark_client_activated(libs, client)
             return
         if result is window_mod.ActivationResult.PENDING_RESTORE:
@@ -1505,9 +1526,18 @@ class PreviewHost:
           has reproduced one -- the remaining candidate is the client's
           own message-pump latency during a busy moment (grid load, a
           jump, a session change), which is EVE-side and not ordering.
+        - No settle sleep remains. It used to stall this thread -- the pump
+          that handles hotkeys, alerts, sweeps, and preview mouse messages --
+          solely to separate a post-activation minimize and compensating
+          re-activation that this ordering removed.
         - A pending restore does not minimize at all while Windows catches
-          up. Its timer retries from the pump; only an observed later success
-          applies the already-recorded outgoing minimize decision.
+          up. Its timer retries from the pump; only an observed success,
+          including an iconic target that succeeds immediately, applies the
+          already-recorded outgoing minimize decision. This is deliberately
+          limited to the iconic/pending continuation: minimizing after an
+          ordinary activation can steal foreground from the target. Task 5's
+          probe gate owns that general ordering hazard; this temporary shape
+          preserves the pending-switch contract without pre-empting it.
         - A refused non-iconic activation brings the outgoing client back
           (switching.should_restore); that is the old "never minimize after
           a refused switch" safety property in the only shape minimize-first
@@ -1544,7 +1574,20 @@ class PreviewHost:
         # PENDING_RESTORE is only possible for an iconic target. Preserve the
         # existing minimize-first behavior for all other switches, but leave
         # the outgoing client alone while this target's restoration races.
-        target_was_iconic = bool(libs.user32.IsIconic(client.hwnd)) if libs else False
+        # window_mod.activate probes IsIconic again because it owns restoration
+        # and its verdict; this probe has to precede that external call so the
+        # host can choose its ordering. Sharing it would couple those layers
+        # and still race a window changing state between the two operations.
+        target_was_iconic = (
+            bool(libs.user32.IsIconic(client.hwnd)) if libs is not None else False
+        )
+        pending = _PendingSwitch(
+            client.stable_key,
+            client.hwnd,
+            previous_key,
+            previous_hwnd,
+            minimize,
+        )
         with _animation_off(libs):
             if minimize and not target_was_iconic:
                 self._minimize(libs, previous.hwnd)
@@ -1569,18 +1612,11 @@ class PreviewHost:
                     window_mod.activate(libs, previous.hwnd)
                 raise
             if result is window_mod.ActivationResult.PENDING_RESTORE:
-                self._arm_pending_activation(
-                    libs,
-                    _PendingSwitch(
-                        client.stable_key,
-                        client.hwnd,
-                        previous_key,
-                        previous_hwnd,
-                        minimize,
-                    ),
-                )
+                self._arm_pending_activation(libs, pending)
                 return result
             if result is window_mod.ActivationResult.ACTIVATED:
+                if target_was_iconic:
+                    self._complete_pending_minimize(libs, pending)
                 # The ring moves HERE, inline, the instant the switch is
                 # known to have taken -- not on the sweep the foreground
                 # hook asks for. The hook and the sweep stay exactly as
