@@ -1008,6 +1008,56 @@ def test_repeated_shared_focus_chord_uses_the_virtual_target(monkeypatch):
     assert activated == [0x1111]
 
 
+def test_shared_focus_ignores_stale_last_cycle_outside_eve(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Alice"
+    h._registered = {1: ("focus", ("Alice", "Bravo"))}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x1111]
+
+
+def test_cycle_uses_last_cycle_as_fallback_outside_eve(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Alice"
+    h._registered = {1: ("cycle", 1)}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
+def test_shared_focus_uses_cycle_target_established_in_same_batch(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Alice"
+    h._registered = {
+        1: ("cycle", 1),
+        2: ("focus", ("Alice", "Bravo")),
+    }
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x1111]
+    assert h._last_cycled == "Alice"
+
+
 def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch):
     h, libs = _batch_hotkey_host()
     h._registered = {1: ("cycle", 1)}

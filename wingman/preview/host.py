@@ -1257,10 +1257,10 @@ class PreviewHost:
             (key for key, client in self._clients.items() if client.hwnd == foreground),
             None,
         )
-        # This is a virtual cursor over the whole batch. Updating it for each
-        # action preserves relative cycle meaning without activating any of
-        # the intermediate clients.
-        target = foreground_key or self._last_cycled
+        # This is a virtual cursor over the whole batch. Focus tie-breaking
+        # starts from the actual foreground; only cycle actions may fall back
+        # to the last cycle target when no action in this batch established one.
+        target = foreground_key
         cycle_seen = False
         final_action = None
         for _ident, action in registered:
@@ -1287,7 +1287,7 @@ class PreviewHost:
                 )
                 target = None
                 continue
-            target = cycle.step(keys, target, value)
+            target = cycle.step(keys, target or self._last_cycled, value)
 
         if cycle_seen and target is not None:
             self._last_cycled = target
