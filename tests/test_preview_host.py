@@ -1090,6 +1090,65 @@ def test_focus_then_cycle_applies_cycle_to_the_virtual_focus_target(monkeypatch)
     assert h._last_cycled == "Delta"
 
 
+def test_failed_focus_does_not_erase_foreground_cursor_for_later_cycle(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._last_cycled = "Carol"
+    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
+def test_failed_focus_then_cycle_uses_cycle_history_when_outside_eve(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Carol"
+    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle", 1)}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x4444]
+    assert h._last_cycled == "Delta"
+
+
+def test_failed_focus_does_not_erase_prior_cycle_cursor(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1), 2: ("focus", ("Ghost",))}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 1])
+
+    assert activated == [0x3333]
+    assert h._last_cycled == "Carol"
+
+
+def test_final_failed_focus_suppresses_prior_cycle_dispatch(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1), 2: ("focus", ("Ghost",))}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == []
+    assert h._last_cycled == "Bravo"
+
+
 def test_later_focus_supersedes_cycle_before_final_relative_action(monkeypatch):
     h, libs = _batch_hotkey_host()
     h._registered = {

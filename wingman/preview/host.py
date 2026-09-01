@@ -1197,10 +1197,12 @@ class PreviewHost:
             (key for key, client in self._clients.items() if client.hwnd == foreground),
             None,
         )
-        # This is a virtual cursor over the whole batch. Focus tie-breaking
-        # starts from the actual foreground; only cycle actions may fall back
-        # to the last cycle target when no action in this batch established one.
+        # `target` is the final dispatch decision, while `resolved_cursor`
+        # remembers the last place this sequential batch reached. A failed
+        # focus must suppress dispatch if it is final without making a later
+        # relative action resume from stale cross-batch cycle history.
         target = foreground_key
+        resolved_cursor = foreground_key
         cycle_seen = False
         last_cycle_target = None
         final_action = None
@@ -1208,11 +1210,14 @@ class PreviewHost:
             final_action = action
             kind, value = action
             if kind == "focus":
-                target = self._pick_focus_target(value, target)
+                target = self._pick_focus_target(value, resolved_cursor)
                 if target is None:
-                    # An unavailable absolute request supersedes an earlier
-                    # virtual target; a later action can establish a new one.
+                    # An unavailable absolute request supersedes the final
+                    # dispatch target, but not the cursor a later relative
+                    # action continues from.
                     logger.debug("Preview hotkey targets %r are not running", value)
+                else:
+                    resolved_cursor = target
                 continue
 
             cycle_seen = True
@@ -1228,8 +1233,11 @@ class PreviewHost:
                 )
                 target = None
                 continue
-            target = cycle.step(keys, target or self._last_cycled, value)
+            target = cycle.step(
+                keys, target or resolved_cursor or self._last_cycled, value
+            )
             if target is not None:
+                resolved_cursor = target
                 # A later direct focus determines this folded batch's final
                 # dispatch target, but must not overwrite cycle's sequential
                 # fallback anchor for the next press outside EVE.
