@@ -35,6 +35,11 @@
   // Set when a render is skipped because a capture is armed; flushed by
   // endCapture(). See requestRender() below for why this exists.
   var pendingRender = false;
+  // Set while a group lifecycle write (create/rename/delete/bind) is in
+  // flight. Lifecycle and assignment controls are disabled during this
+  // window so concurrent mutations cannot race; cleared in both resolve
+  // and rejection paths so a failed write never leaves the form stuck.
+  var groupBusy = false;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -103,6 +108,11 @@
     var cycles = 0;
     if (state.hotkeys.cycle_next === gesture) { cycles += 1; }
     if (state.hotkeys.cycle_prev === gesture) { cycles += 1; }
+    // Named group cycles also compete for registrations; a group chord
+    // matching cycle_next/cycle_prev (or another group) is a duplicate.
+    state.hotkeys.groups.forEach(function (g) {
+      if (g.cycle === gesture) { cycles += 1; }
+    });
     if (cycles > 1 || (cycles && sharers(gesture).length)) {
       return 'duplicate';
     }
@@ -122,6 +132,13 @@
       return 'unknown';
     }
     return known[gesture] === false ? 'refused' : null;
+  }
+
+  // Ordered array of named preview cycle groups from the current hotkeys
+  // state. Returns a stable empty array when the payload predates groups,
+  // so callers do not need null checks.
+  function groups() {
+    return state.hotkeys.groups || [];
   }
 
   function makeRow(label, gesture, online, onSet, character) {
@@ -161,6 +178,16 @@
     // `position: sticky` and cannot leave while its own block is on
     // screen. See the note on `#preview-binds .bind-group` in style.css.
     if (online === false) { lab.classList.add('dim'); }
+    // Group assignment select: only for real characters and only when
+    // groups exist. Appended to `lab`, NOT to `row` -- an extra
+    // row.appendChild would be a sixth grid cell and break the five-track
+    // layout. The cell-count guard derives its count from row.appendChild
+    // calls inside makeRow; a lab.appendChild here is invisible to it by
+    // design, so the grid stays at five tracks regardless of groups.
+    if (character && groups().length) {
+      lab.classList.add('has-group-select');
+      lab.appendChild(makeGroupSelect(character));
+    }
     row.appendChild(lab);
 
     // Whether this character is opted out of previews entirely. The
@@ -1129,12 +1156,29 @@
     // `true`, not state.enabled: the cycle chords are not characters and
     // have no online state to report. Dimming them while previews were
     // off was half of what made the whole list grey at once.
-    host.appendChild(makeRow('Cycle forward', state.hotkeys.cycle_next,
+    host.appendChild(makeRow('All forward', state.hotkeys.cycle_next,
                              true,
                              function (g) { setBind('cycle_next', g); }));
-    host.appendChild(makeRow('Cycle back', state.hotkeys.cycle_prev,
+    host.appendChild(makeRow('All back', state.hotkeys.cycle_prev,
                              true,
                              function (g) { setBind('cycle_prev', g); }));
+
+    // Named group keybind rows. Each group gets its own row rendered by
+    // the shared makeRow so it inherits the five-track shape and the same
+    // Clear/Edit… controls. Rendered after All rows and before the
+    // character divider -- the task brief's wireframe B ordering.
+    groups().forEach(function (group) {
+      host.appendChild(makeRow(
+        group.name, group.cycle, true,
+        function (g) { setGroupBind(group.id, g); }
+      ));
+    });
+
+    // Manage groups disclosure: Add/Rename…/Delete. Rendered after group
+    // rows and before the character separator so it lives in the "keys"
+    // section of the table. Rendered even when groups().length is 0 so
+    // the Add field is always available.
+    host.appendChild(makeGroupManager());
 
     var list = rows();
     // An UNNAMED rule, then the column headers. The rule used to be a
@@ -1266,6 +1310,218 @@
     send(next);
   }
 
+  // Narrow group keybind writer. Calls set_preview_cycle_group_bind instead
+  // of the full set_preview_binds (send(next)) so only the one group's chord
+  // changes and all other groups/characters/cycle_next/prev are untouched.
+  // The generation guard uses `pushes` as in send(): a push that overtook
+  // the bridge call carries the authoritative table.
+  function setGroupBind(groupId, gesture) {
+    endCapture();
+    var generation = pushes;
+    WM.send('set_preview_cycle_group_bind', groupId, gesture).then(function (res) {
+      if (!res || !res.applied) {
+        refresh();
+        WM.send('alert_bookmarks',
+                res && res.error
+                  ? res.error
+                  : 'That binding was not saved. The keybind could not be ' +
+                    'read, or the settings file could not be written.');
+        return;
+      }
+      if (generation !== pushes) { return; }
+      if (res.hotkeys) {
+        state.hotkeys = res.hotkeys;
+        state.hotkeys.groups = state.hotkeys.groups || [];
+        state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+      }
+      requestRender();
+    });
+  }
+
+  // Build the group assignment <select> for one character row. Appended to
+  // `lab` inside makeRow -- never to `row` -- so it never adds a grid cell.
+  //
+  // Not gated on the `off` (opted-out) state: unlike the keybind button
+  // and Size..., which can do nothing for an opted-out character, group
+  // membership is saved and waits for the preview to come back.
+  function makeGroupSelect(characterName) {
+    var sel = WM.make('select', 'field preview-group-select');
+    sel.setAttribute('aria-label', 'Cycle group for ' + characterName);
+
+    // Always-first option: no group assigned (All only).
+    var allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All only';
+    sel.appendChild(allOpt);
+
+    // One option per named group, in creation order.
+    groups().forEach(function (g) {
+      var opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.name;
+      sel.appendChild(opt);
+    });
+
+    // Reflect current assignment.
+    var gbc = state.hotkeys.group_by_character || {};
+    sel.value = gbc[characterName] || '';
+
+    sel.addEventListener('change', function () {
+      var selectedId = sel.value;
+      // Disable lifecycle and assignment controls for the duration.
+      groupBusy = true;
+      requestRender();
+      WM.send('set_preview_character_group', characterName, selectedId)
+        .then(function (res) {
+          groupBusy = false;
+          if (!res || !res.applied) {
+            // Revert: re-read from state.
+            sel.value = (state.hotkeys.group_by_character || {})[characterName] || '';
+            if (res && res.error) {
+              WM.send('alert_bookmarks', res.error);
+            }
+            requestRender();
+            return;
+          }
+          if (res.hotkeys) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+        });
+    });
+    return sel;
+  }
+
+  // Rename a named group. Called from the management disclosure. Ends the
+  // capture first (an armed capture's keydown handler would eat the dialog).
+  function renameGroup(group) {
+    endCapture();
+    WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
+              group.name).then(function (text) {
+      if (text === null || text.trim() === '') { return; }
+      groupBusy = true;
+      requestRender();
+      WM.send('rename_preview_cycle_group', group.id, text.trim())
+        .then(function (res) {
+          groupBusy = false;
+          if (!res || !res.applied) {
+            if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+            requestRender();
+            return;
+          }
+          if (res.hotkeys) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+        });
+    });
+  }
+
+  // Delete a named group. Called from the management disclosure. Ends the
+  // capture first, then shows a WM.confirm with the group name and member
+  // count so the user knows what they are removing.
+  function deleteGroup(group) {
+    endCapture();
+    var gbc = state.hotkeys.group_by_character || {};
+    var members = Object.keys(gbc).filter(function (n) {
+      return gbc[n] === group.id;
+    });
+    var memberText = members.length === 1
+      ? '1 character' : members.length + ' characters';
+    var msg = 'Delete group "' + group.name + '"? ' + memberText +
+              ' will return to All only cycling.';
+    WM.confirm('Delete group', msg).then(function (confirmed) {
+      if (!confirmed) { return; }
+      groupBusy = true;
+      requestRender();
+      WM.send('delete_preview_cycle_group', group.id).then(function (res) {
+        groupBusy = false;
+        if (!res || !res.applied) {
+          if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+          requestRender();
+          return;
+        }
+        if (res.hotkeys) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+        }
+        requestRender();
+      });
+    });
+  }
+
+  // Build the "Manage groups" disclosure: a text field and Add button,
+  // then one Rename…/Delete row per existing group. Rendered inside
+  // #preview-binds spanning the full grid width (same as .bind-group).
+  // Called from render() after the group keybind rows and before the
+  // character separator.
+  function makeGroupManager() {
+    var block = WM.make('div', 'bind-group preview-group-manager');
+    var addRow = WM.make('div', 'group-add-row');
+    var nameField = WM.make('input', 'field group-add-name');
+    nameField.type = 'text';
+    nameField.placeholder = 'New group name';
+    nameField.setAttribute('aria-label', 'New group name');
+    var addBtn = WM.make('button', 'btn group-add-btn', 'Add');
+    WM.setEnabled(addBtn, !groupBusy);
+    WM.setEnabled(nameField, !groupBusy);
+
+    function doAdd() {
+      var name = nameField.value.trim();
+      if (!name) { return; }
+      groupBusy = true;
+      requestRender();
+      WM.send('create_preview_cycle_group', name).then(function (res) {
+        groupBusy = false;
+        if (!res || !res.applied) {
+          if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+          requestRender();
+          return;
+        }
+        if (res.hotkeys) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+        }
+        requestRender();
+      });
+    }
+
+    // Commit on Enter (not blur -- Settings commit rule: free text commits on
+    // Enter or an explicit button, never on blur).
+    nameField.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); doAdd(); }
+    });
+    addBtn.addEventListener('click', doAdd);
+
+    addRow.appendChild(nameField);
+    addRow.appendChild(addBtn);
+    block.appendChild(addRow);
+
+    // Per-group Rename…/Delete rows.
+    groups().forEach(function (group) {
+      var gRow = WM.make('div', 'group-manage-row');
+      var gName = WM.make('span', 'group-manage-name', group.name);
+      var renBtn = WM.make('button', 'btn group-rename-btn', 'Rename…');
+      var delBtn = WM.make('button', 'btn danger group-delete-btn', 'Delete');
+      WM.setEnabled(renBtn, !groupBusy);
+      WM.setEnabled(delBtn, !groupBusy);
+      renBtn.addEventListener('click', function () { renameGroup(group); });
+      delBtn.addEventListener('click', function () { deleteGroup(group); });
+      gRow.appendChild(gName);
+      gRow.appendChild(renBtn);
+      gRow.appendChild(delBtn);
+      block.appendChild(gRow);
+    });
+
+    return block;
+  }
+
   function refresh() {
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
@@ -1273,6 +1529,8 @@
       pushes += 1;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                         cycle_prev: ''};
+      state.hotkeys.groups = state.hotkeys.groups || [];
+      state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
@@ -1330,6 +1588,8 @@
     pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
+    state.hotkeys.groups = state.hotkeys.groups || [];
+    state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     state.excluded = state.excluded || [];

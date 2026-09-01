@@ -118,8 +118,13 @@ def test_every_bridge_method_the_page_calls_has_a_double():
         "list.js: open_recording_dir",
         "previews.js: alert_bookmarks",
         "previews.js: capture_preview_bind",
+        "previews.js: create_preview_cycle_group",
+        "previews.js: delete_preview_cycle_group",
         "previews.js: parse_preview_bind",
+        "previews.js: rename_preview_cycle_group",
         "previews.js: set_preview_binds",
+        "previews.js: set_preview_character_group",
+        "previews.js: set_preview_cycle_group_bind",
         "settings.js: set_preview_enabled",
         "settings.js: set_restore_preview_positions",
     }

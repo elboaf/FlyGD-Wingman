@@ -2522,6 +2522,43 @@ button.btn:disabled,
    hide, so a character who has logged out still shows its saved binding. */
 #preview-binds .row > .lab.dim { color: var(--text-faint); }
 
+/* Group assignment select inside the character name cell. The `.lab` cell
+   is already a flex row; when groups exist, makeRow adds .has-group-select
+   and appends the select, turning it into a two-line column instead. No
+   new grid track is added -- the select lives inside track 1 (.lab), and
+   the grid template stays at five cell-bearing tracks.
+
+   `.lab.dim .preview-group-select` keeps the select readable on an offline
+   row: `.lab.dim` dims the name to --text-faint, but the select should
+   stay at --text so it is legible without relying solely on colour.     */
+#preview-binds .row > .lab.has-group-select {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+#preview-binds .preview-group-select {
+  width: 100%; min-width: 0; max-width: 100%;
+}
+#preview-binds .lab.dim .preview-group-select {
+  color: var(--text);
+}
+
+/* Group manager disclosure block. Spans the full grid width like other
+   .bind-group children. The add row and per-group rows are flex. */
+.preview-group-manager {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.group-add-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.group-add-name { flex: 1 1 auto; min-width: 0; }
+.group-manage-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.group-manage-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-muted); }
+
 /* A latent bookmark collision (previews.js's bookmarkClash) marks the
    chord without the warning colour .clash uses -- nothing is being taken
    away yet, only would be if bookmarks were turned on. Border is

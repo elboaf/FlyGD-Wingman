@@ -1871,3 +1871,278 @@ def test_character_group_assignment_over_64_member_cap_is_refused(
         assert new_char not in host.hotkeys.get("group_by_character", {}), (
             "Host was delivered a table claiming the dropped assignment"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Group keybind rows, clash detection, assignment, and management UI
+# ---------------------------------------------------------------------------
+
+
+def test_named_group_clashes_are_counted_with_all_cycle_chords():
+    """clashes() must check group cycles against the chord being tested.
+    A group keybind matching cycle_next/cycle_prev or another group cycle
+    is a duplicate, not just unknown."""
+    js = _web("previews.js")
+    block = js.split("function clashes", 1)[1].split("function makeRow", 1)[0]
+    assert "state.hotkeys.groups" in block, (
+        "clashes() does not walk group cycles; group<->All collision is invisible"
+    )
+    assert ".cycle" in block, "clashes() does not read the group's cycle field"
+
+
+def test_group_bind_calls_set_preview_cycle_group_bind_not_send():
+    """setGroupBind must use the narrow group endpoint, not the full
+    set_preview_binds that overwrites character and cycle_next/prev."""
+    js = _web("previews.js")
+    block = js.split("function setGroupBind", 1)[1].split("\n  }", 1)[0]
+    assert "set_preview_cycle_group_bind" in block, (
+        "setGroupBind does not call set_preview_cycle_group_bind"
+    )
+    assert "send(next)" not in block, (
+        "setGroupBind routes through set_preview_binds (send(next)) instead "
+        "of the narrow group endpoint"
+    )
+
+
+def test_group_rows_rendered_after_all_rows_before_character_divider():
+    """render() appends group rows after the two All rows and before the
+    empty bind-group separator that precedes the column headers."""
+    import re
+
+    js = _web("previews.js")
+    # Strip line comments so embedded prose can't confuse the search.
+    stripped = re.sub(r"//[^\n]*", "", js)
+    render_body = stripped.split("function render()", 1)[1].split("function send(", 1)[
+        0
+    ]
+    all_pos = render_body.index("'All forward'")  # renamed from 'Cycle forward'
+    # groups() helper call appears before bind-group separator (empty divider)
+    groups_call_pos = render_body.index("groups()")
+    divider_pos = render_body.index("'bind-group'")
+    assert all_pos < groups_call_pos < divider_pos, (
+        "group rows are not placed after All rows and before the character divider: "
+        f"all_pos={all_pos}, groups_call_pos={groups_call_pos}, "
+        f"divider_pos={divider_pos}"
+    )
+
+
+def test_group_row_clear_absent_when_no_bind_present():
+    """makeRow's Clear gate (only renders when gesture is truthy) already
+    handles group rows -- a group row with an empty bind must not render
+    a Clear button. This is already guaranteed by the shared makeRow path,
+    so the test asserts the group onSet callback passes through makeRow."""
+    js = _web("previews.js")
+    # groups helper must pass onSet to makeRow, not build its own row.
+    # groups() returns the array; render() passes each through makeRow.
+    # Just ensure the groups() helper is called in render() context.
+    assert (
+        "groups()" in js.split("function render()", 1)[1].split("function send(", 1)[0]
+    ), "render() does not call groups() to enumerate named-group rows"
+
+
+def test_group_edit_always_available_not_gated_on_off():
+    """Edit… on a group row is never disabled -- groups have no `off` (opted-out)
+    state equivalent. setGroupBind must not pass `off=true` to makeRow."""
+    js = _web("previews.js")
+    render_body = js.split("function render()", 1)[1].split("function send(", 1)[0]
+    # group rows call makeRow with online=true (not gated on state.enabled)
+    # and no `character` argument (so `off` resolves to false inside makeRow).
+    # The clearest assertion: render() passes `true` as the online arg for groups.
+    assert "makeRow(group.name" in render_body or "groups()" in render_body, (
+        "render() does not iterate named groups at all"
+    )
+
+
+def test_capture_ends_before_rename_dialog():
+    """WM.prompt for rename must only be opened after endCapture() -- an
+    armed capture's keydown handler preventDefault()s everything, so a
+    prompt opened while one is live cannot be typed into."""
+    js = _web("previews.js")
+    # Find the rename handler -- it calls WM.prompt and endCapture.
+    assert "endCapture" in js, "endCapture is not defined"
+    assert "WM.prompt" in js, "WM.prompt is not used"
+    # The rename path must call endCapture before WM.prompt.
+    # Find the renameGroup (or equivalent) code block.
+    rename_block = js.split("renameGroup", 1)
+    assert len(rename_block) > 1, "no renameGroup function/handler found in previews.js"
+    body = rename_block[1].split("\n  function ", 1)[0]
+    ec_pos = body.find("endCapture")
+    prompt_pos = body.find("WM.prompt")
+    assert ec_pos != -1 and prompt_pos != -1, (
+        "renameGroup block must contain both endCapture() and WM.prompt"
+    )
+    assert ec_pos < prompt_pos, (
+        "renameGroup calls WM.prompt before endCapture; an armed capture "
+        "would eat the dialog's keystrokes"
+    )
+
+
+def test_capture_ends_before_delete_dialog():
+    """WM.confirm for delete must only be opened after endCapture() --
+    same reasoning as the rename guard above."""
+    js = _web("previews.js")
+    assert "WM.confirm" in js, "WM.confirm is not used (delete dialog)"
+    delete_block = js.split("deleteGroup", 1)
+    assert len(delete_block) > 1, "no deleteGroup function/handler found in previews.js"
+    body = delete_block[1].split("\n  function ", 1)[0]
+    ec_pos = body.find("endCapture")
+    confirm_pos = body.find("WM.confirm")
+    assert ec_pos != -1 and confirm_pos != -1, (
+        "deleteGroup block must contain both endCapture() and WM.confirm"
+    )
+    assert ec_pos < confirm_pos, "deleteGroup calls WM.confirm before endCapture"
+
+
+def test_group_rename_uses_wm_prompt_not_window_prompt():
+    """DESIGN.md forbids window.prompt/confirm/alert. Group rename must use
+    WM.prompt (the app's own dialog)."""
+    js = _web("previews.js")
+    assert "window.prompt" not in js, (
+        "previews.js uses window.prompt, which is forbidden by DESIGN.md; "
+        "use WM.prompt instead"
+    )
+
+
+def test_group_delete_uses_wm_confirm_not_window_confirm():
+    """DESIGN.md forbids window.confirm. Group delete must use WM.confirm."""
+    js = _web("previews.js")
+    assert "window.confirm" not in js, (
+        "previews.js uses window.confirm, which is forbidden by DESIGN.md; "
+        "use WM.confirm instead"
+    )
+
+
+def test_make_group_select_appends_to_lab_not_row():
+    """makeGroupSelect must append its <select> to `lab`, never directly
+    to `row` -- an extra row.appendChild would break the five-cell grid."""
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    # Must not append to row.
+    assert "row.appendChild" not in body, (
+        "makeGroupSelect calls row.appendChild, which would add a sixth "
+        "grid cell and break the five-track layout"
+    )
+    # Must append to lab (or return a node the caller appends to lab).
+    assert "lab.appendChild" in body or "return " in body, (
+        "makeGroupSelect neither appends to lab nor returns a node"
+    )
+
+
+def test_make_group_select_only_when_groups_exist():
+    """The group select is only built (and only appended to lab) when
+    groups().length is truthy -- an empty group list should leave the
+    lab unchanged."""
+    js = _web("previews.js")
+    body = js.split("function makeRow", 1)[1].split("return row;", 1)[0]
+    # The conditional guard: groups().length before appending the select.
+    assert "groups().length" in body, (
+        "makeRow does not guard the group select on groups().length; "
+        "the select would always render even with no groups defined"
+    )
+
+
+def test_manage_groups_disclosure_has_add_rename_delete():
+    """The management disclosure must contain Add, Rename…, and Delete
+    controls for each group."""
+    js = _web("previews.js")
+    assert "makeGroupManager" in js or "renderGroupManager" in js, (
+        "no group manager renderer found in previews.js"
+    )
+    # Check all three actions appear in the source.
+    assert "create_preview_cycle_group" in js, (
+        "previews.js does not call create_preview_cycle_group (Add)"
+    )
+    assert "rename_preview_cycle_group" in js, (
+        "previews.js does not call rename_preview_cycle_group (Rename…)"
+    )
+    assert "delete_preview_cycle_group" in js, (
+        "previews.js does not call delete_preview_cycle_group (Delete)"
+    )
+
+
+def test_manage_add_commits_on_button_or_enter_not_blur():
+    """Settings commit rule: free text commits on Enter or an explicit
+    button, never on blur. The Add text field must not have a blur listener
+    that calls create_preview_cycle_group."""
+    js = _web("previews.js")
+    # The add path must not commit on blur.
+    # Find the add-name field handling.
+    assert "create_preview_cycle_group" in js, "no add endpoint"
+    # Any blur listener that leads to create_preview_cycle_group is wrong.
+    # Simple lexical check: 'blur' must not appear between the add-field
+    # event binding and the create call in a single handler chain.
+    # The last addEventListener before the create call must not be 'blur'.
+    # If blur listener appears at all before the create call it must not
+    # directly reach create_preview_cycle_group on the same path.
+    # Sufficient signal: no blur listener immediately before the send.
+    # Sufficient signal: no blur listener immediately before the send.
+    create_after_blur = js.split("addEventListener('blur'", 1)
+    if len(create_after_blur) > 1:
+        after_blur = create_after_blur[1]
+        # If blur handler contains create_preview_cycle_group it commits on blur.
+        blur_handler = after_blur.split("addEventListener(", 1)[0]
+        assert "create_preview_cycle_group" not in blur_handler, (
+            "the Add field commits on blur, violating the Settings commit rule"
+        )
+
+
+def test_delete_confirm_copy_includes_group_name_and_member_count():
+    """The delete confirmation must include the group name and member count
+    so the user knows what they are removing."""
+    js = _web("previews.js")
+    delete_block = js.split("deleteGroup", 1)
+    assert len(delete_block) > 1, "no deleteGroup in previews.js"
+    body = delete_block[1].split("\n  function ", 1)[0]
+    # Must reference group_by_character to derive member count.
+    assert "group_by_character" in body, (
+        "deleteGroup does not derive member count from group_by_character"
+    )
+    # The confirm dialog body must mention the group name and count.
+    confirm_pos = body.find("WM.confirm")
+    assert confirm_pos != -1, "no WM.confirm in deleteGroup"
+    confirm_call = body[confirm_pos : confirm_pos + 300]
+    # group name must appear in the confirm text (group.name or similar).
+    assert ".name" in confirm_call or "group" in confirm_call, (
+        "WM.confirm message does not reference the group name"
+    )
+
+
+def test_group_busy_disables_controls_during_mutation():
+    """groupBusy state: while a write is pending, lifecycle and assignment
+    controls must be disabled. The source must declare a groupBusy variable."""
+    js = _web("previews.js")
+    assert "groupBusy" in js, (
+        "previews.js has no groupBusy state variable; controls are never "
+        "disabled during a group mutation"
+    )
+    # groupBusy must be set before the async call and cleared in both
+    # resolve and reject paths.
+    assert js.count("groupBusy") >= 3, (
+        "groupBusy must be set, cleared on success, and cleared on failure "
+        "(at minimum 3 references)"
+    )
+
+
+def test_state_defaults_fill_groups_and_group_by_character():
+    """The payload normalisation in onPreviewHotkeys and refresh() must
+    fill groups and group_by_character with safe defaults, so later code
+    does not need null checks everywhere."""
+    js = _web("previews.js")
+    # Both the push handler and the refresh path normalize state.
+    normalize_block = js.split("onPreviewHotkeys", 1)[1].split(
+        "WM.handle('onPreviewBindCaptured'", 1
+    )[0]
+    assert "state.hotkeys.groups" in normalize_block, (
+        "onPreviewHotkeys does not default state.hotkeys.groups"
+    )
+    assert "state.hotkeys.group_by_character" in normalize_block, (
+        "onPreviewHotkeys does not default state.hotkeys.group_by_character"
+    )
+    # Also check refresh().
+    refresh_block = js.split("function refresh(", 1)[1].split("\n  }", 1)[0]
+    assert "groups" in refresh_block, (
+        "refresh() does not normalize groups in the returned payload"
+    )

@@ -2766,3 +2766,73 @@ def test_the_volume_slider_commits_on_change_not_on_input():
         "the volume commits before `change`, which is a settings write per "
         "pixel dragged"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Group keybind rows, assignment placement, and management UI
+# ---------------------------------------------------------------------------
+
+
+def test_group_select_does_not_add_row_appendchild():
+    """makeGroupSelect must never call row.appendChild -- that would add a
+    sixth grid cell and break the five-track layout.  The cell-count guard
+    (test_the_previews_grid_has_one_track_per_cell_makeRow_appends) reads
+    makeRow's `row.appendChild(` calls, so a row.appendChild inside
+    makeGroupSelect that is called from makeRow would silently inflate the
+    count even though the selector body is in a different function."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeGroupSelect" in src, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "row.appendChild" not in body, (
+        "makeGroupSelect calls row.appendChild; that is a sixth grid cell "
+        "and breaks the five-track layout"
+    )
+
+
+def test_group_select_appended_to_lab_inside_makerow():
+    """The group select must be appended to `lab` inside makeRow, not to
+    `row` -- any new row.appendChild in makeRow beyond the five-track set
+    breaks the grid derivation guard."""
+    body = _makerow_body()
+    # lab.appendChild(makeGroupSelect is the allowed form.
+    assert "lab.appendChild(makeGroupSelect" in body or (
+        "makeGroupSelect" in body and "lab.appendChild" in body
+    ), (
+        "makeRow does not append the group select to lab; it either is not "
+        "present or it appends to row, which would break the grid"
+    )
+
+
+def test_group_select_has_css_for_lab_column_without_new_track():
+    """Scoped CSS for the group select must exist and must NOT add a new
+    grid track to #preview-binds (the template stays at five cell tracks)."""
+    assert "preview-group-select" in CSS, (
+        "no .preview-group-select rule found in style.css"
+    )
+    # The grid-template-columns must still declare exactly 5 cell-bearing
+    # tracks (name + 4 controls) -- the trailing minmax(0, 1fr) is the 6th
+    # token but holds no cell. _preview_binds_cell_tracks() returns the
+    # cell-bearing count: 1 (name) + repeat-count (4) = 5.
+    tracks = _preview_binds_cell_tracks()
+    assert tracks == 5, (
+        f"#preview-binds now has {tracks} cell tracks instead of 5 after "
+        f"adding group-select CSS; the track count must not change"
+    )
+
+
+def test_has_group_select_css_is_scoped_and_does_not_introduce_display():
+    """The .has-group-select CSS must only change flex layout of the lab
+    cell (flex-direction, align-items, gap) and must not introduce a new
+    display value that would need a [hidden] override."""
+    assert ".has-group-select" in CSS, (
+        "no .has-group-select rule found; makeRow adds the class but style.css "
+        "has no matching rule"
+    )
+    # Must be scoped under #preview-binds.
+    assert "#preview-binds" in CSS.split(".has-group-select")[0].rsplit("\n", 5)[
+        -1
+    ] or re.search(r"#preview-binds[^{]*\.has-group-select", CSS), (
+        ".has-group-select is not scoped under #preview-binds"
+    )
