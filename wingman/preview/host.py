@@ -145,6 +145,12 @@ def plan_registrations(table) -> list:
     entries = [(chord, ("focus", tuple(names))) for chord, names in by_chord.items()]
     entries.append((table.get("cycle_next"), ("cycle", 1)))
     entries.append((table.get("cycle_prev"), ("cycle", -1)))
+    groups = table.get("groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            entries.append((group.get("cycle"), ("cycle_group", group.get("id"))))
 
     plan, claimed = [], set()
     for text, action in entries:
@@ -330,6 +336,12 @@ class PreviewHost:
         self._registered = {}  # hotkey_id -> action
         self._hotkey_status = {}  # gesture text -> registered?
         self._last_cycled = None
+        # Snapshot of the hotkey table committed by _apply_hotkeys, read by
+        # dispatch. Never read from _desired_hotkeys in dispatch: the table
+        # may have been replaced between the rebind signal and the next press.
+        self._active_hotkeys = {}
+        # Per-group-id last cycled name, updated in parallel with _last_cycled.
+        self._last_group_cycled = {}
         # Same shape as _desired_hotkeys above, and for the same reason:
         # PostMessageW carries integers only, so the payload travels in a
         # field under the lock and only the signal is posted. A list, not
@@ -1139,6 +1151,9 @@ class PreviewHost:
                     text,
                 )
         self._hotkey_status = status
+        # Snapshot the table so dispatch reads consistent membership even if
+        # a new rebind signal arrives before the next WM_HOTKEY.
+        self._active_hotkeys = dict(table) if isinstance(table, dict) else {}
         # One line per pass, not per chord: this is the only place that
         # would tell "nothing is bound" from "everything failed" from
         # "some chord lost the fight" if a field report ever needed it.
@@ -1205,6 +1220,7 @@ class PreviewHost:
         resolved_cursor = foreground_key
         cycle_seen = False
         last_cycle_target = None
+        last_group_targets = {}
         final_action = None
         for _ident, action in registered:
             final_action = action
@@ -1221,30 +1237,45 @@ class PreviewHost:
                 continue
 
             cycle_seen = True
-            keys = self._cycle_keys()
-            if not keys:
-                # Distinct from the "not running" no-op below, and it has
-                # to be: every candidate here IS running, and was left out
-                # on purpose. Borrowing that message would send a reader
-                # looking for a client that is on screen in front of them.
-                logger.debug(
-                    "Cycle keybind had nothing to visit: every running "
-                    "character is opted out of previews"
+            if kind == "cycle":
+                keys = self._cycle_keys()
+                if not keys:
+                    # Distinct from the "not running" no-op below, and it has
+                    # to be: every candidate here IS running, and was left out
+                    # on purpose. Borrowing that message would send a reader
+                    # looking for a client that is on screen in front of them.
+                    logger.debug(
+                        "Cycle keybind had nothing to visit: every running "
+                        "character is opted out of previews"
+                    )
+                    target = None
+                    continue
+                target = cycle.step(
+                    keys, target or resolved_cursor or self._last_cycled, value
                 )
-                target = None
-                continue
-            target = cycle.step(
-                keys, target or resolved_cursor or self._last_cycled, value
-            )
-            if target is not None:
-                resolved_cursor = target
-                # A later direct focus determines this folded batch's final
-                # dispatch target, but must not overwrite cycle's sequential
-                # fallback anchor for the next press outside EVE.
-                last_cycle_target = target
+                if target is not None:
+                    resolved_cursor = target
+                    last_cycle_target = target
+            else:  # cycle_group
+                group_id = value
+                keys = self._group_cycle_keys(group_id)
+                if not keys:
+                    logger.debug(
+                        "Group cycle keybind %r had nothing to visit", group_id
+                    )
+                    target = None
+                    continue
+                history = self._last_group_cycled.get(group_id)
+                target = cycle.step(keys, target or resolved_cursor or history, 1)
+                if target is not None:
+                    resolved_cursor = target
+                    last_group_targets[group_id] = target
 
         if last_cycle_target is not None:
             self._last_cycled = last_cycle_target
+        for gid, gtarget in last_group_targets.items():
+            self._last_group_cycled[gid] = gtarget
+
         if len(registered) > 1:
             logger.debug(
                 "Coalesced preview hotkeys: %d, final %s -> %s",
@@ -1963,6 +1994,18 @@ class PreviewHost:
         """
         return [key for key in self.characters() if not self._is_excluded(key)]
 
+    def _group_cycle_keys(self, group_id: str) -> list:
+        """Like _cycle_keys but restricted to members of *group_id*.
+
+        Reads _active_hotkeys, the snapshot installed by _apply_hotkeys,
+        so dispatch always sees the membership that was live when the last
+        rebind completed -- never a partially-applied pending table.
+        """
+        memberships = self._active_hotkeys.get("group_by_character") or {}
+        return [
+            name for name in self._cycle_keys() if memberships.get(name) == group_id
+        ]
+
     def _restyle(self, libs=None) -> None:
         """Push live show_labels/opacity/locked onto every open preview,
         and re-run the visibility pass.
@@ -2140,6 +2183,8 @@ class PreviewHost:
         # a reader on another thread must never observe a half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
+        self._active_hotkeys = {}
+        self._last_group_cycled = {}
         self._clear_pending_activation(libs)
         # Same reasoning, for the state the render path reads: an hour-old
         # batch queued between stop() and the next enable would arm every

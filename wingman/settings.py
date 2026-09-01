@@ -149,7 +149,13 @@ def _preview_defaults() -> dict:
         # land these become the default group's, so the schema grows
         # without migrating anyone -- the same shape the parent design
         # used to defer profiles.
-        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": "", "groups": [], "group_by_character": {}},
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [],
+            "group_by_character": {},
+        },
         "seen": [],
         # Where a preview OPENS: on, at the rect the user last dragged
         # it to; off, at default_stack placement. Positions are

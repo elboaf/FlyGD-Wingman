@@ -663,6 +663,63 @@ def test_cycle_actions_carry_direction():
     assert actions == [("cycle", -1), ("cycle", 1)]
 
 
+# --- Group planner tests (Step 1) ---
+
+
+def test_plan_carries_stable_id_for_named_group_cycles():
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "dps-id", "name": "DPS", "cycle": "Ctrl+F3"},
+                {"id": "logi-id", "name": "Logistics", "cycle": "Ctrl+F4"},
+            ],
+        }
+    )
+    assert [entry[2] for entry in plan] == [
+        ("cycle", 1),
+        ("cycle", -1),
+        ("cycle_group", "dps-id"),
+        ("cycle_group", "logi-id"),
+    ]
+
+
+def test_plan_character_chord_beats_group_chord():
+    """A character binding already claimed a chord -- the group cycle loses."""
+    plan = host.plan_registrations(
+        {
+            "characters": {"Alice": "Ctrl+F3"},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    assert ("focus", ("Alice",)) in actions
+    assert ("cycle_group", "dps") not in actions
+
+
+def test_plan_all_cycle_chord_beats_group_chord():
+    """The All cycle chord has earlier entry order -- the group cycle loses."""
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F3",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    assert ("cycle", 1) in actions
+    assert ("cycle_group", "dps") not in actions
+
+
 class _FakeUser32:
     def __init__(self, refuse=(), foreground=0):
         self.registered = {}
@@ -1183,6 +1240,138 @@ def test_opposite_cycle_actions_that_return_to_foreground_do_not_activate(
     assert h._last_cycled == "Alice"
 
 
+# --- Group fold/history tests (Step 6) ---
+
+
+def test_group_cycle_next_advances_within_group(monkeypatch):
+    """Foreground is Alice (dps). DPS cycle should advance Alice→Bravo."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {1: ("cycle_group", "dps")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x2222]  # Bravo
+    assert h._last_group_cycled == {"dps": "Bravo"}
+
+
+def test_group_cycle_nonmember_foreground_starts_at_first_member(monkeypatch):
+    """Foreground is Alice (dps), pressing logi cycle starts at first logi."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {1: ("cycle_group", "logi")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x3333]  # Carol (first logi)
+    assert h._last_group_cycled == {"logi": "Carol"}
+
+
+def test_group_cycle_outside_eve_resumes_per_group_history(monkeypatch):
+    """Outside EVE, each group resumes from its own per-group history."""
+    h, _libs = _batch_hotkey_host()
+    h._last_group_cycled = {"logi": "Carol"}
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {1: ("cycle_group", "logi")}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))  # outside EVE
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x4444]  # Delta (next after Carol)
+    assert h._last_group_cycled == {"logi": "Delta"}
+
+
+def test_mixed_group_cycles_keep_independent_histories(monkeypatch):
+    """All, DPS, and Logistics histories update independently in one batch."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {
+        1: ("cycle_group", "dps"),
+        2: ("cycle_group", "logi"),
+        3: ("cycle", 1),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 3])
+
+    assert h._last_group_cycled == {"dps": "Bravo", "logi": "Carol"}
+    assert h._last_cycled == "Delta"
+
+
+def test_empty_group_logs_no_op_and_skips_dispatch(monkeypatch):
+    """A group with no members produces no activation."""
+    h, libs = _batch_hotkey_host()
+    h._active_hotkeys = {"group_by_character": {}}  # nobody in "dps"
+    h._registered = {1: ("cycle_group", "dps")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == []
+    assert h._last_group_cycled == {}
+
+
+def test_group_cycle_capture_yields_registered_text(monkeypatch):
+    """Capture receives the registered chord, not a cycle action."""
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._registered = {1: ("cycle_group", "dps")}
+    h._registered_text = {1: "Ctrl+F3"}
+    h.set_capture(True)
+
+    h._on_hotkeys(_FakeLibs(_FakeUser32()), [1])
+
+    assert captured == ["Ctrl+F3"]
+
+
 def test_capture_uses_newest_registered_hotkey_in_the_batch(monkeypatch):
     captured = []
     h = host.PreviewHost(
@@ -1271,6 +1460,43 @@ def test_empty_cycle_batch_does_not_add_a_target_none_diagnostic(monkeypatch, ca
         == 1
     )
     assert "Preview hotkey target None is not running" not in messages
+
+
+# --- Active-snapshot and group-key tests (Step 4) ---
+
+
+def test_group_cycle_keys_use_applied_membership_and_skip_excluded():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, excluded=lambda: ["Excluded"]
+    )
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=1),
+        "Bob": _FakeClient("Bob", hwnd=2),
+        "Excluded": _FakeClient("Excluded", hwnd=3),
+    }
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bob": "logi",
+            "Excluded": "dps",
+        }
+    }
+    assert h._group_cycle_keys("dps") == ["Alice"]
+
+
+def test_group_cycle_keys_reads_active_not_desired():
+    """Dispatch reads the snapshot committed in _apply_hotkeys, not the
+    pending table that may have been replaced since."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=1),
+        "Bob": _FakeClient("Bob", hwnd=2),
+    }
+    # _active_hotkeys has old membership; _desired_hotkeys has new membership.
+    h._active_hotkeys = {"group_by_character": {"Alice": "dps", "Bob": "logi"}}
+    h._desired_hotkeys = {"group_by_character": {"Alice": "logi", "Bob": "dps"}}
+    # Should reflect _active_hotkeys, not _desired_hotkeys.
+    assert h._group_cycle_keys("dps") == ["Alice"]
 
 
 def test_hotkey_focuses_the_named_character(monkeypatch):
