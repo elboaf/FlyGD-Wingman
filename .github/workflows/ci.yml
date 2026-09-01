@@ -171,6 +171,8 @@ jobs:
         # authenticated log fetch -- the only way to see which tests
         # failed when no human is signed in.
         run: uv run --no-sync python -m pytest tests/ -v --junitxml=pytest-result.xml
+      - name: Test settings codec
+        run: cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
       - name: Surface failures
         if: failure()
         shell: bash
