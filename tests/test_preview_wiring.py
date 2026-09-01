@@ -2278,7 +2278,11 @@ def test_delete_group_has_generation_guard():
         "Add the guard matching the makeGroupSelect / setGroupBind pattern."
     )
     # groupBusy = false must appear in the then() callback
-    then_body = body.split(".then(function (res)")[1] if ".then(function (res)" in body else body
+    then_body = (
+        body.split(".then(function (res)")[1]
+        if ".then(function (res)" in body
+        else body
+    )
     assert "groupBusy = false" in then_body, (
         "groupBusy = false must appear inside deleteGroup's .then() callback "
         "so busy state always clears, even when the guard skips the hotkeys update."
@@ -2320,8 +2324,247 @@ def test_do_add_has_generation_guard():
         "Add `if (pushes !== before) { ... }` before applying res.hotkeys."
     )
     # groupBusy must clear in the .then() body
-    then_body = do_add_body.split(".then(function (res)")[1] if ".then(function (res)" in do_add_body else do_add_body
+    then_body = (
+        do_add_body.split(".then(function (res)")[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
     assert "groupBusy = false" in then_body, (
         "groupBusy = false must appear inside doAdd's .then() callback "
         "so busy state always clears regardless of whether the guard fires."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 1/5: Four targeted correctness fixes
+# ---------------------------------------------------------------------------
+
+
+def test_set_group_bind_participates_in_group_busy():
+    """setGroupBind must set groupBusy=true before the bridge call and
+    clear it in both success and refusal paths, so it serialises against
+    all other group writes and assignment selects stay disabled.
+
+    Without this, a concurrent assignment-select change or manager action
+    (rename/delete/add) can fire while a group-bind write is in flight,
+    leading to overlapping bridge calls and stale responses overwriting
+    authoritative state.
+    """
+    js = _web("previews.js")
+    assert "function setGroupBind" in js, "setGroupBind not defined in previews.js"
+    block = js.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+
+    # Must set groupBusy = true before the bridge call.
+    assert "groupBusy = true" in block, (
+        "setGroupBind does not set groupBusy = true before the bridge call. "
+        "All group writes must participate in the shared busy lock."
+    )
+    # Must clear groupBusy in the .then() callback.
+    then_body = (
+        block.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in block
+        else ""
+    )
+    assert "groupBusy = false" in then_body, (
+        "setGroupBind does not clear groupBusy = false inside the .then() "
+        "callback. Both success and refusal paths must clear busy."
+    )
+    # groupBusy must be cleared before the early return on refusal.
+    refusal_pos = then_body.find("if (!res || !res.applied)")
+    busy_clear_pos = then_body.find("groupBusy = false")
+    assert busy_clear_pos < refusal_pos, (
+        "groupBusy = false must appear before the refusal early-return in "
+        "setGroupBind's .then(), so a refused write still clears busy."
+    )
+
+
+def test_group_row_bind_controls_disabled_when_group_busy():
+    """makeRow must disable the keybind button, Clear, and Edit… controls
+    when groupBusy is true for group rows (rows without a character).
+
+    makeGroupSelect must also be disabled based on groupBusy, so an
+    assignment change cannot fire while another group write is in flight.
+
+    The current code gates all three on !off only. A group-row has no
+    character so off is always false, meaning the controls stay enabled
+    even while a setGroupBind, rename, delete, or add is in flight.
+    """
+    js = _web("previews.js")
+    assert "function makeRow" in js, "makeRow not defined in previews.js"
+    make_row = js.split("function makeRow", 1)[1].split("\n  function ", 1)[0]
+
+    # The keybind button, Clear, and Edit… setEnabled calls must reference
+    # groupBusy (or a helper that tests it) not just !off.
+    assert "groupBusy" in make_row, (
+        "makeRow does not reference groupBusy. The keybind button, Clear, "
+        "and Edit... controls must be gated on !groupBusy (in addition to "
+        "the existing !off gate) so they stay disabled while any group "
+        "write is in flight."
+    )
+    # The group select must also be disabled during groupBusy.
+    make_group_select_block = js.split("function makeGroupSelect", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    # The select element must have WM.setEnabled or disabled attribute set
+    # based on groupBusy at creation time.
+    assert (
+        "setEnabled(sel" in make_group_select_block
+        or "groupBusy" in make_group_select_block.split("addEventListener", 1)[0]
+    ), (
+        "makeGroupSelect does not disable the select based on groupBusy at "
+        "creation time. The select must be rendered disabled when groupBusy "
+        "is true, matching the lifecycle controls in makeGroupManager."
+    )
+
+
+def test_make_group_select_stale_success_still_repaints():
+    """makeGroupSelect's stale-push success path (pushes !== before) must
+    call requestRender() before returning.
+
+    Currently: groupBusy = false, then if (pushes !== before) { return; }
+    The early return skips requestRender, leaving the DOM with permanently
+    disabled controls because groupBusy was cleared in JavaScript state but
+    the old DOM nodes (built when groupBusy was true) are never replaced.
+
+    The fix is to move requestRender() outside the stale guard (unconditional
+    after the guard), or include it inside the stale guard block before return.
+    Either way the DOM must be rebuilt whenever the .then() fires.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, "makeGroupSelect not found in previews.js"
+    block = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    then_body = then_body[1]
+
+    stale_guard = "if (pushes !== before)"
+    assert stale_guard in then_body, (
+        "makeGroupSelect .then() has no stale-push guard (if pushes !== before)"
+    )
+
+    # The stale guard must NOT be a bare `return` that skips repaint.
+    # Check: the stale guard block itself must contain requestRender, OR
+    # requestRender must appear before the stale guard (unconditional).
+    stale_pos = then_body.find(stale_guard)
+    # Get the guard's inline block content (everything on the same line after the condition)
+    guard_line = then_body[stale_pos : then_body.find("\n", stale_pos)]
+    # A bare `{ return; }` on the same line is the bug
+    is_bare_return = "return;" in guard_line and "requestRender" not in guard_line
+
+    # But the requestRender before the guard must not be inside the refusal block
+    # (which exits via return, so stale successes never reach it)
+    refusal_end = then_body.find("return;", then_body.find("if (!res || !res.applied)"))
+    rr_outside_refusal_before_guard = any(
+        then_body[i : i + 13] == "requestRender" and i > (refusal_end or 0)
+        for i in range(stale_pos)
+    )
+
+    # The guard block itself must not be a bare { return; } unless requestRender
+    # already ran unconditionally for ALL paths (i.e., outside both refusal and stale)
+    assert not is_bare_return or rr_outside_refusal_before_guard, (
+        "makeGroupSelect stale-push guard is a bare `{ return; }` that skips "
+        "requestRender(). The DOM retains disabled controls forever (groupBusy "
+        "was cleared in JS state but the old disabled DOM is never rebuilt). "
+        "Either move requestRender() before the stale guard (unconditional), or "
+        "add requestRender() inside the stale guard block before returning."
+    )
+
+
+def test_delete_group_restores_focus_on_refusal():
+    """deleteGroup refusal path must restore focus just as the success path
+    does. Currently, refusal calls requestRender() but NOT focusGroupManager().
+
+    After a refused delete the DOM is rebuilt (requestRender), so focus falls
+    to <body>. The user would have to Tab back to any control, which is
+    disorienting — especially since the refused delete means the group and
+    its controls are still present.
+    """
+    js = _web("previews.js")
+    assert "function deleteGroup" in js, "deleteGroup not defined in previews.js"
+    block = js.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "deleteGroup has no .then() callback"
+    then_body = then_body[1]
+
+    # Identify the refusal branch: if (!res || !res.applied) { ... }
+    refusal_idx = then_body.find("if (!res || !res.applied)")
+    assert refusal_idx != -1, "deleteGroup .then() has no refusal guard"
+
+    # Find the end of the refusal block (the matching return)
+    refusal_block = then_body[refusal_idx:]
+    return_idx = refusal_block.find("return;")
+    refusal_content = refusal_block[: return_idx + len("return;")]
+
+    has_focus = (
+        "focusGroupManager" in refusal_content
+        or ("querySelector" in refusal_content and ".focus()" in refusal_content)
+        or ("group-delete-btn" in refusal_content and ".focus()" in refusal_content)
+        or ("group-add-name" in refusal_content and ".focus()" in refusal_content)
+    )
+    assert has_focus, (
+        "deleteGroup refusal path (if !res || !res.applied) does not restore "
+        "keyboard focus. After a refused delete the DOM is rebuilt by "
+        "requestRender but focus falls to <body>. Add focusGroupManager() "
+        "after requestRender in the refusal branch, matching the success path."
+    )
+
+
+def test_make_group_select_restores_focus_after_repaint():
+    """After makeGroupSelect's change handler calls requestRender() and the
+    DOM is rebuilt, focus must be restored to the replacement select for the
+    same character (by stable character identity / aria-label), or to an
+    enabled Previews fallback if that row no longer exists.
+
+    Currently no focus restoration is attempted on success, refusal, or
+    stale-push paths. After requestRender() the old select is detached and
+    the new one has focus on <body>.
+
+    Acceptable patterns in the .then() body:
+    - querySelector('[aria-label="Cycle group for "] + ...') targeting the
+      same character's replacement select
+    - WM.el() or section.querySelector() using the characterName variable
+    - a helper function (focusGroupSelect or similar) called after repaint
+
+    Any of these satisfies the requirement; the key constraint is that the
+    focus target is identified by character identity, not by DOM position,
+    and the call appears after requestRender().
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, "makeGroupSelect not defined"
+    block = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    then_body = then_body[1]
+
+    # Focus restoration must appear in the .then() body, after requestRender.
+    # Acceptable patterns:
+    # 1. focusGroupSelect or similar named helper
+    # 2. querySelector using 'Cycle group for' + characterName
+    # 3. querySelector using 'preview-group-select' with a focus() call
+    has_focus_restore = (
+        "focusGroupSelect" in then_body
+        or ("Cycle group for" in then_body and ".focus()" in then_body)
+        or ("preview-group-select" in then_body and ".focus()" in then_body)
+        or ("characterName" in then_body and ".focus()" in then_body)
+    )
+    assert has_focus_restore, (
+        "makeGroupSelect .then() does not restore focus to the replacement "
+        "select after requestRender(). The old select node is detached by "
+        "repaint; focus falls to <body>. Identify the replacement by character "
+        "identity (e.g. aria-label or characterName variable) and call "
+        ".focus() on it after requestRender(). Use an enabled Previews control "
+        "as fallback when the row no longer exists."
+    )
+
+    # The focus call must come AFTER requestRender (targeting an attached node).
+    rr_pos = then_body.rfind("requestRender")
+    if "focusGroupSelect" in then_body:
+        focus_pos = then_body.rfind("focusGroupSelect")
+    else:
+        focus_pos = then_body.rfind(".focus()")
+    assert rr_pos != -1, "makeGroupSelect .then() must call requestRender()"
+    assert focus_pos != -1, "makeGroupSelect .then() must have a focus call"
+    assert focus_pos > rr_pos, (
+        "focus call appears before requestRender in makeGroupSelect .then(); "
+        "must run after repaint so it targets an attached (not detached) node"
     )

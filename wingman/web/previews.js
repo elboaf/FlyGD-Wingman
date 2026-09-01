@@ -289,7 +289,11 @@
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
     });
-    WM.setEnabled(button, !off);
+    // Gate on both !off (character opted out) and !groupBusy (a group write
+    // is in flight). Group-cycle rows have no character so off is always
+    // false there; without the groupBusy gate they would stay live while a
+    // rename/delete/add/setGroupBind is pending, allowing overlapping writes.
+    WM.setEnabled(button, !(off || groupBusy));
     row.appendChild(button);
 
     // One cell, not two tracks. Two adjacent link buttons in their own
@@ -316,7 +320,7 @@
     if (gesture) {
       var clear = WM.make('button', 'linkbtn', 'Clear');
       clear.addEventListener('click', function () { endCapture(); onSet(''); });
-      WM.setEnabled(clear, !off);
+      WM.setEnabled(clear, !(off || groupBusy));
       acts.appendChild(clear);
     }
 
@@ -344,7 +348,7 @@
         });
       });
     });
-    WM.setEnabled(typed, !off);
+    WM.setEnabled(typed, !(off || groupBusy));
     acts.appendChild(typed);
     row.appendChild(acts);
 
@@ -1317,8 +1321,14 @@
   // the bridge call carries the authoritative table.
   function setGroupBind(groupId, gesture) {
     endCapture();
+    // Participates in the shared groupBusy serialisation lock so that
+    // assignment selects, lifecycle controls, and other group writes stay
+    // disabled for the duration of this in-flight bridge call.
+    groupBusy = true;
+    requestRender();
     var generation = pushes;
     WM.send('set_preview_cycle_group_bind', groupId, gesture).then(function (res) {
+      groupBusy = false;
       if (!res || !res.applied) {
         refresh();
         WM.send('alert_bookmarks',
@@ -1328,7 +1338,12 @@
                     'read, or the settings file could not be written.');
         return;
       }
-      if (generation !== pushes) { return; }
+      if (generation !== pushes) {
+        // A newer push already applied authoritative state; skip the stale
+        // response but still repaint so the busy lock is visually cleared.
+        requestRender();
+        return;
+      }
       if (res.hotkeys) {
         state.hotkeys = res.hotkeys;
         state.hotkeys.groups = state.hotkeys.groups || [];
@@ -1365,6 +1380,9 @@
     // Reflect current assignment.
     var gbc = state.hotkeys.group_by_character || {};
     sel.value = gbc[characterName] || '';
+    // Disabled during any group write (assignment, lifecycle, or bind) so
+    // concurrent changes from multiple selects can't stack.
+    WM.setEnabled(sel, !groupBusy);
 
     sel.addEventListener('change', function () {
       var selectedId = sel.value;
@@ -1387,18 +1405,50 @@
               WM.send('alert_bookmarks', res.error);
             }
             requestRender();
+            focusGroupSelect(characterName);
             return;
           }
-          if (pushes !== before) { return; }
+          if (pushes !== before) {
+            // A newer push already applied authoritative state; skip the
+            // stale hotkeys update but still repaint so disabled controls
+            // are re-enabled (groupBusy is already false above).
+            requestRender();
+            focusGroupSelect(characterName);
+            return;
+          }
           if (res.hotkeys) {
             state.hotkeys = res.hotkeys;
             state.hotkeys.groups = state.hotkeys.groups || [];
             state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           }
           requestRender();
+          focusGroupSelect(characterName);
         });
     });
     return sel;
+  }
+
+  // Restore keyboard focus to the assignment select for `characterName`
+  // after a repaint that replaced its DOM node. Finds the replacement
+  // by aria-label (stable character identity). Falls back to the group
+  // manager's Add field, then any enabled interactive control in the
+  // Previews section.
+  function focusGroupSelect(characterName) {
+    var section = WM.el('section-previews');
+    if (!section) { return; }
+    var target = section.querySelector(
+      'select[aria-label="Cycle group for ' + characterName + '"]'
+      + ':not([hidden]):not(:disabled)');
+    if (target) { target.focus(); return; }
+    // Row may have disappeared (group removed); fall back to a stable control.
+    var addField = section.querySelector(
+      '.group-add-name:not([hidden]):not(:disabled)');
+    if (addField) { addField.focus(); return; }
+    var fallback = section.querySelector(
+      'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)');
+    if (fallback) { fallback.focus(); }
   }
 
   // Rename a named group. Called from the management disclosure. Ends the
@@ -1442,14 +1492,18 @@
   function focusGroupManager() {
     var section = WM.el('section-previews');
     if (!section) { return; }
-    // Prefer a surviving group's Delete button (first enabled one).
-    var delBtn = section.querySelector(
-      '.group-delete-btn:not([hidden]):not(:disabled)');
-    if (delBtn) { delBtn.focus(); return; }
-    // Fall back to the Add-name field.
+    // Prefer the Add-name field: it is always present and is never the
+    // logically-deleted group's own control, so it stays valid even when
+    // a stale push causes the deleted group to re-appear transiently.
+    // A Delete button for a surviving group is a valid but less-stable
+    // target because the DOM order after a stale push can be ambiguous.
     var addField = section.querySelector(
       '.group-add-name:not([hidden]):not(:disabled)');
     if (addField) { addField.focus(); return; }
+    // If the Add field is somehow absent, try a surviving group's button.
+    var delBtn = section.querySelector(
+      '.group-delete-btn:not([hidden]):not(:disabled)');
+    if (delBtn) { delBtn.focus(); return; }
     // Last resort: any enabled interactive control in the section.
     var fallback = section.querySelector(
       'button:not([hidden]):not(:disabled), '
@@ -1481,6 +1535,9 @@
         if (!res || !res.applied) {
           if (res && res.error) { WM.send('alert_bookmarks', res.error); }
           requestRender();
+          // Refusal: the group is still present; repaint re-enables its
+          // controls but focus falls to <body> without an explicit restore.
+          focusGroupManager();
           return;
         }
         if (pushes !== before) {
