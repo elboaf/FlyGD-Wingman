@@ -3244,13 +3244,9 @@ def test_unsuccessful_switch_never_requests_an_async_minimize(monkeypatch, activ
 
     assert h._activate_client(libs, h._clients["Bravo"]) is activation
 
-    # Target restore also uses ShowWindowAsync; only an outgoing minimize is
-    # forbidden before activation succeeds.
-    assert [
-        entry
-        for entry in order
-        if entry == ("show_async", 0x1111, host.win32.SW_SHOWMINNOACTIVE)
-    ] == []
+    assert [entry for entry in order if entry[0] == "send"] == []
+    assert [entry for entry in order if entry[0] == "show_async"] == []
+    assert [entry for entry in order if entry[0] == "animation"] == []
 
 
 def test_refused_switch_keeps_foreground_and_selection_ring_unchanged(monkeypatch):

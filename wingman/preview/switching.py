@@ -13,6 +13,16 @@ def should_minimize(*, enabled, previous_key, next_key, never) -> bool:
     stable key/HWND, but performs the asynchronous request only after the target
     is observed foreground.
     """
-    if not enabled or not previous_key or previous_key == next_key:
+    if not enabled:
+        # User opted out entirely; a successful switch must not hide anything.
         return False
+    if not previous_key:
+        # No foreground client was identified, so there is nothing safe to tuck away.
+        return False
+    if previous_key == next_key:
+        # Switching to the same key is just a self-focus refresh; minimizing would
+        # collapse the already-foreground client for no visible gain.
+        return False
+    # Roster exemptions are remembered by key so a never-minimize character stays
+    # open across later switches even if the current foreground changed elsewhere.
     return previous_key not in (never or [])
