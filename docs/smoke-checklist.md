@@ -2339,13 +2339,17 @@ target client, and what became foreground if it occurs.
       repeatedly to a target that Minimize inactive clients put down. It must
       either restore and become foreground within about 500ms (25 non-blocking
       20ms retries) or stop retrying while Wingman remains responsive. During a
-      pending restore, the outgoing client normally remains visible; if it was
-      already minimized in the narrow interval where the target became iconic
-      between the host and activation probes, Wingman must request its rollback
-      before retaining the retry. A refused or late rollback can still flash the
-      desktop. After a successful restore the outgoing client must minimize.
-      Start another click or hotkey immediately and confirm the newer request
-      wins rather than waiting behind the older restore.
+      pending restore, the outgoing client normally remains visible. The host
+      and activation `IsIconic` probes can race: if an outgoing client was
+      already minimized before the target became iconic, Wingman requests a
+      rollback; if the host saw iconic but activation saw non-iconic, a success
+      minimizes only the exact saved outgoing HWND. If an ordinary refused
+      switch finds its outgoing rollback still iconic, that rollback gets the
+      same bounded retry without another minimize. A refused or late rollback
+      can still flash the desktop. After a successful restore the outgoing
+      client must minimize. Start another click or hotkey immediately and
+      confirm the newer request wins rather than waiting behind either pending
+      target or rollback restore.
 - [ ] **Browser-to-minimized-client regression:** turn on **Hide previews on
       lost focus** and **Minimize inactive clients**, leave a browser visible,
       then switch to a minimized EVE client. The browser remains visible until

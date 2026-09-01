@@ -2834,43 +2834,6 @@ def test_pending_restore_with_a_rejected_timer_is_discarded(monkeypatch, caplog)
     )
 
 
-@pytest.mark.parametrize(
-    ("rollback_result", "outcome"),
-    [
-        (host.window_mod.ActivationResult.ACTIVATED, "rollback restored"),
-        (
-            host.window_mod.ActivationResult.PENDING_RESTORE,
-            "rollback is still pending",
-        ),
-        (host.window_mod.ActivationResult.REFUSED, "rollback was refused"),
-    ],
-)
-def test_pending_transition_rollback_logs_its_explicit_outcome(
-    monkeypatch, caplog, rollback_result, outcome
-):
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
-    h._hwnd = 0x99
-
-    monkeypatch.setattr(
-        host.window_mod,
-        "activate",
-        lambda _libs, hwnd: (
-            host.window_mod.ActivationResult.PENDING_RESTORE
-            if hwnd == 0x2222
-            else rollback_result
-        ),
-    )
-
-    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
-        h._activate_client(libs, h._clients["Bravo"])
-
-    assert any(
-        f"Pending activation of 0x2222 after minimizing 0x1111: {outcome}"
-        in record.message
-        for record in caplog.records
-    )
-
-
 def test_a_target_that_becomes_iconic_after_the_host_probe_rolls_back_before_pending(
     monkeypatch,
 ):
@@ -2952,7 +2915,7 @@ def test_a_pending_transition_does_not_roll_back_a_recreated_outgoing_client(
 def test_pending_transition_rollback_refusal_is_logged_and_keeps_newest_request_bounded(
     monkeypatch, caplog
 ):
-    """A failed rollback does not discard the target's bounded, newest-wins retry.
+    """A refused rollback logs its outcome and retains the target's bounded retry.
 
     The rollback has a separate refusal verdict from the pending target. Losing
     either distinction makes the log misleading or lets an obsolete timer win.
@@ -3394,10 +3357,11 @@ MINIMIZE_ALICE = (
 def test_pending_restore_retries_foreground_work_after_the_target_is_non_iconic():
     """The first iconic attempt restores only; the timer retry owns focus.
 
-    This is the browser-flash regression: with previews hidden away from EVE,
-    calling foreground APIs before the minimized target has restored leaves a
-    desktop frame. The browser is not an outgoing EVE client, so it must stay
-    visible until the retry observes EVE foreground.
+    This bypasses _switching_host because that fixture stubs window.activate();
+    the browser-flash regression needs its real IsIconic and foreground path.
+    With previews hidden away from EVE, calling foreground APIs before the
+    minimized target has restored leaves a desktop frame, so the browser must
+    stay visible until the retry observes EVE foreground.
     """
     browser = 0xDEAD
     calls = []
@@ -3657,6 +3621,231 @@ def test_a_refused_switch_brings_the_minimized_client_back(monkeypatch):
     ]
 
 
+def test_host_probe_iconic_to_window_noniconic_race_completes_saved_minimize():
+    """The host-probe/iconic-to-window-noniconic race keeps the saved minimize.
+
+    _switching_host stubs window.activate(), so it cannot represent its
+    separate IsIconic probe. This uses the real activation path to prove that
+    an iconic host probe followed by a non-iconic window probe still completes
+    the saved outgoing minimize after observed activation.
+    """
+    order = []
+
+    class IconicThenNonIconicUser32(_SwitchUser32):
+        def __init__(self):
+            super().__init__(order, foreground=0x1111, iconic=False)
+            self._iconic = iter((True, False))
+
+        def IsIconic(self, hwnd):
+            order.append(("is_iconic", hwnd))
+            return next(self._iconic)
+
+        def GetWindowThreadProcessId(self, hwnd, _process):
+            return 3 if hwnd == 0x2222 else 2
+
+        def AttachThreadInput(self, _source, _destination, _attach):
+            return True
+
+        def SetForegroundWindow(self, hwnd):
+            self._foreground = hwnd
+            return True
+
+        def SetFocus(self, _hwnd):
+            return 0
+
+    user32 = IconicThenNonIconicUser32()
+    libs = _FakeLibs(user32)
+    libs.kernel32 = type("Kernel32", (), {"GetCurrentThreadId": lambda _self: 1})()
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        minimize_inactive_clients=lambda: True,
+    )
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    h._windows = {key: _RingWindow(key, order) for key in h._clients}
+
+    assert (
+        h._activate_client(libs, h._clients["Bravo"])
+        is host.window_mod.ActivationResult.ACTIVATED
+    )
+
+    assert [entry for entry in order if entry[0] == "is_iconic"] == [
+        ("is_iconic", 0x2222),
+        ("is_iconic", 0x2222),
+    ]
+    assert user32.minimized == [0x1111]
+
+
+def test_host_probe_iconic_to_window_noniconic_race_skips_a_recreated_outgoing(
+    caplog,
+):
+    """The same race never minimizes an outgoing HWND that was recreated."""
+    order = []
+    replacement = {}
+
+    class IconicThenNonIconicUser32(_SwitchUser32):
+        def __init__(self):
+            super().__init__(order, foreground=0x1111, iconic=False)
+            self._iconic = iter((True, False))
+
+        def IsIconic(self, _hwnd):
+            return next(self._iconic)
+
+        def GetWindowThreadProcessId(self, hwnd, _process):
+            return 3 if hwnd == 0x2222 else 2
+
+        def AttachThreadInput(self, _source, _destination, _attach):
+            return True
+
+        def SetForegroundWindow(self, hwnd):
+            replacement["host"]._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+            self._foreground = hwnd
+            return True
+
+        def SetFocus(self, _hwnd):
+            return 0
+
+    user32 = IconicThenNonIconicUser32()
+    libs = _FakeLibs(user32)
+    libs.kernel32 = type("Kernel32", (), {"GetCurrentThreadId": lambda _self: 1})()
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        minimize_inactive_clients=lambda: True,
+    )
+    replacement["host"] = h
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    }
+    h._windows = {key: _RingWindow(key, order) for key in h._clients}
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        assert (
+            h._activate_client(libs, h._clients["Bravo"])
+            is host.window_mod.ActivationResult.ACTIVATED
+        )
+
+    assert user32.minimized == []
+    assert any("saved minimize skipped" in record.message for record in caplog.records)
+
+
+def test_a_refused_switch_retries_a_pending_iconic_rollback_until_it_succeeds(
+    monkeypatch,
+):
+    """A rollback restore can be pending rather than implicitly foregrounding.
+
+    The failed switch has already minimized Alice. If restoring Alice returns
+    PENDING_RESTORE, retain a bounded, minimize-free request for that exact
+    client so the timer can perform the foreground attempt after restoration.
+    """
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+    alice_results = iter(
+        (
+            host.window_mod.ActivationResult.PENDING_RESTORE,
+            host.window_mod.ActivationResult.ACTIVATED,
+        )
+    )
+
+    def activate(_libs, hwnd):
+        order.append(("activate", hwnd))
+        if hwnd == 0x2222:
+            return host.window_mod.ActivationResult.REFUSED
+        return next(alice_results)
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+
+    assert (
+        h._activate_client(libs, h._clients["Bravo"])
+        is host.window_mod.ActivationResult.REFUSED
+    )
+    assert h._pending_switch == host._PendingSwitch("Alice", 0x1111, None, 0, False)
+    assert h._pending_activation_timer is True
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222),
+        ("activate", 0x1111),
+        ("activate", 0x1111),
+    ]
+    assert h._focused_key == "Alice"
+    assert libs.user32.minimized == [0x1111]
+
+
+def test_a_refused_switch_does_not_arm_a_pending_rollback_for_a_recreated_outgoing(
+    monkeypatch, caplog
+):
+    """A replacement client cannot inherit the old client's rollback retry."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+
+    def activate(_libs, hwnd):
+        order.append(("activate", hwnd))
+        if hwnd == 0x2222:
+            h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+            return host.window_mod.ActivationResult.REFUSED
+        raise AssertionError(f"rollback targeted stale HWND 0x{hwnd:x}")
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        assert (
+            h._activate_client(libs, h._clients["Bravo"])
+            is host.window_mod.ActivationResult.REFUSED
+        )
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+    assert any(
+        "rollback skipped; previous Alice exited or changed" in r.message
+        for r in caplog.records
+    )
+
+
+def test_a_newer_request_supersedes_a_pending_iconic_rollback(monkeypatch):
+    """A later request cancels a rollback retry before it can revive Alice."""
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, iconic=False)
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._windows["Carol"] = _RingWindow("Carol", order)
+
+    def activate(_libs, hwnd):
+        order.append(("activate", hwnd))
+        if hwnd == 0x2222:
+            return host.window_mod.ActivationResult.REFUSED
+        if hwnd == 0x1111:
+            return host.window_mod.ActivationResult.PENDING_RESTORE
+        return host.window_mod.ActivationResult.ACTIVATED
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+
+    h._activate_client(libs, h._clients["Bravo"])
+    assert h._pending_switch.stable_key == "Alice"
+
+    assert (
+        h._activate_client(libs, h._clients["Carol"])
+        is host.window_mod.ActivationResult.ACTIVATED
+    )
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222),
+        ("activate", 0x1111),
+        ("activate", 0x3333),
+    ]
+
+
 def test_an_activation_that_raises_still_restores_the_minimized_client(
     monkeypatch, caplog
 ):
@@ -3718,7 +3907,7 @@ def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
         (host.window_mod.ActivationResult.ACTIVATED, "restored 0x1111"),
         (
             host.window_mod.ActivationResult.PENDING_RESTORE,
-            "restore of 0x1111 is still pending",
+            "restore of 0x1111 is pending",
         ),
         (host.window_mod.ActivationResult.REFUSED, "restore of 0x1111 was refused"),
     ],

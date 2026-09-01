@@ -1576,14 +1576,16 @@ class PreviewHost:
           so minimize-first still cannot promise no desktop gap. Its timer
           retries from the pump; only an observed success after the target is
           non-iconic applies the already-recorded outgoing minimize decision.
-          This is deliberately limited to the
-          iconic/pending continuation: minimizing after an ordinary activation
-          can steal foreground from the target. The external transition probe
-          supplied no safe basis for changing that general order, so only the
-          pending-restore case differs.
+          This is deliberately limited to the iconic/pending continuation:
+          minimizing after an ordinary activation can steal foreground from the
+          target. The external transition probe supplied no safe basis for
+          changing that general order, so only the pending-restore case differs.
         - A refused non-iconic activation attempts to bring the outgoing
-          client back (switching.should_restore); the restore can itself be
-          refused, so the desktop-gap risk remains with minimize-first.
+          client back (switching.should_restore). An iconic rollback returns
+          pending without foregrounding, so its revalidated exact HWND takes
+          the same bounded timer with minimize=False; a newer user request
+          clears it. A refused or expired rollback still leaves the known
+          minimize-first desktop-gap risk.
 
         Every decision about *whether* to minimize or restore lives in
         switching.py so it can be tested off Windows; this function owns
@@ -1715,24 +1717,38 @@ class PreviewHost:
             elif switching.should_restore(
                 activated=False, attempted=minimize and not target_was_iconic
             ):
-                # activate() restores an iconic window before raising it,
-                # so this one call undoes the minimize AND hands the
-                # foreground back. Its verdict does not reach the caller
-                # -- their bool is about the client they asked for -- but
-                # it is logged: the refusal that stopped the switch (no
-                # recent input in this process) applies to the rollback
-                # too, and without this line the user's log shows two
-                # "did not take" lines for two hwnds with nothing saying
-                # the second was a rollback. A refused rollback IS the
-                # empty-desktop case the smoke checklist says to watch.
-                restored = window_mod.activate(libs, previous.hwnd)
-                if restored is window_mod.ActivationResult.ACTIVATED:
-                    outcome = f"restored 0x{previous.hwnd:x}"
-                elif restored is window_mod.ActivationResult.PENDING_RESTORE:
-                    outcome = f"restore of 0x{previous.hwnd:x} is still pending"
+                # An iconic rollback starts asynchronous restoration and returns
+                # PENDING_RESTORE without foregrounding. Revalidate the client
+                # before targeting it, then let the bounded timer make the later
+                # foreground attempt; an obsolete HWND can belong to another
+                # window by the time the failed switch returns.
+                current_previous = self._clients.get(previous_key)
+                if current_previous is None or current_previous.hwnd != previous_hwnd:
+                    logger.info(
+                        "Switch to 0x%x refused; rollback skipped; previous %s "
+                        "exited or changed",
+                        client.hwnd,
+                        previous_key,
+                    )
                 else:
-                    outcome = f"restore of 0x{previous.hwnd:x} was refused"
-                logger.info("Switch to 0x%x refused; %s", client.hwnd, outcome)
+                    restored = window_mod.activate(libs, current_previous.hwnd)
+                    if restored is window_mod.ActivationResult.ACTIVATED:
+                        outcome = f"restored 0x{current_previous.hwnd:x}"
+                    elif restored is window_mod.ActivationResult.PENDING_RESTORE:
+                        self._arm_pending_activation(
+                            libs,
+                            _PendingSwitch(
+                                current_previous.stable_key,
+                                current_previous.hwnd,
+                                None,
+                                0,
+                                False,
+                            ),
+                        )
+                        outcome = f"restore of 0x{current_previous.hwnd:x} is pending"
+                    else:
+                        outcome = f"restore of 0x{current_previous.hwnd:x} was refused"
+                    logger.info("Switch to 0x%x refused; %s", client.hwnd, outcome)
         return result
 
     def _minimize(self, libs, hwnd) -> None:
