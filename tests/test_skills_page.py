@@ -358,6 +358,28 @@ def test_the_plan_heading_carries_a_copy_control():
     )
 
 
+def test_copy_plan_reports_clipboard_success_and_failure_locally():
+    """Copying succeeds or fails in the browser after Python returns text,
+    so the Skills pane -- not the global status strip -- must report both.
+
+    This fails if the local live region disappears, a clipboard rejection is
+    ignored, or a successful write does not confirm the completed action.
+    """
+    status = re.search(r'<p[^>]*id="skills-copy-status"[^>]*>', BODY)
+    assert status, "Copy plan has no local feedback region"
+    assert 'role="status"' in status.group(0)
+
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler, "Copy plan no longer owns its clipboard result"
+    assert "navigator.clipboard.writeText(text).then(" in handler.group(1)
+    assert "Plan copied to clipboard." in handler.group(1)
+    assert "Could not copy the plan to the clipboard." in handler.group(1)
+
+
 # ---- round 5: the roster opens, and its numbers are scoped -------------
 
 # Whitespace-collapsed: the checklist is wrapped prose, so a sentence this

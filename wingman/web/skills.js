@@ -28,6 +28,7 @@
   var filterText = '';
   var asked = false;      // has the page asked Python for state yet
   var autoExpanded = false; // has the one-shot small-roster expansion run
+  var copyStatusPlan = ''; // plan named by the local clipboard outcome
 
   /* S1. The expanded row is the ONLY surface in the whole application for
    * forgetting a character or re-authenticating it (see THE LOCKOUT GUARD
@@ -419,6 +420,15 @@
       ? 'Copies every skill in “' + name + '” for EVE\u2019s skill plan '
         + 'import. The game drops the ones already trained.'
       : '';
+    // A feedback message describes the plan it copied. Do not leave that
+    // result attached to a different plan after the next authoritative push.
+    if (copyStatusPlan && copyStatusPlan !== name) setCopyStatus('', false);
+  }
+
+  function setCopyStatus(message, failed) {
+    var status = WM.el('skills-copy-status');
+    status.textContent = message;
+    status.classList.toggle('err', !!failed);
   }
 
   WM.el('skills-copy-plan').addEventListener('click', function () {
@@ -427,11 +437,26 @@
     // Python returns the text and the page owns the clipboard write, the
     // same split list.js:396-401 uses for `Copy link`: with Tk gone there
     // is no toolkit clipboard and navigator.clipboard is right here.
-    // Python has already put the outcome on the status strip either way --
     // "" is a plan the last reload invalidated, not an empty plan, because
     // plans.parse rejects a file with no requirements.
+    setCopyStatus('', false);
     WM.send('skills_plan_text', name).then(function (text) {
-      if (text) navigator.clipboard.writeText(text);
+      if (!text) {
+        setCopyStatus('The plan is no longer available. Reload plans and try again.', true);
+        return;
+      }
+      try {
+        navigator.clipboard.writeText(text).then(function () {
+          copyStatusPlan = name;
+          setCopyStatus('Plan copied to clipboard.', false);
+        }, function () {
+          setCopyStatus('Could not copy the plan to the clipboard.', true);
+        });
+      } catch (err) {
+        // A clipboard denied before it returns a promise has the same
+        // user-facing result as a rejected write.
+        setCopyStatus('Could not copy the plan to the clipboard.', true);
+      }
     });
   });
 

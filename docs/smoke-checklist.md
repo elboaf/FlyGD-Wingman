@@ -413,8 +413,12 @@ somewhere stale and nothing on that screen is worth reviewing.
       the right. At the 840x625 floor the footer wraps and `Delete
       selected` takes a second line, right-aligned — check it is reachable
       and does not overlap the row above.
-- [ ] **Click-to-sort works on every column and shows direction,** on the
-      active column only. Sorting is pure client state; a sort that
+- [ ] **Click, Enter and Space sort every column and show direction** on the
+      active column only. Tab to each header and use Enter, then Space: each
+      must follow the same ascending/descending cycle as click and Space must
+      not scroll the page. In the Chromium accessibility pane, the active
+      header reports `aria-sort` as ascending or descending and every other
+      header reports none. Sorting is pure client state; a sort that
       round-trips to Python or clears the selection is a defect.
 - [ ] **The leftmost header is a bare check, not a checkbox.** Clicking it
       SORTS by checked state — it must not select or clear anything.
@@ -3475,11 +3479,14 @@ against a placeholder id; only these items are blocked on the registration.
 - [ ] **`Copy plan` puts the plan on the clipboard** (round 3, S7). With a
       plan selected, press `Copy plan` on the pane heading and paste into a
       text editor. Expected: one `Skill Name IV` line per requirement, in
-      roman numerals, in plan order — and the status strip says it was
-      copied. Then paste it into EVE's skill plan import and confirm the
-      game accepts it and drops the skills already trained (that is why the
-      whole plan is enough and no per-character diffing is done). With no
-      plan selected the button is disabled rather than absent.
+      roman numerals, in plan order, and a local `Plan copied to clipboard.`
+      status beneath the heading. Deny clipboard permission (or use a browser
+      context that denies it) and confirm that same local status says
+      `Could not copy the plan to the clipboard.` rather than failing silently
+      or changing plan state. Then paste it into EVE's skill plan import and
+      confirm the game accepts it and drops the skills already trained (that
+      is why the whole plan is enough and no per-character diffing is done).
+      With no plan selected the button is disabled rather than absent.
 - [ ] **The two-step Forget cannot be triggered by one mis-click.** First
       click arms the control (it changes to a confirm state); a second,
       separate click is required to actually forget the character;

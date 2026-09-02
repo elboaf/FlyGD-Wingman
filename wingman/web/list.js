@@ -199,6 +199,7 @@
         var active = head.dataset.sort === sortKey;
         head.classList.toggle('sorted', active);
         head.classList.toggle('desc', active && sortDesc);
+        head.setAttribute('aria-sort', active ? (sortDesc ? 'descending' : 'ascending') : 'none');
       });
 
     document.dispatchEvent(new CustomEvent('wm:selection'));
@@ -324,18 +325,30 @@
   }
 
   // ---- events -------------------------------------------------------
-  WM.el('list-head').addEventListener('click', function (ev) {
-    var head = ev.target.closest('[data-sort]');
-    if (!head) return;
-    var key = head.dataset.sort;
+  function sortBy(key) {
     sortDesc = (key === sortKey) ? !sortDesc : false;
     sortKey = key;
     render();
     // No focus re-seed here. app.py's _sort_by re-orders and re-applies
     // zebra tags and nothing else -- and the header sits OUTSIDE
-    // #list-scroll, so clicking it does not focus the list. Seeding here
+    // #list-scroll, so sorting it does not focus the list. Seeding here
     // would draw a ring on a list the user has still never tabbed to,
     // which is the same divergence the onRows guard exists to prevent.
+  }
+
+  WM.el('list-head').addEventListener('click', function (ev) {
+    var head = ev.target.closest('[data-sort]');
+    if (!head) return;
+    sortBy(head.dataset.sort);
+  });
+
+  WM.el('list-head').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+      var head = ev.target.closest('[data-sort]');
+      if (!head) return;
+      ev.preventDefault();
+      sortBy(head.dataset.sort);
+    }
   });
 
   var body = WM.el('list-body');

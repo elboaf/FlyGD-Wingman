@@ -41,8 +41,10 @@
         <!-- A bare check, deliberately NOT a box glyph: every heading here
              is a sort control, and a box in the header position reads as a
              select-all checkbox this column does not offer. -->
-        <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
-        <span class="c-name"   data-sort="filename">Filename</span>
+        <span class="c-check" data-sort="checked" title="Sort by selected"
+              role="button" tabindex="0" aria-sort="none">&#10003;</span>
+        <span class="c-name" data-sort="filename"
+              role="button" tabindex="0" aria-sort="none">Filename</span>
         <!-- "Age", not "Modified" (round 3's finding 8 dropped this column;
              it is back by request, and the heading is deliberately not the
              one that left).
@@ -74,10 +76,14 @@
              newest-first); format_date's docstring is explicit that a text
              sort would put "Aug" before "Dec" and "2 days ago" before
              "3h ago". -->
-        <span class="c-date"   data-sort="date">Age</span>
-        <span class="c-size"   data-sort="size">Size</span>
-        <span class="c-len"    data-sort="duration">Length</span>
-        <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
+        <span class="c-date" data-sort="date"
+              role="button" tabindex="0" aria-sort="none">Age</span>
+        <span class="c-size" data-sort="size"
+              role="button" tabindex="0" aria-sort="none">Size</span>
+        <span class="c-len" data-sort="duration"
+              role="button" tabindex="0" aria-sort="none">Length</span>
+        <span class="c-link" data-sort="link" title="Sort by uploaded"
+              role="button" tabindex="0" aria-sort="none">Link</span>
       </div>
 
       <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
@@ -1863,6 +1869,11 @@
              vocabulary's disabled-when-the-object-is-absent rule. -->
         <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
+      <!-- The browser owns clipboard access, so its success or refusal
+           belongs beside the plan action rather than on the global strip.
+           Kept mounted for role=status: a live region first made visible
+           with its message is not consistently announced by screen readers. -->
+      <p class="skills-copy-status" id="skills-copy-status" role="status"></p>
 
       <!-- Collapses entirely when empty rather than reserving a blank
            strip: on the common path there is nothing to say, and an empty

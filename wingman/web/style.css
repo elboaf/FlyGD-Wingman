@@ -1143,13 +1143,13 @@ button.btn:disabled,
    mechanism was built and then hidden behind knowing it was there.
 
    opacity, not visibility, so the glyph is present-but-quiet rather than
-   absent: .28 is legible as a mark without competing with the label, and
+   absent: .18 is legible as a mark without competing with the label, and
    the width was already reserved unconditionally by the rule above (see
    its note -- reserving it is what stopped the header moving on click),
    so nothing reflows at any of the three levels. */
 .list-head > span::after {
   content: "\25B2"; font-size: 8px; flex: none;
-  width: 8px; opacity: .28;
+  width: 8px; opacity: .18;
 }
 .list-head > span:hover::after { opacity: .7; }
 .list-head > span.sorted::after { opacity: 1; }
@@ -4427,6 +4427,14 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
 #skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
+/* Clipboard access finishes in the page, not Python, so this local status
+   confirms the action at its source. It remains mounted while empty because
+   a role=status region shown only with new text can be missed by a reader. */
+.skills-copy-status {
+  flex: none; min-height: 17px; margin: -4px 0;
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
+.skills-copy-status.err { color: var(--err); }
 
 /* Collapses when empty, so the roster sits directly under the heading on
    the common path. Author rules beat the UA stylesheet's

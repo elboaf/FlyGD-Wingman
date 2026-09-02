@@ -728,6 +728,59 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
     # The two centred headers need it mirrored or reserving it decentres
     # them by half its own box.
     assert re.search(r"\.c-check::before,\s*\.list-head > span\.c-link::before", CSS)
+    # Numeric columns right-align their labels with their cells, so the
+    # reserved arrow belongs before the label rather than stealing its edge.
+    numeric = re.search(
+        r"\.list-head > span\.c-date::after,\s*"
+        r"\.list-head > span\.c-size::after,\s*"
+        r"\.list-head > span\.c-len::after\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert numeric and re.search(r"order:\s*-1", numeric.group(1))
+
+
+def test_sort_headers_are_keyboard_buttons_with_current_sort_state():
+    """A span keeps the shared grid geometry, but it must expose the same
+    sort control to keyboard and assistive-technology users as to a mouse.
+
+    This fails if a header loses its button semantics, if Enter/Space follows
+    another code path from click, or if the active direction is not exposed.
+    """
+    header = HTML[
+        HTML.index('id="list-head"') : HTML.index(
+            "</div>", HTML.index('id="list-head"')
+        )
+    ]
+    controls = re.findall(r'<span\b[^>]*data-sort="[^"]+"[^>]*>', header)
+    assert len(controls) == len(COLUMNS)
+    for control in controls:
+        assert 'role="button"' in control
+        assert 'tabindex="0"' in control
+        assert 'aria-sort="none"' in control
+
+    helper = re.search(r"function sortBy\(key\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
+    assert helper, "sorting needs one helper shared by click and keyboard"
+    assert "sortDesc = (key === sortKey) ? !sortDesc : false;" in helper.group(1)
+    assert "sortKey = key;" in helper.group(1)
+    assert "render();" in helper.group(1)
+    assert LIST_JS.count("sortBy(head.dataset.sort)") == 2
+
+    keydown = re.search(
+        r"WM\.el\('list-head'\)\.addEventListener\('keydown', function \(ev\) \{(.*?)\n  \}\);",
+        LIST_JS,
+        re.DOTALL,
+    )
+    assert keydown, "sort headers need a keyboard activation handler"
+    assert "ev.key === 'Enter'" in keydown.group(1)
+    assert "ev.key === ' '" in keydown.group(1)
+    assert "ev.preventDefault();" in keydown.group(1)
+
+    render = re.search(r"function render\(\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
+    assert render, "render() owns the dynamic header state"
+    assert (
+        "head.setAttribute('aria-sort', active ? (sortDesc ? 'descending' : 'ascending') : 'none');"
+        in render.group(1)
+    )
 
 
 def test_the_empty_pane_is_centred_rather_than_half_centred():
