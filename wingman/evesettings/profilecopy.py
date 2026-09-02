@@ -7,10 +7,13 @@ crosses (root -> server -> profile -> file) rather than only the last one,
 and staging a whole recognized file set so a caller sees either the complete
 new profile or none of it.
 
-Replacement (backup-first overwrite) and API integration are later tasks;
-this module only creates a NEW profile from a validated source. `stage_copy`
-and `StagedProfileCopy` are already shaped for a replacement publisher to
-reuse.
+`publish_new` creates a NEW profile from a validated source; `publish_replacement`
+publishes a staged copy over an EXISTING destination, invoking a caller-
+supplied rollback on any caught publication failure -- the caller is
+responsible for taking the durable backup rollback restores from, and for
+calling `backup.restore(..., backup_current=False)` from that rollback so it
+reuses that backup rather than taking a fresh one of a half-mutated profile.
+API integration is a later task.
 """
 
 import contextlib
@@ -391,3 +394,64 @@ def publish_new(staged: StagedProfileCopy) -> Path:
         raise FileExistsError(f"{plan.destination_name!r} already exists.")
     staged.path.rename(plan.destination)
     return plan.destination
+
+
+class ReplacementFailed(Exception):
+    """A staged replacement failed partway through publication.
+
+    Carries both the error that stopped publication and, separately,
+    whatever the caller's rollback did about it -- `destination_restored`
+    is False exactly when rollback itself raised, which is the one case a
+    caller must not treat the destination as recovered.
+    """
+
+    def __init__(self, publication_error, rollback_error=None):
+        super().__init__(str(publication_error))
+        self.publication_error = publication_error
+        self.rollback_error = rollback_error
+
+    @property
+    def destination_restored(self):
+        return self.rollback_error is None
+
+
+def publish_replacement(staged: StagedProfileCopy, *, rollback) -> Path:
+    """Publish a staged replacement copy over an existing destination
+    profile, invoking *rollback* on any caught failure during publication.
+
+    The destination's own recognized members are computed and validated
+    (the same escaping-link check `_recognized_members` applies to a
+    source) BEFORE anything is mutated -- computing them after a partial
+    failure would describe the profile this call itself already changed,
+    not the one a caller's rollback is meant to restore. Every staged
+    member is then atomically replaced or added via
+    `atomicio.copy_atomic` (temp-file-plus-rename, so a reader never
+    observes a half-written file), and only once every staged member has
+    landed are recognized destination-only files removed -- the same
+    order `backup.restore` uses for the identical reason: deletion is the
+    one step here that cannot be undone by simply not doing it.
+
+    A caught `Exception` anywhere in that sequence invokes *rollback*
+    exactly once, captures whatever it raises, and raises
+    `ReplacementFailed` from the publication error. `BaseException`
+    (`SystemExit`, `KeyboardInterrupt`) is deliberately not caught here:
+    rollback must never run behind the caller's own interruption.
+    """
+    plan = staged.plan
+    destination = plan.destination
+    before = _recognized_members(destination)
+    staged_names = set(staged.members)
+    to_remove = [member for member in before if member.name not in staged_names]
+    try:
+        for name in staged.members:
+            atomicio.copy_atomic(staged.path / name, destination / name)
+        for existing in to_remove:
+            existing.unlink()
+    except Exception as error:
+        rollback_error = None
+        try:
+            rollback()
+        except Exception as failed_rollback:  # noqa: BLE001 - captured on the exception, not swallowed: ReplacementFailed.rollback_error reports it to the caller
+            rollback_error = failed_rollback
+        raise ReplacementFailed(error, rollback_error) from error
+    return destination

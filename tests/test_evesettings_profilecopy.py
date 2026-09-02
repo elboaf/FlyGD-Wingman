@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from wingman.evesettings import profilecopy, tree
+from wingman.evesettings import backup, profilecopy, tree
 
 
 def _make_junction(link: Path, target: Path) -> None:
@@ -63,6 +63,32 @@ def copy_plan(tmp_path):
 def staged_copy(copy_plan):
     with profilecopy.stage_copy(copy_plan) as staged:
         yield staged
+
+
+@pytest.fixture
+def replace_plan(tmp_path):
+    root = tmp_path / "EVE"
+    server = root / "server_tranquility"
+    source = server / "settings_Default"
+    source.mkdir(parents=True)
+    (source / "core_char_1.dat").write_bytes(b"A")
+    (source / "core_user_2.dat").write_bytes(b"B")
+    destination = server / "settings_Fleet"
+    destination.mkdir(parents=True)
+    (destination / "core_char_1.dat").write_bytes(b"old")
+    (destination / "core_char_9.dat").write_bytes(b"remove")
+    (destination / "notes.txt").write_bytes(b"keep")
+    (destination / "extras").mkdir()
+    (destination / "extras" / "thing.txt").write_bytes(b"keep")
+    return profilecopy.ProfileCopyPlan(
+        root=root,
+        server=server,
+        source=source,
+        destination=destination,
+        source_name="Default",
+        destination_name="Fleet",
+        mode="replace",
+    )
 
 
 # ----- validate_friendly_name --------------------------------------------
@@ -408,6 +434,110 @@ def test_publish_new_refuses_a_destination_race(staged_copy):
     with pytest.raises(FileExistsError):
         profilecopy.publish_new(staged_copy)
     assert list(staged_copy.plan.destination.iterdir()) == []
+
+
+# ----- publish_replacement: exact replacement and rollback -----------------
+
+
+def test_publish_replacement_replaces_recognized_files_and_keeps_the_rest(
+    replace_plan,
+):
+    """The concrete before/after transition from the design doc: recognized
+    source files land exactly as the source has them, a recognized
+    destination-only file is removed, and unrelated entries -- a plain file
+    and a subdirectory -- are untouched."""
+    destination = replace_plan.destination
+    with profilecopy.stage_copy(replace_plan) as staged:
+        published = profilecopy.publish_replacement(
+            staged, rollback=lambda: pytest.fail("must not roll back on success")
+        )
+    assert published == destination
+    assert (destination / "core_char_1.dat").read_bytes() == b"A"
+    assert (destination / "core_user_2.dat").read_bytes() == b"B"
+    assert not (destination / "core_char_9.dat").exists()
+    assert (destination / "notes.txt").read_bytes() == b"keep"
+    assert (destination / "extras" / "thing.txt").read_bytes() == b"keep"
+
+
+def test_publish_replacement_rolls_back_the_whole_before_set_on_a_caught_failure(
+    replace_plan, tmp_path, monkeypatch
+):
+    """A caller takes a durable backup of the destination before staging and
+    publishing; a failure partway through publication (after one recognized
+    file has already been replaced) must restore that entire before-set, not
+    merely undo the one replacement that happened to land."""
+    destination = replace_plan.destination
+    store = tmp_path / "backups"
+    made = backup.create_profile_backup(store, destination, origin="manual")
+
+    calls = {"n": 0}
+    real_copy_atomic = profilecopy.atomicio.copy_atomic
+
+    def flaky_after_one(source, target, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk full")
+        return real_copy_atomic(source, target, *args, **kwargs)
+
+    def rollback():
+        backup.restore(store, made, replace_plan.root, backup_current=False)
+
+    with profilecopy.stage_copy(replace_plan) as staged:
+        # Patched only now: stage_copy's own staging copy must run for
+        # real, so the failure injected below lands in publish_replacement,
+        # not while the stage is still being built.
+        monkeypatch.setattr(profilecopy.atomicio, "copy_atomic", flaky_after_one)
+        with pytest.raises(profilecopy.ReplacementFailed) as excinfo:
+            profilecopy.publish_replacement(staged, rollback=rollback)
+
+    assert isinstance(excinfo.value.publication_error, OSError)
+    assert excinfo.value.rollback_error is None
+    assert excinfo.value.destination_restored
+    assert (destination / "core_char_1.dat").read_bytes() == b"old"
+    assert (destination / "core_char_9.dat").read_bytes() == b"remove"
+    assert (destination / "notes.txt").read_bytes() == b"keep"
+    assert (destination / "extras" / "thing.txt").read_bytes() == b"keep"
+
+
+def test_publish_replacement_records_a_rollback_that_also_failed(
+    replace_plan, monkeypatch
+):
+    def boom(source, target, *args, **kwargs):
+        raise OSError("disk full")
+
+    def failing_rollback():
+        raise RuntimeError("rollback also failed")
+
+    with profilecopy.stage_copy(replace_plan) as staged:
+        monkeypatch.setattr(profilecopy.atomicio, "copy_atomic", boom)
+        with pytest.raises(profilecopy.ReplacementFailed) as excinfo:
+            profilecopy.publish_replacement(staged, rollback=failing_rollback)
+
+    assert isinstance(excinfo.value.publication_error, OSError)
+    assert isinstance(excinfo.value.rollback_error, RuntimeError)
+    assert not excinfo.value.destination_restored
+
+
+def test_publish_replacement_does_not_roll_back_on_system_exit(
+    replace_plan, monkeypatch
+):
+    """SystemExit (and any other BaseException) is the caller's own
+    interruption, not a publication failure -- rollback must never run
+    behind it."""
+
+    def boom(source, target, *args, **kwargs):
+        raise SystemExit(1)
+
+    rollback_calls = []
+
+    with profilecopy.stage_copy(replace_plan) as staged:
+        monkeypatch.setattr(profilecopy.atomicio, "copy_atomic", boom)
+        with pytest.raises(SystemExit):
+            profilecopy.publish_replacement(
+                staged, rollback=lambda: rollback_calls.append(1)
+            )
+
+    assert rollback_calls == []
 
 
 # ----- abandoned-stage cleanup ----------------------------------------------
