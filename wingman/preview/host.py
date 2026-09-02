@@ -1616,7 +1616,7 @@ class PreviewHost:
         activation updates selection and requests its async minimize, which
         prevents the minimize-first desktop gap found in Windows smoke.
         """
-        # A newer click or hotkey supersedes an outstanding restored target.
+        # A newer click or hotkey supersedes an outstanding pending target.
         superseded = self._pending_switch
         if superseded is not None:
             logger.debug(
