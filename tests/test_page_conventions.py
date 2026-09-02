@@ -1096,6 +1096,49 @@ def test_every_action_control_shares_one_disabled_state():
             )
 
 
+def test_shared_focus_and_selected_rail_states_stay_distinct():
+    """Selection owns the rail fill; keyboard focus is an outline only.
+
+    The group manager bypasses the shared button selector because its
+    interactive summary is not a button. It once referenced undefined
+    `--focus`, so keyboard focus had no authored indicator at all.
+    """
+    manager = re.search(
+        r"\.preview-group-manager > summary:focus-visible\s*\{([^}]*)\}", CSS
+    )
+    assert manager, "the group-manager summary has no focus-visible rule"
+    assert "var(--focus-ring)" in manager.group(1)
+    assert "var(--focus)" not in manager.group(1)
+
+    active = re.search(r"[^{}]*\.rail-item\.active[^{}]*\{([^}]*)\}", CSS)
+    assert active and "background:" in active.group(1), (
+        "the selected rail item no longer owns a filled current-location state"
+    )
+
+    focus = re.search(r"([^{}]*\.rail-item:focus-visible[^{}]*)\{([^}]*)\}", CSS)
+    assert focus and "outline:" in focus.group(2), (
+        "the Settings rail is missing the shared keyboard focus outline"
+    )
+    assert "background:" not in focus.group(2), (
+        "rail focus paints a competing fill instead of an outline-only state"
+    )
+
+
+def test_enabled_subordinate_actions_have_readable_resting_contrast():
+    """Quiet actions still have to read as live before hover.
+
+    `--text-faint` is appropriate for explanatory text, but on a compact
+    row it made Clear/Edit and Skills' group actions resemble disabled
+    controls. `--text-dim` keeps the documented link-button taxonomy while
+    giving every enabled subordinate action, including compact Preview row
+    actions, a readable resting state.
+    """
+    linkbtn = re.search(r"\.linkbtn\s*\{([^}]*)\}", CSS)
+    assert linkbtn, "the shared .linkbtn treatment is missing"
+    assert "color: var(--text-dim)" in linkbtn.group(1)
+    assert "color: var(--text-faint)" not in linkbtn.group(1)
+
+
 def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     """`.btn.danger` is the ONE destructive treatment (round 3, B3/S4/P2).
 
@@ -2222,9 +2265,9 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
     """D6's rule -- do not draw a control in a state where it can only
     refuse -- applied to the control that broke it worst. `Clear` used to
     be rendered on every row and disabled wherever there was no chord to
-    clear, which on a fresh install is every row. It is a .linkbtn, so
-    :disabled is opacity .45 over --text-faint: 1.94:1 against the card, a
-    control nobody can read holding a grid track on thirteen rows.
+    clear, which on a fresh install is every row. It is a .linkbtn, so the
+    shared disabled opacity makes it intentionally quieter than the enabled
+    subordinate treatment, while still holding a grid track on thirteen rows.
 
     Only the render-at-all gate moved. `Clear` still goes through
     WM.setEnabled against the row's own opted-out state once it exists --
@@ -2418,6 +2461,52 @@ def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():
     body = halves[1].split("return label;", 1)[0]
     assert "WM.setEnabled" not in body, "the opt-out box gates itself"
     assert "set_preview_excluded" in body
+
+
+def test_range_controls_use_token_driven_track_thumb_and_value_styles():
+    """Chromium's native blue slider must not escape the dark control system."""
+    base = re.search(r'input\[type="range"\]\s*\{([^}]*)\}', CSS)
+    assert base, "range inputs have no shared base rule"
+    assert "appearance: none" in base.group(1)
+    assert "background: transparent" in base.group(1)
+
+    track = re.search(
+        r'input\[type="range"\]::-webkit-slider-runnable-track\s*\{([^}]*)\}',
+        CSS,
+    )
+    assert track, "range inputs have no authored WebKit track"
+    assert "background: var(--track)" in track.group(1)
+    assert "border:" in track.group(1) and "var(--control-border)" in track.group(1)
+
+    thumb = re.search(r'input\[type="range"\]::-webkit-slider-thumb\s*\{([^}]*)\}', CSS)
+    assert thumb, "range inputs have no authored WebKit thumb"
+    assert "background: var(--control)" in thumb.group(1)
+    assert "border:" in thumb.group(1) and "var(--brand-edge)" in thumb.group(1)
+
+    focus = re.search(
+        r'input\[type="range"\]:focus-visible::-webkit-slider-thumb\s*\{([^}]*)\}',
+        CSS,
+    )
+    assert focus and "var(--focus-ring)" in focus.group(1), (
+        "the authored range thumb has no shared keyboard focus indicator"
+    )
+
+    value = re.search(r"\.range-value\s*\{([^}]*)\}", CSS)
+    assert value, "range controls have no adjacent value treatment"
+    assert "background: var(--sunken)" in value.group(1)
+    assert "border:" in value.group(1) and "var(--control-border)" in value.group(1)
+
+
+def test_preview_opacity_reads_on_input_and_commits_on_change():
+    """Dragging is local feedback; only release crosses the settings bridge."""
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    body = js[js.index("var box = WM.el('preview-opacity')") :]
+    input_handler = re.search(r"box\.addEventListener\('input', ([A-Za-z]+)\)", body)
+    assert input_handler and input_handler.group(1) == "show"
+    change = body.index("box.addEventListener('change'")
+    send = body.index("WM.send('set_preview_opacity'")
+    assert change < send
+    assert "set_preview_opacity" not in body[:change]
 
 
 def test_the_opacity_slider_can_still_reach_the_stored_floor():

@@ -1493,6 +1493,12 @@ only ever checked by hand.
       trust the rail and fix this line: it said seven for exactly as long
       as it took to add General one commit later, which is the drift this
       checklist exists to catch elsewhere.
+- [ ] **Rail selection and keyboard focus are different states.** Click
+      Previews, then press Tab until another rail entry receives focus.
+      Expected: Previews keeps the filled current-location treatment while
+      the focused entry has an outline only. The focused neighbour must not
+      look like a second selected section. Tab to **Manage groups** too and
+      confirm its summary receives the same visible focus outline.
 - [ ] **No card heading repeats the rail entry you just clicked.** Walk the
       rail and read the first heading in each pane. Folders and Discord both
       repeated themselves ("Folders" / "Folders", "Discord" / "Discord
@@ -1529,12 +1535,16 @@ only ever checked by hand.
       the hand.
       Round 3's L5 moved four control classes onto one declaration; all
       three sites above are `.btn`, so this is a regression check on the
-      one class that already had a treatment.
-      `.linkbtn` and `.bindbtn` gained one here and have **no disabled site
-      yet** — the first will be finding B2's `Clear` on a keybind reading
-      `Not set`, which lane R4 applies. When that lands, hover it: before
-      L5 those two classes had no disabled rule at all, so a dead one still
-      lit up.
+      one class that already had a treatment. In Previews, opt a character
+      out and hover its disabled keybind and Clear / Edit actions too.
+      Before L5 `.linkbtn` and `.bindbtn` had no disabled rule, so dead
+      controls still lit up.
+- [ ] **Enabled subordinate actions read as live before hover.** Compare an
+      enabled Preview Clear / Edit action and Skills Rename / Delete action
+      with a disabled one. Expected: enabled labels are quiet but clearly
+      legible; disabled labels remain distinctly dimmer. Hover still lifts
+      only the enabled action. They remain link-style subordinate actions,
+      not neutral or accent buttons.
 - [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
       section.** Go to Settings > Bookmarks, click a keybind button so it
       reads "Press a key…", then WITHOUT pressing a key click **Folders** in
@@ -1637,15 +1647,18 @@ only ever checked by hand.
       after its slider rather than parked at the far card edge ~556px from
       its label.
 - [ ] **Opacity is a percentage, and it still reaches the floor.**
-      Settings > Previews. Expected: the readout reads `100%`, not `255`,
-      and dragging the slider fully left reads `8%` rather than `20`.
-      Round 5's C2: the control was showing a raw Win32 alpha byte, so its
-      floor read "20" and every reader takes that for 20% when it is 7.8%.
-      The stored value is still the 0-255 byte — at 40% the settings file
-      must hold 102. If the readout is EMPTY, the module threw before its
-      listeners registered; that is exactly the inert-screen failure this
-      file's preamble describes, and it happened once while this lane was
-      being written.
+      Settings > Previews. Expected: the dark track and bordered thumb fit
+      the other controls, the adjacent value reads `100%`, not `255`, and
+      dragging fully left reads `8%` rather than `20`. Tab to the slider:
+      the thumb receives the shared visible focus ring. While dragging, the
+      value follows live; the preview and settings file update only when the
+      change commits on release. Round 5's C2: the control was showing a raw
+      Win32 alpha byte, so its floor read "20" and every reader takes that
+      for 20% when it is 7.8%. The stored value is still the 0-255 byte; at
+      40% the settings file must hold 102. If the readout is EMPTY, the
+      module threw before its listeners registered; that is exactly the
+      inert-screen failure this file's preamble describes, and it happened
+      once while this lane was being written.
 - [ ] **The Never-minimize disclosure exists only while its toggle is on.**
       Settings > Previews with `Minimize a client's window while it is not
       the one you switched to` UNTICKED — the shipped default. Expected:

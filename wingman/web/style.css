@@ -2575,7 +2575,7 @@ button.btn:disabled,
 }
 .preview-group-manager > summary:hover { color: var(--text); }
 .preview-group-manager > summary:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 /* Chromium's UA rule hides non-summary children of a closed <details>
@@ -3666,9 +3666,15 @@ button.btn:disabled,
 
    Changing the padding here instead would move eighteen bookmark bind
    rows, Skills' two link buttons and Profiles' `Change...`, none of which
-   anyone reported. */
+   anyone reported.
+
+   The resting label uses --text-dim rather than --text-faint. These are
+   enabled actions, including compact Clear / Edit… controls and Skills'
+   group actions; making them legible at rest does not promote them out of
+   the documented subordinate treatment. Disabled controls still become
+   quieter through the shared opacity rule above. */
 .linkbtn {
-  background: none; border: 0; color: var(--text-faint);
+  background: none; border: 0; color: var(--text-dim);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
   padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
 }
@@ -3752,14 +3758,37 @@ button.btn:disabled,
 .settings .row > select.field { flex: 0 0 150px; }
 .settings .row > input#f-category { flex: 0 0 90px; }
 
-/* No wrapper convention exists for input[type=range] the way .check/.radio
-   exist for checkboxes/radios -- `color-scheme: dark` above already gets a
-   dark-themed native track and thumb from WebView2's Chromium, so the only
-   thing left off-brand is the thumb's default blue. accent-color is enough
-   to fix that without a bespoke track/thumb build. */
-input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
+/* Range controls use Chromium's WebKit pseudo-elements because a native
+   thumb brings an unrelated blue into the dark control vocabulary. The
+   geometry is shared by Preview opacity and alert volume; their input /
+   change listeners still own live readout versus persistence separately. */
+input[type="range"] {
+  flex: 1; min-width: 0; height: 20px;
+  appearance: none; -webkit-appearance: none;
+  background: transparent; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--track); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+}
+input[type="range"]::-webkit-slider-thumb {
+  width: 16px; height: 16px; margin-top: -5px;
+  appearance: none; -webkit-appearance: none;
+  background: var(--control); border: 2px solid var(--brand-edge);
+  border-radius: 50%;
+}
+input[type="range"]:hover:not(:disabled)::-webkit-slider-thumb {
+  background: var(--control-hover);
+}
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 .range-value {
-  flex: none; min-width: 2.5em; text-align: right;
+  flex: none; min-width: 4em; padding: 3px 6px; text-align: right;
+  background: var(--sunken); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
   color: var(--text-dim); font-size: var(--fs-mono); font-family: var(--mono);
 }
 
@@ -4368,6 +4397,9 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .rail-plan:hover, .rail-item:hover, .fm-item:hover {
   background: var(--hover); color: var(--text);
 }
+/* Selection owns the fill. Keyboard focus stays the outline-only treatment
+   in the shared :focus-visible rule, so a focused neighbour cannot look
+   like a second current location. */
 .rail-plan.active, .rail-item.active, .fm-item.active {
   background: var(--row-active); border-left-color: var(--brand); color: var(--text);
 }
