@@ -1544,12 +1544,10 @@ button.btn:disabled,
 .check.inert input:not(:checked) + .box {
   background: var(--sunken);
 }
-/* The Size column's cell for a character that cannot be sized yet.
-   Carries a title explaining how to make one settable, and therefore has
-   to be HOVERABLE: as an empty span it computed to 46.44 x 0 and
-   elementFromPoint at its centre returned null, so the explanation could
-   never be reached. The dash gives it a line box, and says "nothing here"
-   to someone who never hovers at all. */
+/* The Saved geometry detail's Size… placeholder for a character that cannot
+   be sized yet. It carries a title explaining how to make one settable, and
+   therefore has to be HOVERABLE: an empty span has no hover target. The dash
+   gives it a line box and says the missing action is expected. */
 .size-none { color: var(--text-faint); cursor: default; }
 
 /* The per-character exceptions to a global preview default. Sits directly
@@ -2411,13 +2409,12 @@ button.btn:disabled,
      display:contents, so the grid sees one flat stream of cells and cannot
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
-     That is why makeRow always appends exactly one of {the opt-out
-     checkbox} and {the Size control or its filler} -- cycle forward/back
-     have no character, and without the filler those two rows would
-     misalign every row after them. Change the number of per-row children
-     and this number changes with it -- test_page_conventions.py now
-     DERIVES the expected count from makeRow's own appends rather than
-     trusting this comment. */
+     That is why makeRow appends the same collapsed identity, Preview,
+     keybind, action and Configure cells for character and cycle rows.
+     Character-specific Size… and Copy… controls are in the full-grid detail,
+     not the scan line. Change the number of per-row children and this number
+     changes with it -- test_page_conventions.py derives the expected count
+     from makeRow's unconditional appends rather than trusting this comment. */
   grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
 }
 

@@ -227,8 +227,8 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
     rows on purpose, for two different reasons: `#eve-binds` because its
     labels are long action names and it gives them a whole line instead,
-    `#preview-binds` because it gives the character name a fixed 150px
-    track of its own -- an inline column, not a line. Both do it with an
+    `#preview-binds` because it gives the character name a bounded
+    length-based track of its own -- an inline column, not a line. Both do it with an
     ID selector: `#eve-binds .row > .lab` and `#preview-binds .row > .lab`.
 
     ID specificity also beats the `max-width: 720px` block that collapses
@@ -1111,8 +1111,11 @@ def test_shared_focus_and_selected_rail_states_stay_distinct():
     assert "var(--focus)" not in manager.group(1)
 
     active = re.search(r"[^{}]*\.rail-item\.active[^{}]*\{([^}]*)\}", CSS)
-    assert active and "background:" in active.group(1), (
-        "the selected rail item no longer owns a filled current-location state"
+    assert active and "background: var(--row-active)" in active.group(1), (
+        "the selected rail item must keep the declared current-location fill"
+    )
+    assert "border-left-color: var(--brand)" in active.group(1), (
+        "the selected rail item must keep its existing brand edge"
     )
 
     focus = re.search(r"([^{}]*\.rail-item:focus-visible[^{}]*)\{([^}]*)\}", CSS)
@@ -1792,7 +1795,7 @@ def _preview_binds_cell_tracks() -> int:
     Both callers below used to inline `(\\d+)px\\s+repeat\\((\\d+),`, which
     pinned the SPELLING of a deliberate first track rather than the
     property that makes it deliberate. Round 6 widened the name column to
-    `minmax(150px, 260px)` -- still two lengths, still never sized by
+    `minmax(210px, 320px)` -- still two lengths, still never sized by
     whoever is logged in, which is all round 3's B1 ever asked for -- and
     both guards failed on the shape while the rule they exist for held.
 
@@ -1844,17 +1847,20 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     The label USED to be excluded, because `#preview-binds .row > .lab` was
     `grid-column: 1 / -1` and spanned the row instead of sitting in a
     track. It sits in track 1 now, so it is a cell like any other and the
-    `-1` that discounted it is gone. The `else` branch is still excluded,
-    because its fillers stand in for the character branch's controls one
-    for one -- counting both would double every cell.
+    `-1` that discounted it is gone. Every collapsed cell is now appended
+    unconditionally: character-specific controls live in the full-grid
+    detail, and the two cycle rows use the same ternary fillers as every
+    other row.
     """
     body = _makerow_body()
-    halves = body.split("} else {", 1)
-    assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
+    assert "} else {" not in body, (
+        "makeRow has a dead character/cycle branch instead of one unconditional "
+        "collapsed-row shape"
+    )
     # The label is COUNTED now: it sits in track 1 rather than spanning the
-    # row, so it is a cell like any other. That is the whole change, and it
-    # is why the -1 that used to discount it is gone.
-    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
+    # row, so it is a cell like any other. Every row.appendChild() here is
+    # one of the collapsed grid cells.
+    cells = body.count("row.appendChild(")
 
     tracks = _preview_binds_cell_tracks()
 
@@ -1863,6 +1869,17 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
         f"declares {tracks} tracks -- every row after the first is "
         f"pulled into the previous row's leftover columns"
     )
+
+
+def test_the_roster_heading_owns_the_focus_fallback():
+    """The focus fallback and narrow screenshot target the actual roster header."""
+    html = _strip_html_comments(HTML)
+    assert 'id="preview-roster-heading"' not in html
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+    assert "preview-roster-heading" in head
+    assert "tabindex', '-1'" in head
 
 
 def test_the_previews_header_row_names_one_column_per_track():
@@ -2236,7 +2253,7 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
     assert "source.online === false" in picker
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
-    assert "restoreCopyFocusAfterRefresh(name)" in picker
+    assert "restoreCopyFocusAfterRefresh(name, interaction)" in picker
     assert "state.characters" not in picker
     assert "It applies next time" not in picker
     assert "source.name !== name" in src
@@ -2254,7 +2271,7 @@ def test_copy_picker_has_collapsing_empty_and_status_lines():
     assert "preview-copy-status" in src
     assert "status.classList.toggle('err', !!error)" in src
     assert "status.hidden = !status.textContent" in src
-    assert "function focusCopyTarget(" in src
+    assert "function restoreCopyFocusAfterRefresh(name, interaction)" in src
 
     section = src.split("document.addEventListener('wm:section'", 1)
     assert len(section) == 2
@@ -3095,9 +3112,9 @@ def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
     copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
     cancelled = copy.split("if (source === null)", 1)[1].split("}", 1)[0]
     assert "clearDetailFocus(name, 'copy')" in cancelled
-    assert copy.count("restoreCopyFocusAfterRefresh(name)") == 2, (
-        "both the refused and successful copy paths must clear focus intent "
-        "after their refresh attempt"
+    assert copy.count("restoreCopyFocusAfterRefresh(name, interaction)") == 2, (
+        "both the refused and successful copy paths must refresh with the initiating "
+        "detail interaction"
     )
 
     restore = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
@@ -3105,17 +3122,16 @@ def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
     )[0]
     assert "refresh(function ()" in restore
     assert "rememberDetailFocus(name, 'copy')" in restore
-    assert "clearDetailFocus(name, 'copy')" in restore
-    assert restore.index("clearDetailFocus(name, 'copy')") < restore.index(
-        "focusCopyTarget(name)"
-    )
+    assert "interaction !== detailInteraction" in restore
+    assert "openDetailName !== name" in restore
 
 
 def test_preview_roster_heading_is_a_programmatic_focus_fallback():
-    """Removing an open character must not strand focus on the document body."""
-    html = _strip_html_comments(HTML)
-    heading = re.search(r'<h2 id="preview-roster-heading"([^>]*)>', html)
-    assert heading and 'tabindex="-1"' in heading.group(1)
+    """Removing an open character focuses the generated roster header, not the card."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow", 1)[1].split("return row;", 1)[0]
+    assert "cell.id = 'preview-roster-heading'" in head
+    assert "cell.setAttribute('tabindex', '-1')" in head
 
 
 # ---- Final-review fixes: disclosure, roster, busy guard, minor ----
@@ -3266,31 +3282,13 @@ def test_every_group_mutation_handler_has_synchronous_busy_guard():
     )
 
 
-def test_focusGroupSelect_does_not_use_interpolated_css_selector():
-    """Minor finding: focusGroupSelect must not use a CSS attribute-selector
-    built by string interpolation (unsafe for names containing quotes or
-    backslashes).  It must iterate elements and compare aria-label directly."""
+def test_group_focus_restoration_delegates_to_the_current_detail_intent():
+    """A group response must never independently focus a closed detail."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     block = src.split("function focusGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    # Must NOT contain the interpolated pattern
-    assert (
-        "querySelector" not in block
-        or "'select[aria-label=\"Cycle group for ' + characterName" not in block
-    ), (
-        "focusGroupSelect still uses an interpolated CSS attribute selector; "
-        "character names with quotes or backslashes will break it"
-    )
-    # Must contain an iteration-based lookup
-    assert (
-        "querySelectorAll" in block
-        or "getElementsByTagName" in block
-        or "Array.from" in block
-        or ".getAttribute" in block
-        or "forEach" in block
-    ), (
-        "focusGroupSelect does not appear to iterate and compare aria-label; "
-        "it must use a safe escaping-independent lookup"
-    )
+    assert "detailFocusIntent.name !== characterName" in block
+    assert "restoreDetailFocus()" in block
+    assert "querySelector" not in block
 
 
 def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():

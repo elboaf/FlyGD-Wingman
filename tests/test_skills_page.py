@@ -432,6 +432,23 @@ def test_pending_copy_completion_is_invalidated_when_the_plan_changes():
     )
 
 
+def test_reloading_plans_invalidates_copy_attempts_even_when_name_survives():
+    """Reload is authoritative even when its replacement keeps the same name."""
+    reload_handler = re.search(
+        r"WM\.el\('skills-reload-plans'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert reload_handler, "Reload plans handler is missing"
+    body = reload_handler.group(1)
+    assert "copyAttemptSeq += 1" in body, (
+        "reload must invalidate a pending copy even when selection name is unchanged"
+    )
+    assert "resetCopyStatus('')" in body, (
+        "reload must clear copy feedback with the invalidated attempt"
+    )
+
+
 # ---- round 5: the roster opens, and its numbers are scoped -------------
 
 # Whitespace-collapsed: the checklist is wrapped prose, so a sentence this

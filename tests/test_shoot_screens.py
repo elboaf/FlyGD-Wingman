@@ -508,8 +508,9 @@ def test_preview_group_stage_setup_scripts():
     narrow_script = scripts["settings-previews-narrow"]
     # The groups stage must scroll to reveal the Manage groups disclosure.
     assert groups_script is not None, "settings-previews-groups needs a setup script"
-    assert "scrollTop" in groups_script or "scrollHeight" in groups_script, (
-        "groups stage setup must scroll the pane"
+    assert "preview-group-manager" in groups_script
+    assert "scrollIntoView" in groups_script, (
+        "groups stage setup must scroll the real group manager into view"
     )
     # The narrow stage must scroll (not resize via window.resizeTo --
     # that is a no-op in WebView2; the viewport is set through CDP instead).
@@ -1280,31 +1281,46 @@ def test_narrow_stage_uses_the_exact_roster_heading_selector():
     assert selectors.count("#preview-roster-heading") == 1, selectors
 
 
-def test_narrow_stage_does_not_use_generic_first_select_selector():
-    """The settings-previews-narrow setup script must NOT target
-    '.preview-group-select' alone as the primary selector.
-
-    '.preview-group-select' matches the FIRST select in document order,
-    which is 'Aiga Otsolen' in the fixture — not the intended long-name
-    character whose ellipsis behaviour this stage captures.
-    """
+def test_narrow_stage_does_not_target_a_character_control():
+    """The floor stage frames the roster heading, never a first character control."""
     narrow_screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
-    # Reject a bare .preview-group-select querySelector without an [aria-label]
-    # (a refinement like .preview-group-select[aria-label=...] is fine, but
-    #  querySelector('.preview-group-select') is not)
+    # A bare first-match character selector would capture an arbitrary row
+    # rather than the stable roster heading.
     bare_first_match = re.search(
         r"querySelector\s*\(\s*['\"]\s*\.preview-group-select\s*['\"]\s*\)",
         script,
     )
     assert bare_first_match is None, (
-        "narrow stage setup script must NOT use querySelector('.preview-group-select') "
-        "-- it selects the first row (Aiga Otsolen), not the intended long-name character. "
-        "Use the full aria-label attribute selector instead."
+        "narrow stage setup script must not target a character control; "
+        "it must frame #preview-roster-heading."
     )
+
+
+def test_fixture_stages_fail_closed_when_required_controls_are_missing():
+    """Fixture stages must never capture live state or an incomplete target."""
+    scripts = {
+        key: shoot.screen_setup_script(next(s for s in shoot.SCREENS if s.key == key))
+        for key in (
+            "settings-previews-detail",
+            "settings-previews-copy",
+            "settings-previews-groups",
+            "settings-previews-narrow",
+        )
+    }
+    for key, script in scripts.items():
+        assert script is not None
+        assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
+        assert "throw new Error" in script, key
+    for key in ("settings-previews-detail", "settings-previews-copy"):
+        assert "Configure control" in scripts[key]
+        assert "detail" in scripts[key]
+    assert "Copy control" in scripts["settings-previews-copy"]
+    assert "group manager" in scripts["settings-previews-groups"]
+    assert "roster heading" in scripts["settings-previews-narrow"]
 
 
 class _FailOnceCDP(_OrderedCDP):

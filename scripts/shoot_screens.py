@@ -230,11 +230,9 @@ def screen_setup_script(screen: Screen) -> str | None:
           if (pane) { pane.scrollTop = pane.scrollHeight; }
         }())"""
     if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
-        # The page's read-side hotkey handler is safe to use against a live
-        # install: it only replaces page state, never writes the user's
-        # settings. Opening the real Configure control keeps this shot coupled
-        # to the detail the user actually reaches rather than a hand-built
-        # overlay.
+        # Inject only the authoritative fixture, then drive the same Configure
+        # and Copy controls a user reaches. Every required step fails closed:
+        # a live-state or half-staged capture is misleading evidence.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
         long_name = "Aleksandrina Shadowbanes Voidstriders"
@@ -243,12 +241,16 @@ def screen_setup_script(screen: Screen) -> str | None:
             copy_click = (
                 "  var copy = document.querySelector(\n"
                 "    '[data-preview-detail-control=\"copy\"]');\n"
-                "  if (copy) { copy.click(); }\n"
+                "  if (!copy) { throw new Error('Copy control is missing'); }\n"
+                "  copy.click();\n"
             )
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
-            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
             "  var expanded = document.querySelectorAll(\n"
             "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
             "  Array.prototype.forEach.call(expanded, function (button) {\n"
@@ -256,61 +258,53 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  });\n"
             "  var configure = document.querySelector(\n"
             "    '[data-preview-configure=\"" + long_name + "\"]');\n"
-            "  if (configure) {\n"
-            "    var detailId = configure.getAttribute('aria-controls');\n"
-            "    configure.click();\n"
-            "    var detail = document.getElementById(detailId);\n"
-            "    if (detail) {\n"
-            "      detail.scrollIntoView({block: 'center', behavior: 'instant'});\n"
-            "    }\n"
-            "  }\n" + copy_click + "}())"
+            "  if (!configure) { throw new Error('Configure control is missing'); }\n"
+            "  var detailId = configure.getAttribute('aria-controls');\n"
+            "  configure.click();\n"
+            "  var detail = document.getElementById(detailId);\n"
+            "  if (!detail) { throw new Error('Configure detail is missing'); }\n"
+            "  detail.scrollIntoView({block: 'center', behavior: 'instant'});\n"
+            + copy_click
+            + "}())"
         )
     if screen.key == "settings-previews-groups":
-        # Load the authoritative dev fixture via onPreviewHotkeys (read-only;
-        # never calls a write API) so the page shows deterministic group state
-        # regardless of what the real user's settings contain.
-        # Then scroll directly to .preview-group-manager (the Manage groups
-        # disclosure) rather than pane.scrollHeight (absolute bottom): the
-        # manager is rendered after the group keybind rows and before the
-        # character rows, so absolute-bottom scrolling does not guarantee it
-        # is in frame.
+        # Load the authoritative fixture through the read-side handler, then
+        # frame the real manager. Do not fall back to a live page or its bottom.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
-            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
-            "  var mgr = document.querySelector('.preview-group-manager');\n"
-            "  if (mgr) {\n"
-            "    mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
-            "  } else {\n"
-            "    var pane = document.querySelector('.settings-pane');\n"
-            "    if (pane) { pane.scrollTop = pane.scrollHeight; }\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
             "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var mgr = document.querySelector('.preview-group-manager');\n"
+            "  if (!mgr) { throw new Error('Preview group manager is missing'); }\n"
+            "  mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "}())"
         )
     if screen.key == "settings-previews-narrow":
-        # Load the authoritative fixture through the page's read-side handler
-        # after CDP has already pinned the viewport at 840x625 (walk() keeps
-        # that ordering and clears the override in finally). The preceding
-        # detail and Copy shots leave the detail open, so close every open
-        # Configure disclosure before framing the collapsed roster at the
-        # scrollport's top.
+        # CDP pins 840x625 before this fixture-backed setup. Close inherited
+        # details, then frame the generated roster heading; every missing
+        # prerequisite fails the shot instead of photographing live state.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
-            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
             "  var expanded = document.querySelectorAll(\n"
             "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
             "  Array.prototype.forEach.call(expanded, function (configure) {\n"
             "    configure.click();\n"
             "  });\n"
             "  var heading = document.querySelector('#preview-roster-heading');\n"
-            "  if (heading) {\n"
-            "    heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
-            "  }\n"
+            "  if (!heading) { throw new Error('Preview roster heading is missing'); }\n"
+            "  heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "}())"
         )
     return None

@@ -340,8 +340,10 @@
   });
 
   WM.el('skills-reload-plans').addEventListener('click', function () {
-    // A reload can change which plan names exist, so the cached details
-    // are no more trustworthy than after a plan switch.
+    // A reload can replace a plan without renaming it, so invalidate pending
+    // clipboard work as well as detail data before asking Python to reload.
+    copyAttemptSeq += 1;
+    resetCopyStatus('');
     details = {};
     pendingDetail = {};
     WM.send('skills_reload_plans');

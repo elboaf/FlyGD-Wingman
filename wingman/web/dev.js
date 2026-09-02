@@ -759,8 +759,7 @@
   //
   // Character assignments:
   //   Zuelo Parvi and Corvin Veles -- online, share a supported direct bind.
-  //   Aiga Otsolen      -- online, NOT excluded, NOT assigned (All-only for
-  //                        opted-in character -- distinct from excluded path).
+  //   Aiga Otsolen      -- online, NOT excluded, assigned to DPS.
   //   Tanuki Solette    -- offline, assigned to Logistics and conflicts with
   //                        All forward, so the local conflict copy renders.
   //   Aleksandrina ...  -- offline, assigned to DPS and Copy-enabled.
@@ -776,7 +775,7 @@
   //                          branch renders).
   //   Empty group (g-empty) -- zero members, no bind (zero-member UI path).
   //
-  // excluded[]: Sera only, while still assigned to Logistics. Aiga is All-only
+  // excluded[]: Sera only, while still assigned to Logistics. Zuelo is All-only
   // (non-excluded, unassigned), a different and independently-exercised state.
   //
   // Gesture strings use preview/gestures.py display() canonical form
@@ -791,8 +790,8 @@
   // registered.  Must stay in step with the bookmarks fixture.
   //
   // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) is load-bearing: the
-  // only row that exercises the ellipsis in the 150px name track, the title
-  // attribute fallback, and the offline tag width at the 840px viewport floor.
+  // only row that exercises ellipsis in the bounded name track and the title
+  // attribute fallback at the 840px viewport floor.
   var DEV_PREVIEW_HOTKEYS_FIXTURE = {
     "enabled": true,
     "hotkeys": {

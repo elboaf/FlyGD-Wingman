@@ -1630,19 +1630,11 @@ only ever checked by hand.
       except `Positions are remembered per character`, which
       `Reopen previews where you last put them` already says beside the
       switch that governs it.
-- [ ] **The Geometry column keeps the Size slot on a row that cannot be
-      sized.** Settings > Previews, character list, with a character that
-      has never been previewed (so `Size…` is unavailable) but has another
-      character to copy from. Expected: the em dash marks the empty Size
-      slot and `Copy…` follows it, instead of `Copy…` sliding into
-      `Size…`'s position as it did before. Measured at the 840 floor, that
-      shift drops from 55px to 34px — it does NOT fully align, because the
-      dash is 13px against `Size…`'s 46px and `.geometry-actions` is a flex
-      cell with no track of its own. Closing the last 34px means giving the
-      two controls real tracks in `#preview-binds`, which changes the
-      per-row cell count every guard in test_page_conventions.py derives
-      from makeRow; deliberately not done here. The dash also restores the
-      hover sentence explaining why a size cannot be set on that row.
+- [ ] **Saved geometry stays inside Configure.** Settings > Previews,
+      open **Configure** for a character that has never been previewed but
+      has another character to copy from. Expected: `Size…` is replaced by
+      an em dash with a hover explanation, and `Copy…` remains alongside it
+      in the detail. No collapsed-row Geometry cell remains.
 - [ ] **Two controls stop claiming a width they have no use for.**
       Settings > Previews. Expected: `Default preview size` is a short
       field (~12 characters), not a 586px box holding `480x300` — which
@@ -1712,15 +1704,15 @@ only ever checked by hand.
       failure WCAG 2.5.3 names.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
-      `Character`, `Preview`, `Keybind`, `Geometry` — sentence case, a step
+      `Character`, `Preview`, `Keybind`, `Configure` — sentence case, a step
       smaller and dimmer than the names below it — with one blank heading
       over the cell `Clear` and `Edit…` share. `Lock` and `Never minimize`
       name nothing here any more: both left the row for their own
       disclosures under the toggles they except, so the three CHECKBOX
       columns this heading row used to carry are down to one, `Preview`,
-      still a bare box with no word beside it. `Clear`, `Edit…` and
-      `Size…` and `Copy…` still carry their own words where available, and
-      should: they are verbs on controls, not the name of a column. `Clear` and
+      still a bare box with no word beside it. `Size…` and `Copy…` appear
+      only after opening Configure, where they remain verbs on controls,
+      not collapsed-row columns. `Clear` and
       `Edit…` have no heading for the same reason, and `Clear` is now
       ABSENT — not present and disabled — on a row with no chord to
       clear, sharing its cell with `Edit…`, right-aligned so `Edit…` sits
@@ -1763,8 +1755,8 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…`, `Size…` and `Copy…` where present — goes dim and
-      stops responding to clicks. The row's saved keybind stays legible on the inert button;
+      `Clear`, `Edit…` and `Configure` — goes dim and stops responding to
+      clicks. The row's saved keybind stays legible on the inert button;
       it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
       **the character's box in the Lock block must read inert**, since
@@ -1802,20 +1794,17 @@ only ever checked by hand.
       happens.
 - [ ] **`Size…` is absent for a character that has never been dragged.**
       Settings > Previews with at least one character offline that has
-      never had its preview moved or resized. Expected: that row shows no
-      `Size…`. If another character has saved geometry, `Copy…` may occupy
-      the Geometry cell instead; if neither action can succeed, the cell
-      carries a dash and its tooltip says how to make a size settable.
-      The cell itself is never omitted: `#preview-binds` is a shared grid
-      and every row must still contribute one Geometry cell. Now drag that
-      character's preview once and reopen the section: `Size…` is there.
+      never had its preview moved or resized. Open that row's **Configure**
+      detail. Expected: it shows no `Size…`; if another character has saved
+      geometry, `Copy…` is available beside the explanatory dash. Now drag
+      that character's preview once and reopen Configure: `Size…` is there.
       Running clients always have it. The point is that
       `set_preview_size` refuses a character with no layouts entry, and a
       layouts entry is written on a drag or resize rather than merely on
       discovery.
 - [ ] **Copy geometry offers only usable sources.** Give at least three
-      characters saved layouts, leave one online and one offline, and open
-      `Copy…` on a different target. Expected: the app-owned picker groups
+      characters saved layouts, leave one online and one offline, open the
+      target's **Configure** detail, then open `Copy…`. Expected: the app-owned picker groups
       sources under visible `Online` and `Offline` labels, excludes the
       target, and offers no character without a full saved rectangle. The
       selector owns initial focus, Tab stays inside the picker, Escape cancels,
@@ -1841,18 +1830,11 @@ only ever checked by hand.
       leaving Previews disarms capture as before.
 - [ ] **The row still fits at the window's floor.** Settings > Previews at
       the smallest the window will go (840x625). Expected: every row ends
-      inside the card with a gap after `Copy…`, `Size…`, or the trailing
-      `Edit…` on a row with neither, and nothing is clipped. Grid tracks do not
-      wrap, so an overflow here is a cut-off control at every width, not a
-      reflow — a seven-track version of this row once measured 608.41px
-      against the same 586px card interior, which is why the opt-out
-      label was the single word `Off` rather than a phrase on the first
-      draft. **That constraint stayed retired, and shrank further:** Lock
-      and Never minimize have since left the row for their own
-      disclosures, taking their per-row labels and cells with them.
-      Measured after that move: 519.25px of the same 586px. This change
-      keeps the same column count and adds a second action inside Geometry;
-      re-measure both actions here rather than trusting the old figure.
+      inside the card after the trailing `Configure` or `Edit…` control,
+      and nothing is clipped. Grid tracks do not wrap, so an overflow here
+      is a cut-off control at every width, not a reflow. Open Configure on
+      several rows and confirm its full-grid detail returns the same way:
+      Size and Copy must never widen or add a collapsed roster column.
 - [ ] **The two global defaults are reachable and take effect.** Settings >
       Previews, below `Keep previews the same shape as their client`.
       - `Default preview size` shows the current pair and commits on

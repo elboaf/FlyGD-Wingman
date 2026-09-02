@@ -739,12 +739,11 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
     assert numeric and re.search(r"order:\s*-1", numeric.group(1))
 
 
-def test_sort_headers_are_keyboard_buttons_with_current_sort_state():
-    """A span keeps the shared grid geometry, but it must expose the same
-    sort control to keyboard and assistive-technology users as to a mouse.
+def test_sort_headers_are_keyboard_column_headers_with_current_sort_state():
+    """A span keeps the shared grid geometry while exposing sortable columns.
 
-    This fails if a header loses its button semantics, if Enter/Space follows
-    another code path from click, or if the active direction is not exposed.
+    This fails if a header loses valid column-header semantics, if Enter/Space
+    follows another code path from click, or if the active direction is not exposed.
     """
     header = HTML[
         HTML.index('id="list-head"') : HTML.index(
@@ -754,7 +753,7 @@ def test_sort_headers_are_keyboard_buttons_with_current_sort_state():
     controls = re.findall(r'<span\b[^>]*data-sort="[^"]+"[^>]*>', header)
     assert len(controls) == len(COLUMNS)
     for control in controls:
-        assert 'role="button"' in control
+        assert 'role="columnheader"' in control
         assert 'tabindex="0"' in control
         assert 'aria-sort="none"' in control
 

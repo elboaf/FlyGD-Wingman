@@ -42,9 +42,9 @@
              is a sort control, and a box in the header position reads as a
              select-all checkbox this column does not offer. -->
         <span class="c-check" data-sort="checked" title="Sort by selected"
-              role="button" tabindex="0" aria-sort="none">&#10003;</span>
+              role="columnheader" tabindex="0" aria-sort="none">&#10003;</span>
         <span class="c-name" data-sort="filename"
-              role="button" tabindex="0" aria-sort="none">Filename</span>
+              role="columnheader" tabindex="0" aria-sort="none">Filename</span>
         <!-- "Age", not "Modified" (round 3's finding 8 dropped this column;
              it is back by request, and the heading is deliberately not the
              one that left).
@@ -77,13 +77,13 @@
              sort would put "Aug" before "Dec" and "2 days ago" before
              "3h ago". -->
         <span class="c-date" data-sort="date"
-              role="button" tabindex="0" aria-sort="none">Age</span>
+              role="columnheader" tabindex="0" aria-sort="none">Age</span>
         <span class="c-size" data-sort="size"
-              role="button" tabindex="0" aria-sort="none">Size</span>
+              role="columnheader" tabindex="0" aria-sort="none">Size</span>
         <span class="c-len" data-sort="duration"
-              role="button" tabindex="0" aria-sort="none">Length</span>
+              role="columnheader" tabindex="0" aria-sort="none">Length</span>
         <span class="c-link" data-sort="link" title="Sort by uploaded"
-              role="button" tabindex="0" aria-sort="none">Link</span>
+              role="columnheader" tabindex="0" aria-sort="none">Link</span>
       </div>
 
       <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
@@ -986,7 +986,7 @@
       </section>
 
       <section class="card">
-        <h2 id="preview-roster-heading" tabindex="-1">Global keybinds</h2>
+        <h2>Global keybinds</h2>
         <!-- THE precedence statement, and after round 5's C5 the only
              one. Round 3's R4 finding 4 put the same rule in the same
              words under Bookmarks as well, deliberately: each screen used

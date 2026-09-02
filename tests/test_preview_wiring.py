@@ -2893,6 +2893,37 @@ def test_delete_refusal_always_alerts_user():
     )
 
 
+def test_detail_focus_restoration_is_scoped_to_the_current_interaction():
+    """A late Copy or group reply cannot steal focus after another detail opens."""
+    js = _web("previews.js")
+    assert "var detailInteraction = 0;" in js
+
+    restore = js.split("function restoreDetailFocus", 1)[1].split("\n  function ", 1)[0]
+    assert "intent.interaction !== detailInteraction" in restore
+    assert "focusRosterHeading" not in restore
+
+    copy = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "interaction !== detailInteraction" in copy
+    assert "openDetailName !== name" in copy
+
+
+def test_closing_or_leaving_previews_invalidates_pending_detail_focus():
+    """A response after a closed detail or section leave has no focus side effect."""
+    js = _web("previews.js")
+    configure = js.split("configure.addEventListener('click'", 1)[1].split(
+        "requestRender();", 1
+    )[0]
+    assert "detailInteraction += 1;" in configure
+
+    section = js.split("document.addEventListener('wm:section'", 1)[1].split(
+        "\n  refresh();", 1
+    )[0]
+    assert "detailInteraction += 1;" in section
+    assert "detailFocusIntent = null;" in section
+
+
 def test_add_refusal_restores_focus_after_requestrender():
     """doAdd's refusal branch must call focusGroupManager() after requestRender()
     so keyboard focus reaches the newly attached Add field.

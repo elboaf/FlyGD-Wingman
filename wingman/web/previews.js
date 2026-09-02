@@ -52,6 +52,9 @@
   // A contained control is replaced by a render after its mutation. Keep its
   // identity long enough to focus the recreated detail, never a detached node.
   var detailFocusIntent = null;
+  // Every Configure interaction supersedes pending detail work. A late bridge
+  // response must not pull focus back after the user opens or closes a detail.
+  var detailInteraction = 0;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -251,21 +254,17 @@
     // renderNeverMinimizeBlock (does not) for where that asymmetry is
     // expressed now that both live in their own disclosures, not this row.
     //
-    // The NAME is deliberately not dimmed either. `.dim` on a .lab already
-    // means "not logged in" -- the `.off-tag` word this function appends
-    // beside the name says so in those words -- and borrowing it for a
-    // second meaning would make that word false for every opted-out
-    // character who is in fact online. (This used to cite the group note
-    // above the list, which said the same thing in one place until the
-    // word moved onto the rows themselves.) The inert controls and the
-    // unticked Preview box carry the state instead.
+    // The NAME is deliberately not dimmed either. `.dim` on a .lab means
+    // "not logged in", now named once by the sticky Offline heading.
+    // Borrowing it for opt-out would make that state false for every opted-
+    // out character who is in fact online. The inert controls and unticked
+    // Preview box carry the distinct opt-out state instead.
     var off = !!(character && isExcluded(character));
 
     // Track 1 of every row. A cycle row gets a filler rather than a box:
     // cycle forward/back are app commands, not characters, and there is
-    // nothing to opt them out of. One appendChild rather than an if/else
-    // pair so this row contributes the same cell count either way -- see
-    // the note on the filler branch at the bottom of this function.
+    // nothing to opt them out of. The ternary keeps the collapsed shape
+    // unconditional without a separate character/cycle branch.
     row.appendChild(character ? makeExcludedCheck(character)
                               : document.createElement('span'));
 
@@ -413,6 +412,8 @@
       configure.setAttribute('data-preview-configure', character);
       configure.addEventListener('click', function () {
         endCapture();
+        detailInteraction += 1;
+        detailFocusIntent = null;
         openDetailName = openDetailName === character ? null : character;
         requestRender();
         var detail = document.getElementById(detailId(character));
@@ -422,70 +423,10 @@
     }
     row.appendChild(configure || document.createElement('span'));
 
-    // All forward/back have no `character` -- they are chords, not
-    // characters, and Never-minimize means nothing for them. #preview-binds
-    // is a CSS grid with `.row { display: contents }` (style.css), so
-    // every row must contribute the same number of cells or a short row's
-    // children bleed into the next row's columns.
-    //
-    // Round 5, C3 and decision D6 introduced a Never-minimize cell here
-    // that existed only while the global "Minimize a client's window..."
-    // toggle was ON -- built for every character and then DISABLED
-    // whenever the global was off, which is the default, so the ordinary
-    // state of this screen was ~13 permanently dead controls, one per
-    // character, each carrying a tooltip explaining why it could not be
-    // used. That made the cell count vary across renders (one template
-    // for each toggle state, kept in sync by hand as `#preview-binds` /
-    // `#preview-binds.no-nm`), which is what this task retired: the cell
-    // and the toggling both left `makeRow`, and D6's reasoning -- a
-    // control must not render at all in a state where it can do nothing
-    // -- now governs whether renderNeverMinimizeBlock's whole disclosure
-    // is `hidden`, not a per-row cell.
-    //
-    // The `if` below is deliberately EMPTY -- comments only, no
-    // statements. It used to build the Never-minimize cell for a real
-    // character. That cell is gone from BOTH branches now, so nothing
-    // here stands in for it and nothing should: the one filler left in
-    // the `else` stands in for Size..., on the cycle forward/back rows
-    // that have no character, exactly as the comment there says. That is
-    // what keeps the two branches' cell counts equal.
-    // Nothing here needs collapsing to `if (!character)`: the `} else {`
-    // shape is what test_the_previews_grid_has_one_track_per_cell_makeRow_appends
-    // splits the function body on to find both halves, and the surviving
-    // prose below is the record of what this branch used to build, kept
-    // so the next person does not read an empty block as dead code and
-    // delete it along with the guard it satisfies.
-    if (character) {
-      // NOT passed `off`, unlike every other control on the row -- true
-      // of makeNeverMinimizeCheck's call site now, same reasoning as
-      // always. Opting a character out stops their PREVIEW; it does not
-      // stop minimize_inactive_clients, because _activate_client resolves
-      // `previous_key` from PreviewHost._clients -- which deliberately
-      // still holds opted-out characters -- and so still consults
-      // _is_never_minimize when switching away from that character's real
-      // EVE window. Greying this box would leave a setting in force with
-      // no control to change it, which is the same shape as the roster
-      // eviction LayoutStore._protected exists to prevent.
-      //
-      // Lock and Never minimize used to sit here too, both gated on `off`
-      // for Lock's part -- the asymmetry was the point: with no window
-      // there is nothing to lock, but minimize_inactive_clients still
-      // applies to an opted-out character's real EVE window. Both have
-      // since left the row for their own disclosures under their global
-      // toggles (renderLockBlock, renderNeverMinimizeBlock); Lock's still
-      // passes each character's opted-out state, Never minimize's does
-      // not, for the same reason this comment used to give.
-    } else {
-      // One filler, standing in for Size… on the cycle-forward/back rows,
-      // which have no character and so no Size control either. A constant
-      // absence here would be wrong the moment a future cell joins Size…
-      // in the character branch; matching it one for one is what keeps
-      // the two branches' counts equal without restating the number.
-      //
-      // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
-      // the ternary at the top of this function, which runs for both kinds
-      // of row.
-    }
+    // The collapsed row has one unconditional five-cell shape. Character-
+    // specific group and geometry controls live in the full-grid detail;
+    // cycle rows use the fillers already selected by the two ternaries above.
+    // Keeping the shape branch-free makes the shared-grid invariant explicit.
     return row;
   }
 
@@ -516,7 +457,9 @@
   }
 
   function rememberDetailFocus(characterName, control) {
-    detailFocusIntent = {name: characterName, control: control};
+    detailFocusIntent = {
+      name: characterName, control: control, interaction: detailInteraction
+    };
   }
 
   function clearDetailFocus(characterName, control) {
@@ -559,11 +502,10 @@
     if (!detailFocusIntent || groupBusy) { return; }
     var intent = detailFocusIntent;
     detailFocusIntent = null;
-    if (openDetailName === intent.name) {
-      focusCharacterDetailControl(intent.name, intent.control);
-    } else {
-      focusRosterHeading();
+    if (intent.interaction !== detailInteraction || openDetailName !== intent.name) {
+      return;
     }
+    focusCharacterDetailControl(intent.name, intent.control);
   }
 
   // Follows the same shape as the Edit… path: disarm, prompt, send the raw
@@ -618,19 +560,17 @@
     });
   }
 
-  function focusCopyTarget(name) {
-    focusCharacterDetailControl(name, 'copy');
-  }
-
-  // Install the intent only in refresh's authoritative-payload path. A
-  // dialog cancellation or bridge failure cannot then leave it for an
-  // unrelated hotkey push to consume.
-  function restoreCopyFocusAfterRefresh(name) {
-    refresh(function () { rememberDetailFocus(name, 'copy'); })
-      .then(function () {
-        clearDetailFocus(name, 'copy');
-        focusCopyTarget(name);
-      });
+  // Install the intent only in refresh's authoritative-payload path, and
+  // only while the detail that began Copy is still the current interaction.
+  // A cancellation, section leave, or different Configure click cannot then
+  // let a late refresh steal focus from the user's newer destination.
+  function restoreCopyFocusAfterRefresh(name, interaction) {
+    if (interaction !== detailInteraction || openDetailName !== name) { return; }
+    refresh(function () {
+      if (interaction === detailInteraction && openDetailName === name) {
+        rememberDetailFocus(name, 'copy');
+      }
+    });
   }
 
   function copyStatus(text, error) {
@@ -648,6 +588,7 @@
     WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
       endCapture();
+      var interaction = detailInteraction;
       copyStatus('', false);
       var sources = copySources(name);
       var groups = [
@@ -675,11 +616,11 @@
             copyStatus(result && result.error
                        ? result.error
                        : 'That preview placement could not be copied.', true);
-            restoreCopyFocusAfterRefresh(name);
+            restoreCopyFocusAfterRefresh(name, interaction);
             return;
           }
           copyStatus('Copied ' + source + '’s geometry to ' + name + '.', false);
-          restoreCopyFocusAfterRefresh(name);
+          restoreCopyFocusAfterRefresh(name, interaction);
         });
       });
     });
@@ -688,17 +629,9 @@
 
   function makeGeometryActions(name, off) {
     var actions = WM.make('span', 'geometry-actions');
-    // The filler goes in whenever Size... does NOT, not only when the cell
-    // would otherwise be empty. With Copy... present and Size... absent the
-    // old shape appended one control that took Size...'s position, so a
-    // single un-sizable character silently moved Copy... one column left
-    // while every row around it kept the pair -- a ragged edge in the one
-    // column of this table that is read by scanning down it.
-    //
-    // The dash still means what it says for this row: a size cannot be set
-    // until the preview exists. That is true whether or not the row also
-    // has something to copy from, which is why the same filler serves both
-    // cases rather than needing a second, quieter one.
+    // The filler goes in whenever Size… does not. Copy… and Size… share a
+    // detail field, so the dash keeps Copy from becoming an unexplained lone
+    // action while preserving the guidance that a size needs a preview first.
     if (isSizable(name)) {
       actions.appendChild(makeSizeButton(name, off));
     } else {
@@ -1075,11 +1008,9 @@
   }
 
   function makeSizeFiller() {
-    // Holds the Size column open for a character that cannot be sized,
-    // and says why on hover rather than being a blank cell the reader has
-    // no account of. Before the gate, clicking Size... here produced the
-    // refusal sentence that NAMED the way out; withdrawing the control
-    // without the sentence would take that away too.
+    // Keeps the Saved geometry detail action legible when Size… is unavailable,
+    // and says why on hover rather than leaving an unexplained blank control.
+    // Withdrawing Size… must not withdraw the guidance it formerly returned.
     //
     // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
     // grid and elementFromPoint at its centre returned null, so the title
@@ -1152,8 +1083,15 @@
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
     var cells = ['Character', 'Preview', 'Keybind', '', 'Configure'];
-    cells.forEach(function (text) {
-      row.appendChild(WM.make('span', '', text));
+    cells.forEach(function (text, index) {
+      var cell = WM.make('span', '', text);
+      if (index === 0) {
+        // The generated Character cell is the roster's stable focus fallback
+        // and the narrow screenshot anchor, not the static card heading.
+        cell.id = 'preview-roster-heading';
+        cell.setAttribute('tabindex', '-1');
+      }
+      row.appendChild(cell);
     });
     return row;
   }
@@ -1609,39 +1547,12 @@
     return sel;
   }
 
-  // Restore keyboard focus to the assignment select for `characterName`
-  // after a repaint that replaced its DOM node. Finds the replacement
-  // by aria-label (stable character identity). Falls back to the group
-  // manager's Add field, then any enabled interactive control in the
-  // Previews section.
+  // Restore only the still-current detail intent. `restoreDetailFocus` owns
+  // the interaction token check, preventing a late assignment reply from
+  // focusing a closed detail or any control after the section has changed.
   function focusGroupSelect(characterName) {
-    var detail = document.getElementById(detailId(characterName));
-    if (!detail) { focusRosterHeading(); return; }
-    var section = WM.el('section-previews');
-    if (!section) { return; }
-    // Iterate and compare aria-label directly: a CSS attribute-selector built
-    // by string interpolation breaks for character names that contain quotes
-    // or backslashes (they would need CSS escaping, which ES5 has no API for).
-    var selects = section.querySelectorAll('select.preview-group-select');
-    var target = null;
-    for (var i = 0; i < selects.length; i++) {
-      var s = selects[i];
-      if (s.getAttribute('aria-label') === 'Cycle group for ' + characterName
-          && !s.hidden && !s.disabled) {
-        target = s;
-        break;
-      }
-    }
-    if (target) { target.focus(); return; }
-    // Row may have disappeared (group removed); fall back to a stable control.
-    var addField = section.querySelector(
-      '.group-add-name:not([hidden]):not(:disabled)');
-    if (addField) { addField.focus(); return; }
-    var fallback = section.querySelector(
-      'button:not([hidden]):not(:disabled), '
-      + 'input:not([hidden]):not(:disabled), '
-      + 'select:not([hidden]):not(:disabled)');
-    if (fallback) { fallback.focus(); }
+    if (!detailFocusIntent || detailFocusIntent.name !== characterName) { return; }
+    restoreDetailFocus();
   }
 
   // Rename a named group. Called from the management disclosure. Ends the
@@ -2044,6 +1955,9 @@
       refresh();
       return;
     }
+    // A response after navigation must not move focus into a hidden section.
+    detailInteraction += 1;
+    detailFocusIntent = null;
     // Leaving must disarm an in-progress capture. bookmarks.js installs
     // its own document-level keydown listener too; stopPropagation() only
     // stops OTHER listeners further along the same dispatch, not a sibling
