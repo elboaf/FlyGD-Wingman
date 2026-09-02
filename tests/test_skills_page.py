@@ -674,3 +674,21 @@ def test_no_two_functions_in_skills_js_share_a_name():
     duplicates = sorted({n for n in names if names.count(n) > 1})
 
     assert not duplicates, f"duplicate function declarations: {duplicates}"
+
+
+def test_missing_plan_is_reported_only_by_python():
+    """Python can diagnose a vanished plan; the page cannot add a second warning.
+
+    The page owns clipboard outcomes after it receives text. A falsey plan-text
+    result is instead Python's missing-plan warning, so rendering another local
+    no-plan message duplicates feedback for one failed action.
+    """
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler, "Copy plan handler is missing"
+    body = handler.group(1)
+    assert "if (!text) { return; }" in body
+    assert "The plan is no longer available." not in body

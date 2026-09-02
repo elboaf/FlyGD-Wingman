@@ -467,10 +467,9 @@
     // plans.parse rejects a file with no requirements.
     WM.send('skills_plan_text', name).then(function (text) {
       if (!copyAttemptIsCurrent(token, name)) return;
-      if (!text) {
-        setCopyStatus('The plan is no longer available. Reload plans and try again.', true);
-        return;
-      }
+      // Python owns the missing-plan warning: it knows this listed plan
+      // vanished during a reload, while the page only owns clipboard results.
+      if (!text) { return; }
       try {
         navigator.clipboard.writeText(text).then(function () {
           if (!copyAttemptIsCurrent(token, name)) return;

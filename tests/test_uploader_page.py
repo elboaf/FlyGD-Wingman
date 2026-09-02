@@ -764,7 +764,8 @@ def test_sort_headers_are_keyboard_buttons_with_current_sort_direction():
     assert "sortDesc = (key === sortKey) ? !sortDesc : false;" in helper.group(1)
     assert "sortKey = key;" in helper.group(1)
     assert "render();" in helper.group(1)
-    assert LIST_JS.count("sortBy(head.dataset.sort)") == 2
+    # Mouse, Enter, and Space all reach the one client-side sort helper.
+    assert LIST_JS.count("sortBy(head.dataset.sort)") == 3
 
     keydown = re.search(
         r"WM\.el\('list-head'\)\.addEventListener\('keydown', function \(ev\) \{(.*?)\n  \}\);",
@@ -774,7 +775,20 @@ def test_sort_headers_are_keyboard_buttons_with_current_sort_direction():
     assert keydown, "sort headers need a keyboard activation handler"
     assert "ev.key === 'Enter'" in keydown.group(1)
     assert "ev.key === ' '" in keydown.group(1)
+    # Holding Space repeats keydown. It must suppress scrolling here but
+    # defer activation until the single keyup.
+    assert keydown.group(1).count("sortBy(head.dataset.sort)") == 1
     assert "ev.preventDefault();" in keydown.group(1)
+
+    keyup = re.search(
+        r"WM\.el\('list-head'\)\.addEventListener\('keyup', function \(ev\) \{(.*?)\n  \}\);",
+        LIST_JS,
+        re.DOTALL,
+    )
+    assert keyup, "Space activation needs a keyup handler"
+    assert "ev.key !== ' '" in keyup.group(1)
+    assert "ev.key !== 'Spacebar'" in keyup.group(1)
+    assert "sortBy(head.dataset.sort)" in keyup.group(1)
 
     render = re.search(r"function render\(\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
     assert render, "render() owns the dynamic header state"

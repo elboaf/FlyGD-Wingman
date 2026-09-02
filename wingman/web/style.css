@@ -2533,6 +2533,10 @@ button.btn:disabled,
 .preview-character-detail {
   grid-column: 1 / -1;
   display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px;
+  /* One sticky table header plus one sticky group header can cover this
+     disclosure after Configure scrolls it into view. Their shared measured
+     height is defined by the table, so this clearance follows it. */
+  scroll-margin-top: calc(var(--preview-bind-head-height) * 2);
   padding: 5px 0 7px;
   border-top: 1px solid var(--field-border);
 }

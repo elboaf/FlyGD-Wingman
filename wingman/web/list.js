@@ -345,12 +345,23 @@
   });
 
   WM.el('list-head').addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
-      var head = ev.target.closest('[data-sort]');
-      if (!head) return;
+    var head = ev.target.closest('[data-sort]');
+    if (!head) return;
+    if (ev.key === 'Enter') {
       ev.preventDefault();
       sortBy(head.dataset.sort);
+      return;
     }
+    // A held Space repeats keydown. Suppress its native page scroll here,
+    // then activate once from keyup, matching ARIA button behavior.
+    if (ev.key === ' ' || ev.key === 'Spacebar') { ev.preventDefault(); }
+  });
+
+  WM.el('list-head').addEventListener('keyup', function (ev) {
+    if (ev.key !== ' ' && ev.key !== 'Spacebar') return;
+    var head = ev.target.closest('[data-sort]');
+    if (!head) return;
+    sortBy(head.dataset.sort);
   });
 
   var body = WM.el('list-body');

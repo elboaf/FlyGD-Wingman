@@ -210,25 +210,39 @@ def load_dev_preview_fixture(checkout: str | None = None) -> dict:
         ) from exc
 
 
+def _fixture_preview_setup(body: str) -> str:
+    """Run a Preview capture against the one extracted, read-only fixture."""
+    payload_js = json.dumps(load_dev_preview_fixture())
+    return (
+        "(function () {\n"
+        "  var payload = " + payload_js + ";\n"
+        "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+        "    throw new Error('onPreviewHotkeys is missing');\n"
+        "  }\n"
+        "  window.onPreviewHotkeys(payload);\n" + body + "\n}())"
+    )
+
+
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
     if screen.key == "settings-previews":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = 0; }
-        }())"""
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = 0;"
+        )
     if screen.key == "settings-previews-middle":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) {
-            pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
-          }
-        }())"""
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;"
+        )
     if screen.key == "settings-previews-table":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = pane.scrollHeight; }
-        }())"""
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = pane.scrollHeight;"
+        )
     if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
         # Inject only the authoritative fixture, then drive the same Configure
         # and Copy controls a user reaches. Every required step fails closed:
@@ -285,6 +299,15 @@ def screen_setup_script(screen: Screen) -> str | None:
             "    throw new Error('onPreviewHotkeys is missing');\n"
             "  }\n"
             "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (configure) {\n"
+            "    configure.click();\n"
+            "  });\n"
+            "  if (document.querySelector(\n"
+            "      '[data-preview-configure][aria-expanded=\"true\"]')) {\n"
+            "    throw new Error('No preview detail was closed');\n"
+            "  }\n"
             "  var mgr = document.querySelector('.preview-group-manager');\n"
             "  if (!mgr) { throw new Error('Preview group manager is missing'); }\n"
             "  mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"

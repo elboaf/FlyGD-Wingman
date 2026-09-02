@@ -220,9 +220,10 @@ somewhere stale and nothing on that screen is worth reviewing.
 ## Look and feel
 
 - [ ] **The screenshot shooter produces a complete set.** Run
-      `scripts/shoot_screens.py` with Wingman idle. Expected: `17/17 screens`
-      (or a `4/17` plus an explicit "EVE gate off, skipped:" line and thirteen
-      EVE-gated screens skipped), every PNG showing populated content,
+      `scripts/shoot_screens.py` with Wingman idle. Expected: every planned
+      screen for the current EVE-gate state is captured (or every non-EVE screen
+      plus an explicit "EVE gate off, skipped:" line naming every EVE-gated
+      screen), every PNG showing populated content,
       `manifest.json` naming the checkout you meant to shoot, and the
       previously-running Wingman restored. The Previews captures cover its
       top, middle, bottom, open Configure detail, Copy picker, groups, and
@@ -2464,8 +2465,10 @@ pytest.
 - [ ] **The screenshot set does not replace interaction checks.** In Settings
       > Previews, open Configure for an online and an offline character, then
       close it. Focus stays on that row's Configure button on both actions;
-      opening a second detail closes the first. Change a Cycle group or Copy a
-      saved placement, let the refresh repaint, and confirm focus returns to
+      opening a second detail closes the first. On an opted-out row, Clear and
+      Edit… may be disabled, but Configure stays live: open it and confirm the
+      saved Cycle group and geometry controls remain reachable for re-enable.
+      Change a Cycle group or Copy a saved placement, let the refresh repaint, and confirm focus returns to
       the contained control rather than the page body. Restart Wingman and
       confirm the saved group assignment and copied placement persist. These
       focus and persistence paths are intentionally not staged by the

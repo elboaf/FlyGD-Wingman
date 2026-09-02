@@ -168,7 +168,10 @@
     return owners;
   }
 
-  function makeBindConflict(label, gesture, character) {
+  function makeBindConflict(label, gesture, character, off) {
+    // An opted-out character owns no preview registration. Its retained bind
+    // is deliberately visible on the row, but it cannot conflict locally.
+    if (off) { return null; }
     var clash = clashes(gesture);
     var bookmark = bookmarkClash(gesture);
     // Read the registration payload here rather than infer Windows state from
@@ -194,8 +197,6 @@
       text = gesture + ' is already owned by another application.';
     } else if (bookmark === 'active') {
       text = gesture + ' conflicts with an active EVE bookmark keybind.';
-    } else if (bookmark === 'latent') {
-      text = gesture + ' is also configured for an EVE bookmark keybind. Enabling bookmarks makes them collide.';
     }
     return text ? WM.make('div', 'preview-bind-conflict', text) : null;
   }
@@ -1057,9 +1058,8 @@
   // own and into a fixed track, which is what `Character` names. So this
   // header now names a fixed five tracks, not a conditional six or seven.
   // `Clear` and `Edit...` share one cell now (`.rowacts`, built in
-  // makeRow) rather than a track each, and `Size...` keeps its own word --
-  // they are verbs on a control, not the name of a column, so none of
-  // them were ever in that count.
+  // makeRow). `Size...` lives in the expanded Saved geometry detail; all
+  // three are verbs on controls, not names of collapsed-row columns.
   //
   // The width that bought is not per-row. Each column is ONE shared
   // max-content track, so the longest text in a column sizes it for the
@@ -1237,7 +1237,7 @@
     if (character && openDetailName === character) {
       host.appendChild(makeCharacterDetail(character, isExcluded(character)));
     }
-    var conflict = makeBindConflict(label, gesture, character);
+    var conflict = makeBindConflict(label, gesture, character, isExcluded(character));
     if (conflict) { host.appendChild(conflict); }
   }
 

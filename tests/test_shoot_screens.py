@@ -7,6 +7,7 @@ the same split bookmarks.py/hotkeys.py already uses.
 """
 
 import importlib.util
+import json
 import pathlib
 import re
 
@@ -1418,3 +1419,57 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
         f"post-set ops: {post_set!r}\n"
         "Ensure the screenshot call is inside the try block, not after the finally."
     )
+
+
+# ---------------------------------------------------------------------------
+# Final review: deterministic, read-only Preview capture setups
+# ---------------------------------------------------------------------------
+
+
+def _preview_capture_scripts():
+    """Every Preview stage in SCREENS, including later additions."""
+    return {
+        screen.key: shoot.screen_setup_script(screen)
+        for screen in shoot.SCREENS
+        if screen.key.startswith("settings-previews")
+    }
+
+
+def test_every_preview_capture_uses_the_authoritative_read_only_fixture():
+    """Adjacent Preview shots need one deterministic roster without writes."""
+    scripts = _preview_capture_scripts()
+    fixture = shoot.load_dev_preview_fixture()
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    )
+
+    for key, script in scripts.items():
+        assert script is not None, f"{key} needs deterministic setup"
+        assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
+        assert "window.onPreviewHotkeys(payload);" in script, key
+        assert "throw new Error" in script, key
+        match = re.search(r"var payload = (\{.*?\});", script, re.DOTALL)
+        assert match, f"{key} does not embed the authoritative fixture"
+        assert json.loads(match.group(1)) == fixture
+        for writer in writers:
+            assert writer not in script, f"{key} must not call {writer}"
+
+
+def test_groups_stage_closes_inherited_detail_before_framing_management():
+    """The group capture must not inherit the preceding Configure disclosure."""
+    script = _preview_capture_scripts()["settings-previews-groups"]
+    assert script is not None
+    expanded = '[data-preview-configure][aria-expanded="true"]'
+    assert expanded in script
+    assert "No preview detail was closed" in script
+    assert script.index(expanded) < script.index(".preview-group-manager")

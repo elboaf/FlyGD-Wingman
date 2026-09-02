@@ -2080,7 +2080,9 @@ def test_local_bind_conflict_copy_uses_authoritative_collision_state():
     ):
         assert source in block
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
-    assert "makeBindConflict(label, gesture, character)" in append
+    assert (
+        "makeBindConflict(label, gesture, character, isExcluded(character))" in append
+    )
 
 
 def test_manage_groups_disclosure_has_add_rename_delete():
@@ -3030,4 +3032,44 @@ def test_add_refusal_restores_focus_after_requestrender():
     assert last_focus > last_rr, (
         "focusGroupManager() in doAdd refusal path must appear after "
         "requestRender(), not before, so it targets the newly attached node."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final review: local conflicts and sticky detail clearance
+# ---------------------------------------------------------------------------
+
+
+def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
+    """Only current, actionable registration conflicts get a red local error.
+
+    An opted-out character has no registered preview bind, and a latent
+    bookmark collision is merely a future configuration consequence. Both
+    remain visible on the bind button without being rendered as a conflict.
+    """
+    js = _web("previews.js")
+    assert "function makeBindConflict(label, gesture, character, off)" in js
+    conflict = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert "if (off) { return null; }" in conflict
+    assert "bookmark === 'latent'" not in conflict
+    # Refused registration and active bookmark ownership remain actionable.
+    assert "already owned by another application" in conflict
+    assert "conflicts with an active EVE bookmark keybind" in conflict
+
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert (
+        "makeBindConflict(label, gesture, character, isExcluded(character))" in append
+    )
+
+
+def test_preview_detail_reserves_both_sticky_header_heights_when_scrolled():
+    """An opened detail cannot be hidden under the table and group headers."""
+    css = _web("style.css")
+    detail = re.search(r"\.preview-character-detail\s*\{([^}]*)\}", css)
+    assert detail, "the preview character detail has no CSS rule"
+    assert (
+        "scroll-margin-top: calc(var(--preview-bind-head-height) * 2)"
+        in detail.group(1)
+    ), (
+        "the detail needs clearance for both sticky preview headers when it is scrolled into view"
     )
