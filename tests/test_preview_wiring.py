@@ -2722,3 +2722,185 @@ def test_do_add_restores_focus_to_add_field_after_successful_create():
         "focus call in doAdd success path must appear after requestRender, "
         "not before, so it targets the newly attached Add field"
     )
+
+
+# ---------------------------------------------------------------------------
+# Final fix wave 3: unconditional user feedback in all four refusal branches
+# and focusGroupManager() in doAdd refusal after requestRender().
+# ---------------------------------------------------------------------------
+
+
+def _extract_refusal_content(then_body):
+    """Return the text of the first `if (!res || !res.applied)` block."""
+    idx = then_body.find("if (!res || !res.applied)")
+    if idx == -1:
+        return None
+    block = then_body[idx:]
+    ret = block.find("return;")
+    if ret == -1:
+        return block
+    return block[: ret + len("return;")]
+
+
+def test_assignment_refusal_always_alerts_user():
+    """makeGroupSelect's refusal branch must call WM.send('alert_bookmarks')
+    unconditionally -- showing res.error when available, or a shared fallback
+    message when res is null/malformed.  The conditional
+    `if (res && res.error)` pattern silently swallows failures that arrive
+    without a structured error payload (network drop, server crash, bridge
+    timeout), leaving the user no indication that their assignment was not
+    saved.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js
+    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    refusal = _extract_refusal_content(then_body[1])
+    assert refusal is not None, "makeGroupSelect .then() has no refusal guard"
+    # Must contain an unconditional alert, not one guarded by `res && res.error`.
+    # Acceptable forms: ternary `res && res.error ? ... : 'fallback'`
+    # or two separate sends -- but the second must not be inside `if (res &&`.
+    has_unconditional = "alert_bookmarks" in refusal and (
+        # ternary pattern: alert present outside a conditional-only block
+        ("res && res.error" in refusal and "?" in refusal)
+        or (
+            # two separate alert sends OR fallback string present
+            "alert_bookmarks" in refusal
+            and "That group change was not saved" in refusal
+        )
+    )
+    assert has_unconditional, (
+        "makeGroupSelect refusal branch uses `if (res && res.error)` to gate "
+        "WM.send('alert_bookmarks'), so failures without a structured error "
+        "payload are silently swallowed. Replace with a ternary that always "
+        "sends -- e.g.: WM.send('alert_bookmarks', res && res.error "
+        "? res.error : 'That group change was not saved.')"
+    )
+
+
+def test_add_refusal_always_alerts_user():
+    """doAdd's refusal branch must call WM.send('alert_bookmarks') unconditionally.
+    When res is null (bridge timeout / crash) the user sees nothing today;
+    the fallback message must be shown instead.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    refusal = _extract_refusal_content(then_body)
+    assert refusal is not None, "doAdd .then() has no refusal guard"
+    has_unconditional = "alert_bookmarks" in refusal and (
+        ("res && res.error" in refusal and "?" in refusal)
+        or "That group change was not saved" in refusal
+    )
+    assert has_unconditional, (
+        "doAdd refusal branch does not unconditionally alert the user. "
+        "Replace the conditional send with a ternary: "
+        "WM.send('alert_bookmarks', res && res.error "
+        "? res.error : 'That group change was not saved.')"
+    )
+
+
+def test_rename_refusal_always_alerts_user():
+    """renameGroup's refusal branch must call WM.send('alert_bookmarks')
+    unconditionally -- ternary or equivalent, never guarded solely by
+    `if (res && res.error)`.
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "renameGroup has no .then() callback"
+    refusal = _extract_refusal_content(then_body[1])
+    assert refusal is not None, "renameGroup .then() has no refusal guard"
+    has_unconditional = "alert_bookmarks" in refusal and (
+        ("res && res.error" in refusal and "?" in refusal)
+        or "That group change was not saved" in refusal
+    )
+    assert has_unconditional, (
+        "renameGroup refusal branch uses a conditional send and silently "
+        "swallows null/malformed responses. Replace with a ternary that "
+        "always shows feedback -- e.g. res.error or the shared fallback."
+    )
+
+
+def test_delete_refusal_always_alerts_user():
+    """deleteGroup's refusal branch must call WM.send('alert_bookmarks')
+    unconditionally.
+    """
+    js = _web("previews.js")
+    assert "function deleteGroup" in js
+    block = js.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "deleteGroup has no .then() callback"
+    refusal = _extract_refusal_content(then_body[1])
+    assert refusal is not None, "deleteGroup .then() has no refusal guard"
+    has_unconditional = "alert_bookmarks" in refusal and (
+        ("res && res.error" in refusal and "?" in refusal)
+        or "That group change was not saved" in refusal
+    )
+    assert has_unconditional, (
+        "deleteGroup refusal branch uses a conditional send and silently "
+        "swallows null/malformed responses. Replace with a ternary that "
+        "always shows feedback."
+    )
+
+
+def test_add_refusal_restores_focus_after_requestrender():
+    """doAdd's refusal branch must call focusGroupManager() after requestRender()
+    so keyboard focus reaches the newly attached Add field.
+
+    requestRender() detaches and replaces the old nameField/addBtn DOM nodes.
+    Without an explicit focus call the user's focus falls to <body> on every
+    refused create (e.g. duplicate name), requiring a Tab or click to continue
+    typing.  The success path already calls focusGroupManager(); the refusal
+    path must match.
+    """
+    import re as _re
+
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    refusal = _extract_refusal_content(then_body)
+    assert refusal is not None, "doAdd .then() has no refusal guard"
+
+    has_focus = "focusGroupManager" in refusal or (
+        "group-add-name" in refusal and ".focus()" in refusal
+    )
+    assert has_focus, (
+        "doAdd refusal path does not restore keyboard focus after requestRender(). "
+        "The rebuilt DOM has a fresh nameField that is not focused. "
+        "Add focusGroupManager() after requestRender() in the refusal branch, "
+        "matching the success path."
+    )
+    # Ordering: focus must come after the last requestRender() in refusal block.
+    rr_calls = list(_re.finditer(r"requestRender\s*\(\)", refusal))
+    assert rr_calls, "doAdd refusal path must contain requestRender()"
+    last_rr = rr_calls[-1].start()
+    focus_calls = list(_re.finditer(r"focusGroupManager\s*\(\)", refusal))
+    if not focus_calls:
+        focus_calls = list(_re.finditer(r"\.focus\(\)", refusal))
+    assert focus_calls, "doAdd refusal path must have a focus call"
+    last_focus = focus_calls[-1].start()
+    assert last_focus > last_rr, (
+        "focusGroupManager() in doAdd refusal path must appear after "
+        "requestRender(), not before, so it targets the newly attached node."
+    )

@@ -1434,9 +1434,10 @@
           if (!res || !res.applied) {
             // Revert: re-read from state.
             sel.value = (state.hotkeys.group_by_character || {})[characterName] || '';
-            if (res && res.error) {
-              WM.send('alert_bookmarks', res.error);
-            }
+            WM.send('alert_bookmarks',
+                    res && res.error
+                      ? res.error
+                      : 'That group change was not saved.');
             // Apply the authoritative table when available and no newer push
             // has landed since the call was issued.  This keeps the groups
             // list coherent without a full refresh() round-trip.
@@ -1519,7 +1520,10 @@
         .then(function (res) {
           groupBusy = false;
           if (!res || !res.applied) {
-            if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+            WM.send('alert_bookmarks',
+                    res && res.error
+                      ? res.error
+                      : 'That group change was not saved.');
             // Apply the authoritative table when available and no newer push
             // has landed.  A refused rename carries the unchanged name.
             if (res && res.hotkeys && pushes === before) {
@@ -1599,7 +1603,10 @@
       WM.send('delete_preview_cycle_group', group.id).then(function (res) {
         groupBusy = false;
         if (!res || !res.applied) {
-          if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+          WM.send('alert_bookmarks',
+                  res && res.error
+                    ? res.error
+                    : 'That group change was not saved.');
           // Apply the authoritative table when available and no newer push
           // has landed.  A refused delete confirms the group is still present.
           if (res && res.hotkeys && pushes === before) {
@@ -1676,7 +1683,10 @@
       WM.send('create_preview_cycle_group', name).then(function (res) {
         groupBusy = false;
         if (!res || !res.applied) {
-          if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+          WM.send('alert_bookmarks',
+                  res && res.error
+                    ? res.error
+                    : 'That group change was not saved.');
           // Apply the authoritative table when available and no newer push
           // has landed.  A refused create may carry a table that already
           // reflects the reason for refusal (e.g. duplicate name).
@@ -1686,6 +1696,9 @@
             state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           }
           requestRender();
+          // The old nameField is detached by requestRender(); query the new
+          // one so focus reaches the rebuilt Add field, not a detached node.
+          focusGroupManager();
           return;
         }
         if (pushes !== before) {
