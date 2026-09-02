@@ -9,6 +9,7 @@ import itertools
 import logging
 import sys
 from ctypes import wintypes
+from dataclasses import replace
 
 import pytest
 
@@ -3301,6 +3302,274 @@ def test_the_hosts_activation_callback_preserves_the_activation_result(monkeypat
     )
 
 
+def test_pending_foreground_starts_a_timer_without_blocking_or_minimizing(monkeypatch):
+    """A zero foreground after the direct request is an in-progress switch,
+    not permission to enter the synchronous attached fallback on this turn.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+
+    result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_FOREGROUND
+    assert h._pending_switch.stable_key == "Bravo"
+    assert libs.user32.minimized == []
+    assert libs.user32.timers[-1][1:] == (
+        host.ACTIVATE_RETRY_TIMER_ID,
+        host.ACTIVATE_RETRY_MS,
+    )
+    assert [entry for entry in order if entry[0] == "ring"] == []
+
+
+def test_pending_foreground_observes_success_without_reissuing_activation(monkeypatch):
+    """Timer turns observe the one direct request; they must not generate a
+    stream of SetForegroundWindow calls while Windows completes it.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    calls_after_request = list(order)
+    libs.user32._foreground = 0x2222
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: pytest.fail("observation reissued activation"),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [
+        entry for entry in order[len(calls_after_request) :] if entry[0] == "ring"
+    ] == [("ring", "Bravo", True)]
+
+
+@pytest.mark.parametrize("observed", [0, 0x1111], ids=["zero", "unchanged-source"])
+def test_pending_foreground_before_deadline_stays_observe_only(monkeypatch, observed):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.1))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = observed
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: pytest.fail("observation reissued activation"),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is not None
+    assert (
+        h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_FOREGROUND
+    )
+    assert h._pending_switch.attempts == 1
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+
+
+def test_pending_foreground_cancels_when_newer_foreground_wins(monkeypatch):
+    h, libs, _order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0x9999
+    attached = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda *_args, **_kwargs: attached.append(True),
+        raising=False,
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert attached == []
+
+
+def test_pending_foreground_deadline_uses_one_attached_fallback(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.249, 10.250))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+    attached = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda _libs, hwnd, source_hwnd: (
+            attached.append((hwnd, source_hwnd))
+            or host.window_mod.ActivationResult.ACTIVATED
+        ),
+    )
+
+    h._retry_pending_activation(libs)
+    assert attached == []
+    h._retry_pending_activation(libs)
+
+    assert host.ACTIVATE_DIRECT_TIMEOUT_S == 0.25
+    assert attached == [(0x2222, 0x1111)]
+    assert h._pending_switch is None
+    assert ("ring", "Bravo", True) in order
+
+
+def test_pending_foreground_iconic_target_enters_restore_without_activation(
+    monkeypatch,
+):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32.iconic = True
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: pytest.fail("observer activated an iconic target"),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch.attempts == 0
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+
+
+def test_foreground_phase_after_restore_resets_attempts_and_deadline(monkeypatch):
+    h, libs, _order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 20.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    h._pending_switch = replace(h._pending_switch, attempts=7)
+    libs.user32.iconic = False
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert (
+        h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_FOREGROUND
+    )
+    assert h._pending_switch.attempts == 0
+    assert h._pending_switch.deadline == 20.25
+
+
+def test_deadline_pending_restore_enters_restore_phase(monkeypatch):
+    h, libs, _order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.25))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda *_args: host.window_mod.ActivationResult.PENDING_RESTORE,
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch.attempts == 0
+    assert h._pending_switch.deadline == 0.0
+
+
+def test_deadline_cancels_when_saved_eve_source_changed_hwnd(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.25))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+    libs.user32._foreground = 0
+    attached = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda *_args: attached.append(True),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert attached == []
+    assert [entry for entry in order if entry[0] in {"ring", "show_async"}] == []
+
+
+@pytest.mark.parametrize(
+    "outcome", [host.window_mod.ActivationResult.REFUSED, RuntimeError]
+)
+def test_deadline_failure_clears_pending_without_minimizing(monkeypatch, outcome):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.25))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+
+    def fallback(*_args):
+        if outcome is RuntimeError:
+            raise RuntimeError("fallback failed")
+        return outcome
+
+    monkeypatch.setattr(host.window_mod, "activate_attached", fallback)
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert [entry for entry in order if entry[0] in {"ring", "show_async"}] == []
+
+
 def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatch):
     """An iconic target may restore after activate() returns. The host must
     return to its message pump instead of blocking or hiding the active client.
@@ -3330,19 +3599,28 @@ def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatc
     assert [entry for entry in order if entry[0] == "ring"] == []
 
 
-def test_pending_restore_without_a_live_host_window_is_discarded(monkeypatch, caplog):
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_pending_activation_without_a_live_host_window_is_discarded(
+    monkeypatch, caplog, activation
+):
     """A pending result needs a timer-backed message pump to make progress."""
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
-        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
-        iconic=True,
+        activation=activation,
+        iconic=activation is host.window_mod.ActivationResult.PENDING_RESTORE,
     )
 
     with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
         result = h._activate_client(libs, h._clients["Bravo"])
 
-    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert result is activation
     assert h._pending_switch is None
     assert h._pending_activation_timer is False
     assert libs.user32.timers == []
@@ -3352,12 +3630,21 @@ def test_pending_restore_without_a_live_host_window_is_discarded(monkeypatch, ca
     )
 
 
-def test_pending_restore_with_a_rejected_timer_is_discarded(monkeypatch, caplog):
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_pending_activation_with_a_rejected_timer_is_discarded(
+    monkeypatch, caplog, activation
+):
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
-        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
-        iconic=True,
+        activation=activation,
+        iconic=activation is host.window_mod.ActivationResult.PENDING_RESTORE,
     )
     h._hwnd = 0x99
     monkeypatch.setattr(libs.user32, "SetTimer", lambda *_args: 0)
@@ -3365,7 +3652,7 @@ def test_pending_restore_with_a_rejected_timer_is_discarded(monkeypatch, caplog)
     with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
         result = h._activate_client(libs, h._clients["Bravo"])
 
-    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert result is activation
     assert h._pending_switch is None
     assert h._pending_activation_timer is False
     assert any(
@@ -3644,7 +3931,16 @@ def test_pending_restore_client_replacement_cancels_the_request(monkeypatch):
     assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
 
 
-def test_teardown_kills_the_pending_restore_timer_and_clears_the_request(monkeypatch):
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_teardown_kills_the_pending_activation_timer_and_clears_the_request(
+    monkeypatch, activation
+):
     """Stopping the host must not leave a timer targeting its dead HWND.
 
     A surviving timer is a use-after-teardown callback when the next preview
@@ -3653,8 +3949,8 @@ def test_teardown_kills_the_pending_restore_timer_and_clears_the_request(monkeyp
     h, libs, _ = _switching_host(
         monkeypatch,
         foreground=0x1111,
-        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
-        iconic=True,
+        activation=activation,
+        iconic=activation is host.window_mod.ActivationResult.PENDING_RESTORE,
     )
     h._hwnd = 0x99
     h._activate_client(libs, h._clients["Bravo"])
