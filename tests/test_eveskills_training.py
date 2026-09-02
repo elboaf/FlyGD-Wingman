@@ -183,6 +183,35 @@ def test_multiple_skills_with_different_attribute_pairs_accumulate():
     assert isinstance(result.seconds, int)
 
 
+def test_arbitrary_extra_fields_in_attributes_do_not_affect_estimate():
+    attrs_with_extras = {
+        "charisma": 19,
+        "intelligence": 20,
+        "memory": 20,
+        "perception": 27,
+        "willpower": 21,
+        "extra_string": "should be ignored",
+        "extra_negative": -5,
+    }
+    result_with_extras = training.estimate(
+        [req(level=4)],
+        {"gunnery": 3300},
+        {3300: 40_000},
+        skill_points_complete=True,
+        attributes=attrs_with_extras,
+        metadata={3300: META},
+    )
+    result_without_extras = training.estimate(
+        [req(level=4)],
+        {"gunnery": 3300},
+        {3300: 40_000},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={3300: META},
+    )
+    assert result_with_extras == result_without_extras
+
+
 @pytest.mark.parametrize(
     ("seconds", "label"),
     [

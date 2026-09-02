@@ -63,8 +63,11 @@ def estimate(
     if not attributes or not all(attr in attributes for attr in ATTRIBUTE_NAMES):
         return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
 
-    if not all(v > 0 for v in attributes.values()):
-        return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
+    # Validate only the five named attributes: all present, all positive integers, none bool
+    for attr_name in ATTRIBUTE_NAMES:
+        val = attributes[attr_name]
+        if isinstance(val, bool) or not isinstance(val, int) or val <= 0:
+            return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
 
     total_seconds = Fraction(0)
 
