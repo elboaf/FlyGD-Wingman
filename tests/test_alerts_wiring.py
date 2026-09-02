@@ -82,7 +82,7 @@ def _alerts_section(**over):
                 "pulses": 3,
                 "flash_rate": "normal",
                 "color": "#ff4d4d",
-                "sound": "alarm",
+                "sound": "system-fault",
             },
             "warp_scramble": {
                 "enabled": True,
@@ -90,7 +90,7 @@ def _alerts_section(**over):
                 "pulses": 3,
                 "flash_rate": "normal",
                 "color": "#ffd24d",
-                "sound": "ring",
+                "sound": "obey",
             },
             "decloak": {
                 "enabled": True,
@@ -98,7 +98,7 @@ def _alerts_section(**over):
                 "pulses": 3,
                 "flash_rate": "normal",
                 "color": "#4dd2ff",
-                "sound": "alarm",
+                "sound": "system-fault",
             },
         },
     }
@@ -303,7 +303,7 @@ def test_a_test_alert_plays_the_sound_once_per_preview_count(monkeypatch, tmp_pa
 
     api.test_alert("combat")
 
-    assert played == [("alarm", 100)]
+    assert played == [("system-fault", 100)]
     assert len(host.raised) == 3
 
 
@@ -323,7 +323,7 @@ def test_a_test_alert_with_no_live_preview_still_plays_the_sound(monkeypatch, tm
     assert result["applied"] is True
     assert result["persisted"] is False
     assert result["error"] == "Previews are off, so only the sound played."
-    assert played == [("alarm", 100)]
+    assert played == [("system-fault", 100)]
 
 
 def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
@@ -345,7 +345,7 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
 
     assert result["applied"] is True
     assert result["error"] == "No EVE clients are open, so only the sound played."
-    assert played == [("alarm", 100)]
+    assert played == [("system-fault", 100)]
     assert host.raised == []
 
 
@@ -458,7 +458,7 @@ def test_a_test_alert_plays_at_the_configured_volume(monkeypatch, tmp_path):
 
     api.test_alert("combat")
 
-    assert played == [("alarm", 25)]
+    assert played == [("system-fault", 25)]
 
 
 def test_a_test_alert_is_not_silenced_by_a_focused_client(monkeypatch, tmp_path):
@@ -475,7 +475,7 @@ def test_a_test_alert_is_not_silenced_by_a_focused_client(monkeypatch, tmp_path)
 
     api.test_alert("combat")
 
-    assert played == [("alarm", 100)]
+    assert played == [("system-fault", 100)]
 
 
 # ---- the remaining bridge methods -------------------------------------------

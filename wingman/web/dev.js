@@ -511,12 +511,12 @@
               volume: 70,
               events: {
                 combat: { enabled: true, cooldown_s: 1, flash_rate: 'fast',
-                  pulses: 3, color: '#ff4d4d', sound: 'alarm' },
+                  pulses: 3, color: '#ff4d4d', sound: 'system-fault' },
                 warp_scramble: { enabled: true, cooldown_s: 8,
                   flash_rate: 'normal', pulses: 3, color: '#ffd24d',
-                  sound: 'ring' },
+                  sound: 'obey' },
                 decloak: { enabled: true, cooldown_s: 8, flash_rate: 'slow',
-                  pulses: 5, color: '#4dd2ff', sound: 'notify' }
+                  pulses: 5, color: '#4dd2ff', sound: 'sly' }
               }
             }
           },

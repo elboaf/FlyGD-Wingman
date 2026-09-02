@@ -25,7 +25,7 @@ def _config(**over):
                 "enabled": True,
                 "cooldown_s": 1,
                 "color": "#ff4d4d",
-                "sound": "alarm",
+                "sound": "system-fault",
                 "pulses": 3,
                 "flash_rate": "normal",
             },
@@ -33,7 +33,7 @@ def _config(**over):
                 "enabled": True,
                 "cooldown_s": 8,
                 "color": "#ffd24d",
-                "sound": "ring",
+                "sound": "obey",
                 "pulses": 3,
                 "flash_rate": "normal",
             },
@@ -41,7 +41,7 @@ def _config(**over):
                 "enabled": True,
                 "cooldown_s": 8,
                 "color": "#4dd2ff",
-                "sound": "alarm",
+                "sound": "system-fault",
                 "pulses": 3,
                 "flash_rate": "normal",
             },
@@ -135,7 +135,7 @@ def test_a_suppressed_event_plays_no_sound():
     ev = tailer.Event("Alice", "combat", PLAYER)
     s._handle([ev], 0.0)
     s._handle([ev], 0.5)
-    assert sounds == [("alarm", 100)]
+    assert sounds == [("system-fault", 100)]
 
 
 def test_a_sound_of_none_is_not_played():
@@ -417,7 +417,7 @@ def test_another_character_still_makes_a_noise_while_you_fly_alice():
     sounds = []
     s = _service(sounds=sounds, focused=lambda: "Alice")
     s._handle([tailer.Event("Bravo", "combat", PLAYER)], 0.0)
-    assert sounds == [("alarm", 100)]
+    assert sounds == [("system-fault", 100)]
 
 
 def test_no_focused_client_means_every_alert_sounds():
@@ -427,7 +427,7 @@ def test_no_focused_client_means_every_alert_sounds():
     sounds = []
     s = _service(sounds=sounds, focused=lambda: None)
     s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
-    assert sounds == [("alarm", 100)]
+    assert sounds == [("system-fault", 100)]
 
 
 def test_a_focus_callable_that_raises_does_not_lose_the_alert(caplog):
@@ -441,7 +441,7 @@ def test_a_focus_callable_that_raises_does_not_lose_the_alert(caplog):
     s = _service(sounds=sounds, focused=boom)
     out = s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
     assert [e[1] for e in out] == ["combat"]
-    assert sounds == [("alarm", 100)]
+    assert sounds == [("system-fault", 100)]
 
 
 # ---- volume ----------------------------------------------------------------
@@ -451,7 +451,7 @@ def test_the_configured_volume_reaches_the_sink():
     sounds = []
     s = _service(_config(volume=40), sounds=sounds)
     s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
-    assert sounds == [("alarm", 40)]
+    assert sounds == [("system-fault", 40)]
 
 
 def test_a_missing_volume_key_plays_at_full_volume():
@@ -462,7 +462,7 @@ def test_a_missing_volume_key_plays_at_full_volume():
     sounds = []
     s = _service(cfg, sounds=sounds)
     s._handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
-    assert sounds == [("alarm", 100)]
+    assert sounds == [("system-fault", 100)]
 
 
 def test_a_silenced_alert_is_also_a_timed_one():

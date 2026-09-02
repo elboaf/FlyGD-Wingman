@@ -21,7 +21,26 @@ from .preview import roster as preview_roster
 # Sounds that ship. An id present in the UI dropdown but missing here
 # normalises to silence, which is indistinguishable from a broken alert --
 # so the two lists are checked against the assets folder in the sound task.
-VALID_SOUNDS = {"none", "alarm", "ring", "notify"}
+VALID_SOUNDS = {
+    "none",
+    "come-here",
+    "glassy-knock",
+    "isnt-it",
+    "lovely",
+    "obey",
+    "slick",
+    "sly",
+    "system-fault",
+    "your-turn",
+}
+
+# The ids that shipped from 4.5.0 until the sound set was replaced. An
+# unknown id normalises to "none" below, so without this table every
+# install that had ever saved an alert would come up SILENT after the
+# upgrade -- the one failure mode PRODUCT.md says an alert must never
+# have. Each old id maps to the sound that took its default slot, so the
+# upgrade changes what an alert sounds like, never whether it sounds.
+_LEGACY_SOUND_IDS = {"alarm": "system-fault", "ring": "obey", "notify": "sly"}
 
 # The speed presets, owned by alerts/state.py because that is where a
 # preset becomes a duration. Named here only so the validators below read
@@ -35,14 +54,15 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # cyan for a decloak.
 _ALERT_EVENT_DEFAULTS = {
     # Sounds are assigned by LENGTH against each event's cooldown, then by
-    # urgency. combat re-alerts every 1s, so it gets the only sound short
-    # enough to finish (0.77s); a longer one would be cut off by its own
-    # next alert, since PlaySound replaces whatever is still playing.
-    # scram and decloak have 8s to play with. Pitch falls with severity:
-    # alarm is 1342 Hz, ring 1046 Hz, notify 523 Hz.
-    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "alarm"},
-    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "ring"},
-    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "notify"},
+    # urgency. combat re-alerts every 1s, so it gets a sound short enough
+    # to finish (system-fault, 0.43s); a longer one would be cut off by
+    # its own next alert, since PlaySound replaces whatever is still
+    # playing. scram and decloak have 8s to play with, so they take the
+    # two longer, more distinctive cues: obey (1.5s) for "you cannot
+    # leave", sly (1.26s) for the one that announces a ship appearing.
+    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "system-fault"},
+    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "obey"},
+    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "sly"},
 }
 
 
@@ -550,6 +570,7 @@ def _validated_alert_event(raw, defaults: dict) -> dict:
         event["color"] = colour
     sound = raw.get("sound")
     if isinstance(sound, str):
+        sound = _LEGACY_SOUND_IDS.get(sound, sound)
         event["sound"] = sound if sound in VALID_SOUNDS else "none"
     rate = raw.get("flash_rate")
     if isinstance(rate, str) and rate in VALID_FLASH_RATES:

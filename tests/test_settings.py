@@ -69,7 +69,7 @@ def test_defaults_are_the_documented_values():
                         "flash_rate": "normal",
                         "cooldown_s": 1,
                         "color": "#ff4d4d",
-                        "sound": "alarm",
+                        "sound": "system-fault",
                     },
                     "warp_scramble": {
                         "enabled": True,
@@ -77,7 +77,7 @@ def test_defaults_are_the_documented_values():
                         "flash_rate": "normal",
                         "cooldown_s": 8,
                         "color": "#ffd24d",
-                        "sound": "ring",
+                        "sound": "obey",
                     },
                     "decloak": {
                         "enabled": True,
@@ -85,7 +85,7 @@ def test_defaults_are_the_documented_values():
                         "flash_rate": "normal",
                         "cooldown_s": 8,
                         "color": "#4dd2ff",
-                        "sound": "notify",
+                        "sound": "sly",
                     },
                 },
             },
