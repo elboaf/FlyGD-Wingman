@@ -1135,21 +1135,13 @@ button.btn:disabled,
    changing under the pointer, which is how it read as "every column, every
    visit". Reserving the width unconditionally costs the label 12px it was
    never entitled to keep and makes the header stop moving. */
-/* Round 6, P2-2. `visibility: hidden` until a column carried .sorted, and
-   the list opens in delivery order with nothing sorted -- so on first
-   open all four headers had ZERO affordance and read as static labels.
-   Sixteen recordings differing only in a timestamp make Size and Length
-   the fast route to "which one was the good fight", and the whole
-   mechanism was built and then hidden behind knowing it was there.
-
-   opacity, not visibility, so the glyph is present-but-quiet rather than
-   absent: .18 is legible as a mark without competing with the label, and
-   the width was already reserved unconditionally by the rule above (see
-   its note -- reserving it is what stopped the header moving on click),
-   so nothing reflows at any of the three levels. */
+/* Keep the inactive glyph transparent: showing every triangle made all
+   columns look sorted at once. Opacity, not visibility or removal, keeps
+   the width reserved unconditionally, so hover and sorting never reflow
+   a header label. */
 .list-head > span::after {
   content: "\25B2"; font-size: 8px; flex: none;
-  width: 8px; opacity: .18;
+  width: 8px; opacity: 0;
 }
 .list-head > span:hover::after { opacity: .7; }
 .list-head > span.sorted::after { opacity: 1; }
@@ -2416,6 +2408,12 @@ button.btn:disabled,
      changes with it -- test_page_conventions.py derives the expected count
      from makeRow's unconditional appends rather than trusting this comment. */
   grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
+}
+
+/* Five gaps reclaim the 20px that overflowed the measured window floor;
+   the identity and control tracks keep their usable widths. */
+@media (max-width: 840px) {
+  #preview-binds { column-gap: 6px; }
 }
 
 /* Round 6. The 620px measure is right for this section's PROSE and wrong
@@ -4767,6 +4765,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 button.btn.danger { border-color: var(--danger); color: var(--danger); }
 button.btn.danger:hover:not(:disabled) {
   background: var(--danger-solid); color: var(--on-accent);
+}
+/* A disabled destructive action is unavailable, not an active warning.
+   Leave opacity and cursor to the shared disabled rule above. */
+button.btn.danger:disabled {
+  border-color: var(--control-border); color: var(--text-faint);
 }
 /* `.linkbtn.danger` STOOD HERE and is deleted, not moved. It survived L5
    for one site -- skills.js's `Forget character` -- and R3 converted that

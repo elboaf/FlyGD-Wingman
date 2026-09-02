@@ -1322,12 +1322,15 @@ report of it.
       did not is exactly what matters then.
 
 ## Delete
-- [ ] **`Delete selected` is visibly the destructive one.** Look at the
-      four footer buttons together. Expected: `Delete selected` carries the
-      red outline and label (`.btn.danger`), and the other three do not.
-      It used to be pixel-identical to `Select all` beside it — four
-      buttons of equal weight, one of which destroys recordings. Profiles'
-      `Delete` is the reference; the two must match.
+- [ ] **`Delete selected` is visibly destructive only while available.**
+      Look at the four footer buttons together with a recording selected.
+      Expected: `Delete selected` carries the red outline and label
+      (`.btn.danger`), and the other three do not. Clear the selection:
+      expected, its disabled border and label become neutral like the other
+      unavailable controls, with the same dimming and no hover response.
+      It used to be pixel-identical to `Select all` beside it when enabled,
+      then stayed strongly red when disabled. Profiles' enabled `Delete` is
+      the destructive reference; the two must match.
 - [ ] **It still confirms exactly once.** The treatment is appearance only.
       Expected: one confirmation, naming every file, from Python's own
       dialog — not two, and not the page's `WM.confirm`.
@@ -1833,8 +1836,9 @@ only ever checked by hand.
 - [ ] **The row still fits at the window's floor.** Settings > Previews at
       the smallest the window will go (840x625). Expected: every row ends
       inside the card after the trailing `Configure` or `Edit…` control,
-      and nothing is clipped. Grid tracks do not wrap, so an overflow here
-      is a cut-off control at every width, not a reflow. Open Configure on
+      nothing is clipped, and the Settings pane has no horizontal scrollbar.
+      Grid tracks do not wrap, so an overflow here is a cut-off control at
+      every width, not a reflow. Open Configure on
       several rows and confirm its full-grid detail returns the same way:
       Size and Copy must never widen or add a collapsed roster column.
 - [ ] **The two global defaults are reachable and take effect.** Settings >

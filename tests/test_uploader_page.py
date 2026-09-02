@@ -711,20 +711,22 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
         "header-shift this test exists to prevent"
     )
 
-    # Round 6, P2-2. The arrow used to be `visibility: hidden` until a
-    # column carried .sorted -- and the list opens in delivery order with
-    # nothing sorted, so on first open all four headers had zero
-    # affordance and read as static labels. It is now present-but-quiet at
-    # rest and rises through hover to sorted, so the mechanism is
-    # discoverable without having been discovered.
-    rest = re.search(r"opacity:\s*(\.\d+|0?\.\d+|1)", base.group(1))
-    assert rest, (
-        "the arrow must be visible at rest, not hidden until sorted: " + base.group(1)
+    # Showing the inactive triangle made every header look sorted at once.
+    # Opacity zero removes that noise without taking the reserved slot out
+    # of flow; hover and sorted states still reveal the same glyph in place.
+    assert re.search(r"opacity:\s*0\s*;", base.group(1)), (
+        "inactive sort arrows must be transparent without losing their slot"
     )
-    assert float(rest.group(1)) > 0, "an arrow at opacity 0 is still hidden"
+    assert re.search(r"\.list-head > span:hover::after\s*\{[^}]*opacity:\s*\.7", CSS), (
+        "hover must reveal the reserved sort arrow"
+    )
     assert re.search(r"\.list-head > span\.sorted::after\s*\{[^}]*opacity:\s*1", CSS), (
-        "the sorted column's arrow must be the strongest of the three states"
+        "the sorted column's arrow must be the strongest state"
     )
+    assert re.search(
+        r'\.list-head > span\.sorted\.desc::after\s*\{[^}]*content:\s*"\\25BC"',
+        CSS,
+    ), "descending sort must retain its down-arrow glyph"
     # The two centred headers need it mirrored or reserving it decentres
     # them by half its own box.
     assert re.search(r"\.c-check::before,\s*\.list-head > span\.c-link::before", CSS)

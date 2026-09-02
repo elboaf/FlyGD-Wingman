@@ -223,6 +223,23 @@ def _media_spans(max_width: int) -> list[tuple[int, int]]:
     return spans
 
 
+def test_preview_grid_tightens_only_its_column_gap_at_the_840_floor():
+    """The six Preview tracks overflowed the pane by 18-20px at the floor.
+
+    Five gaps are the only safe place to reclaim that width: the 210px
+    identity floor and the controls remain unchanged, while 10px to 6px
+    returns exactly 20px. The base layout stays at its roomier spacing.
+    """
+    base = re.search(r"#preview-binds\s*\{([^}]*)\}", CSS)
+    assert base and re.search(r"\bcolumn-gap\s*:\s*10px\s*;", base.group(1))
+
+    floor = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(840))
+    rule = re.search(r"#preview-binds\s*\{([^}]*)\}", floor)
+    assert rule and re.fullmatch(r"\s*column-gap\s*:\s*6px\s*;\s*", rule.group(1)), (
+        "the 840px tier must change only #preview-binds' column gap to 6px"
+    )
+
+
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
     rows on purpose, for two different reasons: `#eve-binds` because its
@@ -1191,6 +1208,26 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_disabled_danger_buttons_return_to_neutral_control_tokens():
+    """A disabled destructive action is unavailable, not an active warning.
+
+    Its scoped override follows the red treatment so neutral border and
+    text win, while the shared disabled declaration continues to own
+    opacity and cursor for every action control.
+    """
+    danger = re.search(r"button\.btn\.danger\s*\{([^}]*)\}", CSS)
+    disabled = re.search(r"button\.btn\.danger:disabled\s*\{([^}]*)\}", CSS)
+    assert danger and disabled, "disabled danger buttons need a scoped neutral state"
+    assert disabled.start() > danger.end(), "the neutral disabled state must follow red"
+    assert re.search(
+        r"\bborder-color\s*:\s*var\(--control-border\)\s*;", disabled.group(1)
+    )
+    assert re.search(r"\bcolor\s*:\s*var\(--text-faint\)\s*;", disabled.group(1))
+    assert "opacity" not in disabled.group(1) and "cursor" not in disabled.group(1), (
+        "danger-disabled must retain the shared opacity and cursor behavior"
     )
 
 
