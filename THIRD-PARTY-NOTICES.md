@@ -82,20 +82,26 @@ Licence text: https://creativecommons.org/licenses/by/4.0/legalcode
 
 Sounds from [notificationsounds.com](https://notificationsounds.com).
 
-Three sounds are bundled as `assets/sounds/`, played when a gamelog alert
+Nine sounds are bundled as `assets/sounds/`, played when a gamelog alert
 fires. CC BY 4.0 requires that modifications be disclosed, so each is
 listed with what was changed:
 
 | Shipped as | Original | Modifications |
 | --- | --- | --- |
-| `alarm.wav` | [get-outta-here](https://notificationsounds.com/notification-sounds/get-outta-here-505) | decoded from MP3 to 16-bit PCM WAV |
-| `ring.wav` | [juntos](https://notificationsounds.com/notification-sounds/juntos-607) | decoded from MP3 to 16-bit PCM WAV; truncated from 3.21s to 1.5s with a 150ms fade-out |
-| `notify.wav` | [no-problem](https://notificationsounds.com/notification-sounds/no-problem-notification-sound) | decoded from MP3 to 16-bit PCM WAV |
+| `system-fault.wav` | [System fault](https://notificationsounds.com/wake-up-tones/system-fault-518) | decoded from MP3 to 16-bit PCM WAV |
+| `obey.wav` | [Obey](https://notificationsounds.com/standard-ringtones/obey-479) | decoded from MP3 to 16-bit PCM WAV; truncated from 2.48s to 1.5s with a 150ms fade-out |
+| `sly.wav` | [Sly](https://notificationsounds.com/application-user-interface-ui-sounds/sly-user-interface-sound) | decoded from MP3 to 16-bit PCM WAV |
+| `come-here.wav` | [Come here](https://notificationsounds.com/notification-sounds/come-here-notification) | decoded from MP3 to 16-bit PCM WAV |
+| `glassy-knock.wav` | [Glassy soft knock](https://notificationsounds.com/wake-up-tones/glassy-soft-knock-379) | decoded from MP3 to 16-bit PCM WAV; truncated from 2.43s to 1.5s with a 150ms fade-out (the dropped tail is below -90 dB) |
+| `isnt-it.wav` | [Isn't it](https://notificationsounds.com/standard-ringtones/isnt-it-524) | decoded from MP3 to 16-bit PCM WAV |
+| `lovely.wav` | [Lovely](https://notificationsounds.com/standard-ringtones/lovely-441) | decoded from MP3 to 16-bit PCM WAV |
+| `slick.wav` | [Slick](https://notificationsounds.com/soft-subtle-ringtones/slick-notification) | decoded from MP3 to 16-bit PCM WAV |
+| `your-turn.wav` | [Your turn](https://notificationsounds.com/message-tones/your-turn-491) | decoded from MP3 to 16-bit PCM WAV |
 
 The conversion is not cosmetic: `winsound.PlaySound` plays RIFF/PCM only
-and will not accept an MP3. `ring.wav` was shortened because combat alerts
-can repeat every second and each new sound replaces the one still playing,
-so a 3.21s file could never finish.
+and will not accept an MP3. The two long sounds were shortened because
+combat alerts can repeat every second and each new sound replaces the one
+still playing, so a 2.5s file could never finish.
 
 CC BY 4.0 is not a GPL licence and imposes no condition on the application
 that plays these files. They are listed here because they are

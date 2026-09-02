@@ -29,10 +29,10 @@ def test_sound_path_prefers_the_frozen_bundle(tmp_path, monkeypatch):
     """
     sounds = tmp_path / "assets" / "sounds"
     sounds.mkdir(parents=True)
-    (sounds / "alarm.wav").write_bytes(b"")
+    (sounds / "system-fault.wav").write_bytes(b"")
     monkeypatch.setattr(service.paths, "bundle_dir", lambda: tmp_path)
 
-    assert service.sound_path("alarm") == sounds / "alarm.wav"
+    assert service.sound_path("system-fault") == sounds / "system-fault.wav"
 
 
 def test_the_spec_collects_the_sounds_folder():

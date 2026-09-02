@@ -360,7 +360,7 @@ def _play_file(path) -> None:
     winsound refuses `SND_MEMORY | SND_ASYNC` with RuntimeError ("this
     module does not support playing from a memory image asynchronously"),
     and the synchronous form would block the alert poll thread for the
-    length of the sound -- 1.5s for `ring`, against a 1s poll. So the
+    length of the sound -- 1.5s for `obey`, against a 1s poll. So the
     scaled audio is a file (sound.playable_path) and this call is the one
     it always was.
     """
