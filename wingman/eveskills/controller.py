@@ -38,6 +38,7 @@ from . import jwt as jwt_mod
 from . import loopback as loopback_mod
 from . import sso as sso_mod
 from . import state as state_mod
+from . import training as training_mod
 from .training import ATTRIBUTE_NAMES
 
 logger = logging.getLogger(__name__)
@@ -734,6 +735,12 @@ class SkillsController:
         selected = self._selected_plan_locked()
         group = self._selected_group_locked()
         ids = self._cache.type_ids()
+        # One metadata snapshot for the whole payload, filtered for
+        # freshness ONCE. Per-row snapshots would each re-read the clock,
+        # so a record expiring mid-build could estimate for the first
+        # characters and not the last -- forty rows disagreeing about the
+        # same public fact.
+        metadata = self._cache.training_metadata(self._now())
         return {
             "auth_configured": application.is_configured(),
             "auth_in_progress": self._auth_in_progress,
@@ -743,7 +750,8 @@ class SkillsController:
             "groups": self._groups_locked(),
             "plans": [self._plan_row_locked(plan, ids, group) for plan in self._plans],
             "characters": [
-                self._character_row(ch, selected, ids) for ch in self._state.characters
+                self._character_row(ch, selected, ids, metadata)
+                for ch in self._state.characters
             ],
             # Every issue planstore.list_plans reported: a rejected file
             # (with its per-line diagnostics) and a folder-level problem
@@ -802,7 +810,7 @@ class SkillsController:
             "ready_count": ready,
         }
 
-    def _character_row(self, ch, plan, ids) -> dict:
+    def _character_row(self, ch, plan, ids, metadata) -> dict:
         """One roster row, scored against the selected plan.
 
         `analysis` is None when no plan is selected or the previously
@@ -814,6 +822,7 @@ class SkillsController:
         is not padding.
         """
         analysis = None
+        estimate = None
         if plan is not None:
             analysis = evaluator.evaluate(
                 plan.requirements,
@@ -822,6 +831,14 @@ class SkillsController:
                 ch.trained_levels,
                 ch.queue,
                 ch.has_snapshot,
+            )
+            estimate = training_mod.estimate(
+                plan.requirements,
+                ids,
+                ch.skill_points,
+                skill_points_complete=ch.skill_points_complete,
+                attributes=self._usable_attributes(ch),
+                metadata=metadata,
             )
         return {
             "character_id": ch.character_id,
@@ -859,7 +876,55 @@ class SkillsController:
             if analysis
             else [],
             "unknown_count": analysis.unknown_count if analysis else 0,
+            # Raw seconds for the page to SORT on and a rendered label for
+            # it to PRINT: the split exists so no arithmetic and no time
+            # vocabulary crosses the bridge as a string that has to be
+            # parsed back. None/"" whenever there is no number, so the page
+            # never has to distinguish "zero" from "unknown".
+            #
+            # `estimated_finish_utc` above is deliberately untouched by
+            # this: that is EVE's own queue fact for the requirements
+            # already queued, and this is the work the plan still needs.
+            # Deriving one from the other would replace a fact with a
+            # guess.
+            "training_remaining_seconds": (
+                estimate.seconds if estimate is not None else None
+            ),
+            "training_remaining_label": (
+                training_mod.format_duration(estimate.seconds)
+                if estimate is not None and estimate.status == training_mod.AVAILABLE
+                else ""
+            ),
+            # "" is NOT a fifth status: it means no estimate was asked
+            # for, because no plan is selected. Every value the estimator
+            # itself produces is one of its four named statuses, and the
+            # non-available ones are technical -- the page renders them all
+            # as one phrase and never shows this word.
+            "training_estimate_status": (
+                estimate.status if estimate is not None else ""
+            ),
         }
+
+    @staticmethod
+    def _usable_attributes(ch) -> dict:
+        """The character's attributes, or {} when they must not be used.
+
+        Both halves are load-bearing. `attributes_fetched_utc` is the only
+        proof the stored map was confirmed rather than merely present, and
+        a non-empty `attributes_error` means the last supplemental call
+        failed -- in which case the map beside it is last-known data kept
+        for recovery, not a current fact to compute a duration from.
+
+        Returning {} rather than raising or reporting is what makes the
+        estimator answer `attributes_unavailable`: the reason itself never
+        leaves the controller, because attributes_error carries transport
+        wording (and, for a scope-shaped 403, re-authentication wording)
+        about a character whose core refresh succeeded and whose token is
+        fine.
+        """
+        if ch.attributes_fetched_utc is None or ch.attributes_error:
+            return {}
+        return ch.attributes
 
     # ----- pushing ------------------------------------------------------
 
@@ -1063,6 +1128,7 @@ class SkillsController:
                 (ch.character_id, ch.character_name) for ch in self._state.characters
             ]
         self._resolve_missing_skill_ids()
+        self._refresh_training_metadata()
         total = len(targets)
         for index, (character_id, name) in enumerate(targets, start=1):
             if self._stopping.is_set():
@@ -1520,6 +1586,76 @@ class SkillsController:
                 # The cache rebuilds completely by re-resolving names, so a
                 # failed write costs requests on the next refresh and
                 # nothing else.
+                logger.warning("Could not save the skill id cache", exc_info=True)
+
+    def _refresh_training_metadata(self) -> None:
+        """Backfill rank and training attributes for plan skills that lack
+        them, or whose records have aged out.
+
+        Runs immediately after id resolution and before any character is
+        fetched, for the same reason resolution does: this is public,
+        character-independent data, and one missing record suppresses the
+        estimate for EVERY character the selected plan is scored against.
+        Doing it after the roster loop would leave the whole screen a
+        refresh behind.
+
+        It is a SEPARATE pass rather than an extension of
+        `_resolve_missing_skill_ids`, which stays about ids alone: a name
+        resolved in this very pass is due for metadata here, and a name
+        resolved months ago is due again when its record expires. Those are
+        different populations, and folding them together would tie a
+        30-day expiry to a lookup that never repeats.
+
+        Failures are logged and nothing more. Readiness comes from ids and
+        levels, so a type detail that will not load costs the estimate and
+        never the answer the screen exists for.
+        """
+        with self._lock:
+            # Same source and same `ok`-by-construction argument as
+            # _resolve_missing_skill_ids: only cleanly parsed plans are in
+            # self._plans. Explicit plan names only -- prerequisites are
+            # not expanded anywhere in this app, and inventing them here
+            # would spend requests on skills no plan actually asks for.
+            names = sorted(
+                {req.skill_name for plan in self._plans for req in plan.requirements}
+            )
+            # Read under the lock with the names it filters, so the
+            # freshness decision and the plan snapshot cannot straddle a
+            # reload.
+            now = self._now()
+            due = self._cache.metadata_due(names, now)
+        if not due:
+            return
+        try:
+            # OUTSIDE the lock. This fans out one public request per type
+            # over a thread pool; holding the state lock across it would
+            # block every page read for the length of the fetch, and
+            # `state_payload` is called on the bridge thread.
+            accepted, failures = skillids.fetch_training_metadata(
+                due, self._client, now
+            )
+        except Exception:
+            logger.exception("Skill training metadata refresh failed")
+            return
+        if failures:
+            # Bounded: names, not per-type diagnostics, and one line for
+            # the whole pass rather than one per failed type.
+            logger.info("Unresolved skill training metadata: %s", sorted(failures))
+        if not accepted:
+            return
+        with self._lock:
+            # ONE lock hold for the whole staged result and its save. A
+            # payload built between two merges would score one plan skill
+            # with an estimate and the next without, so the row would show
+            # a duration that is confidently too small -- worse than the
+            # "unavailable" it replaced.
+            self._cache.merge_metadata(accepted)
+            try:
+                skillids.save(self._cache, self._cache_path)
+            except OSError:
+                # Same trade _resolve_missing_skill_ids makes: the records
+                # are live in memory, and a failed write costs requests on
+                # the next refresh and nothing else.
                 logger.warning("Could not save the skill id cache", exc_info=True)
 
     # ----- forget -----------------------------------------------------

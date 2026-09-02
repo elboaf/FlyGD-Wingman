@@ -13,12 +13,15 @@ from types import SimpleNamespace
 import pytest
 
 from wingman.eveskills import application
+from wingman.eveskills import controller as controller_mod
 from wingman.eveskills import esi as esi_mod
+from wingman.eveskills import evaluator as evaluator_mod
 from wingman.eveskills import jwt as jwt_mod
 from wingman.eveskills import loopback as loopback_mod
 from wingman.eveskills import skillids as skillids_mod
 from wingman.eveskills import sso as sso_mod
 from wingman.eveskills import state as state_mod
+from wingman.eveskills import training as training_mod
 from wingman.eveskills.controller import SkillsController
 
 T0 = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
@@ -342,6 +345,34 @@ QUEUE_BODY = [
     }
 ]
 
+# Name -> dogma attribute id, inverted from skillids' own table rather than
+# retyped: a fixture that disagreed with the decoder would pass by
+# describing a response ESI never sends.
+_ATTRIBUTE_IDS = {name: aid for aid, name in skillids_mod.ATTRIBUTE_ID_TO_NAME.items()}
+
+
+def _type_body(rank: int, primary: str, secondary: str) -> dict:
+    """One /v3/universe/types/{id}/ body carrying a skill's training dogma.
+
+    275 is rank (skillTimeConstant); 180/181 are REFERENCES to one of the
+    five attribute ids, which is why the values here are ids and not the
+    attribute names the decoded metadata carries.
+    """
+    return {
+        "group_id": 255,
+        "dogma_attributes": [
+            {"attribute_id": skillids_mod.DOGMA_SKILL_TIME_CONSTANT, "value": rank},
+            {
+                "attribute_id": skillids_mod.DOGMA_PRIMARY_ATTRIBUTE,
+                "value": _ATTRIBUTE_IDS[primary],
+            },
+            {
+                "attribute_id": skillids_mod.DOGMA_SECONDARY_ATTRIBUTE,
+                "value": _ATTRIBUTE_IDS[secondary],
+            },
+        ],
+    }
+
 
 class FakeEsi:
     """Replays scripted responses per path suffix, and records every call.
@@ -352,14 +383,19 @@ class FakeEsi:
     these tests exist to catch.
     """
 
-    def __init__(self, skills=None, queue=None, attributes=None):
+    def __init__(self, skills=None, queue=None, attributes=None, types=None):
         self.skills = list(skills or [esi_response(200, SKILLS_BODY, etag='"s1"')])
         self.queue = list(queue or [esi_response(200, QUEUE_BODY, etag='"q1"')])
         self.attributes = list(
             attributes or [esi_response(200, ATTRIBUTES_BODY, etag='"a1"')]
         )
+        # Public type details, keyed by type id rather than scripted in
+        # order: the metadata backfill fetches them concurrently, so there
+        # is no call order for a list to stand for.
+        self.types = dict(types or {})
         self.calls = []
         self.on_get = None
+        self.on_type = None
         self._hooked = False
 
     def get(self, path, *, token=None, etag=None):
@@ -367,6 +403,15 @@ class FakeEsi:
         if self.on_get is not None and not self._hooked:
             self._hooked = True  # Fires once, or the test never ends.
             self.on_get(path)
+        if "/universe/types/" in path:
+            # Checked first, and by id rather than by suffix: an unrouted
+            # type call would otherwise be answered by the queue script and
+            # silently look like a malformed type body.
+            if self.on_type is not None:
+                self.on_type(path)
+            type_id = int(path.rstrip("/").rsplit("/", 1)[-1])
+            assert type_id in self.types, f"unscripted ESI type call: {path}"
+            return self.types[type_id]
         if path.endswith("/skills/"):
             script = self.skills
         elif path.endswith("/attributes/"):
@@ -1343,7 +1388,11 @@ def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
     controller, _, _ = build(
         tmp_path,
         characters=[with_snapshot()],
-        client=FakeEsi(),
+        # A name resolved in this pass has no training metadata yet, so the
+        # backfill that runs behind resolution asks for its type detail.
+        client=FakeEsi(
+            types={3327: esi_response(200, _type_body(1, "perception", "willpower"))}
+        ),
         sso=FakeSso(),
         spawn=DirectSpawn(),
         plans={"Interceptor": "Navigation V\n"},
@@ -2459,3 +2508,346 @@ def test_a_failed_delete_restores_members_and_selection_together(tmp_path, monke
     assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
     assert payload["selected_group"] == "Wolfpack"
     assert alerts and alerts[-1][0] == "warning"
+
+
+# ----- training metadata backfill and estimates -------------------------
+
+GUNNERY_ID = 3300
+# Gunnery V at rank 1 is 256,000 SP. with_snapshot's attributes give
+# perception 27 / willpower 21, which is the Omega rate 27 + 21/2 = 37.5
+# SP per minute: 256000 / 37.5 = 6826.67 minutes = 409,600 seconds, which
+# rounds to the two-unit label below. Written out rather than recomputed
+# from training.py's own formula, which would only assert that the code
+# agrees with itself.
+GUNNERY_V_SECONDS = 409600
+GUNNERY_V_LABEL = "4d 17h"
+
+
+def _meta(fetched_utc):
+    """Gunnery's decoded training metadata, stamped when the caller says."""
+    return training_mod.SkillTrainingMetadata(1, "perception", "willpower", fetched_utc)
+
+
+def _estimate_character(**kwargs):
+    """with_snapshot(), but with nothing trained and nothing queued.
+
+    The plan's target is then entirely untrained, so the estimate under
+    test is the whole skill rather than an arbitrary remainder.
+    """
+    defaults = dict(active_levels={}, trained_levels={}, skill_points={}, queue=())
+    defaults.update(kwargs)
+    return with_snapshot(**defaults)
+
+
+def _estimating(
+    tmp_path,
+    character=None,
+    *,
+    plan="Gunnery V\n",
+    selected="Gunnery",
+    metadata=T0,
+    clock=None,
+):
+    """A controller holding every estimate input, so a test varies one.
+
+    `metadata=None` leaves the id cache enriched with nothing, which is the
+    "never backfilled" case; any other value is the stamp the metadata
+    carries, so an expired record is one argument away.
+    """
+    clock = clock or Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    controller, _, _ = build(
+        tmp_path,
+        characters=[character if character is not None else _estimate_character()],
+        plans={"Gunnery": plan},
+        selected=selected,
+        now=clock,
+    )
+    if metadata is not None:
+        assert controller._cache.merge_metadata({GUNNERY_ID: _meta(metadata)}) == 1
+    return controller
+
+
+def _estimate_row(controller):
+    return controller.state_payload()["characters"][0]
+
+
+def test_metadata_backfill_enriches_an_id_only_cache_entry(tmp_path):
+    """Ids were resolved long before training metadata existed, so a real
+    user's cache is entirely id-only. Without a backfill pass their
+    estimates would stay unavailable forever -- resolve() never revisits a
+    name it has already answered."""
+    clock = Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    esi = FakeEsi(
+        types={GUNNERY_ID: esi_response(200, _type_body(1, "perception", "willpower"))}
+    )
+    controller, _, _ = run_refresh(
+        tmp_path,
+        esi,
+        character=_estimate_character(),
+        clock=clock,
+        plans={"Gunnery": "Gunnery V\n"},
+        selected="Gunnery",
+    )
+
+    assert controller._cache.get("Gunnery") == GUNNERY_ID
+    assert controller._cache.training_metadata(clock.value)[GUNNERY_ID].rank == 1
+    # Saved in the same lock hold, or the next launch pays for it again.
+    reloaded, warnings = skillids_mod.load(tmp_path / "eve_skills_cache.json")
+    assert warnings == []
+    assert reloaded.training_metadata(clock.value)[GUNNERY_ID].rank == 1
+
+
+def test_metadata_backfill_publishes_every_answer_or_none(tmp_path):
+    """A payload built halfway through a two-type backfill would score one
+    plan skill with an estimate and the other without, so the row would
+    show a number that is confidently too small. The fetch is staged and
+    merged once, and it happens with the state lock released."""
+    clock = Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID, "navigation": NAVIGATION_ID})
+    esi = FakeEsi(
+        types={
+            GUNNERY_ID: esi_response(200, _type_body(1, "perception", "willpower")),
+            NAVIGATION_ID: esi_response(200, _type_body(1, "intelligence", "memory")),
+        }
+    )
+    controller = None
+    observed = []
+    lock_free = []
+
+    def observe(path):
+        # Runs on the backfill's own worker threads, i.e. WHILE it is in
+        # flight. A lock it cannot take here is a lock the fetch is holding
+        # across the network, which is the rule this asserts rather than
+        # hangs on.
+        taken = controller._lock.acquire(blocking=False)
+        lock_free.append(taken)
+        if taken:
+            controller._lock.release()
+        controller.state_payload()
+        observed.append(len(controller._cache.training_metadata(clock.value)))
+
+    controller, _, _ = build(
+        tmp_path,
+        characters=[_estimate_character()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+        now=clock,
+        plans={"Gunnery": "Gunnery V\nNavigation I\n"},
+        selected="Gunnery",
+    )
+    esi.on_type = observe
+
+    controller.refresh_characters()
+
+    assert len(observed) == 2
+    assert set(observed) <= {0, 2}  # never one entry of a two-entry merge
+    assert all(lock_free)
+    assert len(controller._cache.training_metadata(clock.value)) == 2
+
+
+def test_metadata_backfill_failure_only_stops_the_estimate(tmp_path):
+    """Public metadata is not character data. A type call that fails must
+    leave readiness -- the answer the whole screen exists for -- exactly
+    where a successful refresh put it."""
+    clock = Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    esi = FakeEsi(types={GUNNERY_ID: esi_response(500, error="upstream")})
+    controller, _, _ = run_refresh(
+        tmp_path,
+        esi,
+        character=_estimate_character(),
+        clock=clock,
+        plans={"Gunnery": "Gunnery V\n"},
+        selected="Gunnery",
+    )
+
+    row = _estimate_row(controller)
+    assert (row["readiness"], row["missing_count"]) == ("Missing", 1)
+    assert row["error"] == "" and row["stale"] is False
+    assert row["training_remaining_seconds"] is None
+    assert row["training_remaining_label"] == ""
+    assert row["training_estimate_status"] == training_mod.METADATA_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("age", "expected_calls"),
+    [
+        pytest.param(timedelta(0), 0, id="fresh"),
+        pytest.param(skillids_mod.METADATA_MAX_AGE, 1, id="expired"),
+    ],
+)
+def test_metadata_backfill_spends_a_request_only_on_an_aged_record(
+    tmp_path, age, expected_calls
+):
+    """Thirty days of freshness is the point of caching it at all: a
+    refresh that re-fetched every plan skill's type detail would spend one
+    public request per skill, per click, forever. Both directions are
+    asserted together -- a backfill that never fired would satisfy the
+    fresh case for entirely the wrong reason."""
+    clock = Clock()
+    esi = FakeEsi(
+        types={GUNNERY_ID: esi_response(200, _type_body(1, "perception", "willpower"))}
+    )
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    controller, _, _ = build(
+        tmp_path,
+        characters=[_estimate_character()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+        now=clock,
+        plans={"Gunnery": "Gunnery V\n"},
+        selected="Gunnery",
+    )
+    controller._cache.merge_metadata({GUNNERY_ID: _meta(clock.value - age)})
+
+    controller.refresh_characters()
+
+    assert len([c for c in esi.calls if "/universe/types/" in c[0]]) == expected_calls
+    # Either way the record ends the pass fresh and usable, so the estimate
+    # an expired record suppressed is restored by the same refresh.
+    assert _estimate_row(controller)["training_estimate_status"] == (
+        training_mod.AVAILABLE
+    )
+
+
+def test_training_remaining_is_published_for_the_selected_plan(tmp_path):
+    """The whole feature: raw seconds for the page to sort on, a formatted
+    label for it to print, and a status word that says which."""
+    controller = _estimating(tmp_path)
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] == GUNNERY_V_SECONDS
+    assert row["training_remaining_label"] == GUNNERY_V_LABEL
+    assert row["training_estimate_status"] == training_mod.AVAILABLE
+
+
+def test_training_remaining_needs_a_complete_sp_snapshot(tmp_path):
+    """A partial SP map reads every absent skill as zero, which inflates
+    the estimate rather than admitting it does not know."""
+    controller = _estimating(tmp_path, _estimate_character(skill_points_complete=False))
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_remaining_label"] == ""
+    assert row["training_estimate_status"] == training_mod.REFRESH_REQUIRED
+
+
+def test_training_remaining_needs_attributes_that_were_confirmed(tmp_path):
+    """Attributes carry their own freshness. An unconfirmed set beside
+    newly refreshed SP is exactly the silent mismatch the supplemental
+    timestamp exists to prevent."""
+    controller = _estimating(tmp_path)
+    controller._state.characters[0].attributes_fetched_utc = None
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.ATTRIBUTES_UNAVAILABLE
+
+
+def test_training_remaining_needs_attributes_that_did_not_fail(tmp_path):
+    """A recorded attributes_error means the stored map is last-known, not
+    current, so it must not feed a number the row presents as a fact."""
+    controller = _estimating(
+        tmp_path,
+        _estimate_character(attributes_error=controller_mod.MSG_ATTRIBUTES_UNREADABLE),
+    )
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.ATTRIBUTES_UNAVAILABLE
+
+
+def test_the_attributes_error_text_never_reaches_the_payload(tmp_path):
+    """attributes_error carries transport wording and can carry the
+    re-authenticate message for a scope-shaped 403 -- on a character whose
+    core refresh succeeded and whose token is fine. Putting that on the
+    roster would tell the user to fix an account that is not broken."""
+    controller = _estimating(
+        tmp_path, _estimate_character(attributes_error=controller_mod.MSG_REAUTH)
+    )
+
+    payload = controller.state_payload()
+
+    assert controller_mod.MSG_REAUTH not in json.dumps(payload, default=str)
+    assert payload["characters"][0]["needs_reauth"] is False
+    assert (
+        payload["characters"][0]["training_estimate_status"]
+        == training_mod.ATTRIBUTES_UNAVAILABLE
+    )
+
+
+def test_training_remaining_needs_metadata_that_was_resolved(tmp_path):
+    controller = _estimating(tmp_path, metadata=None)
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.METADATA_UNAVAILABLE
+
+
+def test_training_remaining_needs_metadata_that_has_not_expired(tmp_path):
+    """Expiry has to be enforced where the estimate is READ, not only where
+    the backfill decides what to fetch: a refresh that failed to renew an
+    aged record must not leave the last render's number standing."""
+    controller = _estimating(tmp_path, metadata=T0 - skillids_mod.METADATA_MAX_AGE)
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.METADATA_UNAVAILABLE
+
+
+def test_training_remaining_includes_queued_requirements(tmp_path):
+    """Queued is not trained. The SP is still owed, so it stays in the
+    duration -- and estimated_finish_utc stays EVE's own queue fact rather
+    than being recomputed from it."""
+    finish = T0 + timedelta(days=2)
+    queued = _estimate_character(
+        queue=(evaluator_mod.QueueEntry(GUNNERY_ID, 5, T0, finish, 0),)
+    )
+    controller = _estimating(tmp_path, queued)
+
+    row = _estimate_row(controller)
+
+    assert (row["readiness"], row["queued_count"]) == ("Training", 1)
+    assert row["training_remaining_seconds"] == GUNNERY_V_SECONDS
+    assert row["estimated_finish_utc"] == finish.isoformat()
+
+
+def test_training_remaining_is_zero_for_a_target_already_trained(tmp_path):
+    """Trained-but-inactive is an Omega lapse, not missing SP: the skill is
+    paid for, so it contributes no training time even though the row is not
+    Ready."""
+    trained = _estimate_character(
+        trained_levels={GUNNERY_ID: 5},
+        skill_points={GUNNERY_ID: training_mod.skill_point_threshold(1, 5)},
+    )
+    controller = _estimating(tmp_path, trained)
+
+    row = _estimate_row(controller)
+
+    assert row["trained_inactive_count"] == 1
+    assert row["training_remaining_seconds"] == 0
+    assert row["training_remaining_label"] == "0m"
+    assert row["training_estimate_status"] == training_mod.AVAILABLE
+
+
+def test_training_remaining_is_empty_with_no_plan_selected(tmp_path):
+    """Nothing was asked for, so nothing is unavailable. The row keeps its
+    existing Unscored shape and the estimate fields are simply empty."""
+    controller = _estimating(tmp_path, selected="")
+
+    row = _estimate_row(controller)
+
+    assert row["readiness"] == "Unscored"
+    assert row["training_remaining_seconds"] is None
+    assert row["training_remaining_label"] == ""
+    assert row["training_estimate_status"] == ""
