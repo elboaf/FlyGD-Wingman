@@ -36,6 +36,73 @@ def _strip_html_comments(text: str) -> str:
 CODE = _strip_js_comments(SKILLS)
 BODY = _strip_html_comments(HTML)
 RAIL = re.search(r'<aside class="skills-rail">(.*?)</aside>', BODY, re.DOTALL).group(1)
+DEV_JS = _strip_js_comments((WEB / "dev.js").read_text(encoding="utf-8"))
+
+
+def _function_body(text: str, name: str) -> str:
+    r"""A function's body by brace-matching rather than a first-`}` regex.
+
+    `statusLine` and the two comparators below all nest an `if` block, so a
+    naive `\{(.*?)\n  \}` stops at the FIRST closing brace, which belongs to
+    the nested `if` rather than the function -- and would silently pass on
+    a truncated body that happens to contain what a test is looking for.
+    """
+    match = re.search(r"function\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", text)
+    assert match, f"{name} function is missing"
+    depth = 1
+    index = match.end()
+    while index < len(text) and depth:
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+        index += 1
+    assert depth == 0, f"{name} function has unbalanced braces"
+    return text[match.end() : index - 1]
+
+
+def _dev_skills_characters():
+    """Parses the skills fixture's `characters` array field-by-field.
+
+    Not a JSON/JS parser -- this is a lexical suite and dev.js is not JSON
+    (unquoted keys, single quotes, trailing commas would all break one).
+    Each character object is split out by its leading `{ character_id:`,
+    and every field is read independently by its own regex, so entries are
+    free to carry fields in any order or omit optional ones
+    (`missing_names`) without breaking the split.
+    """
+    match = re.search(
+        r"var skills = \{.*?characters:\s*\[(.*?)\n    \],\n\s*plan_issues",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, "the skills fixture's characters array is missing"
+    entries = re.split(r"\{ character_id:", match.group(1))[1:]
+
+    def field(entry, name, pattern=r"'([^']*)'"):
+        found = re.search(name + r":\s*" + pattern, entry)
+        return found.group(1) if found else None
+
+    parsed = []
+    for entry in entries:
+        seconds = field(entry, "training_remaining_seconds", r"(null|\d+)")
+        queued = field(entry, "queued_count", r"(\d+)")
+        missing = field(entry, "missing_count", r"(\d+)")
+        parsed.append(
+            {
+                "name": field(entry, "character_name"),
+                "readiness": field(entry, "readiness"),
+                "finish": field(entry, "estimated_finish_utc") or "",
+                "seconds": None if seconds in (None, "null") else int(seconds),
+                "status": field(entry, "training_estimate_status"),
+                "queued_count": int(queued) if queued is not None else 0,
+                "missing_count": int(missing) if missing is not None else 0,
+            }
+        )
+    return parsed
+
+
+DEV_CHARACTERS = _dev_skills_characters()
 
 
 # ---- the rail's two numbers -------------------------------------------
@@ -692,3 +759,288 @@ def test_missing_plan_is_reported_only_by_python():
     body = handler.group(1)
     assert "if (!text) { return; }" in body
     assert "The plan is no longer available." not in body
+
+
+# ---- Task 6: sorting the two live groups by training time -------------
+#
+# Task 5's payload carries three estimate fields per character:
+# `estimated_finish_utc` (EVE's own queue fact, untouched), and
+# `training_remaining_seconds` / `training_remaining_label` (the plan's
+# whole remaining duration, raw and formatted). The Training group sorts
+# on the first; the Missing group sorts on the second. Sorting Missing by
+# `missing_count` (a count of REQUIREMENTS) answered a different question
+# than the group now claims to answer (how long is left), and sorting
+# Training by name told a fleet commander nothing about who finishes soonest.
+
+
+def test_training_rows_sort_by_real_finish_with_unknown_last():
+    """The Training group's whole reason to exist as a sort target: `soonest
+    first` is the one ordering a queue timing-unknown row cannot honestly
+    join, so it must be excluded from the comparison entirely rather than
+    sorting as though its (missing) finish were early or late."""
+    assert "function byTrainingFinishThenName" in CODE
+    body = _function_body(CODE, "byTrainingFinishThenName")
+    assert "estimated_finish_utc" in body
+    assert "training_remaining_seconds" not in body, (
+        "the Training sort must use EVE's own queue fact, not the plan's "
+        "whole remaining duration"
+    )
+
+
+def test_missing_rows_sort_by_raw_training_seconds_with_unavailable_last():
+    """The Missing group has no queue fact to sort by -- nothing is queued
+    yet -- so it sorts on the plan's own remaining-duration estimate, and
+    only the RAW seconds: sorting on the formatted label would sort text
+    ("1d 2h" before "9h") rather than time."""
+    assert "function byTrainingRemainingThenName" in CODE
+    body = _function_body(CODE, "byTrainingRemainingThenName")
+    assert "training_remaining_seconds" in body
+    assert "training_remaining_label" not in body, (
+        "the Missing sort must compare raw seconds, not the printed string"
+    )
+
+
+def test_missing_status_carries_unqueued_count_and_training_work():
+    """S2 still holds: the row may not restate `Missing requirements`, its
+    own group header. What the header cannot carry is how much is left to
+    train and how long that takes -- and `unqueued` rather than `missing`
+    is deliberate, because every one of these requirements is about to be
+    queued, not merely absent."""
+    body = _function_body(CODE, "statusLine")
+    assert " unqueued" in body
+    assert " training remaining" in body
+    assert "training time unavailable" in body
+
+
+def test_missing_status_never_folds_no_plan_into_training_time_unavailable():
+    """`training_estimate_status === ""` means no plan was ever asked about
+    (Task 5's ruling) -- controller._character_row cannot produce a
+    `Missing` readiness without also producing one of the four real
+    estimator statuses, so this never fires from Python today. It is
+    guarded anyway: folding "" into the same phrase as a real failure
+    would silently start being true the moment that invariant ever moved,
+    with nothing here to catch it."""
+    body = _function_body(CODE, "statusLine")
+    assert "ch.training_estimate_status ?" in body, (
+        "the unavailable phrase must be gated on a truthy status, not an "
+        "unconditional else that would also fire for the empty ('no plan') "
+        "status"
+    )
+
+
+def test_training_rows_use_the_finish_comparator_and_missing_the_remaining_one():
+    """buildRoster() must not use one comparator for every group -- a
+    Training row sorted by name again would silently undo this task, and a
+    Ready/Locked/Unknown row sorted by training time would sort on a field
+    those groups do not mean to answer with."""
+    body = _function_body(CODE, "comparatorFor")
+    assert "byTrainingFinishThenName" in body
+    assert "byTrainingRemainingThenName" in body
+    assert "byName" in body
+    training_at = body.index("'Training'")
+    missing_at = body.index("'Missing'")
+    assert training_at < body.index("byTrainingFinishThenName"), (
+        "the Training comparator is not gated on the Training group name"
+    )
+    assert missing_at < body.index("byTrainingRemainingThenName"), (
+        "the Missing comparator is not gated on the Missing group name"
+    )
+    assert "comparatorFor(" in CODE and re.search(
+        r"rows\.sort\(comparatorFor\(", CODE
+    ), "buildRoster no longer selects a comparator per group"
+
+
+# ---- Task 6: the assumptions behind every estimate ---------------------
+
+
+def test_the_estimate_info_button_states_its_assumptions_accessibly():
+    """Every training ETA and remaining-time figure rests on assumptions
+    the payload cannot state per-row (Omega speed, no implants, and a
+    requirement this build could not resolve is simply skipped) -- so one
+    real, keyboard-reachable control states them once. A `<span>` with a
+    `title` -- list.js's existing tooltip vocabulary -- cannot be reached
+    by keyboard at all, which is why this is a `<button>`."""
+    tag = re.search(r'<button[^>]*id="skills-estimate-info"[^>]*>', BODY)
+    assert tag, "the estimate info button is missing"
+    markup = tag.group(0)
+    assert 'type="button"' in markup, "a button with no explicit type submits a form"
+    assert re.search(r"\bhidden\b", markup), (
+        "the info button must start hidden -- there is no plan selected on first paint"
+    )
+    label = re.search(r'aria-label="([^"]*)"', markup)
+    assert label, "the info button has no aria-label"
+    assert "Omega" in label.group(1)
+    assert "implant" in label.group(1).lower()
+    assert "requirement" in label.group(1).lower()
+    tip = re.search(r'data-tip="([^"]*)"', markup)
+    assert tip, "the info button has no data-tip for a mouse user"
+    assert "Omega" in tip.group(1)
+    assert "implant" in tip.group(1).lower()
+    assert "requirement" in tip.group(1).lower()
+
+
+def test_the_estimate_info_button_sits_between_the_count_and_copy_plan():
+    """It is an attribute of the SELECTED PLAN's numbers, not a general help
+    button, so it belongs beside the count those numbers describe rather
+    than at either end of the header."""
+    head = re.search(r'<header class="skills-head">(.*?)</header>', BODY, re.DOTALL)
+    assert head, "the Skills pane header moved"
+    count_at = head.group(1).index('id="skills-plan-count"')
+    info_at = head.group(1).index('id="skills-estimate-info"')
+    copy_at = head.group(1).index('id="skills-copy-plan"')
+    assert count_at < info_at < copy_at, (
+        "the info button must sit after the plan count and before Copy plan"
+    )
+
+
+def test_render_head_toggles_the_estimate_info_button_with_the_plan():
+    body = re.search(r"function renderHead\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert body, "renderHead is gone"
+    assert "skills-estimate-info" in body.group(1), (
+        "renderHead no longer touches the info button at all"
+    )
+    assert re.search(r"\.hidden = !name", body.group(1)), (
+        "the info button does not hide with no plan selected and reveal with one"
+    )
+
+
+def test_missing_status_carries_the_same_tooltip_for_mouse_discovery():
+    """The button is the keyboard-reachable affordance; a Missing row's own
+    status span carries the identical `data-tip` so resting a mouse on the
+    number gets the same explanation without tabbing up to the header. It
+    is read off the button rather than retyped, so the two copies of this
+    sentence cannot drift apart."""
+    assert "skills-estimate-info" in CODE
+    assert "getAttribute('data-tip')" in CODE, (
+        "the row's tooltip is not derived from the button's own data-tip"
+    )
+
+
+def test_the_tooltip_primitive_opens_on_keyboard_focus_too():
+    """Native `title` does not reliably open on keyboard focus, which is
+    why the info button is a real `<button>` and not a titled span -- but
+    the existing `[data-tip]` primitive itself was hover-only, so it must
+    be extended or a keyboard user still cannot read it."""
+    assert "[data-tip]:focus-visible::after" in CSS
+
+
+def test_the_estimate_info_button_has_a_hidden_override():
+    """Its base rule sets `display`, so the [hidden] trap DESIGN.md names
+    applies here too: an author rule beats the UA stylesheet's
+    `[hidden] { display: none }` regardless of specificity."""
+    assert ".skills-estimate-info[hidden] { display: none; }" in CSS
+
+
+def test_the_estimate_info_button_uses_only_existing_tokens():
+    """Restrained treatment: no new colour, no decorative background, and
+    the app's own dim-text token rather than a literal."""
+    rule = re.search(r"\.skills-estimate-info\s*\{([^}]*)\}", CSS)
+    assert rule, ".skills-estimate-info has no rule"
+    body = rule.group(1)
+    assert "display: inline-flex" in body
+    assert "var(--" in body, "the button must reuse an existing token"
+    assert "#" not in body, "a literal hex colour would be a new, unreviewed one"
+
+
+def test_the_estimate_info_button_gets_the_shared_focus_ring():
+    """THE focus indicator (style.css) is one shared rule so every
+    focusable control gets the same measured contrast; a control left out
+    of it falls back to the UA ring, which the same block's own comment
+    says resolves near-black on this dark page."""
+    rule = re.search(r"\.btn:focus-visible,(.*?)\{", CSS, re.DOTALL)
+    assert rule, "the shared :focus-visible rule is gone"
+    assert ".skills-estimate-info:focus-visible" in rule.group(1)
+
+
+# ---- Task 6: the dev fixture exercises every edge ----------------------
+
+
+def test_the_dev_fixture_gives_every_character_all_three_estimate_fields():
+    for character in DEV_CHARACTERS:
+        assert character["status"] is not None, (
+            f"{character['name']} has no training_estimate_status in the ?dev=1 fixture"
+        )
+
+
+def test_the_dev_fixture_carries_every_training_estimate_status():
+    statuses = {c["status"] for c in DEV_CHARACTERS}
+    for expected in (
+        "available",
+        "refresh_required",
+        "attributes_unavailable",
+        "metadata_unavailable",
+    ):
+        assert expected in statuses, (
+            f"no character in the ?dev=1 fixture carries "
+            f"training_estimate_status: {expected!r}, so that estimate "
+            "failure mode is not eyeballable in the harness"
+        )
+
+
+def test_the_dev_fixture_has_training_rows_out_of_name_order_plus_unknown():
+    training = [c for c in DEV_CHARACTERS if c["readiness"] == "Training"]
+    dated = [c for c in training if c["finish"]]
+    unknown = [c for c in training if not c["finish"]]
+    assert len(dated) >= 2, "need at least two dated Training rows"
+    assert len(unknown) >= 1, "need at least one timing-unknown Training row"
+    by_name = [c["name"] for c in sorted(dated, key=lambda c: c["name"].lower())]
+    by_finish = [c["name"] for c in sorted(dated, key=lambda c: c["finish"])]
+    assert by_name != by_finish, (
+        "the dated Training rows are already in name order; the fixture "
+        "cannot show byTrainingFinishThenName doing anything a name sort "
+        "would not"
+    )
+
+
+def test_the_dev_fixture_has_a_missing_tie_break_pair_out_of_name_order():
+    missing = [c for c in DEV_CHARACTERS if c["readiness"] == "Missing"]
+    by_seconds = {}
+    for c in missing:
+        by_seconds.setdefault(c["seconds"], []).append(c["name"])
+    ties = [
+        names
+        for seconds, names in by_seconds.items()
+        if seconds is not None and len(names) >= 2
+    ]
+    assert ties, (
+        "no two Missing characters share a training_remaining_seconds; the "
+        "tie-break by name is not exercised in the harness"
+    )
+    pair = ties[0]
+    assert sorted(pair, key=str.lower) != pair, (
+        "the tied pair is already in name order in the fixture array; the "
+        "harness could then pass with array order alone standing in for "
+        "the tie-break"
+    )
+
+
+def test_the_dev_fixture_has_a_missing_row_with_both_queued_and_unqueued_work():
+    assert any(
+        c["readiness"] == "Missing" and c["queued_count"] > 0 and c["missing_count"] > 0
+        for c in DEV_CHARACTERS
+    ), (
+        "no Missing character carries both queued_count > 0 and "
+        "missing_count > 0, so a mixed queued/unqueued roster row is not "
+        "visible in the harness"
+    )
+
+
+def test_the_dev_fixture_has_a_stale_missing_row_with_a_valid_estimate():
+    assert any(
+        c["readiness"] == "Missing" and c["status"] == "available"
+        for c in DEV_CHARACTERS
+    )
+    assert re.search(r"stale:\s*true,\s*\n\s*readiness:\s*'Missing'", DEV_JS), (
+        "the stale Missing character must keep a real training estimate, "
+        "not just its stale ESI error"
+    )
+
+
+def test_the_dev_fixture_has_a_long_character_name_and_a_long_missing_skill():
+    assert any(len(c["name"] or "") >= 35 for c in DEV_CHARACTERS), (
+        "no character name in the fixture is long enough to exercise the "
+        "240px name column's ellipsis"
+    )
+    # The exact skill style.css's own .skills-main comment names as the
+    # longest in EVE, so a regression there and here would be caught together.
+    assert "Heavy Assault Missile Specialization V" in DEV_JS
