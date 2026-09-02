@@ -36,8 +36,10 @@
   // The launcher holds eight. Kept in step with formations.MAX_PROBES by
   // Python refusing a ninth -- this only stops the button offering one.
   var MAX_PROBES = 8;
-  // Valid scan ranges are powers of two from 0.25 to 32 AU.
-  var RANGES = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+  // Valid scan ranges are powers of two from 0.25 to 64 AU. Core probes
+  // stop at 32; combat probes reach 64, and a formation does not know
+  // which kind will launch it, so the editor offers the union.
+  var RANGES = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64];
   // Screen-reader label for each internal axis letter, matching the column
   // headers ('West (km)', 'Up (km)', 'North (km)') rather than the raw x/y/z.
   var AXIS_LABELS = { x: 'West', y: 'Up', z: 'North' };
