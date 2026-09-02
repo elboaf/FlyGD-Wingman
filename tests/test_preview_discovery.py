@@ -109,3 +109,94 @@ def test_window_inspection_failure_is_skipped_by_default_but_strict_propagates()
 
 def test_strict_discovery_still_skips_an_inaccessible_process():
     assert _list(image_name=lambda pid: None, strict=True) == []
+
+
+# Probe tests: fail-closed EVE client state detection
+@pytest.mark.parametrize(
+    ("windows", "pid", "image", "expected"),
+    [
+        ([], 7, "exefile.exe", discovery.EveClientState.CLOSED),
+        ([(1, "Browser")], 7, None, discovery.EveClientState.CLOSED),
+        ([(1, "EVE - Alice")], 7, "exefile.exe", discovery.EveClientState.RUNNING),
+        ([(1, "EVE - Alice")], 7, "chrome.exe", discovery.EveClientState.CLOSED),
+        ([(1, "EVE - Alice")], 0, "exefile.exe", discovery.EveClientState.UNKNOWN),
+        ([(1, "EVE - Alice")], 7, None, discovery.EveClientState.UNKNOWN),
+    ],
+)
+def test_profile_probe_states(windows, pid, image, expected):
+    """Probe returns tri-state: CLOSED, RUNNING, or UNKNOWN."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: windows,
+        pids=lambda _hwnd: pid,
+        image_name=lambda _pid: image,
+    )
+    assert result.state is expected
+
+
+def test_probe_enumerator_exception_is_collected():
+    """Enumerator exception collects as an error; probe returns UNKNOWN."""
+    def boom():
+        raise OSError("no window station")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=boom,
+        pids=lambda _hwnd: 7,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], OSError)
+
+
+def test_probe_pid_exception_is_collected():
+    """PID lookup exception collects as an error; with EVE window, returns UNKNOWN."""
+    def boom(_hwnd):
+        raise OSError("process disappeared")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(1, "EVE - Alice")],
+        pids=boom,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+
+
+def test_probe_image_exception_is_collected():
+    """Image lookup exception collects as an error; with EVE window, returns UNKNOWN."""
+    def boom(_pid):
+        raise OSError("access denied")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(1, "EVE - Alice")],
+        pids=lambda _hwnd: 7,
+        image_name=boom,
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+
+
+def test_probe_mixed_known_and_unresolved_returns_unknown():
+    """UNKNOWN dominates: if any candidate has errors, probe returns UNKNOWN."""
+    def pids(hwnd):
+        if hwnd == 1:
+            return 7
+        raise OSError("process disappeared")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(1, "EVE - Alice"), (2, "EVE - Bob")],
+        pids=pids,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) > 0
+
+
+def test_probe_preserves_list_clients_strict_compatibility():
+    """list_clients with strict=True still works unchanged."""
+    # Existing behavior: strict=True propagates exceptions from enumerator
+    def boom():
+        raise OSError("no window station")
+
+    with pytest.raises(OSError, match="no window station"):
+        discovery.list_clients(enumerator=boom, strict=True)
