@@ -3629,14 +3629,22 @@ against a placeholder id; only these items are blocked on the registration.
       `training.estimate()`'s real answer for an already-trained target
       and must never stand in for a number the estimator could not
       compute at all.
-- [ ] **At the 840x625 floor, long names stay identifiable and every
-      collapsed status stays on one line.** Drag the window to its floor
-      with `?dev=1` loaded. Confirm Konstantina Alexandrovna
-      Winterbourne's name ellipsises (the 240px name-column cap) but her
-      full name is still readable from the row's `title`, and confirm
-      the longest status line on the roster — Gustav Oswaldo's
-      `6 unqueued · 15d 0h training remaining` — does not wrap to a
-      second line and is not cut off without an ellipsis.
+- [ ] **At the 840x625 floor, long names still read as themselves and
+      every collapsed status stays on one line.** Drag the window to its
+      floor with `?dev=1` loaded. Confirm Konstantina Alexandrovna
+      Winterbourne's name ellipsises at the 240px name-column cap rather
+      than overflowing or wrapping: `text-overflow: ellipsis` truncates
+      from the end, so enough of the PREFIX stays visible to tell her
+      apart from every other row at a glance — `.skills-name` carries no
+      `title`, so this is the only identity the collapsed row offers, not
+      a fallback for a full string recoverable on hover. Then confirm the
+      roster's worst case for the status column: Gustav Oswaldo, whose
+      `Stale` badge and `6 unqueued · 15d 0h training remaining` status
+      sit on the same line as his name. Neither wraps to a second line,
+      neither is cut off without an ellipsis, and the badge and status do
+      not overlap the name or each other — the chevron, badge and status
+      are all `flex: none`, so the name column is the only thing that
+      gives way, and this row is where it has to give way the most.
 - [ ] **The Groups block sits above Plans and its list stays capped.**
       With `?dev=1`'s seeded groups, confirm the rail lists `All` followed
       by every seeded group, top to bottom, each member count matching the
