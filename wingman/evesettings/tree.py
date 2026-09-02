@@ -11,7 +11,12 @@ from typing import NamedTuple
 
 # EVE's own three-level layout:
 #   <root>/<server>/settings_<profile>/core_char_<id>.dat
-_PROFILE_PREFIX = "settings_"
+#
+# Public: profilecopy.py derives a new profile's directory name from this
+# same prefix, and a private name here would mean that module's authority
+# over profile creation quietly depended on a second, independent copy of
+# the literal -- the exact drift backup.py's _NAME_RE comment warns about.
+PROFILE_PREFIX = "settings_"
 _KIND_PREFIXES = {"core_char_": "character", "core_user_": "account"}
 
 # A real EVE root holds one directory per shared-cache install -- a
@@ -176,7 +181,7 @@ def _shard(name: str) -> tuple[str, str]:
 
 
 def _is_profile_dir(path) -> bool:
-    return Path(path).name.startswith(_PROFILE_PREFIX)
+    return Path(path).name.startswith(PROFILE_PREFIX)
 
 
 class Probe(NamedTuple):
@@ -296,7 +301,7 @@ def _profiles_in(server) -> tuple[list, bool]:
             modified = path.stat().st_mtime
         except OSError:
             modified = 0.0
-        found.append(Profile(path, path.name[len(_PROFILE_PREFIX) :], count, modified))
+        found.append(Profile(path, path.name[len(PROFILE_PREFIX) :], count, modified))
     # os.scandir's order is filesystem-dependent, so two profiles whose
     # names differ only by case (a real thing on the case-sensitive
     # filesystems this suite runs its Linux tests on -- Windows can never
