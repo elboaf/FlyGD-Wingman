@@ -414,11 +414,12 @@ somewhere stale and nothing on that screen is worth reviewing.
       selected` takes a second line, right-aligned — check it is reachable
       and does not overlap the row above.
 - [ ] **Click, Enter and Space sort every column and show direction** on the
-      active column only. Tab to each header and use Enter, then Space: each
+      active control only. Tab to each header and use Enter, then Space: each
       must follow the same ascending/descending cycle as click and Space must
-      not scroll the page. In the Chromium accessibility pane, the active
-      header reports `aria-sort` as ascending or descending and every other
-      header reports none. Sorting is pure client state; a sort that
+      not scroll the page. In the Chromium accessibility pane, every header is
+      a button (not an orphaned ARIA table header); the active button's
+      accessible name announces ascending or descending and an inactive button
+      announces only what it sorts. Sorting is pure client state; a sort that
       round-trips to Python or clears the selection is a defect.
 - [ ] **The leftmost header is a bare check, not a checkbox.** Clicking it
       SORTS by checked state — it must not select or clear anything.

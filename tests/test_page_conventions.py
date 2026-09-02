@@ -2253,7 +2253,7 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
     assert "source.online === false" in picker
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
-    assert "restoreCopyFocusAfterRefresh(name, interaction)" in picker
+    assert "restoreCopyFocusAfterRefresh(name, interaction, attempt)" in picker
     assert "state.characters" not in picker
     assert "It applies next time" not in picker
     assert "source.name !== name" in src
@@ -2271,7 +2271,7 @@ def test_copy_picker_has_collapsing_empty_and_status_lines():
     assert "preview-copy-status" in src
     assert "status.classList.toggle('err', !!error)" in src
     assert "status.hidden = !status.textContent" in src
-    assert "function restoreCopyFocusAfterRefresh(name, interaction)" in src
+    assert "function restoreCopyFocusAfterRefresh(name, interaction, attempt)" in src
 
     section = src.split("document.addEventListener('wm:section'", 1)
     assert len(section) == 2
@@ -3112,9 +3112,11 @@ def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
     copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
     cancelled = copy.split("if (source === null)", 1)[1].split("}", 1)[0]
     assert "clearDetailFocus(name, 'copy')" in cancelled
-    assert copy.count("restoreCopyFocusAfterRefresh(name, interaction)") == 2, (
+    assert (
+        copy.count("restoreCopyFocusAfterRefresh(name, interaction, attempt)") == 2
+    ), (
         "both the refused and successful copy paths must refresh with the initiating "
-        "detail interaction"
+        "detail interaction and Copy attempt"
     )
 
     restore = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
@@ -3124,6 +3126,7 @@ def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
     assert "rememberDetailFocus(name, 'copy')" in restore
     assert "interaction !== detailInteraction" in restore
     assert "openDetailName !== name" in restore
+    assert "attempt !== copyAttempt" in restore
 
 
 def test_preview_roster_heading_is_a_programmatic_focus_fallback():

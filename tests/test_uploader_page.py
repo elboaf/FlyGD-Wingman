@@ -739,11 +739,12 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
     assert numeric and re.search(r"order:\s*-1", numeric.group(1))
 
 
-def test_sort_headers_are_keyboard_column_headers_with_current_sort_state():
-    """A span keeps the shared grid geometry while exposing sortable columns.
+def test_sort_headers_are_keyboard_buttons_with_current_sort_direction():
+    """Sortable spans need button semantics, not partial ARIA table roles.
 
-    This fails if a header loses valid column-header semantics, if Enter/Space
-    follows another code path from click, or if the active direction is not exposed.
+    The grid is presentational rather than an ARIA table, so aria-sort on an
+    orphaned columnheader is invalid. The active direction instead belongs in
+    each button's accessible name while click, Enter, and Space share sortBy.
     """
     header = HTML[
         HTML.index('id="list-head"') : HTML.index(
@@ -753,9 +754,10 @@ def test_sort_headers_are_keyboard_column_headers_with_current_sort_state():
     controls = re.findall(r'<span\b[^>]*data-sort="[^"]+"[^>]*>', header)
     assert len(controls) == len(COLUMNS)
     for control in controls:
-        assert 'role="columnheader"' in control
+        assert 'role="button"' in control
         assert 'tabindex="0"' in control
-        assert 'aria-sort="none"' in control
+        assert "aria-sort=" not in control
+        assert "aria-label=" in control
 
     helper = re.search(r"function sortBy\(key\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
     assert helper, "sorting needs one helper shared by click and keyboard"
@@ -776,10 +778,9 @@ def test_sort_headers_are_keyboard_column_headers_with_current_sort_state():
 
     render = re.search(r"function render\(\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
     assert render, "render() owns the dynamic header state"
-    assert (
-        "head.setAttribute('aria-sort', active ? (sortDesc ? 'descending' : 'ascending') : 'none');"
-        in render.group(1)
-    )
+    assert "head.setAttribute('aria-label'" in render.group(1)
+    assert "ascending" in render.group(1) and "descending" in render.group(1)
+    assert "aria-sort" not in render.group(1)
 
 
 def test_the_empty_pane_is_centred_rather_than_half_centred():

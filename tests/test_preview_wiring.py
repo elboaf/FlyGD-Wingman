@@ -7,6 +7,7 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import contextlib
 import copy
+import re
 import threading
 import types
 
@@ -2922,6 +2923,63 @@ def test_closing_or_leaving_previews_invalidates_pending_detail_focus():
     )[0]
     assert "detailInteraction += 1;" in section
     assert "detailFocusIntent = null;" in section
+
+
+def test_zero_row_roster_has_an_attached_focus_fallback():
+    """Removing the open character must not leave focus on document.body.
+
+    The generated Character header remains the normal roster and screenshot
+    anchor. When no character remains, its existing empty-state hint is the
+    attached, programmatically focusable fallback.
+    """
+    html = _web("index.html")
+    js = _web("previews.js")
+
+    empty = re.search(r'id="preview-binds-empty"[^>]*>', html)
+    assert empty and 'tabindex="-1"' in empty.group(0)
+    focus = js.split("function focusRosterHeading", 1)[1].split("\n  function ", 1)[0]
+    assert "preview-roster-heading" in focus
+    assert "preview-binds-empty" in focus
+
+
+def test_copy_status_and_focus_belong_to_the_current_copy_attempt():
+    """A late Copy A result cannot report over Configure B or Copy B."""
+    js = _web("previews.js")
+    assert "var copyAttempt = 0;" in js
+
+    copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
+    assert "var attempt = ++copyAttempt;" in copy
+    assert copy.count("copyStatusForCurrent(") == 2
+    assert copy.count("restoreCopyFocusAfterRefresh(name, interaction, attempt)") == 2
+
+    status = js.split("function copyStatusForCurrent", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    for guard in (
+        "interaction !== detailInteraction",
+        "openDetailName !== name",
+        "attempt !== copyAttempt",
+    ):
+        assert guard in status
+
+    refresh = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "attempt !== copyAttempt" in refresh
+
+
+def test_detail_changes_invalidate_pending_copy_attempts():
+    """Opening another detail or leaving Previews supersedes late Copy work."""
+    js = _web("previews.js")
+    configure = js.split("configure.addEventListener('click'", 1)[1].split(
+        "requestRender();", 1
+    )[0]
+    section = js.split("document.addEventListener('wm:section'", 1)[1].split(
+        "\n  refresh();", 1
+    )[0]
+    assert "copyAttempt += 1;" in configure
+    assert "copyStatus('', false);" in configure
+    assert "copyAttempt += 1;" in section
 
 
 def test_add_refusal_restores_focus_after_requestrender():

@@ -55,6 +55,9 @@
   // Every Configure interaction supersedes pending detail work. A late bridge
   // response must not pull focus back after the user opens or closes a detail.
   var detailInteraction = 0;
+  // A Copy result belongs to one chooser attempt. Another Copy, a Configure
+  // change, or leaving Previews invalidates the older result and its focus.
+  var copyAttempt = 0;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -261,7 +264,7 @@
     // Preview box carry the distinct opt-out state instead.
     var off = !!(character && isExcluded(character));
 
-    // Track 1 of every row. A cycle row gets a filler rather than a box:
+    // Track 2 of every row. A cycle row gets a filler rather than a box:
     // cycle forward/back are app commands, not characters, and there is
     // nothing to opt them out of. The ternary keeps the collapsed shape
     // unconditional without a separate character/cycle branch.
@@ -413,7 +416,9 @@
       configure.addEventListener('click', function () {
         endCapture();
         detailInteraction += 1;
+        copyAttempt += 1;
         detailFocusIntent = null;
+        copyStatus('', false);
         openDetailName = openDetailName === character ? null : character;
         requestRender();
         var detail = document.getElementById(detailId(character));
@@ -471,7 +476,11 @@
 
   function focusRosterHeading() {
     var heading = WM.el('preview-roster-heading');
-    if (heading) { heading.focus(); }
+    if (heading) { heading.focus(); return; }
+    // The generated header is absent with no characters. Its attached empty
+    // state is the only programmatic fallback that remains in the roster.
+    var empty = WM.el('preview-binds-empty');
+    if (empty && !empty.hidden) { empty.focus(); }
   }
 
   function focusConfigure(characterName) {
@@ -561,13 +570,15 @@
   }
 
   // Install the intent only in refresh's authoritative-payload path, and
-  // only while the detail that began Copy is still the current interaction.
-  // A cancellation, section leave, or different Configure click cannot then
+  // only while the detail and Copy attempt that began it are still current.
+  // A cancellation, section leave, newer Copy, or Configure click cannot then
   // let a late refresh steal focus from the user's newer destination.
-  function restoreCopyFocusAfterRefresh(name, interaction) {
-    if (interaction !== detailInteraction || openDetailName !== name) { return; }
+  function restoreCopyFocusAfterRefresh(name, interaction, attempt) {
+    if (interaction !== detailInteraction || openDetailName !== name
+        || attempt !== copyAttempt) { return; }
     refresh(function () {
-      if (interaction === detailInteraction && openDetailName === name) {
+      if (interaction === detailInteraction && openDetailName === name
+          && attempt === copyAttempt) {
         rememberDetailFocus(name, 'copy');
       }
     });
@@ -581,6 +592,12 @@
     status.hidden = !status.textContent;
   }
 
+  function copyStatusForCurrent(name, interaction, attempt, text, error) {
+    if (interaction !== detailInteraction || openDetailName !== name
+        || attempt !== copyAttempt) { return; }
+    copyStatus(text, error);
+  }
+
   function makeCopyButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Copy…');
     btn.setAttribute('data-copy-target', name);
@@ -589,6 +606,7 @@
     btn.addEventListener('click', function () {
       endCapture();
       var interaction = detailInteraction;
+      var attempt = ++copyAttempt;
       copyStatus('', false);
       var sources = copySources(name);
       var groups = [
@@ -613,14 +631,18 @@
         }
         WM.send('copy_preview_layout', name, source).then(function (result) {
           if (!result || !result.applied) {
-            copyStatus(result && result.error
-                       ? result.error
-                       : 'That preview placement could not be copied.', true);
-            restoreCopyFocusAfterRefresh(name, interaction);
+            copyStatusForCurrent(
+              name, interaction, attempt,
+              result && result.error
+                ? result.error
+                : 'That preview placement could not be copied.', true);
+            restoreCopyFocusAfterRefresh(name, interaction, attempt);
             return;
           }
-          copyStatus('Copied ' + source + '’s geometry to ' + name + '.', false);
-          restoreCopyFocusAfterRefresh(name, interaction);
+          copyStatusForCurrent(
+            name, interaction, attempt,
+            'Copied ' + source + '’s geometry to ' + name + '.', false);
+          restoreCopyFocusAfterRefresh(name, interaction, attempt);
         });
       });
     });
@@ -1013,7 +1035,7 @@
     // Withdrawing Size… must not withdraw the guidance it formerly returned.
     //
     // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
-    // grid and elementFromPoint at its centre returned null, so the title
+    // detail flex action layout and elementFromPoint at its centre returned null, so the title
     // below had no hover target and the explanation was unreachable. It
     // also says "nothing here, and that is expected" to someone who never
     // hovers -- an unexplained gap in one column of one row otherwise
@@ -1950,6 +1972,7 @@
   // fire on a plain tab switch and was the wrong event to listen for here.
   // wm:section, not wm:route -- see the matching comment in bookmarks.js.
   document.addEventListener('wm:section', function (event) {
+    copyAttempt += 1;
     copyStatus('', false);
     if (event.detail === 'previews') {
       refresh();

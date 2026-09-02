@@ -1323,6 +1323,18 @@ def test_fixture_stages_fail_closed_when_required_controls_are_missing():
     assert "roster heading" in scripts["settings-previews-narrow"]
 
 
+def test_copy_stage_fails_closed_unless_the_copy_chooser_opens():
+    """Clicking Copy is setup, not proof that the picker was staged."""
+    copy = shoot.screen_setup_script(
+        next(s for s in shoot.SCREENS if s.key == "settings-previews-copy")
+    )
+    assert copy is not None
+    assert copy.index("copy.click()") < copy.index("overlay.hidden")
+    assert "Copy chooser did not open" in copy
+    assert "dialog.classList.contains('choice')" in copy
+    assert "throw new Error" in copy
+
+
 class _FailOnceCDP(_OrderedCDP):
     """Record setup evaluation and every screenshot attempt before failure."""
 

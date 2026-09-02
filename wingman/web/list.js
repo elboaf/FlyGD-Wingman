@@ -199,7 +199,10 @@
         var active = head.dataset.sort === sortKey;
         head.classList.toggle('sorted', active);
         head.classList.toggle('desc', active && sortDesc);
-        head.setAttribute('aria-sort', active ? (sortDesc ? 'descending' : 'ascending') : 'none');
+        var label = head.title || 'Sort by ' + head.textContent.trim().toLowerCase();
+        head.setAttribute('aria-label', label + (active
+          ? ', ' + (sortDesc ? 'descending' : 'ascending')
+          : ''));
       });
 
     document.dispatchEvent(new CustomEvent('wm:selection'));

@@ -42,9 +42,9 @@
              is a sort control, and a box in the header position reads as a
              select-all checkbox this column does not offer. -->
         <span class="c-check" data-sort="checked" title="Sort by selected"
-              role="columnheader" tabindex="0" aria-sort="none">&#10003;</span>
+              role="button" tabindex="0" aria-label="Sort by selected">&#10003;</span>
         <span class="c-name" data-sort="filename"
-              role="columnheader" tabindex="0" aria-sort="none">Filename</span>
+              role="button" tabindex="0" aria-label="Sort by filename">Filename</span>
         <!-- "Age", not "Modified" (round 3's finding 8 dropped this column;
              it is back by request, and the heading is deliberately not the
              one that left).
@@ -77,13 +77,13 @@
              sort would put "Aug" before "Dec" and "2 days ago" before
              "3h ago". -->
         <span class="c-date" data-sort="date"
-              role="columnheader" tabindex="0" aria-sort="none">Age</span>
+              role="button" tabindex="0" aria-label="Sort by age">Age</span>
         <span class="c-size" data-sort="size"
-              role="columnheader" tabindex="0" aria-sort="none">Size</span>
+              role="button" tabindex="0" aria-label="Sort by size">Size</span>
         <span class="c-len" data-sort="duration"
-              role="columnheader" tabindex="0" aria-sort="none">Length</span>
+              role="button" tabindex="0" aria-label="Sort by length">Length</span>
         <span class="c-link" data-sort="link" title="Sort by uploaded"
-              role="columnheader" tabindex="0" aria-sort="none">Link</span>
+              role="button" tabindex="0" aria-label="Sort by uploaded">Link</span>
       </div>
 
       <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
@@ -1038,7 +1038,7 @@
             Edit&hellip; lets you type one instead.</span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-empty">Start an EVE client to
+          <span class="hint" id="preview-binds-empty" tabindex="-1">Start an EVE client to
             add a character here.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-copy-empty" hidden>Move or resize

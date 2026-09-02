@@ -243,6 +243,12 @@ def screen_setup_script(screen: Screen) -> str | None:
                 "    '[data-preview-detail-control=\"copy\"]');\n"
                 "  if (!copy) { throw new Error('Copy control is missing'); }\n"
                 "  copy.click();\n"
+                "  var overlay = WM.el('overlay');\n"
+                "  var dialog = WM.el('dialog');\n"
+                "  if (!overlay || overlay.hidden || !dialog\n"
+                "      || !dialog.classList.contains('choice')) {\n"
+                "    throw new Error('Copy chooser did not open');\n"
+                "  }\n"
             )
         return (
             "(function () {\n"
@@ -702,8 +708,8 @@ def walk(
             if screen.key == "settings-previews-narrow":
                 # CDP viewport override MUST be applied before the setup
                 # script runs (finding 1, round 2): the setup script injects
-                # the fixture via onPreviewHotkeys and scrolls to the target
-                # character row -- both must execute at 840x625 so the layout
+                # the fixture via onPreviewHotkeys and scrolls to the roster
+                # heading -- both must execute at 840x625 so the layout
                 # is already constrained before the scroll position is chosen.
                 # window.resizeTo is a no-op in WebView2; CDP emulation is
                 # the only mechanism that works.
