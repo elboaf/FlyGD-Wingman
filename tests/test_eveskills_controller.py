@@ -495,7 +495,16 @@ def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
 
 def with_snapshot(**kwargs):
     """A character that already has committed data, so a later refresh has
-    something to preserve or overwrite."""
+    something to preserve or overwrite.
+
+    skill_points/skill_points_complete default to a valid, complete map so
+    the stored skills_etag stays valid under from_dict's migration rule
+    (state.py: an ETag survives a load only alongside a complete SP map) -- keeping every existing conditional-request test representing a modern,
+    complete snapshot rather than a legacy one whose ETag load() would
+    silently discard. Attributes are left at their empty defaults
+    deliberately; Task 4 adds valid attributes here once the refresh path
+    understands them.
+    """
     defaults = dict(
         character_id=95,
         character_name="Aiga Otsolen",
@@ -505,6 +514,8 @@ def with_snapshot(**kwargs):
         trained_levels={3327: 3},
         skills_etag='"old-s"',
         queue_etag='"old-q"',
+        skill_points={3327: 1000},
+        skill_points_complete=True,
     )
     defaults.update(kwargs)
     return state_mod.Character(**defaults)
@@ -1332,7 +1343,23 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
     controller, _, _alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
-        characters=[with_snapshot(owner_hash="hash-1")],
+        characters=[
+            with_snapshot(
+                owner_hash="hash-1",
+                skill_points={3327: 1000},
+                skill_points_complete=True,
+                attributes={
+                    "charisma": 19,
+                    "intelligence": 20,
+                    "memory": 20,
+                    "perception": 27,
+                    "willpower": 21,
+                },
+                attributes_fetched_utc=T0,
+                attributes_error="",
+                attributes_etag='"old-attrs"',
+            )
+        ],
         validate_token=lambda *a, **k: IDENTITY,
     )
 
@@ -1342,6 +1369,17 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
     found = reloaded.find(95)
     assert found.active_levels == {3327: 3}
     assert found.error == ""
+    assert found.skill_points == {3327: 1000}
+    assert found.skill_points_complete is True
+    assert found.attributes == {
+        "charisma": 19,
+        "intelligence": 20,
+        "memory": 20,
+        "perception": 27,
+        "willpower": 21,
+    }
+    assert found.attributes_fetched_utc == T0
+    assert found.attributes_etag == '"old-attrs"'
 
 
 def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
@@ -1350,7 +1388,23 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     controller, _, _, _, _ = build_auth(
         tmp_path,
         monkeypatch,
-        characters=[with_snapshot(owner_hash="old-hash")],
+        characters=[
+            with_snapshot(
+                owner_hash="old-hash",
+                skill_points={3327: 1000},
+                skill_points_complete=True,
+                attributes={
+                    "charisma": 19,
+                    "intelligence": 20,
+                    "memory": 20,
+                    "perception": 27,
+                    "willpower": 21,
+                },
+                attributes_fetched_utc=T0,
+                attributes_error="",
+                attributes_etag='"old-attrs"',
+            )
+        ],
         validate_token=lambda *a, **k: IDENTITY,
     )
 
@@ -1364,6 +1418,12 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     assert found.fetched_utc is None
     assert found.skills_etag == ""
     assert found.queue_etag == ""
+    assert found.skill_points == {}
+    assert found.skill_points_complete is False
+    assert found.attributes == {}
+    assert found.attributes_fetched_utc is None
+    assert found.attributes_error == ""
+    assert found.attributes_etag == ""
     assert found.error == (
         "Character ownership changed; cached skill data was cleared."
     )

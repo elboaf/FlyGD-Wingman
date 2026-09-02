@@ -131,10 +131,92 @@ def test_round_trips_a_full_character():
                 refresh_token_blob="QUJD",
                 skills_etag='W/"abc"',
                 queue_etag='W/"def"',
+                skill_points={3300: 256000, 3301: 40000},
+                skill_points_complete=True,
+                attributes={
+                    "charisma": 19,
+                    "intelligence": 20,
+                    "memory": 20,
+                    "perception": 27,
+                    "willpower": 21,
+                },
+                attributes_fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=UTC),
+                attributes_error="",
+                attributes_etag='W/"attrs"',
             )
         ],
     )
     assert state.from_dict(state.to_dict(original)) == original
+
+
+def test_legacy_snapshot_clears_skills_etag_until_sp_is_downloaded():
+    """A document written before this package tracked total SP has a
+    skills_etag but no skill_points map. That ETag was earned against a
+    response body that never carried SP at all -- trusting it on the first
+    post-upgrade refresh would short-circuit the request that is supposed
+    to backfill skill_points, leaving the character permanently missing it.
+    """
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "fetched_utc": "2026-08-24T10:30:00+00:00",
+                    "active_levels": {"3300": 5},
+                    "trained_levels": {"3300": 5},
+                    "skills_etag": 'W/"legacy"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == ""
+
+
+def test_malformed_persisted_sp_invalidates_completeness_and_etag():
+    """One invalid entry discards the whole SP map (unlike active/trained
+    levels, which drop per-entry) -- and a malformed-but-marked-complete map
+    must not leave a stale skills_etag standing in for it, or the next
+    refresh would send a conditional request and get back a 304 that hides
+    the very data this load just discarded."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "skill_points": {"3300": 1000, "bad": 5},
+                    "skill_points_complete": True,
+                    "skills_etag": 'W/"must-not-hide-next-body"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == ""
+
+
+def test_an_empty_sp_map_marked_complete_stays_complete():
+    """A character with zero trained skills is a real, valid state -- an
+    empty dict is structurally valid, so `skill_points_complete: true` must
+    survive rather than being treated as "no data yet"."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "skill_points": {},
+                    "skill_points_complete": True,
+                    "skills_etag": 'W/"empty-sp"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.skill_points == {}
+    assert ch.skill_points_complete is True
+    assert ch.skills_etag == 'W/"empty-sp"'
 
 
 def test_from_dict_never_raises_on_junk():
@@ -216,7 +298,13 @@ def test_character_name_owner_hash_and_error_are_trimmed():
     """TriffSkillsState.cs:157-158,163 trims these three fields. The token
     blob and the two ETags are opaque values rather than display text and
     must NOT be trimmed -- a blob or ETag that happens to start or end
-    with whitespace-like bytes would be silently corrupted."""
+    with whitespace-like bytes would be silently corrupted.
+
+    skill_points/skill_points_complete are set here only so skills_etag
+    survives the completeness gate _coerce_skill_points enforces
+    elsewhere -- the field this test actually cares about is the
+    (non-)trimming, not that gate.
+    """
     raw = {
         "characters": [
             {
@@ -226,6 +314,8 @@ def test_character_name_owner_hash_and_error_are_trimmed():
                 "error": "  ESI timed out  ",
                 "refresh_token_blob": "  QUJD  ",
                 "skills_etag": '  W/"abc"  ',
+                "skill_points": {"3300": 1000},
+                "skill_points_complete": True,
             }
         ]
     }

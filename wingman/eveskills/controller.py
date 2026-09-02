@@ -1607,6 +1607,17 @@ class SkillsController:
                     ch.fetched_utc = None
                     ch.skills_etag = ""
                     ch.queue_etag = ""
+                    # Total SP and the five learning attributes are just as
+                    # much someone else's data as active_levels/queue above
+                    # -- character-owned estimate inputs, not public
+                    # training metadata, so they are cleared here too.
+                    # SkillIdCache is untouched: it is not character-owned.
+                    ch.skill_points = {}
+                    ch.skill_points_complete = False
+                    ch.attributes = {}
+                    ch.attributes_fetched_utc = None
+                    ch.attributes_error = ""
+                    ch.attributes_etag = ""
                     ch.error = MSG_OWNER_CHANGED
                 else:
                     ch.error = ""
