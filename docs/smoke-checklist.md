@@ -2601,8 +2601,9 @@ pytest.
 - [ ] **From a foreground member, a foreground nonmember, and a browser, verify the
   anchor/history behavior (design decision 3).** With a group active: from a
   group member in the foreground, cycling advances from that member; from a
-  group nonmember in the foreground, the anchor uses the group's own history;
-  from a browser, the group falls back to its last-cycled target.
+  group nonmember in the foreground, the anchor is missing and the action starts
+  at the group's first running member; from a browser, the group falls back to
+  its last-cycled target.
 - [ ] **Alternate All, DPS, Logistics, and direct-character hotkeys rapidly; the
   final client matches sequential meaning without displaying intermediate
   targets.** Calculate the expected endpoint from the action sequence first.
@@ -2615,8 +2616,9 @@ pytest.
   registered and membership is unchanged; no reconfiguration is needed and
   the renamed group cycles correctly on the very next press.
 - [ ] **Delete a populated group.** Expected: the confirmation names the exact
-  number of assignments, the chord is released immediately, and every former
-  member still cycles under All only — no reassignment, no crash.
+  number of assignments, the chord is released immediately, every former
+  member still cycles under All only — no reassignment, no crash — and every
+  former member's visible assignment selector reads **All only** after deletion.
 - [ ] **Log members in and out during repeated cycling.** Expected: no wrong
   client, no stale window handle, no crash, and no stuck hotkey over an
   extended session of login/logout churn.
