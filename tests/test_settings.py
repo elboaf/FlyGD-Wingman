@@ -47,7 +47,13 @@ def test_defaults_are_the_documented_values():
             # is keyed off this marker.
             "defaults_version": 2,
             "layouts": {},
-            "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+            "hotkeys": {
+                "characters": {},
+                "cycle_next": "",
+                "cycle_prev": "",
+                "groups": [],
+                "group_by_character": {},
+            },
             "seen": [],
             "restore_preview_positions": True,
             "alerts": {
@@ -329,7 +335,13 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
 
 def test_preview_defaults_carry_an_empty_hotkey_table():
     section = settings._preview_defaults()
-    assert section["hotkeys"] == {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+    assert section["hotkeys"] == {
+        "characters": {},
+        "cycle_next": "",
+        "cycle_prev": "",
+        "groups": [],
+        "group_by_character": {},
+    }
     assert section["seen"] == []
 
 
@@ -379,7 +391,13 @@ def test_validated_preview_canonicalises_gestures():
 
 def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
     section = settings.validated_preview({"hotkeys": "nonsense"})
-    assert section["hotkeys"] == {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+    assert section["hotkeys"] == {
+        "characters": {},
+        "cycle_next": "",
+        "cycle_prev": "",
+        "groups": [],
+        "group_by_character": {},
+    }
 
 
 def test_validated_preview_cleans_the_roster():

@@ -8,6 +8,15 @@ the record and the code have since diverged, and what is left to build.
 Status as of #65. Every claim below was checked against the tree, not carried
 forward from the record.
 
+### Named cycle groups — shipped
+
+Character groups with named forward-only cycle keybinds and scope-aware
+history are complete. The All forward and All back rows remain the implicit
+cycle-all fallback and are backward-compatible with settings files that have
+no groups. Multiple group membership, backward group cycle keys, and group-specific
+preview geometry remain open. EVE-O/EVE-X profile import remains open (see item 13
+below); multiple named profiles remain open (see item 12 below).
+
 ## Corrections to the record
 
 The design document was last edited at #31 and is read as current more often

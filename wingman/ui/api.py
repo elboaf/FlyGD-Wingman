@@ -21,6 +21,7 @@ passed in: create_window() needs js_api before a window object exists.
 """
 
 import contextlib
+import copy
 import datetime
 import json
 import logging
@@ -500,6 +501,15 @@ class Api:
         self._watcher = None
         self._auth_thread: threading.Thread | None = None
         self._on_recording_dir_ready = None
+        # Serializes all preview hotkey persistence and host delivery.
+        # Every write to preview.hotkeys -- set_preview_binds and all group
+        # operations -- must acquire this lock before entering
+        # settings_mod.update and must hold it through the host.set_hotkeys
+        # call that follows. That makes the per-call sequence (persist then
+        # deliver) atomic with respect to every other such call, so two
+        # concurrent mutations cannot reorder their host deliveries past their
+        # persist order.
+        self._preview_hotkey_lock = threading.Lock()
 
     # ----- page -> Python -------------------------------------------------
 
@@ -3075,8 +3085,35 @@ class Api:
             return {"gesture": "", "error": "unparseable"}
         return {"gesture": preview_gestures.display(parsed), "error": None}
 
+    # ---- Preview hotkey private helpers (must run under _preview_hotkey_lock)
+
+    def _preview_hotkeys(self) -> dict:
+        """Deep copy of the current preview hotkeys table from settings."""
+        return copy.deepcopy(
+            self._state.settings.get("preview", {}).get("hotkeys") or {}
+        )
+
+    @staticmethod
+    def _preview_group_result(applied, error, hotkeys) -> dict:
+        """Build the standard group-operation result dict.
+
+        Invariant: group operations persist before live host delivery, so
+        ``persisted == applied`` always holds for this helper -- there is no
+        partial state where the host has a change that was not also written
+        to disk.
+        """
+        return {
+            "applied": bool(applied),
+            "persisted": bool(applied),
+            "error": error,
+            "hotkeys": copy.deepcopy(hotkeys),
+        }
+
     def set_preview_binds(self, section) -> bool:
-        """Replace the whole binding table, persist it, and push it down.
+        """Replace the character keybinds and All-cycle chords, persist them,
+        and push the full table to the host.
+
+        Groups and group membership are left unchanged.
 
         Returns False on a chord that will not parse rather than silently
         dropping it: the page needs to tell a rejected entry from a saved
@@ -3106,16 +3143,242 @@ class Api:
                 return False
             table[key] = preview_gestures.display(parsed)
 
-        try:
-            with settings_mod.update(self._state.settings) as cfg:
-                cfg.setdefault("preview", {})["hotkeys"] = table
-        except OSError:
-            logger.exception("Could not persist preview hotkeys")
-            return False
-
-        if self._preview_host is not None:
-            self._preview_host.set_hotkeys(table)
+        with self._preview_hotkey_lock:
+            try:
+                with settings_mod.update(self._state.settings) as cfg:
+                    hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
+                    hotkeys["characters"] = table["characters"]
+                    hotkeys["cycle_next"] = table["cycle_next"]
+                    hotkeys["cycle_prev"] = table["cycle_prev"]
+            except OSError:
+                logger.exception("Could not persist preview hotkeys")
+                return False
+            applied = self._preview_hotkeys()
+            if self._preview_host is not None:
+                self._preview_host.set_hotkeys(applied)
         return True
+
+    def create_preview_cycle_group(self, name) -> dict:
+        """Create a new named cycle group.
+
+        Returns {applied, persisted, error, hotkeys}. The hotkeys field is
+        the authoritative normalized table after the mutation.
+        """
+        if not isinstance(name, str) or not name.strip():
+            # Acquire the writer lock before reading so the refusal table
+            # reflects the authoritative post-commit (or post-rollback) state
+            # rather than a transient mutation from a concurrent writer.
+            with self._preview_hotkey_lock:
+                empty = self._preview_hotkeys()
+            return self._preview_group_result(
+                False, "Group name must be a non-empty string", empty
+            )
+        clean_name = name.strip()
+        folded = clean_name.casefold()
+        new_id = self._id_factory()
+        with self._preview_hotkey_lock:
+            try:
+                with settings_mod.update(self._state.settings) as cfg:
+                    hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
+                    # Enforce unique case-insensitive name and unique ID.
+                    groups = hotkeys.setdefault("groups", [])
+                    for g in groups:
+                        if g.get("name", "").casefold() == folded:
+                            raise ValueError(
+                                f"A group named {clean_name!r} already exists"
+                            )
+                    if any(g.get("id") == new_id for g in groups):
+                        raise ValueError(f"ID collision for {new_id!r}")
+                    groups.append({"id": new_id, "name": clean_name, "cycle": ""})
+            except ValueError as exc:
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, str(exc), current)
+            except OSError:
+                logger.exception("Could not persist preview hotkeys")
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, "Persist error", current)
+            result_table = self._preview_hotkeys()
+            if self._preview_host is not None:
+                self._preview_host.set_hotkeys(result_table)
+        return self._preview_group_result(True, None, result_table)
+
+    def rename_preview_cycle_group(self, group_id, name) -> dict:
+        """Rename an existing cycle group by its stable ID.
+
+        Returns {applied, persisted, error, hotkeys}.
+        """
+        if not isinstance(group_id, str) or not group_id:
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(False, "Invalid group_id", current)
+        if not isinstance(name, str) or not name.strip():
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(
+                False, "Group name must be a non-empty string", current
+            )
+        clean_name = name.strip()
+        folded = clean_name.casefold()
+        with self._preview_hotkey_lock:
+            try:
+                with settings_mod.update(self._state.settings) as cfg:
+                    hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
+                    groups = hotkeys.setdefault("groups", [])
+                    target = next((g for g in groups if g.get("id") == group_id), None)
+                    if target is None:
+                        raise ValueError(f"No group with id {group_id!r}")
+                    for g in groups:
+                        if g is not target and g.get("name", "").casefold() == folded:
+                            raise ValueError(
+                                f"A group named {clean_name!r} already exists"
+                            )
+                    target["name"] = clean_name
+            except ValueError as exc:
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, str(exc), current)
+            except OSError:
+                logger.exception("Could not persist preview hotkeys")
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, "Persist error", current)
+            result_table = self._preview_hotkeys()
+            if self._preview_host is not None:
+                self._preview_host.set_hotkeys(result_table)
+        return self._preview_group_result(True, None, result_table)
+
+    def delete_preview_cycle_group(self, group_id) -> dict:
+        """Delete a cycle group and remove all character memberships.
+
+        Returns {applied, persisted, error, hotkeys}.
+        """
+        if not isinstance(group_id, str) or not group_id:
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(False, "Invalid group_id", current)
+        with self._preview_hotkey_lock:
+            try:
+                with settings_mod.update(self._state.settings) as cfg:
+                    hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
+                    groups = hotkeys.setdefault("groups", [])
+                    orig_len = len(groups)
+                    hotkeys["groups"] = [g for g in groups if g.get("id") != group_id]
+                    if len(hotkeys["groups"]) == orig_len:
+                        raise ValueError(f"No group with id {group_id!r}")
+                    mapping = hotkeys.setdefault("group_by_character", {})
+                    hotkeys["group_by_character"] = {
+                        name: gid for name, gid in mapping.items() if gid != group_id
+                    }
+            except ValueError as exc:
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, str(exc), current)
+            except OSError:
+                logger.exception("Could not persist preview hotkeys")
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, "Persist error", current)
+            result_table = self._preview_hotkeys()
+            if self._preview_host is not None:
+                self._preview_host.set_hotkeys(result_table)
+        return self._preview_group_result(True, None, result_table)
+
+    def set_preview_cycle_group_bind(self, group_id, gesture) -> dict:
+        """Set the cycle keybind for a named group.
+
+        Returns {applied, persisted, error, hotkeys}. Empty gesture clears
+        the bind. A non-empty string that does not parse is refused.
+        """
+        if not isinstance(group_id, str) or not group_id:
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(False, "Invalid group_id", current)
+        if not isinstance(gesture, str):
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(
+                False, "gesture must be a string", current
+            )
+        canonical = ""
+        if gesture.strip():
+            parsed = preview_gestures.parse(gesture)
+            if parsed is None:
+                with self._preview_hotkey_lock:
+                    current = self._preview_hotkeys()
+                return self._preview_group_result(
+                    False, f"Unparseable gesture: {gesture!r}", current
+                )
+            canonical = preview_gestures.display(parsed)
+        with self._preview_hotkey_lock:
+            try:
+                with settings_mod.update(self._state.settings) as cfg:
+                    hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
+                    groups = hotkeys.setdefault("groups", [])
+                    target = next((g for g in groups if g.get("id") == group_id), None)
+                    if target is None:
+                        raise ValueError(f"No group with id {group_id!r}")
+                    target["cycle"] = canonical
+            except ValueError as exc:
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, str(exc), current)
+            except OSError:
+                logger.exception("Could not persist preview hotkeys")
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, "Persist error", current)
+            result_table = self._preview_hotkeys()
+            if self._preview_host is not None:
+                self._preview_host.set_hotkeys(result_table)
+        return self._preview_group_result(True, None, result_table)
+
+    def set_preview_character_group(self, name, group_id) -> dict:
+        """Assign a character to a cycle group, or remove the assignment.
+
+        An empty group_id removes the character from its group (All-only).
+        Returns {applied, persisted, error, hotkeys}.
+        Uses the same stable-name boundary as other preview APIs.
+        """
+        if not self._usable_preview_character(name):
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(
+                False, f"Invalid character name: {name!r}", current
+            )
+        if not isinstance(group_id, str):
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(
+                False, "group_id must be a string", current
+            )
+        with self._preview_hotkey_lock:
+            try:
+                with settings_mod.update(self._state.settings) as cfg:
+                    hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
+                    mapping = hotkeys.setdefault("group_by_character", {})
+                    if group_id == "":
+                        mapping.pop(name, None)
+                    else:
+                        groups = hotkeys.setdefault("groups", [])
+                        valid_ids = {g.get("id") for g in groups}
+                        if group_id not in valid_ids:
+                            raise ValueError(f"No group with id {group_id!r}")
+                        mapping[name] = group_id
+            except ValueError as exc:
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, str(exc), current)
+            except OSError:
+                logger.exception("Could not persist preview hotkeys")
+                current = self._preview_hotkeys()
+                return self._preview_group_result(False, "Persist error", current)
+            result_table = self._preview_hotkeys()
+            # Finding 2: the normalizer enforces a 64-entry roster cap on
+            # group_by_character.  If the assignment was silently discarded,
+            # the operation did not really apply; refuse it truthfully and do
+            # not deliver a table that claims the dropped assignment to the host.
+            if group_id and name not in result_table.get("group_by_character", {}):
+                return self._preview_group_result(
+                    False,
+                    f"Roster cap reached; {name!r} was not assigned to {group_id!r}",
+                    result_table,
+                )
+            if self._preview_host is not None:
+                self._preview_host.set_hotkeys(result_table)
+        return self._preview_group_result(True, None, result_table)
 
     def set_bind_capture(self, armed) -> bool:
         """Tell the preview host a bind row is waiting for a keystroke.

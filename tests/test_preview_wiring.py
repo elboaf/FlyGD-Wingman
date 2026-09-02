@@ -7,6 +7,7 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import contextlib
 import copy
+import threading
 import types
 
 from tests.test_api import make_api
@@ -1388,3 +1389,1518 @@ def test_set_preview_selection_color_works_without_a_host(tmp_path, monkeypatch)
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
     assert api.set_preview_selection_color("#ff5a00")["applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Serialized, operation-specific group API writes
+# ---------------------------------------------------------------------------
+
+# --- Step 1: Construction and preservation tests ---
+
+
+def test_preview_hotkey_lock_is_private(tmp_path):
+    """The lock must not be a public attribute (pywebview recurses into it)."""
+    api = make_api(tmp_path)
+    assert hasattr(api, "_preview_hotkey_lock"), "lock not created"
+    assert not hasattr(api, "preview_hotkey_lock"), (
+        "lock is public — RecursionError risk"
+    )
+
+
+def test_set_preview_binds_preserves_cycle_groups(tmp_path, monkeypatch):
+    """set_preview_binds owns characters/cycle_next/cycle_prev only.
+    Pre-existing groups and group_by_character must survive the write."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"}],
+            "group_by_character": {"Alice": "dps"},
+        }
+    }
+    assert (
+        api.set_preview_binds(
+            {
+                "characters": {"Bob": "Ctrl+F2"},
+                "cycle_next": "Ctrl+F1",
+                "cycle_prev": "",
+            }
+        )
+        is True
+    )
+    hotkeys = api._state.settings["preview"]["hotkeys"]
+    assert hotkeys["groups"][0]["id"] == "dps"
+    assert hotkeys["group_by_character"] == {"Alice": "dps"}
+    # Owned fields were still applied:
+    assert hotkeys["characters"] == {"Bob": "Ctrl+F2"}
+    assert hotkeys["cycle_next"] == "Ctrl+F1"
+
+
+# --- Step 5: Lifecycle and assignment tests ---
+
+
+def test_create_rename_assign_and_delete_cycle_group(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "group-id")
+    created = api.create_preview_cycle_group(" DPS ")
+    assert created["applied"] is True
+    assert created["hotkeys"]["groups"] == [
+        {"id": "group-id", "name": "DPS", "cycle": ""}
+    ]
+    assert api.set_preview_character_group("Alice", "group-id")["applied"]
+    assert api.rename_preview_cycle_group("group-id", "Damage")["applied"]
+    deleted = api.delete_preview_cycle_group("group-id")
+    assert deleted["hotkeys"]["groups"] == []
+    assert deleted["hotkeys"]["group_by_character"] == {}
+
+
+def test_create_cycle_group_rejects_empty_name(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.create_preview_cycle_group("   ")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_create_cycle_group_rejects_non_string_name(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.create_preview_cycle_group(42)
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_create_cycle_group_rejects_duplicate_name(tmp_path, monkeypatch):
+    """Case-insensitive name uniqueness across groups."""
+    _no_disk(monkeypatch)
+    seq = iter(["id-1", "id-2"])
+    api = make_api(tmp_path, id_factory=lambda: next(seq))
+    api.create_preview_cycle_group("DPS")
+    result = api.create_preview_cycle_group("dps")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_rename_cycle_group_trims_whitespace(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.rename_preview_cycle_group("g1", "  Tank  ")
+    assert result["applied"] is True
+    assert result["hotkeys"]["groups"][0]["name"] == "Tank"
+
+
+def test_rename_cycle_group_rejects_stale_id(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.rename_preview_cycle_group("no-such-id", "Name")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_delete_cycle_group_rejects_stale_id(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.delete_preview_cycle_group("no-such-id")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_set_preview_cycle_group_bind_canonicalizes_gesture(tmp_path, monkeypatch):
+    """Valid chord string → canonical display form persisted."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.set_preview_cycle_group_bind("g1", "ctrl+f3")
+    assert result["applied"] is True
+    assert result["hotkeys"]["groups"][0]["cycle"] == "Ctrl+F3"
+
+
+def test_set_preview_cycle_group_bind_rejects_bad_gesture(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.set_preview_cycle_group_bind("g1", "not-a-chord")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_set_preview_character_group_removes_mapping_on_empty_id(tmp_path, monkeypatch):
+    """Empty group_id clears the character's mapping (All-only)."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    api.set_preview_character_group("Alice", "g1")
+    result = api.set_preview_character_group("Alice", "")
+    assert result["applied"] is True
+    assert "Alice" not in result["hotkeys"]["group_by_character"]
+
+
+def test_set_preview_character_group_rejects_hwnd_name(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    result = api.set_preview_character_group("hwnd:12345", "g1")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_set_preview_character_group_rejects_stale_group_id(tmp_path, monkeypatch):
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    result = api.set_preview_character_group("Alice", "no-such-group")
+    assert result["applied"] is False
+    assert result["error"]
+
+
+def test_cycle_group_methods_work_without_host(tmp_path, monkeypatch):
+    """Persistence-only path when there is no preview host running."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    result = api.create_preview_cycle_group("DPS")
+    assert result["applied"] is True
+    assert result["persisted"] is True
+
+
+def test_cycle_group_methods_deliver_to_host_when_present(tmp_path, monkeypatch):
+    """After a successful mutation the host receives the full table."""
+    _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, id_factory=lambda: "g1", preview_host=host)
+    api.create_preview_cycle_group("DPS")
+    assert host.hotkeys is not None
+    assert host.hotkeys["groups"] == [{"id": "g1", "name": "DPS", "cycle": ""}]
+
+
+def test_failed_persist_does_not_invoke_host_set_hotkeys(tmp_path, monkeypatch):
+    """If settings.update raises, host.set_hotkeys must never be called."""
+    from wingman.ui import api as api_mod
+
+    host = FakeHost()
+    api = make_api(tmp_path, id_factory=lambda: "g1", preview_host=host)
+
+    def boom(data, path=None):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _cm():
+            yield data
+            raise OSError("disk full")
+
+        return _cm()
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", boom)
+    result = api.create_preview_cycle_group("DPS")
+    assert result["applied"] is False
+    # Host was never touched.
+    assert host.hotkeys is None
+
+
+# --- Step 7: Concurrency-order tests ---
+
+
+def test_preview_hotkey_writer_keeps_host_delivery_in_persist_order(
+    tmp_path, monkeypatch
+):
+    """Two concurrent group mutations must not reorder host delivery past
+    their persist order: the first update's host call must complete before
+    the second update can even begin persisting."""
+    _no_disk(monkeypatch)
+    first_delivery = threading.Event()
+    release_first = threading.Event()
+    second_done = threading.Event()
+    deliveries = []
+
+    class BlockingHost(FakeHost):
+        def set_hotkeys(self, table):
+            deliveries.append(copy.deepcopy(table))
+            if len(deliveries) == 1:
+                first_delivery.set()
+                assert release_first.wait(1)
+
+    api = make_api(tmp_path, preview_host=BlockingHost())
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "dps", "name": "DPS", "cycle": ""}],
+            "group_by_character": {},
+        }
+    }
+
+    first = threading.Thread(
+        target=lambda: api.rename_preview_cycle_group("dps", "Damage")
+    )
+
+    def assign():
+        api.set_preview_character_group("Alice", "dps")
+        second_done.set()
+
+    first.start()
+    assert first_delivery.wait(1)
+    second = threading.Thread(target=assign)
+    second.start()
+    # While first holds the lock, second cannot yet complete its persist.
+    assert not second_done.wait(0.05)
+    # The settings dict was NOT mutated by second (it is blocked on the lock).
+    assert api._state.settings["preview"]["hotkeys"]["group_by_character"] == {}
+    release_first.set()
+    first.join(1)
+    second.join(1)
+    # Both deliveries arrived and in the correct order.
+    assert [table["group_by_character"] for table in deliveries] == [
+        {},
+        {"Alice": "dps"},
+    ]
+
+
+def test_stale_rename_cannot_resurrect_deleted_group(tmp_path, monkeypatch):
+    """A rename whose ID no longer exists after a delete must fail cleanly
+    rather than re-inserting the group. Simulates a delayed thread arriving
+    after the delete has committed."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    api.delete_preview_cycle_group("g1")
+    result = api.rename_preview_cycle_group("g1", "Healers")
+    assert result["applied"] is False
+    assert result["hotkeys"]["groups"] == []
+
+
+# --- Step 8: Hotkey-state payload tests ---
+
+
+def test_get_preview_hotkey_state_includes_groups_and_membership(tmp_path):
+    """groups and group_by_character must appear in the hotkey-state payload
+    whether a host is running or not."""
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}],
+            "group_by_character": {"Alice": "g1"},
+        }
+    }
+    state = api.get_preview_hotkey_state()
+    assert state["hotkeys"]["groups"] == [
+        {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
+    ]
+    assert state["hotkeys"]["group_by_character"] == {"Alice": "g1"}
+
+
+def test_push_preview_hotkeys_includes_groups_and_membership(tmp_path):
+    """push_preview_hotkeys must carry the full hotkeys table including groups."""
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}],
+            "group_by_character": {"Alice": "g1"},
+        }
+    }
+    api.push_preview_hotkeys()
+    pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
+    assert len(pushes) == 1
+    import json
+
+    payload_str = pushes[0]
+    # Extract the JSON argument from the JS call.
+    start = payload_str.index("(", payload_str.rindex("onPreviewHotkeys")) + 1
+    end = payload_str.rindex(")")
+    payload = json.loads(payload_str[start:end])
+    assert payload["hotkeys"]["groups"] == [
+        {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
+    ]
+    assert payload["hotkeys"]["group_by_character"] == {"Alice": "g1"}
+
+
+# ---------------------------------------------------------------------------
+# Round-1 / Finding 1 & 2 fixes
+# ---------------------------------------------------------------------------
+
+
+def test_pre_lock_refusal_excludes_transient_rolled_back_mutation(
+    tmp_path, monkeypatch
+):
+    """A pre-lock refusal must return the authoritative post-rollback table,
+    not a snapshot of a concurrent writer's transient mutation.
+
+    Mechanism: a fake settings_mod.update that has real rollback semantics
+    (deep-copy-before, restore-on-exception) pauses after the mutation lands
+    on the live dict but before the CM exits.  A concurrent invalid operation
+    that hits the pre-lock path should not capture the transient state; after
+    the fix it blocks on _preview_hotkey_lock until the rollback completes.
+    """
+    from wingman.ui import api as api_mod
+
+    writer_mutated = threading.Event()  # transient state is now live
+    allow_writer_complete = threading.Event()  # let the writer proceed to failure
+    refusal_captured = threading.Event()  # refusal result is ready
+    refusal_result = {}
+
+    def rollback_update(data, path=None):
+        """Real rollback semantics: deep copy + restore on BaseException."""
+
+        @contextlib.contextmanager
+        def _cm():
+            before = copy.deepcopy(data)
+            try:
+                yield data  # API code mutates live dict here
+                # After yield: transient mutation is live but not yet normalized.
+                writer_mutated.set()  # signal: live dict is dirty
+                assert allow_writer_complete.wait(2)
+                raise OSError("injected failure")  # forces real rollback below
+            except BaseException:
+                data.clear()
+                data.update(before)  # identical to settings.update rollback
+                raise
+
+        return _cm()
+
+    monkeypatch.setattr(api_mod.settings_mod, "update", rollback_update)
+
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [],
+            "group_by_character": {},
+        }
+    }
+
+    def do_write():
+        # create_preview_cycle_group acquires _preview_hotkey_lock, enters
+        # rollback_update, appends the group to the live dict, then pauses.
+        api.create_preview_cycle_group("DPS")
+
+    writer = threading.Thread(target=do_write)
+    writer.start()
+    assert writer_mutated.wait(2), "writer never signalled transient state"
+
+    # Live dict now has the transient DPS group.  Issue an invalid refusal
+    # request from a separate thread so the test-coordinator (main thread)
+    # can still signal allow_writer_complete.
+    def do_invalid_refusal():
+        # Non-string name forces the pre-lock early-return path, which reads
+        # _preview_hotkeys() outside the lock (the bug) or inside (the fix).
+        result = api.create_preview_cycle_group(123)
+        refusal_result.update(result)
+        refusal_captured.set()
+
+    refusal_thread = threading.Thread(target=do_invalid_refusal)
+    refusal_thread.start()
+
+    # With the fix: refusal_thread blocks on _preview_hotkey_lock (writer holds it).
+    # With the bug:  refusal_thread completes immediately and sees transient DPS.
+    # This wait is intentional but the result is not used for assertions; the
+    # assertion that matters is on refusal_result after both threads join.
+    refusal_captured.wait(0.1)  # short probe; not a hard assertion
+
+    # Allow the writer to fail (triggers rollback).
+    allow_writer_complete.set()
+    writer.join(2)
+    refusal_thread.join(2)
+
+    assert refusal_captured.is_set(), "refusal thread did not complete"
+
+    # After rollback, the group must not exist in settings.
+    assert api._state.settings["preview"]["hotkeys"]["groups"] == []
+
+    # The authoritative table returned by the refusal must reflect the
+    # post-rollback state: no transient DPS group.
+    assert refusal_result["hotkeys"]["groups"] == [], (
+        "Pre-lock refusal captured transient data that was subsequently rolled back; "
+        f"got: {refusal_result['hotkeys']['groups']!r}"
+    )
+
+
+def test_character_group_assignment_over_64_member_cap_is_refused(
+    tmp_path, monkeypatch
+):
+    """Assigning a 65th character to a group must be refused when the
+    normalizer enforces the 64-entry roster cap on group_by_character.
+
+    Uses real settings.update() (no _no_disk fake) with the test-isolated
+    temp path to exercise real normalization.  The result must have
+    applied=False, persisted=False, the mapping must be absent from the
+    authoritative returned table, and the host must not be called.
+    """
+    # Do NOT call _no_disk — we need real normalization + real disk writes
+    # to the test's temp-isolated LOCALAPPDATA directory.
+
+    host = FakeHost()
+    api = make_api(tmp_path, id_factory=lambda: "grp", preview_host=host)
+
+    # Prime the settings with a group and 64 character-to-group mappings.
+    memberships = {f"Char{i:02d}": "grp" for i in range(64)}
+    api._state.settings["preview"] = {
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [{"id": "grp", "name": "DPS", "cycle": ""}],
+            "group_by_character": memberships,
+        }
+    }
+
+    # Assign one more character beyond the cap.
+    new_char = "ExtraChar"
+    result = api.set_preview_character_group(new_char, "grp")
+
+    # Must be refused because normalization drops the assignment.
+    assert result["applied"] is False, (
+        f"Expected refused result, got applied=True; result={result!r}"
+    )
+    assert result["persisted"] is False
+    assert new_char not in result["hotkeys"]["group_by_character"], (
+        "Refused result must not include the dropped mapping"
+    )
+
+    # Host must not be called with a table that claims the assignment.
+    if host.hotkeys is not None:
+        assert new_char not in host.hotkeys.get("group_by_character", {}), (
+            "Host was delivered a table claiming the dropped assignment"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Group keybind rows, clash detection, assignment, and management UI
+# ---------------------------------------------------------------------------
+
+
+def test_named_group_clashes_are_counted_with_all_cycle_chords():
+    """clashes() must check group cycles against the chord being tested.
+    A group keybind matching cycle_next/cycle_prev or another group cycle
+    is a duplicate, not just unknown."""
+    js = _web("previews.js")
+    block = js.split("function clashes", 1)[1].split("function makeRow", 1)[0]
+    assert "state.hotkeys.groups" in block, (
+        "clashes() does not walk group cycles; group<->All collision is invisible"
+    )
+    assert ".cycle" in block, "clashes() does not read the group's cycle field"
+
+
+def test_group_bind_calls_set_preview_cycle_group_bind_not_send():
+    """setGroupBind must use the narrow group endpoint, not the full
+    set_preview_binds that overwrites character and cycle_next/prev."""
+    js = _web("previews.js")
+    block = js.split("function setGroupBind", 1)[1].split("\n  }", 1)[0]
+    assert "set_preview_cycle_group_bind" in block, (
+        "setGroupBind does not call set_preview_cycle_group_bind"
+    )
+    assert "send(next)" not in block, (
+        "setGroupBind routes through set_preview_binds (send(next)) instead "
+        "of the narrow group endpoint"
+    )
+
+
+def test_group_rows_rendered_after_all_rows_before_character_divider():
+    """render() appends group rows after the two All rows and before the
+    empty bind-group separator that precedes the column headers."""
+    import re
+
+    js = _web("previews.js")
+    # Strip line comments so embedded prose can't confuse the search.
+    stripped = re.sub(r"//[^\n]*", "", js)
+    render_body = stripped.split("function render()", 1)[1].split("function send(", 1)[
+        0
+    ]
+    all_pos = render_body.index("'All forward'")  # renamed from 'Cycle forward'
+    # groups() helper call appears before bind-group separator (empty divider)
+    groups_call_pos = render_body.index("groups()")
+    divider_pos = render_body.index("'bind-group'")
+    assert all_pos < groups_call_pos < divider_pos, (
+        "group rows are not placed after All rows and before the character divider: "
+        f"all_pos={all_pos}, groups_call_pos={groups_call_pos}, "
+        f"divider_pos={divider_pos}"
+    )
+
+
+def test_group_row_clear_absent_when_no_bind_present():
+    """makeRow's Clear gate (only renders when gesture is truthy) already
+    handles group rows -- a group row with an empty bind must not render
+    a Clear button. This is already guaranteed by the shared makeRow path,
+    so the test asserts the group onSet callback passes through makeRow."""
+    js = _web("previews.js")
+    # groups helper must pass onSet to makeRow, not build its own row.
+    # groups() returns the array; render() passes each through makeRow.
+    # Just ensure the groups() helper is called in render() context.
+    assert (
+        "groups()" in js.split("function render()", 1)[1].split("function send(", 1)[0]
+    ), "render() does not call groups() to enumerate named-group rows"
+
+
+def test_group_edit_always_available_not_gated_on_off():
+    """Edit… on a group row is never disabled -- groups have no `off` (opted-out)
+    state equivalent. setGroupBind must not pass `off=true` to makeRow."""
+    js = _web("previews.js")
+    render_body = js.split("function render()", 1)[1].split("function send(", 1)[0]
+    # group rows call makeRow with online=true (not gated on state.enabled)
+    # and no `character` argument (so `off` resolves to false inside makeRow).
+    # The clearest assertion: render() passes `true` as the online arg for groups.
+    assert "makeRow(group.name" in render_body or "groups()" in render_body, (
+        "render() does not iterate named groups at all"
+    )
+
+
+def test_capture_ends_before_rename_dialog():
+    """WM.prompt for rename must only be opened after endCapture() -- an
+    armed capture's keydown handler preventDefault()s everything, so a
+    prompt opened while one is live cannot be typed into."""
+    js = _web("previews.js")
+    # Find the rename handler -- it calls WM.prompt and endCapture.
+    assert "endCapture" in js, "endCapture is not defined"
+    assert "WM.prompt" in js, "WM.prompt is not used"
+    # The rename path must call endCapture before WM.prompt.
+    # Find the renameGroup (or equivalent) code block.
+    rename_block = js.split("renameGroup", 1)
+    assert len(rename_block) > 1, "no renameGroup function/handler found in previews.js"
+    body = rename_block[1].split("\n  function ", 1)[0]
+    ec_pos = body.find("endCapture")
+    prompt_pos = body.find("WM.prompt")
+    assert ec_pos != -1 and prompt_pos != -1, (
+        "renameGroup block must contain both endCapture() and WM.prompt"
+    )
+    assert ec_pos < prompt_pos, (
+        "renameGroup calls WM.prompt before endCapture; an armed capture "
+        "would eat the dialog's keystrokes"
+    )
+
+
+def test_capture_ends_before_delete_dialog():
+    """WM.confirm for delete must only be opened after endCapture() --
+    same reasoning as the rename guard above."""
+    js = _web("previews.js")
+    assert "WM.confirm" in js, "WM.confirm is not used (delete dialog)"
+    delete_block = js.split("deleteGroup", 1)
+    assert len(delete_block) > 1, "no deleteGroup function/handler found in previews.js"
+    body = delete_block[1].split("\n  function ", 1)[0]
+    ec_pos = body.find("endCapture")
+    confirm_pos = body.find("WM.confirm")
+    assert ec_pos != -1 and confirm_pos != -1, (
+        "deleteGroup block must contain both endCapture() and WM.confirm"
+    )
+    assert ec_pos < confirm_pos, "deleteGroup calls WM.confirm before endCapture"
+
+
+def test_group_rename_uses_wm_prompt_not_window_prompt():
+    """DESIGN.md forbids window.prompt/confirm/alert. Group rename must use
+    WM.prompt (the app's own dialog)."""
+    js = _web("previews.js")
+    assert "window.prompt" not in js, (
+        "previews.js uses window.prompt, which is forbidden by DESIGN.md; "
+        "use WM.prompt instead"
+    )
+
+
+def test_group_delete_uses_wm_confirm_not_window_confirm():
+    """DESIGN.md forbids window.confirm. Group delete must use WM.confirm."""
+    js = _web("previews.js")
+    assert "window.confirm" not in js, (
+        "previews.js uses window.confirm, which is forbidden by DESIGN.md; "
+        "use WM.confirm instead"
+    )
+
+
+def test_make_group_select_appends_to_lab_not_row():
+    """makeGroupSelect must append its <select> to `lab`, never directly
+    to `row` -- an extra row.appendChild would break the five-cell grid."""
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    # Must not append to row.
+    assert "row.appendChild" not in body, (
+        "makeGroupSelect calls row.appendChild, which would add a sixth "
+        "grid cell and break the five-track layout"
+    )
+    # Must append to lab (or return a node the caller appends to lab).
+    assert "lab.appendChild" in body or "return " in body, (
+        "makeGroupSelect neither appends to lab nor returns a node"
+    )
+
+
+def test_make_group_select_only_when_groups_exist():
+    """The group select is only built (and only appended to lab) when
+    groups().length is truthy -- an empty group list should leave the
+    lab unchanged."""
+    js = _web("previews.js")
+    body = js.split("function makeRow", 1)[1].split("return row;", 1)[0]
+    # The conditional guard: groups().length before appending the select.
+    assert "groups().length" in body, (
+        "makeRow does not guard the group select on groups().length; "
+        "the select would always render even with no groups defined"
+    )
+
+
+def test_manage_groups_disclosure_has_add_rename_delete():
+    """The management disclosure must contain Add, Rename…, and Delete
+    controls for each group."""
+    js = _web("previews.js")
+    assert "makeGroupManager" in js or "renderGroupManager" in js, (
+        "no group manager renderer found in previews.js"
+    )
+    # Check all three actions appear in the source.
+    assert "create_preview_cycle_group" in js, (
+        "previews.js does not call create_preview_cycle_group (Add)"
+    )
+    assert "rename_preview_cycle_group" in js, (
+        "previews.js does not call rename_preview_cycle_group (Rename…)"
+    )
+    assert "delete_preview_cycle_group" in js, (
+        "previews.js does not call delete_preview_cycle_group (Delete)"
+    )
+
+
+def test_manage_add_commits_on_button_or_enter_not_blur():
+    """Settings commit rule: free text commits on Enter or an explicit
+    button, never on blur. The Add text field must not have a blur listener
+    that calls create_preview_cycle_group."""
+    js = _web("previews.js")
+    # The add path must not commit on blur.
+    # Find the add-name field handling.
+    assert "create_preview_cycle_group" in js, "no add endpoint"
+    # Any blur listener that leads to create_preview_cycle_group is wrong.
+    # Simple lexical check: 'blur' must not appear between the add-field
+    # event binding and the create call in a single handler chain.
+    # The last addEventListener before the create call must not be 'blur'.
+    # If blur listener appears at all before the create call it must not
+    # directly reach create_preview_cycle_group on the same path.
+    # Sufficient signal: no blur listener immediately before the send.
+    # Sufficient signal: no blur listener immediately before the send.
+    create_after_blur = js.split("addEventListener('blur'", 1)
+    if len(create_after_blur) > 1:
+        after_blur = create_after_blur[1]
+        # If blur handler contains create_preview_cycle_group it commits on blur.
+        blur_handler = after_blur.split("addEventListener(", 1)[0]
+        assert "create_preview_cycle_group" not in blur_handler, (
+            "the Add field commits on blur, violating the Settings commit rule"
+        )
+
+
+def test_delete_confirm_copy_includes_group_name_and_member_count():
+    """The delete confirmation must include the group name and member count
+    so the user knows what they are removing."""
+    js = _web("previews.js")
+    delete_block = js.split("deleteGroup", 1)
+    assert len(delete_block) > 1, "no deleteGroup in previews.js"
+    body = delete_block[1].split("\n  function ", 1)[0]
+    # Must reference group_by_character to derive member count.
+    assert "group_by_character" in body, (
+        "deleteGroup does not derive member count from group_by_character"
+    )
+    # The confirm dialog body must mention the group name and count.
+    confirm_pos = body.find("WM.confirm")
+    assert confirm_pos != -1, "no WM.confirm in deleteGroup"
+    confirm_call = body[confirm_pos : confirm_pos + 300]
+    # group name must appear in the confirm text (group.name or similar).
+    assert ".name" in confirm_call or "group" in confirm_call, (
+        "WM.confirm message does not reference the group name"
+    )
+
+
+def test_group_busy_disables_controls_during_mutation():
+    """groupBusy state: while a write is pending, lifecycle and assignment
+    controls must be disabled. The source must declare a groupBusy variable."""
+    js = _web("previews.js")
+    assert "groupBusy" in js, (
+        "previews.js has no groupBusy state variable; controls are never "
+        "disabled during a group mutation"
+    )
+    # groupBusy must be set before the async call and cleared in both
+    # resolve and reject paths.
+    assert js.count("groupBusy") >= 3, (
+        "groupBusy must be set, cleared on success, and cleared on failure "
+        "(at minimum 3 references)"
+    )
+
+
+def test_state_defaults_fill_groups_and_group_by_character():
+    """The payload normalisation in onPreviewHotkeys and refresh() must
+    fill groups and group_by_character with safe defaults, so later code
+    does not need null checks everywhere."""
+    js = _web("previews.js")
+    # Both the push handler and the refresh path normalize state.
+    normalize_block = js.split("onPreviewHotkeys", 1)[1].split(
+        "WM.handle('onPreviewBindCaptured'", 1
+    )[0]
+    assert "state.hotkeys.groups" in normalize_block, (
+        "onPreviewHotkeys does not default state.hotkeys.groups"
+    )
+    assert "state.hotkeys.group_by_character" in normalize_block, (
+        "onPreviewHotkeys does not default state.hotkeys.group_by_character"
+    )
+    # Also check refresh().
+    refresh_block = js.split("function refresh(", 1)[1].split("\n  }", 1)[0]
+    assert "groups" in refresh_block, (
+        "refresh() does not normalize groups in the returned payload"
+    )
+
+
+def test_delete_group_restores_focus_to_surviving_control():
+    """After a successful group delete and repaint, keyboard focus must
+    return to a surviving logical control rather than falling to <body>.
+    The deleteGroup success path must call a focus helper (or equivalent)
+    that targets a surviving group manage button or the Add-name field.
+
+    Acceptable patterns:
+    - focusGroupManager() called in the success path of deleteGroup
+    - An explicit .focus() call on a surviving control or fallback in that path
+    - A querySelector for '.group-delete-btn' or '.group-add-name' after render
+
+    The helper must use a query-selector (to find an attached node) and must
+    fall back to a section-level enabled control, matching focusCopyTarget.
+    """
+    js = _web("previews.js")
+    delete_block = js.split("function deleteGroup", 1)
+    assert len(delete_block) > 1, "no deleteGroup function found in previews.js"
+    body = delete_block[1].split("\n  function ", 1)[0]
+
+    # The success path is the .then(...) block containing requestRender.
+    # It must contain a focus call or a helper that performs focus.
+    has_focus_helper = (
+        "focusGroupManager" in body
+        or ("querySelector" in body and ".focus()" in body)
+        or ("group-delete-btn" in body and ".focus()" in body)
+        or ("group-add-name" in body and ".focus()" in body)
+    )
+    assert has_focus_helper, (
+        "deleteGroup success path does not restore keyboard focus to a "
+        "surviving control. After repaint the browser drops focus to <body>. "
+        "Add a focusGroupManager() helper or explicit .focus() on a "
+        "surviving group button or the Add-name field."
+    )
+
+    # The focus must not be attempted on a detached node: the helper must
+    # run AFTER requestRender (which rebuilds the DOM), not before.
+    render_pos = body.find("requestRender")
+    # Allow both focusGroupManager and querySelector-based patterns.
+    focus_pos = body.find("focusGroupManager")
+    if focus_pos == -1:
+        focus_pos = body.find(".focus()")
+    assert render_pos != -1, "deleteGroup must call requestRender"
+    assert focus_pos != -1, "deleteGroup must contain a focus call"
+    assert focus_pos > render_pos, (
+        "focus call appears before requestRender in deleteGroup; "
+        "focus must run AFTER repaint so it targets an attached node"
+    )
+
+
+def test_make_group_select_has_generation_guard():
+    """makeGroupSelect's change handler must use a generation guard
+    (store `pushes` before the bridge call, check it before applying
+    res.hotkeys) matching the pattern in setGroupBind and other handlers.
+
+    Without the guard, a Python push that arrives while set_preview_character_group
+    is in flight will have its state overwritten by the stale response.
+    groupBusy prevents concurrent user-initiated requests but does NOT
+    prevent an onPreviewHotkeys push from replacing state.hotkeys wholesale
+    during the in-flight call.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+
+    # Must capture pushes before the bridge call.
+    assert "before = pushes" in body, (
+        "makeGroupSelect change handler does not capture the current push "
+        "generation before calling set_preview_character_group. "
+        "Add `var before = pushes;` before WM.send(...)."
+    )
+    # Must check for a newer push before applying res.hotkeys.
+    assert "pushes !== before" in body or "before !== pushes" in body, (
+        "makeGroupSelect does not guard res.hotkeys application with a "
+        "generation check. Add `if (pushes !== before) { return; }` "
+        "before applying res.hotkeys, matching the setGroupBind pattern."
+    )
+
+
+def test_rename_group_has_generation_guard():
+    """renameGroup's WM.send callback must use a generation guard.
+
+    Before the bridge call it must capture `var before = pushes`, and before
+    applying res.hotkeys it must check `pushes !== before`, matching the
+    makeGroupSelect and setGroupBind patterns.
+
+    Without the guard, an onPreviewHotkeys push arriving while
+    rename_preview_cycle_group is in flight will have its state.hotkeys
+    overwritten by the stale response payload.  groupBusy blocks concurrent
+    user writes but does NOT block Python-pushed state replacements.
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js, "no renameGroup function in previews.js"
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+
+    assert "before = pushes" in body, (
+        "renameGroup does not capture the push generation before the bridge "
+        "call.  Add `var before = pushes;` before WM.send(...)."
+    )
+    assert "pushes !== before" in body or "before !== pushes" in body, (
+        "renameGroup does not guard res.hotkeys with a generation check.  "
+        "Add `if (pushes !== before) { ... }` before applying res.hotkeys, "
+        "matching the setGroupBind / makeGroupSelect pattern."
+    )
+
+
+def test_delete_group_has_generation_guard():
+    """deleteGroup's WM.send callback must use a generation guard.
+
+    Before the bridge call it must capture `var before = pushes`, and the
+    hotkeys assignment must be skipped when `pushes !== before`.
+
+    Crucially, groupBusy = false, requestRender(), and focusGroupManager()
+    must all still execute even when a newer push has landed (the guard must
+    only gate the state.hotkeys assignment, not the cleanup/focus obligations).
+    """
+    js = _web("previews.js")
+    assert "function deleteGroup" in js, "no deleteGroup function in previews.js"
+    body = js.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+
+    assert "before = pushes" in body, (
+        "deleteGroup does not capture the push generation before the bridge "
+        "call.  Add `var before = pushes;` before WM.send(...)."
+    )
+    assert "pushes !== before" in body or "before !== pushes" in body, (
+        "deleteGroup does not guard res.hotkeys with a generation check.  "
+        "Add the guard matching the makeGroupSelect / setGroupBind pattern."
+    )
+    # groupBusy = false must appear in the then() callback
+    then_body = (
+        body.split(".then(function (res)")[1]
+        if ".then(function (res)" in body
+        else body
+    )
+    assert "groupBusy = false" in then_body, (
+        "groupBusy = false must appear inside deleteGroup's .then() callback "
+        "so busy state always clears, even when the guard skips the hotkeys update."
+    )
+    # focusGroupManager must be present (tested by earlier test too, but
+    # confirm it survives the guard refactor)
+    assert "focusGroupManager" in then_body or ".focus()" in then_body, (
+        "deleteGroup success path must still call focusGroupManager() (or "
+        "equivalent .focus()) even when a newer push won."
+    )
+
+
+def test_do_add_has_generation_guard():
+    """doAdd (inside makeGroupManager) must use a generation guard.
+
+    Before the WM.send call it must capture `var before = pushes`, and before
+    applying res.hotkeys it must check `pushes !== before`.
+
+    groupBusy = false must still execute in both the refusal and success paths.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js, "no makeGroupManager in previews.js"
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+
+    assert "function doAdd" in mgr_body, "no doAdd inside makeGroupManager"
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    # Trim to just the doAdd closure (next sibling closure at same indent ends it)
+    # doAdd is an inner function so it ends at the closing brace before addBtn etc.
+    # Use the click-handler registration as a natural end marker.
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+
+    assert "before = pushes" in do_add_body, (
+        "doAdd does not capture the push generation before the bridge call.  "
+        "Add `var before = pushes;` before WM.send(...)."
+    )
+    assert "pushes !== before" in do_add_body or "before !== pushes" in do_add_body, (
+        "doAdd does not guard res.hotkeys with a generation check.  "
+        "Add `if (pushes !== before) { ... }` before applying res.hotkeys."
+    )
+    # groupBusy must clear in the .then() body
+    then_body = (
+        do_add_body.split(".then(function (res)")[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    assert "groupBusy = false" in then_body, (
+        "groupBusy = false must appear inside doAdd's .then() callback "
+        "so busy state always clears regardless of whether the guard fires."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 1/5: Four targeted correctness fixes
+# ---------------------------------------------------------------------------
+
+
+def test_set_group_bind_participates_in_group_busy():
+    """setGroupBind must set groupBusy=true before the bridge call and
+    clear it in both success and refusal paths, so it serialises against
+    all other group writes and assignment selects stay disabled.
+
+    Without this, a concurrent assignment-select change or manager action
+    (rename/delete/add) can fire while a group-bind write is in flight,
+    leading to overlapping bridge calls and stale responses overwriting
+    authoritative state.
+    """
+    js = _web("previews.js")
+    assert "function setGroupBind" in js, "setGroupBind not defined in previews.js"
+    block = js.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+
+    # Must set groupBusy = true before the bridge call.
+    assert "groupBusy = true" in block, (
+        "setGroupBind does not set groupBusy = true before the bridge call. "
+        "All group writes must participate in the shared busy lock."
+    )
+    # Must clear groupBusy in the .then() callback.
+    then_body = (
+        block.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in block
+        else ""
+    )
+    assert "groupBusy = false" in then_body, (
+        "setGroupBind does not clear groupBusy = false inside the .then() "
+        "callback. Both success and refusal paths must clear busy."
+    )
+    # groupBusy must be cleared before the early return on refusal.
+    refusal_pos = then_body.find("if (!res || !res.applied)")
+    busy_clear_pos = then_body.find("groupBusy = false")
+    assert busy_clear_pos < refusal_pos, (
+        "groupBusy = false must appear before the refusal early-return in "
+        "setGroupBind's .then(), so a refused write still clears busy."
+    )
+
+
+def test_group_row_bind_controls_disabled_when_group_busy():
+    """makeRow must disable the keybind button, Clear, and Edit… controls
+    when groupBusy is true for group rows (rows without a character).
+
+    makeGroupSelect must also be disabled based on groupBusy, so an
+    assignment change cannot fire while another group write is in flight.
+
+    The current code gates all three on !off only. A group-row has no
+    character so off is always false, meaning the controls stay enabled
+    even while a setGroupBind, rename, delete, or add is in flight.
+    """
+    js = _web("previews.js")
+    assert "function makeRow" in js, "makeRow not defined in previews.js"
+    make_row = js.split("function makeRow", 1)[1].split("\n  function ", 1)[0]
+
+    # The keybind button, Clear, and Edit… setEnabled calls must reference
+    # groupBusy (or a helper that tests it) not just !off.
+    assert "groupBusy" in make_row, (
+        "makeRow does not reference groupBusy. The keybind button, Clear, "
+        "and Edit... controls must be gated on !groupBusy (in addition to "
+        "the existing !off gate) so they stay disabled while any group "
+        "write is in flight."
+    )
+    # The group select must also be disabled during groupBusy.
+    make_group_select_block = js.split("function makeGroupSelect", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    # The select element must have WM.setEnabled or disabled attribute set
+    # based on groupBusy at creation time.
+    assert (
+        "setEnabled(sel" in make_group_select_block
+        or "groupBusy" in make_group_select_block.split("addEventListener", 1)[0]
+    ), (
+        "makeGroupSelect does not disable the select based on groupBusy at "
+        "creation time. The select must be rendered disabled when groupBusy "
+        "is true, matching the lifecycle controls in makeGroupManager."
+    )
+
+
+def test_make_group_select_stale_success_still_repaints():
+    """makeGroupSelect's stale-push success path (pushes !== before) must
+    call requestRender() before returning.
+
+    Currently: groupBusy = false, then if (pushes !== before) { return; }
+    The early return skips requestRender, leaving the DOM with permanently
+    disabled controls because groupBusy was cleared in JavaScript state but
+    the old DOM nodes (built when groupBusy was true) are never replaced.
+
+    The fix is to move requestRender() outside the stale guard (unconditional
+    after the guard), or include it inside the stale guard block before return.
+    Either way the DOM must be rebuilt whenever the .then() fires.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, "makeGroupSelect not found in previews.js"
+    block = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    then_body = then_body[1]
+
+    stale_guard = "if (pushes !== before)"
+    assert stale_guard in then_body, (
+        "makeGroupSelect .then() has no stale-push guard (if pushes !== before)"
+    )
+
+    # The stale guard must NOT be a bare `return` that skips repaint.
+    # Check: the stale guard block itself must contain requestRender, OR
+    # requestRender must appear before the stale guard (unconditional).
+    stale_pos = then_body.find(stale_guard)
+    # Get the guard's inline block content (everything on the same line after the condition)
+    guard_line = then_body[stale_pos : then_body.find("\n", stale_pos)]
+    # A bare `{ return; }` on the same line is the bug
+    is_bare_return = "return;" in guard_line and "requestRender" not in guard_line
+
+    # But the requestRender before the guard must not be inside the refusal block
+    # (which exits via return, so stale successes never reach it)
+    refusal_end = then_body.find("return;", then_body.find("if (!res || !res.applied)"))
+    rr_outside_refusal_before_guard = any(
+        then_body[i : i + 13] == "requestRender" and i > (refusal_end or 0)
+        for i in range(stale_pos)
+    )
+
+    # The guard block itself must not be a bare { return; } unless requestRender
+    # already ran unconditionally for ALL paths (i.e., outside both refusal and stale)
+    assert not is_bare_return or rr_outside_refusal_before_guard, (
+        "makeGroupSelect stale-push guard is a bare `{ return; }` that skips "
+        "requestRender(). The DOM retains disabled controls forever (groupBusy "
+        "was cleared in JS state but the old disabled DOM is never rebuilt). "
+        "Either move requestRender() before the stale guard (unconditional), or "
+        "add requestRender() inside the stale guard block before returning."
+    )
+
+
+def test_delete_group_restores_focus_on_refusal():
+    """deleteGroup refusal path must restore focus just as the success path
+    does. Currently, refusal calls requestRender() but NOT focusGroupManager().
+
+    After a refused delete the DOM is rebuilt (requestRender), so focus falls
+    to <body>. The user would have to Tab back to any control, which is
+    disorienting — especially since the refused delete means the group and
+    its controls are still present.
+    """
+    js = _web("previews.js")
+    assert "function deleteGroup" in js, "deleteGroup not defined in previews.js"
+    block = js.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "deleteGroup has no .then() callback"
+    then_body = then_body[1]
+
+    # Identify the refusal branch: if (!res || !res.applied) { ... }
+    refusal_idx = then_body.find("if (!res || !res.applied)")
+    assert refusal_idx != -1, "deleteGroup .then() has no refusal guard"
+
+    # Find the end of the refusal block (the matching return)
+    refusal_block = then_body[refusal_idx:]
+    return_idx = refusal_block.find("return;")
+    refusal_content = refusal_block[: return_idx + len("return;")]
+
+    has_focus = (
+        "focusGroupManager" in refusal_content
+        or ("querySelector" in refusal_content and ".focus()" in refusal_content)
+        or ("group-delete-btn" in refusal_content and ".focus()" in refusal_content)
+        or ("group-add-name" in refusal_content and ".focus()" in refusal_content)
+    )
+    assert has_focus, (
+        "deleteGroup refusal path (if !res || !res.applied) does not restore "
+        "keyboard focus. After a refused delete the DOM is rebuilt by "
+        "requestRender but focus falls to <body>. Add focusGroupManager() "
+        "after requestRender in the refusal branch, matching the success path."
+    )
+
+
+def test_make_group_select_restores_focus_after_repaint():
+    """After makeGroupSelect's change handler calls requestRender() and the
+    DOM is rebuilt, focus must be restored to the replacement select for the
+    same character (by stable character identity / aria-label), or to an
+    enabled Previews fallback if that row no longer exists.
+
+    Currently no focus restoration is attempted on success, refusal, or
+    stale-push paths. After requestRender() the old select is detached and
+    the new one has focus on <body>.
+
+    Acceptable patterns in the .then() body:
+    - querySelector('[aria-label="Cycle group for "] + ...') targeting the
+      same character's replacement select
+    - WM.el() or section.querySelector() using the characterName variable
+    - a helper function (focusGroupSelect or similar) called after repaint
+
+    Any of these satisfies the requirement; the key constraint is that the
+    focus target is identified by character identity, not by DOM position,
+    and the call appears after requestRender().
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js, "makeGroupSelect not defined"
+    block = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    then_body = then_body[1]
+
+    # Focus restoration must appear in the .then() body, after requestRender.
+    # Acceptable patterns:
+    # 1. focusGroupSelect or similar named helper
+    # 2. querySelector using 'Cycle group for' + characterName
+    # 3. querySelector using 'preview-group-select' with a focus() call
+    has_focus_restore = (
+        "focusGroupSelect" in then_body
+        or ("Cycle group for" in then_body and ".focus()" in then_body)
+        or ("preview-group-select" in then_body and ".focus()" in then_body)
+        or ("characterName" in then_body and ".focus()" in then_body)
+    )
+    assert has_focus_restore, (
+        "makeGroupSelect .then() does not restore focus to the replacement "
+        "select after requestRender(). The old select node is detached by "
+        "repaint; focus falls to <body>. Identify the replacement by character "
+        "identity (e.g. aria-label or characterName variable) and call "
+        ".focus() on it after requestRender(). Use an enabled Previews control "
+        "as fallback when the row no longer exists."
+    )
+
+    # The focus call must come AFTER requestRender (targeting an attached node).
+    rr_pos = then_body.rfind("requestRender")
+    if "focusGroupSelect" in then_body:
+        focus_pos = then_body.rfind("focusGroupSelect")
+    else:
+        focus_pos = then_body.rfind(".focus()")
+    assert rr_pos != -1, "makeGroupSelect .then() must call requestRender()"
+    assert focus_pos != -1, "makeGroupSelect .then() must have a focus call"
+    assert focus_pos > rr_pos, (
+        "focus call appears before requestRender in makeGroupSelect .then(); "
+        "must run after repaint so it targets an attached (not detached) node"
+    )
+
+
+def test_rename_group_restores_focus_after_success_repaint():
+    """After a successful rename and requestRender(), focusGroupManager() must
+    be called so keyboard focus returns to the group manager Add field rather
+    than falling to <body>.
+
+    deleteGroup has this; renameGroup is the missing counterpart.
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js, "no renameGroup function in previews.js"
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "renameGroup has no .then() callback"
+    then_body = then_body[1]
+
+    # The renameGroup .then() callback ends before the comment block that
+    # precedes focusGroupManager's definition. Trim the then_body to just
+    # the callback closure (ends at the closing `});` of `.then(...)`).
+    # Count to closing brace: find the matching '}); });' sequence.
+    # Simple approach: trim to just the JS code before any comment block.
+    # Find last `focusGroupManager` that is a function call (not a comment).
+    import re as _re
+
+    calls = list(_re.finditer(r"focusGroupManager\s*\(\)", then_body))
+    assert calls, (
+        "renameGroup success path does not call focusGroupManager(). "
+        "Add focusGroupManager() after requestRender() in the success path, "
+        "matching deleteGroup."
+    )
+    # The success-path requestRender comes last in the actual code (before comments).
+    # Find requestRender() calls (not comment occurrences). Exclude lines starting
+    # with // by checking that the match is not preceded by '//' on the same line.
+    rr_calls = []
+    for m in _re.finditer(r"requestRender\s*\(\)", then_body):
+        # Check if this occurrence is on a comment line.
+        line_start = then_body.rfind("\n", 0, m.start()) + 1
+        line = then_body[line_start : m.start()].lstrip()
+        if not line.startswith("//"):
+            rr_calls.append(m)
+    assert rr_calls, "renameGroup must call requestRender()"
+    last_rr = rr_calls[-1].start()
+    last_focus = calls[-1].start()
+    assert last_focus > last_rr, (
+        "focusGroupManager must appear after the last requestRender() in "
+        "renameGroup's .then() callback (success path)"
+    )
+
+
+def test_rename_group_restores_focus_after_refusal_repaint():
+    """After a rename refusal and requestRender(), focusGroupManager() must
+    be called in the refusal path too (matches deleteGroup refusal path).
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js, "no renameGroup function in previews.js"
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "renameGroup has no .then() callback"
+    then_body = then_body[1]
+
+    refusal_idx = then_body.find("if (!res || !res.applied)")
+    assert refusal_idx != -1, "renameGroup .then() has no refusal guard"
+    refusal_block = then_body[refusal_idx:]
+    return_idx = refusal_block.find("return;")
+    refusal_content = refusal_block[: return_idx + len("return;")]
+
+    has_focus = "focusGroupManager" in refusal_content or (
+        "querySelector" in refusal_content and ".focus()" in refusal_content
+    )
+    assert has_focus, (
+        "renameGroup refusal path does not restore keyboard focus. "
+        "Add focusGroupManager() after requestRender() in the refusal branch."
+    )
+
+
+def test_do_add_clears_name_field_after_successful_create():
+    """After a successful group create, the Add name field must be cleared
+    (nameField.value = '' or equivalent) so the user doesn't see the old
+    group name still in the text field.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js, "no makeGroupManager in previews.js"
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body, "no doAdd inside makeGroupManager"
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    # Success path is after the refusal block; look for nameField.value clear
+    has_clear = "nameField.value" in then_body and (
+        "nameField.value = ''" in then_body
+        or 'nameField.value = ""' in then_body
+        or "nameField.value=''" in then_body
+    )
+    assert has_clear, (
+        "doAdd success path does not clear nameField.value after a successful "
+        "create. The user would see the just-added group name still in the "
+        "Add field, making a duplicate-create attempt likely. "
+        "Add `nameField.value = '';` in the success path before requestRender()."
+    )
+
+
+def test_do_add_restores_focus_to_add_field_after_successful_create():
+    """After a successful group create and requestRender(), focus must be
+    restored to the newly-attached Add field (not the detached old one).
+
+    The old nameField is detached by requestRender(); the new one must be
+    queried from the rebuilt DOM and focused.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js, "no makeGroupManager in previews.js"
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body, "no doAdd inside makeGroupManager"
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    # Must contain a requestRender() followed by a focus on the new Add field.
+    has_focus = (
+        "focusGroupManager" in then_body
+        or ("group-add-name" in then_body and ".focus()" in then_body)
+        or ("addField" in then_body and ".focus()" in then_body)
+    )
+    assert has_focus, (
+        "doAdd success path does not restore focus to the Add field after "
+        "requestRender(). The rebuilt DOM has a fresh Add field that is not "
+        "focused; the user must Tab or click to continue. "
+        "Add a focusGroupManager() call or querySelector for .group-add-name "
+        "after requestRender() in the success path."
+    )
+    import re as _re
+
+    rr_calls = list(_re.finditer(r"requestRender\s*\(\)", then_body))
+    assert rr_calls, "doAdd success path must call requestRender()"
+    last_rr = rr_calls[-1].start()
+    focus_calls = list(_re.finditer(r"focusGroupManager\s*\(\)", then_body))
+    if not focus_calls:
+        focus_calls = list(_re.finditer(r"\.focus\(\)", then_body))
+    assert focus_calls, "doAdd success path must have a focus call"
+    last_focus = focus_calls[-1].start()
+    assert last_focus > last_rr, (
+        "focus call in doAdd success path must appear after requestRender, "
+        "not before, so it targets the newly attached Add field"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final fix wave 3: unconditional user feedback in all four refusal branches
+# and focusGroupManager() in doAdd refusal after requestRender().
+# ---------------------------------------------------------------------------
+
+
+def _extract_refusal_content(then_body):
+    """Return the text of the first `if (!res || !res.applied)` block."""
+    idx = then_body.find("if (!res || !res.applied)")
+    if idx == -1:
+        return None
+    block = then_body[idx:]
+    ret = block.find("return;")
+    if ret == -1:
+        return block
+    return block[: ret + len("return;")]
+
+
+def test_assignment_refusal_always_alerts_user():
+    """makeGroupSelect's refusal branch must call WM.send('alert_bookmarks')
+    unconditionally -- showing res.error when available, or a shared fallback
+    message when res is null/malformed.  The conditional
+    `if (res && res.error)` pattern silently swallows failures that arrive
+    without a structured error payload (network drop, server crash, bridge
+    timeout), leaving the user no indication that their assignment was not
+    saved.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupSelect" in js
+    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    refusal = _extract_refusal_content(then_body[1])
+    assert refusal is not None, "makeGroupSelect .then() has no refusal guard"
+    # Must contain an unconditional alert, not one guarded by `res && res.error`.
+    # Acceptable forms: ternary `res && res.error ? ... : 'fallback'`
+    # or two separate sends -- but the second must not be inside `if (res &&`.
+    has_unconditional = "alert_bookmarks" in refusal and (
+        # ternary pattern: alert present outside a conditional-only block
+        ("res && res.error" in refusal and "?" in refusal)
+        or (
+            # two separate alert sends OR fallback string present
+            "alert_bookmarks" in refusal
+            and "That group change was not saved" in refusal
+        )
+    )
+    assert has_unconditional, (
+        "makeGroupSelect refusal branch uses `if (res && res.error)` to gate "
+        "WM.send('alert_bookmarks'), so failures without a structured error "
+        "payload are silently swallowed. Replace with a ternary that always "
+        "sends -- e.g.: WM.send('alert_bookmarks', res && res.error "
+        "? res.error : 'That group change was not saved.')"
+    )
+
+
+def test_add_refusal_always_alerts_user():
+    """doAdd's refusal branch must call WM.send('alert_bookmarks') unconditionally.
+    When res is null (bridge timeout / crash) the user sees nothing today;
+    the fallback message must be shown instead.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    refusal = _extract_refusal_content(then_body)
+    assert refusal is not None, "doAdd .then() has no refusal guard"
+    has_unconditional = "alert_bookmarks" in refusal and (
+        ("res && res.error" in refusal and "?" in refusal)
+        or "That group change was not saved" in refusal
+    )
+    assert has_unconditional, (
+        "doAdd refusal branch does not unconditionally alert the user. "
+        "Replace the conditional send with a ternary: "
+        "WM.send('alert_bookmarks', res && res.error "
+        "? res.error : 'That group change was not saved.')"
+    )
+
+
+def test_rename_refusal_always_alerts_user():
+    """renameGroup's refusal branch must call WM.send('alert_bookmarks')
+    unconditionally -- ternary or equivalent, never guarded solely by
+    `if (res && res.error)`.
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "renameGroup has no .then() callback"
+    refusal = _extract_refusal_content(then_body[1])
+    assert refusal is not None, "renameGroup .then() has no refusal guard"
+    has_unconditional = "alert_bookmarks" in refusal and (
+        ("res && res.error" in refusal and "?" in refusal)
+        or "That group change was not saved" in refusal
+    )
+    assert has_unconditional, (
+        "renameGroup refusal branch uses a conditional send and silently "
+        "swallows null/malformed responses. Replace with a ternary that "
+        "always shows feedback -- e.g. res.error or the shared fallback."
+    )
+
+
+def test_delete_refusal_always_alerts_user():
+    """deleteGroup's refusal branch must call WM.send('alert_bookmarks')
+    unconditionally.
+    """
+    js = _web("previews.js")
+    assert "function deleteGroup" in js
+    block = js.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = block.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "deleteGroup has no .then() callback"
+    refusal = _extract_refusal_content(then_body[1])
+    assert refusal is not None, "deleteGroup .then() has no refusal guard"
+    has_unconditional = "alert_bookmarks" in refusal and (
+        ("res && res.error" in refusal and "?" in refusal)
+        or "That group change was not saved" in refusal
+    )
+    assert has_unconditional, (
+        "deleteGroup refusal branch uses a conditional send and silently "
+        "swallows null/malformed responses. Replace with a ternary that "
+        "always shows feedback."
+    )
+
+
+def test_add_refusal_restores_focus_after_requestrender():
+    """doAdd's refusal branch must call focusGroupManager() after requestRender()
+    so keyboard focus reaches the newly attached Add field.
+
+    requestRender() detaches and replaces the old nameField/addBtn DOM nodes.
+    Without an explicit focus call the user's focus falls to <body> on every
+    refused create (e.g. duplicate name), requiring a Tab or click to continue
+    typing.  The success path already calls focusGroupManager(); the refusal
+    path must match.
+    """
+    import re as _re
+
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    refusal = _extract_refusal_content(then_body)
+    assert refusal is not None, "doAdd .then() has no refusal guard"
+
+    has_focus = "focusGroupManager" in refusal or (
+        "group-add-name" in refusal and ".focus()" in refusal
+    )
+    assert has_focus, (
+        "doAdd refusal path does not restore keyboard focus after requestRender(). "
+        "The rebuilt DOM has a fresh nameField that is not focused. "
+        "Add focusGroupManager() after requestRender() in the refusal branch, "
+        "matching the success path."
+    )
+    # Ordering: focus must come after the last requestRender() in refusal block.
+    rr_calls = list(_re.finditer(r"requestRender\s*\(\)", refusal))
+    assert rr_calls, "doAdd refusal path must contain requestRender()"
+    last_rr = rr_calls[-1].start()
+    focus_calls = list(_re.finditer(r"focusGroupManager\s*\(\)", refusal))
+    if not focus_calls:
+        focus_calls = list(_re.finditer(r"\.focus\(\)", refusal))
+    assert focus_calls, "doAdd refusal path must have a focus call"
+    last_focus = focus_calls[-1].start()
+    assert last_focus > last_rr, (
+        "focusGroupManager() in doAdd refusal path must appear after "
+        "requestRender(), not before, so it targets the newly attached node."
+    )

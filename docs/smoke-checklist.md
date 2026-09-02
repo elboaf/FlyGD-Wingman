@@ -1773,7 +1773,7 @@ only ever checked by hand.
       reaches Python, a file written by this build and read by an older
       one silently shows every preview the wrong way round.
 - [ ] **An unticked `Preview` character stops competing for chords on
-      OTHER rows.** Give a character the same chord as `Cycle forward`.
+      OTHER rows.** Give a character the same chord as `All forward`.
       Expected first: the cycle row goes red and says the cycle keybind is
       the one that loses. Now untick `Preview` on that character. Expected:
       that warning clears, because Python has dropped the character and
@@ -2488,7 +2488,7 @@ pytest.
   row stays armed and visibly capturing, typing fills in normally, and a
   pressed chord binds correctly. The original bug left the row armed but
   invisible, eating keystrokes and binding them silently.
-- [ ] Cycle forward and back walk every running client in name order and wrap.
+- [ ] All forward and back walk every running client in name order and wrap.
   **Try it with a browser focused, not just with an EVE client focused** —
   these are different branches of `_on_hotkey`: with an EVE client focused,
   cycling anchors on that client; with a browser (or anything else) focused,
@@ -2496,7 +2496,7 @@ pytest.
   multiboxer actually uses, so it must be checked, not just the EVE-focused
   case.
 - [ ] **A cycle burst lands at its net destination.** With four clients in
-  known name order and A foreground, press Cycle forward three times rapidly
+  known name order and A foreground, press All forward three times rapidly
   and stop. Expected: the final target is D, with no intermediate clients
   appearing after the final switch. Repeat with mixed forward and back presses,
   calculate the destination first, and confirm Wingman lands there.
@@ -2588,6 +2588,51 @@ pytest.
   keystrokes arriving in a different client. The preview chords must be
   available to another application without a reboot. Relaunch Wingman and
   confirm the chords register and switch normally again.
+
+### Preview cycle groups
+
+**Windows and real EVE clients required; not verifiable by the automated suite.**
+
+- [ ] **Existing All forward/back chords behave exactly as before on an upgraded
+  settings file with no groups.** Open an install with existing cycle binds but
+  no groups configured. Expected: the rows remain labelled All forward and
+  All back and the chords cycle every running client as before.
+- [ ] **Create DPS and Logistics, assign online and offline characters, and confirm
+  each group chord visits only its running assigned members.** Bind a chord to
+  each group. Pressing DPS's chord must never land on a Logistics member,
+  and offline members of either group must be skipped.
+- [ ] **From a foreground member, a foreground nonmember, and a browser, verify the
+  anchor/history behavior (design decision 3).** With a group active: from a
+  group member in the foreground, cycling advances from that member; from a
+  group nonmember in the foreground, the anchor is missing and the action starts
+  at the group's first running member; from a browser, the group falls back to
+  its last-cycled target.
+- [ ] **Alternate All, DPS, Logistics, and direct-character hotkeys rapidly; the
+  final client matches sequential meaning without displaying intermediate
+  targets.** Calculate the expected endpoint from the action sequence first.
+  No wrong client appears after the burst ends.
+- [ ] **Opt a member out of previews.** Expected: its group assignment remains
+  selected in the UI, its direct-focus chord is released, and its group cycle
+  skips it. Re-enable Preview for that character and it rejoins the group cycle
+  without needing reassignment.
+- [ ] **Rename a group while previews run.** Expected: the chord remains
+  registered and membership is unchanged; no reconfiguration is needed and
+  the renamed group cycles correctly on the very next press.
+- [ ] **Delete a populated group.** Expected: the confirmation names the exact
+  number of assignments, the chord is released immediately, every former
+  member still cycles under All only — no reassignment, no crash — and every
+  former member's visible assignment selector reads **All only** after deletion.
+- [ ] **Log members in and out during repeated cycling.** Expected: no wrong
+  client, no stale window handle, no crash, and no stuck hotkey over an
+  extended session of login/logout churn.
+- [ ] **Arm a named-group keybind capture, then trigger a roster push by opening
+  or closing a client.** Expected: the capture row stays visible and armed;
+  the next chord binds correctly. The original bug left an armed row invisible
+  after any state push.
+- [ ] **At 840x625, inspect the full card with long group and character names.**
+  Expected: no sixth column, no horizontal clipping, no native light control,
+  and the group value control is reachable by keyboard. Check at 150% scaling
+  as well (the CSS viewport remains 840x625).
 
 ## Shared preview keybinds
 
@@ -3640,7 +3685,7 @@ behaviour a lexical guard cannot reach.
       and the box is 15px; every other column's control is dead centre
       under its label, and this one was 15px left of it. Nothing else on
       the row moves.
-- [ ] **The list says how to set a bind.** Above `Cycle forward`:
+- [ ] **The list says how to set a bind.** Above `All forward`:
       "Click a keybind and press the keys you want. Edit… lets you type
       one instead." Both halves are load-bearing — nothing else says the
       chord itself is clickable, and `Edit…` sits under a blank column

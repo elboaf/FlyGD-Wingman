@@ -332,3 +332,59 @@ def test_clear_keeps_a_pending_roster_name():
     store.record_character("Bob")
     store.clear()
     assert live["preview"]["seen"] == ["Bob"]
+
+
+# ---- Final-review fix: Finding #3 - assigned names protected from eviction ----
+
+
+def test_a_group_assigned_character_is_protected_from_eviction():
+    """A character mapped in hotkeys.group_by_character has a persisted
+    group assignment that is invisible and unremovable once they age out of
+    `seen`.  The fix: membership-map keys join the protected set so a new
+    discovery cannot evict them before the select that would clear the
+    assignment is ever shown."""
+    live = {
+        "preview": {
+            "seen": [f"C{i}" for i in range(64)],
+            "hotkeys": {
+                "characters": {},
+                "group_by_character": {"C63": "dps"},
+            },
+        }
+    }
+    store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
+    store.record_character("New")
+    store.flush()
+    assert "C63" in live["preview"]["seen"], (
+        "C63 has a group assignment but was evicted from seen; its group "
+        "select would never render to clear the assignment"
+    )
+
+
+def test_group_assignment_protection_survives_roster_cap_recovery():
+    """At the 64-name cap, a newly-seen character must not displace an
+    offline assigned character even when that character has no bind or
+    exclusion entry.
+
+    C63 is at the tail of the 64-entry seen list; without protection it is
+    the first candidate the eviction loop removes.  With a group assignment
+    it must survive."""
+    live = {
+        "preview": {
+            "seen": [f"C{i}" for i in range(64)],
+            "hotkeys": {
+                "characters": {},
+                "group_by_character": {"C63": "dps"},
+            },
+            "excluded": [],
+        }
+    }
+    store = LayoutStore(update_settings=_updater(live), timer=_ImmediateTimer)
+    store.record_character("NewCharacter")
+    store.flush()
+    # C63 is group-assigned; it must be kept despite being the eviction candidate.
+    assert "C63" in live["preview"]["seen"], (
+        "C63 has a group assignment and must not be evicted at the cap boundary"
+    )
+    # The newly-seen character must also be present.
+    assert "NewCharacter" in live["preview"]["seen"]

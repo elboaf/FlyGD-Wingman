@@ -35,6 +35,17 @@
   // Set when a render is skipped because a capture is armed; flushed by
   // endCapture(). See requestRender() below for why this exists.
   var pendingRender = false;
+  // Set while a group lifecycle write (create/rename/delete/bind) is in
+  // flight. Lifecycle and assignment controls are disabled during this
+  // window so concurrent mutations cannot race; cleared in both resolve
+  // and rejection paths so a failed write never leaves the form stuck.
+  var groupBusy = false;
+  // Whether the "Manage groups" details disclosure was open the last time
+  // render() ran.  Persisted across rerenders so focus can land in the
+  // Add-name field after a successful group mutation (the disclosure must
+  // still be open at that point).  Defaults to false (collapsed) so a
+  // fresh install does not force the panel open.
+  var groupManagerOpen = false;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -66,6 +77,12 @@
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
+    // group_by_character: a character with a persisted group assignment
+    // but no running/seen/bind entry needs a row so the select can clear
+    // the assignment (design §6: "offline membership is still editable").
+    Object.keys(state.hotkeys.group_by_character || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     return out;
@@ -103,6 +120,11 @@
     var cycles = 0;
     if (state.hotkeys.cycle_next === gesture) { cycles += 1; }
     if (state.hotkeys.cycle_prev === gesture) { cycles += 1; }
+    // Named group cycles also compete for registrations; a group chord
+    // matching cycle_next/cycle_prev (or another group) is a duplicate.
+    state.hotkeys.groups.forEach(function (g) {
+      if (g.cycle === gesture) { cycles += 1; }
+    });
     if (cycles > 1 || (cycles && sharers(gesture).length)) {
       return 'duplicate';
     }
@@ -122,6 +144,13 @@
       return 'unknown';
     }
     return known[gesture] === false ? 'refused' : null;
+  }
+
+  // Ordered array of named preview cycle groups from the current hotkeys
+  // state. Returns a stable empty array when the payload predates groups,
+  // so callers do not need null checks.
+  function groups() {
+    return state.hotkeys.groups || [];
   }
 
   function makeRow(label, gesture, online, onSet, character) {
@@ -161,6 +190,16 @@
     // `position: sticky` and cannot leave while its own block is on
     // screen. See the note on `#preview-binds .bind-group` in style.css.
     if (online === false) { lab.classList.add('dim'); }
+    // Group assignment select: only for real characters and only when
+    // groups exist. Appended to `lab`, NOT to `row` -- an extra
+    // row.appendChild would be a sixth grid cell and break the five-track
+    // layout. The cell-count guard derives its count from row.appendChild
+    // calls inside makeRow; a lab.appendChild here is invisible to it by
+    // design, so the grid stays at five tracks regardless of groups.
+    if (character && groups().length) {
+      lab.classList.add('has-group-select');
+      lab.appendChild(makeGroupSelect(character));
+    }
     row.appendChild(lab);
 
     // Whether this character is opted out of previews entirely. The
@@ -262,7 +301,11 @@
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
     });
-    WM.setEnabled(button, !off);
+    // Gate on both !off (character opted out) and !groupBusy (a group write
+    // is in flight). Group-cycle rows have no character so off is always
+    // false there; without the groupBusy gate they would stay live while a
+    // rename/delete/add/setGroupBind is pending, allowing overlapping writes.
+    WM.setEnabled(button, !(off || groupBusy));
     row.appendChild(button);
 
     // One cell, not two tracks. Two adjacent link buttons in their own
@@ -289,7 +332,7 @@
     if (gesture) {
       var clear = WM.make('button', 'linkbtn', 'Clear');
       clear.addEventListener('click', function () { endCapture(); onSet(''); });
-      WM.setEnabled(clear, !off);
+      WM.setEnabled(clear, !(off || groupBusy));
       acts.appendChild(clear);
     }
 
@@ -317,7 +360,7 @@
         });
       });
     });
-    WM.setEnabled(typed, !off);
+    WM.setEnabled(typed, !(off || groupBusy));
     acts.appendChild(typed);
     row.appendChild(acts);
 
@@ -336,7 +379,7 @@
       row.appendChild(makeGeometryActions(character, off));
     }
 
-    // Cycle forward/back have no `character` -- they are chords, not
+    // All forward/back have no `character` -- they are chords, not
     // characters, and Never-minimize means nothing for them. #preview-binds
     // is a CSS grid with `.row { display: contents }` (style.css), so
     // every row must contribute the same number of cells or a short row's
@@ -1129,12 +1172,29 @@
     // `true`, not state.enabled: the cycle chords are not characters and
     // have no online state to report. Dimming them while previews were
     // off was half of what made the whole list grey at once.
-    host.appendChild(makeRow('Cycle forward', state.hotkeys.cycle_next,
+    host.appendChild(makeRow('All forward', state.hotkeys.cycle_next,
                              true,
                              function (g) { setBind('cycle_next', g); }));
-    host.appendChild(makeRow('Cycle back', state.hotkeys.cycle_prev,
+    host.appendChild(makeRow('All back', state.hotkeys.cycle_prev,
                              true,
                              function (g) { setBind('cycle_prev', g); }));
+
+    // Named group keybind rows. Each group gets its own row rendered by
+    // the shared makeRow so it inherits the five-track shape and the same
+    // Clear/Edit… controls. Rendered after All rows and before the
+    // character divider -- the task brief's wireframe B ordering.
+    groups().forEach(function (group) {
+      host.appendChild(makeRow(
+        group.name, group.cycle, true,
+        function (g) { setGroupBind(group.id, g); }
+      ));
+    });
+
+    // Manage groups disclosure: Add/Rename…/Delete. Rendered after group
+    // rows and before the character separator so it lives in the "keys"
+    // section of the table. Rendered even when groups().length is 0 so
+    // the Add field is always available.
+    host.appendChild(makeGroupManager());
 
     var list = rows();
     // An UNNAMED rule, then the column headers. The rule used to be a
@@ -1266,6 +1326,429 @@
     send(next);
   }
 
+  // Narrow group keybind writer. Calls set_preview_cycle_group_bind instead
+  // of the full set_preview_binds (send(next)) so only the one group's chord
+  // changes and all other groups/characters/cycle_next/prev are untouched.
+  // The generation guard uses `pushes` as in send(): a push that overtook
+  // the bridge call carries the authoritative table.
+  function setGroupBind(groupId, gesture) {
+    // Synchronous guard: a second click while a write is already in flight
+    // must be rejected immediately, before endCapture() or any send.
+    // requestRender() defers during capture, so without this guard old
+    // controls remain live and a repeated click under capture would race.
+    if (groupBusy) { return; }
+    endCapture();
+    // Participates in the shared groupBusy serialisation lock so that
+    // assignment selects, lifecycle controls, and other group writes stay
+    // disabled for the duration of this in-flight bridge call.
+    groupBusy = true;
+    requestRender();
+    var generation = pushes;
+    WM.send('set_preview_cycle_group_bind', groupId, gesture).then(function (res) {
+      groupBusy = false;
+      if (!res || !res.applied) {
+        // On refusal: apply the authoritative table from res.hotkeys when
+        // available and no newer push has landed.  This avoids showing a
+        // stale/deleted group for the extra round-trip that refresh() would
+        // require.  Fall back to refresh() only when res or res.hotkeys is
+        // absent (bridge error or server omission).
+        if (res && res.hotkeys && generation === pushes) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          requestRender();
+        } else {
+          refresh();
+        }
+        WM.send('alert_bookmarks',
+                res && res.error
+                  ? res.error
+                  : 'That binding was not saved. The keybind could not be ' +
+                    'read, or the settings file could not be written.');
+        return;
+      }
+      if (generation !== pushes) {
+        // A newer push already applied authoritative state; skip the stale
+        // response but still repaint so the busy lock is visually cleared.
+        requestRender();
+        return;
+      }
+      if (res.hotkeys) {
+        state.hotkeys = res.hotkeys;
+        state.hotkeys.groups = state.hotkeys.groups || [];
+        state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+      }
+      requestRender();
+    });
+  }
+
+  // Build the group assignment <select> for one character row. Appended to
+  // `lab` inside makeRow -- never to `row` -- so it never adds a grid cell.
+  //
+  // Not gated on the `off` (opted-out) state: unlike the keybind button
+  // and Size..., which can do nothing for an opted-out character, group
+  // membership is saved and waits for the preview to come back.
+  function makeGroupSelect(characterName) {
+    var sel = WM.make('select', 'field preview-group-select');
+    sel.setAttribute('aria-label', 'Cycle group for ' + characterName);
+
+    // Always-first option: no group assigned (All only).
+    var allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All only';
+    sel.appendChild(allOpt);
+
+    // One option per named group, in creation order.
+    groups().forEach(function (g) {
+      var opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.name;
+      sel.appendChild(opt);
+    });
+
+    // Reflect current assignment.
+    var gbc = state.hotkeys.group_by_character || {};
+    sel.value = gbc[characterName] || '';
+    // Disabled during any group write (assignment, lifecycle, or bind) so
+    // concurrent changes from multiple selects can't stack.
+    WM.setEnabled(sel, !groupBusy);
+
+    sel.addEventListener('change', function () {
+      // Synchronous guard: a concurrent write must be rejected before any
+      // state change.  Without this, rapid changes under an armed capture
+      // (where requestRender() defers) can stack.
+      if (groupBusy) { return; }
+      var selectedId = sel.value;
+      // Disable lifecycle and assignment controls for the duration.
+      groupBusy = true;
+      requestRender();
+      // Capture the push generation before the bridge call. If a newer
+      // onPreviewHotkeys push arrives while the call is in flight it
+      // replaces state.hotkeys wholesale; applying the stale response
+      // on top of that would overwrite the authoritative table. Same
+      // guard as setGroupBind.
+      var before = pushes;
+      WM.send('set_preview_character_group', characterName, selectedId)
+        .then(function (res) {
+          groupBusy = false;
+          if (!res || !res.applied) {
+            // Revert: re-read from state.
+            sel.value = (state.hotkeys.group_by_character || {})[characterName] || '';
+            WM.send('alert_bookmarks',
+                    res && res.error
+                      ? res.error
+                      : 'That group change was not saved.');
+            // Apply the authoritative table when available and no newer push
+            // has landed since the call was issued.  This keeps the groups
+            // list coherent without a full refresh() round-trip.
+            if (res && res.hotkeys && pushes === before) {
+              state.hotkeys = res.hotkeys;
+              state.hotkeys.groups = state.hotkeys.groups || [];
+              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+            }
+            requestRender();
+            focusGroupSelect(characterName);
+            return;
+          }
+          if (pushes !== before) {
+            // A newer push already applied authoritative state; skip the
+            // stale hotkeys update but still repaint so disabled controls
+            // are re-enabled (groupBusy is already false above).
+            requestRender();
+            focusGroupSelect(characterName);
+            return;
+          }
+          if (res.hotkeys) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          focusGroupSelect(characterName);
+        });
+    });
+    return sel;
+  }
+
+  // Restore keyboard focus to the assignment select for `characterName`
+  // after a repaint that replaced its DOM node. Finds the replacement
+  // by aria-label (stable character identity). Falls back to the group
+  // manager's Add field, then any enabled interactive control in the
+  // Previews section.
+  function focusGroupSelect(characterName) {
+    var section = WM.el('section-previews');
+    if (!section) { return; }
+    // Iterate and compare aria-label directly: a CSS attribute-selector built
+    // by string interpolation breaks for character names that contain quotes
+    // or backslashes (they would need CSS escaping, which ES5 has no API for).
+    var selects = section.querySelectorAll('select.preview-group-select');
+    var target = null;
+    for (var i = 0; i < selects.length; i++) {
+      var s = selects[i];
+      if (s.getAttribute('aria-label') === 'Cycle group for ' + characterName
+          && !s.hidden && !s.disabled) {
+        target = s;
+        break;
+      }
+    }
+    if (target) { target.focus(); return; }
+    // Row may have disappeared (group removed); fall back to a stable control.
+    var addField = section.querySelector(
+      '.group-add-name:not([hidden]):not(:disabled)');
+    if (addField) { addField.focus(); return; }
+    var fallback = section.querySelector(
+      'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)');
+    if (fallback) { fallback.focus(); }
+  }
+
+  // Rename a named group. Called from the management disclosure. Ends the
+  // capture first (an armed capture's keydown handler would eat the dialog).
+  function renameGroup(group) {
+    // Synchronous guard: reject if a write is already in flight before
+    // ending capture or opening the prompt.
+    if (groupBusy) { return; }
+    endCapture();
+    WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
+              group.name).then(function (text) {
+      if (text === null || text.trim() === '') { return; }
+      groupBusy = true;
+      requestRender();
+      var before = pushes;
+      WM.send('rename_preview_cycle_group', group.id, text.trim())
+        .then(function (res) {
+          groupBusy = false;
+          if (!res || !res.applied) {
+            WM.send('alert_bookmarks',
+                    res && res.error
+                      ? res.error
+                      : 'That group change was not saved.');
+            // Apply the authoritative table when available and no newer push
+            // has landed.  A refused rename carries the unchanged name.
+            if (res && res.hotkeys && pushes === before) {
+              state.hotkeys = res.hotkeys;
+              state.hotkeys.groups = state.hotkeys.groups || [];
+              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+            }
+            requestRender();
+            focusGroupManager();
+            return;
+          }
+          if (pushes !== before) {
+            // A newer push has already applied authoritative state; skip
+            // the stale response but still repaint with current data.
+          } else if (res.hotkeys) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          focusGroupManager();
+        });
+    });
+  }
+
+  // Restore keyboard focus to the first surviving group management control
+  // (a Delete button for a remaining group), then the Add-name field, then
+  // any enabled control in the Previews section.
+  //
+  // Called AFTER requestRender() rebuilds the DOM so it queries attached
+  // nodes only. The pattern matches focusCopyTarget: named target first,
+  // section-level fallback second, no focus on detached nodes.
+  function focusGroupManager() {
+    var section = WM.el('section-previews');
+    if (!section) { return; }
+    // Prefer the Add-name field: it is always present and is never the
+    // logically-deleted group's own control, so it stays valid even when
+    // a stale push causes the deleted group to re-appear transiently.
+    // A Delete button for a surviving group is a valid but less-stable
+    // target because the DOM order after a stale push can be ambiguous.
+    var addField = section.querySelector(
+      '.group-add-name:not([hidden]):not(:disabled)');
+    if (addField) { addField.focus(); return; }
+    // If the Add field is somehow absent, try a surviving group's button.
+    var delBtn = section.querySelector(
+      '.group-delete-btn:not([hidden]):not(:disabled)');
+    if (delBtn) { delBtn.focus(); return; }
+    // Last resort: any enabled interactive control in the section.
+    var fallback = section.querySelector(
+      'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)');
+    if (fallback) { fallback.focus(); }
+  }
+
+  // Delete a named group. Called from the management disclosure. Ends the
+  // capture first, then shows a WM.confirm with the group name and member
+  // count so the user knows what they are removing.
+  function deleteGroup(group) {
+    // Synchronous guard: reject if a write is already in flight before
+    // ending capture or computing the member count.
+    if (groupBusy) { return; }
+    endCapture();
+    var gbc = state.hotkeys.group_by_character || {};
+    var members = Object.keys(gbc).filter(function (n) {
+      return gbc[n] === group.id;
+    });
+    var memberText = members.length === 1
+      ? '1 character' : members.length + ' characters';
+    var msg = 'Delete group "' + group.name + '"? ' + memberText +
+              ' will return to All only cycling.';
+    WM.confirm('Delete group', msg).then(function (confirmed) {
+      if (!confirmed) { return; }
+      groupBusy = true;
+      requestRender();
+      var before = pushes;
+      WM.send('delete_preview_cycle_group', group.id).then(function (res) {
+        groupBusy = false;
+        if (!res || !res.applied) {
+          WM.send('alert_bookmarks',
+                  res && res.error
+                    ? res.error
+                    : 'That group change was not saved.');
+          // Apply the authoritative table when available and no newer push
+          // has landed.  A refused delete confirms the group is still present.
+          if (res && res.hotkeys && pushes === before) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          // Refusal: the group is still present; repaint re-enables its
+          // controls but focus falls to <body> without an explicit restore.
+          focusGroupManager();
+          return;
+        }
+        if (pushes !== before) {
+          // A newer push has already applied authoritative state.
+          // Skip the stale hotkeys but still repaint and restore focus --
+          // the group is gone either way and focus must not fall to <body>.
+        } else if (res.hotkeys) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+        }
+        requestRender();
+        focusGroupManager();
+      });
+    });
+  }
+
+  // Build the "Manage groups" disclosure: a collapsed <details> with a
+  // <summary> showing "Manage groups (N)", then a text field and Add button,
+  // then one Rename…/Delete row per existing group.  Rendered inside
+  // #preview-binds spanning the full grid width via .preview-group-manager.
+  // Uses <details> rather than a plain div so:
+  //   1. The panel is collapsible -- it does not stay permanently expanded.
+  //   2. It does NOT inherit the bind-group sticky-header CSS that would
+  //      pin it at the top and overlay character rows.
+  // Called from render() after the group keybind rows and before the
+  // character separator.  Open state is preserved across rerenders via
+  // groupManagerOpen so focus restoration works.
+  function makeGroupManager() {
+    var el = document.createElement('details');
+    el.className = 'preview-group-manager';
+    // Restore open state from the module-level flag so a rerender does not
+    // collapse the panel while the user is typing or clicking.
+    if (groupManagerOpen) { el.open = true; }
+    el.addEventListener('toggle', function () {
+      groupManagerOpen = el.open;
+    });
+
+    var sumEl = document.createElement('summary');
+    var count = groups().length;
+    sumEl.textContent = count
+      ? 'Manage groups (' + count + ')'
+      : 'Manage groups';
+    el.appendChild(sumEl);
+
+    var body = WM.make('div', 'group-manager-body');
+    var addRow = WM.make('div', 'group-add-row');
+    var nameField = WM.make('input', 'field group-add-name');
+    nameField.type = 'text';
+    nameField.placeholder = 'New group name';
+    nameField.setAttribute('aria-label', 'New group name');
+    var addBtn = WM.make('button', 'btn group-add-btn', 'Add');
+    WM.setEnabled(addBtn, !groupBusy);
+    WM.setEnabled(nameField, !groupBusy);
+
+    function doAdd() {
+      if (groupBusy) { return; }
+      var name = nameField.value.trim();
+      if (!name) { return; }
+      groupBusy = true;
+      requestRender();
+      var before = pushes;
+      WM.send('create_preview_cycle_group', name).then(function (res) {
+        groupBusy = false;
+        if (!res || !res.applied) {
+          WM.send('alert_bookmarks',
+                  res && res.error
+                    ? res.error
+                    : 'That group change was not saved.');
+          // Apply the authoritative table when available and no newer push
+          // has landed.  A refused create may carry a table that already
+          // reflects the reason for refusal (e.g. duplicate name).
+          if (res && res.hotkeys && pushes === before) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          // The old nameField is detached by requestRender(); query the new
+          // one so focus reaches the rebuilt Add field, not a detached node.
+          focusGroupManager();
+          return;
+        }
+        if (pushes !== before) {
+          // A newer push has already applied authoritative state; skip
+          // the stale response but still repaint.
+        } else if (res.hotkeys) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+        }
+        // Clear the submitted name so the field does not show a stale value
+        // after repaint (a non-empty field invites a duplicate-add attempt).
+        nameField.value = '';
+        requestRender();
+        // The old nameField is detached by requestRender(); query the new one.
+        focusGroupManager();
+      });
+    }
+
+    // Commit on Enter (not blur -- Settings commit rule: free text commits on
+    // Enter or an explicit button, never on blur).
+    nameField.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); doAdd(); }
+    });
+    addBtn.addEventListener('click', doAdd);
+
+    addRow.appendChild(nameField);
+    addRow.appendChild(addBtn);
+    body.appendChild(addRow);
+
+    // Per-group Rename…/Delete rows.
+    groups().forEach(function (group) {
+      var gRow = WM.make('div', 'group-manage-row');
+      var gName = WM.make('span', 'group-manage-name', group.name);
+      var renBtn = WM.make('button', 'btn group-rename-btn', 'Rename…');
+      var delBtn = WM.make('button', 'btn danger group-delete-btn', 'Delete');
+      WM.setEnabled(renBtn, !groupBusy);
+      WM.setEnabled(delBtn, !groupBusy);
+      renBtn.addEventListener('click', function () { renameGroup(group); });
+      delBtn.addEventListener('click', function () { deleteGroup(group); });
+      gRow.appendChild(gName);
+      gRow.appendChild(renBtn);
+      gRow.appendChild(delBtn);
+      body.appendChild(gRow);
+    });
+
+    el.appendChild(body);
+    return el;
+  }
+
   function refresh() {
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
@@ -1273,6 +1756,8 @@
       pushes += 1;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                         cycle_prev: ''};
+      state.hotkeys.groups = state.hotkeys.groups || [];
+      state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
@@ -1330,6 +1815,8 @@
     pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
+    state.hotkeys.groups = state.hotkeys.groups || [];
+    state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     state.excluded = state.excluded || [];

@@ -2533,6 +2533,70 @@ button.btn:disabled,
    hide, so a character who has logged out still shows its saved binding. */
 #preview-binds .row > .lab.dim { color: var(--text-faint); }
 
+/* Group assignment select inside the character name cell. The `.lab` cell
+   is already a flex row; when groups exist, makeRow adds .has-group-select
+   and appends the select, turning it into a two-line column instead. No
+   new grid track is added -- the select lives inside track 1 (.lab), and
+   the grid template stays at five cell-bearing tracks.
+
+   `.lab.dim .preview-group-select` keeps the select readable on an offline
+   row: `.lab.dim` dims the name to --text-faint, but the select should
+   stay at --text so it is legible without relying solely on colour.     */
+#preview-binds .row > .lab.has-group-select {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+#preview-binds .preview-group-select {
+  width: 100%; min-width: 0; max-width: 100%;
+}
+#preview-binds .lab.dim .preview-group-select {
+  color: var(--text);
+}
+
+/* Group manager disclosure block. Spans the full grid width. Uses
+   <details> rather than .bind-group: the bind-group rule at
+   #preview-binds .bind-group:not(:empty) applies position:sticky which
+   would pin the disclosure over the character rows.  The manager spans
+   the grid independently via grid-column:1/-1 below. */
+.preview-group-manager {
+  grid-column: 1 / -1;
+  padding: 4px 0 2px;
+}
+.preview-group-manager > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-muted);
+  user-select: none;
+}
+.preview-group-manager > summary:hover { color: var(--text); }
+.preview-group-manager > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+/* Chromium's UA rule hides non-summary children of a closed <details>
+   by setting display:none on the internal ::details-content pseudo, but
+   an author display:flex declaration on the body div wins the cascade and
+   keeps the body visible even when the panel is collapsed.  This explicit
+   :not([open]) rule restores the expected closed-panel behaviour without
+   removing the flex layout that applies while the panel is open. */
+.preview-group-manager:not([open]) > .group-manager-body { display: none; }
+.group-manager-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 6px;
+}
+.group-add-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.group-add-name { flex: 1 1 auto; min-width: 0; }
+.group-manage-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.group-manage-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-muted); }
+
 /* A latent bookmark collision (previews.js's bookmarkClash) marks the
    chord without the warning colour .clash uses -- nothing is being taken
    away yet, only would be if bookmarks were turned on. Border is
@@ -3258,7 +3322,7 @@ button.btn:disabled,
    (dev.js leaves it empty -- get_bookmarks is unstubbed):
 
      Bookmarks  column 189.6px ("Convert EvE-Scout Bookmarks")  bind at 200.6
-     Previews   column  86.2px ("Cycle forward")                bind at  97.2
+     Previews   column  86.2px ("All forward")                  bind at  97.2
 
    103.4 CSS px apart, from a 586px row in both. The walkthrough measured
    79 CSS on the live app; the difference is not a discrepancy but the
@@ -3270,7 +3334,7 @@ button.btn:disabled,
    WHAT THE ALTERNATIVES COST, all measured, none hypothetical:
 
    - A shared explicit column has to be at least the widest BIND_LABEL, so
-     Previews gets the void back: 104px on "Cycle forward", 130px on a
+     Previews gets the void back: 104px on "All forward", 130px on a
      short character name. It is also a derived figure retyped into CSS,
      which CLAUDE.md forbids and no test could assert without rendering.
    - Stretching the name (`minmax(0, 1fr)`) and right-aligning the controls

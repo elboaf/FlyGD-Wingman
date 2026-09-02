@@ -2886,3 +2886,462 @@ def test_the_volume_slider_commits_on_change_not_on_input():
         "the volume commits before `change`, which is a settings write per "
         "pixel dragged"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Group keybind rows, assignment placement, and management UI
+# ---------------------------------------------------------------------------
+
+
+def test_group_select_does_not_add_row_appendchild():
+    """makeGroupSelect must never call row.appendChild -- that would add a
+    sixth grid cell and break the five-track layout.  The cell-count guard
+    (test_the_previews_grid_has_one_track_per_cell_makeRow_appends) reads
+    makeRow's `row.appendChild(` calls, so a row.appendChild inside
+    makeGroupSelect that is called from makeRow would silently inflate the
+    count even though the selector body is in a different function."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeGroupSelect" in src, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "row.appendChild" not in body, (
+        "makeGroupSelect calls row.appendChild; that is a sixth grid cell "
+        "and breaks the five-track layout"
+    )
+
+
+def test_group_select_appended_to_lab_inside_makerow():
+    """The group select must be appended to `lab` inside makeRow, not to
+    `row` -- any new row.appendChild in makeRow beyond the five-track set
+    breaks the grid derivation guard."""
+    body = _makerow_body()
+    # lab.appendChild(makeGroupSelect is the allowed form.
+    assert "lab.appendChild(makeGroupSelect" in body or (
+        "makeGroupSelect" in body and "lab.appendChild" in body
+    ), (
+        "makeRow does not append the group select to lab; it either is not "
+        "present or it appends to row, which would break the grid"
+    )
+
+
+def test_group_select_has_css_for_lab_column_without_new_track():
+    """Scoped CSS for the group select must exist and must NOT add a new
+    grid track to #preview-binds (the template stays at five cell tracks)."""
+    assert "preview-group-select" in CSS, (
+        "no .preview-group-select rule found in style.css"
+    )
+    # The grid-template-columns must still declare exactly 5 cell-bearing
+    # tracks (name + 4 controls) -- the trailing minmax(0, 1fr) is the 6th
+    # token but holds no cell. _preview_binds_cell_tracks() returns the
+    # cell-bearing count: 1 (name) + repeat-count (4) = 5.
+    tracks = _preview_binds_cell_tracks()
+    assert tracks == 5, (
+        f"#preview-binds now has {tracks} cell tracks instead of 5 after "
+        f"adding group-select CSS; the track count must not change"
+    )
+
+
+def test_has_group_select_css_is_scoped_and_does_not_introduce_display():
+    """The .has-group-select CSS must only change flex layout of the lab
+    cell (flex-direction, align-items, gap) and must not introduce a new
+    display value that would need a [hidden] override."""
+    assert ".has-group-select" in CSS, (
+        "no .has-group-select rule found; makeRow adds the class but style.css "
+        "has no matching rule"
+    )
+    # Must be scoped under #preview-binds.
+    assert "#preview-binds" in CSS.split(".has-group-select")[0].rsplit("\n", 5)[
+        -1
+    ] or re.search(r"#preview-binds[^{]*\.has-group-select", CSS), (
+        ".has-group-select is not scoped under #preview-binds"
+    )
+
+
+# ---- Final-review fixes: disclosure, roster, busy guard, minor ----
+
+
+def test_makeGroupManager_is_a_details_element():
+    """Finding #2: makeGroupManager must build a <details>, not a plain
+    div.  A plain div is always expanded and inherits the sticky
+    bind-group heading CSS that can overlay rows."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert (
+        "document.createElement('details')" in block or "WM.make('details'" in block
+    ), (
+        "makeGroupManager does not create a <details> element; it must use a "
+        "real HTML disclosure so the panel can be collapsed"
+    )
+
+
+def test_makeGroupManager_has_summary_with_derived_count():
+    """Finding #2: the <summary> must show a derived group count, not a
+    static label.  Count derivation must read groups().length or an
+    equivalent expression."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert (
+        "document.createElement('summary')" in block or "WM.make('summary'" in block
+    ), "makeGroupManager does not create a <summary> element"
+    # The summary text must be derived from the group count, not static.
+    # Any of: groups().length, groups.length, state.hotkeys.groups.length
+    assert re.search(r"groups\(\)\.length|groups\.length|\.groups\.length", block), (
+        "makeGroupManager summary does not derive a count from the group list"
+    )
+
+
+def test_makeGroupManager_open_state_is_preserved_across_rerenders():
+    """Finding #2: the open state must be saved across rerenders so
+    Add/Rename/Delete focus restoration targets an attached visible
+    field.  A module-level flag (or equivalent) must track whether the
+    details is open."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # A variable holding the open state must exist at module scope (outside
+    # any function) and be read when building the manager.
+    # Common name patterns: _groupManagerOpen, groupManagerOpen, managerOpen
+    assert re.search(
+        r"^\s*var\s+(groupManagerOpen|_groupManagerOpen|managerOpen|groupsOpen)\b",
+        src,
+        re.MULTILINE,
+    ), (
+        "No module-level open-state variable found for the group manager "
+        "disclosure; open state cannot survive a rerender"
+    )
+    # The makeGroupManager block must reference that variable.
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(
+        r"groupManagerOpen|_groupManagerOpen|managerOpen|groupsOpen", block
+    ), (
+        "makeGroupManager does not read the open-state variable; the details "
+        "panel will collapse on every rerender"
+    )
+
+
+def test_makeGroupManager_does_not_use_bind_group_class():
+    """Finding #2: the manager must NOT use the bind-group class, which
+    carries sticky-positioning CSS that can overlay rows."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    # The top-level element must not be a 'bind-group', but child rows may
+    # still use whatever class they need.  We test only the creation call
+    # for the outermost element.
+    first_make = re.search(
+        r"(?:WM\.make|document\.createElement)\s*\(['\"](?:details|div)['\"]"
+        r"(?:,\s*['\"]([^'\"]*)['\"])?",
+        block,
+    )
+    assert first_make, "makeGroupManager creation call not found"
+    outer_class = first_make.group(1) or ""
+    assert "bind-group" not in outer_class.split(), (
+        "makeGroupManager outer element uses bind-group class, which inherits "
+        "sticky positioning and can overlay rows"
+    )
+
+
+def test_group_manager_css_does_not_apply_sticky_positioning():
+    """Finding #2: the dedicated manager class must not carry position:sticky,
+    since the manager is a full-grid-span disclosure, not a section header."""
+    assert "preview-group-manager" in CSS or "group-manager" in CSS, (
+        "no .preview-group-manager rule found in style.css"
+    )
+    # Find the preview-group-manager block.
+    m = re.search(r"\.preview-group-manager\s*\{([^}]*)\}", CSS)
+    if m:
+        assert "sticky" not in m.group(1), (
+            ".preview-group-manager has position:sticky which would overlay rows"
+        )
+
+
+def test_rows_includes_group_by_character_keys():
+    """Finding #3: rows() must include every key in
+    hotkeys.group_by_character so persisted offline assignments always
+    have a select that can clear them."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function rows()", 1)[1].split("function sharers", 1)[0]
+    assert "group_by_character" in block, (
+        "rows() does not consult hotkeys.group_by_character; a character with "
+        "a persisted assignment but no running/seen/bind entry has no row and "
+        "no way to clear the assignment"
+    )
+
+
+def test_every_group_mutation_handler_has_synchronous_busy_guard():
+    """Finding #4: setGroupBind, makeGroupSelect's change handler, doAdd,
+    renameGroup, and deleteGroup must all check `if (groupBusy) { return; }`
+    synchronously before sending anything, so a second click during capture
+    cannot submit twice."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    # setGroupBind
+    gb_block = src.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", gb_block), (
+        "setGroupBind lacks a synchronous groupBusy early-return guard"
+    )
+
+    # makeGroupSelect's change handler
+    sel_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", sel_block), (
+        "makeGroupSelect change handler lacks a synchronous groupBusy guard"
+    )
+
+    # doAdd inside makeGroupManager
+    mgr_block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", mgr_block), (
+        "makeGroupManager (doAdd) lacks a synchronous groupBusy guard"
+    )
+
+    # renameGroup
+    ren_block = src.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", ren_block), (
+        "renameGroup lacks a synchronous groupBusy early-return guard"
+    )
+
+    # deleteGroup
+    del_block = src.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", del_block), (
+        "deleteGroup lacks a synchronous groupBusy early-return guard"
+    )
+
+
+def test_focusGroupSelect_does_not_use_interpolated_css_selector():
+    """Minor finding: focusGroupSelect must not use a CSS attribute-selector
+    built by string interpolation (unsafe for names containing quotes or
+    backslashes).  It must iterate elements and compare aria-label directly."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function focusGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    # Must NOT contain the interpolated pattern
+    assert (
+        "querySelector" not in block
+        or "'select[aria-label=\"Cycle group for ' + characterName" not in block
+    ), (
+        "focusGroupSelect still uses an interpolated CSS attribute selector; "
+        "character names with quotes or backslashes will break it"
+    )
+    # Must contain an iteration-based lookup
+    assert (
+        "querySelectorAll" in block
+        or "getElementsByTagName" in block
+        or "Array.from" in block
+        or ".getAttribute" in block
+        or "forEach" in block
+    ), (
+        "focusGroupSelect does not appear to iterate and compare aria-label; "
+        "it must use a safe escaping-independent lookup"
+    )
+
+
+def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():
+    """Minor finding: on a refused group write where res.hotkeys exists and
+    no newer push won, the handler must apply res.hotkeys to state.hotkeys
+    directly rather than relying solely on a full refresh() round-trip.
+    A sole refresh() leaves a stale/deleted group visible for an extra
+    round-trip."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    gb_block = src.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+    # Isolate the refusal arm: after '!res.applied' up to the first 'return;'
+    if "!res.applied" in gb_block:
+        after_guard = gb_block.split("!res.applied", 1)[1]
+        refusal_arm = after_guard.split("return;", 1)[0]
+        only_refresh = (
+            "res.hotkeys" not in refusal_arm
+            and "state.hotkeys" not in refusal_arm
+            and "refresh()" in refusal_arm
+        )
+        assert not only_refresh, (
+            "setGroupBind refusal arm calls only refresh(); when res.hotkeys "
+            "exists and no newer push won, it must apply res.hotkeys directly "
+            "to avoid showing a stale group during the refresh round-trip"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Final-fix wave 2 tests
+# ---------------------------------------------------------------------------
+
+
+def test_closed_details_hides_group_manager_body():
+    """Fix wave 2 - closed-details display: the .group-manager-body rule sets
+    display:flex, but that overrides Chromium's UA rule that hides non-summary
+    children of a closed <details>.  A rule scoped to
+    .preview-group-manager:not([open]) must set display:none on the body so
+    the panel actually collapses.
+
+    The rule must exist because without it the body remains visible even when
+    the <details> element is closed, making the 'collapse' feature inoperable
+    in WebView2.
+    """
+    # Check that there is a rule that forces display:none on .group-manager-body
+    # (or a direct child) when the manager lacks [open].
+    not_open_body_hidden = bool(
+        re.search(
+            r"\.preview-group-manager:not\(\[open\]\)\s*[>~+\s]"
+            r"*[.#\w-]*group-manager-body[^}]*display\s*:\s*none",
+            CSS,
+            re.DOTALL,
+        )
+        or re.search(
+            r"\.preview-group-manager:not\(\[open\]\)\s*\{[^}]*display\s*:\s*none",
+            CSS,
+            re.DOTALL,
+        )
+    )
+    assert not_open_body_hidden, (
+        ".preview-group-manager:not([open]) does not set display:none on "
+        ".group-manager-body.  Without this rule, Chromium's UA stylesheet "
+        "cannot hide the body when the <details> is closed because the author "
+        "display:flex declaration on .group-manager-body wins."
+    )
+
+
+def _extract_refusal_arm(block):
+    """Return the text between '!res.applied' and the first 'return;' that
+    follows it -- the refusal arm of a then-callback."""
+    if "!res.applied" not in block:
+        return ""
+    after = block.split("!res.applied", 1)[1]
+    arm, _, _ = after.partition("return;")
+    return arm
+
+
+def test_assignment_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - makeGroupSelect's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (generation/before guard).  Without this, a refused assignment leaves the
+    page showing stale group membership until the next refresh() round-trip.
+
+    The branch must still clear groupBusy (unconditionally, before any return),
+    call requestRender(), and restore focus via focusGroupSelect().
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # Isolate makeGroupSelect's then-callback
+    ms_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(ms_block)
+
+    # Must apply res.hotkeys under a generation/before guard
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "makeGroupSelect refusal arm does not assign res.hotkeys to state.hotkeys; "
+        "the authoritative table must be applied on generation match to avoid a "
+        "stale-group round-trip"
+    )
+    assert has_generation_guard, (
+        "makeGroupSelect refusal arm applies res.hotkeys without a generation "
+        "guard (pushes !== before check); a newer push's table would be "
+        "overwritten by the stale response"
+    )
+
+    # Cleanup must be unconditional: groupBusy=false, requestRender, focus
+    assert "groupBusy = false" in ms_block, (
+        "makeGroupSelect callback does not reset groupBusy; busy lock leaks"
+    )
+    assert "requestRender()" in ms_block, (
+        "makeGroupSelect refusal arm does not call requestRender()"
+    )
+    assert "focusGroupSelect" in ms_block, (
+        "makeGroupSelect refusal arm does not restore focus via focusGroupSelect"
+    )
+
+
+def test_add_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - doAdd's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused add leaves the page showing a
+    potentially stale groups list until the next refresh().
+
+    groupBusy=false and requestRender() must remain unconditional.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # doAdd is a closure inside makeGroupManager; isolate from doAdd to the
+    # next closure-level function definition.
+    da_block = src.split("function doAdd()", 1)[1].split("\n    function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(da_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "doAdd refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "refused add should still show the authoritative groups list"
+    )
+    assert has_generation_guard, (
+        "doAdd refusal arm applies res.hotkeys without checking pushes !== before; "
+        "a newer push's authoritative table would be overwritten"
+    )
+
+    assert "groupBusy = false" in da_block, "doAdd callback does not reset groupBusy"
+    assert "requestRender()" in da_block, (
+        "doAdd refusal arm does not call requestRender()"
+    )
+
+
+def test_rename_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - renameGroup's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused rename leaves the stale name
+    visible until the next refresh().
+
+    groupBusy=false, requestRender(), and focusGroupManager() must be
+    unconditional (fire on every refusal, not only when hotkeys is absent).
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    rg_block = src.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(rg_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "renameGroup refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "a refused rename should show the authoritative (unchanged) name"
+    )
+    assert has_generation_guard, (
+        "renameGroup refusal arm applies res.hotkeys without a generation guard; "
+        "a newer push's table would be overwritten"
+    )
+
+    assert "groupBusy = false" in rg_block, (
+        "renameGroup callback does not reset groupBusy"
+    )
+    assert "requestRender()" in rg_block, (
+        "renameGroup refusal arm does not call requestRender()"
+    )
+    assert "focusGroupManager" in rg_block, (
+        "renameGroup refusal arm does not restore focus via focusGroupManager"
+    )
+
+
+def test_delete_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - deleteGroup's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused delete shows a stale groups list
+    until the next refresh().
+
+    groupBusy=false, requestRender(), and focusGroupManager() must be
+    unconditional.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    dg_block = src.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(dg_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "deleteGroup refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "a refused delete should show the authoritative groups list"
+    )
+    assert has_generation_guard, (
+        "deleteGroup refusal arm applies res.hotkeys without a generation guard; "
+        "a newer push's table would be overwritten"
+    )
+
+    assert "groupBusy = false" in dg_block, (
+        "deleteGroup callback does not reset groupBusy"
+    )
+    assert "requestRender()" in dg_block, (
+        "deleteGroup refusal arm does not call requestRender()"
+    )
+    assert "focusGroupManager" in dg_block, (
+        "deleteGroup refusal arm does not restore focus via focusGroupManager"
+    )

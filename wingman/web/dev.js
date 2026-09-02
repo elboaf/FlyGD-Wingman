@@ -748,144 +748,249 @@
     return Promise.resolve(false);
   };
 
+  // DEV_PREVIEW_HOTKEYS_FIXTURE is the single authoritative source for the
+  // preview hotkey state in ?dev=1 mode.  Strict JSON-compatible text: all keys
+  // and strings double-quoted, no functions or comments inside the literal body,
+  // so shoot_screens.py can parse it directly with json.loads.
+  //
+  // Both get_preview_hotkey_state and _devPreviewHotkeys derive deep copies
+  // from this one declaration -- the fixture data can never drift between the
+  // initial page load and subsequent mutation pushes.
+  //
+  // Character assignments:
+  //   Aiga Otsolen      -- online, assigned to DPS, opted-in.
+  //   Zuelo Parvi       -- online, NOT excluded, NOT assigned (All-only for
+  //                        opted-in character -- distinct from excluded path).
+  //   Tanuki Solette    -- offline, assigned to Logistics.
+  //   Aleksandrina ...  -- offline, assigned to DPS, excluded (opted-out AND
+  //                        assigned -- the combination the page must handle).
+  //
+  // Groups:
+  //   DPS      (g-dps)    -- members Aiga + Aleksandrina, cycle Ctrl+Shift+1.
+  //   Logistics (g-logi)  -- member Tanuki, cycle Ctrl+Shift+1 (deliberate
+  //                          collision with DPS so the collision branch renders).
+  //   Empty group (g-empty) -- zero members, no bind (zero-member UI path).
+  //
+  // excluded[]: Aleksandrina only.  Zuelo is All-only (non-excluded, unassigned),
+  // which is a different and independently-exercised state from opted-out.
+  //
+  // Gesture strings use preview/gestures.py display() canonical form
+  // ("Ctrl+Alt+Right"), NOT AHK ("^!Right"). Verified by from_capture().
+  //
+  // lock_default: false -- must match the settings fixture checkbox; the bool is
+  // always sent by Api.get_preview_hotkey_state, so omitting and relying on
+  // JS coercion would let the table disagree with the control that governs it.
+  //
+  // bookmark_chords.active: ["Ctrl+Alt+1"] -- matches the get_bookmarks fixture
+  // (enabled: true, 'EVE - Aiga Otsolen' ticked), which makes that chord
+  // registered.  Must stay in step with the bookmarks fixture.
+  //
+  // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) is load-bearing: the
+  // only row that exercises the ellipsis in the 150px name track, the title
+  // attribute fallback, and the offline tag width at the 840px viewport floor.
+  var DEV_PREVIEW_HOTKEYS_FIXTURE = {
+    "enabled": true,
+    "hotkeys": {
+      "characters": {
+        "Aiga Otsolen": "Ctrl+Alt+1",
+        "Zuelo Parvi": "Ctrl+Alt+2"
+      },
+      "cycle_next": "Ctrl+Alt+Right",
+      "cycle_prev": "",
+      "groups": [
+        {"id": "g-dps",   "name": "DPS",         "cycle": "Ctrl+Shift+1"},
+        {"id": "g-logi",  "name": "Logistics",    "cycle": "Ctrl+Shift+1"},
+        {"id": "g-empty", "name": "Empty group",  "cycle": ""}
+      ],
+      "group_by_character": {
+        "Aiga Otsolen": "g-dps",
+        "Tanuki Solette": "g-logi",
+        "Aleksandrina Shadowbanes Voidstriders": "g-dps"
+      }
+    },
+    "characters": ["Aiga Otsolen", "Zuelo Parvi"],
+    "roster": [
+      "Aiga Otsolen", "Zuelo Parvi", "Tanuki Solette",
+      "Aleksandrina Shadowbanes Voidstriders"
+    ],
+    "registration": {
+      "Ctrl+Alt+1": true,
+      "Ctrl+Alt+2": true,
+      "Ctrl+Alt+Right": true
+    },
+    "locked": ["Aiga Otsolen"],
+    "lock_default": false,
+    "never_minimize": ["Tanuki Solette"],
+    "excluded": ["Aleksandrina Shadowbanes Voidstriders"],
+    "sizes": {"Aiga Otsolen": [1280, 720]},
+    "client_sizes": {"Aiga Otsolen": [1920, 1080], "Zuelo Parvi": [1600, 900]},
+    "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Tanuki Solette"],
+    "layout_sources": [
+      {"name": "Aiga Otsolen", "online": true},
+      {"name": "Tanuki Solette", "online": false}
+    ],
+    "bookmark_chords": {"active": ["Ctrl+Alt+1"], "latent": []}
+  };
+
   api.get_preview_hotkey_state = function () {
     console.log('DEV api.get_preview_hotkey_state()');
-    // Shapes taken from Api.get_preview_hotkey_state and the settings
-    // schema, not guessed: `hotkeys` is
-    // {characters: {name: chord}, cycle_next, cycle_prev} -- NOT
-    // cycle_forward/cycle_back -- `registration` is keyed by CHORD with a
-    // boolean value, and `bookmark_chords` is {active: [], latent: []}.
-    // The first draft of this fixture invented three of those and rendered
-    // every row as "Not set" while looking plausible, which is the exact
-    // failure this file's own comment warns about: a double that models a
-    // shape the bridge does not produce.
+    return Promise.resolve(JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE)));
+  };
+
+  // ---- Stateful dev stubs for the five preview cycle-group methods.
+  //
+  // _devPreviewHotkeys is a deep copy of DEV_PREVIEW_HOTKEYS_FIXTURE.hotkeys.
+  // Mutations update it in place; _devPushHotkeys rebuilds the full state from
+  // DEV_PREVIEW_HOTKEYS_FIXTURE (providing enabled, characters, roster, excluded,
+  // etc.) with the current _devPreviewHotkeys substituted as the hotkeys field,
+  // so onPreviewHotkeys always receives the correct full-state shape.
+  //
+  // All five stubs return the production result shape {applied, persisted,
+  // error, hotkeys} where hotkeys is the current _devPreviewHotkeys copy.
+  var _devPreviewHotkeys = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE.hotkeys));
+
+  function _devHotkeysCopy() {
+    return JSON.parse(JSON.stringify(_devPreviewHotkeys));
+  }
+
+  function _devGroupResult(applied, error) {
+    return {
+      applied: applied,
+      persisted: applied,
+      error: error || null,
+      hotkeys: _devHotkeysCopy()
+    };
+  }
+
+  function _devPushHotkeys() {
+    // Deferred via setTimeout to match production's async push behaviour:
+    // Api._push is fired from a worker thread so it never runs inline within
+    // a promise resolution.  A synchronous push here causes re-entrant renders
+    // and makes the timing non-deterministic relative to the caller.
     //
-    // `enabled: true`, not false. This fixture originally shipped with
-    // previews OFF -- deliberately, to exercise the under-looked-at
-    // offline-binding path -- but that meant every row went through
-    // `makeRow`'s `online === null` branch (previews.js: `state.enabled ?
-    // entry.online : null`), and `.dim` never got added to a single row.
-    // Previews being ON is the normal state for anyone using this
-    // feature, so an always-off fixture left the branch users actually
-    // see unrendered and unverified. `characters` (below) now lists who
-    // is running -- Windows genuinely cannot hold chords with the host
-    // stopped, so `enabled: true` requires this to be non-empty, unlike
-    // the old `enabled: false` + `characters: []` pair.
-    return Promise.resolve({
-      enabled: true,
-      // Preview gestures are stored as preview/gestures.py display()
-      // strings -- "Ctrl+Alt+Right" -- and NOT as AHK. Bookmarks use AHK
-      // and send a separate `displays` table; previews render the stored
-      // value directly, so the two subsystems genuinely differ here. The
-      // first draft of this fixture wrote AHK and rendered "^!Right" in
-      // the button, which looks like a formatting bug in the page rather
-      // than a wrong fixture. Verified by running from_capture() rather
-      // than typed.
-      hotkeys: {
-        characters: {
-          'Aiga Otsolen': 'Ctrl+Alt+1',
-          'Zuelo Parvi': 'Ctrl+Alt+2'
-        },
-        cycle_next: 'Ctrl+Alt+Right',
-        cycle_prev: ''
-      },
-      // Running (online) characters. Both are also owed a row by
-      // `hotkeys.characters` above, so this is what flips them from the
-      // offline/dim branch to the online one now that `enabled: true`.
-      characters: ['Aiga Otsolen', 'Zuelo Parvi'],
-      // `roster` is every character previews knows about, running or
-      // not -- `rows()` (previews.js) already de-dupes against
-      // `characters`, so listing the same two names again here is
-      // harmless and matches what the real bridge sends. Four distinct
-      // rows total, not three: a three-row fixture never has to prove
-      // `.settings-pane`'s vertical scroller (overflow-y: auto, style.css)
-      // actually does anything at the 625px floor, and never puts an
-      // offline (dim) row next to an online one so both render at once.
-      //
-      // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) stays, and is
-      // load-bearing again. It was added when the name was
-      // #preview-binds's own first column and the only track that could
-      // shrink; B1 then gave the name a full-width line of its own, where
-      // nothing could squeeze it; the name is back in a column now, a
-      // FIXED 150px one. At 291px of text against that track it is the
-      // only fixture row that exercises the ellipsis, the `title` that
-      // carries the untruncated name, and -- with this row also being
-      // offline -- the proof that the `offline` tag keeps its full width
-      // while the name yields, which is what the flex split of `.lab`
-      // exists to do. It also still proves the older half: a name wider
-      // than the control line neither wraps badly nor pushes the card into
-      // horizontal overflow at the 840px floor.
-      roster: [
-        'Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette',
-        'Aleksandrina Shadowbanes Voidstriders'
-      ],
-      // Windows holding all three configured chords -- the normal case
-      // once the host is actually running, unlike the old `{}` that
-      // matched `enabled: false`'s "nothing can be registered" state.
-      registration: {
-        'Ctrl+Alt+1': true,
-        'Ctrl+Alt+2': true,
-        'Ctrl+Alt+Right': true
-      },
-      // One lock and one never-minimize, on different characters on
-      // purpose: 'Aiga Otsolen' is running and 'Tanuki Solette' is not.
-      // Neither checkbox sits on a row any more -- both moved into the
-      // disclosures under their global toggles, where every character is
-      // listed the same way regardless of whether their client is up. The
-      // split is kept because the two rosters are built from the same
-      // `rows()` the table is, so a fixture whose ticks all landed on
-      // running characters would not show that an offline character
-      // reaches the blocks at all.
-      locked: ['Aiga Otsolen'],
-      // Rides THIS payload, not the settings one -- previews.js resolves
-      // isLocked from `state`, which is the hotkey payload wholesale. The
-      // settings fixture carries a copy for settings.js's own checkbox;
-      // both are false and must stay in step, or the harness shows the
-      // table disagreeing with the control that governs it.
-      //
-      // Present rather than omitted even though `!!undefined` is already
-      // false: Api.get_preview_hotkey_state always sends the bool, and a
-      // fixture that leans on a JS coercion the real payload never
-      // exercises is a fixture that agrees by luck.
-      lock_default: false,
-      never_minimize: ['Tanuki Solette'],
-      // One opted-out character, and deliberately one that is ONLINE and
-      // holds a keybind ('Zuelo Parvi'): that is the row where the state
-      // is visible -- a live client whose controls are all grey and whose
-      // saved chord is still showing on an inert button. An offline
-      // opted-out row would look almost the same as an ordinary offline
-      // one and would prove nothing.
-      excluded: ['Zuelo Parvi'],
-      // Task 8: one character with both a saved size and a live client
-      // size ('Aiga Otsolen' -- exercises sizeHint's computed-height
-      // branch), one with a client size but no saved one yet (defaults to
-      // 640 wide), and one offline with neither ('Tanuki Solette' --
-      // exercises the "not running" branch). Without both branches present
-      // the Size… control cannot be exercised at all under ?dev=1.
-      sizes: { 'Aiga Otsolen': [1280, 720] },
-      client_sizes: { 'Aiga Otsolen': [1920, 1080], 'Zuelo Parvi': [1600, 900] },
-      // Which characters set_preview_size can succeed for -- Api computes
-      // it as (running | in layouts), and the page renders Size... only
-      // for these. Deliberately NOT every name above: the two online
-      // characters plus 'Tanuki Solette', who is offline but has been
-      // dragged once, so the harness shows both states of the column. If
-      // this listed everyone the fixture would hide the whole point of the
-      // gate, which is that most of a real roster cannot be sized.
-      sizable: ['Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette'],
-      // Sources deliberately cross the online boundary: the picker groups
-      // both in words, and offline geometry is the feature's primary value.
-      layout_sources: [
-        {name: 'Aiga Otsolen', online: true},
-        {name: 'Tanuki Solette', online: false}
-      ],
-      // ACTIVE, matching what Api._bookmark_chords would return for the
-      // get_bookmarks fixture above: it ships `enabled: true` with
-      // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a
-      // bookmark chord registered. This said `latent` under a comment
-      // reasoning that "bookmarks register nothing" -- true of no fixture
-      // in this file. Caught by review while C6 was adding the other half.
-      bookmark_chords: { active: ['Ctrl+Alt+1'], latent: [] }
+    // Rebuilds the full state from DEV_PREVIEW_HOTKEYS_FIXTURE (provides
+    // enabled, characters, roster, excluded, etc.) with the mutated
+    // _devPreviewHotkeys substituted as the hotkeys field, so
+    // onPreviewHotkeys replaces state with the correct full-state shape
+    // instead of a partial hotkeys-only object.
+    setTimeout(function () {
+      if (window.onPreviewHotkeys) {
+        var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+        full.hotkeys = _devHotkeysCopy();
+        window.onPreviewHotkeys(full);
+      }
+    }, 0);
+  }
+
+  api.create_preview_cycle_group = function (name) {
+    console.log('DEV api.create_preview_cycle_group(', name, ')');
+    if (!name || !name.trim()) {
+      return Promise.resolve(_devGroupResult(false, 'Group name must be a non-empty string'));
+    }
+    var clean = name.trim();
+    var folded = clean.toLowerCase();
+    var groups = _devPreviewHotkeys.groups;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].name.toLowerCase() === folded) {
+        return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
+      }
+    }
+    var id = 'g-dev-' + Date.now();
+    groups.push({id: id, name: clean, cycle: ''});
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.rename_preview_cycle_group = function (groupId, name) {
+    console.log('DEV api.rename_preview_cycle_group(', groupId, name, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    if (!name || !name.trim()) {
+      return Promise.resolve(_devGroupResult(false, 'Group name must be a non-empty string'));
+    }
+    var clean = name.trim();
+    var folded = clean.toLowerCase();
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    for (var j = 0; j < groups.length; j++) {
+      if (groups[j] !== target && groups[j].name.toLowerCase() === folded) {
+        return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
+      }
+    }
+    target.name = clean;
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.delete_preview_cycle_group = function (groupId) {
+    console.log('DEV api.delete_preview_cycle_group(', groupId, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var idx = -1;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { idx = i; break; }
+    }
+    if (idx === -1) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    groups.splice(idx, 1);
+    var gbc = _devPreviewHotkeys.group_by_character;
+    Object.keys(gbc).forEach(function (charName) {
+      if (gbc[charName] === groupId) { delete gbc[charName]; }
     });
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_cycle_group_bind = function (groupId, gesture) {
+    console.log('DEV api.set_preview_cycle_group_bind(', groupId, gesture, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    target.cycle = gesture || '';
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_character_group = function (name, groupId) {
+    console.log('DEV api.set_preview_character_group(', name, groupId, ')');
+    if (!name) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid character name'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var gbc = _devPreviewHotkeys.group_by_character;
+    if (!groupId) {
+      // Empty string removes assignment (All-only).
+      delete gbc[name];
+    } else {
+      var valid = false;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].id === groupId) { valid = true; break; }
+      }
+      if (!valid) {
+        return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+      }
+      gbc[name] = groupId;
+    }
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
   };
 
   api.list_rows = function () {
