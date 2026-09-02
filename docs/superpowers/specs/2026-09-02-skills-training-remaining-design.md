@@ -115,10 +115,17 @@ threshold is already met. Requirement readiness and duration remain separate
 concepts.
 
 An estimate is all-or-nothing. A missing character-attributes snapshot, a
-missing skills/SP snapshot, or missing training multiplier, primary attribute,
-or secondary attribute yields an unavailable estimate. A skill absent from an
-otherwise valid skills snapshot is the expected representation of zero SP, not
-missing data. The system must not sum known requirements and present an
+missing or incomplete skills/SP snapshot, or missing training multiplier,
+primary attribute, or secondary attribute yields an unavailable estimate. The
+persisted skills snapshot carries an explicit `skill_points_complete` marker.
+Only a successful skills response in which every row has valid
+`skillpoints_in_skill` data sets that marker. Any malformed SP row leaves the
+core level parser's existing tolerant behavior intact but invalidates the whole
+supplemental SP map for estimation.
+
+A required skill absent from a snapshot marked complete is the expected
+representation of zero SP. Absence from an incomplete or legacy snapshot is not
+interpreted as zero. The system must not sum known requirements and present an
 understated partial total.
 
 ## ESI and metadata acquisition
@@ -156,16 +163,28 @@ payload construction must not observe a partially enriched cache.
 ## Snapshot and failure behavior
 
 Skills and queue remain the coherent core snapshot and keep their existing
-all-or-nothing commit. Attribute estimation data is supplemental:
+all-or-nothing commit. SP completeness and attribute estimation data are
+supplemental:
 
 - an attribute request failure does not discard successfully refreshed skills
   and queue data;
 - a failed attribute refresh makes the estimate unavailable for that refresh;
-- persisted attributes carry their own confirmed timestamp and error/freshness
-  state rather than borrowing the core snapshot's `fetched_utc`;
+- persisted attributes carry their own confirmed timestamp, ETag, and
+  error/freshness state rather than borrowing the core snapshot's `fetched_utc`;
 - an old attribute snapshot is not silently combined with newly refreshed SP;
 - existing state documents without SP or attributes continue to load and show
-  `training time unavailable` until one successful refresh.
+  `training time unavailable` until one successful refresh;
+- loading a legacy snapshot without `skill_points_complete` clears or bypasses
+  its persisted skills ETag, forcing the next refresh to download a full skills
+  response instead of accepting a 304 that can never populate SP;
+- a newly downloaded skills response with incomplete SP data likewise does not
+  retain an ETag for later conditional requests, so a subsequent refresh gets
+  another opportunity to obtain a complete body.
+
+When reauthorization detects a changed `owner_hash`, the same locked transaction
+that clears the existing character snapshot also clears the SP map and
+completeness marker, attributes, attribute timestamp/error state, and attribute
+ETag. Public skill metadata is not character-owned and remains cached.
 
 Network work remains outside `SkillsController`'s mutation lock. The controller
 continues to be the only state-document writer, with each state mutation and
@@ -242,10 +261,19 @@ Tests cover:
 Tests cover:
 
 - parsing and retaining `skillpoints_in_skill`;
+- marking the SP snapshot incomplete when any response row has malformed or
+  missing SP while preserving existing tolerant level parsing;
+- treating a skill absent from a complete snapshot as zero SP, but never doing
+  so for an incomplete snapshot;
 - parsing character attributes under the existing authorization grant;
 - core snapshot success when attribute acquisition fails;
 - supplemental freshness/error behavior;
 - backward-compatible loading of old character documents;
+- bypassing a legacy skills ETag until a full response populates SP, including
+  the old-document-plus-conditional-refresh regression case;
+- withholding the skills ETag after an SP-incomplete body;
+- clearing every new character-derived field and attribute ETag when
+  `owner_hash` changes;
 - metadata dogma parsing, named IDs, migration/backfill, expiry, malformed data,
   and atomic publication;
 - controller lock and save invariants.
