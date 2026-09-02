@@ -502,6 +502,50 @@ def test_select_canonicalizes_a_legacy_deep_root(tmp_path, monkeypatch):
     assert section["profile"] == str(profile)
 
 
+def test_select_switches_to_a_sibling_profile_from_a_legacy_profile_root(
+    tmp_path, monkeypatch
+):
+    """normalize_selection's profile-dir branch discards the CALLER'S
+    requested profile in favor of the one implied by a legacy deep root
+    (tree.py's `return root.parent.parent, root.parent, root`). Selection
+    must discover from the EFFECTIVE canonical root first, so a genuine
+    request to switch to a sibling profile is not overruled by the very
+    legacy value it is trying to move away from."""
+    profile = eve_tree(tmp_path)
+    sibling = profile.parent / "settings_Alt"
+    sibling.mkdir()
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(profile)
+    assert api.eve_settings_select(str(profile.parent), str(sibling)) is True
+    section = api._eve_section()
+    assert section["root"] == str(profile.parent.parent)
+    assert section["server"] == str(profile.parent)
+    assert section["profile"] == str(sibling)
+
+
+def test_select_switches_to_a_sibling_server_from_a_legacy_server_root(
+    tmp_path, monkeypatch
+):
+    """Same fix, the server-directory branch: normalize_selection discards
+    the caller's requested SERVER when the stored root is itself a server
+    directory (`return root.parent, root, ...`). A legacy install whose
+    root points at one server must still be able to select a different,
+    sibling server."""
+    profile = eve_tree(tmp_path)
+    server = profile.parent
+    root = server.parent
+    other_server = root / "server_singularity"
+    other_profile = other_server / "settings_Default"
+    other_profile.mkdir(parents=True)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(server)
+    assert api.eve_settings_select(str(other_server), str(other_profile)) is True
+    section = api._eve_section()
+    assert section["root"] == str(root)
+    assert section["server"] == str(other_server)
+    assert section["profile"] == str(other_profile)
+
+
 def test_select_with_an_empty_profile_chooses_the_servers_first_profile(
     tmp_path, monkeypatch
 ):

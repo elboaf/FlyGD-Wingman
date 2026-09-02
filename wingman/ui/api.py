@@ -5063,9 +5063,21 @@ class Api:
         with self._eve_hold() as held:
             if not held:
                 return False
-            section = self._eve_section()
+            # The EFFECTIVE root, not the raw stored value: normalize_selection
+            # rewrites a root pointed at a profile or server directory, and
+            # in doing so it also discards whatever server/profile the
+            # caller asked for in favor of the ones implied by that deep
+            # root (see tree.py's normalize_selection). Discovering directly
+            # from a legacy deep `root` would therefore silently overrule a
+            # real selection change -- e.g. picking a sibling profile from a
+            # pre-canonicalization install that stored `root` as the
+            # original profile itself. Resolving the canonical root FIRST,
+            # then discovering from IT with the requested tokens, is what
+            # lets normalize_selection's third branch (which passes both
+            # tokens through untouched) actually see them.
+            effective_root = self._eve_discover().root
             found = evesettings_tree.discover(
-                section.get("root"), server or None, profile or None
+                effective_root, server or None, profile or None
             )
             if found.root is None:
                 return False
