@@ -124,6 +124,26 @@ def _folder_dialog_kind():
     return webview.FileDialog.FOLDER
 
 
+def _eve_same_path(candidate: Path | None, requested) -> bool:
+    """Whether *candidate* IS the path the caller named, not a fallback
+    discover() supplied for it.
+
+    discover() falls back to the first server/profile it finds when a
+    requested token matches nothing on disk, so comparing the requested
+    token against the RESULT can't tell a genuine selection from a
+    fabricated one that happened to land on the default. Two-way
+    containment (rather than a lexical `==`) is what tree.py's own
+    equality-through-is_under idiom uses, and it is what makes this call
+    resilient to a trailing separator or an unresolved symlink either
+    side names the same directory with.
+    """
+    if candidate is None:
+        return False
+    return evesettings_tree.is_under(
+        candidate, requested
+    ) and evesettings_tree.is_under(requested, candidate)
+
+
 def _open_file_dialog_kind():
     """pywebview's open-file-dialog constant, imported at call time.
 
@@ -4966,15 +4986,19 @@ class Api:
             if not chosen:
                 return ""
             picked = str(chosen[0])
-            # Selection is cleared, not carried: the old server and profile
-            # belong to a tree that is no longer the one on screen.
+            # The old server and profile belong to a tree that is no
+            # longer the one on screen -- but rather than merely clearing
+            # them, discover the tree the picked folder actually names
+            # and persist ITS complete triple. normalize_selection lifts a
+            # folder pointed at a server or a profile back up to the real
+            # root, and the freshly discovered server/profile are what the
+            # page renders as selected on the very next state() call,
+            # instead of showing "none chosen" for a folder that plainly
+            # has one.
             self._eve_clear_identification()
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"root": picked, "server": None, "profile": None},
-            )
-            return picked
+            found = evesettings_tree.discover(picked)
+            self._eve_persist_selection(found)
+            return str(found.root) if found.root else ""
 
     def eve_settings_detect_root(self) -> str:
         """Detect the EVE settings root, the way Folders detects OBS's.
@@ -5003,8 +5027,8 @@ class Api:
         with self._eve_hold() as held:
             if not held:
                 return ""
-            found = evesettings_tree.default_root()
-            if not found.is_dir():
+            default = evesettings_tree.default_root()
+            if not default.is_dir():
                 # Named, not just refused. The path is the useful half of
                 # the answer: a user whose EVE lives somewhere else learns
                 # where we looked, which is what tells them Choose folder...
@@ -5013,42 +5037,75 @@ class Api:
                     "info",
                     "EVE settings folder not found",
                     "Could not find an EVE settings folder at:\n"
-                    f"{found}\n\n"
+                    f"{default}\n\n"
                     "Use Choose folder... to point at it.",
                 )
                 return ""
+            found = evesettings_tree.discover(default)
             section = self._eve_section()
-            if str(found) == str(section.get("root") or ""):
+            if str(found.root) == str(section.get("root") or ""):
                 # Agreement reported as agreement, not as a silent rewrite
-                # -- detect_folder's rule, and the reason it takes the live
-                # value rather than the stored one. Returning "" here also
-                # keeps the selection intact, which the write path below
-                # would otherwise clear for no reason.
+                # -- detect_folder's rule, and the reason it compares the
+                # live value rather than blindly rewriting. Returning ""
+                # here also keeps the selection intact, which the write
+                # path below would otherwise clear for no reason.
                 self._alert(
                     "info",
                     "EVE settings folder",
-                    f"Already set to the detected folder:\n{found}",
+                    f"Already set to the detected folder:\n{found.root}",
                 )
                 return ""
             self._eve_clear_identification()
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"root": str(found), "server": None, "profile": None},
-            )
-            return str(found)
+            self._eve_persist_selection(found)
+            return str(found.root)
 
     def eve_settings_select(self, server: str, profile: str) -> bool:
         with self._eve_hold() as held:
             if not held:
                 return False
-            self._eve_clear_identification()
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"server": server or None, "profile": profile or None},
+            section = self._eve_section()
+            found = evesettings_tree.discover(
+                section.get("root"), server or None, profile or None
             )
+            if found.root is None:
+                return False
+            # discover() falls back to the first server/profile it finds
+            # when the requested token matches nothing on disk -- a
+            # fabricated server or profile must not silently persist as
+            # "whatever discover() picked instead". An empty profile is
+            # the one deliberate case that IS a fallback: it asks for the
+            # requested server's first profile, which is exactly what
+            # discover() returns for a None profile.
+            if server and not _eve_same_path(found.server, server):
+                return False
+            if profile and not _eve_same_path(found.profile, profile):
+                return False
+            self._eve_clear_identification()
+            self._eve_persist_selection(found)
             return True
+
+    def _eve_persist_selection(self, found, *, profile=None) -> None:
+        """The one place that writes root/server/profile to settings.
+
+        Every explicit selection -- picker, Detect, and eve_settings_select
+        -- discovers a Tree first and persists ITS complete triple here,
+        rather than writing back whatever the caller was originally given.
+        A picked or typed value can be a server or a profile directory, or
+        a legacy root that pointed one or two levels too deep; discover()
+        already normalizes all of those, and persisting anything other
+        than its answer would let the stored root drift out of step with
+        the server/profile that were actually chosen alongside it.
+        """
+        selected = profile if profile is not None else found.profile
+        settings_mod.update_section(
+            self._state.settings,
+            "eve_settings",
+            {
+                "root": str(found.root) if found.root else None,
+                "server": str(found.server) if found.server else None,
+                "profile": str(selected) if selected else None,
+            },
+        )
 
     def _eve_discover(self):
         section = self._eve_section()
@@ -5693,8 +5750,10 @@ class Api:
             ):
                 return
             store = paths.eve_settings_backup_dir()
-            root = self._eve_section().get("root")
-            written = evesettings_backup.restore(store, archive, root)
+            found = self._eve_discover()
+            if found.root is None:
+                raise ValueError("Choose the EVE settings folder first.")
+            written = evesettings_backup.restore(store, archive, found.root)
             keep = int(self._eve_section().get("auto_keep", 10))
             self._eve_prune(keep)
             self._status(f"Restored into {written.name}.")

@@ -76,6 +76,25 @@ def test_default_profile_sorts_first(tmp_path):
     assert found.profiles[0].name == "Default"
 
 
+def test_profile_root_normalizes_to_canonical_triple(tmp_path):
+    profile = tmp_path / "EVE" / "server_tranquility" / "settings_Default"
+    profile.mkdir(parents=True)
+    found = tree.discover(profile)
+    assert (found.root, found.server, found.profile) == (
+        profile.parent.parent,
+        profile.parent,
+        profile,
+    )
+
+
+def test_profiles_have_a_stable_path_tiebreaker(tmp_path):
+    server = tmp_path / "server_tranquility"
+    (server / "settings_alt").mkdir(parents=True)
+    (server / "settings_Alt").mkdir()
+    found = tree.discover(tmp_path, server)
+    assert [p.path.name for p in found.profiles] == ["settings_Alt", "settings_alt"]
+
+
 def test_normalize_selection_heals_a_root_pointed_at_a_profile(tmp_path):
     profile = build(tmp_path)
     root, server, selected = tree.normalize_selection(profile, None, None)

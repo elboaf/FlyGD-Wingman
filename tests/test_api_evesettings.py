@@ -80,6 +80,24 @@ def test_state_labels_unresolved_characters_with_their_id(tmp_path, monkeypatch)
     assert state["characters"][0]["name"] == "Character 1"
 
 
+def test_state_normalizes_a_legacy_profile_root_without_saving(tmp_path, monkeypatch):
+    """An install from before canonical persistence could have `root` set
+    to a profile directory. Reading state must show the canonical triple
+    without writing anything back -- no-write-on-read holds for a legacy
+    value exactly as it does for a fresh one."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._eve_section().update({"root": str(profile), "server": None, "profile": None})
+    monkeypatch.setattr(
+        api_mod.settings_mod,
+        "update_section",
+        lambda *a, **k: pytest.fail("state must not save"),
+    )
+    state = api.eve_settings_state()
+    assert state["root"] == str(profile.parent.parent)
+    assert state["profile"] == str(profile)
+
+
 def test_state_exposes_the_canonical_selective_copy_groups_and_availability(
     tmp_path, monkeypatch
 ):
@@ -438,6 +456,63 @@ def test_select_persists_through_the_merging_writer(tmp_path, monkeypatch):
     assert stored["eve_settings"]["profile"] == str(profile)
 
 
+@pytest.mark.parametrize("picked_level", ["root", "server", "profile"])
+def test_pick_root_persists_the_canonical_selection(
+    tmp_path, monkeypatch, picked_level
+):
+    """Whichever level of the tree the OS dialog hands back, the picker
+    discovers the whole tree from it and persists the canonical triple --
+    not just the raw picked path with server/profile cleared."""
+    profile = eve_tree(tmp_path)
+    root, server = profile.parent.parent, profile.parent
+    api = build(tmp_path, monkeypatch)
+    picked = {"root": root, "server": server, "profile": profile}[picked_level]
+    api._window.create_file_dialog = lambda *a, **k: (str(picked),)
+    assert api.eve_settings_pick_root() == str(root)
+    assert api._eve_section()["root"] == str(root)
+    assert api._eve_section()["server"] == str(server)
+    assert api._eve_section()["profile"] == str(profile)
+
+
+def test_select_rejects_a_fabricated_selection(tmp_path, monkeypatch):
+    """discover() falls back to the first server/profile it finds when a
+    requested token matches nothing on disk. Persisting that fallback under
+    a fabricated request's name would silently swap the user's selection
+    for one they never asked for."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    assert api.eve_settings_select(str(profile.parent), "nonexistent-profile") is False
+    assert api._eve_section()["profile"] is None
+    assert api.eve_settings_select("nonexistent-server", str(profile)) is False
+    assert api._eve_section()["server"] is None
+
+
+def test_select_canonicalizes_a_legacy_deep_root(tmp_path, monkeypatch):
+    """A stored root that is itself a profile directory -- from before
+    canonical persistence -- must be healed by the next selection, not
+    merely tolerated in place."""
+    profile = eve_tree(tmp_path)
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(profile)
+    assert api.eve_settings_select(str(profile.parent), str(profile)) is True
+    section = api._eve_section()
+    assert section["root"] == str(profile.parent.parent)
+    assert section["server"] == str(profile.parent)
+    assert section["profile"] == str(profile)
+
+
+def test_select_with_an_empty_profile_chooses_the_servers_first_profile(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(tmp_path)
+    (profile.parent / "settings_Alt").mkdir()
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    assert api.eve_settings_select(str(profile.parent), "") is True
+    assert api._eve_section()["profile"] == str(profile)
+
+
 def test_names_are_pushed_once_a_pass_resolves_something(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
@@ -496,6 +571,44 @@ def test_backup_refuses_a_path_outside_the_configured_root(tmp_path, monkeypatch
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api.eve_settings_backup(str(other), "profile")
     assert api.eve_settings_state()["backups"] == []
+
+
+def test_restore_authorizes_against_the_effective_root_not_a_legacy_profile_root(
+    tmp_path, monkeypatch
+):
+    """A pre-canonicalization install could have `root` stored pointing
+    directly at a profile directory. Restoring a SIBLING profile's backup
+    must validate against the canonical root discover() resolves from that
+    legacy value -- the profile's grandparent -- not the raw stored path,
+    which would reject the sibling as outside a directory that was never
+    really the configured root."""
+    profile = eve_tree(tmp_path)
+    sibling = profile.parent / "settings_Alt"
+    sibling.mkdir()
+    (sibling / "core_char_9.dat").write_bytes(b"sibling-data")
+    api = build(tmp_path, monkeypatch)
+    store = paths.eve_settings_backup_dir()
+    made = api_mod.evesettings_backup.create_profile_backup(
+        store, sibling, origin="manual"
+    )
+    # Legacy install: `root` points at the original profile, not its
+    # grandparent -- the case this task's restore fix authorizes against.
+    api._state.settings["eve_settings"]["root"] = str(profile)
+    (sibling / "core_char_9.dat").unlink()
+
+    api.eve_settings_restore(str(made))
+
+    assert (sibling / "core_char_9.dat").read_bytes() == b"sibling-data"
+    done = [c for c in api._window.calls if "onEveSettingsDone" in c]
+    assert len(done) == 1 and '"ok": true' in done[0]
+
+
+def test_restore_refuses_when_no_root_is_configured(tmp_path, monkeypatch):
+    api = build(tmp_path, monkeypatch)
+    api.eve_settings_restore("whatever.zip")
+    done = [c for c in api._window.calls if "onEveSettingsDone" in c]
+    assert len(done) == 1 and '"ok": false' in done[0]
+    assert any("Restore failed" in call for call in api._window.calls)
 
 
 def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path, monkeypatch):
@@ -606,15 +719,16 @@ def test_selecting_is_refused_while_a_mutation_holds_the_lock(tmp_path, monkeypa
     root than the one in effect when the user approved it. _eve_begin's
     stated policy is that EVE Settings mutations are refused rather than
     interleaved, and selection mutates exactly that input."""
-    eve_tree(tmp_path)
+    profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._eve_mutation.acquire()
     try:
-        assert api.eve_settings_select("s", "p") is False
+        assert api.eve_settings_select(str(profile.parent), str(profile)) is False
         assert api._state.settings["eve_settings"]["server"] is None
     finally:
         api._eve_mutation.release()
-    assert api.eve_settings_select("s", "p") is True
+    assert api.eve_settings_select(str(profile.parent), str(profile)) is True
 
 
 def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(
@@ -1410,7 +1524,7 @@ def test_identification_check_preserves_snapshot_but_clears_candidate_while_eve_
 def test_identification_cancellation_and_selection_changes_clear_snapshot_and_candidate(
     tmp_path, monkeypatch
 ):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
+    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
     api._eve_section()["root"] = str(tmp_path / "EVE")
 
@@ -1420,7 +1534,7 @@ def test_identification_cancellation_and_selection_changes_clear_snapshot_and_ca
     assert api._eve_identification_candidate is None
 
     _pending_identification(api)
-    assert api.eve_settings_select("server", "profile") is True
+    assert api.eve_settings_select(str(profile.parent), str(profile)) is True
     assert api._eve_identification is None
     assert api._eve_identification_candidate is None
 

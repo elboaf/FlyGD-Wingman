@@ -297,7 +297,19 @@ def _profiles_in(server) -> tuple[list, bool]:
         except OSError:
             modified = 0.0
         found.append(Profile(path, path.name[len(_PROFILE_PREFIX) :], count, modified))
-    found.sort(key=lambda p: (p.name.lower() != "default", p.name.lower()))
+    # os.scandir's order is filesystem-dependent, so two profiles whose
+    # names differ only by case (a real thing on the case-sensitive
+    # filesystems this suite runs its Linux tests on -- Windows can never
+    # have both) would otherwise swap places between two renders of the
+    # same folder. normcase(str(path)) is the tiebreaker: stable across
+    # runs, and a no-op on Windows where such a pair cannot exist anyway.
+    found.sort(
+        key=lambda p: (
+            p.name.lower() != "default",
+            p.name.casefold(),
+            os.path.normcase(str(p.path)),
+        )
+    )
     return found, unreadable
 
 
