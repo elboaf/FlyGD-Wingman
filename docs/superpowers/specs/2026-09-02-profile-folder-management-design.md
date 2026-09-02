@@ -135,7 +135,7 @@ The expected source must resolve to the freshly discovered selected profile. Thi
 
 Containment is checked at every resolved hierarchy edge, not only at the final file:
 
-1. The freshly discovered server must be a direct child entry and resolve beneath the canonical root.
+1. The freshly discovered server must either be a direct child entry that resolves beneath the canonical root or be the canonical root itself when discovery confirms that the root directly contains profiles.
 2. Source and existing destination profiles must be direct discovered children and resolve beneath that server.
 3. A proposed new destination must have that server as its direct lexical parent and resolve beneath it.
 4. Every recognized source and destination file must be a direct entry and resolve beneath its own profile.
@@ -146,9 +146,8 @@ A server or profile junction that resolves outside its authorized parent is refu
 
 Validation is authoritative in Python. JavaScript may provide immediate hints but cannot make a name valid.
 
-A new friendly name:
+A new friendly name is trimmed before validation, so surrounding spaces normalize away. The resulting name:
 
-- is trimmed
 - contains 1 to 80 characters
 - is entered without the `settings_` prefix
 - contains no Windows-invalid filename characters or control characters
@@ -181,7 +180,7 @@ The new flow uses an exception-preserving tri-state probe over EVE-titled window
 - **running:** at least one resolved candidate belongs to `exefile.exe`
 - **unknown:** window enumeration, PID lookup, process opening, or image lookup failed for any EVE-titled candidate
 
-Both **running** and **unknown** refuse the operation. The unknown message says Wingman could not verify that EVE is closed. Existing preview discovery and established Profiles writes retain their current behavior; only the new whole-profile flow consumes the fail-closed result.
+Both **running** and **unknown** refuse the operation. **Unknown** dominates when one candidate is known to be running but another EVE-titled candidate cannot be resolved, preserving the fail-closed rule. The unknown message says Wingman could not verify that EVE is closed. Existing preview discovery and established Profiles writes retain their current behavior; only the new whole-profile flow consumes the fail-closed result.
 
 ## New-profile publication
 
@@ -198,7 +197,7 @@ Creation follows this order:
 
 Staging beside the destination keeps final publication on one filesystem. Its name uses a reserved Wingman prefix such as `.wingman-profile-copy-<uuid>.stage`, never `settings_`, so discovery cannot show crash debris as a profile. If copying or validation fails, staging is removed and no destination is created. If another actor creates the destination before publication, the operation refuses rather than changing it.
 
-Filesystem publication and selection persistence are separate outcomes. If the profile is created but saving its selection fails, Wingman keeps the created profile, refreshes the list, retains the prior selection, and reports: `Created <name>, but Wingman could not remember the selection. Select it from Profile.` A retry must not imply creation failed or overwrite the colliding profile.
+Filesystem publication and selection persistence are separate outcomes. If the profile is created but saving its selection fails, Wingman treats creation as successful, closes the disclosure, refreshes the list, retains the prior selection, and reports: `Created <name>, but Wingman could not remember the selection. Select it from Profile.` A retry must not imply creation failed or overwrite the colliding profile.
 
 ## Existing-profile replacement and rollback
 
@@ -218,7 +217,7 @@ Replacement follows this order:
 
 Publication remains a sequence of per-file atomic replacements because unrelated destination entries must remain in place. “Automatic rollback” covers caught runtime failures while Wingman remains alive; it is not a claim of crash or power-loss atomicity. A hard kill during publication can leave a mixed recognized-file set, but the durable destination backup already exists and remains the recovery path.
 
-All staging uses the non-discoverable `.wingman-profile-copy-<uuid>.stage` namespace. Normal completion removes it in `finally`. Before a new profile operation, Wingman removes abandoned staging directories from that namespace only after validating that each candidate is a direct child of the selected server and is not a discovered profile. Because the durable backup, rather than staging, owns rollback state, abandoned staging can be removed without discarding the recovery copy.
+All staging uses the non-discoverable `.wingman-profile-copy-<uuid>.stage` namespace. Normal completion removes it in `finally`. Before a new profile operation, Wingman removes abandoned staging directories from that namespace only after validating that each candidate is a direct child of the selected server and is not a discovered profile. A stage-shaped link, junction, or otherwise unvalidated candidate refuses the operation rather than being followed or silently ignored. Because the durable backup, rather than staging, owns rollback state, abandoned staging can be removed without discarding the recovery copy.
 
 EVE can start after either probe. Per-file replacement failures remain part of the rollback path, and the user is told to close EVE before retrying. Strengthening every existing Profiles write to use this gate is out of scope.
 
@@ -235,7 +234,7 @@ Failures distinguish the state left on disk:
 
 Detailed filesystem exceptions remain logged. User-visible messages state what happened and what to do, without raw Windows error codes when a specific instruction is available.
 
-The existing `onEveSettingsDone` semantic event remains the sole completion push for Profiles mutations. Its payload may be extended with operation identity or selected-profile information only if the page cannot derive the correct refresh from the final Python state; no second competing completion handler is introduced.
+The existing `onEveSettingsDone` semantic event remains the sole completion push for Profiles mutations. Profile copy extends its payload with the operation identity, whether filesystem publication succeeded, and whether the new selection was persisted. This lets the page close the disclosure after successful creation even when remembering the selection failed, while final `eve_settings_state()` remains authoritative. No second competing completion handler is introduced.
 
 ## Accessibility and visual behavior
 
