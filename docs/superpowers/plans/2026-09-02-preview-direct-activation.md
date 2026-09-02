@@ -411,7 +411,7 @@ Delete switch-only trace calls around mouse input, activation, foreground hooks,
 
 ```bash
 rg -n "DIRECT_ACTIVATE_PROBE|WINGMAN_PREVIEW_DIRECT_ACTIVATE_PROBE|preview-switch-perf|_switch_perf|foreground_observation" \
-  wingman tests docs --glob '!docs/preview-direct-activation-design.md'
+  wingman tests docs/smoke-checklist.md
 ```
 
 Expected: no output. The design may retain historical evidence terms, but no executable diagnostic names.
