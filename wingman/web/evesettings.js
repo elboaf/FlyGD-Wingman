@@ -422,13 +422,14 @@
       : step === 'candidate' ? 'Step 3 of 5 · Confirm character'
       : step === 'name' ? 'Step 4 of 5 · Name account'
       : step === 'roster' ? 'Step 5 of 5 · Review roster'
-      : 'Step 1 of 5 · Start';
+      : 'Step 1 of 5 · Prepare';
     WM.el('ai-progress').textContent = progress;
     WM.el('ai-intro').hidden = watching || candidate || name || roster;
     WM.el('ai-watching-step').hidden = !watching;
     WM.el('es-identify-candidate').hidden = !candidate;
     WM.el('ai-name-step').hidden = !name;
     WM.el('ai-roster-step').hidden = !roster;
+    WM.el('ai-prerequisite').hidden = watching || candidate || name || roster;
     WM.el('es-identify-start').hidden = watching || candidate || name || roster;
     WM.el('es-identify-check').hidden = !watching;
     WM.el('es-identify-cancel').hidden = !(watching || candidate || name);

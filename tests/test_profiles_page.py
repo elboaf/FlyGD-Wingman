@@ -771,6 +771,25 @@ def test_profiles_opens_backups_without_mounting_the_archive_inline():
     assert "WM.route('backups')" in CODE
 
 
+def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
+    """Backups and Formations stay grouped with the selected profile context."""
+    tools = re.findall(
+        r'<div class="es-profile-tools"([^>]*)>(.*?)</div>', BODY, re.DOTALL
+    )
+    assert len(tools) == 1, "profile tools must remain one sibling group"
+    attrs, content = tools[0]
+    assert 'role="group"' in attrs
+    assert 'aria-label="Tools for the selected EVE profile"' in attrs
+    assert 'id="es-backups-open"' in content
+    assert 'id="es-formations-open"' in content
+
+    context_end = BODY.index("</section>", BODY.index("es-context-card"))
+    tools_at = BODY.index('class="es-profile-tools"')
+    copy_at = BODY.index("<h2>Copy EVE settings</h2>")
+    assert context_end < tools_at < copy_at
+    assert "card" not in attrs.split()
+
+
 def test_backups_is_a_profiles_subroute_with_destination_chrome():
     assert 'id="route-backups"' in HTML
     assert "backups: 'route-backups'" in APP
@@ -955,7 +974,7 @@ def test_identification_exposes_its_existing_five_step_progress():
     )
     assert paint
     for label in (
-        "Step 1 of 5 · Start",
+        "Step 1 of 5 · Prepare",
         "Step 2 of 5 · Watch for changes",
         "Step 3 of 5 · Confirm character",
         "Step 4 of 5 · Name account",
@@ -963,6 +982,32 @@ def test_identification_exposes_its_existing_five_step_progress():
     ):
         assert label in paint.group(1)
     assert "WM.el('ai-progress').textContent" in paint.group(1)
+
+
+def test_identification_prerequisite_precedes_the_start_action():
+    actions = re.search(
+        r'<div class="row es-identify-actions">(.*?)</div>',
+        ACCOUNT_ROUTE,
+        re.DOTALL,
+    )
+    assert actions
+    block = actions.group(1)
+    assert "Close every EVE client" in block
+    prerequisite_at = block.index("Close every EVE client")
+    start_at = block.index('id="es-identify-start"')
+    assert prerequisite_at < start_at
+    assert 'id="ai-prerequisite" class="ai-prerequisite"' in block
+    assert ">Begin identification</button>" in block
+    paint = re.search(
+        r"function paintIdentification\(step, message\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert paint and (
+        "ai-prerequisite').hidden = watching || candidate || name || roster"
+        in paint.group(1)
+    )
+    assert "Close every EVE client" not in re.search(
+        r'<section id="ai-intro">(.*?)</section>', ACCOUNT_ROUTE, re.DOTALL
+    ).group(1)
 
 
 def test_identification_uses_the_five_step_markup_and_required_copy():

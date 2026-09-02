@@ -1476,7 +1476,7 @@
         <p id="es-warning" class="hint" hidden></p>
       </section>
 
-      <div class="es-profile-tools">
+      <div class="es-profile-tools" role="group" aria-label="Tools for the selected EVE profile">
         <button class="btn" id="es-backups-open" type="button">Backups…</button>
         <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
       </div>
@@ -1626,19 +1626,19 @@
       <!-- This flow sends the user out to EVE between steps. Keep the
            current place visible on return, but leave announcements to the
            focusable step headings so a transition is not spoken twice. -->
-      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Start</p>
+      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Prepare</p>
       <h1>Identify accounts</h1>
       <section id="ai-intro">
         <h2 id="ai-intro-heading" tabindex="-1">Match an account</h2>
         <p>EVE stores account settings under a number, not a name. Wingman can match that number to a character by watching which settings change together.</p>
-        <p class="hint">Close every EVE client. You will launch one character after identification starts.</p>
       </section>
       <section id="ai-watching-step" hidden>
         <h2 id="ai-watching-heading" tabindex="-1">Watch for changes</h2>
       </section>
       <p id="es-identity-status" class="ai-status" role="status"></p>
       <div class="row es-identify-actions">
-        <button id="es-identify-start" class="btn acc" type="button">Start identification</button>
+        <p id="ai-prerequisite" class="ai-prerequisite">Close every EVE client before you begin. You will launch one character after identification starts.</p>
+        <button id="es-identify-start" class="btn acc" type="button">Begin identification</button>
         <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
         <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
       </div>

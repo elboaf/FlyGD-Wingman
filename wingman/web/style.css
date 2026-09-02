@@ -2703,11 +2703,13 @@ button.btn:disabled,
    a long root from pushing Change beyond that width. */
 .es-context-card { width: 100%; }
 
-/* Quiet tools sit between context and work rather than becoming another
-   card in the copy flow. They wrap at the window floor instead of creating
-   horizontal overflow. */
+/* Quiet tools remain siblings between context and work rather than becoming
+   another card or route. Pulling the group toward the context and aligning it
+   with that card's content associates Backups and Formations with the selected
+   profile without putting either inside the copy workflow. */
 .es-profile-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
+  margin-top: -4px; padding-inline: 16px;
 }
 .es-profile-tools[hidden] { display: none; }
 #es-formations-open[hidden] { display: none; }
@@ -3241,6 +3243,10 @@ button.btn:disabled,
 #es-identity-account, #es-character-add, #ai-roster-character { flex: 1; }
 #es-manage-account-name, #es-account-name { flex: 1; }
 .es-identify-actions { margin-top: 4px; }
+.ai-prerequisite {
+  flex: 0 0 100%; margin: 0 0 4px; color: var(--warn);
+  font-size: var(--fs-body); font-weight: 650;
+}
 
 .es-target-choice { align-items: flex-start; }
 .es-target-text { display: flex; min-width: 0; flex-direction: column; }

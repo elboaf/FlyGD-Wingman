@@ -2881,10 +2881,10 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] **Profiles opens with compact context and tools.** With a selected EVE
       profile, the full-width context row identifies the folder, server, and
-      profile without competing with the top tool row. That row contains
-      **Backups…** and **Edit formations…** when the codec is available. In
-      Accounts mode, the Copy card contains **Identify accounts…**; none of
-      these tools is an inline card below Copy.
+      profile. The **Backups…** and **Edit formations…** sibling tool group
+      sits directly beneath that context when the codec is available, without
+      becoming another card or route. In Accounts mode, the Copy card contains
+      **Identify accounts…**; none of these tools is an inline card below Copy.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -3001,11 +3001,13 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] **Identify one account through a controlled client session.** Switch to
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
-      what Wingman will watch, says to close every EVE client, and offers one
-      primary action. A quiet `Step N of 5` line stays above the title and
-      advances through Start, Watch for changes, Confirm character, Name
-      account, and Review roster. Start identification, launch one character, enter the
-      game, make a small settings change, fully close that client, and press
+      what Wingman will watch, and offers one primary action. The warning to
+      close every EVE client sits immediately above **Begin identification**,
+      where it remains visible before activation. A quiet `Step N of 5` line
+      stays above the title and advances through Prepare, Watch for changes,
+      Confirm character, Name account, and Review roster. Begin identification,
+      launch one character, enter the game, make a small settings change, fully
+      close that client, and press
       `Check changes`. Wingman proposes the one changed account and character
       and persists nothing when `Link character` opens the required account-name
       step.
