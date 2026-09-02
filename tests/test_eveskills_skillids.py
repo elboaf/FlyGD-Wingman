@@ -743,6 +743,59 @@ def test_a_wrong_training_metadata_sub_version_preserves_ids_and_drops_metadata(
     assert loaded.training_metadata(NOW) == {}
 
 
+def test_a_second_case_folded_name_with_a_different_type_id_does_not_leak_its_metadata(
+    tmp_path,
+):
+    """Fix round 1: _cache_from_raw() built *metadata* from every entry that
+    passed the per-entry id checks, keyed by that entry's OWN type_id, and
+    then applied it with a direct cache._metadata.update() -- bypassing
+    merge_metadata()'s known-id invariant entirely. "Gunnery" and "gunnery"
+    fold to the same _by_key key, so merge() (first spelling wins, never
+    overwrites) accepts only 3300 into _by_key; but the update() bypass
+    still stored training metadata for 9999, an id this cache does not
+    actually hold. Only 3300 must ever be visible, in both type_ids() and
+    training_metadata().
+    """
+    target = tmp_path / "cache.json"
+    target.write_text(
+        json.dumps(
+            {
+                "version": skillids.CACHE_VERSION,
+                "training_metadata_version": skillids.TRAINING_METADATA_VERSION,
+                "entries": [
+                    {
+                        "name": "Gunnery",
+                        "type_id": 3300,
+                        "category_id": 16,
+                        "training": {
+                            "rank": 1,
+                            "primary_attribute": "perception",
+                            "secondary_attribute": "willpower",
+                            "fetched_utc": "2026-09-02T00:00:00+00:00",
+                        },
+                    },
+                    {
+                        "name": "gunnery",
+                        "type_id": 9999,
+                        "category_id": 16,
+                        "training": {
+                            "rank": 1,
+                            "primary_attribute": "perception",
+                            "secondary_attribute": "willpower",
+                            "fetched_utc": "2026-09-02T00:00:00+00:00",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded, warnings = skillids.load(target)
+    assert warnings == []
+    assert loaded.type_ids() == {"gunnery": 3300}
+    assert loaded.training_metadata(NOW) == {3300: GUNNERY_META}
+
+
 def _entry_with_training(training_obj) -> dict:
     return {
         "version": skillids.CACHE_VERSION,

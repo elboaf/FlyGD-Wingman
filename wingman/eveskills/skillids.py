@@ -333,7 +333,14 @@ def _cache_from_raw(raw) -> "SkillIdCache | None":
 
     cache = SkillIdCache()
     cache.merge(accepted)
-    cache._metadata.update(metadata)
+    # merge_metadata(), not a direct _metadata update: it enforces the same
+    # known-id invariant merge() enforces above. A duplicate case-folded
+    # name (e.g. "Gunnery" and "gunnery" with different type ids) or a
+    # MAX_ENTRIES cap rejection can leave *metadata* holding an entry for a
+    # type id merge() never actually accepted into _by_key -- publishing
+    # that entry unchecked would let this cache answer training_metadata()
+    # for an id it does not otherwise know about.
+    cache.merge_metadata(metadata)
     return cache
 
 
