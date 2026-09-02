@@ -546,6 +546,46 @@ def test_the_preview_fixture_carries_online_and_offline_layout_sources():
     assert "copy_preview_layout" in _stubbed()
 
 
+def test_preview_fixture_covers_the_roster_states_screenshots_need():
+    """Keep the authoritative fixture representative rather than tiny.
+
+    The capture tool injects this exact JSON into the real page. A short,
+    uniform roster hides scrolling, the offline divider, unavailable geometry,
+    direct-bind sharing, and a collision until a user's own state happens to
+    expose one of them.
+    """
+    fixture = _dev_preview_fixture()
+    roster = fixture["roster"]
+    online = set(fixture["characters"])
+    offline = set(roster) - online
+    hotkeys = fixture["hotkeys"]
+    direct = hotkeys["characters"]
+
+    assert len(roster) >= 10
+    assert online and offline
+    assert any(len(name) >= 30 for name in roster)
+    assert hotkeys["group_by_character"]
+    assert set(roster) & set(fixture["sizable"])
+    assert set(roster) - set(fixture["sizable"])
+    long_name = "Aleksandrina Shadowbanes Voidstriders"
+    assert long_name in roster
+    assert long_name not in fixture["excluded"], (
+        "the staged Copy target must have an enabled Copy control"
+    )
+    assert any(source["name"] != long_name for source in fixture["layout_sources"])
+
+    by_gesture = {}
+    for name, gesture in direct.items():
+        by_gesture.setdefault(gesture, []).append(name)
+    assert any(len(names) >= 2 for names in by_gesture.values()), (
+        "fixture needs a supported shared direct-character bind"
+    )
+    assert any(
+        gesture in {hotkeys["cycle_next"], hotkeys["cycle_prev"]}
+        for gesture in direct.values()
+    ), "fixture needs a direct-character/cycle-keybind conflict"
+
+
 def test_the_bookmark_fixture_uses_real_ahk_strings():
     """The mirror of the above, for the subsystem that really does use AHK.
 

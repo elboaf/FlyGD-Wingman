@@ -72,6 +72,13 @@ SCREENS = (
         True,
     ),
     Screen(
+        "settings-previews-detail",
+        "Settings - Previews (detail)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
         "settings-previews-copy",
         "Settings - Previews (copy picker)",
         "settings",
@@ -222,19 +229,35 @@ def screen_setup_script(screen: Screen) -> str | None:
           var pane = document.querySelector('.settings-pane');
           if (pane) { pane.scrollTop = pane.scrollHeight; }
         }())"""
-    if screen.key == "settings-previews-copy":
-        return """WM.choose(
-          'Copy preview geometry',
-          'Copy saved size and position to "Aleksandrina Shadowbanes Voidstriders".',
-          [
-            {label: 'Online', options: [
-              {value: 'Aiga Otsolen', label: 'Aiga Otsolen'}
-            ]},
-            {label: 'Offline', options: [
-              {value: 'Tanuki Solette', label: 'Tanuki Solette'}
-            ]}
-          ],
-          'Copy')"""
+    if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
+        # The page's read-side hotkey handler is safe to use against a live
+        # install: it only replaces page state, never writes the user's
+        # settings. Opening the real Configure control keeps this shot coupled
+        # to the detail the user actually reaches rather than a hand-built
+        # overlay.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        long_name = "Aleksandrina Shadowbanes Voidstriders"
+        copy_click = ""
+        if screen.key == "settings-previews-copy":
+            copy_click = (
+                "  var copy = document.querySelector(\n"
+                "    '[data-preview-detail-control=\"copy\"]');\n"
+                "  if (copy) { copy.click(); }\n"
+            )
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (button) {\n"
+            "    button.click();\n"
+            "  });\n"
+            "  var configure = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (configure) { configure.click(); }\n" + copy_click + "}())"
+        )
     if screen.key == "settings-previews-groups":
         # Load the authoritative dev fixture via onPreviewHotkeys (read-only;
         # never calls a write API) so the page shows deterministic group state
@@ -260,35 +283,26 @@ def screen_setup_script(screen: Screen) -> str | None:
             "}())"
         )
     if screen.key == "settings-previews-narrow":
-        # Load the authoritative dev fixture via onPreviewHotkeys so the
-        # page has deterministic group state.  The 840x625 viewport override
-        # is applied through CDP (Emulation.setDeviceMetricsOverride) in
-        # walk() BEFORE this script runs, so the layout is already at 840px
-        # when the injection and scroll execute.
-        # window.resizeTo is a no-op inside a WebView2 target controlled by
-        # pywebview, so it must never appear in this script.
-        #
-        # Target 'Aleksandrina Shadowbanes Voidstriders' by stable aria-label
-        # (set at previews.js:1364 as aria-label="Cycle group for <name>").
-        # This is the load-bearing character: 37-char name exercises the
-        # ellipsis in the 150px name track and the offline tag width at 840px.
-        # Using the generic .preview-group-select class would match the first
-        # row ('Aiga Otsolen'), not the long-name character -- non-deterministic.
+        # Load the authoritative fixture through the page's read-side handler
+        # after CDP has already pinned the viewport at 840x625 (walk() keeps
+        # that ordering and clears the override in finally). The preceding
+        # detail and Copy shots leave the detail open, so close every open
+        # Configure disclosure before framing the collapsed roster at the
+        # scrollport's top.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
-        long_name = "Aleksandrina Shadowbanes Voidstriders"
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
             "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
-            "  var sel = document.querySelector('select[aria-label=\"Cycle group for "
-            + long_name
-            + "\"]');\n"
-            "  if (sel) {\n"
-            "    sel.scrollIntoView({block: 'center', behavior: 'instant'});\n"
-            "  } else {\n"
-            "    var pane = document.querySelector('.settings-pane');\n"
-            "    if (pane) { pane.scrollTop = pane.scrollHeight / 2; }\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (configure) {\n"
+            "    configure.click();\n"
+            "  });\n"
+            "  var heading = document.querySelector('#preview-roster-heading');\n"
+            "  if (heading) {\n"
+            "    heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "  }\n"
             "}())"
         )
