@@ -2079,7 +2079,7 @@ def test_local_bind_conflict_copy_uses_authoritative_collision_state():
     ):
         assert source in block
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
-    assert "makeBindConflict(label, gesture)" in append
+    assert "makeBindConflict(label, gesture, character)" in append
 
 
 def test_manage_groups_disclosure_has_add_rename_delete():

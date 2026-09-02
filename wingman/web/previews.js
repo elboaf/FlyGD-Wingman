@@ -162,7 +162,7 @@
     return owners;
   }
 
-  function makeBindConflict(label, gesture) {
+  function makeBindConflict(label, gesture, character) {
     var clash = clashes(gesture);
     var bookmark = bookmarkClash(gesture);
     // Read the registration payload here rather than infer Windows state from
@@ -170,7 +170,16 @@
     // truth for refused versus unknown registrations.
     var registration = state.registration || {};
     var text = '';
-    if (clash === 'duplicate') {
+    if (character && clash === 'duplicate') {
+      // Direct-character sharing is a supported registration plan. On its
+      // rows, name only the cycle owner that makes this chord incompatible.
+      var owners = cycleOwners(gesture).filter(function (owner) {
+        return owner !== 'cycle group ' + label;
+      });
+      text = gesture + ' conflicts with ' + (owners.join(', ') || 'another cycle keybind') + '.';
+    } else if (clash === 'duplicate') {
+      // A cycle row has no supported shared-owner role: direct characters
+      // using its chord are the incompatible registrations to identify.
       var owners = cycleOwners(gesture).concat(sharers(gesture)).filter(function (owner) {
         return owner !== label && owner !== 'cycle group ' + label;
       });
@@ -197,14 +206,13 @@
     var lab = WM.make('span', 'lab');
     // The name in a span of its own, not as `.lab`'s own text. The cell is
     // a flex row (style.css) so that the name can ellipsize inside its
-    // fixed 150px track while the `offline` tag beside it keeps its full
-    // width -- the tag is the encoding of that state and cannot be
-    // truncated away. Appended to `lab`, NOT to `row`: an extra child on
+    // bounded 210px-to-320px track while any name that outgrows it
+    // ellipsizes. Appended to `lab`, NOT to `row`: an extra child on
     // the row would be an extra grid cell, and the cell-count guard reads
     // appends lexically, so it could not see one that appears on offline
     // rows only.
     lab.appendChild(WM.make('span', 'lab-name', label));
-    // The track is a fixed 150px, so a long name ellipsizes. The title is
+    // The track is bounded rather than content-sized, so a long name ellipsizes. The title is
     // the only place the whole of it can be read. Unconditional, including
     // for names that plainly fit: knowing whether this one truncated means
     // comparing scrollWidth to clientWidth, which is a forced reflow per
@@ -511,6 +519,13 @@
     detailFocusIntent = {name: characterName, control: control};
   }
 
+  function clearDetailFocus(characterName, control) {
+    if (detailFocusIntent && detailFocusIntent.name === characterName
+        && detailFocusIntent.control === control) {
+      detailFocusIntent = null;
+    }
+  }
+
   function focusRosterHeading() {
     var heading = WM.el('preview-roster-heading');
     if (heading) { heading.focus(); }
@@ -563,7 +578,6 @@
     WM.setEnabled(btn, !off);
     btn.setAttribute('data-preview-detail-control', 'size');
     btn.addEventListener('click', function () {
-      rememberDetailFocus(name, 'size');
       // Same trap bookmarks.js documents: an armed capture's document
       // keydown handler preventDefault()s every key, so a prompt opened
       // while one is live cannot be typed into.
@@ -608,6 +622,17 @@
     focusCharacterDetailControl(name, 'copy');
   }
 
+  // Install the intent only in refresh's authoritative-payload path. A
+  // dialog cancellation or bridge failure cannot then leave it for an
+  // unrelated hotkey push to consume.
+  function restoreCopyFocusAfterRefresh(name) {
+    refresh(function () { rememberDetailFocus(name, 'copy'); })
+      .then(function () {
+        clearDetailFocus(name, 'copy');
+        focusCopyTarget(name);
+      });
+  }
+
   function copyStatus(text, error) {
     var status = WM.el('preview-copy-status');
     if (!status) { return; }
@@ -622,7 +647,6 @@
     btn.setAttribute('data-preview-detail-control', 'copy');
     WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
-      rememberDetailFocus(name, 'copy');
       endCapture();
       copyStatus('', false);
       var sources = copySources(name);
@@ -642,17 +666,20 @@
       WM.choose('Copy preview geometry',
                 'Copy saved size and position to "' + name + '".',
                 groups, 'Copy').then(function (source) {
-        if (source === null) { return; }
+        if (source === null) {
+          clearDetailFocus(name, 'copy');
+          return;
+        }
         WM.send('copy_preview_layout', name, source).then(function (result) {
           if (!result || !result.applied) {
             copyStatus(result && result.error
                        ? result.error
                        : 'That preview placement could not be copied.', true);
-            refresh().then(function () { focusCopyTarget(name); });
+            restoreCopyFocusAfterRefresh(name);
             return;
           }
           copyStatus('Copied ' + source + '’s geometry to ' + name + '.', false);
-          refresh().then(function () { focusCopyTarget(name); });
+          restoreCopyFocusAfterRefresh(name);
         });
       });
     });
@@ -1247,11 +1274,11 @@
 
   function appendBindRow(label, gesture, online, onSet, character) {
     host.appendChild(makeRow(label, gesture, online, onSet, character));
-    var conflict = makeBindConflict(label, gesture);
-    if (conflict) { host.appendChild(conflict); }
     if (character && openDetailName === character) {
       host.appendChild(makeCharacterDetail(character, isExcluded(character)));
     }
+    var conflict = makeBindConflict(label, gesture, character);
+    if (conflict) { host.appendChild(conflict); }
   }
 
   function render() {
@@ -1492,8 +1519,8 @@
     });
   }
 
-  // Build the group assignment <select> for one character row. Appended to
-  // `lab` inside makeRow -- never to `row` -- so it never adds a grid cell.
+  // Build the group assignment <select> for one character detail. The
+  // detail spans the grid, so returning this control never adds a row cell.
   //
   // Not gated on the `off` (opted-out) state: unlike the keybind button
   // and Size..., which can do nothing for an opted-out character, group
@@ -1863,7 +1890,7 @@
     return el;
   }
 
-  function refresh() {
+  function refresh(beforeRender) {
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
       state = payload;
@@ -1875,6 +1902,7 @@
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
+      if (beforeRender) { beforeRender(); }
       requestRender();
     });
   }

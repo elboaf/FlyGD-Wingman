@@ -2193,7 +2193,7 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
     assert "source.online === false" in picker
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
-    assert "focusCopyTarget(name)" in picker
+    assert "restoreCopyFocusAfterRefresh(name)" in picker
     assert "state.characters" not in picker
     assert "It applies next time" not in picker
     assert "source.name !== name" in src
@@ -2961,6 +2961,65 @@ def test_character_detail_and_conflict_siblings_span_the_preview_grid():
         assert rule and "grid-column: 1 / -1" in rule.group(1), (
             f"{selector} must span the Preview grid rather than add a row cell"
         )
+
+
+def test_character_conflict_copy_excludes_supported_direct_sharers():
+    """A shared direct bind is supported, so a character's warning names
+    only the incompatible cycle owner rather than other sharing characters.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    character_duplicate = block.split("if (character && clash === 'duplicate')", 1)[
+        1
+    ].split("} else", 1)[0]
+    assert "cycleOwners(gesture)" in character_duplicate
+    assert "sharers(gesture)" not in character_duplicate, (
+        "character conflict copy calls sharers(), so it blames supported "
+        "direct-character sharing for a cycle collision"
+    )
+
+
+def test_character_detail_precedes_its_conflict_copy():
+    """A character's detail belongs directly below its row; any warning
+    follows the detail so it cannot split the row from the controls it explains.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    row = append.index("host.appendChild(makeRow")
+    detail = append.index("host.appendChild(makeCharacterDetail")
+    conflict = append.index("host.appendChild(conflict)")
+    assert row < detail < conflict
+
+
+def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
+    """Size has no authoritative redraw, and Copy's intent is installed only
+    inside its refresh response. Cancellation and a failed copy therefore cannot
+    leave intent for a later unrelated push to consume.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    size = js.split("function makeSizeButton", 1)[1].split("\n  function ", 1)[0]
+    assert "rememberDetailFocus" not in size, (
+        "Size patches local state without rerendering; it must not retain a "
+        "detail focus intent across cancellation or parse/save failure"
+    )
+
+    copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
+    cancelled = copy.split("if (source === null)", 1)[1].split("}", 1)[0]
+    assert "clearDetailFocus(name, 'copy')" in cancelled
+    assert copy.count("restoreCopyFocusAfterRefresh(name)") == 2, (
+        "both the refused and successful copy paths must clear focus intent "
+        "after their refresh attempt"
+    )
+
+    restore = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "refresh(function ()" in restore
+    assert "rememberDetailFocus(name, 'copy')" in restore
+    assert "clearDetailFocus(name, 'copy')" in restore
+    assert restore.index("clearDetailFocus(name, 'copy')") < restore.index(
+        "focusCopyTarget(name)"
+    )
 
 
 def test_preview_roster_heading_is_a_programmatic_focus_fallback():

@@ -2372,36 +2372,33 @@ button.btn:disabled,
   --preview-bind-head-height: 22px;
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* A fixed name column, four content-sized control tracks, then one
+  /* A bounded name column, four content-sized control tracks, then one
      flexible one. The character name sits in track 1 rather than taking a
      line of its own -- the `.lab` override below no longer spans -- and
-     the four that follow size the CONTROLS beside it: Preview, bind button,
-     the keybind actions cell (Clear/Edit… together, `.rowacts`), and the
-     Geometry actions cell (Size…/Copy… together) -- exactly the four
-     children previews.js's makeRow appends after the label. Clear and Edit… used to be two of those children, one track
-     each; they now share the one `.rowacts` span, which is what dropped
-     the count from five. Lock and Never minimize used to sit here too, as
-     a sixth and a conditional seventh; both now render once, in their own
-     disclosures under their global toggles, rather than as a track on
-     every row. The trailing minmax(0, 1fr) absorbs the leftover width so
-     the four stay packed at the start instead of spreading.
+     the four that follow size the controls beside it: Preview, bind button,
+     the keybind actions cell (Clear/Edit… together, `.rowacts`), and
+     Configure. Rare group and geometry controls sit in the full-grid
+     disclosure below the character row, so they do not widen the scan line.
+     Clear and Edit… used to be two of those children, one track each; they
+     now share the one `.rowacts` span, which is what dropped the count from
+     five. Lock and Never minimize used to sit here too, as a sixth and a
+     conditional seventh; both now render once, in their own disclosures
+     under their global toggles, rather than as a track on every row. The
+     trailing minmax(0, 1fr) absorbs the leftover width so the four stay
+     packed at the start instead of spreading.
 
      THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
      this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. `minmax(150px, 260px)`
+     in, so the bind button moves between sessions. `minmax(210px, 320px)`
      keeps the stability B1 bought -- both ends are lengths, so the track
      never consults the roster -- while dropping the cross-list half of
      its rule. Bookmarks still stacks, because "Convert EvE-Scout
      Bookmarks" is 189.6px and genuinely needs its own line.
 
-     Round 6 raised the ceiling from a flat 150px. At 150 a name was
-     ellipsized to 106px (the track less the `offline` tag) on a window
-     with 191px of empty gutter beside the card -- the truncation was not
-     paying for anything. The floor stays 150 so the 840 floor is
-     unaffected; the 260 ceiling is only reachable once the card is wide
-     enough, which it now is (see the max-width block below). Names wider
-     than the resolved track still ellipsize and still carry a `title`.
+     The 210px floor and 320px ceiling reclaim enough collapsed-row space
+     for names without returning to content-sized tracks. Names wider than
+     the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2518,8 +2515,8 @@ button.btn:disabled,
 
 /* This one no longer merely restates the override above. While B1
    collapsed the column unconditionally, this block said the same thing
-   twice; the name sits in a 150px track now, so below 720px this is what
-   would actually hand it the whole line back instead of ellipsizing it in
+   twice; the name sits in a bounded 210px-to-320px track now, so below
+   720px this is what would actually hand it the whole line back instead of ellipsizing it in
    a track a narrow card cannot afford. WOULD, not does -- the CSS floor
    is 840x625 at every scaling (see the note at #eve-binds), so 720px is
    still unreachable through the window and this is still kept for the
@@ -3361,8 +3358,8 @@ button.btn:disabled,
    whoever is logged in.
 
    THAT WAS ONCE TRUE OF BOTH SECTIONS, and now describes this one alone.
-   #preview-binds took its name back into a FIXED 150px track, which keeps
-   the content-independence this argument is about while spending a column
+   #preview-binds took its name back into a BOUNDED 210px-to-320px track,
+   which keeps the content-independence this argument is about while spending a column
    on it -- affordable there because character names are uniform and short,
    and not here, where "Convert EvE-Scout Bookmarks" is 189.6px. The
    cross-list half of B1's rule is retired; the no-max-content half is not,
