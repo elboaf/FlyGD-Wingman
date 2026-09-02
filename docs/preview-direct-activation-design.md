@@ -1,6 +1,6 @@
 # Preview direct activation and non-blocking foreground observation
 
-Implemented through Task 4 on 2026-09-02. Base: `main` (`20f2939`). Automated validation is complete; the Windows/EVE acceptance pass remains pending.
+Implemented and accepted through Task 5 on 2026-09-02. Base: `main` (`20f2939`). Automated Linux and Windows validation passed, and the live Windows/EVE observe-only and immediate-input probes were accepted under the byte-equivalence ruling described below.
 
 ## Outcome
 
@@ -56,9 +56,11 @@ Results by initial outcome:
 | Foreground transition pending | 20 | 39.9ms | 56.8ms |
 | Minimized target pending restore | 33 | 27.7ms | 38.6ms |
 
-Pending-foreground switches required a median 1.5 timer retries and completed within 73.5ms. That probe reissued the direct foreground request on a pending timer turn, however, so it validated non-blocking retries but not a strictly observe-only loop. The production implementation closes that gap: it issues one direct request, then timer turns only observe foreground until completion, cancellation, or the bounded attached fallback. Automated tests enforce that no activation call is reissued during observation; live Windows/EVE acceptance remains pending.
+Pending-foreground switches required a median 1.5 timer retries and completed within 73.5ms. That probe reissued the direct foreground request on a pending timer turn, however, so it validated non-blocking retries but not a strictly observe-only loop. The production implementation closes that gap: it issues one direct request, then timer turns only observe foreground until completion, cancellation, or the bounded attached fallback. Automated tests enforce that no activation call is reissued during observation. A subsequent live Windows/EVE run exercised the final observe-only behavior successfully while the temporary diagnostic logging and gating were still present.
 
 A separate manual pass prepared distinct chat-input contents in two EVE clients, switched by preview and hotkey, typed and clicked immediately, and exercised a held repeating key. The tester reported that all input landed correctly.
+
+Task 5 accepted those live probes for the cleaned production implementation because cleanup removed only diagnostic logging and gating and left the activation path byte-equivalent. No post-cleanup live rerun occurred. The explicit residual risk is that diagnostic logging overhead could have affected timing or that a cleanup-only integration issue could remain; if that equivalence ruling is rejected, a post-build Windows/EVE rerun is required.
 
 ## Constraints
 
@@ -208,16 +210,17 @@ All production behavior changes are test-first.
 
 ### Verification
 
-The automated suite and static checks below passed after the temporary probe code was removed. The Windows/EVE checklist is the remaining acceptance gate.
+Task 5 completed after the temporary probe code was removed. Full Linux verification passed with 3,527 tests passed and 8 skipped; focused Windows verification passed with 449 tests passed. Ruff lint, Ruff format, and diff checks also passed.
 
 ```bash
 uv run --no-sync python -m pytest tests/test_preview_window.py tests/test_preview_host.py tests/test_preview_cycle.py tests/test_preview_switching.py tests/test_preview_wiring.py -q
 uv run --no-sync python -m pytest tests/ -q
 uv run --extra dev ruff check .
 uv run --extra dev ruff format --check .
+git diff --check
 ```
 
-Windows verification repeats:
+The live Windows/EVE observe-only and immediate-input probes were accepted as the production acceptance pass under the byte-equivalence ruling above; they were not rerun after diagnostic cleanup. The maintained Windows regression checklist covers:
 
 - locked and unlocked preview clicks with minimization on and off;
 - direct-character and cycle hotkeys, including rapid latest-wins sequences;
