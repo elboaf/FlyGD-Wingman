@@ -380,6 +380,58 @@ def test_copy_plan_reports_clipboard_success_and_failure_locally():
     assert "Could not copy the plan to the clipboard." in handler.group(1)
 
 
+def test_failed_copy_feedback_belongs_to_the_plan_that_started_the_attempt():
+    """A failed plan lookup or clipboard write must not inherit ownership
+    from the last successful copy. Otherwise switching plans can leave the
+    failure attached to whichever plan happened to succeed previously.
+    """
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    starts_request = body.index("WM.send('skills_plan_text', name)")
+    owns_attempt = body.index("resetCopyStatus(name)")
+    assert owns_attempt < starts_request, (
+        "every copy attempt must claim its plan before either the plan lookup "
+        "or clipboard write can fail"
+    )
+    reset = re.search(
+        r"function resetCopyStatus\(plan\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert reset
+    assert "copyStatusPlan = plan" in reset.group(1)
+    assert "setCopyStatus('', false)" in reset.group(1), (
+        "attempt ownership and the old status must be reset together"
+    )
+
+
+def test_pending_copy_completion_is_invalidated_when_the_plan_changes():
+    """A plan lookup and clipboard write are both asynchronous. Switching
+    away and back must invalidate either completion rather than letting an
+    old attempt report success or failure under the newly selected plan.
+    """
+    assert re.search(r"var copyAttemptSeq = 0;", CODE)
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    assert "copyAttemptSeq += 1" in body
+    assert "var token = copyAttemptSeq" in body
+    # One guard after the bridge lookup and one in each clipboard outcome.
+    assert body.count("copyAttemptIsCurrent(token, name)") >= 3
+
+    select = re.search(r"function selectPlan\(name\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert select and "resetCopyStatus('')" in select.group(1), (
+        "selection must clear feedback and invalidate pending completions immediately"
+    )
+
+
 # ---- round 5: the roster opens, and its numbers are scoped -------------
 
 # Whitespace-collapsed: the checklist is wrapped prose, so a sentence this
