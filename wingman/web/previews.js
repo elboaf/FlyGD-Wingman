@@ -1437,6 +1437,14 @@
             if (res && res.error) {
               WM.send('alert_bookmarks', res.error);
             }
+            // Apply the authoritative table when available and no newer push
+            // has landed since the call was issued.  This keeps the groups
+            // list coherent without a full refresh() round-trip.
+            if (res && res.hotkeys && pushes === before) {
+              state.hotkeys = res.hotkeys;
+              state.hotkeys.groups = state.hotkeys.groups || [];
+              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+            }
             requestRender();
             focusGroupSelect(characterName);
             return;
@@ -1512,6 +1520,13 @@
           groupBusy = false;
           if (!res || !res.applied) {
             if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+            // Apply the authoritative table when available and no newer push
+            // has landed.  A refused rename carries the unchanged name.
+            if (res && res.hotkeys && pushes === before) {
+              state.hotkeys = res.hotkeys;
+              state.hotkeys.groups = state.hotkeys.groups || [];
+              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+            }
             requestRender();
             focusGroupManager();
             return;
@@ -1585,6 +1600,13 @@
         groupBusy = false;
         if (!res || !res.applied) {
           if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+          // Apply the authoritative table when available and no newer push
+          // has landed.  A refused delete confirms the group is still present.
+          if (res && res.hotkeys && pushes === before) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
           requestRender();
           // Refusal: the group is still present; repaint re-enables its
           // controls but focus falls to <body> without an explicit restore.
@@ -1655,6 +1677,14 @@
         groupBusy = false;
         if (!res || !res.applied) {
           if (res && res.error) { WM.send('alert_bookmarks', res.error); }
+          // Apply the authoritative table when available and no newer push
+          // has landed.  A refused create may carry a table that already
+          // reflects the reason for refusal (e.g. duplicate name).
+          if (res && res.hotkeys && pushes === before) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
           requestRender();
           return;
         }

@@ -2563,6 +2563,13 @@ button.btn:disabled,
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+/* Chromium's UA rule hides non-summary children of a closed <details>
+   by setting display:none on the internal ::details-content pseudo, but
+   an author display:flex declaration on the body div wins the cascade and
+   keeps the body visible even when the panel is collapsed.  This explicit
+   :not([open]) rule restores the expected closed-panel behaviour without
+   removing the flex layout that applies while the panel is open. */
+.preview-group-manager:not([open]) > .group-manager-body { display: none; }
 .group-manager-body {
   display: flex;
   flex-direction: column;

@@ -3035,3 +3035,193 @@ def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():
             "exists and no newer push won, it must apply res.hotkeys directly "
             "to avoid showing a stale group during the refresh round-trip"
         )
+
+
+# ---------------------------------------------------------------------------
+# Final-fix wave 2 tests
+# ---------------------------------------------------------------------------
+
+
+def test_closed_details_hides_group_manager_body():
+    """Fix wave 2 - closed-details display: the .group-manager-body rule sets
+    display:flex, but that overrides Chromium's UA rule that hides non-summary
+    children of a closed <details>.  A rule scoped to
+    .preview-group-manager:not([open]) must set display:none on the body so
+    the panel actually collapses.
+
+    The rule must exist because without it the body remains visible even when
+    the <details> element is closed, making the 'collapse' feature inoperable
+    in WebView2.
+    """
+    # Check that there is a rule that forces display:none on .group-manager-body
+    # (or a direct child) when the manager lacks [open].
+    not_open_body_hidden = bool(
+        re.search(
+            r"\.preview-group-manager:not\(\[open\]\)\s*[>~+\s]"
+            r"*[.#\w-]*group-manager-body[^}]*display\s*:\s*none",
+            CSS,
+            re.DOTALL,
+        )
+        or re.search(
+            r"\.preview-group-manager:not\(\[open\]\)\s*\{[^}]*display\s*:\s*none",
+            CSS,
+            re.DOTALL,
+        )
+    )
+    assert not_open_body_hidden, (
+        ".preview-group-manager:not([open]) does not set display:none on "
+        ".group-manager-body.  Without this rule, Chromium's UA stylesheet "
+        "cannot hide the body when the <details> is closed because the author "
+        "display:flex declaration on .group-manager-body wins."
+    )
+
+
+def _extract_refusal_arm(block):
+    """Return the text between '!res.applied' and the first 'return;' that
+    follows it -- the refusal arm of a then-callback."""
+    if "!res.applied" not in block:
+        return ""
+    after = block.split("!res.applied", 1)[1]
+    arm, _, _ = after.partition("return;")
+    return arm
+
+
+def test_assignment_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - makeGroupSelect's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (generation/before guard).  Without this, a refused assignment leaves the
+    page showing stale group membership until the next refresh() round-trip.
+
+    The branch must still clear groupBusy (unconditionally, before any return),
+    call requestRender(), and restore focus via focusGroupSelect().
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # Isolate makeGroupSelect's then-callback
+    ms_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(ms_block)
+
+    # Must apply res.hotkeys under a generation/before guard
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "makeGroupSelect refusal arm does not assign res.hotkeys to state.hotkeys; "
+        "the authoritative table must be applied on generation match to avoid a "
+        "stale-group round-trip"
+    )
+    assert has_generation_guard, (
+        "makeGroupSelect refusal arm applies res.hotkeys without a generation "
+        "guard (pushes !== before check); a newer push's table would be "
+        "overwritten by the stale response"
+    )
+
+    # Cleanup must be unconditional: groupBusy=false, requestRender, focus
+    assert "groupBusy = false" in ms_block, (
+        "makeGroupSelect callback does not reset groupBusy; busy lock leaks"
+    )
+    assert "requestRender()" in ms_block, (
+        "makeGroupSelect refusal arm does not call requestRender()"
+    )
+    assert "focusGroupSelect" in ms_block, (
+        "makeGroupSelect refusal arm does not restore focus via focusGroupSelect"
+    )
+
+
+def test_add_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - doAdd's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused add leaves the page showing a
+    potentially stale groups list until the next refresh().
+
+    groupBusy=false and requestRender() must remain unconditional.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # doAdd is a closure inside makeGroupManager; isolate from doAdd to the
+    # next closure-level function definition.
+    da_block = src.split("function doAdd()", 1)[1].split("\n    function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(da_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "doAdd refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "refused add should still show the authoritative groups list"
+    )
+    assert has_generation_guard, (
+        "doAdd refusal arm applies res.hotkeys without checking pushes !== before; "
+        "a newer push's authoritative table would be overwritten"
+    )
+
+    assert "groupBusy = false" in da_block, "doAdd callback does not reset groupBusy"
+    assert "requestRender()" in da_block, (
+        "doAdd refusal arm does not call requestRender()"
+    )
+
+
+def test_rename_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - renameGroup's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused rename leaves the stale name
+    visible until the next refresh().
+
+    groupBusy=false, requestRender(), and focusGroupManager() must be
+    unconditional (fire on every refusal, not only when hotkeys is absent).
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    rg_block = src.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(rg_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "renameGroup refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "a refused rename should show the authoritative (unchanged) name"
+    )
+    assert has_generation_guard, (
+        "renameGroup refusal arm applies res.hotkeys without a generation guard; "
+        "a newer push's table would be overwritten"
+    )
+
+    assert "groupBusy = false" in rg_block, (
+        "renameGroup callback does not reset groupBusy"
+    )
+    assert "requestRender()" in rg_block, (
+        "renameGroup refusal arm does not call requestRender()"
+    )
+    assert "focusGroupManager" in rg_block, (
+        "renameGroup refusal arm does not restore focus via focusGroupManager"
+    )
+
+
+def test_delete_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - deleteGroup's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused delete shows a stale groups list
+    until the next refresh().
+
+    groupBusy=false, requestRender(), and focusGroupManager() must be
+    unconditional.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    dg_block = src.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(dg_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "deleteGroup refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "a refused delete should show the authoritative groups list"
+    )
+    assert has_generation_guard, (
+        "deleteGroup refusal arm applies res.hotkeys without a generation guard; "
+        "a newer push's table would be overwritten"
+    )
+
+    assert "groupBusy = false" in dg_block, (
+        "deleteGroup callback does not reset groupBusy"
+    )
+    assert "requestRender()" in dg_block, (
+        "deleteGroup refusal arm does not call requestRender()"
+    )
+    assert "focusGroupManager" in dg_block, (
+        "deleteGroup refusal arm does not restore focus via focusGroupManager"
+    )
