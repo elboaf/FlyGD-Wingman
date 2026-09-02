@@ -1,3 +1,15 @@
+"""Pure arithmetic training time calculator.
+
+Calculates exact remaining seconds to train skills using deterministic EVE
+thresholds and Fraction arithmetic, with single final ceiling. All-or-nothing
+validation: unresolved skill IDs or invalid metadata abort the entire sum.
+
+Threshold table is canonical; formula accumulates seconds without per-skill
+rounding. Character attributes must be exactly the five named fields; metadata
+attribute names validate against those names before lookup. Deficit is clamped
+to non-negative (already-trained skills produce zero contribution).
+"""
+
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +39,7 @@ class TrainingEstimate:
 
 
 _RANK_ONE_THRESHOLDS = (0, 250, 1415, 8000, 45255, 256000)
+# Canonical threshold table: _RANK_ONE_THRESHOLDS[level] * rank = total SP.
 
 
 def skill_point_threshold(rank: int, level: int) -> int:
@@ -44,24 +57,18 @@ def estimate(
     attributes,
     metadata,
 ) -> TrainingEstimate:
-    # Step 1: Validate skill_points_complete
     if not skill_points_complete:
         return TrainingEstimate(None, REFRESH_REQUIRED)
 
-    # Step 2: Validate attributes
     if not attributes or not all(attr in attributes for attr in ATTRIBUTE_NAMES):
         return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
 
-    # All attributes must be positive
     if not all(v > 0 for v in attributes.values()):
         return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
 
-    # Step 3: Calculate total seconds using Fraction arithmetic
     total_seconds = Fraction(0)
 
     for req in requirements:
-        # Get skill ID (case-insensitive lookup)
-        # skill_ids maps skill_name -> skill_id
         skill_id = None
         for sname, sid in skill_ids.items():
             if sname.lower() == req.skill_name.lower():
@@ -71,34 +78,45 @@ def estimate(
         if skill_id is None:
             return TrainingEstimate(None, METADATA_UNAVAILABLE)
 
-        # Check if metadata exists
         if skill_id not in metadata:
             return TrainingEstimate(None, METADATA_UNAVAILABLE)
 
         meta = metadata[skill_id]
 
-        # Get current SP (0 if absent)
+        try:
+            target_sp = skill_point_threshold(meta.rank, req.level)
+        except ValueError:
+            return TrainingEstimate(None, METADATA_UNAVAILABLE)
+
+        if not isinstance(meta.primary_attribute, str) or not isinstance(
+            meta.secondary_attribute, str
+        ):
+            return TrainingEstimate(None, METADATA_UNAVAILABLE)
+
+        if (
+            meta.primary_attribute.lower() not in ATTRIBUTE_NAMES
+            or meta.secondary_attribute.lower() not in ATTRIBUTE_NAMES
+        ):
+            return TrainingEstimate(None, METADATA_UNAVAILABLE)
+
         current_sp = skill_points.get(skill_id, 0)
-
-        # Calculate target SP
-        target_sp = skill_point_threshold(meta.rank, req.level)
-
-        # Calculate deficit (clamped to non-negative)
         deficit = max(0, target_sp - current_sp)
 
         if deficit > 0:
-            # Get attributes (case-insensitive)
-            attrs = {k.lower(): v for k, v in attributes.items()}
-            primary = attrs.get(meta.primary_attribute.lower(), 0)
-            secondary = attrs.get(meta.secondary_attribute.lower(), 0)
+            primary = attributes.get(meta.primary_attribute.lower(), None)
+            secondary = attributes.get(meta.secondary_attribute.lower(), None)
 
-            # Calculate seconds using the formula
-            seconds_fraction = Fraction(deficit * 120, primary * 2 + secondary)
+            if primary is None or secondary is None:
+                return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
+
+            denominator = primary * 2 + secondary
+            if denominator <= 0:
+                return TrainingEstimate(None, ATTRIBUTES_UNAVAILABLE)
+
+            seconds_fraction = Fraction(deficit * 120, denominator)
             total_seconds += seconds_fraction
 
-    # Round up once at the end
     result_seconds = math.ceil(total_seconds)
-
     return TrainingEstimate(result_seconds, AVAILABLE)
 
 
@@ -109,27 +127,24 @@ def format_duration(seconds: int | None) -> str:
     if seconds == 0:
         return "0m"
 
-    # Round to nearest minute: (seconds + 30) // 60
     minutes = (seconds + 30) // 60
 
-    # Positive seconds that round to 0 minutes get special treatment
     if minutes == 0:
         return "<1m"
 
-    # Convert to days, hours, minutes
     days = minutes // (24 * 60)
     remaining_minutes = minutes % (24 * 60)
     hours = remaining_minutes // 60
     mins = remaining_minutes % 60
 
-    # Build result with at most two units
     parts = []
     if days > 0:
         parts.append(f"{days}d")
-    if hours > 0:
         parts.append(f"{hours}h")
-    if mins > 0:
+    elif hours > 0:
+        parts.append(f"{hours}h")
+        parts.append(f"{mins}m")
+    else:
         parts.append(f"{mins}m")
 
-    # Return only the first two parts
     return " ".join(parts[:2])

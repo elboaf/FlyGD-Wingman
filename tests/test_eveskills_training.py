@@ -18,6 +18,12 @@ META = training.SkillTrainingMetadata(
     secondary_attribute="willpower",
     fetched_utc=NOW,
 )
+META_RANK_3 = training.SkillTrainingMetadata(
+    rank=3,
+    primary_attribute="charisma",
+    secondary_attribute="memory",
+    fetched_utc=NOW,
+)
 
 
 def req(name="Gunnery", level=5):
@@ -94,6 +100,89 @@ def test_one_missing_metadata_record_suppresses_the_whole_sum():
     assert result == training.TrainingEstimate(None, training.METADATA_UNAVAILABLE)
 
 
+def test_malformed_rank_returns_metadata_unavailable():
+    bad_meta = training.SkillTrainingMetadata(
+        rank=-1,
+        primary_attribute="perception",
+        secondary_attribute="willpower",
+        fetched_utc=NOW,
+    )
+    result = training.estimate(
+        [req(level=3)],
+        {"gunnery": 3300},
+        {3300: 0},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={3300: bad_meta},
+    )
+    assert result == training.TrainingEstimate(None, training.METADATA_UNAVAILABLE)
+
+
+def test_unknown_metadata_attribute_name_returns_metadata_unavailable():
+    bad_meta = training.SkillTrainingMetadata(
+        rank=1,
+        primary_attribute="invalid_attr",
+        secondary_attribute="willpower",
+        fetched_utc=NOW,
+    )
+    result = training.estimate(
+        [req(level=3)],
+        {"gunnery": 3300},
+        {3300: 0},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={3300: bad_meta},
+    )
+    assert result == training.TrainingEstimate(None, training.METADATA_UNAVAILABLE)
+
+
+def test_missing_one_character_attribute_returns_attributes_unavailable():
+    incomplete_attrs = {
+        "charisma": 19,
+        "intelligence": 20,
+        "memory": 20,
+        "perception": 27,
+    }
+    result = training.estimate(
+        [req(level=3)],
+        {"gunnery": 3300},
+        {3300: 0},
+        skill_points_complete=True,
+        attributes=incomplete_attrs,
+        metadata={3300: META},
+    )
+    assert result == training.TrainingEstimate(None, training.ATTRIBUTES_UNAVAILABLE)
+
+
+def test_already_trained_skill_produces_zero_seconds():
+    result = training.estimate(
+        [req(level=1)],
+        {"gunnery": 3300},
+        {3300: 500},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={3300: META},
+    )
+    assert result == training.TrainingEstimate(0, training.AVAILABLE)
+
+
+def test_multiple_skills_with_different_attribute_pairs_accumulate():
+    result = training.estimate(
+        [req("Gunnery", 2), req("Navigation", 2)],
+        {"gunnery": 3300, "navigation": 3449},
+        {3300: 0, 3449: 0},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={
+            3300: META,
+            3449: META_RANK_3,
+        },
+    )
+    assert result.status == training.AVAILABLE
+    assert result.seconds > 0
+    assert isinstance(result.seconds, int)
+
+
 @pytest.mark.parametrize(
     ("seconds", "label"),
     [
@@ -103,6 +192,8 @@ def test_one_missing_metadata_record_suppresses_the_whole_sum():
         (12 * 60, "12m"),
         (4 * 3600 + 20 * 60, "4h 20m"),
         (2 * 86400 + 4 * 3600 + 31 * 60, "2d 4h"),
+        (2 * 86400 + 30 * 60, "2d 0h"),
+        (3 * 3600 + 30 * 60, "3h 30m"),
     ],
 )
 def test_format_duration(seconds, label):
