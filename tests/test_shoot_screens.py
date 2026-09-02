@@ -956,30 +956,29 @@ def test_groups_stage_scrolls_to_preview_group_manager():
         )
 
 
-def test_narrow_stage_scrolls_to_a_group_select_row():
-    """The narrow stage must scroll to a specific long row, not to
-    pane.scrollTop = 0 (the top of the pane).
-
-    The brief calls for 840x625 with long character/group names visible.
-    Scrolling to the top shows the global keybind rows, not the character
-    rows where the group select appears.
-    """
+def test_narrow_stage_frames_roster_heading_at_scrollport_start():
+    """The viewport-floor stage starts at the collapsed roster heading."""
     narrow_screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
-    # Must target a character row or group select element, not just scroll top
-    assert (
-        "preview-group-select" in script
-        or "scrollIntoView" in script
-        or "data-char" in script
-        or "aria-label" in script
-    ), (
-        "narrow stage must scroll to a specific long-name character row "
-        "using a stable selector -- scrollTop = 0 shows only global keybinds, "
-        "missing the character rows where group names appear"
+    selectors = _query_selector_arguments(script)
+    assert selectors.count("#preview-roster-heading") == 1, selectors
+    assert "heading.scrollIntoView({block: 'start', behavior: 'instant'})" in script
+
+
+def test_detail_stage_scrolls_opened_character_detail_into_view():
+    """Opening after the bottom stage must deterministically reframe detail."""
+    detail_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-detail"
     )
+    script = shoot.screen_setup_script(detail_screen)
+    assert script is not None
+    assert "configure.getAttribute('aria-controls')" in script
+    assert "document.getElementById(detailId)" in script
+    assert "detail.scrollIntoView({block: 'center', behavior: 'instant'})" in script
+    assert script.index("configure.click()") < script.index("detail.scrollIntoView")
 
 
 def test_fixture_backed_preview_staging_does_not_invoke_write_methods():

@@ -256,7 +256,14 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  });\n"
             "  var configure = document.querySelector(\n"
             "    '[data-preview-configure=\"" + long_name + "\"]');\n"
-            "  if (configure) { configure.click(); }\n" + copy_click + "}())"
+            "  if (configure) {\n"
+            "    var detailId = configure.getAttribute('aria-controls');\n"
+            "    configure.click();\n"
+            "    var detail = document.getElementById(detailId);\n"
+            "    if (detail) {\n"
+            "      detail.scrollIntoView({block: 'center', behavior: 'instant'});\n"
+            "    }\n"
+            "  }\n" + copy_click + "}())"
         )
     if screen.key == "settings-previews-groups":
         # Load the authoritative dev fixture via onPreviewHotkeys (read-only;

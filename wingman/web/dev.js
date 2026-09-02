@@ -764,13 +764,16 @@
   //   Tanuki Solette    -- offline, assigned to Logistics and conflicts with
   //                        All forward, so the local conflict copy renders.
   //   Aleksandrina ...  -- offline, assigned to DPS and Copy-enabled.
-  //   Sera Vahn          -- offline, assigned to Logistics, excluded (opted-out
+  //   Mara Veld         -- offline, assigned to DPS.
+  //   Sera Vahn         -- offline, assigned to Logistics, excluded (opted-out
   //                        AND assigned -- the combination the page must handle).
   //
   // Groups:
-  //   DPS      (g-dps)    -- members Aiga + Aleksandrina, cycle Ctrl+Shift+1.
-  //   Logistics (g-logi)  -- member Tanuki, cycle Ctrl+Shift+1 (deliberate
-  //                          collision with DPS so the collision branch renders).
+  //   DPS      (g-dps)    -- members Aiga + Aleksandrina + Mara,
+  //                          cycle Ctrl+Shift+1.
+  //   Logistics (g-logi)  -- members Tanuki + Sera, cycle Ctrl+Shift+1
+  //                          (deliberate collision with DPS so the collision
+  //                          branch renders).
   //   Empty group (g-empty) -- zero members, no bind (zero-member UI path).
   //
   // excluded[]: Sera only, while still assigned to Logistics. Aiga is All-only
