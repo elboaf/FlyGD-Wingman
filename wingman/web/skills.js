@@ -28,6 +28,8 @@
   var filterText = '';
   var asked = false;      // has the page asked Python for state yet
   var autoExpanded = false; // has the one-shot small-roster expansion run
+  var copyStatusPlan = ''; // plan named by the current clipboard attempt
+  var copyAttemptSeq = 0; // invalidates superseded asynchronous completions
 
   /* S1. The expanded row is the ONLY surface in the whole application for
    * forgetting a character or re-authenticating it (see THE LOCKOUT GUARD
@@ -240,6 +242,10 @@
 
   function selectPlan(name) {
     if (!STATE || name === STATE.selected_plan_name) return;
+    // Feedback belongs to the old selection, and either asynchronous stage
+    // of its copy attempt may still complete after this click.
+    copyAttemptSeq += 1;
+    resetCopyStatus('');
     // Every cached detail was computed against the OLD plan and is now
     // answering a question nobody asked. Dropping pendingDetail as well is
     // what makes the in-flight replies land in requestDetail's mismatch
@@ -334,8 +340,10 @@
   });
 
   WM.el('skills-reload-plans').addEventListener('click', function () {
-    // A reload can change which plan names exist, so the cached details
-    // are no more trustworthy than after a plan switch.
+    // A reload can replace a plan without renaming it, so invalidate pending
+    // clipboard work as well as detail data before asking Python to reload.
+    copyAttemptSeq += 1;
+    resetCopyStatus('');
     details = {};
     pendingDetail = {};
     WM.send('skills_reload_plans');
@@ -419,19 +427,63 @@
       ? 'Copies every skill in “' + name + '” for EVE\u2019s skill plan '
         + 'import. The game drops the ones already trained.'
       : '';
+    // A feedback message describes one plan. An authoritative push can also
+    // change the selection (for example after plans are reloaded), so it must
+    // invalidate the old attempt just like an explicit plan click does.
+    if (copyStatusPlan && copyStatusPlan !== name) {
+      copyAttemptSeq += 1;
+      resetCopyStatus('');
+    }
+  }
+
+  function setCopyStatus(message, failed) {
+    var status = WM.el('skills-copy-status');
+    status.textContent = message;
+    status.classList.toggle('err', !!failed);
+  }
+
+  function resetCopyStatus(plan) {
+    copyStatusPlan = plan;
+    setCopyStatus('', false);
+  }
+
+  function copyAttemptIsCurrent(token, plan) {
+    return token === copyAttemptSeq && plan === copyStatusPlan;
   }
 
   WM.el('skills-copy-plan').addEventListener('click', function () {
     var name = (STATE && STATE.selected_plan_name) || '';
     if (!name) return;
+    // Claim ownership before either asynchronous stage can fail. The token
+    // also distinguishes two attempts for the same plan and a switch away
+    // and back, where comparing only the plan name would accept stale work.
+    copyAttemptSeq += 1;
+    var token = copyAttemptSeq;
+    resetCopyStatus(name);
     // Python returns the text and the page owns the clipboard write, the
     // same split list.js:396-401 uses for `Copy link`: with Tk gone there
     // is no toolkit clipboard and navigator.clipboard is right here.
-    // Python has already put the outcome on the status strip either way --
     // "" is a plan the last reload invalidated, not an empty plan, because
     // plans.parse rejects a file with no requirements.
     WM.send('skills_plan_text', name).then(function (text) {
-      if (text) navigator.clipboard.writeText(text);
+      if (!copyAttemptIsCurrent(token, name)) return;
+      // Python owns the missing-plan warning: it knows this listed plan
+      // vanished during a reload, while the page only owns clipboard results.
+      if (!text) { return; }
+      try {
+        navigator.clipboard.writeText(text).then(function () {
+          if (!copyAttemptIsCurrent(token, name)) return;
+          setCopyStatus('Plan copied to clipboard.', false);
+        }, function () {
+          if (!copyAttemptIsCurrent(token, name)) return;
+          setCopyStatus('Could not copy the plan to the clipboard.', true);
+        });
+      } catch (err) {
+        // A clipboard denied before it returns a promise has the same
+        // user-facing result as a rejected write.
+        if (!copyAttemptIsCurrent(token, name)) return;
+        setCopyStatus('Could not copy the plan to the clipboard.', true);
+      }
     });
   });
 

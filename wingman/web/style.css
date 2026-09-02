@@ -1135,21 +1135,13 @@ button.btn:disabled,
    changing under the pointer, which is how it read as "every column, every
    visit". Reserving the width unconditionally costs the label 12px it was
    never entitled to keep and makes the header stop moving. */
-/* Round 6, P2-2. `visibility: hidden` until a column carried .sorted, and
-   the list opens in delivery order with nothing sorted -- so on first
-   open all four headers had ZERO affordance and read as static labels.
-   Sixteen recordings differing only in a timestamp make Size and Length
-   the fast route to "which one was the good fight", and the whole
-   mechanism was built and then hidden behind knowing it was there.
-
-   opacity, not visibility, so the glyph is present-but-quiet rather than
-   absent: .28 is legible as a mark without competing with the label, and
-   the width was already reserved unconditionally by the rule above (see
-   its note -- reserving it is what stopped the header moving on click),
-   so nothing reflows at any of the three levels. */
+/* Keep the inactive glyph transparent: showing every triangle made all
+   columns look sorted at once. Opacity, not visibility or removal, keeps
+   the width reserved unconditionally, so hover and sorting never reflow
+   a header label. */
 .list-head > span::after {
   content: "\25B2"; font-size: 8px; flex: none;
-  width: 8px; opacity: .28;
+  width: 8px; opacity: 0;
 }
 .list-head > span:hover::after { opacity: .7; }
 .list-head > span.sorted::after { opacity: 1; }
@@ -1544,12 +1536,10 @@ button.btn:disabled,
 .check.inert input:not(:checked) + .box {
   background: var(--sunken);
 }
-/* The Size column's cell for a character that cannot be sized yet.
-   Carries a title explaining how to make one settable, and therefore has
-   to be HOVERABLE: as an empty span it computed to 46.44 x 0 and
-   elementFromPoint at its centre returned null, so the explanation could
-   never be reached. The dash gives it a line box, and says "nothing here"
-   to someone who never hovers at all. */
+/* The Saved geometry detail's Size… placeholder for a character that cannot
+   be sized yet. It carries a title explaining how to make one settable, and
+   therefore has to be HOVERABLE: an empty span has no hover target. The dash
+   gives it a line box and says the missing action is expected. */
 .size-none { color: var(--text-faint); cursor: default; }
 
 /* The per-character exceptions to a global preview default. Sits directly
@@ -2372,36 +2362,33 @@ button.btn:disabled,
   --preview-bind-head-height: 22px;
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* A fixed name column, four content-sized control tracks, then one
+  /* A bounded name column, four content-sized control tracks, then one
      flexible one. The character name sits in track 1 rather than taking a
      line of its own -- the `.lab` override below no longer spans -- and
-     the four that follow size the CONTROLS beside it: Preview, bind button,
-     the keybind actions cell (Clear/Edit… together, `.rowacts`), and the
-     Geometry actions cell (Size…/Copy… together) -- exactly the four
-     children previews.js's makeRow appends after the label. Clear and Edit… used to be two of those children, one track
-     each; they now share the one `.rowacts` span, which is what dropped
-     the count from five. Lock and Never minimize used to sit here too, as
-     a sixth and a conditional seventh; both now render once, in their own
-     disclosures under their global toggles, rather than as a track on
-     every row. The trailing minmax(0, 1fr) absorbs the leftover width so
-     the four stay packed at the start instead of spreading.
+     the four that follow size the controls beside it: Preview, bind button,
+     the keybind actions cell (Clear/Edit… together, `.rowacts`), and
+     Configure. Rare group and geometry controls sit in the full-grid
+     disclosure below the character row, so they do not widen the scan line.
+     Clear and Edit… used to be two of those children, one track each; they
+     now share the one `.rowacts` span, which is what dropped the count from
+     five. Lock and Never minimize used to sit here too, as a sixth and a
+     conditional seventh; both now render once, in their own disclosures
+     under their global toggles, rather than as a track on every row. The
+     trailing minmax(0, 1fr) absorbs the leftover width so the four stay
+     packed at the start instead of spreading.
 
      THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
      this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. `minmax(150px, 260px)`
+     in, so the bind button moves between sessions. `minmax(210px, 320px)`
      keeps the stability B1 bought -- both ends are lengths, so the track
      never consults the roster -- while dropping the cross-list half of
      its rule. Bookmarks still stacks, because "Convert EvE-Scout
      Bookmarks" is 189.6px and genuinely needs its own line.
 
-     Round 6 raised the ceiling from a flat 150px. At 150 a name was
-     ellipsized to 106px (the track less the `offline` tag) on a window
-     with 191px of empty gutter beside the card -- the truncation was not
-     paying for anything. The floor stays 150 so the 840 floor is
-     unaffected; the 260 ceiling is only reachable once the card is wide
-     enough, which it now is (see the max-width block below). Names wider
-     than the resolved track still ellipsize and still carry a `title`.
+     The 210px floor and 320px ceiling reclaim enough collapsed-row space
+     for names without returning to content-sized tracks. Names wider than
+     the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2414,14 +2401,19 @@ button.btn:disabled,
      display:contents, so the grid sees one flat stream of cells and cannot
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
-     That is why makeRow always appends exactly one of {the opt-out
-     checkbox} and {the Size control or its filler} -- cycle forward/back
-     have no character, and without the filler those two rows would
-     misalign every row after them. Change the number of per-row children
-     and this number changes with it -- test_page_conventions.py now
-     DERIVES the expected count from makeRow's own appends rather than
-     trusting this comment. */
-  grid-template-columns: minmax(150px, 260px) repeat(4, max-content) minmax(0, 1fr);
+     That is why makeRow appends the same collapsed identity, Preview,
+     keybind, action and Configure cells for character and cycle rows.
+     Character-specific Size… and Copy… controls are in the full-grid detail,
+     not the scan line. Change the number of per-row children and this number
+     changes with it -- test_page_conventions.py derives the expected count
+     from makeRow's unconditional appends rather than trusting this comment. */
+  grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
+}
+
+/* Five gaps reclaim the 20px that overflowed the measured window floor;
+   the identity and control tracks keep their usable widths. */
+@media (max-width: 840px) {
+  #preview-binds { column-gap: 6px; }
 }
 
 /* Round 6. The 620px measure is right for this section's PROSE and wrong
@@ -2518,8 +2510,8 @@ button.btn:disabled,
 
 /* This one no longer merely restates the override above. While B1
    collapsed the column unconditionally, this block said the same thing
-   twice; the name sits in a 150px track now, so below 720px this is what
-   would actually hand it the whole line back instead of ellipsizing it in
+   twice; the name sits in a bounded 210px-to-320px track now, so below
+   720px this is what would actually hand it the whole line back instead of ellipsizing it in
    a track a narrow card cannot afford. WOULD, not does -- the CSS floor
    is 840x625 at every scaling (see the note at #eve-binds), so 720px is
    still unreachable through the window and this is still kept for the
@@ -2533,25 +2525,36 @@ button.btn:disabled,
    hide, so a character who has logged out still shows its saved binding. */
 #preview-binds .row > .lab.dim { color: var(--text-faint); }
 
-/* Group assignment select inside the character name cell. The `.lab` cell
-   is already a flex row; when groups exist, makeRow adds .has-group-select
-   and appends the select, turning it into a two-line column instead. No
-   new grid track is added -- the select lives inside track 1 (.lab), and
-   the grid template stays at five cell-bearing tracks.
+/* One character detail spans the grid rather than becoming an extra table
+   cell. It keeps rare assignment and geometry changes close to the row
+   while the collapsed line stays useful for roster-scale verification. */
+.preview-character-detail {
+  grid-column: 1 / -1;
+  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px;
+  /* One sticky table header plus one sticky group header can cover this
+     disclosure after Configure scrolls it into view. Their shared measured
+     height is defined by the table, so this clearance follows it. */
+  scroll-margin-top: calc(var(--preview-bind-head-height) * 2);
+  padding: 5px 0 7px;
+  border-top: 1px solid var(--field-border);
+}
+.preview-detail-field {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.preview-detail-label {
+  font-size: var(--fs-muted); color: var(--text-dim);
+}
+.preview-character-detail .preview-group-select {
+  min-width: 160px; max-width: 240px;
+}
+.preview-character-detail .geometry-actions { min-height: 28px; }
+.preview-configure { justify-self: start; }
 
-   `.lab.dim .preview-group-select` keeps the select readable on an offline
-   row: `.lab.dim` dims the name to --text-faint, but the select should
-   stay at --text so it is legible without relying solely on colour.     */
-#preview-binds .row > .lab.has-group-select {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
-#preview-binds .preview-group-select {
-  width: 100%; min-width: 0; max-width: 100%;
-}
-#preview-binds .lab.dim .preview-group-select {
-  color: var(--text);
+/* A conditional conflict is a sibling after its affected row. Since rows
+   are display:contents, it must span every track rather than add a cell. */
+.preview-bind-conflict {
+  grid-column: 1 / -1;
+  color: var(--danger); font-size: var(--fs-muted);
 }
 
 /* Group manager disclosure block. Spans the full grid width. Uses
@@ -2571,7 +2574,7 @@ button.btn:disabled,
 }
 .preview-group-manager > summary:hover { color: var(--text); }
 .preview-group-manager > summary:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 /* Chromium's UA rule hides non-summary children of a closed <details>
@@ -2699,11 +2702,13 @@ button.btn:disabled,
    a long root from pushing Change beyond that width. */
 .es-context-card { width: 100%; }
 
-/* Quiet tools sit between context and work rather than becoming another
-   card in the copy flow. They wrap at the window floor instead of creating
-   horizontal overflow. */
+/* Quiet tools remain siblings between context and work rather than becoming
+   another card or route. Pulling the group toward the context and aligning it
+   with that card's content associates Backups and Formations with the selected
+   profile without putting either inside the copy workflow. */
 .es-profile-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
+  margin-top: -4px; padding-inline: 16px;
 }
 .es-profile-tools[hidden] { display: none; }
 #es-formations-open[hidden] { display: none; }
@@ -3237,6 +3242,10 @@ button.btn:disabled,
 #es-identity-account, #es-character-add, #ai-roster-character { flex: 1; }
 #es-manage-account-name, #es-account-name { flex: 1; }
 .es-identify-actions { margin-top: 4px; }
+.ai-prerequisite {
+  flex: 0 0 100%; margin: 0 0 4px; color: var(--warn);
+  font-size: var(--fs-body); font-weight: 650;
+}
 
 .es-target-choice { align-items: flex-start; }
 .es-target-text { display: flex; min-width: 0; flex-direction: column; }
@@ -3354,8 +3363,8 @@ button.btn:disabled,
    whoever is logged in.
 
    THAT WAS ONCE TRUE OF BOTH SECTIONS, and now describes this one alone.
-   #preview-binds took its name back into a FIXED 150px track, which keeps
-   the content-independence this argument is about while spending a column
+   #preview-binds took its name back into a BOUNDED 210px-to-320px track,
+   which keeps the content-independence this argument is about while spending a column
    on it -- affordable there because character names are uniform and short,
    and not here, where "Convert EvE-Scout Bookmarks" is 189.6px. The
    cross-list half of B1's rule is retired; the no-max-content half is not,
@@ -3662,9 +3671,15 @@ button.btn:disabled,
 
    Changing the padding here instead would move eighteen bookmark bind
    rows, Skills' two link buttons and Profiles' `Change...`, none of which
-   anyone reported. */
+   anyone reported.
+
+   The resting label uses --text-dim rather than --text-faint. These are
+   enabled actions, including compact Clear / Edit… controls and Skills'
+   group actions; making them legible at rest does not promote them out of
+   the documented subordinate treatment. Disabled controls still become
+   quieter through the shared opacity rule above. */
 .linkbtn {
-  background: none; border: 0; color: var(--text-faint);
+  background: none; border: 0; color: var(--text-dim);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
   padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
 }
@@ -3748,14 +3763,37 @@ button.btn:disabled,
 .settings .row > select.field { flex: 0 0 150px; }
 .settings .row > input#f-category { flex: 0 0 90px; }
 
-/* No wrapper convention exists for input[type=range] the way .check/.radio
-   exist for checkboxes/radios -- `color-scheme: dark` above already gets a
-   dark-themed native track and thumb from WebView2's Chromium, so the only
-   thing left off-brand is the thumb's default blue. accent-color is enough
-   to fix that without a bespoke track/thumb build. */
-input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
+/* Range controls use Chromium's WebKit pseudo-elements because a native
+   thumb brings an unrelated blue into the dark control vocabulary. The
+   geometry is shared by Preview opacity and alert volume; their input /
+   change listeners still own live readout versus persistence separately. */
+input[type="range"] {
+  flex: 1; min-width: 0; height: 20px;
+  appearance: none; -webkit-appearance: none;
+  background: transparent; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--track); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+}
+input[type="range"]::-webkit-slider-thumb {
+  width: 16px; height: 16px; margin-top: -5px;
+  appearance: none; -webkit-appearance: none;
+  background: var(--control); border: 2px solid var(--brand-edge);
+  border-radius: 50%;
+}
+input[type="range"]:hover:not(:disabled)::-webkit-slider-thumb {
+  background: var(--control-hover);
+}
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 .range-value {
-  flex: none; min-width: 2.5em; text-align: right;
+  flex: none; min-width: 4em; padding: 3px 6px; text-align: right;
+  background: var(--sunken); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
   color: var(--text-dim); font-size: var(--fs-mono); font-family: var(--mono);
 }
 
@@ -4364,6 +4402,9 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .rail-plan:hover, .rail-item:hover, .fm-item:hover {
   background: var(--hover); color: var(--text);
 }
+/* Selection owns the fill. Keyboard focus stays the outline-only treatment
+   in the shared :focus-visible rule, so a focused neighbour cannot look
+   like a second current location. */
 .rail-plan.active, .rail-item.active, .fm-item.active {
   background: var(--row-active); border-left-color: var(--brand); color: var(--text);
 }
@@ -4385,6 +4426,14 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
 #skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
+/* Clipboard access finishes in the page, not Python, so this local status
+   confirms the action at its source. It remains mounted while empty because
+   a role=status region shown only with new text can be missed by a reader. */
+.skills-copy-status {
+  flex: none; min-height: 17px; margin: -4px 0;
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
+.skills-copy-status.err { color: var(--err); }
 
 /* Collapses when empty, so the roster sits directly under the heading on
    the common path. Author rules beat the UA stylesheet's
@@ -4716,6 +4765,11 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 button.btn.danger { border-color: var(--danger); color: var(--danger); }
 button.btn.danger:hover:not(:disabled) {
   background: var(--danger-solid); color: var(--on-accent);
+}
+/* A disabled destructive action is unavailable, not an active warning.
+   Leave opacity and cursor to the shared disabled rule above. */
+button.btn.danger:disabled {
+  border-color: var(--control-border); color: var(--text-faint);
 }
 /* `.linkbtn.danger` STOOD HERE and is deleted, not moved. It survived L5
    for one site -- skills.js's `Forget character` -- and R3 converted that

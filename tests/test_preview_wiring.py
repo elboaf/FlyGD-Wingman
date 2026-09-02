@@ -7,6 +7,7 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import contextlib
 import copy
+import re
 import threading
 import types
 
@@ -2012,9 +2013,8 @@ def test_group_delete_uses_wm_confirm_not_window_confirm():
     )
 
 
-def test_make_group_select_appends_to_lab_not_row():
-    """makeGroupSelect must append its <select> to `lab`, never directly
-    to `row` -- an extra row.appendChild would break the five-cell grid."""
+def test_make_group_select_returns_a_detail_control_not_a_row_cell():
+    """Assignment remains a returned control and never adds a grid cell."""
     js = _web("previews.js")
     assert "function makeGroupSelect" in js, (
         "makeGroupSelect is not defined in previews.js"
@@ -2025,22 +2025,63 @@ def test_make_group_select_appends_to_lab_not_row():
         "makeGroupSelect calls row.appendChild, which would add a sixth "
         "grid cell and break the five-track layout"
     )
-    # Must append to lab (or return a node the caller appends to lab).
-    assert "lab.appendChild" in body or "return " in body, (
-        "makeGroupSelect neither appends to lab nor returns a node"
+    assert "return sel;" in body, "makeGroupSelect must return its control"
+
+
+def test_make_group_select_only_when_groups_exist_in_the_detail():
+    """The detail omits assignment cleanly when no named groups exist."""
+    js = _web("previews.js")
+    assert "function makeCharacterDetail" in js
+    body = js.split("function makeCharacterDetail", 1)[1].split("\n  function ", 1)[0]
+    assert "groups().length" in body, (
+        "makeCharacterDetail does not guard the group select on groups().length; "
+        "the select would render even with no groups defined"
     )
 
 
-def test_make_group_select_only_when_groups_exist():
-    """The group select is only built (and only appended to lab) when
-    groups().length is truthy -- an empty group list should leave the
-    lab unchanged."""
+def test_preview_detail_has_single_open_state_and_safe_identity_lookup():
+    """Only one character detail survives a render, addressed without CSS escaping."""
     js = _web("previews.js")
-    body = js.split("function makeRow", 1)[1].split("return row;", 1)[0]
-    # The conditional guard: groups().length before appending the select.
-    assert "groups().length" in body, (
-        "makeRow does not guard the group select on groups().length; "
-        "the select would always render even with no groups defined"
+    assert "var openDetailName" in js
+    assert "openDetailName === character" in js
+    assert "function detailId" in js
+    assert "document.getElementById(detailId(" in js
+
+
+def test_authoritative_refresh_closes_a_detail_for_a_missing_character():
+    """A stale detail must not outlive the character it configures."""
+    js = _web("previews.js")
+    render = js.split("function render()", 1)[1].split("function send(", 1)[0]
+    assert "openDetailName" in render and "rows()" in render
+    assert "openDetailName = null" in render
+    assert "preview-roster-heading" in js
+
+
+def test_detail_mutations_restore_focus_only_after_recreating_the_detail():
+    """A rerender must restore the surviving detail before its changed control."""
+    js = _web("previews.js")
+    assert "detailFocusIntent" in js
+    assert "function focusCharacterDetailControl" in js
+    select = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "rememberDetailFocus(characterName, 'group')" in select
+    assert "focusGroupSelect(characterName)" in select
+
+
+def test_local_bind_conflict_copy_uses_authoritative_collision_state():
+    """Warnings describe actual collision owners, not a second registration model."""
+    js = _web("previews.js")
+    assert "function makeBindConflict" in js
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    for source in (
+        "clashes(gesture)",
+        "sharers(gesture)",
+        "bookmarkClash(gesture)",
+        "state.registration",
+    ):
+        assert source in block
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert (
+        "makeBindConflict(label, gesture, character, isExcluded(character))" in append
     )
 
 
@@ -2855,6 +2896,94 @@ def test_delete_refusal_always_alerts_user():
     )
 
 
+def test_detail_focus_restoration_is_scoped_to_the_current_interaction():
+    """A late Copy or group reply cannot steal focus after another detail opens."""
+    js = _web("previews.js")
+    assert "var detailInteraction = 0;" in js
+
+    restore = js.split("function restoreDetailFocus", 1)[1].split("\n  function ", 1)[0]
+    assert "intent.interaction !== detailInteraction" in restore
+    assert "focusRosterHeading" not in restore
+
+    copy = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "interaction !== detailInteraction" in copy
+    assert "openDetailName !== name" in copy
+
+
+def test_closing_or_leaving_previews_invalidates_pending_detail_focus():
+    """A response after a closed detail or section leave has no focus side effect."""
+    js = _web("previews.js")
+    configure = js.split("configure.addEventListener('click'", 1)[1].split(
+        "requestRender();", 1
+    )[0]
+    assert "detailInteraction += 1;" in configure
+
+    section = js.split("document.addEventListener('wm:section'", 1)[1].split(
+        "\n  refresh();", 1
+    )[0]
+    assert "detailInteraction += 1;" in section
+    assert "detailFocusIntent = null;" in section
+
+
+def test_zero_row_roster_has_an_attached_focus_fallback():
+    """Removing the open character must not leave focus on document.body.
+
+    The generated Character header remains the normal roster and screenshot
+    anchor. When no character remains, its existing empty-state hint is the
+    attached, programmatically focusable fallback.
+    """
+    html = _web("index.html")
+    js = _web("previews.js")
+
+    empty = re.search(r'id="preview-binds-empty"[^>]*>', html)
+    assert empty and 'tabindex="-1"' in empty.group(0)
+    focus = js.split("function focusRosterHeading", 1)[1].split("\n  function ", 1)[0]
+    assert "preview-roster-heading" in focus
+    assert "preview-binds-empty" in focus
+
+
+def test_copy_status_and_focus_belong_to_the_current_copy_attempt():
+    """A late Copy A result cannot report over Configure B or Copy B."""
+    js = _web("previews.js")
+    assert "var copyAttempt = 0;" in js
+
+    copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
+    assert "var attempt = ++copyAttempt;" in copy
+    assert copy.count("copyStatusForCurrent(") == 2
+    assert copy.count("restoreCopyFocusAfterRefresh(name, interaction, attempt)") == 2
+
+    status = js.split("function copyStatusForCurrent", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    for guard in (
+        "interaction !== detailInteraction",
+        "openDetailName !== name",
+        "attempt !== copyAttempt",
+    ):
+        assert guard in status
+
+    refresh = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "attempt !== copyAttempt" in refresh
+
+
+def test_detail_changes_invalidate_pending_copy_attempts():
+    """Opening another detail or leaving Previews supersedes late Copy work."""
+    js = _web("previews.js")
+    configure = js.split("configure.addEventListener('click'", 1)[1].split(
+        "requestRender();", 1
+    )[0]
+    section = js.split("document.addEventListener('wm:section'", 1)[1].split(
+        "\n  refresh();", 1
+    )[0]
+    assert "copyAttempt += 1;" in configure
+    assert "copyStatus('', false);" in configure
+    assert "copyAttempt += 1;" in section
+
+
 def test_add_refusal_restores_focus_after_requestrender():
     """doAdd's refusal branch must call focusGroupManager() after requestRender()
     so keyboard focus reaches the newly attached Add field.
@@ -2903,4 +3032,44 @@ def test_add_refusal_restores_focus_after_requestrender():
     assert last_focus > last_rr, (
         "focusGroupManager() in doAdd refusal path must appear after "
         "requestRender(), not before, so it targets the newly attached node."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final review: local conflicts and sticky detail clearance
+# ---------------------------------------------------------------------------
+
+
+def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
+    """Only current, actionable registration conflicts get a red local error.
+
+    An opted-out character has no registered preview bind, and a latent
+    bookmark collision is merely a future configuration consequence. Both
+    remain visible on the bind button without being rendered as a conflict.
+    """
+    js = _web("previews.js")
+    assert "function makeBindConflict(label, gesture, character, off)" in js
+    conflict = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert "if (off) { return null; }" in conflict
+    assert "bookmark === 'latent'" not in conflict
+    # Refused registration and active bookmark ownership remain actionable.
+    assert "already owned by another application" in conflict
+    assert "conflicts with an active EVE bookmark keybind" in conflict
+
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert (
+        "makeBindConflict(label, gesture, character, isExcluded(character))" in append
+    )
+
+
+def test_preview_detail_reserves_both_sticky_header_heights_when_scrolled():
+    """An opened detail cannot be hidden under the table and group headers."""
+    css = _web("style.css")
+    detail = re.search(r"\.preview-character-detail\s*\{([^}]*)\}", css)
+    assert detail, "the preview character detail has no CSS rule"
+    assert (
+        "scroll-margin-top: calc(var(--preview-bind-head-height) * 2)"
+        in detail.group(1)
+    ), (
+        "the detail needs clearance for both sticky preview headers when it is scrolled into view"
     )

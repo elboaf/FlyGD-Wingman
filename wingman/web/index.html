@@ -41,8 +41,10 @@
         <!-- A bare check, deliberately NOT a box glyph: every heading here
              is a sort control, and a box in the header position reads as a
              select-all checkbox this column does not offer. -->
-        <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
-        <span class="c-name"   data-sort="filename">Filename</span>
+        <span class="c-check" data-sort="checked" title="Sort by selected"
+              role="button" tabindex="0" aria-label="Sort by selected">&#10003;</span>
+        <span class="c-name" data-sort="filename"
+              role="button" tabindex="0" aria-label="Sort by filename">Filename</span>
         <!-- "Age", not "Modified" (round 3's finding 8 dropped this column;
              it is back by request, and the heading is deliberately not the
              one that left).
@@ -74,10 +76,14 @@
              newest-first); format_date's docstring is explicit that a text
              sort would put "Aug" before "Dec" and "2 days ago" before
              "3h ago". -->
-        <span class="c-date"   data-sort="date">Age</span>
-        <span class="c-size"   data-sort="size">Size</span>
-        <span class="c-len"    data-sort="duration">Length</span>
-        <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
+        <span class="c-date" data-sort="date"
+              role="button" tabindex="0" aria-label="Sort by age">Age</span>
+        <span class="c-size" data-sort="size"
+              role="button" tabindex="0" aria-label="Sort by size">Size</span>
+        <span class="c-len" data-sort="duration"
+              role="button" tabindex="0" aria-label="Sort by length">Length</span>
+        <span class="c-link" data-sort="link" title="Sort by uploaded"
+              role="button" tabindex="0" aria-label="Sort by uploaded">Link</span>
       </div>
 
       <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
@@ -1032,7 +1038,7 @@
             Edit&hellip; lets you type one instead.</span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-empty">Start an EVE client to
+          <span class="hint" id="preview-binds-empty" tabindex="-1">Start an EVE client to
             add a character here.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-copy-empty" hidden>Move or resize
@@ -1494,7 +1500,7 @@
         <p id="es-warning" class="hint" hidden></p>
       </section>
 
-      <div class="es-profile-tools">
+      <div class="es-profile-tools" role="group" aria-label="Tools for the selected EVE profile">
         <button class="btn" id="es-backups-open" type="button">Backups…</button>
         <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
       </div>
@@ -1644,19 +1650,19 @@
       <!-- This flow sends the user out to EVE between steps. Keep the
            current place visible on return, but leave announcements to the
            focusable step headings so a transition is not spoken twice. -->
-      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Start</p>
+      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Prepare</p>
       <h1>Identify accounts</h1>
       <section id="ai-intro">
         <h2 id="ai-intro-heading" tabindex="-1">Match an account</h2>
         <p>EVE stores account settings under a number, not a name. Wingman can match that number to a character by watching which settings change together.</p>
-        <p class="hint">Close every EVE client. You will launch one character after identification starts.</p>
       </section>
       <section id="ai-watching-step" hidden>
         <h2 id="ai-watching-heading" tabindex="-1">Watch for changes</h2>
       </section>
       <p id="es-identity-status" class="ai-status" role="status"></p>
       <div class="row es-identify-actions">
-        <button id="es-identify-start" class="btn acc" type="button">Start identification</button>
+        <p id="ai-prerequisite" class="ai-prerequisite">Close every EVE client before you begin. You will launch one character after identification starts.</p>
+        <button id="es-identify-start" class="btn acc" type="button">Begin identification</button>
         <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
         <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
       </div>
@@ -1881,6 +1887,11 @@
              vocabulary's disabled-when-the-object-is-absent rule. -->
         <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
+      <!-- The browser owns clipboard access, so its success or refusal
+           belongs beside the plan action rather than on the global strip.
+           Kept mounted for role=status: a live region first made visible
+           with its message is not consistently announced by screen readers. -->
+      <p class="skills-copy-status" id="skills-copy-status" role="status"></p>
 
       <!-- Collapses entirely when empty rather than reserving a blank
            strip: on the common path there is nothing to say, and an empty

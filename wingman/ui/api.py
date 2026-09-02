@@ -5868,7 +5868,8 @@ class Api:
         if not text:
             self._status("That plan is no longer available. Reload plans.", "WARNING")
             return ""
-        self._status("Skill plan copied to clipboard", "SUCCESS")
+        # The browser performs navigator.clipboard.writeText after this returns.
+        # Do not claim a copy succeeded before that operation has completed.
         return text
 
     def skills_add_character(self) -> bool:

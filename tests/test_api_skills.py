@@ -305,15 +305,17 @@ def _status_lines(window):
     return out
 
 
-def test_copying_a_plan_returns_its_text_and_says_so(tmp_path):
-    """S7. The page owns the clipboard write -- with Tk gone there is no
-    toolkit clipboard -- so this returns the text and reports the outcome on
-    the status strip, exactly the split copy_path uses for `Copy link`."""
+def test_copying_a_plan_returns_its_text_without_claiming_clipboard_success(tmp_path):
+    """The browser owns the clipboard write, so only it can report success.
+
+    Python still reports a vanished plan, which it alone can diagnose before
+    returning to the page.
+    """
     api = make_api(tmp_path, window=FakeWindow(), skills=FakeSkills())
 
     assert api.skills_plan_text("Ishtar") == "Navigation IV\n"
     assert api._skills.calls[-1] == ("plan_text", "Ishtar")
-    assert _status_lines(api._window)[-1]["kind"] == "SUCCESS"
+    assert _status_lines(api._window) == []
 
 
 def test_a_plan_that_no_longer_exists_is_reported_not_silent(tmp_path):

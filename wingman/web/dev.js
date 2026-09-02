@@ -758,21 +758,25 @@
   // initial page load and subsequent mutation pushes.
   //
   // Character assignments:
-  //   Aiga Otsolen      -- online, assigned to DPS, opted-in.
-  //   Zuelo Parvi       -- online, NOT excluded, NOT assigned (All-only for
-  //                        opted-in character -- distinct from excluded path).
-  //   Tanuki Solette    -- offline, assigned to Logistics.
-  //   Aleksandrina ...  -- offline, assigned to DPS, excluded (opted-out AND
-  //                        assigned -- the combination the page must handle).
+  //   Zuelo Parvi and Corvin Veles -- online, share a supported direct bind.
+  //   Aiga Otsolen      -- online, NOT excluded, assigned to DPS.
+  //   Tanuki Solette    -- offline, assigned to Logistics and conflicts with
+  //                        All forward, so the local conflict copy renders.
+  //   Aleksandrina ...  -- offline, assigned to DPS and Copy-enabled.
+  //   Mara Veld         -- offline, assigned to DPS.
+  //   Sera Vahn         -- offline, assigned to Logistics, excluded (opted-out
+  //                        AND assigned -- the combination the page must handle).
   //
   // Groups:
-  //   DPS      (g-dps)    -- members Aiga + Aleksandrina, cycle Ctrl+Shift+1.
-  //   Logistics (g-logi)  -- member Tanuki, cycle Ctrl+Shift+1 (deliberate
-  //                          collision with DPS so the collision branch renders).
+  //   DPS      (g-dps)    -- members Aiga + Aleksandrina + Mara,
+  //                          cycle Ctrl+Shift+1.
+  //   Logistics (g-logi)  -- members Tanuki + Sera, cycle Ctrl+Shift+1
+  //                          (deliberate collision with DPS so the collision
+  //                          branch renders).
   //   Empty group (g-empty) -- zero members, no bind (zero-member UI path).
   //
-  // excluded[]: Aleksandrina only.  Zuelo is All-only (non-excluded, unassigned),
-  // which is a different and independently-exercised state from opted-out.
+  // excluded[]: Sera only, while still assigned to Logistics. Zuelo is All-only
+  // (non-excluded, unassigned), a different and independently-exercised state.
   //
   // Gesture strings use preview/gestures.py display() canonical form
   // ("Ctrl+Alt+Right"), NOT AHK ("^!Right"). Verified by from_capture().
@@ -786,14 +790,18 @@
   // registered.  Must stay in step with the bookmarks fixture.
   //
   // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) is load-bearing: the
-  // only row that exercises the ellipsis in the 150px name track, the title
-  // attribute fallback, and the offline tag width at the 840px viewport floor.
+  // only row that exercises ellipsis in the bounded name track and the title
+  // attribute fallback at the 840px viewport floor.
   var DEV_PREVIEW_HOTKEYS_FIXTURE = {
     "enabled": true,
     "hotkeys": {
       "characters": {
         "Aiga Otsolen": "Ctrl+Alt+1",
-        "Zuelo Parvi": "Ctrl+Alt+2"
+        "Zuelo Parvi": "Ctrl+Alt+2",
+        "Corvin Veles": "Ctrl+Alt+2",
+        "Tanuki Solette": "Ctrl+Alt+Right",
+        "Mara Veld": "Ctrl+Shift+2",
+        "Niko Avar": "Ctrl+Shift+3"
       },
       "cycle_next": "Ctrl+Alt+Right",
       "cycle_prev": "",
@@ -805,26 +813,31 @@
       "group_by_character": {
         "Aiga Otsolen": "g-dps",
         "Tanuki Solette": "g-logi",
-        "Aleksandrina Shadowbanes Voidstriders": "g-dps"
+        "Aleksandrina Shadowbanes Voidstriders": "g-dps",
+        "Mara Veld": "g-dps",
+        "Sera Vahn": "g-logi"
       }
     },
-    "characters": ["Aiga Otsolen", "Zuelo Parvi"],
+    "characters": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles"],
     "roster": [
-      "Aiga Otsolen", "Zuelo Parvi", "Tanuki Solette",
-      "Aleksandrina Shadowbanes Voidstriders"
+      "Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette",
+      "Aleksandrina Shadowbanes Voidstriders", "Mara Veld", "Niko Avar",
+      "Sera Vahn", "Dorin Kalt", "Iria Sol", "Vex Noren", "Yara Tolen"
     ],
     "registration": {
       "Ctrl+Alt+1": true,
       "Ctrl+Alt+2": true,
-      "Ctrl+Alt+Right": true
+      "Ctrl+Alt+Right": true,
+      "Ctrl+Shift+2": true,
+      "Ctrl+Shift+3": true
     },
     "locked": ["Aiga Otsolen"],
     "lock_default": false,
     "never_minimize": ["Tanuki Solette"],
-    "excluded": ["Aleksandrina Shadowbanes Voidstriders"],
+    "excluded": ["Sera Vahn"],
     "sizes": {"Aiga Otsolen": [1280, 720]},
     "client_sizes": {"Aiga Otsolen": [1920, 1080], "Zuelo Parvi": [1600, 900]},
-    "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Tanuki Solette"],
+    "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette", "Mara Veld"],
     "layout_sources": [
       {"name": "Aiga Otsolen", "online": true},
       {"name": "Tanuki Solette", "online": false}

@@ -223,12 +223,29 @@ def _media_spans(max_width: int) -> list[tuple[int, int]]:
     return spans
 
 
+def test_preview_grid_tightens_only_its_column_gap_at_the_840_floor():
+    """The six Preview tracks overflowed the pane by 18-20px at the floor.
+
+    Five gaps are the only safe place to reclaim that width: the 210px
+    identity floor and the controls remain unchanged, while 10px to 6px
+    returns exactly 20px. The base layout stays at its roomier spacing.
+    """
+    base = re.search(r"#preview-binds\s*\{([^}]*)\}", CSS)
+    assert base and re.search(r"\bcolumn-gap\s*:\s*10px\s*;", base.group(1))
+
+    floor = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(840))
+    rule = re.search(r"#preview-binds\s*\{([^}]*)\}", floor)
+    assert rule and re.fullmatch(r"\s*column-gap\s*:\s*6px\s*;\s*", rule.group(1)), (
+        "the 840px tier must change only #preview-binds' column gap to 6px"
+    )
+
+
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
     rows on purpose, for two different reasons: `#eve-binds` because its
     labels are long action names and it gives them a whole line instead,
-    `#preview-binds` because it gives the character name a fixed 150px
-    track of its own -- an inline column, not a line. Both do it with an
+    `#preview-binds` because it gives the character name a bounded
+    length-based track of its own -- an inline column, not a line. Both do it with an
     ID selector: `#eve-binds .row > .lab` and `#preview-binds .row > .lab`.
 
     ID specificity also beats the `max-width: 720px` block that collapses
@@ -1096,6 +1113,52 @@ def test_every_action_control_shares_one_disabled_state():
             )
 
 
+def test_shared_focus_and_selected_rail_states_stay_distinct():
+    """Selection owns the rail fill; keyboard focus is an outline only.
+
+    The group manager bypasses the shared button selector because its
+    interactive summary is not a button. It once referenced undefined
+    `--focus`, so keyboard focus had no authored indicator at all.
+    """
+    manager = re.search(
+        r"\.preview-group-manager > summary:focus-visible\s*\{([^}]*)\}", CSS
+    )
+    assert manager, "the group-manager summary has no focus-visible rule"
+    assert "var(--focus-ring)" in manager.group(1)
+    assert "var(--focus)" not in manager.group(1)
+
+    active = re.search(r"[^{}]*\.rail-item\.active[^{}]*\{([^}]*)\}", CSS)
+    assert active and "background: var(--row-active)" in active.group(1), (
+        "the selected rail item must keep the declared current-location fill"
+    )
+    assert "border-left-color: var(--brand)" in active.group(1), (
+        "the selected rail item must keep its existing brand edge"
+    )
+
+    focus = re.search(r"([^{}]*\.rail-item:focus-visible[^{}]*)\{([^}]*)\}", CSS)
+    assert focus and "outline:" in focus.group(2), (
+        "the Settings rail is missing the shared keyboard focus outline"
+    )
+    assert "background:" not in focus.group(2), (
+        "rail focus paints a competing fill instead of an outline-only state"
+    )
+
+
+def test_enabled_subordinate_actions_have_readable_resting_contrast():
+    """Quiet actions still have to read as live before hover.
+
+    `--text-faint` is appropriate for explanatory text, but on a compact
+    row it made Clear/Edit and Skills' group actions resemble disabled
+    controls. `--text-dim` keeps the documented link-button taxonomy while
+    giving every enabled subordinate action, including compact Preview row
+    actions, a readable resting state.
+    """
+    linkbtn = re.search(r"\.linkbtn\s*\{([^}]*)\}", CSS)
+    assert linkbtn, "the shared .linkbtn treatment is missing"
+    assert "color: var(--text-dim)" in linkbtn.group(1)
+    assert "color: var(--text-faint)" not in linkbtn.group(1)
+
+
 def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     """`.btn.danger` is the ONE destructive treatment (round 3, B3/S4/P2).
 
@@ -1145,6 +1208,26 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_disabled_danger_buttons_return_to_neutral_control_tokens():
+    """A disabled destructive action is unavailable, not an active warning.
+
+    Its scoped override follows the red treatment so neutral border and
+    text win, while the shared disabled declaration continues to own
+    opacity and cursor for every action control.
+    """
+    danger = re.search(r"button\.btn\.danger\s*\{([^}]*)\}", CSS)
+    disabled = re.search(r"button\.btn\.danger:disabled\s*\{([^}]*)\}", CSS)
+    assert danger and disabled, "disabled danger buttons need a scoped neutral state"
+    assert disabled.start() > danger.end(), "the neutral disabled state must follow red"
+    assert re.search(
+        r"\bborder-color\s*:\s*var\(--control-border\)\s*;", disabled.group(1)
+    )
+    assert re.search(r"\bcolor\s*:\s*var\(--text-faint\)\s*;", disabled.group(1))
+    assert "opacity" not in disabled.group(1) and "cursor" not in disabled.group(1), (
+        "danger-disabled must retain the shared opacity and cursor behavior"
     )
 
 
@@ -1343,10 +1426,10 @@ def test_choice_dialog_uses_a_labelled_select_and_cancels_safely():
     assert "active.kind === 'choice'" in escape
 
 
-def test_the_previews_table_names_geometry_as_geometry():
+def test_the_previews_table_names_the_configure_disclosure():
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
-    assert "'Geometry'" in head
+    assert "'Configure'" in head
     assert "'Size'" not in head
 
 
@@ -1749,7 +1832,7 @@ def _preview_binds_cell_tracks() -> int:
     Both callers below used to inline `(\\d+)px\\s+repeat\\((\\d+),`, which
     pinned the SPELLING of a deliberate first track rather than the
     property that makes it deliberate. Round 6 widened the name column to
-    `minmax(150px, 260px)` -- still two lengths, still never sized by
+    `minmax(210px, 320px)` -- still two lengths, still never sized by
     whoever is logged in, which is all round 3's B1 ever asked for -- and
     both guards failed on the shape while the rule they exist for held.
 
@@ -1801,17 +1884,20 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     The label USED to be excluded, because `#preview-binds .row > .lab` was
     `grid-column: 1 / -1` and spanned the row instead of sitting in a
     track. It sits in track 1 now, so it is a cell like any other and the
-    `-1` that discounted it is gone. The `else` branch is still excluded,
-    because its fillers stand in for the character branch's controls one
-    for one -- counting both would double every cell.
+    `-1` that discounted it is gone. Every collapsed cell is now appended
+    unconditionally: character-specific controls live in the full-grid
+    detail, and the two cycle rows use the same ternary fillers as every
+    other row.
     """
     body = _makerow_body()
-    halves = body.split("} else {", 1)
-    assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
+    assert "} else {" not in body, (
+        "makeRow has a dead character/cycle branch instead of one unconditional "
+        "collapsed-row shape"
+    )
     # The label is COUNTED now: it sits in track 1 rather than spanning the
-    # row, so it is a cell like any other. That is the whole change, and it
-    # is why the -1 that used to discount it is gone.
-    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
+    # row, so it is a cell like any other. Every row.appendChild() here is
+    # one of the collapsed grid cells.
+    cells = body.count("row.appendChild(")
 
     tracks = _preview_binds_cell_tracks()
 
@@ -1820,6 +1906,17 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
         f"declares {tracks} tracks -- every row after the first is "
         f"pulled into the previous row's leftover columns"
     )
+
+
+def test_the_roster_heading_owns_the_focus_fallback():
+    """The focus fallback and narrow screenshot target the actual roster header."""
+    html = _strip_html_comments(HTML)
+    assert 'id="preview-roster-heading"' not in html
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+    assert "preview-roster-heading" in head
+    assert "tabindex', '-1'" in head
 
 
 def test_the_previews_header_row_names_one_column_per_track():
@@ -1939,7 +2036,7 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
-        ("Geometry", "makeGeometryActions"),
+        ("Configure", "'Configure'"),
     )
 
     for heading, token in owners:
@@ -2153,12 +2250,17 @@ def test_every_previews_row_starts_a_fresh_grid_line():
     )
 
 
-def test_the_geometry_cell_gates_size_and_copy_on_backend_payloads():
-    """One cell owns both geometry actions without duplicating backend rules."""
+def test_the_character_detail_gates_size_and_copy_on_backend_payloads():
+    """The disclosure owns geometry actions without duplicating backend rules."""
     body = _makerow_body()
-    assert "makeGeometryActions(character, off)" in body
+    assert "makeGeometryActions" not in body
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeGeometryActions(characterName, off)" in detail
+
     geometry_actions = src.split("function makeGeometryActions(", 1)
     assert len(geometry_actions) == 2
     geometry_actions = geometry_actions[1].split("\n  }", 1)[0]
@@ -2188,7 +2290,7 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
     assert "source.online === false" in picker
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
-    assert "focusCopyTarget(name)" in picker
+    assert "restoreCopyFocusAfterRefresh(name, interaction, attempt)" in picker
     assert "state.characters" not in picker
     assert "It applies next time" not in picker
     assert "source.name !== name" in src
@@ -2206,7 +2308,7 @@ def test_copy_picker_has_collapsing_empty_and_status_lines():
     assert "preview-copy-status" in src
     assert "status.classList.toggle('err', !!error)" in src
     assert "status.hidden = !status.textContent" in src
-    assert "function focusCopyTarget(" in src
+    assert "function restoreCopyFocusAfterRefresh(name, interaction, attempt)" in src
 
     section = src.split("document.addEventListener('wm:section'", 1)
     assert len(section) == 2
@@ -2217,9 +2319,9 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
     """D6's rule -- do not draw a control in a state where it can only
     refuse -- applied to the control that broke it worst. `Clear` used to
     be rendered on every row and disabled wherever there was no chord to
-    clear, which on a fresh install is every row. It is a .linkbtn, so
-    :disabled is opacity .45 over --text-faint: 1.94:1 against the card, a
-    control nobody can read holding a grid track on thirteen rows.
+    clear, which on a fresh install is every row. It is a .linkbtn, so the
+    shared disabled opacity makes it intentionally quieter than the enabled
+    subordinate treatment, while still holding a grid track on thirteen rows.
 
     Only the render-at-all gate moved. `Clear` still goes through
     WM.setEnabled against the row's own opted-out state once it exists --
@@ -2283,15 +2385,15 @@ def test_an_opted_out_character_row_disables_its_own_controls():
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
-    # The above is gated INLINE; this receives the state as an argument
-    # instead, and was unguarded until a review pointed out that dropping
-    # the second argument at the call site leaves the control live and
-    # undimmed with the whole suite green -- which is the exact failure
-    # this test's docstring claims to prevent.
-    for builder in ("makeGeometryActions",):
-        assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
-            f"makeRow does not pass the row's opted-out state to {builder}"
-        )
+    # Geometry now lives in the inline detail, but it must retain the
+    # opted-out state that keeps Size and Copy inert for a disabled preview.
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert re.search(r"makeGeometryActions\(characterName,[^)]*\boff\b", detail), (
+        "makeCharacterDetail does not pass the opted-out state to geometry actions"
+    )
     # Lock left the row for its own disclosure, and took this invariant with
     # it: with no window there is nothing to lock, so the block must pass
     # each character's opted-out state the way the row used to. Asserted on
@@ -2413,6 +2515,52 @@ def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():
     body = halves[1].split("return label;", 1)[0]
     assert "WM.setEnabled" not in body, "the opt-out box gates itself"
     assert "set_preview_excluded" in body
+
+
+def test_range_controls_use_token_driven_track_thumb_and_value_styles():
+    """Chromium's native blue slider must not escape the dark control system."""
+    base = re.search(r'input\[type="range"\]\s*\{([^}]*)\}', CSS)
+    assert base, "range inputs have no shared base rule"
+    assert "appearance: none" in base.group(1)
+    assert "background: transparent" in base.group(1)
+
+    track = re.search(
+        r'input\[type="range"\]::-webkit-slider-runnable-track\s*\{([^}]*)\}',
+        CSS,
+    )
+    assert track, "range inputs have no authored WebKit track"
+    assert "background: var(--track)" in track.group(1)
+    assert "border:" in track.group(1) and "var(--control-border)" in track.group(1)
+
+    thumb = re.search(r'input\[type="range"\]::-webkit-slider-thumb\s*\{([^}]*)\}', CSS)
+    assert thumb, "range inputs have no authored WebKit thumb"
+    assert "background: var(--control)" in thumb.group(1)
+    assert "border:" in thumb.group(1) and "var(--brand-edge)" in thumb.group(1)
+
+    focus = re.search(
+        r'input\[type="range"\]:focus-visible::-webkit-slider-thumb\s*\{([^}]*)\}',
+        CSS,
+    )
+    assert focus and "var(--focus-ring)" in focus.group(1), (
+        "the authored range thumb has no shared keyboard focus indicator"
+    )
+
+    value = re.search(r"\.range-value\s*\{([^}]*)\}", CSS)
+    assert value, "range controls have no adjacent value treatment"
+    assert "background: var(--sunken)" in value.group(1)
+    assert "border:" in value.group(1) and "var(--control-border)" in value.group(1)
+
+
+def test_preview_opacity_reads_on_input_and_commits_on_change():
+    """Dragging is local feedback; only release crosses the settings bridge."""
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    body = js[js.index("var box = WM.el('preview-opacity')") :]
+    input_handler = re.search(r"box\.addEventListener\('input', ([A-Za-z]+)\)", body)
+    assert input_handler and input_handler.group(1) == "show"
+    change = body.index("box.addEventListener('change'")
+    send = body.index("WM.send('set_preview_opacity'")
+    assert change < send
+    assert "set_preview_opacity" not in body[:change]
 
 
 def test_the_opacity_slider_can_still_reach_the_stored_floor():
@@ -2911,51 +3059,119 @@ def test_group_select_does_not_add_row_appendchild():
     )
 
 
-def test_group_select_appended_to_lab_inside_makerow():
-    """The group select must be appended to `lab` inside makeRow, not to
-    `row` -- any new row.appendChild in makeRow beyond the five-track set
-    breaks the grid derivation guard."""
+def test_group_select_is_owned_by_the_character_detail():
+    """Assignment is an infrequent per-character setting, not a roster cell."""
     body = _makerow_body()
-    # lab.appendChild(makeGroupSelect is the allowed form.
-    assert "lab.appendChild(makeGroupSelect" in body or (
-        "makeGroupSelect" in body and "lab.appendChild" in body
+    assert "makeGroupSelect" not in body
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "groups().length" in detail
+    assert "makeGroupSelect(characterName)" in detail
+
+
+def test_group_select_is_styled_inside_the_detail_without_a_new_track():
+    """The detail preserves the five collapsed-row tracks."""
+    assert ".preview-character-detail .preview-group-select" in CSS
+    assert _preview_binds_cell_tracks() == 5
+
+
+def test_character_roster_rows_keep_configuration_out_of_the_scan_line():
+    """Collapsed rows expose only identity, Preview, keybind actions, Configure."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+    assert "makeGroupSelect" not in body
+    assert "makeGeometryActions" not in body
+    assert "'Configure'" in body
+    assert "aria-expanded" in body
+    assert "aria-controls" in body
+
+
+def test_character_detail_and_conflict_siblings_span_the_preview_grid():
+    """Secondary detail and conditional copy cannot consume a data track."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeCharacterDetail(" in src
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeGroupSelect" in detail
+    assert "makeGeometryActions" in detail
+
+    for selector in (".preview-character-detail", ".preview-bind-conflict"):
+        rule = re.search(rf"{re.escape(selector)}\s*\{{(.*?)\}}", CSS, re.DOTALL)
+        assert rule and "grid-column: 1 / -1" in rule.group(1), (
+            f"{selector} must span the Preview grid rather than add a row cell"
+        )
+
+
+def test_character_conflict_copy_excludes_supported_direct_sharers():
+    """A shared direct bind is supported, so a character's warning names
+    only the incompatible cycle owner rather than other sharing characters.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    character_duplicate = block.split("if (character && clash === 'duplicate')", 1)[
+        1
+    ].split("} else", 1)[0]
+    assert "cycleOwners(gesture)" in character_duplicate
+    assert "sharers(gesture)" not in character_duplicate, (
+        "character conflict copy calls sharers(), so it blames supported "
+        "direct-character sharing for a cycle collision"
+    )
+
+
+def test_character_detail_precedes_its_conflict_copy():
+    """A character's detail belongs directly below its row; any warning
+    follows the detail so it cannot split the row from the controls it explains.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    row = append.index("host.appendChild(makeRow")
+    detail = append.index("host.appendChild(makeCharacterDetail")
+    conflict = append.index("host.appendChild(conflict)")
+    assert row < detail < conflict
+
+
+def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
+    """Size has no authoritative redraw, and Copy's intent is installed only
+    inside its refresh response. Cancellation and a failed copy therefore cannot
+    leave intent for a later unrelated push to consume.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    size = js.split("function makeSizeButton", 1)[1].split("\n  function ", 1)[0]
+    assert "rememberDetailFocus" not in size, (
+        "Size patches local state without rerendering; it must not retain a "
+        "detail focus intent across cancellation or parse/save failure"
+    )
+
+    copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
+    cancelled = copy.split("if (source === null)", 1)[1].split("}", 1)[0]
+    assert "clearDetailFocus(name, 'copy')" in cancelled
+    assert (
+        copy.count("restoreCopyFocusAfterRefresh(name, interaction, attempt)") == 2
     ), (
-        "makeRow does not append the group select to lab; it either is not "
-        "present or it appends to row, which would break the grid"
+        "both the refused and successful copy paths must refresh with the initiating "
+        "detail interaction and Copy attempt"
     )
 
-
-def test_group_select_has_css_for_lab_column_without_new_track():
-    """Scoped CSS for the group select must exist and must NOT add a new
-    grid track to #preview-binds (the template stays at five cell tracks)."""
-    assert "preview-group-select" in CSS, (
-        "no .preview-group-select rule found in style.css"
-    )
-    # The grid-template-columns must still declare exactly 5 cell-bearing
-    # tracks (name + 4 controls) -- the trailing minmax(0, 1fr) is the 6th
-    # token but holds no cell. _preview_binds_cell_tracks() returns the
-    # cell-bearing count: 1 (name) + repeat-count (4) = 5.
-    tracks = _preview_binds_cell_tracks()
-    assert tracks == 5, (
-        f"#preview-binds now has {tracks} cell tracks instead of 5 after "
-        f"adding group-select CSS; the track count must not change"
-    )
+    restore = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "refresh(function ()" in restore
+    assert "rememberDetailFocus(name, 'copy')" in restore
+    assert "interaction !== detailInteraction" in restore
+    assert "openDetailName !== name" in restore
+    assert "attempt !== copyAttempt" in restore
 
 
-def test_has_group_select_css_is_scoped_and_does_not_introduce_display():
-    """The .has-group-select CSS must only change flex layout of the lab
-    cell (flex-direction, align-items, gap) and must not introduce a new
-    display value that would need a [hidden] override."""
-    assert ".has-group-select" in CSS, (
-        "no .has-group-select rule found; makeRow adds the class but style.css "
-        "has no matching rule"
-    )
-    # Must be scoped under #preview-binds.
-    assert "#preview-binds" in CSS.split(".has-group-select")[0].rsplit("\n", 5)[
-        -1
-    ] or re.search(r"#preview-binds[^{]*\.has-group-select", CSS), (
-        ".has-group-select is not scoped under #preview-binds"
-    )
+def test_preview_roster_heading_is_a_programmatic_focus_fallback():
+    """Removing an open character focuses the generated roster header, not the card."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow", 1)[1].split("return row;", 1)[0]
+    assert "cell.id = 'preview-roster-heading'" in head
+    assert "cell.setAttribute('tabindex', '-1')" in head
 
 
 # ---- Final-review fixes: disclosure, roster, busy guard, minor ----
@@ -3106,31 +3322,13 @@ def test_every_group_mutation_handler_has_synchronous_busy_guard():
     )
 
 
-def test_focusGroupSelect_does_not_use_interpolated_css_selector():
-    """Minor finding: focusGroupSelect must not use a CSS attribute-selector
-    built by string interpolation (unsafe for names containing quotes or
-    backslashes).  It must iterate elements and compare aria-label directly."""
+def test_group_focus_restoration_delegates_to_the_current_detail_intent():
+    """A group response must never independently focus a closed detail."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     block = src.split("function focusGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    # Must NOT contain the interpolated pattern
-    assert (
-        "querySelector" not in block
-        or "'select[aria-label=\"Cycle group for ' + characterName" not in block
-    ), (
-        "focusGroupSelect still uses an interpolated CSS attribute selector; "
-        "character names with quotes or backslashes will break it"
-    )
-    # Must contain an iteration-based lookup
-    assert (
-        "querySelectorAll" in block
-        or "getElementsByTagName" in block
-        or "Array.from" in block
-        or ".getAttribute" in block
-        or "forEach" in block
-    ), (
-        "focusGroupSelect does not appear to iterate and compare aria-label; "
-        "it must use a safe escaping-independent lookup"
-    )
+    assert "detailFocusIntent.name !== characterName" in block
+    assert "restoreDetailFocus()" in block
+    assert "querySelector" not in block
 
 
 def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():

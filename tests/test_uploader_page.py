@@ -711,23 +711,92 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
         "header-shift this test exists to prevent"
     )
 
-    # Round 6, P2-2. The arrow used to be `visibility: hidden` until a
-    # column carried .sorted -- and the list opens in delivery order with
-    # nothing sorted, so on first open all four headers had zero
-    # affordance and read as static labels. It is now present-but-quiet at
-    # rest and rises through hover to sorted, so the mechanism is
-    # discoverable without having been discovered.
-    rest = re.search(r"opacity:\s*(\.\d+|0?\.\d+|1)", base.group(1))
-    assert rest, (
-        "the arrow must be visible at rest, not hidden until sorted: " + base.group(1)
+    # Showing the inactive triangle made every header look sorted at once.
+    # Opacity zero removes that noise without taking the reserved slot out
+    # of flow; hover and sorted states still reveal the same glyph in place.
+    assert re.search(r"opacity:\s*0\s*;", base.group(1)), (
+        "inactive sort arrows must be transparent without losing their slot"
     )
-    assert float(rest.group(1)) > 0, "an arrow at opacity 0 is still hidden"
+    assert re.search(r"\.list-head > span:hover::after\s*\{[^}]*opacity:\s*\.7", CSS), (
+        "hover must reveal the reserved sort arrow"
+    )
     assert re.search(r"\.list-head > span\.sorted::after\s*\{[^}]*opacity:\s*1", CSS), (
-        "the sorted column's arrow must be the strongest of the three states"
+        "the sorted column's arrow must be the strongest state"
     )
+    assert re.search(
+        r'\.list-head > span\.sorted\.desc::after\s*\{[^}]*content:\s*"\\25BC"',
+        CSS,
+    ), "descending sort must retain its down-arrow glyph"
     # The two centred headers need it mirrored or reserving it decentres
     # them by half its own box.
     assert re.search(r"\.c-check::before,\s*\.list-head > span\.c-link::before", CSS)
+    # Numeric columns right-align their labels with their cells, so the
+    # reserved arrow belongs before the label rather than stealing its edge.
+    numeric = re.search(
+        r"\.list-head > span\.c-date::after,\s*"
+        r"\.list-head > span\.c-size::after,\s*"
+        r"\.list-head > span\.c-len::after\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert numeric and re.search(r"order:\s*-1", numeric.group(1))
+
+
+def test_sort_headers_are_keyboard_buttons_with_current_sort_direction():
+    """Sortable spans need button semantics, not partial ARIA table roles.
+
+    The grid is presentational rather than an ARIA table, so aria-sort on an
+    orphaned columnheader is invalid. The active direction instead belongs in
+    each button's accessible name while click, Enter, and Space share sortBy.
+    """
+    header = HTML[
+        HTML.index('id="list-head"') : HTML.index(
+            "</div>", HTML.index('id="list-head"')
+        )
+    ]
+    controls = re.findall(r'<span\b[^>]*data-sort="[^"]+"[^>]*>', header)
+    assert len(controls) == len(COLUMNS)
+    for control in controls:
+        assert 'role="button"' in control
+        assert 'tabindex="0"' in control
+        assert "aria-sort=" not in control
+        assert "aria-label=" in control
+
+    helper = re.search(r"function sortBy\(key\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
+    assert helper, "sorting needs one helper shared by click and keyboard"
+    assert "sortDesc = (key === sortKey) ? !sortDesc : false;" in helper.group(1)
+    assert "sortKey = key;" in helper.group(1)
+    assert "render();" in helper.group(1)
+    # Mouse, Enter, and Space all reach the one client-side sort helper.
+    assert LIST_JS.count("sortBy(head.dataset.sort)") == 3
+
+    keydown = re.search(
+        r"WM\.el\('list-head'\)\.addEventListener\('keydown', function \(ev\) \{(.*?)\n  \}\);",
+        LIST_JS,
+        re.DOTALL,
+    )
+    assert keydown, "sort headers need a keyboard activation handler"
+    assert "ev.key === 'Enter'" in keydown.group(1)
+    assert "ev.key === ' '" in keydown.group(1)
+    # Holding Space repeats keydown. It must suppress scrolling here but
+    # defer activation until the single keyup.
+    assert keydown.group(1).count("sortBy(head.dataset.sort)") == 1
+    assert "ev.preventDefault();" in keydown.group(1)
+
+    keyup = re.search(
+        r"WM\.el\('list-head'\)\.addEventListener\('keyup', function \(ev\) \{(.*?)\n  \}\);",
+        LIST_JS,
+        re.DOTALL,
+    )
+    assert keyup, "Space activation needs a keyup handler"
+    assert "ev.key !== ' '" in keyup.group(1)
+    assert "ev.key !== 'Spacebar'" in keyup.group(1)
+    assert "sortBy(head.dataset.sort)" in keyup.group(1)
+
+    render = re.search(r"function render\(\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
+    assert render, "render() owns the dynamic header state"
+    assert "head.setAttribute('aria-label'" in render.group(1)
+    assert "ascending" in render.group(1) and "descending" in render.group(1)
+    assert "aria-sort" not in render.group(1)
 
 
 def test_the_empty_pane_is_centred_rather_than_half_centred():

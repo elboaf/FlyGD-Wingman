@@ -220,15 +220,18 @@ somewhere stale and nothing on that screen is worth reviewing.
 ## Look and feel
 
 - [ ] **The screenshot shooter produces a complete set.** Run
-      `scripts/shoot_screens.py` with Wingman idle. Expected: `14/14 screens`
-      (or a `4/14` plus an explicit "EVE gate off, skipped:" line and ten
-      EVE-gated screens skipped), every PNG showing populated content,
+      `scripts/shoot_screens.py` with Wingman idle. Expected: every planned
+      screen for the current EVE-gate state is captured (or every non-EVE screen
+      plus an explicit "EVE gate off, skipped:" line naming every EVE-gated
+      screen), every PNG showing populated content,
       `manifest.json` naming the checkout you meant to shoot, and the
-      previously-running Wingman restored. The four Previews captures cover
-      its top, middle, character table, and Copy picker rather than presenting
-      the top of a long nested scroller as the complete screen. A blank
-      screen in the set is a real defect, not a capture artifact -- one bad
-      handler name silently disables every registration below it.
+      previously-running Wingman restored. The Previews captures cover its
+      top, middle, bottom, open Configure detail, Copy picker, groups, and
+      840x625 floor rather than presenting the top of a long nested scroller
+      as the complete screen. The floor shot starts at the collapsed roster
+      heading; a detail left open by an earlier stage is a capture defect. A
+      blank screen in the set is a real defect, not a capture artifact -- one
+      bad handler name silently disables every registration below it.
 
 ### Window chrome
 - [ ] **LOAD-BEARING: the custom title bar drags the window.** The OS title
@@ -411,8 +414,13 @@ somewhere stale and nothing on that screen is worth reviewing.
       the right. At the 840x625 floor the footer wraps and `Delete
       selected` takes a second line, right-aligned — check it is reachable
       and does not overlap the row above.
-- [ ] **Click-to-sort works on every column and shows direction,** on the
-      active column only. Sorting is pure client state; a sort that
+- [ ] **Click, Enter and Space sort every column and show direction** on the
+      active control only. Tab to each header and use Enter, then Space: each
+      must follow the same ascending/descending cycle as click and Space must
+      not scroll the page. In the Chromium accessibility pane, every header is
+      a button (not an orphaned ARIA table header); the active button's
+      accessible name announces ascending or descending and an inactive button
+      announces only what it sorts. Sorting is pure client state; a sort that
       round-trips to Python or clears the selection is a defect.
 - [ ] **The leftmost header is a bare check, not a checkbox.** Clicking it
       SORTS by checked state — it must not select or clear anything.
@@ -1314,12 +1322,15 @@ report of it.
       did not is exactly what matters then.
 
 ## Delete
-- [ ] **`Delete selected` is visibly the destructive one.** Look at the
-      four footer buttons together. Expected: `Delete selected` carries the
-      red outline and label (`.btn.danger`), and the other three do not.
-      It used to be pixel-identical to `Select all` beside it — four
-      buttons of equal weight, one of which destroys recordings. Profiles'
-      `Delete` is the reference; the two must match.
+- [ ] **`Delete selected` is visibly destructive only while available.**
+      Look at the four footer buttons together with a recording selected.
+      Expected: `Delete selected` carries the red outline and label
+      (`.btn.danger`), and the other three do not. Clear the selection:
+      expected, its disabled border and label become neutral like the other
+      unavailable controls, with the same dimming and no hover response.
+      It used to be pixel-identical to `Select all` beside it when enabled,
+      then stayed strongly red when disabled. Profiles' enabled `Delete` is
+      the destructive reference; the two must match.
 - [ ] **It still confirms exactly once.** The treatment is appearance only.
       Expected: one confirmation, naming every file, from Python's own
       dialog — not two, and not the page's `WM.confirm`.
@@ -1491,6 +1502,12 @@ only ever checked by hand.
       trust the rail and fix this line: it said seven for exactly as long
       as it took to add General one commit later, which is the drift this
       checklist exists to catch elsewhere.
+- [ ] **Rail selection and keyboard focus are different states.** Click
+      Previews, then press Tab until another rail entry receives focus.
+      Expected: Previews keeps the filled current-location treatment while
+      the focused entry has an outline only. The focused neighbour must not
+      look like a second selected section. Tab to **Manage groups** too and
+      confirm its summary receives the same visible focus outline.
 - [ ] **No card heading repeats the rail entry you just clicked.** Walk the
       rail and read the first heading in each pane. Folders and Discord both
       repeated themselves ("Folders" / "Folders", "Discord" / "Discord
@@ -1527,12 +1544,16 @@ only ever checked by hand.
       the hand.
       Round 3's L5 moved four control classes onto one declaration; all
       three sites above are `.btn`, so this is a regression check on the
-      one class that already had a treatment.
-      `.linkbtn` and `.bindbtn` gained one here and have **no disabled site
-      yet** — the first will be finding B2's `Clear` on a keybind reading
-      `Not set`, which lane R4 applies. When that lands, hover it: before
-      L5 those two classes had no disabled rule at all, so a dead one still
-      lit up.
+      one class that already had a treatment. In Previews, opt a character
+      out and hover its disabled keybind and Clear / Edit actions too.
+      Before L5 `.linkbtn` and `.bindbtn` had no disabled rule, so dead
+      controls still lit up.
+- [ ] **Enabled subordinate actions read as live before hover.** Compare an
+      enabled Preview Clear / Edit action and Skills Rename / Delete action
+      with a disabled one. Expected: enabled labels are quiet but clearly
+      legible; disabled labels remain distinctly dimmer. Hover still lifts
+      only the enabled action. They remain link-style subordinate actions,
+      not neutral or accent buttons.
 - [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
       section.** Go to Settings > Bookmarks, click a keybind button so it
       reads "Press a key…", then WITHOUT pressing a key click **Folders** in
@@ -1614,19 +1635,11 @@ only ever checked by hand.
       except `Positions are remembered per character`, which
       `Reopen previews where you last put them` already says beside the
       switch that governs it.
-- [ ] **The Geometry column keeps the Size slot on a row that cannot be
-      sized.** Settings > Previews, character list, with a character that
-      has never been previewed (so `Size…` is unavailable) but has another
-      character to copy from. Expected: the em dash marks the empty Size
-      slot and `Copy…` follows it, instead of `Copy…` sliding into
-      `Size…`'s position as it did before. Measured at the 840 floor, that
-      shift drops from 55px to 34px — it does NOT fully align, because the
-      dash is 13px against `Size…`'s 46px and `.geometry-actions` is a flex
-      cell with no track of its own. Closing the last 34px means giving the
-      two controls real tracks in `#preview-binds`, which changes the
-      per-row cell count every guard in test_page_conventions.py derives
-      from makeRow; deliberately not done here. The dash also restores the
-      hover sentence explaining why a size cannot be set on that row.
+- [ ] **Saved geometry stays inside Configure.** Settings > Previews,
+      open **Configure** for a character that has never been previewed but
+      has another character to copy from. Expected: `Size…` is replaced by
+      an em dash with a hover explanation, and `Copy…` remains alongside it
+      in the detail. No collapsed-row Geometry cell remains.
 - [ ] **Two controls stop claiming a width they have no use for.**
       Settings > Previews. Expected: `Default preview size` is a short
       field (~12 characters), not a 586px box holding `480x300` — which
@@ -1635,15 +1648,18 @@ only ever checked by hand.
       after its slider rather than parked at the far card edge ~556px from
       its label.
 - [ ] **Opacity is a percentage, and it still reaches the floor.**
-      Settings > Previews. Expected: the readout reads `100%`, not `255`,
-      and dragging the slider fully left reads `8%` rather than `20`.
-      Round 5's C2: the control was showing a raw Win32 alpha byte, so its
-      floor read "20" and every reader takes that for 20% when it is 7.8%.
-      The stored value is still the 0-255 byte — at 40% the settings file
-      must hold 102. If the readout is EMPTY, the module threw before its
-      listeners registered; that is exactly the inert-screen failure this
-      file's preamble describes, and it happened once while this lane was
-      being written.
+      Settings > Previews. Expected: the dark track and bordered thumb fit
+      the other controls, the adjacent value reads `100%`, not `255`, and
+      dragging fully left reads `8%` rather than `20`. Tab to the slider:
+      the thumb receives the shared visible focus ring. While dragging, the
+      value follows live; the preview and settings file update only when the
+      change commits on release. Round 5's C2: the control was showing a raw
+      Win32 alpha byte, so its floor read "20" and every reader takes that
+      for 20% when it is 7.8%. The stored value is still the 0-255 byte; at
+      40% the settings file must hold 102. If the readout is EMPTY, the
+      module threw before its listeners registered; that is exactly the
+      inert-screen failure this file's preamble describes, and it happened
+      once while this lane was being written.
 - [ ] **The Never-minimize disclosure exists only while its toggle is on.**
       Settings > Previews with `Minimize a client's window while it is not
       the one you switched to` UNTICKED — the shipped default. Expected:
@@ -1693,15 +1709,15 @@ only ever checked by hand.
       failure WCAG 2.5.3 names.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
-      `Character`, `Preview`, `Keybind`, `Geometry` — sentence case, a step
+      `Character`, `Preview`, `Keybind`, `Configure` — sentence case, a step
       smaller and dimmer than the names below it — with one blank heading
       over the cell `Clear` and `Edit…` share. `Lock` and `Never minimize`
       name nothing here any more: both left the row for their own
       disclosures under the toggles they except, so the three CHECKBOX
       columns this heading row used to carry are down to one, `Preview`,
-      still a bare box with no word beside it. `Clear`, `Edit…` and
-      `Size…` and `Copy…` still carry their own words where available, and
-      should: they are verbs on controls, not the name of a column. `Clear` and
+      still a bare box with no word beside it. `Size…` and `Copy…` appear
+      only after opening Configure, where they remain verbs on controls,
+      not collapsed-row columns. `Clear` and
       `Edit…` have no heading for the same reason, and `Clear` is now
       ABSENT — not present and disabled — on a row with no chord to
       clear, sharing its cell with `Edit…`, right-aligned so `Edit…` sits
@@ -1744,8 +1760,8 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…`, `Size…` and `Copy…` where present — goes dim and
-      stops responding to clicks. The row's saved keybind stays legible on the inert button;
+      `Clear`, `Edit…` and `Configure` — goes dim and stops responding to
+      clicks. The row's saved keybind stays legible on the inert button;
       it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
       **the character's box in the Lock block must read inert**, since
@@ -1783,20 +1799,17 @@ only ever checked by hand.
       happens.
 - [ ] **`Size…` is absent for a character that has never been dragged.**
       Settings > Previews with at least one character offline that has
-      never had its preview moved or resized. Expected: that row shows no
-      `Size…`. If another character has saved geometry, `Copy…` may occupy
-      the Geometry cell instead; if neither action can succeed, the cell
-      carries a dash and its tooltip says how to make a size settable.
-      The cell itself is never omitted: `#preview-binds` is a shared grid
-      and every row must still contribute one Geometry cell. Now drag that
-      character's preview once and reopen the section: `Size…` is there.
+      never had its preview moved or resized. Open that row's **Configure**
+      detail. Expected: it shows no `Size…`; if another character has saved
+      geometry, `Copy…` is available beside the explanatory dash. Now drag
+      that character's preview once and reopen Configure: `Size…` is there.
       Running clients always have it. The point is that
       `set_preview_size` refuses a character with no layouts entry, and a
       layouts entry is written on a drag or resize rather than merely on
       discovery.
 - [ ] **Copy geometry offers only usable sources.** Give at least three
-      characters saved layouts, leave one online and one offline, and open
-      `Copy…` on a different target. Expected: the app-owned picker groups
+      characters saved layouts, leave one online and one offline, open the
+      target's **Configure** detail, then open `Copy…`. Expected: the app-owned picker groups
       sources under visible `Online` and `Offline` labels, excludes the
       target, and offers no character without a full saved rectangle. The
       selector owns initial focus, Tab stays inside the picker, Escape cancels,
@@ -1822,18 +1835,12 @@ only ever checked by hand.
       leaving Previews disarms capture as before.
 - [ ] **The row still fits at the window's floor.** Settings > Previews at
       the smallest the window will go (840x625). Expected: every row ends
-      inside the card with a gap after `Copy…`, `Size…`, or the trailing
-      `Edit…` on a row with neither, and nothing is clipped. Grid tracks do not
-      wrap, so an overflow here is a cut-off control at every width, not a
-      reflow — a seven-track version of this row once measured 608.41px
-      against the same 586px card interior, which is why the opt-out
-      label was the single word `Off` rather than a phrase on the first
-      draft. **That constraint stayed retired, and shrank further:** Lock
-      and Never minimize have since left the row for their own
-      disclosures, taking their per-row labels and cells with them.
-      Measured after that move: 519.25px of the same 586px. This change
-      keeps the same column count and adds a second action inside Geometry;
-      re-measure both actions here rather than trusting the old figure.
+      inside the card after the trailing `Configure` or `Edit…` control,
+      nothing is clipped, and the Settings pane has no horizontal scrollbar.
+      Grid tracks do not wrap, so an overflow here is a cut-off control at
+      every width, not a reflow. Open Configure on
+      several rows and confirm its full-grid detail returns the same way:
+      Size and Copy must never widen or add a collapsed roster column.
 - [ ] **The two global defaults are reachable and take effect.** Settings >
       Previews, below `Keep previews the same shape as their client`.
       - `Default preview size` shows the current pair and commits on
@@ -2497,6 +2504,17 @@ pytest.
 
 ## EVE preview hotkeys
 
+- [ ] **The screenshot set does not replace interaction checks.** In Settings
+      > Previews, open Configure for an online and an offline character, then
+      close it. Focus stays on that row's Configure button on both actions;
+      opening a second detail closes the first. On an opted-out row, Clear and
+      Edit… may be disabled, but Configure stays live: open it and confirm the
+      saved Cycle group and geometry controls remain reachable for re-enable.
+      Change a Cycle group or Copy a saved placement, let the refresh repaint, and confirm focus returns to
+      the contained control rather than the page body. Restart Wingman and
+      confirm the saved group assignment and copied placement persist. These
+      focus and persistence paths are intentionally not staged by the
+      read-only screenshot shooter.
 - [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
   Bind any chord and press it. If nothing happens while the log shows a
   successful registration, `HWND_MESSAGE` is not receiving the message and
@@ -2895,10 +2913,10 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] **Profiles opens with compact context and tools.** With a selected EVE
       profile, the full-width context row identifies the folder, server, and
-      profile without competing with the top tool row. That row contains
-      **Backups…** and **Edit formations…** when the codec is available. In
-      Accounts mode, the Copy card contains **Identify accounts…**; none of
-      these tools is an inline card below Copy.
+      profile. The **Backups…** and **Edit formations…** sibling tool group
+      sits directly beneath that context when the codec is available, without
+      becoming another card or route. In Accounts mode, the Copy card contains
+      **Identify accounts…**; none of these tools is an inline card below Copy.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -3015,11 +3033,13 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] **Identify one account through a controlled client session.** Switch to
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
-      what Wingman will watch, says to close every EVE client, and offers one
-      primary action. A quiet `Step N of 5` line stays above the title and
-      advances through Start, Watch for changes, Confirm character, Name
-      account, and Review roster. Start identification, launch one character, enter the
-      game, make a small settings change, fully close that client, and press
+      what Wingman will watch, and offers one primary action. The warning to
+      close every EVE client sits immediately above **Begin identification**,
+      where it remains visible before activation. A quiet `Step N of 5` line
+      stays above the title and advances through Prepare, Watch for changes,
+      Confirm character, Name account, and Review roster. Begin identification,
+      launch one character, enter the game, make a small settings change, fully
+      close that client, and press
       `Check changes`. Wingman proposes the one changed account and character
       and persists nothing when `Link character` opens the required account-name
       step.
@@ -3487,11 +3507,14 @@ against a placeholder id; only these items are blocked on the registration.
 - [ ] **`Copy plan` puts the plan on the clipboard** (round 3, S7). With a
       plan selected, press `Copy plan` on the pane heading and paste into a
       text editor. Expected: one `Skill Name IV` line per requirement, in
-      roman numerals, in plan order — and the status strip says it was
-      copied. Then paste it into EVE's skill plan import and confirm the
-      game accepts it and drops the skills already trained (that is why the
-      whole plan is enough and no per-character diffing is done). With no
-      plan selected the button is disabled rather than absent.
+      roman numerals, in plan order, and a local `Plan copied to clipboard.`
+      status beneath the heading. Deny clipboard permission (or use a browser
+      context that denies it) and confirm that same local status says
+      `Could not copy the plan to the clipboard.` rather than failing silently
+      or changing plan state. Then paste it into EVE's skill plan import and
+      confirm the game accepts it and drops the skills already trained (that
+      is why the whole plan is enough and no per-character diffing is done).
+      With no plan selected the button is disabled rather than absent.
 - [ ] **The two-step Forget cannot be triggered by one mis-click.** First
       click arms the control (it changes to a confirm state); a second,
       separate click is required to actually forget the character;

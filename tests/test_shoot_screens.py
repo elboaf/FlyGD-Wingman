@@ -7,6 +7,7 @@ the same split bookmarks.py/hotkeys.py already uses.
 """
 
 import importlib.util
+import json
 import pathlib
 import re
 
@@ -35,7 +36,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 16
+    assert len(to_shoot) == 17
     assert skipped == []
 
 
@@ -53,7 +54,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 12
+    assert len(skipped) == 13
 
 
 def _strip_js_comments(text: str) -> str:
@@ -124,6 +125,7 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         "settings-previews",
         "settings-previews-middle",
         "settings-previews-table",
+        "settings-previews-detail",
         "settings-previews-copy",
         "settings-previews-groups",
         "settings-previews-narrow",
@@ -131,9 +133,13 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
     assert "scrollTop = 0" in variants["settings-previews"]
     assert "scrollHeight - pane.clientHeight" in variants["settings-previews-middle"]
     assert "pane.scrollHeight" in variants["settings-previews-table"]
-    assert "WM.choose(" in variants["settings-previews-copy"]
-    assert "Online" in variants["settings-previews-copy"]
-    assert "Offline" in variants["settings-previews-copy"]
+    detail = variants["settings-previews-detail"]
+    copy = variants["settings-previews-copy"]
+    assert '[data-preview-configure="Aleksandrina Shadowbanes Voidstriders"]' in detail
+    assert "WM.choose(" not in copy
+    assert '[data-preview-configure="Aleksandrina Shadowbanes Voidstriders"]' in copy
+    assert '[data-preview-detail-control="copy"]' in copy
+    assert copy.index("configure.click()") < copy.index("copy.click()")
 
 
 def test_page_candidates_keeps_the_real_app_page():
@@ -299,6 +305,7 @@ def test_manifest_records_what_the_gate_skipped():
         "settings-bookmarks",
         "settings-previews",
         "settings-previews-copy",
+        "settings-previews-detail",
         "settings-previews-groups",
         "settings-previews-middle",
         "settings-previews-narrow",
@@ -486,9 +493,10 @@ def test_preview_group_stages_are_present():
 
 
 def test_preview_group_stage_setup_scripts():
-    """The staging scripts for the two new stages must follow the existing
-    pattern: scroll the pane to reveal groups, and use scroll-only JS for
-    the 840x625 stage (viewport is now set via CDP, not window.resizeTo).
+    """The group and floor stages scroll without resizing the page.
+
+    CDP owns the 840x625 override; the floor setup merely closes inherited
+    details and frames the roster heading in the Settings scrollport.
     """
     scripts = {
         s.key: shoot.screen_setup_script(s)
@@ -501,8 +509,9 @@ def test_preview_group_stage_setup_scripts():
     narrow_script = scripts["settings-previews-narrow"]
     # The groups stage must scroll to reveal the Manage groups disclosure.
     assert groups_script is not None, "settings-previews-groups needs a setup script"
-    assert "scrollTop" in groups_script or "scrollHeight" in groups_script, (
-        "groups stage setup must scroll the pane"
+    assert "preview-group-manager" in groups_script
+    assert "scrollIntoView" in groups_script, (
+        "groups stage setup must scroll the real group manager into view"
     )
     # The narrow stage must scroll (not resize via window.resizeTo --
     # that is a no-op in WebView2; the viewport is set through CDP instead).
@@ -511,15 +520,16 @@ def test_preview_group_stage_setup_scripts():
         "narrow stage must NOT use window.resizeTo (it is a no-op in WebView2); "
         "use Emulation.setDeviceMetricsOverride via CDP instead"
     )
-    assert "scrollTop" in narrow_script, (
-        "narrow stage must scroll the pane into position"
+    assert "#preview-roster-heading" in narrow_script
+    assert "scrollIntoView" in narrow_script, (
+        "narrow stage must frame the roster heading in the scrollport"
     )
 
 
 def test_gate_on_shoots_every_screen_including_new_group_stages():
-    """With the two new stages, the total must increase by 2."""
+    """The representative detail stage brings the gated capture set to 17."""
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 16
+    assert len(to_shoot) == 17
     assert skipped == []
 
 
@@ -872,7 +882,7 @@ def test_dev_preview_fixture_extractor_returns_a_dict_with_hotkeys():
     """load_dev_preview_fixture() must return a dict parsed from the named
     literal in dev.js, containing at least the 'hotkeys' key with 'groups'.
     """
-    fixture = shoot.load_dev_preview_fixture()
+    fixture = shoot.load_dev_preview_fixture(str(ROOT))
     assert isinstance(fixture, dict), "load_dev_preview_fixture must return a dict"
     assert "hotkeys" in fixture, (
         "fixture must have a 'hotkeys' key matching the get_preview_hotkey_state shape"
@@ -881,6 +891,9 @@ def test_dev_preview_fixture_extractor_returns_a_dict_with_hotkeys():
     assert len(fixture["hotkeys"]["groups"]) >= 1, (
         "fixture must have at least one group"
     )
+    assert len(fixture["roster"]) >= 10
+    assert any(len(name) >= 30 for name in fixture["roster"])
+    assert set(fixture["roster"]) - set(fixture["characters"])
 
 
 def test_groups_stage_injects_fixture_via_onPreviewHotkeys():
@@ -945,40 +958,37 @@ def test_groups_stage_scrolls_to_preview_group_manager():
         )
 
 
-def test_narrow_stage_scrolls_to_a_group_select_row():
-    """The narrow stage must scroll to a specific long row, not to
-    pane.scrollTop = 0 (the top of the pane).
-
-    The brief calls for 840x625 with long character/group names visible.
-    Scrolling to the top shows the global keybind rows, not the character
-    rows where the group select appears.
-    """
+def test_narrow_stage_frames_roster_heading_at_scrollport_start():
+    """The viewport-floor stage starts at the collapsed roster heading."""
     narrow_screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
-    # Must target a character row or group select element, not just scroll top
-    assert (
-        "preview-group-select" in script
-        or "scrollIntoView" in script
-        or "data-char" in script
-        or "aria-label" in script
-    ), (
-        "narrow stage must scroll to a specific long-name character row "
-        "using a stable selector -- scrollTop = 0 shows only global keybinds, "
-        "missing the character rows where group names appear"
+    selectors = _query_selector_arguments(script)
+    assert selectors.count("#preview-roster-heading") == 1, selectors
+    assert "heading.scrollIntoView({block: 'start', behavior: 'instant'})" in script
+
+
+def test_detail_stage_scrolls_opened_character_detail_into_view():
+    """Opening after the bottom stage must deterministically reframe detail."""
+    detail_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-detail"
     )
+    script = shoot.screen_setup_script(detail_screen)
+    assert script is not None
+    assert "configure.getAttribute('aria-controls')" in script
+    assert "document.getElementById(detailId)" in script
+    assert "detail.scrollIntoView({block: 'center', behavior: 'instant'})" in script
+    assert script.index("configure.click()") < script.index("detail.scrollIntoView")
 
 
-def test_group_staging_does_not_invoke_write_methods():
-    """The setup scripts for groups and narrow stages must NOT call any
-    write bridge method (create_preview_cycle_group, rename_preview_cycle_group,
-    delete_preview_cycle_group, set_preview_cycle_group_bind,
-    set_preview_character_group).
+def test_fixture_backed_preview_staging_does_not_invoke_write_methods():
+    """Fixture-backed setup must remain page-only and read-only.
 
-    Screenshot stages are read-only; calling write methods would mutate the
-    user's real settings during a capture session.
+    Detail and Copy now join groups and floor captures. Configure is local and
+    Copy only opens the page-owned chooser; none of those stages may call a
+    bridge writer against the user's settings.
     """
     write_methods = {
         "create_preview_cycle_group",
@@ -986,8 +996,19 @@ def test_group_staging_does_not_invoke_write_methods():
         "delete_preview_cycle_group",
         "set_preview_cycle_group_bind",
         "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
     }
-    for key in ("settings-previews-groups", "settings-previews-narrow"):
+    for key in (
+        "settings-previews-detail",
+        "settings-previews-copy",
+        "settings-previews-groups",
+        "settings-previews-narrow",
+    ):
         screen = next(s for s in shoot.SCREENS if s.key == key)
         script = shoot.screen_setup_script(screen)
         assert script is not None
@@ -1135,42 +1156,41 @@ def test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure(
     )
 
 
-def test_narrow_stage_targets_long_name_character_deterministically():
-    """The narrow stage setup script must target the long-name character
-    ('Aleksandrina Shadowbanes Voidstriders') by their stable aria-label
-    selector, not by the generic '.preview-group-select' class.
+def test_narrow_stage_closes_details_and_returns_the_roster_heading_to_top():
+    """The floor shot must not inherit the preceding detail's expanded state.
 
-    The first .preview-group-select is whichever row happens to be rendered
-    first -- with the fixture it is 'Aiga Otsolen', not the long-name
-    character whose ellipsis behaviour the narrow stage is meant to capture.
-    Using the generic first-match selector makes the framing non-deterministic
-    and defeats the purpose of the stage.
-
-    The page sets: aria-label="Cycle group for <characterName>" on each select
-    (previews.js line 1364), so the stable selector is:
-      select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]
+    It deliberately frames the roster heading at the Settings scrollport top,
+    so the 840x625 capture shows the collapsed table geometry rather than a
+    stale disclosure or an arbitrary offset.
     """
     narrow_screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
+    assert '[data-preview-configure][aria-expanded="true"]' in script
+    assert "#preview-roster-heading" in script
+    assert script.index("aria-expanded") < script.index("#preview-roster-heading")
 
-    # The long-name character must be explicitly named in the script.
-    assert "Aleksandrina Shadowbanes Voidstriders" in script, (
-        "narrow stage setup script must explicitly target the long-name character "
-        "'Aleksandrina Shadowbanes Voidstriders', not the first .preview-group-select.\n"
-        'Use: select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]'
+
+def test_narrow_stage_targets_roster_heading_deterministically():
+    """The floor capture must use the actual roster-heading id, not a row.
+
+    A detail can be left open by a preceding shot; framing a character after
+    closing it makes the capture depend on roster order. The heading names the
+    stable collapsed-table starting point instead.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
-    # The aria-label selector must be used (not a generic class selector).
-    assert "aria-label" in script, (
-        "narrow stage must use the stable aria-label selector to target the "
-        "long-name character deterministically"
-    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    selectors = _query_selector_arguments(script)
+    assert selectors.count("#preview-roster-heading") == 1, selectors
 
 
-def test_groups_and_narrow_setup_scripts_embed_exact_fixture_payload():
-    """Both setup scripts must embed the exact JSON serialization of
+def test_fixture_backed_preview_setup_scripts_embed_exact_fixture_payload():
+    """Every fixture-backed preview setup script embeds the exact JSON serialization of
     load_dev_preview_fixture() -- no extra fields, no missing fields.
 
     The assertion is: json.loads(embedded_payload) == load_dev_preview_fixture().
@@ -1183,7 +1203,12 @@ def test_groups_and_narrow_setup_scripts_embed_exact_fixture_payload():
 
     fixture = shoot.load_dev_preview_fixture()
 
-    for key in ("settings-previews-groups", "settings-previews-narrow"):
+    for key in (
+        "settings-previews-detail",
+        "settings-previews-copy",
+        "settings-previews-groups",
+        "settings-previews-narrow",
+    ):
         screen = next(s for s in shoot.SCREENS if s.key == key)
         script = shoot.screen_setup_script(screen)
         assert script is not None
@@ -1246,56 +1271,69 @@ def test_groups_stage_uses_preview_group_manager_selector():
     )
 
 
-def test_narrow_stage_uses_exact_aria_label_selector_syntax():
-    """The settings-previews-narrow setup script must target the character row
-    via the full CSS attribute selector:
-        select[aria-label=\"Cycle group for Aleksandrina Shadowbanes Voidstriders\"]
-
-    Partial matches (e.g. just the character name without the attribute
-    selector syntax) do not guarantee querySelector will find the element,
-    and 'aria-label' as a bare string in a comment would also pass a weaker
-    test.  This test asserts the complete syntax.
-    """
+def test_narrow_stage_uses_the_exact_roster_heading_selector():
+    """The floor script must use the real heading selector as its scroll target."""
     narrow_screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
-    full_selector = (
-        'select[aria-label="Cycle group for Aleksandrina Shadowbanes Voidstriders"]'
-    )
     selectors = _query_selector_arguments(script)
-    assert selectors.count(full_selector) == 1, (
-        "settings-previews-narrow must pass the exact long-character selector "
-        f"to document.querySelector; got {selectors!r}"
-    )
+    assert selectors.count("#preview-roster-heading") == 1, selectors
 
 
-def test_narrow_stage_does_not_use_generic_first_select_selector():
-    """The settings-previews-narrow setup script must NOT target
-    '.preview-group-select' alone as the primary selector.
-
-    '.preview-group-select' matches the FIRST select in document order,
-    which is 'Aiga Otsolen' in the fixture — not the intended long-name
-    character whose ellipsis behaviour this stage captures.
-    """
+def test_narrow_stage_does_not_target_a_character_control():
+    """The floor stage frames the roster heading, never a first character control."""
     narrow_screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
     )
     script = shoot.screen_setup_script(narrow_screen)
     assert script is not None
-    # Reject a bare .preview-group-select querySelector without an [aria-label]
-    # (a refinement like .preview-group-select[aria-label=...] is fine, but
-    #  querySelector('.preview-group-select') is not)
+    # A bare first-match character selector would capture an arbitrary row
+    # rather than the stable roster heading.
     bare_first_match = re.search(
         r"querySelector\s*\(\s*['\"]\s*\.preview-group-select\s*['\"]\s*\)",
         script,
     )
     assert bare_first_match is None, (
-        "narrow stage setup script must NOT use querySelector('.preview-group-select') "
-        "-- it selects the first row (Aiga Otsolen), not the intended long-name character. "
-        "Use the full aria-label attribute selector instead."
+        "narrow stage setup script must not target a character control; "
+        "it must frame #preview-roster-heading."
     )
+
+
+def test_fixture_stages_fail_closed_when_required_controls_are_missing():
+    """Fixture stages must never capture live state or an incomplete target."""
+    scripts = {
+        key: shoot.screen_setup_script(next(s for s in shoot.SCREENS if s.key == key))
+        for key in (
+            "settings-previews-detail",
+            "settings-previews-copy",
+            "settings-previews-groups",
+            "settings-previews-narrow",
+        )
+    }
+    for key, script in scripts.items():
+        assert script is not None
+        assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
+        assert "throw new Error" in script, key
+    for key in ("settings-previews-detail", "settings-previews-copy"):
+        assert "Configure control" in scripts[key]
+        assert "detail" in scripts[key]
+    assert "Copy control" in scripts["settings-previews-copy"]
+    assert "group manager" in scripts["settings-previews-groups"]
+    assert "roster heading" in scripts["settings-previews-narrow"]
+
+
+def test_copy_stage_fails_closed_unless_the_copy_chooser_opens():
+    """Clicking Copy is setup, not proof that the picker was staged."""
+    copy = shoot.screen_setup_script(
+        next(s for s in shoot.SCREENS if s.key == "settings-previews-copy")
+    )
+    assert copy is not None
+    assert copy.index("copy.click()") < copy.index("overlay.hidden")
+    assert "Copy chooser did not open" in copy
+    assert "dialog.classList.contains('choice')" in copy
+    assert "throw new Error" in copy
 
 
 class _FailOnceCDP(_OrderedCDP):
@@ -1381,3 +1419,57 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
         f"post-set ops: {post_set!r}\n"
         "Ensure the screenshot call is inside the try block, not after the finally."
     )
+
+
+# ---------------------------------------------------------------------------
+# Final review: deterministic, read-only Preview capture setups
+# ---------------------------------------------------------------------------
+
+
+def _preview_capture_scripts():
+    """Every Preview stage in SCREENS, including later additions."""
+    return {
+        screen.key: shoot.screen_setup_script(screen)
+        for screen in shoot.SCREENS
+        if screen.key.startswith("settings-previews")
+    }
+
+
+def test_every_preview_capture_uses_the_authoritative_read_only_fixture():
+    """Adjacent Preview shots need one deterministic roster without writes."""
+    scripts = _preview_capture_scripts()
+    fixture = shoot.load_dev_preview_fixture()
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    )
+
+    for key, script in scripts.items():
+        assert script is not None, f"{key} needs deterministic setup"
+        assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
+        assert "window.onPreviewHotkeys(payload);" in script, key
+        assert "throw new Error" in script, key
+        match = re.search(r"var payload = (\{.*?\});", script, re.DOTALL)
+        assert match, f"{key} does not embed the authoritative fixture"
+        assert json.loads(match.group(1)) == fixture
+        for writer in writers:
+            assert writer not in script, f"{key} must not call {writer}"
+
+
+def test_groups_stage_closes_inherited_detail_before_framing_management():
+    """The group capture must not inherit the preceding Configure disclosure."""
+    script = _preview_capture_scripts()["settings-previews-groups"]
+    assert script is not None
+    expanded = '[data-preview-configure][aria-expanded="true"]'
+    assert expanded in script
+    assert "No preview detail was closed" in script
+    assert script.index(expanded) < script.index(".preview-group-manager")

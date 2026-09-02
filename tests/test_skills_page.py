@@ -358,6 +358,97 @@ def test_the_plan_heading_carries_a_copy_control():
     )
 
 
+def test_copy_plan_reports_clipboard_success_and_failure_locally():
+    """Copying succeeds or fails in the browser after Python returns text,
+    so the Skills pane -- not the global status strip -- must report both.
+
+    This fails if the local live region disappears, a clipboard rejection is
+    ignored, or a successful write does not confirm the completed action.
+    """
+    status = re.search(r'<p[^>]*id="skills-copy-status"[^>]*>', BODY)
+    assert status, "Copy plan has no local feedback region"
+    assert 'role="status"' in status.group(0)
+
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler, "Copy plan no longer owns its clipboard result"
+    assert "navigator.clipboard.writeText(text).then(" in handler.group(1)
+    assert "Plan copied to clipboard." in handler.group(1)
+    assert "Could not copy the plan to the clipboard." in handler.group(1)
+
+
+def test_failed_copy_feedback_belongs_to_the_plan_that_started_the_attempt():
+    """A failed plan lookup or clipboard write must not inherit ownership
+    from the last successful copy. Otherwise switching plans can leave the
+    failure attached to whichever plan happened to succeed previously.
+    """
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    starts_request = body.index("WM.send('skills_plan_text', name)")
+    owns_attempt = body.index("resetCopyStatus(name)")
+    assert owns_attempt < starts_request, (
+        "every copy attempt must claim its plan before either the plan lookup "
+        "or clipboard write can fail"
+    )
+    reset = re.search(
+        r"function resetCopyStatus\(plan\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert reset
+    assert "copyStatusPlan = plan" in reset.group(1)
+    assert "setCopyStatus('', false)" in reset.group(1), (
+        "attempt ownership and the old status must be reset together"
+    )
+
+
+def test_pending_copy_completion_is_invalidated_when_the_plan_changes():
+    """A plan lookup and clipboard write are both asynchronous. Switching
+    away and back must invalidate either completion rather than letting an
+    old attempt report success or failure under the newly selected plan.
+    """
+    assert re.search(r"var copyAttemptSeq = 0;", CODE)
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    assert "copyAttemptSeq += 1" in body
+    assert "var token = copyAttemptSeq" in body
+    # One guard after the bridge lookup and one in each clipboard outcome.
+    assert body.count("copyAttemptIsCurrent(token, name)") >= 3
+
+    select = re.search(r"function selectPlan\(name\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert select and "resetCopyStatus('')" in select.group(1), (
+        "selection must clear feedback and invalidate pending completions immediately"
+    )
+
+
+def test_reloading_plans_invalidates_copy_attempts_even_when_name_survives():
+    """Reload is authoritative even when its replacement keeps the same name."""
+    reload_handler = re.search(
+        r"WM\.el\('skills-reload-plans'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert reload_handler, "Reload plans handler is missing"
+    body = reload_handler.group(1)
+    assert "copyAttemptSeq += 1" in body, (
+        "reload must invalidate a pending copy even when selection name is unchanged"
+    )
+    assert "resetCopyStatus('')" in body, (
+        "reload must clear copy feedback with the invalidated attempt"
+    )
+
+
 # ---- round 5: the roster opens, and its numbers are scoped -------------
 
 # Whitespace-collapsed: the checklist is wrapped prose, so a sentence this
@@ -583,3 +674,21 @@ def test_no_two_functions_in_skills_js_share_a_name():
     duplicates = sorted({n for n in names if names.count(n) > 1})
 
     assert not duplicates, f"duplicate function declarations: {duplicates}"
+
+
+def test_missing_plan_is_reported_only_by_python():
+    """Python can diagnose a vanished plan; the page cannot add a second warning.
+
+    The page owns clipboard outcomes after it receives text. A falsey plan-text
+    result is instead Python's missing-plan warning, so rendering another local
+    no-plan message duplicates feedback for one failed action.
+    """
+    handler = re.search(
+        r"WM\.el\('skills-copy-plan'\)\.addEventListener\('click', function \(\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler, "Copy plan handler is missing"
+    body = handler.group(1)
+    assert "if (!text) { return; }" in body
+    assert "The plan is no longer available." not in body

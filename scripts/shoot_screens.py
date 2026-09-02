@@ -72,6 +72,13 @@ SCREENS = (
         True,
     ),
     Screen(
+        "settings-previews-detail",
+        "Settings - Previews (detail)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
         "settings-previews-copy",
         "Settings - Previews (copy picker)",
         "settings",
@@ -203,93 +210,130 @@ def load_dev_preview_fixture(checkout: str | None = None) -> dict:
         ) from exc
 
 
+def _fixture_preview_setup(body: str) -> str:
+    """Run a Preview capture against the one extracted, read-only fixture."""
+    payload_js = json.dumps(load_dev_preview_fixture())
+    return (
+        "(function () {\n"
+        "  var payload = " + payload_js + ";\n"
+        "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+        "    throw new Error('onPreviewHotkeys is missing');\n"
+        "  }\n"
+        "  window.onPreviewHotkeys(payload);\n" + body + "\n}())"
+    )
+
+
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
     if screen.key == "settings-previews":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = 0; }
-        }())"""
-    if screen.key == "settings-previews-middle":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) {
-            pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
-          }
-        }())"""
-    if screen.key == "settings-previews-table":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = pane.scrollHeight; }
-        }())"""
-    if screen.key == "settings-previews-copy":
-        return """WM.choose(
-          'Copy preview geometry',
-          'Copy saved size and position to "Aleksandrina Shadowbanes Voidstriders".',
-          [
-            {label: 'Online', options: [
-              {value: 'Aiga Otsolen', label: 'Aiga Otsolen'}
-            ]},
-            {label: 'Offline', options: [
-              {value: 'Tanuki Solette', label: 'Tanuki Solette'}
-            ]}
-          ],
-          'Copy')"""
-    if screen.key == "settings-previews-groups":
-        # Load the authoritative dev fixture via onPreviewHotkeys (read-only;
-        # never calls a write API) so the page shows deterministic group state
-        # regardless of what the real user's settings contain.
-        # Then scroll directly to .preview-group-manager (the Manage groups
-        # disclosure) rather than pane.scrollHeight (absolute bottom): the
-        # manager is rendered after the group keybind rows and before the
-        # character rows, so absolute-bottom scrolling does not guarantee it
-        # is in frame.
-        fixture = load_dev_preview_fixture()
-        payload_js = json.dumps(fixture)
-        return (
-            "(function () {\n"
-            "  var payload = " + payload_js + ";\n"
-            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
-            "  var mgr = document.querySelector('.preview-group-manager');\n"
-            "  if (mgr) {\n"
-            "    mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
-            "  } else {\n"
-            "    var pane = document.querySelector('.settings-pane');\n"
-            "    if (pane) { pane.scrollTop = pane.scrollHeight; }\n"
-            "  }\n"
-            "}())"
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = 0;"
         )
-    if screen.key == "settings-previews-narrow":
-        # Load the authoritative dev fixture via onPreviewHotkeys so the
-        # page has deterministic group state.  The 840x625 viewport override
-        # is applied through CDP (Emulation.setDeviceMetricsOverride) in
-        # walk() BEFORE this script runs, so the layout is already at 840px
-        # when the injection and scroll execute.
-        # window.resizeTo is a no-op inside a WebView2 target controlled by
-        # pywebview, so it must never appear in this script.
-        #
-        # Target 'Aleksandrina Shadowbanes Voidstriders' by stable aria-label
-        # (set at previews.js:1364 as aria-label="Cycle group for <name>").
-        # This is the load-bearing character: 37-char name exercises the
-        # ellipsis in the 150px name track and the offline tag width at 840px.
-        # Using the generic .preview-group-select class would match the first
-        # row ('Aiga Otsolen'), not the long-name character -- non-deterministic.
+    if screen.key == "settings-previews-middle":
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;"
+        )
+    if screen.key == "settings-previews-table":
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = pane.scrollHeight;"
+        )
+    if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
+        # Inject only the authoritative fixture, then drive the same Configure
+        # and Copy controls a user reaches. Every required step fails closed:
+        # a live-state or half-staged capture is misleading evidence.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
         long_name = "Aleksandrina Shadowbanes Voidstriders"
+        copy_click = ""
+        if screen.key == "settings-previews-copy":
+            copy_click = (
+                "  var copy = document.querySelector(\n"
+                "    '[data-preview-detail-control=\"copy\"]');\n"
+                "  if (!copy) { throw new Error('Copy control is missing'); }\n"
+                "  copy.click();\n"
+                "  var overlay = WM.el('overlay');\n"
+                "  var dialog = WM.el('dialog');\n"
+                "  if (!overlay || overlay.hidden || !dialog\n"
+                "      || !dialog.classList.contains('choice')) {\n"
+                "    throw new Error('Copy chooser did not open');\n"
+                "  }\n"
+            )
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
-            "  if (window.onPreviewHotkeys) { window.onPreviewHotkeys(payload); }\n"
-            "  var sel = document.querySelector('select[aria-label=\"Cycle group for "
-            + long_name
-            + "\"]');\n"
-            "  if (sel) {\n"
-            "    sel.scrollIntoView({block: 'center', behavior: 'instant'});\n"
-            "  } else {\n"
-            "    var pane = document.querySelector('.settings-pane');\n"
-            "    if (pane) { pane.scrollTop = pane.scrollHeight / 2; }\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
             "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (button) {\n"
+            "    button.click();\n"
+            "  });\n"
+            "  var configure = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!configure) { throw new Error('Configure control is missing'); }\n"
+            "  var detailId = configure.getAttribute('aria-controls');\n"
+            "  configure.click();\n"
+            "  var detail = document.getElementById(detailId);\n"
+            "  if (!detail) { throw new Error('Configure detail is missing'); }\n"
+            "  detail.scrollIntoView({block: 'center', behavior: 'instant'});\n"
+            + copy_click
+            + "}())"
+        )
+    if screen.key == "settings-previews-groups":
+        # Load the authoritative fixture through the read-side handler, then
+        # frame the real manager. Do not fall back to a live page or its bottom.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (configure) {\n"
+            "    configure.click();\n"
+            "  });\n"
+            "  if (document.querySelector(\n"
+            "      '[data-preview-configure][aria-expanded=\"true\"]')) {\n"
+            "    throw new Error('No preview detail was closed');\n"
+            "  }\n"
+            "  var mgr = document.querySelector('.preview-group-manager');\n"
+            "  if (!mgr) { throw new Error('Preview group manager is missing'); }\n"
+            "  mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
+    if screen.key == "settings-previews-narrow":
+        # CDP pins 840x625 before this fixture-backed setup. Close inherited
+        # details, then frame the generated roster heading; every missing
+        # prerequisite fails the shot instead of photographing live state.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (configure) {\n"
+            "    configure.click();\n"
+            "  });\n"
+            "  var heading = document.querySelector('#preview-roster-heading');\n"
+            "  if (!heading) { throw new Error('Preview roster heading is missing'); }\n"
+            "  heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "}())"
         )
     return None
@@ -687,8 +731,8 @@ def walk(
             if screen.key == "settings-previews-narrow":
                 # CDP viewport override MUST be applied before the setup
                 # script runs (finding 1, round 2): the setup script injects
-                # the fixture via onPreviewHotkeys and scrolls to the target
-                # character row -- both must execute at 840x625 so the layout
+                # the fixture via onPreviewHotkeys and scrolls to the roster
+                # heading -- both must execute at 840x625 so the layout
                 # is already constrained before the scroll position is chosen.
                 # window.resizeTo is a no-op in WebView2; CDP emulation is
                 # the only mechanism that works.
