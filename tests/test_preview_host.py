@@ -4085,6 +4085,90 @@ def _switching_host(
     return h, _FakeLibs(user32), order
 
 
+def test_new_target_during_foreground_zero_keeps_original_outgoing_decision(
+    monkeypatch,
+):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._windows["Carol"] = _RingWindow("Carol", order)
+    results = iter(
+        (
+            host.window_mod.ActivationResult.PENDING_FOREGROUND,
+            host.window_mod.ActivationResult.ACTIVATED,
+        )
+    )
+    monkeypatch.setattr(host.window_mod, "activate", lambda *_args: next(results))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+    h._activate_client(libs, h._clients["Carol"])
+    assert libs.user32.minimized == [0x1111]
+
+
+def test_cycle_during_pending_foreground_anchors_on_pending_target(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *_args: None)
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+        "Carol": _FakeClient("Carol", hwnd=0x3333),
+    }
+    h._pending_switch = host._PendingSwitch(
+        "Bravo",
+        0x2222,
+        "Alice",
+        0x1111,
+        False,
+        phase=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    user32 = _FakeUser32(foreground=0)
+    activated = []
+    monkeypatch.setattr(
+        h,
+        "_activate_client",
+        lambda _libs, client: activated.append(client.stable_key),
+    )
+    h._registered = {1: ("cycle", 1)}
+    h._on_hotkeys(_FakeLibs(user32), [1])
+    assert activated == ["Carol"]
+
+
+def test_superseded_timer_resolves_only_current_target(monkeypatch):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._windows["Carol"] = _RingWindow("Carol", order)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._activate_client(libs, h._clients["Bravo"])
+    h._activate_client(libs, h._clients["Carol"])
+    libs.user32._foreground = 0x3333
+    h._retry_pending_activation(libs)
+    assert h._selected_key == "Carol"
+    assert not h._windows["Bravo"].selected
+
+
+def test_pending_foreground_target_replacement_cancels_the_request(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Bravo"] = _FakeClient("Bravo", hwnd=0x4444)
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
 def test_successful_switch_marks_target_before_nonactivating_async_minimize(
     monkeypatch,
 ):

@@ -1232,6 +1232,11 @@ class PreviewHost:
             (key for key, client in self._clients.items() if client.hwnd == foreground),
             None,
         )
+        if foreground_key is None and self._pending_switch is not None:
+            # Windows commonly reports no foreground while a direct request is
+            # in flight. Keep relative actions sequential without overriding a
+            # real client that has since taken foreground.
+            foreground_key = self._pending_switch.stable_key
         # `target` is the final dispatch decision, while `resolved_cursor`
         # remembers the last place this sequential batch reached. A failed
         # focus must suppress dispatch if it is final without making a later
@@ -1612,35 +1617,44 @@ class PreviewHost:
         prevents the minimize-first desktop gap found in Windows smoke.
         """
         # A newer click or hotkey supersedes an outstanding restored target.
-        if self._pending_switch is not None:
+        superseded = self._pending_switch
+        if superseded is not None:
             logger.debug(
                 "Pending activation of %s superseded by %s",
-                self._pending_switch.stable_key,
+                superseded.stable_key,
                 client.stable_key,
             )
         self._clear_pending_activation(libs)
         previous_hwnd = (
             libs.user32.GetForegroundWindow() if libs is not None else 0
         ) or 0
-        previous_key = next(
-            (
-                key
-                for key, value in self._clients.items()
-                if value.hwnd == previous_hwnd
-            ),
-            None,
-        )
+        if previous_hwnd == 0 and superseded is not None:
+            # Foreground zero is an inconclusive transition, not evidence that
+            # the original outgoing client or its minimize policy changed.
+            previous_key = superseded.previous_key
+            previous_hwnd = superseded.previous_hwnd
+            minimize = superseded.minimize
+        else:
+            previous_key = next(
+                (
+                    key
+                    for key, value in self._clients.items()
+                    if value.hwnd == previous_hwnd
+                ),
+                None,
+            )
+            minimize = switching.should_minimize(
+                enabled=self._minimizing_inactive(),
+                previous_key=previous_key,
+                next_key=client.stable_key,
+                never=([previous_key] if self._is_never_minimize(previous_key) else []),
+            )
         pending = _PendingSwitch(
             client.stable_key,
             client.hwnd,
             previous_key,
             previous_hwnd,
-            switching.should_minimize(
-                enabled=self._minimizing_inactive(),
-                previous_key=previous_key,
-                next_key=client.stable_key,
-                never=[previous_key] if self._is_never_minimize(previous_key) else [],
-            ),
+            minimize,
         )
         try:
             result = window_mod.activate(libs, client.hwnd)
