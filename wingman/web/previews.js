@@ -367,7 +367,7 @@
       row.appendChild(makeGeometryActions(character, off));
     }
 
-    // Cycle forward/back have no `character` -- they are chords, not
+    // All forward/back have no `character` -- they are chords, not
     // characters, and Never-minimize means nothing for them. #preview-binds
     // is a CSS grid with `.row { display: contents }` (style.css), so
     // every row must contribute the same number of cells or a short row's

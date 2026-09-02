@@ -3260,7 +3260,7 @@ button.btn:disabled,
    (dev.js leaves it empty -- get_bookmarks is unstubbed):
 
      Bookmarks  column 189.6px ("Convert EvE-Scout Bookmarks")  bind at 200.6
-     Previews   column  86.2px ("Cycle forward")                bind at  97.2
+     Previews   column  86.2px ("All forward")                  bind at  97.2
 
    103.4 CSS px apart, from a 586px row in both. The walkthrough measured
    79 CSS on the live app; the difference is not a discrepancy but the
@@ -3272,7 +3272,7 @@ button.btn:disabled,
    WHAT THE ALTERNATIVES COST, all measured, none hypothetical:
 
    - A shared explicit column has to be at least the widest BIND_LABEL, so
-     Previews gets the void back: 104px on "Cycle forward", 130px on a
+     Previews gets the void back: 104px on "All forward", 130px on a
      short character name. It is also a derived figure retyped into CSS,
      which CLAUDE.md forbids and no test could assert without rendering.
    - Stretching the name (`minmax(0, 1fr)`) and right-aligning the controls
