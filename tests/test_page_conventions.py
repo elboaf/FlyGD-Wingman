@@ -1343,10 +1343,10 @@ def test_choice_dialog_uses_a_labelled_select_and_cancels_safely():
     assert "active.kind === 'choice'" in escape
 
 
-def test_the_previews_table_names_geometry_as_geometry():
+def test_the_previews_table_names_the_configure_disclosure():
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
-    assert "'Geometry'" in head
+    assert "'Configure'" in head
     assert "'Size'" not in head
 
 
@@ -1939,7 +1939,7 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
-        ("Geometry", "makeGeometryActions"),
+        ("Configure", "'Configure'"),
     )
 
     for heading, token in owners:
@@ -2153,12 +2153,17 @@ def test_every_previews_row_starts_a_fresh_grid_line():
     )
 
 
-def test_the_geometry_cell_gates_size_and_copy_on_backend_payloads():
-    """One cell owns both geometry actions without duplicating backend rules."""
+def test_the_character_detail_gates_size_and_copy_on_backend_payloads():
+    """The disclosure owns geometry actions without duplicating backend rules."""
     body = _makerow_body()
-    assert "makeGeometryActions(character, off)" in body
+    assert "makeGeometryActions" not in body
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeGeometryActions(characterName, off)" in detail
+
     geometry_actions = src.split("function makeGeometryActions(", 1)
     assert len(geometry_actions) == 2
     geometry_actions = geometry_actions[1].split("\n  }", 1)[0]
@@ -2283,15 +2288,15 @@ def test_an_opted_out_character_row_disables_its_own_controls():
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
-    # The above is gated INLINE; this receives the state as an argument
-    # instead, and was unguarded until a review pointed out that dropping
-    # the second argument at the call site leaves the control live and
-    # undimmed with the whole suite green -- which is the exact failure
-    # this test's docstring claims to prevent.
-    for builder in ("makeGeometryActions",):
-        assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
-            f"makeRow does not pass the row's opted-out state to {builder}"
-        )
+    # Geometry now lives in the inline detail, but it must retain the
+    # opted-out state that keeps Size and Copy inert for a disabled preview.
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert re.search(r"makeGeometryActions\(characterName,[^)]*\boff\b", detail), (
+        "makeCharacterDetail does not pass the opted-out state to geometry actions"
+    )
     # Lock left the row for its own disclosure, and took this invariant with
     # it: with no window there is nothing to lock, so the block must pass
     # each character's opted-out state the way the row used to. Asserted on
@@ -2911,51 +2916,58 @@ def test_group_select_does_not_add_row_appendchild():
     )
 
 
-def test_group_select_appended_to_lab_inside_makerow():
-    """The group select must be appended to `lab` inside makeRow, not to
-    `row` -- any new row.appendChild in makeRow beyond the five-track set
-    breaks the grid derivation guard."""
+def test_group_select_is_owned_by_the_character_detail():
+    """Assignment is an infrequent per-character setting, not a roster cell."""
     body = _makerow_body()
-    # lab.appendChild(makeGroupSelect is the allowed form.
-    assert "lab.appendChild(makeGroupSelect" in body or (
-        "makeGroupSelect" in body and "lab.appendChild" in body
-    ), (
-        "makeRow does not append the group select to lab; it either is not "
-        "present or it appends to row, which would break the grid"
-    )
+    assert "makeGroupSelect" not in body
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "groups().length" in detail
+    assert "makeGroupSelect(characterName)" in detail
 
 
-def test_group_select_has_css_for_lab_column_without_new_track():
-    """Scoped CSS for the group select must exist and must NOT add a new
-    grid track to #preview-binds (the template stays at five cell tracks)."""
-    assert "preview-group-select" in CSS, (
-        "no .preview-group-select rule found in style.css"
-    )
-    # The grid-template-columns must still declare exactly 5 cell-bearing
-    # tracks (name + 4 controls) -- the trailing minmax(0, 1fr) is the 6th
-    # token but holds no cell. _preview_binds_cell_tracks() returns the
-    # cell-bearing count: 1 (name) + repeat-count (4) = 5.
-    tracks = _preview_binds_cell_tracks()
-    assert tracks == 5, (
-        f"#preview-binds now has {tracks} cell tracks instead of 5 after "
-        f"adding group-select CSS; the track count must not change"
-    )
+def test_group_select_is_styled_inside_the_detail_without_a_new_track():
+    """The detail preserves the five collapsed-row tracks."""
+    assert ".preview-character-detail .preview-group-select" in CSS
+    assert _preview_binds_cell_tracks() == 5
 
 
-def test_has_group_select_css_is_scoped_and_does_not_introduce_display():
-    """The .has-group-select CSS must only change flex layout of the lab
-    cell (flex-direction, align-items, gap) and must not introduce a new
-    display value that would need a [hidden] override."""
-    assert ".has-group-select" in CSS, (
-        "no .has-group-select rule found; makeRow adds the class but style.css "
-        "has no matching rule"
-    )
-    # Must be scoped under #preview-binds.
-    assert "#preview-binds" in CSS.split(".has-group-select")[0].rsplit("\n", 5)[
-        -1
-    ] or re.search(r"#preview-binds[^{]*\.has-group-select", CSS), (
-        ".has-group-select is not scoped under #preview-binds"
-    )
+def test_character_roster_rows_keep_configuration_out_of_the_scan_line():
+    """Collapsed rows expose only identity, Preview, keybind actions, Configure."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+    assert "makeGroupSelect" not in body
+    assert "makeGeometryActions" not in body
+    assert "'Configure'" in body
+    assert "aria-expanded" in body
+    assert "aria-controls" in body
+
+
+def test_character_detail_and_conflict_siblings_span_the_preview_grid():
+    """Secondary detail and conditional copy cannot consume a data track."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeCharacterDetail(" in src
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeGroupSelect" in detail
+    assert "makeGeometryActions" in detail
+
+    for selector in (".preview-character-detail", ".preview-bind-conflict"):
+        rule = re.search(rf"{re.escape(selector)}\s*\{{(.*?)\}}", CSS, re.DOTALL)
+        assert rule and "grid-column: 1 / -1" in rule.group(1), (
+            f"{selector} must span the Preview grid rather than add a row cell"
+        )
+
+
+def test_preview_roster_heading_is_a_programmatic_focus_fallback():
+    """Removing an open character must not strand focus on the document body."""
+    html = _strip_html_comments(HTML)
+    heading = re.search(r'<h2 id="preview-roster-heading"([^>]*)>', html)
+    assert heading and 'tabindex="-1"' in heading.group(1)
 
 
 # ---- Final-review fixes: disclosure, roster, busy guard, minor ----

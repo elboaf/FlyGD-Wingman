@@ -46,6 +46,12 @@
   // still be open at that point).  Defaults to false (collapsed) so a
   // fresh install does not force the panel open.
   var groupManagerOpen = false;
+  // One inline configuration disclosure at a time. This is presentation
+  // state only; authoritative payloads retain it only for surviving rows.
+  var openDetailName = null;
+  // A contained control is replaced by a render after its mutation. Keep its
+  // identity long enough to focus the recreated detail, never a detached node.
+  var detailFocusIntent = null;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -146,6 +152,39 @@
     return known[gesture] === false ? 'refused' : null;
   }
 
+  function cycleOwners(gesture) {
+    var owners = [];
+    if (state.hotkeys.cycle_next === gesture) { owners.push('All forward'); }
+    if (state.hotkeys.cycle_prev === gesture) { owners.push('All back'); }
+    groups().forEach(function (group) {
+      if (group.cycle === gesture) { owners.push('cycle group ' + group.name); }
+    });
+    return owners;
+  }
+
+  function makeBindConflict(label, gesture) {
+    var clash = clashes(gesture);
+    var bookmark = bookmarkClash(gesture);
+    // Read the registration payload here rather than infer Windows state from
+    // the bind map. `clashes` owns that distinction and remains the source of
+    // truth for refused versus unknown registrations.
+    var registration = state.registration || {};
+    var text = '';
+    if (clash === 'duplicate') {
+      var owners = cycleOwners(gesture).concat(sharers(gesture)).filter(function (owner) {
+        return owner !== label && owner !== 'cycle group ' + label;
+      });
+      text = gesture + ' conflicts with ' + (owners.join(', ') || 'another cycle keybind') + '.';
+    } else if (clash === 'refused' && registration[gesture] === false) {
+      text = gesture + ' is already owned by another application.';
+    } else if (bookmark === 'active') {
+      text = gesture + ' conflicts with an active EVE bookmark keybind.';
+    } else if (bookmark === 'latent') {
+      text = gesture + ' is also configured for an EVE bookmark keybind. Enabling bookmarks makes them collide.';
+    }
+    return text ? WM.make('div', 'preview-bind-conflict', text) : null;
+  }
+
   // Ordered array of named preview cycle groups from the current hotkeys
   // state. Returns a stable empty array when the payload predates groups,
   // so callers do not need null checks.
@@ -190,16 +229,6 @@
     // `position: sticky` and cannot leave while its own block is on
     // screen. See the note on `#preview-binds .bind-group` in style.css.
     if (online === false) { lab.classList.add('dim'); }
-    // Group assignment select: only for real characters and only when
-    // groups exist. Appended to `lab`, NOT to `row` -- an extra
-    // row.appendChild would be a sixth grid cell and break the five-track
-    // layout. The cell-count guard derives its count from row.appendChild
-    // calls inside makeRow; a lab.appendChild here is invisible to it by
-    // design, so the grid stays at five tracks regardless of groups.
-    if (character && groups().length) {
-      lab.classList.add('has-group-select');
-      lab.appendChild(makeGroupSelect(character));
-    }
     row.appendChild(lab);
 
     // Whether this character is opted out of previews entirely. The
@@ -364,20 +393,26 @@
     acts.appendChild(typed);
     row.appendChild(acts);
 
-    // One Geometry cell on every character row. Size... appears only where
-    // set_preview_size can succeed; Copy... appears only with another saved
-    // source; a dash fills the cell when neither action exists. The cell
-    // itself never disappears: `.row` is display:contents, so changing the
-    // number of children would break the shared row/track count.
-    //
-    // What confines each row is `#preview-binds .row > :first-child
-    // { grid-column-start: 1 }` in style.css. The full-width `.lab` used
-    // to force a fresh grid row for free; the name sits in track 1 now,
-    // so that rule is the only thing resetting the auto-placement cursor
-    // and a short row would otherwise pull EVERY row after it left.
+    // The fifth collapsed cell is Configure. Group assignment and geometry
+    // live in the full-grid detail it controls, so roster scanning remains
+    // identity, Preview state, and keybind first.
+    var configure = null;
     if (character) {
-      row.appendChild(makeGeometryActions(character, off));
+      configure = WM.make('button', 'btn preview-configure', 'Configure');
+      configure.setAttribute('aria-expanded',
+                             openDetailName === character ? 'true' : 'false');
+      configure.setAttribute('aria-controls', detailId(character));
+      configure.setAttribute('data-preview-configure', character);
+      configure.addEventListener('click', function () {
+        endCapture();
+        openDetailName = openDetailName === character ? null : character;
+        requestRender();
+        var detail = document.getElementById(detailId(character));
+        if (detail) { detail.scrollIntoView({block: 'nearest'}); }
+        focusConfigure(character);
+      });
     }
+    row.appendChild(configure || document.createElement('span'));
 
     // All forward/back have no `character` -- they are chords, not
     // characters, and Never-minimize means nothing for them. #preview-binds
@@ -442,9 +477,78 @@
       // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
       // the ternary at the top of this function, which runs for both kinds
       // of row.
-      row.appendChild(document.createElement('span'));
     }
     return row;
+  }
+
+  function detailId(name) {
+    // URI encoding produces a stable DOM id without turning a character name
+    // into selector syntax. All later identity lookups use getElementById.
+    return 'preview-character-detail-' + encodeURIComponent(name);
+  }
+
+  function makeCharacterDetail(characterName, off) {
+    var detail = WM.make('div', 'preview-character-detail');
+    detail.id = detailId(characterName);
+    detail.setAttribute('role', 'group');
+    detail.setAttribute('aria-label', 'Configure ' + characterName);
+
+    if (groups().length) {
+      var assignment = WM.make('div', 'preview-detail-field');
+      assignment.appendChild(WM.make('span', 'preview-detail-label', 'Cycle group'));
+      assignment.appendChild(makeGroupSelect(characterName));
+      detail.appendChild(assignment);
+    }
+
+    var geometry = WM.make('div', 'preview-detail-field');
+    geometry.appendChild(WM.make('span', 'preview-detail-label', 'Saved geometry'));
+    geometry.appendChild(makeGeometryActions(characterName, off));
+    detail.appendChild(geometry);
+    return detail;
+  }
+
+  function rememberDetailFocus(characterName, control) {
+    detailFocusIntent = {name: characterName, control: control};
+  }
+
+  function focusRosterHeading() {
+    var heading = WM.el('preview-roster-heading');
+    if (heading) { heading.focus(); }
+  }
+
+  function focusConfigure(characterName) {
+    var buttons = host.querySelectorAll('button.preview-configure');
+    for (var i = 0; i < buttons.length; i++) {
+      if (buttons[i].getAttribute('data-preview-configure') === characterName) {
+        buttons[i].focus();
+        return;
+      }
+    }
+    focusRosterHeading();
+  }
+
+  function focusCharacterDetailControl(characterName, control) {
+    var detail = document.getElementById(detailId(characterName));
+    if (detail) {
+      var target = detail.querySelector(
+        '[data-preview-detail-control="' + control + '"]');
+      if (target && !target.disabled && !target.hidden) {
+        target.focus();
+        return;
+      }
+    }
+    focusConfigure(characterName);
+  }
+
+  function restoreDetailFocus() {
+    if (!detailFocusIntent || groupBusy) { return; }
+    var intent = detailFocusIntent;
+    detailFocusIntent = null;
+    if (openDetailName === intent.name) {
+      focusCharacterDetailControl(intent.name, intent.control);
+    } else {
+      focusRosterHeading();
+    }
   }
 
   // Follows the same shape as the Edit… path: disarm, prompt, send the raw
@@ -457,7 +561,9 @@
   function makeSizeButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Size…');
     WM.setEnabled(btn, !off);
+    btn.setAttribute('data-preview-detail-control', 'size');
     btn.addEventListener('click', function () {
+      rememberDetailFocus(name, 'size');
       // Same trap bookmarks.js documents: an armed capture's document
       // keydown handler preventDefault()s every key, so a prompt opened
       // while one is live cannot be typed into.
@@ -499,19 +605,7 @@
   }
 
   function focusCopyTarget(name) {
-    var buttons = document.querySelectorAll('button[data-copy-target]');
-    var i;
-    for (i = 0; i < buttons.length; i += 1) {
-      if (buttons[i].getAttribute('data-copy-target') === name) {
-        buttons[i].focus();
-        return;
-      }
-    }
-    var section = WM.el('section-previews');
-    var fallback = section && section.querySelector(
-      'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
-      + 'select:not([hidden]):not(:disabled)');
-    if (fallback) { fallback.focus(); }
+    focusCharacterDetailControl(name, 'copy');
   }
 
   function copyStatus(text, error) {
@@ -525,8 +619,10 @@
   function makeCopyButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Copy…');
     btn.setAttribute('data-copy-target', name);
+    btn.setAttribute('data-preview-detail-control', 'copy');
     WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
+      rememberDetailFocus(name, 'copy');
       endCapture();
       copyStatus('', false);
       var sources = copySources(name);
@@ -1028,7 +1124,7 @@
   // hazard arrived with the inline name rather than with the grid.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
-    var cells = ['Character', 'Preview', 'Keybind', '', 'Geometry'];
+    var cells = ['Character', 'Preview', 'Keybind', '', 'Configure'];
     cells.forEach(function (text) {
       row.appendChild(WM.make('span', '', text));
     });
@@ -1149,7 +1245,24 @@
     });
   }
 
+  function appendBindRow(label, gesture, online, onSet, character) {
+    host.appendChild(makeRow(label, gesture, online, onSet, character));
+    var conflict = makeBindConflict(label, gesture);
+    if (conflict) { host.appendChild(conflict); }
+    if (character && openDetailName === character) {
+      host.appendChild(makeCharacterDetail(character, isExcluded(character)));
+    }
+  }
+
   function render() {
+    var list = rows();
+    var openDetailMissing = openDetailName && !list.some(function (entry) {
+      return entry.name === openDetailName;
+    });
+    if (openDetailMissing) {
+      openDetailName = null;
+      detailFocusIntent = null;
+    }
     host.textContent = '';
 
     var off = WM.el('preview-binds-off');
@@ -1172,22 +1285,18 @@
     // `true`, not state.enabled: the cycle chords are not characters and
     // have no online state to report. Dimming them while previews were
     // off was half of what made the whole list grey at once.
-    host.appendChild(makeRow('All forward', state.hotkeys.cycle_next,
-                             true,
-                             function (g) { setBind('cycle_next', g); }));
-    host.appendChild(makeRow('All back', state.hotkeys.cycle_prev,
-                             true,
-                             function (g) { setBind('cycle_prev', g); }));
+    appendBindRow('All forward', state.hotkeys.cycle_next,
+                  true, function (g) { setBind('cycle_next', g); });
+    appendBindRow('All back', state.hotkeys.cycle_prev,
+                  true, function (g) { setBind('cycle_prev', g); });
 
     // Named group keybind rows. Each group gets its own row rendered by
     // the shared makeRow so it inherits the five-track shape and the same
     // Clear/Edit… controls. Rendered after All rows and before the
     // character divider -- the task brief's wireframe B ordering.
     groups().forEach(function (group) {
-      host.appendChild(makeRow(
-        group.name, group.cycle, true,
-        function (g) { setGroupBind(group.id, g); }
-      ));
+      appendBindRow(group.name, group.cycle, true,
+                    function (g) { setGroupBind(group.id, g); });
     });
 
     // Manage groups disclosure: Add/Rename…/Delete. Rendered after group
@@ -1196,7 +1305,6 @@
     // the Add field is always available.
     host.appendChild(makeGroupManager());
 
-    var list = rows();
     // An UNNAMED rule, then the column headers. The rule used to be a
     // `.bind-group` reading `Characters`, which sat one line above a
     // column header reading `Character` -- the same word twice, naming the
@@ -1233,7 +1341,7 @@
     }
 
     function paint(entry) {
-      host.appendChild(makeRow(
+      appendBindRow(
         entry.name, (state.hotkeys.characters || {})[entry.name],
         // null, not false, while previews are off. makeRow dims only on
         // a strict false, and dimming means "this character is logged
@@ -1244,7 +1352,7 @@
         // out; the banner above says "off" instead.
         state.enabled ? entry.online : null,
         function (g) { setCharacterBind(entry.name, g); },
-        entry.name));
+        entry.name);
     }
 
     running.forEach(paint);
@@ -1269,6 +1377,8 @@
     }
     renderLockBlock();
     renderNeverMinimizeBlock();
+    if (openDetailMissing) { focusRosterHeading(); }
+    else { restoreDetailFocus(); }
   }
 
   function send(next) {
@@ -1391,6 +1501,7 @@
   function makeGroupSelect(characterName) {
     var sel = WM.make('select', 'field preview-group-select');
     sel.setAttribute('aria-label', 'Cycle group for ' + characterName);
+    sel.setAttribute('data-preview-detail-control', 'group');
 
     // Always-first option: no group assigned (All only).
     var allOpt = document.createElement('option');
@@ -1419,6 +1530,7 @@
       // (where requestRender() defers) can stack.
       if (groupBusy) { return; }
       var selectedId = sel.value;
+      rememberDetailFocus(characterName, 'group');
       // Disable lifecycle and assignment controls for the duration.
       groupBusy = true;
       requestRender();
@@ -1476,6 +1588,8 @@
   // manager's Add field, then any enabled interactive control in the
   // Previews section.
   function focusGroupSelect(characterName) {
+    var detail = document.getElementById(detailId(characterName));
+    if (!detail) { focusRosterHeading(); return; }
     var section = WM.el('section-previews');
     if (!section) { return; }
     // Iterate and compare aria-label directly: a CSS attribute-selector built

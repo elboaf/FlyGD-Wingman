@@ -2012,9 +2012,8 @@ def test_group_delete_uses_wm_confirm_not_window_confirm():
     )
 
 
-def test_make_group_select_appends_to_lab_not_row():
-    """makeGroupSelect must append its <select> to `lab`, never directly
-    to `row` -- an extra row.appendChild would break the five-cell grid."""
+def test_make_group_select_returns_a_detail_control_not_a_row_cell():
+    """Assignment remains a returned control and never adds a grid cell."""
     js = _web("previews.js")
     assert "function makeGroupSelect" in js, (
         "makeGroupSelect is not defined in previews.js"
@@ -2025,23 +2024,62 @@ def test_make_group_select_appends_to_lab_not_row():
         "makeGroupSelect calls row.appendChild, which would add a sixth "
         "grid cell and break the five-track layout"
     )
-    # Must append to lab (or return a node the caller appends to lab).
-    assert "lab.appendChild" in body or "return " in body, (
-        "makeGroupSelect neither appends to lab nor returns a node"
-    )
+    assert "return sel;" in body, "makeGroupSelect must return its control"
 
 
-def test_make_group_select_only_when_groups_exist():
-    """The group select is only built (and only appended to lab) when
-    groups().length is truthy -- an empty group list should leave the
-    lab unchanged."""
+def test_make_group_select_only_when_groups_exist_in_the_detail():
+    """The detail omits assignment cleanly when no named groups exist."""
     js = _web("previews.js")
-    body = js.split("function makeRow", 1)[1].split("return row;", 1)[0]
-    # The conditional guard: groups().length before appending the select.
+    assert "function makeCharacterDetail" in js
+    body = js.split("function makeCharacterDetail", 1)[1].split("\n  function ", 1)[0]
     assert "groups().length" in body, (
-        "makeRow does not guard the group select on groups().length; "
-        "the select would always render even with no groups defined"
+        "makeCharacterDetail does not guard the group select on groups().length; "
+        "the select would render even with no groups defined"
     )
+
+
+def test_preview_detail_has_single_open_state_and_safe_identity_lookup():
+    """Only one character detail survives a render, addressed without CSS escaping."""
+    js = _web("previews.js")
+    assert "var openDetailName" in js
+    assert "openDetailName === character" in js
+    assert "function detailId" in js
+    assert "document.getElementById(detailId(" in js
+
+
+def test_authoritative_refresh_closes_a_detail_for_a_missing_character():
+    """A stale detail must not outlive the character it configures."""
+    js = _web("previews.js")
+    render = js.split("function render()", 1)[1].split("function send(", 1)[0]
+    assert "openDetailName" in render and "rows()" in render
+    assert "openDetailName = null" in render
+    assert "preview-roster-heading" in js
+
+
+def test_detail_mutations_restore_focus_only_after_recreating_the_detail():
+    """A rerender must restore the surviving detail before its changed control."""
+    js = _web("previews.js")
+    assert "detailFocusIntent" in js
+    assert "function focusCharacterDetailControl" in js
+    select = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "rememberDetailFocus(characterName, 'group')" in select
+    assert "focusGroupSelect(characterName)" in select
+
+
+def test_local_bind_conflict_copy_uses_authoritative_collision_state():
+    """Warnings describe actual collision owners, not a second registration model."""
+    js = _web("previews.js")
+    assert "function makeBindConflict" in js
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    for source in (
+        "clashes(gesture)",
+        "sharers(gesture)",
+        "bookmarkClash(gesture)",
+        "state.registration",
+    ):
+        assert source in block
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert "makeBindConflict(label, gesture)" in append
 
 
 def test_manage_groups_disclosure_has_add_rename_delete():

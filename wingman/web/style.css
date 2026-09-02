@@ -2421,7 +2421,7 @@ button.btn:disabled,
      and this number changes with it -- test_page_conventions.py now
      DERIVES the expected count from makeRow's own appends rather than
      trusting this comment. */
-  grid-template-columns: minmax(150px, 260px) repeat(4, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
 }
 
 /* Round 6. The 620px measure is right for this section's PROSE and wrong
@@ -2533,25 +2533,32 @@ button.btn:disabled,
    hide, so a character who has logged out still shows its saved binding. */
 #preview-binds .row > .lab.dim { color: var(--text-faint); }
 
-/* Group assignment select inside the character name cell. The `.lab` cell
-   is already a flex row; when groups exist, makeRow adds .has-group-select
-   and appends the select, turning it into a two-line column instead. No
-   new grid track is added -- the select lives inside track 1 (.lab), and
-   the grid template stays at five cell-bearing tracks.
+/* One character detail spans the grid rather than becoming an extra table
+   cell. It keeps rare assignment and geometry changes close to the row
+   while the collapsed line stays useful for roster-scale verification. */
+.preview-character-detail {
+  grid-column: 1 / -1;
+  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px;
+  padding: 5px 0 7px;
+  border-top: 1px solid var(--field-border);
+}
+.preview-detail-field {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.preview-detail-label {
+  font-size: var(--fs-muted); color: var(--text-dim);
+}
+.preview-character-detail .preview-group-select {
+  min-width: 160px; max-width: 240px;
+}
+.preview-character-detail .geometry-actions { min-height: 28px; }
+.preview-configure { justify-self: start; }
 
-   `.lab.dim .preview-group-select` keeps the select readable on an offline
-   row: `.lab.dim` dims the name to --text-faint, but the select should
-   stay at --text so it is legible without relying solely on colour.     */
-#preview-binds .row > .lab.has-group-select {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
-#preview-binds .preview-group-select {
-  width: 100%; min-width: 0; max-width: 100%;
-}
-#preview-binds .lab.dim .preview-group-select {
-  color: var(--text);
+/* A conditional conflict is a sibling after its affected row. Since rows
+   are display:contents, it must span every track rather than add a cell. */
+.preview-bind-conflict {
+  grid-column: 1 / -1;
+  color: var(--danger); font-size: var(--fs-muted);
 }
 
 /* Group manager disclosure block. Spans the full grid width. Uses
