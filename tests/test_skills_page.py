@@ -855,11 +855,23 @@ def test_training_rows_use_the_finish_comparator_and_missing_the_remaining_one()
 
 def test_the_estimate_info_button_states_its_assumptions_accessibly():
     """Every training ETA and remaining-time figure rests on assumptions
-    the payload cannot state per-row (Omega speed, no implants, and a
-    requirement this build could not resolve is simply skipped) -- so one
-    real, keyboard-reachable control states them once. A `<span>` with a
-    `title` -- list.js's existing tooltip vocabulary -- cannot be reached
-    by keyboard at all, which is why this is a `<button>`."""
+    the payload cannot state per-row -- current attributes at Omega speed,
+    with implants and any requirement not explicitly listed in the plan
+    excluded from the number -- so one real, keyboard-reachable control
+    states them once. A `<span>` with a `title` -- list.js's existing
+    tooltip vocabulary -- cannot be reached by keyboard at all, which is
+    why this is a `<button>`.
+
+    Fix round 1: the approved copy is pinned VERBATIM, not just by keyword.
+    The previous wording ("skip any requirement this build cannot look
+    up") was false -- training.estimate() is all-or-nothing, so an
+    unresolvable requirement suppresses the WHOLE estimate rather than
+    being individually skipped -- and a keyword-only check ("requirement"
+    appears in both sentences) would have passed it. The approved sentence
+    instead scopes the calculation to what the PLAN explicitly lists
+    (excluding implied prerequisites), which is what the estimator
+    actually does.
+    """
     tag = re.search(r'<button[^>]*id="skills-estimate-info"[^>]*>', BODY)
     assert tag, "the estimate info button is missing"
     markup = tag.group(0)
@@ -867,16 +879,35 @@ def test_the_estimate_info_button_states_its_assumptions_accessibly():
     assert re.search(r"\bhidden\b", markup), (
         "the info button must start hidden -- there is no plan selected on first paint"
     )
+    approved = (
+        "Estimates use current attributes at Omega speed. Implants and "
+        "requirements not listed in this plan are excluded."
+    )
     label = re.search(r'aria-label="([^"]*)"', markup)
     assert label, "the info button has no aria-label"
-    assert "Omega" in label.group(1)
-    assert "implant" in label.group(1).lower()
-    assert "requirement" in label.group(1).lower()
+    assert label.group(1) == approved, (
+        "the info button's aria-label no longer matches the approved copy "
+        "verbatim: " + label.group(1)
+    )
     tip = re.search(r'data-tip="([^"]*)"', markup)
     assert tip, "the info button has no data-tip for a mouse user"
-    assert "Omega" in tip.group(1)
-    assert "implant" in tip.group(1).lower()
-    assert "requirement" in tip.group(1).lower()
+    assert tip.group(1) == approved, (
+        "the info button's data-tip no longer matches the approved copy "
+        "verbatim: " + tip.group(1)
+    )
+    for text in (label.group(1), tip.group(1)):
+        assert "current attributes" in text
+        assert "Omega" in text
+        assert "Implants" in text or "implant" in text.lower()
+        assert "not listed" in text, (
+            "the copy must scope the exclusion to what the plan does not "
+            "list, not claim to skip individual unresolvable requirements"
+        )
+        assert "look up" not in text.lower(), (
+            "the false 'skip any requirement this build cannot look up' "
+            "framing is back -- the estimator withholds the WHOLE estimate "
+            "on an unresolved requirement, it does not skip just that one"
+        )
 
 
 def test_the_estimate_info_button_sits_between_the_count_and_copy_plan():
@@ -922,6 +953,81 @@ def test_the_tooltip_primitive_opens_on_keyboard_focus_too():
     the existing `[data-tip]` primitive itself was hover-only, so it must
     be extended or a keyboard user still cannot read it."""
     assert "[data-tip]:focus-visible::after" in CSS
+
+
+# ---- Fix round 1: WCAG 1.4.13 dismissal for the focus-visible tooltip --
+
+
+def test_escape_suppresses_the_tooltip_without_moving_focus():
+    """1.4.13 (Content on Hover or Focus) requires a way to dismiss extra
+    content shown on focus WITHOUT moving focus -- the persistent-until-
+    tab-away tooltip the previous round shipped had no such escape hatch.
+    Escape must add the suppression class and must not call `.blur()`;
+    calling it would satisfy "dismissable" by cheating -- moving focus is
+    exactly what 1.4.13 forbids as the dismissal mechanism."""
+    handler = re.search(
+        r"estimateInfo\.addEventListener\('keydown', function \(event\) \{"
+        r"(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler, "the info button has no keydown listener"
+    body = handler.group(1)
+    assert "event.key === 'Escape'" in body
+    assert "estimateInfo.classList.add('tip-dismissed')" in body
+    assert ".blur(" not in body, (
+        "the Escape handler must not move focus -- 1.4.13 requires "
+        "dismissal WITHOUT blurring the element the tooltip is attached to"
+    )
+
+
+def test_blur_resets_the_suppression_so_the_next_focus_shows_the_tooltip():
+    """Suppression must not outlive one focus session, or a single Escape
+    early in the app's life would silently disable the tooltip for every
+    later visit to this control."""
+    handler = re.search(
+        r"estimateInfo\.addEventListener\('blur', function \(\) \{"
+        r"(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler, "the info button has no blur listener"
+    assert "estimateInfo.classList.remove('tip-dismissed')" in handler.group(1)
+
+
+def test_the_dismissal_state_is_scoped_to_the_estimate_info_button():
+    """Row status tooltips stay hover-only by design (Task 6's own rule --
+    the status span is not focusable, so :focus-visible never applies to
+    it); this fix must not add keyboard dismissal machinery to `rowNode()`
+    or generalise the class to every `[data-tip]` element."""
+    assert CODE.count("tip-dismissed") == 2, (
+        "tip-dismissed should be set in exactly one place and cleared in "
+        "exactly one place, both on the estimate info button"
+    )
+    row_body = _function_body(CODE, "rowNode")
+    assert "tip-dismissed" not in row_body, (
+        "the row's Missing status tooltip must stay hover-only -- it has "
+        "no keyboard dismissal state to manage"
+    )
+
+
+def test_the_dismissed_rule_outranks_the_shared_tooltip_primitive():
+    """CSS specificity, not source order, is what must decide this: the
+    dismissal rule needs strictly higher specificity than
+    `[data-tip]:focus-visible::after` (an attribute selector plus a
+    pseudo-class) so it always wins regardless of where either rule sits
+    in the file."""
+    rule = re.search(
+        r"\.skills-estimate-info\.tip-dismissed:focus-visible::after\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert rule, (
+        "no .skills-estimate-info.tip-dismissed:focus-visible::after rule -- "
+        "the suppression class has no visual effect"
+    )
+    body = rule.group(1)
+    assert "opacity: 0" in body
+    assert "visibility: hidden" in body
 
 
 def test_the_estimate_info_button_has_a_hidden_override():

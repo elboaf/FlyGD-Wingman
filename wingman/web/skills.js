@@ -493,6 +493,30 @@
     });
   });
 
+  /* Fix round 1, WCAG 1.4.13. The primitive's `:focus-visible` addition
+   * made this tooltip appear on keyboard focus and STAY until focus left
+   * -- with no way to dismiss it that does not also move focus, which is
+   * exactly what 1.4.13 forbids. Escape suppresses the pseudo-tooltip
+   * WITHOUT blurring the button (no `.blur()` call here -- focus stays
+   * exactly where the reader left it), and only a real blur (Tab away,
+   * click elsewhere) clears the suppression, so returning to the button
+   * later shows the tooltip again rather than disabling it for the rest
+   * of the session. `.tip-dismissed` carries no visual treatment of its
+   * own; style.css's `.skills-estimate-info.tip-dismissed:focus-visible
+   * ::after` rule is the only thing that reads it, and its three-selector
+   * specificity is what lets it beat the primitive's own
+   * `[data-tip]:focus-visible::after` rule.
+   */
+  var estimateInfo = WM.el('skills-estimate-info');
+  estimateInfo.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      estimateInfo.classList.add('tip-dismissed');
+    }
+  });
+  estimateInfo.addEventListener('blur', function () {
+    estimateInfo.classList.remove('tip-dismissed');
+  });
+
   function renderNotices() {
     var host = WM.el('skills-notices');
     host.textContent = '';

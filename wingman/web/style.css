@@ -4434,7 +4434,8 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
 /* Task 6. The disclosure behind every training ETA and remaining-time
-   figure: Omega speed, no implants, a skipped unresolved requirement.
+   figure: current attributes at Omega speed, implants and any requirement
+   not explicitly listed in the plan excluded from the number.
    `align-self: center` for the same reason #skills-copy-plan carries it --
    baselined against the h1 hangs a small control below the text. No new
    colour: --text-faint is the plan count's own token, one line up, and
@@ -4453,6 +4454,19 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    `display`, so an author rule beats the UA stylesheet's own
    `[hidden] { display: none }` regardless of specificity. */
 .skills-estimate-info[hidden] { display: none; }
+/* Fix round 1, WCAG 1.4.13 (Content on Hover or Focus): the primitive's
+   :focus-visible rule made this tooltip persistent for as long as the
+   button holds focus, with no way to dismiss it short of tabbing away --
+   which moves focus, the one thing 1.4.13 says dismissal must not do.
+   skills.js's keydown listener adds this class on Escape while the
+   button KEEPS focus, and removes it on blur so the next focus still
+   shows the tooltip. Three selectors of specificity (two classes plus
+   :focus-visible) beat the primitive's `[data-tip]:focus-visible::after`
+   (attribute plus pseudo-class) on purpose, so this always wins over the
+   shared rule regardless of source order. */
+.skills-estimate-info.tip-dismissed:focus-visible::after {
+  opacity: 0; visibility: hidden;
+}
 /* Clipboard access finishes in the page, not Python, so this local status
    confirms the action at its source. It remains mounted while empty because
    a role=status region shown only with new text can be missed by a reader. */
