@@ -40,6 +40,12 @@
   // window so concurrent mutations cannot race; cleared in both resolve
   // and rejection paths so a failed write never leaves the form stuck.
   var groupBusy = false;
+  // Whether the "Manage groups" details disclosure was open the last time
+  // render() ran.  Persisted across rerenders so focus can land in the
+  // Add-name field after a successful group mutation (the disclosure must
+  // still be open at that point).  Defaults to false (collapsed) so a
+  // fresh install does not force the panel open.
+  var groupManagerOpen = false;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -71,6 +77,12 @@
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
+    // group_by_character: a character with a persisted group assignment
+    // but no running/seen/bind entry needs a row so the select can clear
+    // the assignment (design §6: "offline membership is still editable").
+    Object.keys(state.hotkeys.group_by_character || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     return out;
@@ -1320,6 +1332,11 @@
   // The generation guard uses `pushes` as in send(): a push that overtook
   // the bridge call carries the authoritative table.
   function setGroupBind(groupId, gesture) {
+    // Synchronous guard: a second click while a write is already in flight
+    // must be rejected immediately, before endCapture() or any send.
+    // requestRender() defers during capture, so without this guard old
+    // controls remain live and a repeated click under capture would race.
+    if (groupBusy) { return; }
     endCapture();
     // Participates in the shared groupBusy serialisation lock so that
     // assignment selects, lifecycle controls, and other group writes stay
@@ -1330,7 +1347,19 @@
     WM.send('set_preview_cycle_group_bind', groupId, gesture).then(function (res) {
       groupBusy = false;
       if (!res || !res.applied) {
-        refresh();
+        // On refusal: apply the authoritative table from res.hotkeys when
+        // available and no newer push has landed.  This avoids showing a
+        // stale/deleted group for the extra round-trip that refresh() would
+        // require.  Fall back to refresh() only when res or res.hotkeys is
+        // absent (bridge error or server omission).
+        if (res && res.hotkeys && generation === pushes) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          requestRender();
+        } else {
+          refresh();
+        }
         WM.send('alert_bookmarks',
                 res && res.error
                   ? res.error
@@ -1385,6 +1414,10 @@
     WM.setEnabled(sel, !groupBusy);
 
     sel.addEventListener('change', function () {
+      // Synchronous guard: a concurrent write must be rejected before any
+      // state change.  Without this, rapid changes under an armed capture
+      // (where requestRender() defers) can stack.
+      if (groupBusy) { return; }
       var selectedId = sel.value;
       // Disable lifecycle and assignment controls for the duration.
       groupBusy = true;
@@ -1436,9 +1469,19 @@
   function focusGroupSelect(characterName) {
     var section = WM.el('section-previews');
     if (!section) { return; }
-    var target = section.querySelector(
-      'select[aria-label="Cycle group for ' + characterName + '"]'
-      + ':not([hidden]):not(:disabled)');
+    // Iterate and compare aria-label directly: a CSS attribute-selector built
+    // by string interpolation breaks for character names that contain quotes
+    // or backslashes (they would need CSS escaping, which ES5 has no API for).
+    var selects = section.querySelectorAll('select.preview-group-select');
+    var target = null;
+    for (var i = 0; i < selects.length; i++) {
+      var s = selects[i];
+      if (s.getAttribute('aria-label') === 'Cycle group for ' + characterName
+          && !s.hidden && !s.disabled) {
+        target = s;
+        break;
+      }
+    }
     if (target) { target.focus(); return; }
     // Row may have disappeared (group removed); fall back to a stable control.
     var addField = section.querySelector(
@@ -1454,6 +1497,9 @@
   // Rename a named group. Called from the management disclosure. Ends the
   // capture first (an armed capture's keydown handler would eat the dialog).
   function renameGroup(group) {
+    // Synchronous guard: reject if a write is already in flight before
+    // ending capture or opening the prompt.
+    if (groupBusy) { return; }
     endCapture();
     WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
               group.name).then(function (text) {
@@ -1518,6 +1564,9 @@
   // capture first, then shows a WM.confirm with the group name and member
   // count so the user knows what they are removing.
   function deleteGroup(group) {
+    // Synchronous guard: reject if a write is already in flight before
+    // ending capture or computing the member count.
+    if (groupBusy) { return; }
     endCapture();
     var gbc = state.hotkeys.group_by_character || {};
     var members = Object.keys(gbc).filter(function (n) {
@@ -1557,13 +1606,35 @@
     });
   }
 
-  // Build the "Manage groups" disclosure: a text field and Add button,
-  // then one Rename…/Delete row per existing group. Rendered inside
-  // #preview-binds spanning the full grid width (same as .bind-group).
+  // Build the "Manage groups" disclosure: a collapsed <details> with a
+  // <summary> showing "Manage groups (N)", then a text field and Add button,
+  // then one Rename…/Delete row per existing group.  Rendered inside
+  // #preview-binds spanning the full grid width via .preview-group-manager.
+  // Uses <details> rather than a plain div so:
+  //   1. The panel is collapsible -- it does not stay permanently expanded.
+  //   2. It does NOT inherit the bind-group sticky-header CSS that would
+  //      pin it at the top and overlay character rows.
   // Called from render() after the group keybind rows and before the
-  // character separator.
+  // character separator.  Open state is preserved across rerenders via
+  // groupManagerOpen so focus restoration works.
   function makeGroupManager() {
-    var block = WM.make('div', 'bind-group preview-group-manager');
+    var el = document.createElement('details');
+    el.className = 'preview-group-manager';
+    // Restore open state from the module-level flag so a rerender does not
+    // collapse the panel while the user is typing or clicking.
+    if (groupManagerOpen) { el.open = true; }
+    el.addEventListener('toggle', function () {
+      groupManagerOpen = el.open;
+    });
+
+    var sumEl = document.createElement('summary');
+    var count = groups().length;
+    sumEl.textContent = count
+      ? 'Manage groups (' + count + ')'
+      : 'Manage groups';
+    el.appendChild(sumEl);
+
+    var body = WM.make('div', 'group-manager-body');
     var addRow = WM.make('div', 'group-add-row');
     var nameField = WM.make('input', 'field group-add-name');
     nameField.type = 'text';
@@ -1574,6 +1645,7 @@
     WM.setEnabled(nameField, !groupBusy);
 
     function doAdd() {
+      if (groupBusy) { return; }
       var name = nameField.value.trim();
       if (!name) { return; }
       groupBusy = true;
@@ -1612,7 +1684,7 @@
 
     addRow.appendChild(nameField);
     addRow.appendChild(addBtn);
-    block.appendChild(addRow);
+    body.appendChild(addRow);
 
     // Per-group Rename…/Delete rows.
     groups().forEach(function (group) {
@@ -1627,10 +1699,11 @@
       gRow.appendChild(gName);
       gRow.appendChild(renBtn);
       gRow.appendChild(delBtn);
-      block.appendChild(gRow);
+      body.appendChild(gRow);
     });
 
-    return block;
+    el.appendChild(body);
+    return el;
   }
 
   function refresh() {

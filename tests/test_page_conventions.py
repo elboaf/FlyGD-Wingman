@@ -2836,3 +2836,202 @@ def test_has_group_select_css_is_scoped_and_does_not_introduce_display():
     ] or re.search(r"#preview-binds[^{]*\.has-group-select", CSS), (
         ".has-group-select is not scoped under #preview-binds"
     )
+
+
+# ---- Final-review fixes: disclosure, roster, busy guard, minor ----
+
+
+def test_makeGroupManager_is_a_details_element():
+    """Finding #2: makeGroupManager must build a <details>, not a plain
+    div.  A plain div is always expanded and inherits the sticky
+    bind-group heading CSS that can overlay rows."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert (
+        "document.createElement('details')" in block or "WM.make('details'" in block
+    ), (
+        "makeGroupManager does not create a <details> element; it must use a "
+        "real HTML disclosure so the panel can be collapsed"
+    )
+
+
+def test_makeGroupManager_has_summary_with_derived_count():
+    """Finding #2: the <summary> must show a derived group count, not a
+    static label.  Count derivation must read groups().length or an
+    equivalent expression."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert (
+        "document.createElement('summary')" in block or "WM.make('summary'" in block
+    ), "makeGroupManager does not create a <summary> element"
+    # The summary text must be derived from the group count, not static.
+    # Any of: groups().length, groups.length, state.hotkeys.groups.length
+    assert re.search(r"groups\(\)\.length|groups\.length|\.groups\.length", block), (
+        "makeGroupManager summary does not derive a count from the group list"
+    )
+
+
+def test_makeGroupManager_open_state_is_preserved_across_rerenders():
+    """Finding #2: the open state must be saved across rerenders so
+    Add/Rename/Delete focus restoration targets an attached visible
+    field.  A module-level flag (or equivalent) must track whether the
+    details is open."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # A variable holding the open state must exist at module scope (outside
+    # any function) and be read when building the manager.
+    # Common name patterns: _groupManagerOpen, groupManagerOpen, managerOpen
+    assert re.search(
+        r"^\s*var\s+(groupManagerOpen|_groupManagerOpen|managerOpen|groupsOpen)\b",
+        src,
+        re.MULTILINE,
+    ), (
+        "No module-level open-state variable found for the group manager "
+        "disclosure; open state cannot survive a rerender"
+    )
+    # The makeGroupManager block must reference that variable.
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(
+        r"groupManagerOpen|_groupManagerOpen|managerOpen|groupsOpen", block
+    ), (
+        "makeGroupManager does not read the open-state variable; the details "
+        "panel will collapse on every rerender"
+    )
+
+
+def test_makeGroupManager_does_not_use_bind_group_class():
+    """Finding #2: the manager must NOT use the bind-group class, which
+    carries sticky-positioning CSS that can overlay rows."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    # The top-level element must not be a 'bind-group', but child rows may
+    # still use whatever class they need.  We test only the creation call
+    # for the outermost element.
+    first_make = re.search(
+        r"(?:WM\.make|document\.createElement)\s*\(['\"](?:details|div)['\"]"
+        r"(?:,\s*['\"]([^'\"]*)['\"])?",
+        block,
+    )
+    assert first_make, "makeGroupManager creation call not found"
+    outer_class = first_make.group(1) or ""
+    assert "bind-group" not in outer_class.split(), (
+        "makeGroupManager outer element uses bind-group class, which inherits "
+        "sticky positioning and can overlay rows"
+    )
+
+
+def test_group_manager_css_does_not_apply_sticky_positioning():
+    """Finding #2: the dedicated manager class must not carry position:sticky,
+    since the manager is a full-grid-span disclosure, not a section header."""
+    assert "preview-group-manager" in CSS or "group-manager" in CSS, (
+        "no .preview-group-manager rule found in style.css"
+    )
+    # Find the preview-group-manager block.
+    m = re.search(r"\.preview-group-manager\s*\{([^}]*)\}", CSS)
+    if m:
+        assert "sticky" not in m.group(1), (
+            ".preview-group-manager has position:sticky which would overlay rows"
+        )
+
+
+def test_rows_includes_group_by_character_keys():
+    """Finding #3: rows() must include every key in
+    hotkeys.group_by_character so persisted offline assignments always
+    have a select that can clear them."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function rows()", 1)[1].split("function sharers", 1)[0]
+    assert "group_by_character" in block, (
+        "rows() does not consult hotkeys.group_by_character; a character with "
+        "a persisted assignment but no running/seen/bind entry has no row and "
+        "no way to clear the assignment"
+    )
+
+
+def test_every_group_mutation_handler_has_synchronous_busy_guard():
+    """Finding #4: setGroupBind, makeGroupSelect's change handler, doAdd,
+    renameGroup, and deleteGroup must all check `if (groupBusy) { return; }`
+    synchronously before sending anything, so a second click during capture
+    cannot submit twice."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    # setGroupBind
+    gb_block = src.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", gb_block), (
+        "setGroupBind lacks a synchronous groupBusy early-return guard"
+    )
+
+    # makeGroupSelect's change handler
+    sel_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", sel_block), (
+        "makeGroupSelect change handler lacks a synchronous groupBusy guard"
+    )
+
+    # doAdd inside makeGroupManager
+    mgr_block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", mgr_block), (
+        "makeGroupManager (doAdd) lacks a synchronous groupBusy guard"
+    )
+
+    # renameGroup
+    ren_block = src.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", ren_block), (
+        "renameGroup lacks a synchronous groupBusy early-return guard"
+    )
+
+    # deleteGroup
+    del_block = src.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", del_block), (
+        "deleteGroup lacks a synchronous groupBusy early-return guard"
+    )
+
+
+def test_focusGroupSelect_does_not_use_interpolated_css_selector():
+    """Minor finding: focusGroupSelect must not use a CSS attribute-selector
+    built by string interpolation (unsafe for names containing quotes or
+    backslashes).  It must iterate elements and compare aria-label directly."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function focusGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    # Must NOT contain the interpolated pattern
+    assert (
+        "querySelector" not in block
+        or "'select[aria-label=\"Cycle group for ' + characterName" not in block
+    ), (
+        "focusGroupSelect still uses an interpolated CSS attribute selector; "
+        "character names with quotes or backslashes will break it"
+    )
+    # Must contain an iteration-based lookup
+    assert (
+        "querySelectorAll" in block
+        or "getElementsByTagName" in block
+        or "Array.from" in block
+        or ".getAttribute" in block
+        or "forEach" in block
+    ), (
+        "focusGroupSelect does not appear to iterate and compare aria-label; "
+        "it must use a safe escaping-independent lookup"
+    )
+
+
+def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():
+    """Minor finding: on a refused group write where res.hotkeys exists and
+    no newer push won, the handler must apply res.hotkeys to state.hotkeys
+    directly rather than relying solely on a full refresh() round-trip.
+    A sole refresh() leaves a stale/deleted group visible for an extra
+    round-trip."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    gb_block = src.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+    # Isolate the refusal arm: after '!res.applied' up to the first 'return;'
+    if "!res.applied" in gb_block:
+        after_guard = gb_block.split("!res.applied", 1)[1]
+        refusal_arm = after_guard.split("return;", 1)[0]
+        only_refresh = (
+            "res.hotkeys" not in refusal_arm
+            and "state.hotkeys" not in refusal_arm
+            and "refresh()" in refusal_arm
+        )
+        assert not only_refresh, (
+            "setGroupBind refusal arm calls only refresh(); when res.hotkeys "
+            "exists and no newer push won, it must apply res.hotkeys directly "
+            "to avoid showing a stale group during the refresh round-trip"
+        )

@@ -1278,7 +1278,11 @@ class PreviewHost:
                     logger.debug(
                         "Group cycle keybind %r had nothing to visit", group_id
                     )
-                    target = None
+                    # Empty group is a no-op: preserve whatever target a
+                    # prior cycle or direct-focus action already resolved.
+                    # Setting target = None here would cancel an earlier
+                    # successful result in the same rapid batch (design §4:
+                    # "An empty group is a logged no-op").
                     continue
                 history = self._last_group_cycled.get(group_id)
                 target = cycle.step(keys, target or resolved_cursor or history, 1)

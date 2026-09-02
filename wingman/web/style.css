@@ -2543,12 +2543,32 @@ button.btn:disabled,
   color: var(--text);
 }
 
-/* Group manager disclosure block. Spans the full grid width like other
-   .bind-group children. The add row and per-group rows are flex. */
+/* Group manager disclosure block. Spans the full grid width. Uses
+   <details> rather than .bind-group: the bind-group rule at
+   #preview-binds .bind-group:not(:empty) applies position:sticky which
+   would pin the disclosure over the character rows.  The manager spans
+   the grid independently via grid-column:1/-1 below. */
 .preview-group-manager {
+  grid-column: 1 / -1;
+  padding: 4px 0 2px;
+}
+.preview-group-manager > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-muted);
+  user-select: none;
+}
+.preview-group-manager > summary:hover { color: var(--text); }
+.preview-group-manager > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.group-manager-body {
+  display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
+  padding-top: 6px;
 }
 .group-add-row {
   display: flex; align-items: center; gap: 6px;

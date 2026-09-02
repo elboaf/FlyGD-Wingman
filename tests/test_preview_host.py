@@ -4429,3 +4429,69 @@ def test_a_newly_created_preview_is_born_with_the_current_lock_aspect(monkeypatc
     h._sweep(libs=None)
 
     assert seen["lock_aspect"] is False
+
+
+# ---- Final-review fix: Finding #1 - empty group is a no-op, not target reset ----
+
+
+def test_empty_group_after_dps_cycle_preserves_dps_target(monkeypatch):
+    """An empty named group following a successful DPS cycle must not cancel
+    the DPS result.  The empty action is a no-op; the final dispatch target
+    remains Bravo (the DPS step result)."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            # 'empty' group has no members
+        }
+    }
+    h._registered = {
+        1: ("cycle_group", "dps"),
+        2: ("cycle_group", "empty"),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h._on_hotkeys(libs, [1, 2])
+
+    # DPS step: Alice→Bravo.  Empty is a no-op.  Final target = Bravo.
+    assert activated == [0x2222], (
+        "empty group after DPS cycle must not cancel the DPS target"
+    )
+
+
+def test_empty_group_after_direct_focus_preserves_focused_target(monkeypatch):
+    """An empty named group following a direct-focus action must not cancel
+    the focus result.  The final dispatch target remains Carol."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {"group_by_character": {}}  # 'empty' has no members
+    h._registered = {
+        1: ("focus", ("Carol",)),
+        2: ("cycle_group", "empty"),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x3333], (
+        "empty group after direct focus must not cancel the focus result"
+    )
+
+
+def test_standalone_empty_group_activates_nothing(monkeypatch):
+    """A single empty group action with no prior target still produces no
+    activation - the no-op contract for an isolated empty-group press."""
+    h, libs = _batch_hotkey_host()
+    h._active_hotkeys = {"group_by_character": {}}  # 'empty' has no members
+    h._registered = {1: ("cycle_group", "empty")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [], "a standalone empty group action must not activate anything"
