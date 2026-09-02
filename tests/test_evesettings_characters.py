@@ -149,3 +149,27 @@ def test_resolve_limits_parallel_fetches_to_the_requested_worker_count():
     names, deleted = result["value"]
     assert names == {i: f"Pilot {i}" for i in range(1, 6)}
     assert deleted == set()
+
+
+def test_resolve_max_workers_zero_raises_value_error():
+    def fetch(ident):
+        return characters.ACTIVE, f"Pilot {ident}"
+
+    with pytest.raises(ValueError, match="max_workers must be at least 1"):
+        characters.resolve([1, 2, 3], fetch=fetch, max_workers=0)
+
+
+def test_resolve_injected_fetch_exception_treated_as_transient():
+    """If injected fetch raises for one ID, that ID is skipped (transient),
+    and other IDs still resolve successfully."""
+
+    def fetch(ident):
+        if ident == 2:
+            raise RuntimeError("Transport error for this ID")
+        return (characters.ACTIVE, f"Pilot {ident}")
+
+    names, deleted = characters.resolve([1, 2, 3], fetch=fetch, max_workers=2)
+    # ID 2 raised an exception, so it's not in names or deleted (treated as transient)
+    # IDs 1 and 3 should resolve successfully
+    assert names == {1: "Pilot 1", 3: "Pilot 3"}
+    assert deleted == set()
