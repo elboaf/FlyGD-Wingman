@@ -195,7 +195,7 @@ def test_non_iconic_target_already_foreground_skips_attachments():
     assert calls == [("get_foreground", TARGET)]
 
 
-def test_direct_activation_returns_activated_without_input_attachment(monkeypatch):
+def test_direct_activation_returns_activated_without_input_attachment():
     calls = []
     libs = _activation_libs([FOREGROUND, TARGET], calls)
 
@@ -204,7 +204,7 @@ def test_direct_activation_returns_activated_without_input_attachment(monkeypatc
     assert not any(call[0] == "set_focus" for call in calls)
 
 
-def test_direct_activation_returns_pending_for_transitional_zero(monkeypatch):
+def test_direct_activation_returns_pending_for_transitional_zero():
     calls = []
     libs = _activation_libs([FOREGROUND, 0], calls)
 
@@ -215,13 +215,24 @@ def test_direct_activation_returns_pending_for_transitional_zero(monkeypatch):
     assert not any(call[0] == "attach" for call in calls)
 
 
-def test_direct_activation_falls_back_when_source_remains_foreground(monkeypatch):
+def test_direct_activation_falls_back_when_source_remains_foreground():
     calls = []
     libs = _activation_libs([FOREGROUND, FOREGROUND, TARGET], calls)
 
     assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
     assert [call[0] for call in calls].count("set_foreground") == 2
     assert ("set_focus", TARGET) in calls
+
+
+def test_attached_activation_uses_live_foreground_verdict_when_source_is_target():
+    calls = []
+    libs = _activation_libs([FOREGROUND], calls)
+
+    assert (
+        window.activate_attached(libs, TARGET, TARGET)
+        is window.ActivationResult.REFUSED
+    )
+    assert ("get_foreground", FOREGROUND) in calls
 
 
 def test_attached_deadline_fallback_uses_request_time_source_when_live_foreground_was_zero():

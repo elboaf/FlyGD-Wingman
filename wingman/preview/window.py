@@ -80,9 +80,6 @@ def activate_attached(libs, hwnd, source_hwnd) -> ActivationResult:
     if libs.user32.IsIconic(hwnd):
         libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
         return ActivationResult.PENDING_RESTORE
-    if source_hwnd == hwnd:
-        return ActivationResult.ACTIVATED
-
     our_tid = libs.kernel32.GetCurrentThreadId()
     source_tid = libs.user32.GetWindowThreadProcessId(source_hwnd, None)
     target_tid = libs.user32.GetWindowThreadProcessId(hwnd, None)
