@@ -589,6 +589,152 @@ def test_cdp_clear_device_metrics_override_sends_correct_method():
     )
 
 
+class _ExceptionWS:
+    """Websocket stub that returns a Runtime.evaluate response with
+    exceptionDetails set, simulating a JavaScript exception."""
+
+    def __init__(self, exception_details):
+        self._exception_details = exception_details
+        self._id = 0
+        self._queue = []
+
+    def send(self, text):
+        import json as _json
+
+        msg = _json.loads(text)
+        # For Runtime.evaluate, return exceptionDetails; for others, normal empty result.
+        if msg.get("method") == "Runtime.evaluate":
+            self._queue.append(
+                {
+                    "id": msg["id"],
+                    "result": {
+                        "result": {"type": "undefined"},
+                        "exceptionDetails": self._exception_details,
+                    },
+                }
+            )
+        else:
+            self._queue.append({"id": msg["id"], "result": {}})
+
+    def recv(self):
+        import json as _json
+
+        return _json.dumps(self._queue.pop(0))
+
+
+def test_cdp_evaluate_raises_target_error_on_exception_details():
+    """CDP.evaluate must detect exceptionDetails in the Runtime.evaluate
+    response and raise TargetError, so a failed JavaScript setup script
+    is recorded as a failed shot rather than returning None silently.
+
+    Without this guard, a setup script failure (e.g. missing DOM element,
+    undefined handler) produces a valid-looking None return, and the
+    subsequent screenshot documents the wrong page state.
+    """
+    exc_details = {
+        "exceptionId": 1,
+        "text": "Uncaught",
+        "lineNumber": 0,
+        "columnNumber": 0,
+        "exception": {
+            "type": "error",
+            "description": "ReferenceError: x is not defined",
+        },
+    }
+    ws = _ExceptionWS(exc_details)
+    cdp = shoot.CDP(ws)
+    with pytest.raises(shoot.TargetError):
+        cdp.evaluate("x.notDefined()")
+
+
+def test_cdp_evaluate_returns_value_when_no_exception():
+    """CDP.evaluate must return the JS result value when no exceptionDetails
+    is present -- i.e., normal execution is unaffected by the guard."""
+    import json as _json
+
+    class _ValueWS:
+        def __init__(self):
+            self._id = 0
+            self._queue = []
+
+        def send(self, text):
+            msg = _json.loads(text)
+            self._queue.append(
+                {
+                    "id": msg["id"],
+                    "result": {"result": {"type": "string", "value": "hello"}},
+                }
+            )
+
+        def recv(self):
+            return _json.dumps(self._queue.pop(0))
+
+    cdp = shoot.CDP(_ValueWS())
+    assert cdp.evaluate("'hello'") == "hello"
+
+
+def test_walk_records_setup_failure_as_failed_shot(tmp_path, monkeypatch):
+    """When a setup script raises TargetError (e.g. JS exception in the
+    setup expression), walk() must record that shot as failed rather than
+    continuing as if the setup succeeded.
+
+    This tests the end-to-end path: CDP.evaluate(setup) raises TargetError
+    → walk() catches it and records error='...' for that shot key.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+
+    class _SetupFailCDP:
+        """CDP that raises TargetError on any evaluate() call containing 'setup'."""
+
+        def __init__(self):
+            self._ops = []
+
+        def evaluate(self, expression: str):
+            # Fail the setup script evaluations (fixture injection calls).
+            # The eve_shown check must still return True.
+            if "WM.eve_shown" in expression:
+                return True
+            if (
+                "window.onPreviewHotkeys" in expression
+                or "scrollIntoView" in expression
+            ):
+                raise shoot.TargetError("JS exception: setup failed")
+            return None
+
+        def screenshot(self) -> bytes:
+            import base64 as _b64
+
+            return _b64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+                "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+            )
+
+        def set_device_metrics_override(self, *, width: int, height: int) -> None:
+            pass
+
+        def clear_device_metrics_override(self) -> None:
+            pass
+
+    cdp = _SetupFailCDP()
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    # The group and narrow stages both use setup scripts; they must fail.
+    group_shot = next(
+        (s for s in shots if s["key"] == "settings-previews-groups"), None
+    )
+    narrow_shot = next(
+        (s for s in shots if s["key"] == "settings-previews-narrow"), None
+    )
+    assert group_shot is not None, "settings-previews-groups stage must be attempted"
+    assert narrow_shot is not None, "settings-previews-narrow stage must be attempted"
+    assert group_shot["error"] is not None, (
+        "settings-previews-groups must be recorded as failed when setup raises TargetError"
+    )
+    assert narrow_shot["error"] is not None, (
+        "settings-previews-narrow must be recorded as failed when setup raises TargetError"
+    )
+
+
 class _TrackedCDP:
     """A traceable fake CDP that records protocol operations in order.
 

@@ -13,9 +13,9 @@ forward from the record.
 Character groups with named forward-only cycle keybinds and scope-aware
 history are complete. The All forward and All back rows remain the implicit
 cycle-all fallback and are backward-compatible with settings files that have
-no groups. Multiple group membership, backward group cycle keys, group-specific
-preview geometry, and EVE-O/EVE-X profile import remain open (see items 12 and
-13 below).
+no groups. Multiple group membership, backward group cycle keys, and group-specific
+preview geometry remain open. EVE-O/EVE-X profile import remains open (see item 13
+below); multiple named profiles remain open (see item 12 below).
 
 ## Corrections to the record
 

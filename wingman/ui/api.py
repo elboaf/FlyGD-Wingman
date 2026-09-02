@@ -3095,6 +3095,13 @@ class Api:
 
     @staticmethod
     def _preview_group_result(applied, error, hotkeys) -> dict:
+        """Build the standard group-operation result dict.
+
+        Invariant: group operations persist before live host delivery, so
+        ``persisted == applied`` always holds for this helper -- there is no
+        partial state where the host has a change that was not also written
+        to disk.
+        """
         return {
             "applied": bool(applied),
             "persisted": bool(applied),
@@ -3103,7 +3110,10 @@ class Api:
         }
 
     def set_preview_binds(self, section) -> bool:
-        """Replace the whole binding table, persist it, and push it down.
+        """Replace the character keybinds and All-cycle chords, persist them,
+        and push the full table to the host.
+
+        Groups and group membership are left unchanged.
 
         Returns False on a chord that will not parse rather than silently
         dropping it: the page needs to tell a rejected entry from a saved

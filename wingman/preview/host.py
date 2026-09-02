@@ -150,7 +150,10 @@ def plan_registrations(table) -> list:
         for group in groups:
             if not isinstance(group, dict):
                 continue
-            entries.append((group.get("cycle"), ("cycle_group", group.get("id"))))
+            gid = group.get("id")
+            if not isinstance(gid, str) or not gid:
+                continue
+            entries.append((group.get("cycle"), ("cycle_group", gid)))
 
     plan, claimed = [], set()
     for text, action in entries:
@@ -159,11 +162,12 @@ def plan_registrations(table) -> list:
             continue
         canonical = gestures.display(parsed)
         if canonical in claimed:
-            # Reached only by a cycle chord a character already holds --
-            # the character entries were merged above and cannot collide
-            # with each other any more. Windows would refuse the second
-            # registration anyway; dropping it here keeps the reported
-            # status honest about which binding actually lost.
+            # Reached by any duplicate chord: a character chord that
+            # repeats another character's, a group-cycle chord that
+            # duplicates an All-cycle or character chord, or two group
+            # chords that share the same key. Windows would refuse the
+            # second registration anyway; dropping it here keeps the
+            # reported status honest about which binding actually lost.
             continue
         ident = HOTKEY_ID_BASE + len(plan)
         if ident > HOTKEY_ID_MAX:

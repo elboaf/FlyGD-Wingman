@@ -2568,3 +2568,157 @@ def test_make_group_select_restores_focus_after_repaint():
         "focus call appears before requestRender in makeGroupSelect .then(); "
         "must run after repaint so it targets an attached (not detached) node"
     )
+
+
+def test_rename_group_restores_focus_after_success_repaint():
+    """After a successful rename and requestRender(), focusGroupManager() must
+    be called so keyboard focus returns to the group manager Add field rather
+    than falling to <body>.
+
+    deleteGroup has this; renameGroup is the missing counterpart.
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js, "no renameGroup function in previews.js"
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "renameGroup has no .then() callback"
+    then_body = then_body[1]
+
+    # The renameGroup .then() callback ends before the comment block that
+    # precedes focusGroupManager's definition. Trim the then_body to just
+    # the callback closure (ends at the closing `});` of `.then(...)`).
+    # Count to closing brace: find the matching '}); });' sequence.
+    # Simple approach: trim to just the JS code before any comment block.
+    # Find last `focusGroupManager` that is a function call (not a comment).
+    import re as _re
+
+    calls = list(_re.finditer(r"focusGroupManager\s*\(\)", then_body))
+    assert calls, (
+        "renameGroup success path does not call focusGroupManager(). "
+        "Add focusGroupManager() after requestRender() in the success path, "
+        "matching deleteGroup."
+    )
+    # The success-path requestRender comes last in the actual code (before comments).
+    # Find requestRender() calls (not comment occurrences). Exclude lines starting
+    # with // by checking that the match is not preceded by '//' on the same line.
+    rr_calls = []
+    for m in _re.finditer(r"requestRender\s*\(\)", then_body):
+        # Check if this occurrence is on a comment line.
+        line_start = then_body.rfind("\n", 0, m.start()) + 1
+        line = then_body[line_start : m.start()].lstrip()
+        if not line.startswith("//"):
+            rr_calls.append(m)
+    assert rr_calls, "renameGroup must call requestRender()"
+    last_rr = rr_calls[-1].start()
+    last_focus = calls[-1].start()
+    assert last_focus > last_rr, (
+        "focusGroupManager must appear after the last requestRender() in "
+        "renameGroup's .then() callback (success path)"
+    )
+
+
+def test_rename_group_restores_focus_after_refusal_repaint():
+    """After a rename refusal and requestRender(), focusGroupManager() must
+    be called in the refusal path too (matches deleteGroup refusal path).
+    """
+    js = _web("previews.js")
+    assert "function renameGroup" in js, "no renameGroup function in previews.js"
+    body = js.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    then_body = body.split(".then(function (res)", 1)
+    assert len(then_body) > 1, "renameGroup has no .then() callback"
+    then_body = then_body[1]
+
+    refusal_idx = then_body.find("if (!res || !res.applied)")
+    assert refusal_idx != -1, "renameGroup .then() has no refusal guard"
+    refusal_block = then_body[refusal_idx:]
+    return_idx = refusal_block.find("return;")
+    refusal_content = refusal_block[: return_idx + len("return;")]
+
+    has_focus = "focusGroupManager" in refusal_content or (
+        "querySelector" in refusal_content and ".focus()" in refusal_content
+    )
+    assert has_focus, (
+        "renameGroup refusal path does not restore keyboard focus. "
+        "Add focusGroupManager() after requestRender() in the refusal branch."
+    )
+
+
+def test_do_add_clears_name_field_after_successful_create():
+    """After a successful group create, the Add name field must be cleared
+    (nameField.value = '' or equivalent) so the user doesn't see the old
+    group name still in the text field.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js, "no makeGroupManager in previews.js"
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body, "no doAdd inside makeGroupManager"
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    # Success path is after the refusal block; look for nameField.value clear
+    has_clear = "nameField.value" in then_body and (
+        "nameField.value = ''" in then_body
+        or 'nameField.value = ""' in then_body
+        or "nameField.value=''" in then_body
+    )
+    assert has_clear, (
+        "doAdd success path does not clear nameField.value after a successful "
+        "create. The user would see the just-added group name still in the "
+        "Add field, making a duplicate-create attempt likely. "
+        "Add `nameField.value = '';` in the success path before requestRender()."
+    )
+
+
+def test_do_add_restores_focus_to_add_field_after_successful_create():
+    """After a successful group create and requestRender(), focus must be
+    restored to the newly-attached Add field (not the detached old one).
+
+    The old nameField is detached by requestRender(); the new one must be
+    queried from the rebuilt DOM and focused.
+    """
+    js = _web("previews.js")
+    assert "function makeGroupManager" in js, "no makeGroupManager in previews.js"
+    mgr_body = js.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert "function doAdd" in mgr_body, "no doAdd inside makeGroupManager"
+    do_add_body = mgr_body.split("function doAdd", 1)[1]
+    if "addBtn.addEventListener" in do_add_body:
+        do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
+
+    then_body = (
+        do_add_body.split(".then(function (res)", 1)[1]
+        if ".then(function (res)" in do_add_body
+        else do_add_body
+    )
+    # Must contain a requestRender() followed by a focus on the new Add field.
+    has_focus = (
+        "focusGroupManager" in then_body
+        or ("group-add-name" in then_body and ".focus()" in then_body)
+        or ("addField" in then_body and ".focus()" in then_body)
+    )
+    assert has_focus, (
+        "doAdd success path does not restore focus to the Add field after "
+        "requestRender(). The rebuilt DOM has a fresh Add field that is not "
+        "focused; the user must Tab or click to continue. "
+        "Add a focusGroupManager() call or querySelector for .group-add-name "
+        "after requestRender() in the success path."
+    )
+    import re as _re
+
+    rr_calls = list(_re.finditer(r"requestRender\s*\(\)", then_body))
+    assert rr_calls, "doAdd success path must call requestRender()"
+    last_rr = rr_calls[-1].start()
+    focus_calls = list(_re.finditer(r"focusGroupManager\s*\(\)", then_body))
+    if not focus_calls:
+        focus_calls = list(_re.finditer(r"\.focus\(\)", then_body))
+    assert focus_calls, "doAdd success path must have a focus call"
+    last_focus = focus_calls[-1].start()
+    assert last_focus > last_rr, (
+        "focus call in doAdd success path must appear after requestRender, "
+        "not before, so it targets the newly attached Add field"
+    )

@@ -780,6 +780,46 @@ def test_plan_group_with_none_or_empty_cycle_is_dropped():
     assert ("cycle_group", "valid") in actions
 
 
+def test_plan_group_with_missing_or_non_string_id_is_skipped():
+    """Groups whose 'id' is absent, None, non-string, or empty string must
+    produce no plan entry, preventing ("cycle_group", None) from cycling
+    all unassigned characters.
+
+    plan_registrations is called with unvalidated tables from unit tests and
+    potential future callers; it must not register a None-id action even when
+    the group's cycle gesture is valid.
+    """
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [
+                {"name": "no-id", "cycle": "Ctrl+F1"},  # missing 'id' key
+                {"id": None, "name": "none-id", "cycle": "Ctrl+F2"},
+                {"id": "", "name": "empty-id", "cycle": "Ctrl+F3"},
+                {"id": 42, "name": "int-id", "cycle": "Ctrl+F4"},
+                {"id": "valid", "name": "Valid", "cycle": "Ctrl+F5"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    # None-id (from missing key), None, empty, and non-string must all be absent
+    assert ("cycle_group", None) not in actions, (
+        "plan_registrations must not register (cycle_group, None) -- "
+        "this would cycle through all unassigned characters"
+    )
+    assert not any(
+        action == ("cycle_group", a)
+        for action, a in ((a, a[1]) for a in actions if a[0] == "cycle_group")
+        if not isinstance(a, str) or not a
+    ), "non-string or empty cycle_group ids must not be registered"
+    assert ("cycle_group", "valid") in actions, "valid group must still be registered"
+    assert len([a for a in actions if a[0] == "cycle_group"]) == 1, (
+        "only the valid group should produce a cycle_group entry"
+    )
+
+
 class _FakeUser32:
     def __init__(self, refuse=(), foreground=0):
         self.registered = {}
@@ -1029,6 +1069,8 @@ def test_teardown_clears_active_hotkeys_and_group_history():
     assert h._active_hotkeys == {}, "_teardown must clear _active_hotkeys"
     assert h._last_group_cycled == {}, "_teardown must clear _last_group_cycled"
 
+
+def test_raise_alert_drops_oldest_beyond_the_cap():
     """The queue is drained every ~80ms in normal operation (WM_APP_ALERT
     fires _apply_alerts on the pump), so anything beyond a handful means
     nothing is draining -- previews disabled, or the host window not yet

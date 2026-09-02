@@ -562,6 +562,8 @@ class CDP:
         result = self._call(
             "Runtime.evaluate", {"expression": expression, "returnByValue": True}
         )
+        if "exceptionDetails" in result:
+            raise TargetError(result["exceptionDetails"])
         return result.get("result", {}).get("value")
 
     def screenshot(self) -> bytes:

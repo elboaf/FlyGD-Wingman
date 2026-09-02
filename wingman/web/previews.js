@@ -1467,6 +1467,7 @@
           if (!res || !res.applied) {
             if (res && res.error) { WM.send('alert_bookmarks', res.error); }
             requestRender();
+            focusGroupManager();
             return;
           }
           if (pushes !== before) {
@@ -1478,6 +1479,7 @@
             state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           }
           requestRender();
+          focusGroupManager();
         });
     });
   }
@@ -1592,7 +1594,12 @@
           state.hotkeys.groups = state.hotkeys.groups || [];
           state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
         }
+        // Clear the submitted name so the field does not show a stale value
+        // after repaint (a non-empty field invites a duplicate-add attempt).
+        nameField.value = '';
         requestRender();
+        // The old nameField is detached by requestRender(); query the new one.
+        focusGroupManager();
       });
     }
 

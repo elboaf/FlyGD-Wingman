@@ -145,10 +145,10 @@ def _preview_defaults() -> dict:
         # validated_preview for the migration it gates.
         "defaults_version": _PREVIEW_DEFAULTS_VERSION,
         "layouts": {},
-        # Flat cycle chords, not a group table. When named cycle groups
-        # land these become the default group's, so the schema grows
-        # without migrating anyone -- the same shape the parent design
-        # used to defer profiles.
+        # The two flat cycle chords are the All-cycle (forward and back).
+        # Groups and per-character membership are stored alongside them
+        # and default to empty, so existing installs need no migration --
+        # the schema grew in place.
         "hotkeys": {
             "characters": {},
             "cycle_next": "",
