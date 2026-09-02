@@ -219,6 +219,102 @@ def test_an_empty_sp_map_marked_complete_stays_complete():
     assert ch.skills_etag == 'W/"empty-sp"'
 
 
+def test_skill_points_beyond_the_cap_invalidates_the_whole_map_and_etag():
+    """Entries beyond MAX_LEVEL_ENTRIES make the whole map invalid, the same
+    as any other structural failure -- reusing active_levels/trained_levels'
+    own cap rather than a separate one, since both collections are keyed by
+    the same bounded set of real EVE skill ids. Per the legacy-ETag rule, an
+    invalid map must not leave a stale skills_etag standing in for it."""
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "skill_points": {
+                    str(n): 1 for n in range(1, state.MAX_LEVEL_ENTRIES + 2)
+                },
+                "skill_points_complete": True,
+                "skills_etag": 'W/"must-not-survive-overflow"',
+            }
+        ]
+    }
+    ch = state.from_dict(raw).characters[0]
+    assert ch.skill_points == {}
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == ""
+
+
+GOOD_ATTRIBUTES = {
+    "charisma": 19,
+    "intelligence": 20,
+    "memory": 20,
+    "perception": 27,
+    "willpower": 21,
+}
+
+
+@pytest.mark.parametrize(
+    "raw_attributes",
+    [
+        pytest.param("not-a-dict", id="non_dict"),
+        pytest.param(
+            {k: v for k, v in GOOD_ATTRIBUTES.items() if k != "willpower"},
+            id="missing_name",
+        ),
+        pytest.param({**GOOD_ATTRIBUTES, "extra": 1}, id="extra_key"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": 0}, id="zero_value"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": -5}, id="negative_value"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": True}, id="bool_value"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": 21.5}, id="non_int_value"),
+    ],
+)
+def test_a_malformed_attributes_map_loads_as_unavailable(raw_attributes):
+    """Each param is a distinct way `attributes` can fail to be exactly the
+    five ESI learning attributes as positive, non-bool integers -- not a
+    dict at all, missing a name, carrying an extra one, non-positive, a
+    bool (an int subclass that would otherwise sail through as 1), or a
+    value that is not an integer at all. Any one of them must load as no
+    data whatsoever, never a partial attribute set standing in for a real
+    snapshot."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "attributes": raw_attributes,
+                    "attributes_fetched_utc": "2026-08-24T10:30:00+00:00",
+                    "attributes_etag": 'W/"attrs"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.attributes == {}
+    assert ch.attributes_fetched_utc is None
+    assert ch.attributes_etag == ""
+
+
+def test_valid_attributes_without_a_fetched_timestamp_load_as_unavailable():
+    """A structurally valid attributes map with no attributes_fetched_utc
+    has no freshness fact behind it -- it must not be trusted as a real
+    snapshot, and its ETag must not survive to hide the request that would
+    supply both together."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "attributes": dict(GOOD_ATTRIBUTES),
+                    "attributes_etag": 'W/"attrs"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.attributes == {}
+    assert ch.attributes_fetched_utc is None
+    assert ch.attributes_etag == ""
+
+
 def test_from_dict_never_raises_on_junk():
     """This runs at launch. Anything that gets here -- a truncated write, a
     hand edit, a file from a future version -- must degrade to an empty

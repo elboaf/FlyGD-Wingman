@@ -28,6 +28,7 @@ from pathlib import Path
 
 from .. import atomicio
 from .evaluator import QueueEntry
+from .training import ATTRIBUTE_NAMES
 
 MAX_CHARACTERS = 50
 STATE_VERSION = 1
@@ -190,14 +191,6 @@ def _coerce_int(raw):
     return None
 
 
-# ESI's own five learning attributes -- charisma, intelligence, memory,
-# perception, willpower -- fixed by the game rules, not by anything this
-# file can discover. A map missing one, carrying an extra key, or holding
-# any value outside these five names is not a partial attribute set; it is
-# not this endpoint's shape at all.
-ATTRIBUTE_NAMES = ("charisma", "intelligence", "memory", "perception", "willpower")
-
-
 def _coerce_levels(raw) -> dict:
     """Skill id -> level, dropping malformed entries individually.
 
@@ -266,7 +259,12 @@ def _coerce_attributes(raw) -> tuple:
     Positive-only: 0 or negative is not a value ESI has ever reported for a
     trained attribute, so it is closer to a corrupt read than a real one.
     """
-    if not isinstance(raw, dict) or set(raw) != set(ATTRIBUTE_NAMES):
+    # ATTRIBUTE_NAMES is training.py's own canonical frozenset -- the same
+    # five names the calculator validates metadata against -- not retyped
+    # here, so persisted attributes and the calculator can never drift on
+    # what "the five attributes" means. set(raw) != ATTRIBUTE_NAMES compares
+    # fine across set/frozenset by element, so no conversion is needed.
+    if not isinstance(raw, dict) or set(raw) != ATTRIBUTE_NAMES:
         return {}, False
     out: dict = {}
     for name in ATTRIBUTE_NAMES:
