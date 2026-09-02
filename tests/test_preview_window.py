@@ -195,17 +195,81 @@ def test_non_iconic_target_already_foreground_skips_attachments():
     assert calls == [("get_foreground", TARGET)]
 
 
+def test_direct_activation_returns_activated_without_input_attachment():
+    calls = []
+    libs = _activation_libs([FOREGROUND, TARGET], calls)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert not any(call[0] == "attach" for call in calls)
+    assert not any(call[0] == "set_focus" for call in calls)
+
+
+def test_direct_activation_returns_pending_for_transitional_zero():
+    calls = []
+    libs = _activation_libs([FOREGROUND, 0], calls)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.PENDING_FOREGROUND
+    assert [call for call in calls if call[0] == "set_foreground"] == [
+        ("set_foreground", TARGET)
+    ]
+    assert not any(call[0] == "attach" for call in calls)
+
+
+def test_direct_activation_falls_back_when_source_remains_foreground():
+    calls = []
+    libs = _activation_libs([FOREGROUND, FOREGROUND, TARGET], calls)
+
+    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert [call[0] for call in calls].count("set_foreground") == 2
+    assert ("set_focus", TARGET) in calls
+
+
+def test_attached_activation_uses_live_foreground_verdict_when_source_is_target():
+    calls = []
+    libs = _activation_libs([FOREGROUND], calls)
+
+    assert (
+        window.activate_attached(libs, TARGET, TARGET)
+        is window.ActivationResult.REFUSED
+    )
+    assert ("get_foreground", FOREGROUND) in calls
+
+
+def test_attached_deadline_fallback_uses_request_time_source_when_live_foreground_was_zero():
+    """The direct transition temporarily clears foreground. Deadline fallback
+    still needs the source queue that held foreground when the request began.
+    """
+    calls = []
+    libs = _activation_libs([TARGET], calls)
+
+    assert (
+        window.activate_attached(libs, TARGET, FOREGROUND)
+        is window.ActivationResult.ACTIVATED
+    )
+    assert calls == [
+        ("attach", OUR_TID, FOREGROUND_TID, True),
+        ("attach", OUR_TID, TARGET_TID, True),
+        ("set_foreground", TARGET),
+        ("get_foreground", TARGET),
+        ("set_focus", TARGET),
+        ("attach", OUR_TID, TARGET_TID, False),
+        ("attach", OUR_TID, FOREGROUND_TID, False),
+    ]
+
+
 def test_activation_observes_foreground_before_focusing_target():
     """A live target can be foreground but focusless unless keyboard focus is
     assigned while its queue remains attached. SetFocus's return is not a
     verdict; the foreground observation gates it and classifies activation.
     """
     calls = []
-    libs = _activation_libs([FOREGROUND, TARGET], calls)
+    libs = _activation_libs([TARGET], calls)
 
-    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert (
+        window.activate_attached(libs, TARGET, FOREGROUND)
+        is window.ActivationResult.ACTIVATED
+    )
     assert calls == [
-        ("get_foreground", FOREGROUND),
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, TARGET_TID, True),
         ("set_foreground", TARGET),
@@ -218,9 +282,12 @@ def test_activation_observes_foreground_before_focusing_target():
 
 def test_equal_foreground_and_target_threads_are_attached_once():
     calls = []
-    libs = _activation_libs([FOREGROUND, TARGET], calls, target_tid=FOREGROUND_TID)
+    libs = _activation_libs([TARGET], calls, target_tid=FOREGROUND_TID)
 
-    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert (
+        window.activate_attached(libs, TARGET, FOREGROUND)
+        is window.ActivationResult.ACTIVATED
+    )
     assert [call for call in calls if call[0] == "attach"] == [
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, FOREGROUND_TID, False),
@@ -229,11 +296,13 @@ def test_equal_foreground_and_target_threads_are_attached_once():
 
 def test_activation_refusal_does_not_focus_the_target_and_detaches_in_reverse_order():
     calls = []
-    libs = _activation_libs([FOREGROUND, FOREGROUND], calls)
+    libs = _activation_libs([FOREGROUND], calls)
 
-    assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
+    assert (
+        window.activate_attached(libs, TARGET, FOREGROUND)
+        is window.ActivationResult.REFUSED
+    )
     assert calls == [
-        ("get_foreground", FOREGROUND),
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, TARGET_TID, True),
         ("set_foreground", TARGET),
@@ -246,11 +315,11 @@ def test_activation_refusal_does_not_focus_the_target_and_detaches_in_reverse_or
 def test_activation_exception_detaches_every_successful_attachment_in_reverse():
     calls = []
     libs = _activation_libs(
-        [FOREGROUND], calls, set_foreground_error=RuntimeError("foreground failed")
+        [], calls, set_foreground_error=RuntimeError("foreground failed")
     )
 
     with pytest.raises(RuntimeError, match="foreground failed"):
-        window.activate(libs, TARGET)
+        window.activate_attached(libs, TARGET, FOREGROUND)
 
     assert [call for call in calls if call[0] == "attach"] == [
         ("attach", OUR_TID, FOREGROUND_TID, True),
@@ -262,9 +331,12 @@ def test_activation_exception_detaches_every_successful_attachment_in_reverse():
 
 def test_failed_attachment_is_not_detached():
     calls = []
-    libs = _activation_libs([FOREGROUND, TARGET], calls, attached_tids=(TARGET_TID,))
+    libs = _activation_libs([TARGET], calls, attached_tids=(TARGET_TID,))
 
-    assert window.activate(libs, TARGET) is window.ActivationResult.ACTIVATED
+    assert (
+        window.activate_attached(libs, TARGET, FOREGROUND)
+        is window.ActivationResult.ACTIVATED
+    )
     assert [call for call in calls if call[0] == "attach"] == [
         ("attach", OUR_TID, FOREGROUND_TID, True),
         ("attach", OUR_TID, TARGET_TID, True),
@@ -287,10 +359,13 @@ def test_activation_failure_is_visible_at_the_apps_log_level(caplog):
     failed activation is therefore invisible in the only log a user will
     ever send -- which defeats the point of logging it at all."""
     calls = []
-    libs = _activation_libs([FOREGROUND, FOREGROUND], calls)
+    libs = _activation_libs([FOREGROUND], calls)
 
     with caplog.at_level("INFO"):
-        assert window.activate(libs, TARGET) is window.ActivationResult.REFUSED
+        assert (
+            window.activate_attached(libs, TARGET, FOREGROUND)
+            is window.ActivationResult.REFUSED
+        )
     assert any("Activation of" in r.message for r in caplog.records)
 
 

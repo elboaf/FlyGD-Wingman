@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import (
     cycle,
@@ -41,6 +41,9 @@ ACTIVATE_RETRY_TIMER_ID = 3
 # a saved outgoing minimize indefinitely.
 ACTIVATE_RETRY_MS = 20
 ACTIVATE_RETRY_MAX = 25
+# Foreground observation uses wall time, not WM_TIMER turn count: timer delivery
+# is coalesced and can be delayed while this pump handles other work.
+ACTIVATE_DIRECT_TIMEOUT_S = 0.25
 # How long an armed bind capture survives without being disarmed. Long
 # enough that nobody meets it while deciding which key to press; short
 # enough that a page which died mid-capture cannot leave the preview
@@ -64,7 +67,7 @@ COPY_PERSIST_FAILED = "persist_failed"
 
 @dataclass(frozen=True)
 class _PendingSwitch:
-    """The one restore still awaiting Windows' foreground verdict."""
+    """The one activation still awaiting Windows' foreground verdict."""
 
     stable_key: str
     hwnd: int
@@ -72,6 +75,8 @@ class _PendingSwitch:
     previous_hwnd: int
     minimize: bool
     attempts: int = 0
+    phase: window_mod.ActivationResult | None = None
+    deadline: float = 0.0
 
 
 def coalesce_hotkey_ids(peek, hwnd, first_ident) -> list[int]:
@@ -1227,6 +1232,11 @@ class PreviewHost:
             (key for key, client in self._clients.items() if client.hwnd == foreground),
             None,
         )
+        if foreground_key is None and self._pending_switch is not None:
+            # Windows commonly reports no foreground while a direct request is
+            # in flight. Keep relative actions sequential without overriding a
+            # real client that has since taken foreground.
+            foreground_key = self._pending_switch.stable_key
         # `target` is the final dispatch decision, while `resolved_cursor`
         # remembers the last place this sequential batch reached. A failed
         # focus must suppress dispatch if it is final without making a later
@@ -1377,7 +1387,7 @@ class PreviewHost:
         return running[0]
 
     def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> bool:
-        """Retain an armable restore request and report whether it was kept."""
+        """Retain an armable activation request and report whether it was kept."""
         if not self._hwnd or libs is None:
             # This can be reached by a pending retry racing teardown. A request
             # without its host window has no path back into the pump, so keeping
@@ -1408,7 +1418,7 @@ class PreviewHost:
         return True
 
     def _clear_pending_activation(self, libs) -> None:
-        """Forget an outstanding restore and stop its timer exactly once."""
+        """Forget an outstanding activation and stop its timer exactly once."""
         self._pending_switch = None
         if self._pending_activation_timer:
             if self._hwnd and libs is not None:
@@ -1443,9 +1453,12 @@ class PreviewHost:
         self._apply_selection(libs)
 
     def _retry_pending_activation(self, libs) -> None:
-        """Retry one restored target without ever waiting inside the pump."""
+        """Advance one pending phase without waiting inside the pump."""
         pending = self._pending_switch
         if pending is None:
+            return
+        if pending.phase is window_mod.ActivationResult.PENDING_FOREGROUND:
+            self._observe_pending_foreground(libs, pending)
             return
         client = self._clients.get(pending.stable_key)
         if client is None or client.hwnd != pending.hwnd:
@@ -1471,19 +1484,23 @@ class PreviewHost:
             self._mark_client_activated(libs, client)
             self._minimize_after_activation(libs, pending)
             return
+        if result is window_mod.ActivationResult.PENDING_FOREGROUND:
+            self._arm_pending_activation(
+                libs,
+                replace(
+                    pending,
+                    attempts=0,
+                    phase=result,
+                    deadline=time.monotonic() + ACTIVATE_DIRECT_TIMEOUT_S,
+                ),
+            )
+            return
         if result is window_mod.ActivationResult.PENDING_RESTORE:
             attempts = pending.attempts + 1
             if attempts < ACTIVATE_RETRY_MAX:
                 self._arm_pending_activation(
                     libs,
-                    _PendingSwitch(
-                        pending.stable_key,
-                        pending.hwnd,
-                        pending.previous_key,
-                        pending.previous_hwnd,
-                        pending.minimize,
-                        attempts,
-                    ),
+                    replace(pending, attempts=attempts, phase=result, deadline=0.0),
                 )
                 return
             if pending.minimize:
@@ -1504,6 +1521,93 @@ class PreviewHost:
             logger.info("Pending activation of %s was refused", pending.stable_key)
         self._clear_pending_activation(libs)
 
+    def _observe_pending_foreground(self, libs, pending: _PendingSwitch) -> None:
+        """Observe one direct request; never reissue it from a timer turn."""
+        client = self._clients.get(pending.stable_key)
+        if client is None or client.hwnd != pending.hwnd:
+            logger.info(
+                "Pending activation of %s discarded; its window exited or changed",
+                pending.stable_key,
+            )
+            self._clear_pending_activation(libs)
+            return
+
+        if libs.user32.IsIconic(client.hwnd):
+            self._arm_pending_activation(
+                libs,
+                replace(
+                    pending,
+                    attempts=0,
+                    phase=window_mod.ActivationResult.PENDING_RESTORE,
+                    deadline=0.0,
+                ),
+            )
+            return
+
+        foreground = libs.user32.GetForegroundWindow() or 0
+        if foreground == client.hwnd:
+            self._clear_pending_activation(libs)
+            self._mark_client_activated(libs, client)
+            self._minimize_after_activation(libs, pending)
+            return
+
+        if foreground not in (0, pending.previous_hwnd):
+            logger.info(
+                "Pending activation of %s cancelled; foreground moved to 0x%x",
+                pending.stable_key,
+                foreground,
+            )
+            self._clear_pending_activation(libs)
+            return
+
+        if time.monotonic() < pending.deadline:
+            self._arm_pending_activation(
+                libs, replace(pending, attempts=pending.attempts + 1)
+            )
+            return
+
+        if pending.previous_key is not None:
+            source = self._clients.get(pending.previous_key)
+            if source is None or source.hwnd != pending.previous_hwnd:
+                logger.info(
+                    "Pending activation of %s discarded; source %s exited or changed",
+                    pending.stable_key,
+                    pending.previous_key,
+                )
+                self._clear_pending_activation(libs)
+                return
+
+        try:
+            result = window_mod.activate_attached(
+                libs, client.hwnd, pending.previous_hwnd
+            )
+        except Exception:
+            logger.exception(
+                "Deadline activation of %s (0x%x) raised",
+                pending.stable_key,
+                pending.hwnd,
+            )
+            self._clear_pending_activation(libs)
+            return
+        if result is window_mod.ActivationResult.ACTIVATED:
+            self._clear_pending_activation(libs)
+            self._mark_client_activated(libs, client)
+            self._minimize_after_activation(libs, pending)
+            return
+        if result is window_mod.ActivationResult.PENDING_RESTORE:
+            self._arm_pending_activation(
+                libs,
+                replace(
+                    pending,
+                    attempts=0,
+                    phase=result,
+                    deadline=0.0,
+                ),
+            )
+            return
+        self._clear_pending_activation(libs)
+        logger.info("Deadline activation of %s was refused", pending.stable_key)
+
     def _activate_client(self, libs, client) -> window_mod.ActivationResult:
         """Activate *client*, then asynchronously minimize the exact outgoing client.
 
@@ -1512,36 +1616,45 @@ class PreviewHost:
         activation updates selection and requests its async minimize, which
         prevents the minimize-first desktop gap found in Windows smoke.
         """
-        # A newer click or hotkey supersedes an outstanding restored target.
-        if self._pending_switch is not None:
+        # A newer click or hotkey supersedes an outstanding pending target.
+        superseded = self._pending_switch
+        if superseded is not None:
             logger.debug(
                 "Pending activation of %s superseded by %s",
-                self._pending_switch.stable_key,
+                superseded.stable_key,
                 client.stable_key,
             )
         self._clear_pending_activation(libs)
         previous_hwnd = (
             libs.user32.GetForegroundWindow() if libs is not None else 0
         ) or 0
-        previous_key = next(
-            (
-                key
-                for key, value in self._clients.items()
-                if value.hwnd == previous_hwnd
-            ),
-            None,
-        )
+        if previous_hwnd == 0 and superseded is not None:
+            # Foreground zero is an inconclusive transition, not evidence that
+            # the original outgoing client or its minimize policy changed.
+            previous_key = superseded.previous_key
+            previous_hwnd = superseded.previous_hwnd
+            minimize = superseded.minimize
+        else:
+            previous_key = next(
+                (
+                    key
+                    for key, value in self._clients.items()
+                    if value.hwnd == previous_hwnd
+                ),
+                None,
+            )
+            minimize = switching.should_minimize(
+                enabled=self._minimizing_inactive(),
+                previous_key=previous_key,
+                next_key=client.stable_key,
+                never=([previous_key] if self._is_never_minimize(previous_key) else []),
+            )
         pending = _PendingSwitch(
             client.stable_key,
             client.hwnd,
             previous_key,
             previous_hwnd,
-            switching.should_minimize(
-                enabled=self._minimizing_inactive(),
-                previous_key=previous_key,
-                next_key=client.stable_key,
-                never=[previous_key] if self._is_never_minimize(previous_key) else [],
-            ),
+            minimize,
         )
         try:
             result = window_mod.activate(libs, client.hwnd)
@@ -1553,8 +1666,18 @@ class PreviewHost:
                 "Activation of 0x%x raised; outgoing client left unchanged", client.hwnd
             )
             raise
-        if result is window_mod.ActivationResult.PENDING_RESTORE:
-            self._arm_pending_activation(libs, pending)
+        if result in (
+            window_mod.ActivationResult.PENDING_RESTORE,
+            window_mod.ActivationResult.PENDING_FOREGROUND,
+        ):
+            deadline = (
+                time.monotonic() + ACTIVATE_DIRECT_TIMEOUT_S
+                if result is window_mod.ActivationResult.PENDING_FOREGROUND
+                else 0.0
+            )
+            self._arm_pending_activation(
+                libs, replace(pending, phase=result, deadline=deadline)
+            )
         elif result is window_mod.ActivationResult.ACTIVATED:
             self._mark_client_activated(libs, client)
             self._minimize_after_activation(libs, pending)

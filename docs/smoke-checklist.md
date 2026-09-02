@@ -2134,8 +2134,8 @@ Enable previews in Settings before starting.
       window that was never mapped, and the feature looked simply dead.)
       Also check hide-on-lost-focus takes the pill with the preview, and
       that quitting Wingman with labels on leaves no orphan pill behind.
-- [ ] Clicking a preview brings that client to the foreground. If nothing
-      happens, the log has `Activation of 0x… did not take` at debug.
+- [ ] Clicking a preview brings that client to the foreground. If Windows
+      refuses the switch, the log has `Activation of 0x… did not take` at INFO.
 - [ ] **The ring marks the client you last used, and stays there.** With
       two clients running, switch to one: its preview gains the cyan ring
       and the other loses it. Now click a browser, Discord, or Wingman's
@@ -2229,6 +2229,44 @@ Enable previews in Settings before starting.
 - [ ] Frozen build only: run the packaged app and confirm labels still
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
+
+### Direct activation acceptance
+
+These cases require live EVE clients. Run them with **Minimize inactive
+clients** OFF first so minimization cannot hide an activation defect. The
+expected result is one direct foreground request followed by observation, not
+repeated foreground requests from timer turns.
+
+- [ ] **Locked and unlocked clicks complete promptly with minimization off.**
+      From EVE A, click EVE B's locked preview (dispatches on press), then its
+      unlocked preview (dispatches on release). Expected: each accepted click
+      produces one switch, B takes foreground promptly, and B's outline appears
+      with no duplicate switch, pump stall, or late focus change.
+- [ ] **Rapid supersession keeps the newest pending intent.** Start A -> B and
+      immediately request C before B settles. Expected: C is the final
+      foreground and outlined client; B never reappears later, and neither B nor
+      C causes A to minimize while minimization is off. Repeat with a cycle
+      command during the A -> B transition. Expected: the cycle anchors on B,
+      so forward selects the client after B rather than restarting from A.
+- [ ] **Input follows the observed foreground immediately.** After locked and
+      unlocked clicks, a direct-character hotkey, and a cycle hotkey, type in
+      chat and make a harmless mouse click without waiting. Expected: every
+      event lands in the newly foreground EVE client. Repeat while holding the
+      real push-to-talk key; the accepted switch still completes and the held
+      key is not released, duplicated, or redirected.
+- [ ] **A minimized target uses the bounded restore path.** Minimize B, then
+      select it by click and hotkey. Expected: B restores and becomes foreground,
+      its outline follows promptly, Wingman remains responsive, and no other
+      client is marked or minimized while restoration is pending.
+- [ ] **A retained browser or Windows Search cancels stale intent.** Focus a
+      browser text field and then Windows Search; attempt a switch in a case
+      where Windows keeps that application foreground and type immediately.
+      Expected: input remains in the retained application, the EVE outline does
+      not move speculatively, and no deadline fallback steals focus later.
+- [ ] **Teardown clears pending foreground work.** Start a switch and quit
+      Wingman immediately, before the target settles. Expected: the process
+      exits fully, the current foreground remains usable, and no delayed
+      fallback, outline update, minimize, or focus steal occurs after teardown.
 
 ### Reopen previews where you last put them
 
