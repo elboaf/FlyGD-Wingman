@@ -5,10 +5,29 @@ fully on Linux; Windows-only junction tests are skipped where noted.
 """
 
 import os
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from wingman.evesettings import profilecopy, tree
+
+
+def _make_junction(link: Path, target: Path) -> None:
+    """Create a real Windows directory junction via `mklink /J`.
+
+    Junctions, unlike symbolic links, need neither
+    SeCreateSymbolicLinkPrivilege nor Developer Mode -- an ordinary,
+    unelevated user can create one, which is what makes a genuine
+    reparse-point test usable on a stock CI runner rather than only on a
+    developer's elevated shell.
+    """
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 @pytest.fixture
@@ -219,6 +238,26 @@ def test_prepare_copy_rejects_a_server_junction_outside_the_root(tmp_path):
         profilecopy.prepare_copy(found, str(found.profile), "new", "Fleet")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="requires a real Windows junction")
+def test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root(tmp_path):
+    """The portable POSIX symlink test above proves the LOGIC; this proves
+    the same refusal against an actual `mklink /J` junction, which is what
+    ships on a real Windows install and is not detected by
+    `Path.is_symlink()` at all."""
+    root = tmp_path / "EVE"
+    root.mkdir()
+    outside = tmp_path / "outside-server"
+    outside_profile = outside / "settings_Default"
+    outside_profile.mkdir(parents=True)
+    link = root / "server_tranquility"
+    _make_junction(link, outside)
+
+    found = tree.discover(root)
+    assert found.server == link, "the escape must reach prepare_copy, not discover()"
+    with pytest.raises(ValueError):
+        profilecopy.prepare_copy(found, str(found.profile), "new", "Fleet")
+
+
 @pytest.mark.skipif(
     os.name == "nt", reason="POSIX symlink semantics used to fabricate the escape"
 )
@@ -231,6 +270,25 @@ def test_prepare_copy_rejects_a_profile_junction_outside_the_server(tmp_path):
     (outside / "core_char_1.dat").write_bytes(b"x")
     link = server / "settings_Default"
     link.symlink_to(outside, target_is_directory=True)
+
+    found = tree.discover(root, server, link)
+    assert found.profile == link, "the escape must reach prepare_copy, not discover()"
+    with pytest.raises(ValueError):
+        profilecopy.prepare_copy(found, str(link), "new", "Fleet")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires a real Windows junction")
+def test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server(
+    tmp_path,
+):
+    root = tmp_path / "EVE"
+    server = root / "server_tranquility"
+    server.mkdir(parents=True)
+    outside = tmp_path / "outside-profile"
+    outside.mkdir()
+    (outside / "core_char_1.dat").write_bytes(b"x")
+    link = server / "settings_Default"
+    _make_junction(link, outside)
 
     found = tree.discover(root, server, link)
     assert found.profile == link, "the escape must reach prepare_copy, not discover()"
@@ -289,7 +347,10 @@ def test_stage_copy_cleans_up_a_failed_copy(copy_plan, monkeypatch):
 @pytest.mark.skipif(
     os.name == "nt", reason="POSIX symlink semantics used to fabricate the escape"
 )
-def test_stage_copy_ignores_a_recognized_file_link_outside_the_profile(tmp_path):
+def test_stage_copy_rejects_a_recognized_file_link_outside_the_profile(tmp_path):
+    """Full hierarchy validation refuses the whole copy over one escaping
+    file -- it does not silently clone around it and publish a partial
+    profile missing exactly the file an attacker or a stray link chose."""
     root = tmp_path / "EVE"
     server = root / "server_tranquility"
     source = server / "settings_Default"
@@ -308,9 +369,30 @@ def test_stage_copy_ignores_a_recognized_file_link_outside_the_profile(tmp_path)
         destination_name="Fleet",
         mode="new",
     )
-    with profilecopy.stage_copy(plan) as staged:
-        assert staged.members == ("core_char_1.dat",)
-        assert not (staged.path / "core_user_9.dat").exists()
+    with pytest.raises(ValueError), profilecopy.stage_copy(plan):
+        pass  # pragma: no cover - never reached
+    # Refused before publication, and nothing partial is left behind.
+    leftover = [
+        p for p in server.iterdir() if p.name.startswith(profilecopy.STAGE_PREFIX)
+    ]
+    assert leftover == []
+
+
+def test_recognized_members_refuses_when_the_source_cannot_be_read(
+    tmp_path, monkeypatch
+):
+    """An unreadable or vanished source must not read as "no recognized
+    files" -- that would let stage_copy silently publish an EMPTY profile
+    instead of failing loudly."""
+    profile = tmp_path / "settings_Default"
+    profile.mkdir()
+
+    def boom(_path):
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(profilecopy.os, "scandir", boom)
+    with pytest.raises(OSError):
+        profilecopy._recognized_members(profile)
 
 
 def test_publish_new_renames_the_stage_into_place(copy_plan):
@@ -366,6 +448,37 @@ def test_cleanup_refuses_a_stage_shaped_symlink_rather_than_following_it(copy_pl
 
     assert outside.exists()
     assert (outside / "keepme.dat").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires a real Windows junction")
+def test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it(
+    tmp_path,
+):
+    server = tmp_path / "server_tranquility"
+    server.mkdir()
+    outside = tmp_path / "outside-real-profile"
+    outside.mkdir()
+    (outside / "keepme.dat").write_bytes(b"do not delete me")
+    link = server / f"{profilecopy.STAGE_PREFIX}fakeuuid{profilecopy.STAGE_SUFFIX}"
+    _make_junction(link, outside)
+
+    with pytest.raises(OSError):
+        profilecopy.cleanup_abandoned_stages(server)
+
+    assert outside.exists()
+    assert (outside / "keepme.dat").exists()
+
+
+def test_cleanup_refuses_when_the_server_cannot_be_listed(tmp_path, monkeypatch):
+    server = tmp_path / "server_tranquility"
+    server.mkdir()
+
+    def boom(_path):
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(profilecopy.os, "scandir", boom)
+    with pytest.raises(OSError):
+        profilecopy.cleanup_abandoned_stages(server)
 
 
 def test_stage_copy_cleans_up_an_abandoned_stage_before_staging(copy_plan):

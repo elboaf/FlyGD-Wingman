@@ -265,22 +265,31 @@ def _recognized_members(profile: Path) -> list[Path]:
     """The recognized settings files directly inside *profile*, sorted by
     name for a deterministic staging order.
 
-    A recognized-looking name that is actually a link escaping the
-    profile is treated as unrecognized -- the same as any other file this
-    operation does not know about -- rather than followed or treated as a
-    reason to fail the whole staging pass over one rogue reparse point.
+    Both failure modes here abort the whole copy rather than ever
+    publishing a partial clone. A source that cannot be read (vanished,
+    permission denied) raises instead of being read as "no recognized
+    files", which would otherwise let an unreadable source silently
+    publish an EMPTY profile. A recognized-looking name that turns out to
+    be a link escaping the profile also raises, rather than being quietly
+    dropped as though it were merely unrecognized: full hierarchy
+    validation means refusing the whole operation over one rogue entry,
+    not cloning around it.
     """
     try:
         entries = list(os.scandir(str(profile)))
-    except OSError:
-        return []
+    except OSError as error:
+        raise OSError(
+            f"Could not read the source profile {profile}: {error}"
+        ) from error
     members = []
     for entry in entries:
         if tree.file_kind(entry.path) is None:
             continue
         candidate = Path(entry.path)
         if not _is_direct_child(profile, candidate):
-            continue
+            raise ValueError(
+                f"{candidate.name} is a link that resolves outside {profile}."
+            )
         members.append(candidate)
     members.sort(key=lambda p: p.name)
     return members
@@ -319,11 +328,13 @@ def cleanup_abandoned_stages(server: Path) -> None:
     kind of thing that must not be assumed safe to walk into or delete
     through. `os.scandir` itself only ever yields direct entries, so no
     separate direct-child check is needed for that half of the rule.
+
+    A failure to even list *server* (vanished, permission denied) also
+    propagates rather than being read as "nothing to clean up": cleanup
+    failures must be visible to the caller, the same as a failure to
+    remove a matched candidate already was.
     """
-    try:
-        entries = list(os.scandir(str(server)))
-    except OSError:
-        return
+    entries = list(os.scandir(str(server)))
     for entry in entries:
         if not (
             entry.name.startswith(STAGE_PREFIX) and entry.name.endswith(STAGE_SUFFIX)
