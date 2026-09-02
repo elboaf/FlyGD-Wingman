@@ -20,15 +20,46 @@ import stat as stat_module
 import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import atomicio
+from .training import ATTRIBUTE_NAMES, SkillTrainingMetadata
 
 SKILL_CATEGORY_ID = 16
 BATCH_SIZE = 500
 MAX_ENTRIES = 20_000
 CACHE_VERSION = 1
 RESOLVE_WORKERS = 4
+
+# A separate sub-version for the OPTIONAL training-metadata payload beside
+# each id entry. CACHE_VERSION never changes for this feature -- an
+# existing id-only file must keep loading exactly as before -- so an old
+# file simply lacks (or fails to match) this key, and every id in it is
+# still accepted; only the metadata half is treated as absent.
+TRAINING_METADATA_VERSION = 1
+
+# Metadata is not re-fetched forever: rank and the two trained attributes
+# are effectively immutable ESI facts, but nothing else in this cache ever
+# revisits an accepted answer, so a fixed staleness horizon is what makes a
+# hand-edited or years-old value eventually get refreshed at all.
+METADATA_MAX_AGE = timedelta(days=30)
+
+# Documented ESI dogma attribute ids read off a type's own
+# /v3/universe/types/{id}/ response. 275 is the skill's rank
+# (skillTimeConstant). 180 and 181 are themselves REFERENCES to one of the
+# five attribute ids below -- not that attribute's own dogma value -- which
+# is why decoding them is a second lookup through ATTRIBUTE_ID_TO_NAME.
+DOGMA_PRIMARY_ATTRIBUTE = 180
+DOGMA_SECONDARY_ATTRIBUTE = 181
+DOGMA_SKILL_TIME_CONSTANT = 275
+ATTRIBUTE_ID_TO_NAME = {
+    164: "charisma",
+    165: "intelligence",
+    166: "memory",
+    167: "perception",
+    168: "willpower",
+}
 
 # SkillIdCache.cs's MaxCacheFileBytes, read via ReadBoundedText before
 # either the primary or the backup document is ever decoded. Same shape as
@@ -56,6 +87,12 @@ REASON_ESI_UNAVAILABLE = (
     "be retried on the next resolve pass."
 )
 
+# Distinct from the four reasons above: those explain why a NAME never
+# became a type id. This explains why a type id the cache already trusts
+# still has no rank/attribute metadata to estimate training time with --
+# a different failure, on an id already known to be a real skill.
+REASON_METADATA_UNAVAILABLE = "Could not load training metadata from ESI."
+
 
 def _key(name) -> str:
     """The case-insensitive cache key.
@@ -72,6 +109,12 @@ def _key(name) -> str:
 class SkillIdCache:
     def __init__(self, mapping: "Mapping[str, int] | None" = None) -> None:
         self._by_key: dict = {}
+        # Type id -> SkillTrainingMetadata. Keyed by type id, not by the
+        # folded name key _by_key uses: a fetch resolves one type id, and
+        # two names sharing that id (a duplicate plan entry, differing
+        # only in case) must share one metadata record, not each hold
+        # their own copy that could later disagree.
+        self._metadata: dict = {}
         if mapping:
             self.merge(mapping)
 
@@ -122,6 +165,74 @@ class SkillIdCache:
             if type_id <= 0:
                 continue
             self._by_key[key] = type_id
+            added += 1
+        return added
+
+    def training_metadata(self, now: datetime) -> dict:
+        """Type id -> SkillTrainingMetadata for records still fresh at *now*.
+
+        A record that has never been fetched is simply absent from here --
+        the same shape as a stale one, from a caller's point of view. Both
+        mean "nothing usable to estimate with right now"; metadata_due()
+        below is what tells the two apart for the purpose of deciding what
+        to fetch next.
+        """
+        return {
+            type_id: meta
+            for type_id, meta in self._metadata.items()
+            if now - meta.fetched_utc < METADATA_MAX_AGE
+        }
+
+    def metadata_due(self, names: Iterable[str], now: datetime) -> tuple:
+        """(name, type_id) pairs among *names* whose metadata is missing or
+        at least METADATA_MAX_AGE old, deduplicated by type id.
+
+        A name with no id yet is not "due" -- there is nothing to request
+        metadata FOR until resolve() gives it one, and that is a separate
+        pass. Deduplication matters for the identical reason unresolved()
+        dedupes: two plan entries that differ only by case share one type
+        id, and would otherwise spend two requests to learn the same
+        answer twice.
+        """
+        fresh = self.training_metadata(now)
+        seen: set = set()
+        due: list = []
+        for name in names:
+            type_id = self.get(name)
+            if type_id is None or type_id in seen:
+                continue
+            seen.add(type_id)
+            if type_id not in fresh:
+                due.append((name, type_id))
+        return tuple(due)
+
+    def merge_metadata(self, entries: Mapping) -> int:
+        """Store *entries* (type id -> SkillTrainingMetadata), returning the
+        count stored.
+
+        Unlike merge() for ids, this OVERWRITES an existing record. The
+        whole point of metadata_due()/METADATA_MAX_AGE is that a record can
+        go stale and need replacing -- refusing to overwrite here would
+        make expiry a dead letter, forever re-fetching the same stale
+        answer.
+
+        A type id the cache does not already hold an id for is refused: it
+        is not this method's job to invent a skill the id-resolution half
+        of the cache has never seen, and accepting one would let staged
+        fetch results for an id that was since evicted (never happens
+        today, since ids never invalidate, but the check costs nothing and
+        keeps the invariant explicit) silently reappear.
+        """
+        valid_ids = set(self._by_key.values())
+        added = 0
+        for type_id, meta in entries.items():
+            if isinstance(type_id, bool) or not isinstance(type_id, int):
+                continue
+            if type_id not in valid_ids:
+                continue
+            if not isinstance(meta, SkillTrainingMetadata):
+                continue
+            self._metadata[type_id] = meta
             added += 1
         return added
 
@@ -187,7 +298,15 @@ def _cache_from_raw(raw) -> "SkillIdCache | None":
     if not isinstance(entries, list):
         return None
 
+    # A separate gate from CACHE_VERSION above: an id-only file from before
+    # this feature existed simply lacks this key (or an old writer never
+    # set it), and every id in it must still load exactly as it always
+    # has. Metadata is the only thing this flag can discard -- it never
+    # turns an otherwise-valid document into recovery-worthy corruption.
+    metadata_ok = raw.get("training_metadata_version") == TRAINING_METADATA_VERSION
+
     accepted: dict = {}
+    metadata: dict = {}
     for item in entries:
         if not isinstance(item, dict):
             continue
@@ -207,10 +326,203 @@ def _cache_from_raw(raw) -> "SkillIdCache | None":
         if type_id <= 0:
             continue
         accepted[name] = type_id
+        if metadata_ok:
+            meta = _training_from_serialized(item.get("training"))
+            if meta is not None:
+                metadata[type_id] = meta
 
     cache = SkillIdCache()
     cache.merge(accepted)
+    cache._metadata.update(metadata)
     return cache
+
+
+def _parse_fetched_utc(raw):
+    """Parse a serialized "fetched_utc" string to an aware UTC datetime, or
+    None if it is not one.
+
+    Mirrors state.py's _parse_utc: a naive value can only be a hand edit --
+    this cache never writes one -- and is read as UTC rather than local,
+    matching everything else this package persists.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _training_from_serialized(data) -> "SkillTrainingMetadata | None":
+    """Decode one entry's "training" sub-object from disk, or None if any
+    field is malformed.
+
+    Malformed metadata drops only that entry's metadata, never its type id
+    -- matching _cache_from_raw's own per-entry handling of a bad id above.
+    An entry with no "training" key at all (item.get returns None) takes
+    the same None branch as a genuinely malformed one; both mean the same
+    thing here, "nothing usable was persisted."
+    """
+    if not isinstance(data, dict):
+        return None
+    rank = data.get("rank")
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank <= 0:
+        return None
+    primary = data.get("primary_attribute")
+    secondary = data.get("secondary_attribute")
+    if (
+        not isinstance(primary, str)
+        or not isinstance(secondary, str)
+        or primary not in ATTRIBUTE_NAMES
+        or secondary not in ATTRIBUTE_NAMES
+    ):
+        return None
+    fetched_utc = _parse_fetched_utc(data.get("fetched_utc"))
+    if fetched_utc is None:
+        return None
+    return SkillTrainingMetadata(rank, primary, secondary, fetched_utc)
+
+
+def _training_metadata_from_type(data, fetched_utc) -> "SkillTrainingMetadata | None":
+    """Decode ESI's /v3/universe/types/{id}/ response into rank plus the
+    two attributes it trains against, or None if anything here cannot be
+    trusted.
+
+    The three dogma attribute ids read (275/180/181) are documented ESI
+    values: 275 is rank (skillTimeConstant). 180 and 181 are each
+    themselves a REFERENCE to one of the five attribute ids -- not that
+    attribute's own dogma value -- which is why ATTRIBUTE_ID_TO_NAME turns
+    each into the name training.py's calculator validates against.
+
+    Returns None rather than raising for anything malformed, INCLUDING a
+    *fetched_utc* that is not an aware UTC datetime: fetch_training_metadata
+    below calls this once per type inside a worker thread, and one type
+    failing to decode must cost only that type's metadata, never the whole
+    staged fetch.
+    """
+    if not isinstance(fetched_utc, datetime) or fetched_utc.tzinfo is None:
+        return None
+    if not isinstance(data, dict):
+        return None
+    attrs = data.get("dogma_attributes")
+    if not isinstance(attrs, list):
+        return None
+
+    values: dict = {}
+    for item in attrs:
+        if not isinstance(item, dict):
+            continue
+        attribute_id = item.get("attribute_id")
+        if isinstance(attribute_id, bool) or not isinstance(attribute_id, int):
+            continue
+        value = item.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        values[attribute_id] = value
+
+    rank_value = values.get(DOGMA_SKILL_TIME_CONSTANT)
+    if (
+        not isinstance(rank_value, (int, float))
+        or rank_value <= 0
+        or rank_value != int(rank_value)
+    ):
+        return None
+
+    primary_ref = values.get(DOGMA_PRIMARY_ATTRIBUTE)
+    secondary_ref = values.get(DOGMA_SECONDARY_ATTRIBUTE)
+    if not isinstance(primary_ref, (int, float)) or not isinstance(
+        secondary_ref, (int, float)
+    ):
+        return None
+    if primary_ref != int(primary_ref) or secondary_ref != int(secondary_ref):
+        return None
+
+    primary_name = ATTRIBUTE_ID_TO_NAME.get(int(primary_ref))
+    secondary_name = ATTRIBUTE_ID_TO_NAME.get(int(secondary_ref))
+    if primary_name is None or secondary_name is None:
+        return None
+
+    return SkillTrainingMetadata(
+        int(rank_value), primary_name, secondary_name, fetched_utc
+    )
+
+
+def fetch_training_metadata(
+    requests: "Iterable[tuple[str, int]]",
+    client,
+    fetched_utc,
+    *,
+    max_workers: int = RESOLVE_WORKERS,
+) -> tuple:
+    """Fetch training metadata for *requests* ((name, type_id) pairs),
+    returning (accepted, failures) -- staged results that never touch a
+    SkillIdCache.
+
+    Staged, not merged, on purpose: a caller merges the COMPLETE result
+    under one lock hold once the whole staged fetch has finished, so a
+    plan's readiness view never observes half a fetch's answers. One
+    malformed or failed type affects only that type's entry in *failures*;
+    the calculator suppresses just the estimate that needed it.
+
+    Deduplicated by type id: two requests naming the same id (a duplicate
+    plan entry differing only by case, or a caller that did not already
+    dedupe via metadata_due()) cost one request, not two.
+    """
+    accepted: dict = {}
+    failures: dict = {}
+
+    pending: dict = {}
+    for name, type_id in requests:
+        if type_id in pending:
+            continue
+        pending[type_id] = name
+
+    if not pending:
+        return accepted, failures
+
+    def _fetch(type_id: int, name: str) -> tuple:
+        response = client.get(f"/v3/universe/types/{type_id}/")
+        if not response.ok:
+            return name, type_id, None
+        return name, type_id, _training_metadata_from_type(response.data, fetched_utc)
+
+    # Concurrency bound matches resolve()'s own ThreadPoolExecutor: charged
+    # against the same shared ESI error-limit budget.
+    workers = max(1, min(max_workers, len(pending)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(_fetch, type_id, name) for type_id, name in pending.items()
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            name, type_id, meta = future.result()
+            if meta is None:
+                failures[name] = REASON_METADATA_UNAVAILABLE
+            else:
+                accepted[type_id] = meta
+
+    return accepted, failures
+
+
+def _serialize_entry(name: str, type_id: int, meta) -> dict:
+    """One disk entry: the id fields always, a "training" sub-object only
+    when *meta* is present. Freshness is not checked here -- training_
+    metadata(now) filters by age at READ time, so even a record that has
+    gone stale since it was fetched is still worth writing; discarding it
+    here would turn a merely-stale record into a lost one on the very next
+    save.
+    """
+    entry = {"name": name, "type_id": type_id, "category_id": SKILL_CATEGORY_ID}
+    if meta is not None:
+        entry["training"] = {
+            "rank": meta.rank,
+            "primary_attribute": meta.primary_attribute,
+            "secondary_attribute": meta.secondary_attribute,
+            "fetched_utc": meta.fetched_utc.astimezone(UTC).isoformat(),
+        }
+    return entry
 
 
 def save(cache: SkillIdCache, path: Path) -> None:
@@ -238,11 +550,12 @@ def save(cache: SkillIdCache, path: Path) -> None:
 
     document = {
         "version": CACHE_VERSION,
+        "training_metadata_version": TRAINING_METADATA_VERSION,
         # category_id is written on every entry so the load-time check has
         # something real to require. It is constant today; writing it is
         # what makes the requirement honest rather than tautological.
         "entries": [
-            {"name": name, "type_id": type_id, "category_id": SKILL_CATEGORY_ID}
+            _serialize_entry(name, type_id, cache._metadata.get(type_id))
             for name, type_id in sorted(cache.type_ids().items())
         ],
     }

@@ -10,10 +10,11 @@ import json
 import os
 import stat
 import sys
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from wingman.eveskills import esi, skillids
+from wingman.eveskills import esi, skillids, training
 
 
 def test_lookup_is_case_insensitive():
@@ -608,3 +609,327 @@ def test_a_transient_failure_confirming_the_category_is_also_distinct():
     assert failures == {"Navigation": skillids.REASON_ESI_UNAVAILABLE}
     assert failures["Navigation"] != skillids.REASON_NOT_A_SKILL
     assert cache.type_ids() == {}
+
+
+# --- Task 2: expiring skill training metadata -----------------------------
+
+NOW = datetime(2026, 9, 2, tzinfo=UTC)
+GUNNERY_META = training.SkillTrainingMetadata(1, "perception", "willpower", NOW)
+
+# Documented ESI dogma attributes for Gunnery (type 3300): 275 is rank
+# (skillTimeConstant) = 1, 180/181 are references to attribute ids 167
+# (perception) and 168 (willpower).
+TYPE_BODY = {
+    "group_id": 255,
+    "dogma_attributes": [
+        {"attribute_id": 275, "value": 1.0},
+        {"attribute_id": 180, "value": 167.0},
+        {"attribute_id": 181, "value": 168.0},
+    ],
+}
+
+
+def test_training_metadata_round_trips_without_changing_type_id_lookup(tmp_path):
+    cache = skillids.SkillIdCache({"Gunnery": 3300})
+    assert cache.merge_metadata({3300: GUNNERY_META}) == 1
+    target = tmp_path / "cache.json"
+    skillids.save(cache, target)
+    loaded, warnings = skillids.load(target)
+    assert warnings == []
+    assert loaded.get("gunnery") == 3300
+    assert loaded.training_metadata(NOW) == {3300: GUNNERY_META}
+
+
+def test_version_one_id_only_cache_loads_and_requests_metadata(tmp_path):
+    target = tmp_path / "cache.json"
+    target.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": [{"name": "Gunnery", "type_id": 3300, "category_id": 16}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded, warnings = skillids.load(target)
+    assert warnings == []
+    assert loaded.get("gunnery") == 3300
+    assert loaded.metadata_due(["Gunnery"], NOW) == (("Gunnery", 3300),)
+
+
+def test_merge_metadata_rejects_a_type_id_the_cache_does_not_hold():
+    """merge_metadata is not the id-resolution path: it must never let a
+    staged fetch result invent a skill this cache has no id for."""
+    cache = skillids.SkillIdCache({"Gunnery": 3300})
+    assert cache.merge_metadata({9999: GUNNERY_META}) == 0
+    assert cache.training_metadata(NOW) == {}
+
+
+def test_merge_metadata_overwrites_a_stale_record():
+    """Unlike merge() for ids, metadata merge must overwrite: expiry is
+    only useful if a fresh fetch can replace a record already on file."""
+    cache = skillids.SkillIdCache({"Gunnery": 3300})
+    stale = training.SkillTrainingMetadata(
+        1, "perception", "willpower", NOW - timedelta(days=40)
+    )
+    cache.merge_metadata({3300: stale})
+    assert cache.training_metadata(NOW) == {}
+    cache.merge_metadata({3300: GUNNERY_META})
+    assert cache.training_metadata(NOW) == {3300: GUNNERY_META}
+
+
+def test_metadata_at_29_days_is_fresh_and_at_30_days_is_due():
+    cache = skillids.SkillIdCache({"Gunnery": 3300})
+    fresh = training.SkillTrainingMetadata(
+        1, "perception", "willpower", NOW - timedelta(days=29)
+    )
+    cache.merge_metadata({3300: fresh})
+    assert cache.training_metadata(NOW) == {3300: fresh}
+    assert cache.metadata_due(["Gunnery"], NOW) == ()
+
+    stale = training.SkillTrainingMetadata(
+        1, "perception", "willpower", NOW - timedelta(days=30)
+    )
+    cache.merge_metadata({3300: stale})
+    assert cache.training_metadata(NOW) == {}
+    assert cache.metadata_due(["Gunnery"], NOW) == (("Gunnery", 3300),)
+
+
+def test_metadata_due_dedupes_names_sharing_one_type_id():
+    """Two plan entries differing only by case share one type id, and must
+    not spend two requests to learn the same answer twice."""
+    cache = skillids.SkillIdCache({"Gunnery": 3300})
+    assert cache.metadata_due(["Gunnery", "gunnery", "GUNNERY"], NOW) == (
+        ("Gunnery", 3300),
+    )
+
+
+def test_metadata_due_skips_a_name_with_no_type_id_yet():
+    cache = skillids.SkillIdCache()
+    assert cache.metadata_due(["Gunnery"], NOW) == ()
+
+
+def test_a_wrong_training_metadata_sub_version_preserves_ids_and_drops_metadata(
+    tmp_path,
+):
+    """training_metadata_version is a gate independent of CACHE_VERSION: a
+    mismatch discards only the metadata half, never the id it sits beside."""
+    target = tmp_path / "cache.json"
+    target.write_text(
+        json.dumps(
+            {
+                "version": skillids.CACHE_VERSION,
+                "training_metadata_version": 99,
+                "entries": [
+                    {
+                        "name": "Gunnery",
+                        "type_id": 3300,
+                        "category_id": 16,
+                        "training": {
+                            "rank": 1,
+                            "primary_attribute": "perception",
+                            "secondary_attribute": "willpower",
+                            "fetched_utc": "2026-09-02T00:00:00+00:00",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded, warnings = skillids.load(target)
+    assert warnings == []
+    assert loaded.get("Gunnery") == 3300
+    assert loaded.training_metadata(NOW) == {}
+
+
+def _entry_with_training(training_obj) -> dict:
+    return {
+        "version": skillids.CACHE_VERSION,
+        "training_metadata_version": skillids.TRAINING_METADATA_VERSION,
+        "entries": [
+            {
+                "name": "Gunnery",
+                "type_id": 3300,
+                "category_id": 16,
+                "training": training_obj,
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "training_obj",
+    [
+        {
+            "rank": 0,
+            "primary_attribute": "perception",
+            "secondary_attribute": "willpower",
+            "fetched_utc": "2026-09-02T00:00:00+00:00",
+        },
+        {
+            "rank": True,
+            "primary_attribute": "perception",
+            "secondary_attribute": "willpower",
+            "fetched_utc": "2026-09-02T00:00:00+00:00",
+        },
+        {
+            "rank": 1,
+            "primary_attribute": "warlock",
+            "secondary_attribute": "willpower",
+            "fetched_utc": "2026-09-02T00:00:00+00:00",
+        },
+        {
+            "rank": 1,
+            "primary_attribute": "perception",
+            "secondary_attribute": "willpower",
+            "fetched_utc": "not a timestamp",
+        },
+        {
+            "rank": 1,
+            "primary_attribute": "perception",
+            "secondary_attribute": "willpower",
+        },
+    ],
+    ids=[
+        "non_positive_rank",
+        "boolean_rank",
+        "unknown_attribute_name",
+        "malformed_timestamp",
+        "missing_timestamp",
+    ],
+)
+def test_malformed_training_metadata_drops_only_that_entrys_metadata(
+    tmp_path, training_obj
+):
+    target = tmp_path / "cache.json"
+    target.write_text(json.dumps(_entry_with_training(training_obj)), encoding="utf-8")
+    loaded, warnings = skillids.load(target)
+    assert warnings == []
+    assert loaded.get("Gunnery") == 3300
+    assert loaded.training_metadata(NOW) == {}
+
+
+def test_unknown_fields_in_training_metadata_are_ignored(tmp_path):
+    target = tmp_path / "cache.json"
+    target.write_text(
+        json.dumps(
+            _entry_with_training(
+                {
+                    "rank": 1,
+                    "primary_attribute": "perception",
+                    "secondary_attribute": "willpower",
+                    "fetched_utc": "2026-09-02T00:00:00+00:00",
+                    "unexpected_field": "ignored",
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+    loaded, warnings = skillids.load(target)
+    assert warnings == []
+    assert loaded.training_metadata(NOW) == {3300: GUNNERY_META}
+
+
+def test_a_corrupt_cache_recovers_both_ids_and_metadata_from_backup(tmp_path):
+    """Every existing corruption/backup invariant must keep holding with
+    metadata in the picture: recovery must not silently drop it."""
+    target = tmp_path / "cache.json"
+    cache = skillids.SkillIdCache({"Navigation": 3449})
+    cache.merge_metadata(
+        {3449: training.SkillTrainingMetadata(1, "perception", "willpower", NOW)}
+    )
+    skillids.save(cache, target)
+    skillids.save(cache, target)
+    target.write_text("{ not json", encoding="utf-8")
+
+    loaded, warnings = skillids.load(target)
+    assert loaded.get("Navigation") == 3449
+    assert loaded.training_metadata(NOW) == {
+        3449: training.SkillTrainingMetadata(1, "perception", "willpower", NOW)
+    }
+    assert any("Recovered" in w for w in warnings)
+
+
+def test_fetch_training_metadata_decodes_rank_and_attribute_names():
+    client = FakeEsi(types={3300: TYPE_BODY})
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300),), client, NOW, max_workers=1
+    )
+    assert accepted == {3300: GUNNERY_META}
+    assert failures == {}
+
+
+def test_fetch_failure_returns_no_partial_cache_mutation():
+    class OneFailure(FakeEsi):
+        def get(self, path, *, token=None, etag=None):
+            if path.endswith("/3449/"):
+                self.paths.append(path)
+                return esi.EsiResponse(503, None, "boom", "", "GET", path)
+            return super().get(path, token=token, etag=etag)
+
+    cache = skillids.SkillIdCache({"Gunnery": 3300, "Navigation": 3449})
+    client = OneFailure(types={3300: TYPE_BODY})
+    accepted, failures = skillids.fetch_training_metadata(
+        cache.metadata_due(["Gunnery", "Navigation"], NOW),
+        client,
+        NOW,
+        max_workers=1,
+    )
+    assert 3300 in accepted and "Navigation" in failures
+    assert cache.training_metadata(NOW) == {}, "fetch must stage, not mutate"
+    assert failures["Navigation"] == skillids.REASON_METADATA_UNAVAILABLE
+
+
+def test_fetch_training_metadata_dedupes_requests_by_type_id():
+    """Duplicate names sharing one type id must cost one request."""
+    client = FakeEsi(types={3300: TYPE_BODY})
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300), ("gunnery", 3300)), client, NOW, max_workers=1
+    )
+    assert accepted == {3300: GUNNERY_META}
+    assert failures == {}
+    assert client.paths.count("/v3/universe/types/3300/") == 1
+
+
+def test_fetch_training_metadata_rejects_a_type_with_no_dogma_attributes():
+    client = FakeEsi(types={3300: {"group_id": 255}})
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300),), client, NOW, max_workers=1
+    )
+    assert accepted == {}
+    assert failures == {"Gunnery": skillids.REASON_METADATA_UNAVAILABLE}
+
+
+def test_fetch_training_metadata_rejects_an_unknown_attribute_reference():
+    body = {
+        "group_id": 255,
+        "dogma_attributes": [
+            {"attribute_id": 275, "value": 1.0},
+            {"attribute_id": 180, "value": 999.0},
+            {"attribute_id": 181, "value": 168.0},
+        ],
+    }
+    client = FakeEsi(types={3300: body})
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300),), client, NOW, max_workers=1
+    )
+    assert accepted == {}
+    assert failures == {"Gunnery": skillids.REASON_METADATA_UNAVAILABLE}
+
+
+def test_fetch_training_metadata_rejects_a_non_integer_rank():
+    body = {
+        "group_id": 255,
+        "dogma_attributes": [
+            {"attribute_id": 275, "value": 1.5},
+            {"attribute_id": 180, "value": 167.0},
+            {"attribute_id": 181, "value": 168.0},
+        ],
+    }
+    client = FakeEsi(types={3300: body})
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300),), client, NOW, max_workers=1
+    )
+    assert accepted == {}
+    assert failures == {"Gunnery": skillids.REASON_METADATA_UNAVAILABLE}
