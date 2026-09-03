@@ -6,10 +6,12 @@ spawning a real thread, and ``scan_once()`` is called synchronously.  Only
 """
 
 import datetime
+import os
 import threading
 import time
 
 from wingman.telemetry.gamelogs import (
+    MAX_AGE,
     POLL_INTERVAL_S,
     GameLogStream,
     _noop_thread_factory,
@@ -257,8 +259,6 @@ class TestSourceLifecycleAndOrdering:
         stream.stop()
 
     def test_files_older_than_cutoff_ignored(self, tmp_path):
-        import os
-
         path = _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
         old = (NOW - datetime.timedelta(hours=13)).timestamp()
         os.utime(path, (old, old))
@@ -269,8 +269,6 @@ class TestSourceLifecycleAndOrdering:
         assert [e for e in received if isinstance(e, SourceLifecycle)] == []
 
     def test_tied_session_breaks_on_mtime(self, tmp_path):
-        import os
-
         _log(tmp_path, "Alice", stem="20260825_100000_1")
         _log(tmp_path, "Alice", stem="20260825_100000_2")
         os.utime(
@@ -1007,6 +1005,50 @@ class TestWorker:
         assert stream._worker is not w1
         stream.stop()
 
+    def test_timed_out_stop_cleared_by_retry_then_fresh_start(self, tmp_path):
+        """A timed-out stop retains the worker; a later stop (after the worker
+        can finish) clears it, and only then does start create exactly one new
+        worker and one new stop event.  The retained worker is never joined
+        manually here — the retry stop must do it."""
+        gate = threading.Event()
+        created = []
+
+        def blocking(*, target, args, name, daemon):
+            def wrapper():
+                gate.wait(timeout=10)
+                target(*args)
+
+            thread = threading.Thread(target=wrapper, name=name, daemon=daemon)
+            created.append(thread)
+            return thread
+
+        stream = GameLogStream(_thread_factory=blocking)
+        stream.start(tmp_path)
+        w1 = stream._worker
+        ev1 = stream._stop_event
+        stream.stop(timeout=0.01)
+        assert stream._worker is w1 and w1.is_alive()  # retained on timeout
+        assert len(created) == 1
+
+        # Release the worker and retry stop: the retry must join and clear it.
+        gate.set()
+        stream.stop(timeout=5.0)
+        assert stream._worker is None
+        assert not w1.is_alive()
+        assert len(created) == 1  # stop never creates a worker
+
+        # Fresh start: exactly one new worker, one new unset stop event.
+        stream.start(tmp_path)
+        w2 = stream._worker
+        assert w2 is not None and w2 is not w1 and w2.is_alive()
+        assert len(created) == 2
+        assert stream._stop_event is not ev1 and not stream._stop_event.is_set()
+
+        stream.start(tmp_path)  # idempotent: still exactly one worker
+        assert stream._worker is w2 and len(created) == 2
+        stream.stop(timeout=5.0)
+        assert stream._worker is None
+
     def test_cadence(self, tmp_path):
         mono = [0.0]
         rescan_t, poll_t, waits = [], [], []
@@ -1115,6 +1157,188 @@ class TestThreadSafety:
         assert [
             e for e in received if isinstance(e, CombatFact) and e.character == "Alice"
         ] == []
+
+    def test_reentrant_callback_cannot_precede_later_activations(self, tmp_path):
+        """Two sources activate in one batch.  A subscriber that reenters
+        request_source/scan_once on the FIRST activation must not cause the
+        fact batch to be published before the second activation."""
+        stream = _stream()
+        received = _collect(stream)
+        reentered = []
+
+        def reentrant_sub(event):
+            if isinstance(event, SourceLifecycle) and event.active and not reentered:
+                reentered.append(True)
+                stream.request_source("Unknown")
+                stream.scan_once(NOW)
+
+        stream.subscribe(reentrant_sub)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        _log(
+            tmp_path,
+            "Alice",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_1",
+            session="2026.08.25 11:30:00",
+        )
+        _log(
+            tmp_path,
+            "Bravo",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_2",
+            session="2026.08.25 11:30:00",
+        )
+        stream.scan_once(NOW)
+        assert reentered  # the reentrant path really ran
+        activations = [
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, SourceLifecycle) and e.active
+        ]
+        facts = [i for i, e in enumerate(received) if isinstance(e, CombatFact)]
+        assert len(activations) == 2
+        assert len(facts) == 2
+        assert max(activations) < min(facts)
+        # The reentrant request_source publishes strictly after both batches.
+        unknown_i = next(
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, SourceLifecycle) and e.character == "Unknown"
+        )
+        assert unknown_i > max(facts)
+
+    def test_single_drainer_under_concurrent_callers(self, tmp_path):
+        """Two threads run operations concurrently: exactly one drains, the
+        batches stay FIFO, and the second caller's batch is not stranded."""
+        stream = _stream()
+        delivered = []
+        drainer_idents = set()
+        entered = threading.Event()
+        proceed = threading.Event()
+
+        def blocking_sub(event):
+            drainer_idents.add(threading.get_ident())
+            delivered.append(event)
+            if (
+                isinstance(event, SourceLifecycle)
+                and event.character == "Alice"
+                and event.active
+            ):
+                entered.set()
+                proceed.wait(timeout=5)
+
+        stream.subscribe(blocking_sub)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        _log(
+            tmp_path,
+            "Alice",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_1",
+            session="2026.08.25 11:30:00",
+        )
+
+        a_ident = []
+
+        def caller_a():
+            a_ident.append(threading.get_ident())
+            stream.scan_once(NOW)
+
+        ta = threading.Thread(target=caller_a)
+        ta.start()
+        assert entered.wait(timeout=5)
+
+        # Caller B runs a whole operation while A owns delivery.  B must
+        # enqueue and return without publishing anything itself.
+        _log(
+            tmp_path,
+            "Bravo",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_2",
+            session="2026.08.25 11:30:00",
+        )
+        stream.scan_once(NOW)
+        assert [e for e in delivered if e.character == "Bravo"] == []
+
+        proceed.set()
+        ta.join(timeout=5)
+        assert not ta.is_alive()
+        # One drainer only, and B's batches were delivered (not stranded).
+        assert drainer_idents == {a_ident[0]}
+        assert [(type(e).__name__, e.character) for e in delivered] == [
+            ("SourceLifecycle", "Alice"),
+            ("CombatFact", "Alice"),
+            ("SourceLifecycle", "Bravo"),
+            ("CombatFact", "Bravo"),
+        ]
+        stream.stop()
+
+    def test_no_fact_after_retirement_under_contention(self, tmp_path):
+        """A poll gated between rescan and poll holds the operation lock while
+        another thread tries to retire the same source.  Whoever acquires
+        first publishes first, and no old-source fact may follow its
+        retirement in external order."""
+        stream = _stream()
+        received = _collect(stream)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        path = _log(
+            tmp_path, "Alice", stem="20260825_113000_1", session="2026.08.25 11:30:00"
+        )
+        stream.scan_once(NOW)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(OUTGOING_DAMAGE_LINE)
+        received.clear()
+
+        in_poll = threading.Event()
+        release = threading.Event()
+        real_poll = stream._poll
+
+        def gated_poll():
+            in_poll.set()
+            release.wait(timeout=5)
+            real_poll()
+
+        stream._poll = gated_poll
+        b_done = threading.Event()
+
+        def retire_caller():
+            stream.scan_once(NOW)
+            b_done.set()
+
+        ta = threading.Thread(target=lambda: stream.scan_once(NOW))
+        ta.start()
+        assert in_poll.wait(timeout=5)
+        # A is past its rescan, holding the operation lock in the gate.  Age
+        # Alice out so B's rescan retires her while A's facts are unpublished.
+        old = (NOW - MAX_AGE - datetime.timedelta(minutes=1)).timestamp()
+        os.utime(path, (old, old))
+        tb = threading.Thread(target=retire_caller)
+        tb.start()
+        time.sleep(0.1)
+        # B cannot have finished: it is blocked on the operation lock A holds.
+        assert not b_done.is_set()
+        release.set()
+        ta.join(timeout=5)
+        tb.join(timeout=5)
+        assert not ta.is_alive() and not tb.is_alive()
+
+        retire_i = next(
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, SourceLifecycle)
+            and e.character == "Alice"
+            and not e.active
+        )
+        fact_i = [
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, CombatFact) and e.character == "Alice"
+        ]
+        assert fact_i, "the gated poll should still have published its fact"
+        assert max(fact_i) < retire_i
+        stream.stop()
 
     def test_reentrant_request_source_during_dispatch(self, tmp_path):
         """A subscriber that calls request_source during dispatch must not

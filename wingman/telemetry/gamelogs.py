@@ -12,18 +12,32 @@ Tailer is NOT deleted or production-rewired here.
 
 Concurrency model
 -----------------
-``_lock`` (Lock) guards all mutable state.  Subscribers are NEVER called
-under ``_lock``.
+Three locks, always acquired in this order when nested:
+``_op_lock`` -> ``_lock``, and ``_op_lock`` -> ``_dispatch_lock``.
+``_lock`` (mutable state) and ``_dispatch_lock`` (queue) are never nested
+inside each other.  Subscribers are NEVER called under any of them.
 
-Each operation (``scan_once``, ``request_source``, worker iteration) builds
-an ordered event batch under ``_lock``, then appends it to ``_dispatch_queue``
-(a list guarded by ``_dispatch_lock``).  A single ``_drain_queue`` call
-delivers the batches in FIFO order on the caller's thread.  Because rescan
-and poll run inside one ``scan_once`` call, rescan's activation lifecycle
-is guaranteed to be enqueued — and therefore delivered — before poll's facts.
-A reentrant callback that triggers ``request_source`` appends its batch
-*behind* the current batch; the drainer delivers it in order after the
-current batch completes, so no interleaving is possible.
+``_op_lock`` (non-reentrant Lock) serialises *operations*: one
+``scan_once``, one worker iteration, or one ``request_source`` at a time.
+An operation mutates state and appends its complete, ordered batches to
+``_dispatch_queue`` while holding it, so whichever operation acquires
+``_op_lock`` first also publishes first.  Concretely: poll facts enqueued
+before a retirement may be delivered before that retirement, but once a
+retirement is enqueued no fact from the retired source can follow it.
+``_op_lock`` is released BEFORE any delivery, so a subscriber callback may
+reenter ``request_source`` / ``scan_once`` without deadlocking.  Because
+rescan and poll run inside one ``_op_lock`` hold, an activation lifecycle
+is always enqueued — and therefore delivered — before any fact of that
+generation.
+
+Delivery uses explicit single-drainer ownership.  ``_drain_queue`` claims
+ownership under ``_dispatch_lock`` (``_draining``); a concurrent or
+reentrant caller sees the active owner, returns immediately, and leaves
+its already-enqueued batch to the owner.  The owner pops whole batches
+FIFO and delivers them outside every lock.  The empty-queue transition and
+the ownership release happen in the same ``_dispatch_lock`` hold, so an
+appender either observes no owner (and drains itself) or appends before
+the owner's emptiness check — a batch can never be stranded.
 
 ``_lifecycle_lock`` (Lock) makes ``start`` / ``stop`` atomic.  ``start``
 refuses to launch a second worker while a timed-out worker is still alive.
@@ -192,13 +206,21 @@ class GameLogStream:
         self._last_successful_poll_mono: float | None = None
         self._last_successful_rescan_mono: float | None = None
 
+        # _op_lock: serialises whole operations (rescan+poll, request_source)
+        # together with the enqueue of their batches, so publication order
+        # matches the order operations acquired it.  Non-reentrant on
+        # purpose: it is always released before delivery, so a reentrant
+        # subscriber callback acquires it fresh instead of deadlocking.
+        self._op_lock = threading.Lock()
         # _lock: guards ALL mutable state.  Never call subscribers under it.
         self._lock = threading.Lock()
         # _dispatch_queue + _dispatch_lock: serialized event delivery.
-        # Each operation appends an ordered batch; _drain_queue delivers
-        # them in FIFO order outside _lock.
+        # Each operation appends an ordered batch; the single drainer
+        # delivers them in FIFO order outside _lock and _dispatch_lock.
         self._dispatch_queue: list[list[SourceLifecycle | CombatFact]] = []
         self._dispatch_lock = threading.Lock()
+        # _draining: identifies the one thread that owns delivery.
+        self._draining = False
         # _lifecycle_lock: makes start/stop atomic.
         self._lifecycle_lock = threading.Lock()
         self._worker: threading.Thread | None = None
@@ -281,34 +303,38 @@ class GameLogStream:
             now_mono = self._clock()
             now_utc = self._utc_now()
             do_rescan = (now_mono - last_rescan) >= RESCAN_INTERVAL_S
-            if do_rescan:
-                self._rescan(now_utc)
-                last_rescan = self._clock()
-            self._poll()
+            # One operation: state mutation and batch enqueue are serialised
+            # with every other operation, then released before delivery.
+            with self._op_lock:
+                if do_rescan:
+                    self._rescan(now_utc)
+                    last_rescan = self._clock()
+                self._poll()
             self._drain_queue()
             self._wait_fn(stop_event, POLL_INTERVAL_S)
 
     def request_source(self, character: str) -> None:
         """Re-publish lifecycle for a character, or unavailable if unknown."""
-        with self._lock:
-            tracked = self._tracked.get(character)
-            if tracked is not None:
-                event = SourceLifecycle(
-                    character=character,
-                    generation=tracked.generation,
-                    source_id=tracked.source_id,
-                    available=True,
-                    active=True,
-                )
-            else:
-                event = SourceLifecycle(
-                    character=character,
-                    generation=0,
-                    source_id=None,
-                    available=False,
-                    active=False,
-                )
-        self._enqueue([event])
+        with self._op_lock:
+            with self._lock:
+                tracked = self._tracked.get(character)
+                if tracked is not None:
+                    event = SourceLifecycle(
+                        character=character,
+                        generation=tracked.generation,
+                        source_id=tracked.source_id,
+                        available=True,
+                        active=True,
+                    )
+                else:
+                    event = SourceLifecycle(
+                        character=character,
+                        generation=0,
+                        source_id=None,
+                        available=False,
+                        active=False,
+                    )
+            self._enqueue([event])
         self._drain_queue()
 
     def health(self) -> StreamHealth:
@@ -353,25 +379,48 @@ class GameLogStream:
                 self._dispatch_queue.append(batch)
 
     def _drain_queue(self) -> None:
-        """Deliver all queued batches in FIFO order.
+        """Deliver queued batches FIFO if we own delivery, else return.
 
-        Called outside ``_lock``.  A reentrant callback that calls
-        ``request_source`` appends behind the current batch; the loop
-        picks it up on the next iteration.
+        Exactly one thread drains at a time.  A concurrent caller or a
+        reentrant subscriber callback observes the active owner and returns
+        without delivering; its batch is already queued and the owner picks
+        it up in order.  Delivery happens outside ``_lock`` and
+        ``_dispatch_lock``.
         """
-        while True:
-            with self._dispatch_lock:
-                if not self._dispatch_queue:
-                    return
-                batch = self._dispatch_queue.pop(0)
-            with self._lock:
-                subs = list(self._subscribers)
-            for event in batch:
-                for callback in subs:
-                    try:
-                        callback(event)
-                    except Exception:
-                        logger.exception("Subscriber raised during dispatch")
+        with self._dispatch_lock:
+            if self._draining:
+                # Someone else owns delivery.  Returning here is what keeps
+                # publication total: a reentrant callback must not publish
+                # later batches ahead of the batch being delivered.
+                return
+            self._draining = True
+        owned = True
+        try:
+            while True:
+                with self._dispatch_lock:
+                    if not self._dispatch_queue:
+                        # Emptiness check and ownership release in one hold:
+                        # an appender either appends before this check (we
+                        # take it) or claims ownership after it.
+                        self._draining = False
+                        owned = False
+                        return
+                    batch = self._dispatch_queue.pop(0)
+                with self._lock:
+                    subs = list(self._subscribers)
+                for event in batch:
+                    for callback in subs:
+                        try:
+                            callback(event)
+                        except Exception:
+                            logger.exception("Subscriber raised during dispatch")
+        finally:
+            # Only fires when delivery escaped abnormally; the normal exit
+            # already released ownership under the lock.  Guarded by `owned`
+            # so we never clear a flag another drainer has since claimed.
+            if owned:
+                with self._dispatch_lock:
+                    self._draining = False
 
     # ------------------------------------------------------------------
     # Core: synchronous scan + poll (deterministic test seam)
@@ -380,17 +429,23 @@ class GameLogStream:
     def scan_once(self, now_utc: datetime.datetime) -> None:
         """One complete rescan + poll cycle on the caller's thread.
 
-        Rescan enqueues lifecycle events, poll enqueues fact events, then
-        ``_drain_queue`` delivers them all in order.
+        Rescan and poll run as one operation under ``_op_lock`` and enqueue
+        their batches there, so no other operation can interleave between
+        them.  ``_op_lock`` is released before ``_drain_queue`` delivers, so
+        a subscriber may reenter the stream.  If another thread already owns
+        delivery this returns once the batches are queued; that owner
+        publishes them in order.
         """
-        self._rescan(now_utc)
-        self._poll()
+        with self._op_lock:
+            self._rescan(now_utc)
+            self._poll()
         self._drain_queue()
 
     def _rescan(self, now_utc: datetime.datetime) -> None:
         """Discover logs and reconcile tracked sources.
 
-        Acquires ``_lock`` for state.  Enqueues lifecycle events.
+        Caller holds ``_op_lock``.  Acquires ``_lock`` for state.  Enqueues
+        lifecycle events; never delivers.
         """
         with self._lock:
             folder = self._folder
@@ -551,7 +606,12 @@ class GameLogStream:
         return events
 
     def _poll(self) -> None:
-        """Read appended data from all tracked files.  Enqueues fact events."""
+        """Read appended data from all tracked files.  Enqueues fact events.
+
+        Caller holds ``_op_lock``, so the tracked dictionary cannot be
+        reconciled underneath this poll and the facts it enqueues cannot be
+        overtaken by a retirement published by another operation.
+        """
         with self._lock:
             snapshot = list(self._tracked.items())
 
@@ -627,7 +687,10 @@ class GameLogStream:
         for line in lines:
             if not line.strip():
                 continue
-            # Verify tracked object is still current before emitting.
+            # Identity check: the tracked entry must still be the dictionary's
+            # current object for this character, and its generation is read
+            # here rather than captured earlier, so a truncation-driven
+            # regeneration inside this same poll stamps the right generation.
             with self._lock:
                 current = self._tracked.get(character)
                 if current is not tracked:
