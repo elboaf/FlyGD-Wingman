@@ -4425,14 +4425,19 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   padding: 0 8px 0 10px;
   margin-bottom: 2px;
 }
-/* A rail TITLE, not a column header, and used twice: "Settings" over the
-   section list (index.html:274) and "Plans" over the plan list. Both head
-   a list of 13px names, so at --fs-label each was the smallest text in the
-   column it headed -- the same inversion G3 names on the cards. It tracks
-   .card > h2 for that reason, and because --text-label's note in :root
-   already names these two together as the app's two headings. Keep the two
-   font-size declarations in step; .rail-head-key below is the real column
-   header and deliberately does not follow. */
+/* A rail TITLE, not a column header, used across the route's own list
+   headers: "Settings" over the section list (index.html:274), "Groups"
+   and "Plans" over the rail's two lists here, and "Characters" over the
+   roster in the main pane -- reused rather than re-implemented, so a
+   fourth persistent list heading costs no new .14em rule (see
+   test_the_uppercase_tracked_labels_split_headings_from_sub_labels, which
+   still expects exactly four). Each heads a list of 13px names, so at
+   --fs-label each was the smallest text in the column it headed -- the
+   same inversion G3 names on the cards. It tracks .card > h2 for that
+   reason, and because --text-label's note in :root already names these
+   as the app's uppercase tracked section labels. Keep the font-size
+   declaration in step; .rail-head-key below is the real column header
+   and deliberately does not follow. */
 .rail-head {
   font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); font-weight: 600;
@@ -4553,6 +4558,20 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .issue-line {
   color: var(--text-faint); font-size: var(--fs-muted);
   font-family: var(--mono); margin-left: 10px;
+}
+
+/* The route's third independent scroll region (Groups and Plans, in the
+   rail, are the other two, each already headed by its own .rail-head).
+   Only the boundary and spacing are declared here -- the uppercase
+   tracking, size and colour all come from .rail-head itself, reused
+   rather than duplicated, so this adds no second copy of that treatment
+   (see .rail-head's own comment). `flex: none` keeps it out of
+   .skills-main's own flex sizing; --panel-border is the same working
+   hairline token .es-profile-tools's boundary uses elsewhere in this
+   sheet -- not the unrelated, undefined --border some Profiles rules
+   still carry. */
+.skills-roster-head {
+  flex: none; padding-top: 8px; border-top: 1px solid var(--panel-border);
 }
 
 .skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }

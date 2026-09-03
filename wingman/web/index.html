@@ -1886,6 +1886,18 @@
           <span class="rail-head-key">Ready</span>
         </div>
         <div class="rail-plans" id="skills-plans"></div>
+        <!-- Directly below the list they act on, and before the
+             disclosure and the block's own flexible slack -- not after
+             them, where they used to sit. Both are `flex: none` siblings
+             of the same shrinkable list (.rail-plans-block's own comment:
+             the slack is the block's own, at its foot), so reordering the
+             two costs nothing: the block's total height, and the
+             four-plan-row floor measured against it, do not move either
+             way. -->
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
+          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
+        </div>
         <!-- The plan file format was stated in ONE place: the hint shown
              when the folder holds no plans at all -- that is, only to
              users who have no reason to care yet. A user with one plan and
@@ -1898,10 +1910,6 @@
              line with the level you want in roman numerals, like
              <code>Shield Operation V</code>.</p>
         </details>
-        <div class="rail-plan-actions">
-          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
-          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
-        </div>
       </div>
     </aside>
 
@@ -1941,6 +1949,20 @@
         <summary id="skills-issues-summary"></summary>
         <div id="skills-issues-body"></div>
       </details>
+
+      <!-- The pane above this line is scoped to the SELECTED PLAN (the
+           heading, its copy control, notices, plan-file issues); this
+           line down is scoped to CHARACTERS -- the filter, the roster and
+           its empty state all read the roster, never the plan. Nothing
+           marked where one ends and the other begins, and the roster was
+           the one independent scroll region of the route's three (Groups,
+           Plans, this one) with no persistent heading of its own -- only
+           the filter bar sat above it, and Clear filter hides itself
+           until a filter is typed. Reuses .rail-head rather than adding a
+           second heading treatment; .skills-roster-head only adds the
+           boundary. Inert text, not a control: no tabindex, no handler,
+           nothing skills.js renders here. -->
+      <h3 class="rail-head skills-roster-head">Characters</h3>
 
       <div class="skills-filterbar">
         <input class="field" id="skills-filter" type="text" spellcheck="false"
