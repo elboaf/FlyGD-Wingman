@@ -8,6 +8,7 @@ A source checkout passes every test while the frozen release dies on
 launch, so only a test that reads the manifest can catch it here.
 """
 
+import importlib.util
 import json
 import pathlib
 import re
@@ -138,6 +139,88 @@ def test_the_installer_fightrecorder_feature_is_wired():
     assert r'Source: "bin\obs-fightrecorder.dll"; Flags: dontcopy noencryption' in iss
     assert "procedure InstallFightRecorder();" in iss
     assert "WizardIsTaskSelected('fightrecorder')" in iss
+
+
+def _load_manual_update_harness():
+    path = ROOT / "tests" / "manual" / "update_harness.py"
+    spec = importlib.util.spec_from_file_location("manual_update_harness", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_manual_update_harness_is_not_packaged():
+    spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
+    assert "tests/manual" not in spec
+    harness = ROOT / "tests" / "manual" / "update_harness.py"
+    fixture = ROOT / "tests" / "manual" / "update_fixture.iss"
+    assert harness.is_file() and fixture.is_file()
+
+
+@pytest.mark.parametrize(
+    ("argv", "command"),
+    [
+        (["serve", "--mode", "complete"], "serve"),
+        (
+            [
+                "attachment",
+                "--i-understand-this-launches-a-test-exe",
+                "fixture.exe",
+                "https://example.test/fixture.exe",
+            ],
+            "attachment",
+        ),
+        (
+            [
+                "lock-race",
+                "--i-understand-this-launches-a-test-exe",
+                "fixture.exe",
+            ],
+            "lock-race",
+        ),
+        (
+            [
+                "shell-launch",
+                "--i-understand-this-launches-a-test-exe",
+                "fixture.exe",
+                "https://example.test/fixture.exe",
+            ],
+            "shell-launch",
+        ),
+        (["mutex-holder"], "mutex-holder"),
+    ],
+)
+def test_manual_update_harness_parser_exposes_every_command(argv, command):
+    harness = _load_manual_update_harness()
+    assert harness.build_parser().parse_args(argv).command == command
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["attachment", "fixture.exe", "https://example.test/fixture.exe"],
+        ["lock-race", "fixture.exe"],
+        ["shell-launch", "fixture.exe", "https://example.test/fixture.exe"],
+    ],
+)
+def test_manual_update_harness_dangerous_commands_require_opt_in(argv):
+    harness = _load_manual_update_harness()
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(argv)
+
+
+def test_manual_update_harness_rejects_an_abbreviated_opt_in():
+    harness = _load_manual_update_harness()
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(
+            [
+                "attachment",
+                "--i-understand-this-launches",
+                "fixture.exe",
+                "https://example.test/fixture.exe",
+            ]
+        )
 
 
 def test_the_fightrecorder_fetcher_is_on_the_ci_allowlist():

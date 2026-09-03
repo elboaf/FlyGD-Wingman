@@ -69,6 +69,59 @@ Run on Windows against a real install before each release.
 - [ ] A "new recording(s) ready to upload" notification is titled
       **FlyGD Wingman**
 
+## Guided updater native harness
+
+Run the checkout-only fixture before each release on Windows; the complete
+commands and expected output are in `tests/manual/README.md`. These checks must
+use `tests/manual/update_fixture.iss`, never an installed application binary.
+
+```powershell
+iscc /O"$PWD\dist" tests\manual\update_fixture.iss
+$Fixture = Join-Path $PWD "dist\Wingman-Update-Harness-Setup.exe"
+$SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe"
+```
+
+- [ ] **Injected download modes preserve production validation and cleanup.**
+      Run `uv run python tests\manual\update_harness.py serve --mode complete`,
+      then repeat with `truncated` and `checksum-mismatch`. Expected: complete
+      prints verified identity/size/digest and marker create/remove; truncated
+      fails with `code=size`; checksum mismatch fails with `code=checksum`;
+      both faults print `partial retention: none`; every run prints
+      `temporary staging root removed: yes` and makes no network request.
+- [ ] **Attachment Services marks the harmless fixture.** Run:
+      `uv run python tests\manual\update_harness.py attachment
+      --i-understand-this-launches-a-test-exe $Fixture $SourceUrl`, then
+      `Get-Item -LiteralPath $Fixture -Stream *`. Expected: identity, size and
+      digest print; `Zone.Identifier` is present and listed. A local policy
+      rejection remains a typed failure rather than a reason to bypass it.
+- [ ] **The protected handle wins a real replacement race.** Run:
+      `uv run python tests\manual\update_harness.py lock-race
+      --i-understand-this-launches-a-test-exe $Fixture`. Expected:
+      `safe retention: sharing violation (winerror=32)` followed by unchanged
+      identity, size, and SHA-256. The command races only a temporary staged
+      copy and removes that staging root.
+- [ ] **The fixture mutex produces deterministic prompt/no-prompt runs.** In
+      one terminal run
+      `uv run python tests\manual\update_harness.py mutex-holder`; in another,
+      open `dist\Wingman-Update-Harness-Setup.exe`. Expected: Inno's close/OK
+      prompt. Press Enter in the holder, open the fixture again, and expect no
+      app-close prompt.
+- [ ] **Verified ShellExecute transfers and closes its process handle.** Run:
+
+      ```powershell
+      uv run python tests\manual\update_harness.py shell-launch `
+        --i-understand-this-launches-a-test-exe `
+        dist\Wingman-Update-Harness-Setup.exe `
+        https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe
+      ```
+
+      Expected: only the no-payload fixture starts, a non-zero process handle
+      prints, and `process handle closed: yes` follows. Repeat with the fixture
+      mutex held to get the close/OK prompt. Repeat against a deleted
+      `%TEMP%\Wingman-Update-Harness-Setup.exe` path and expect no process,
+      `updater failure`, and exit code 1. Normal unsigned-file reputation UI is
+      allowed; disabling zone checks is not.
+
 ## WebView2 runtime
 
 The app renders its entire UI in WebView2 and has no fallback. These items
