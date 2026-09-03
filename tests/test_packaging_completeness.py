@@ -8,6 +8,7 @@ A source checkout passes every test while the frozen release dies on
 launch, so only a test that reads the manifest can catch it here.
 """
 
+import ast
 import importlib.util
 import json
 import pathlib
@@ -19,6 +20,8 @@ import tomllib
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
+MANUAL_UPDATE_HARNESS = ROOT / "tests" / "manual" / "update_harness.py"
 
 
 def test_every_subpackage_is_declared():
@@ -142,8 +145,9 @@ def test_the_installer_fightrecorder_feature_is_wired():
 
 
 def _load_manual_update_harness():
-    path = ROOT / "tests" / "manual" / "update_harness.py"
-    spec = importlib.util.spec_from_file_location("manual_update_harness", path)
+    spec = importlib.util.spec_from_file_location(
+        "manual_update_harness", MANUAL_UPDATE_HARNESS
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -153,9 +157,131 @@ def _load_manual_update_harness():
 def test_manual_update_harness_is_not_packaged():
     spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
     assert "tests/manual" not in spec
-    harness = ROOT / "tests" / "manual" / "update_harness.py"
-    fixture = ROOT / "tests" / "manual" / "update_fixture.iss"
-    assert harness.is_file() and fixture.is_file()
+    assert MANUAL_UPDATE_HARNESS.is_file() and MANUAL_UPDATE_FIXTURE.is_file()
+
+
+@pytest.mark.parametrize(
+    ("mode", "failure_code"),
+    [
+        ("complete", None),
+        ("truncated", "size"),
+        ("checksum-mismatch", "checksum"),
+    ],
+)
+def test_manual_update_harness_serve_modes_run_without_native_dependencies(
+    mode, failure_code
+):
+    result = subprocess.run(
+        [sys.executable, str(MANUAL_UPDATE_HARNESS), "serve", "--mode", mode],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert "temporary staging root removed: yes" in result.stdout
+    staging_line = next(
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("temporary staging root: ")
+    )
+    assert not pathlib.Path(
+        staging_line.removeprefix("temporary staging root: ")
+    ).exists()
+
+    if failure_code is None:
+        assert "size: 36" in result.stdout
+        assert (
+            "sha256: 00bf96a604486a01f524855947924d49b14deced0ca87bc90143e0034bf91434"
+            in result.stdout
+        )
+        assert "handoff marker created: update-" in result.stdout
+        assert "handoff marker removed: True" in result.stdout
+        assert "expected failure:" not in result.stdout
+        assert "partial retention:" not in result.stdout
+    else:
+        assert f"expected failure: stage=download code={failure_code}" in result.stdout
+        assert "partial retention: none" in result.stdout
+        assert "downloaded:" not in result.stdout
+
+
+def test_manual_update_harness_rejects_non_fixture_basenames():
+    harness = _load_manual_update_harness()
+    with pytest.raises(RuntimeError, match="must name the harmless"):
+        harness._require_fixture(ROOT / "FlyGD-Wingman-Setup-4.9.0.exe")
+
+
+def test_manual_update_harness_rejects_fixture_named_symlinks(tmp_path):
+    harness = _load_manual_update_harness()
+    target = tmp_path / "harmless-target.exe"
+    target.write_bytes(b"not an installer")
+    link = tmp_path / "Wingman-Update-Harness-Setup.exe"
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    with pytest.raises(RuntimeError, match="symlinks are refused"):
+        harness._require_fixture(link)
+
+
+def test_manual_update_fixture_is_inert_and_separate_from_production():
+    text = MANUAL_UPDATE_FIXTURE.read_text(encoding="utf-8")
+    sections = re.findall(r"^\[([^]]+)]$", text, re.MULTILINE)
+    setup_text = text.split("[Setup]\n", 1)[1].split("\n[", 1)[0]
+    setup = dict(
+        line.split("=", 1)
+        for line in setup_text.splitlines()
+        if line and not line.startswith(";")
+    )
+
+    assert sections == ["Setup"]
+    assert setup == {
+        "AppId": "FlyGD Wingman Update Harness",
+        "AppName": "FlyGD Wingman Update Harness",
+        "AppVersion": "1.0.0",
+        "DefaultDirName": r"{tmp}\FlyGD-Wingman-Update-Harness",
+        "PrivilegesRequired": "lowest",
+        "Uninstallable": "no",
+        "AppMutex": r"Local\FlyGDWingmanUpdateHarness",
+        "OutputBaseFilename": "Wingman-Update-Harness-Setup",
+    }
+    for production_identity in (
+        "Wingman.exe",
+        r"{autopf}\FlyGD Wingman",
+        r"Global\OBSYouTubeUploader",
+        r"Global\FlyGDWingman",
+        "FlyGD-Wingman-Setup-{#AppVersion}",
+    ):
+        assert production_identity not in text
+
+
+def test_manual_update_harness_pins_its_deliberate_production_seams():
+    tree = ast.parse(MANUAL_UPDATE_HARNESS.read_text(encoding="utf-8"))
+    referenced = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "updates"
+    }
+
+    # _open_locked is deliberately included: the harness must exercise the
+    # same protected-handle implementation as launch verification, not a
+    # friendlier test-only file reader.
+    assert referenced == {
+        "ReleaseInfo",
+        "UpdateFailure",
+        "_open_locked",
+        "close_process_handle",
+        "download_release",
+        "launch_verified",
+        "remove_handoff_marker",
+        "save_attachment",
+        "validate_download_origin",
+        "write_handoff_marker",
+    }
 
 
 @pytest.mark.parametrize(
