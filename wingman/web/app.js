@@ -309,7 +309,13 @@
   });
 
   // ---- title bar ----------------------------------------------------
+  // Cached reads may resolve after a newer Python push. Advancing on every
+  // accepted render, including same-state progress, lets each read prove no
+  // fresher badge payload arrived while it was in flight.
+  var updateBadgeGeneration = 0;
+
   function renderUpdateBadge(payload) {
+    updateBadgeGeneration += 1;
     var gear = WM.el('btn-settings');
     var available = !!payload.update_available;
     gear.classList.toggle('update-available', available);
@@ -349,8 +355,14 @@
     WM.send('get_settings').then(function (payload) {
       if (payload) window.onSettings(payload);
     });
+    // Keep this cached read for dev mode, where Python never pushes, but do
+    // not let its older snapshot repaint over an update push that won the
+    // race while the bridge promise was pending.
+    var badgeGenerationAtRead = updateBadgeGeneration;
     WM.send('update_status').then(function (payload) {
-      if (payload) window.onUpdateStatus(payload);
+      if (payload && updateBadgeGeneration === badgeGenerationAtRead) {
+        window.onUpdateStatus(payload);
+      }
     });
   });
 }());

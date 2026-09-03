@@ -59,6 +59,11 @@
   // on a transition that happened in a previous session.
   var updatePhase = null;
 
+  // Phase cannot establish freshness: download progress produces several
+  // distinct `downloading` pushes. Every accepted render advances this so a
+  // cached General-entry read can tell that any newer card payload arrived.
+  var updateRenderGeneration = 0;
+
   // Copy for every state the card can be in. Automatic check failures
   // recover to `unavailable` with `error` left blank (ui/api.py's
   // `_update_check_worker`), which is what makes this the one state whose
@@ -96,6 +101,7 @@
 
   function renderUpdate(p) {
     if (!p) { return; }
+    updateRenderGeneration += 1;
     var previous = updatePhase;
     updatePhase = p.state;
 
@@ -160,7 +166,12 @@
   // read of cached state -- a running automatic check is not restarted.
   document.addEventListener('wm:section', function (ev) {
     if (ev.detail === 'general') {
-      WM.send('update_status').then(function (p) { if (p) renderUpdate(p); });
+      var cardGenerationAtRead = updateRenderGeneration;
+      WM.send('update_status').then(function (p) {
+        if (p && updateRenderGeneration === cardGenerationAtRead) {
+          renderUpdate(p);
+        }
+      });
     }
   });
   // Fetched once from Python rather than duplicated here: ui/copy.py's

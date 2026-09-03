@@ -161,6 +161,33 @@ def test_update_status_handler_is_allowlisted_and_registered_literally():
     assert "WM.handle('onUpdateStatus', renderUpdateBadge);" in source
 
 
+def test_startup_update_read_cannot_overwrite_a_newer_push():
+    """A startup read is only authoritative until the first badge render.
+
+    The automatic check may push checking/current while the cached read is
+    still in flight. Every accepted render advances one generation, and the
+    read may render only when the generation it captured before sending is
+    still current. Keeping the read (rather than relying on a push) is what
+    lets the browser dev harness paint its fixture.
+    """
+    source = (WEB / "app.js").read_text(encoding="utf-8")
+    renderer = source.split("function renderUpdateBadge(payload) {", 1)[1].split(
+        "\n  }", 1
+    )[0]
+    startup = source.split("// ---- startup", 1)[1]
+
+    assert "var updateBadgeGeneration = 0;" in source
+    assert "updateBadgeGeneration += 1;" in renderer
+    capture = "var badgeGenerationAtRead = updateBadgeGeneration;"
+    send = "WM.send('update_status')"
+    assert startup.index(capture) < startup.index(send)
+    assert re.search(
+        r"if \(payload\s*&&\s*updateBadgeGeneration\s*===\s*"
+        r"badgeGenerationAtRead\)\s*\{\s*window\.onUpdateStatus\(payload\);\s*\}",
+        startup,
+    )
+
+
 def test_get_settings_remains_a_network_free_read():
     source = API.read_text(encoding="utf-8")
     body = source.split("def get_settings(self) -> dict:", 1)[1].split(

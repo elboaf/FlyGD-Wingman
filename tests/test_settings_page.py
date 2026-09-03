@@ -502,6 +502,43 @@ def test_general_entry_reads_update_status_and_no_other_section_does():
     assert "WM.send('update_status')" in match.group(1)
 
 
+def test_general_update_read_cannot_overwrite_any_newer_card_render():
+    """Pushes own freshness even when their phase does not change.
+
+    Download progress sends several `downloading` payloads, so comparing
+    states cannot detect that a cached read is stale. The card renderer must
+    advance an unconditional generation on every accepted render, while the
+    General-entry read may paint only if that generation has not changed.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    renderer = settings_js.split("function renderUpdate(p) {", 1)[1].split("\n  }", 1)[
+        0
+    ]
+    listener = settings_js.split("document.addEventListener('wm:update-status'", 1)[
+        1
+    ].split("\n  });", 1)[0]
+    general_entry = settings_js.split("document.addEventListener('wm:section'", 1)[
+        1
+    ].split("\n  });", 1)[0]
+
+    assert "var updateRenderGeneration = 0;" in settings_js
+    increment = "updateRenderGeneration += 1;"
+    assert increment in renderer
+    assert "p.state" not in renderer[: renderer.index(increment)], (
+        "generation must advance before any state comparison so same-state "
+        "progress pushes invalidate older reads"
+    )
+    assert "renderUpdate(ev.detail || {});" in listener
+    capture = "var cardGenerationAtRead = updateRenderGeneration;"
+    send = "WM.send('update_status')"
+    assert general_entry.index(capture) < general_entry.index(send)
+    assert re.search(
+        r"if \(p\s*&&\s*updateRenderGeneration\s*===\s*"
+        r"cardGenerationAtRead\)\s*\{\s*renderUpdate\(p\);\s*\}",
+        general_entry,
+    )
+
+
 def test_renderer_reads_only_payload_booleans_for_permission():
     """Task 7's binding rule: the renderer must not reconstruct
     can_check/can_download/can_install from `state`; it reads exactly the
@@ -528,8 +565,9 @@ def test_update_error_takes_precedence_over_normal_state_copy():
 def test_update_actions_render_only_from_backend_pushes():
     """Action return values can arrive after a fast worker's newer push.
 
-    Only the cached General-entry read may render its method return; all
-    state-changing actions use onUpdateStatus as their authoritative path.
+    Only the generation-gated General-entry read may render its method
+    return; all state-changing actions use onUpdateStatus as their
+    authoritative path.
     """
     settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
     for method in ("check_for_updates", "download_update", "install_update"):
