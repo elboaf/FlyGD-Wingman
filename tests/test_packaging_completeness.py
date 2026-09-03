@@ -51,7 +51,9 @@ def test_readme_network_table_covers_eve_and_current_user_triggers():
     assert "| CCP EVE SSO and ESI" in readme
     assert "login.eveonline.com" in readme
     assert "esi.evetech.net" in readme
-    assert "universe/names" in readme
+    assert "skills, queue, and attributes" in readme
+    assert "Authenticated ESI skills, queue, and attributes requests" in readme
+    assert readme.index("`/characters/{id}/`") < readme.index("`/universe/names`")
     assert "FightRecorder" in readme
     assert not re.search(
         r"makes network connections to (?:exactly )?"
@@ -106,6 +108,44 @@ def test_external_privacy_policy_is_not_a_repository_release_gate():
         text = path.read_text(encoding="utf-8")
         for phrase in forbidden[name]:
             assert phrase not in text
+
+
+def test_updater_docs_do_not_claim_power_loss_durability():
+    documents = (
+        ROOT / "docs" / "superpowers" / "plans" / "2026-09-02-guided-updates.md",
+        ROOT / "docs" / "superpowers" / "specs" / "2026-09-02-guided-updates-design.md",
+    )
+    forbidden = (
+        "durable handoff",
+        "durable classification",
+        "durably classified",
+        "durably classifies",
+        "durable handed-off",
+    )
+
+    for path in documents:
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        assert all(phrase not in text for phrase in forbidden)
+        assert "power-loss durability" in text
+        assert "marker's mtime" in text
+        assert "stale orphan marker" in text
+        assert "best-effort" in text
+
+
+def test_updater_manual_docs_keep_fixture_and_windows_policy_claims_narrow():
+    manual = (ROOT / "tests" / "manual" / "README.md").read_text(encoding="utf-8")
+    smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
+    flat_manual = " ".join(manual.split())
+    flat_smoke = " ".join(smoke.split())
+
+    assert "verify the exact basename" in flat_manual
+    assert "guards do not identify the file's contents" in flat_manual
+    assert "must compile and use the provided fixture" in flat_manual
+    assert "ShellExecute starts only" not in flat_manual
+    assert "reputation warning depending on local policy" in flat_smoke
+    assert "must leave zone checks enabled" in flat_smoke
+    assert "normal visible installer" in flat_smoke
+    assert "reputation UI is mandatory" not in flat_smoke
 
 
 def test_every_subpackage_is_declared():

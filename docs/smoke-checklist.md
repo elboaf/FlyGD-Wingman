@@ -108,14 +108,16 @@ $SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/t
       fails with `code=size`; checksum mismatch fails with `code=checksum`;
       both faults print `partial retention: none`; every run prints
       `temporary staging root removed: yes` and makes no network request.
-- [ ] **Attachment Services marks the harmless fixture.** Run:
-      `uv run python tests\manual\update_harness.py attachment
+- [ ] **Attachment Services handles the fixture and preserves MOTW where
+      supported.** Run: `uv run python
+      tests\manual\update_harness.py attachment
       --i-understand-this-launches-a-test-exe $Fixture $SourceUrl`, then
-      `Get-Item -LiteralPath $Fixture -Stream *`. Expected: identity, size and
-      digest print; `Zone.Identifier` is present and listed. This is the real
-      Mark-of-the-Web path, not a fabricated alternate data stream. A local
-      policy rejection remains a typed failure rather than a reason to bypass
-      it.
+      `Get-Item -LiteralPath $Fixture -Stream *`. Expected on a filesystem and
+      policy that support Mark-of-the-Web: identity, size and digest print and
+      `Zone.Identifier` is present and listed. This is the real Attachment
+      Services path, not a fabricated alternate data stream. A local policy
+      rejection or quarantine remains a typed failure rather than a reason to
+      bypass it.
 - [ ] **The protected handle wins a real replacement race.** Run:
       `uv run python tests\manual\update_harness.py lock-race
       --i-understand-this-launches-a-test-exe $Fixture`. Expected:
@@ -139,14 +141,15 @@ $SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/t
         https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe
       ```
 
-      Expected: Windows shows its real SmartScreen/Mark-of-the-Web warning for
-      the unsigned fixture (`Windows protected your PC` / unknown publisher);
-      neither the harness nor Wingman suppresses it. Choose **More info → Run
-      anyway** only for this compiled no-payload fixture. The fixture starts, a
-      non-zero process handle prints, and `process handle closed: yes` follows.
-      Repeat with the fixture mutex held to get the close/OK prompt. For the
-      deterministic launch-failure command, create and remove the required
-      basename before invoking the harness:
+      Expected: the normal visible Inno fixture starts, a non-zero process
+      handle prints, and `process handle closed: yes` follows. Windows may show
+      a SmartScreen/Mark-of-the-Web reputation warning depending on local
+      policy and the fixture's reputation. If it appears, choose **More info →
+      Run anyway** only for this compiled no-payload fixture. Neither the
+      harness nor Wingman disables zone checks. Repeat with the fixture mutex
+      held to get the close/OK prompt. For the deterministic launch-failure
+      command, create and remove the required basename before invoking the
+      harness:
 
       ```powershell
       $Missing = Join-Path $env:TEMP "Wingman-Update-Harness-Setup.exe"
@@ -158,8 +161,10 @@ $SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/t
       ```
 
       Expected: no process opens, `updater failure` prints, and the exit code
-      is 1. Normal unsigned-file reputation UI is mandatory for the successful
-      path; disabling zone checks is not an acceptable workaround.
+      is 1. The successful path must use real Attachment Services and retain
+      Mark-of-the-Web where supported, must leave zone checks enabled, and must
+      show the normal visible installer; reputation UI itself is policy- and
+      reputation-dependent.
 
 ## WebView2 runtime
 
@@ -4310,8 +4315,11 @@ behaviour a lexical guard cannot reach.
       Ready to install.` with `Install update` visible and enabled -- not
       reverted to `Download update` or stuck disabled.
 - [ ] **Retained Install action confirms again.** Click `Install update`; the
-      same confirm reappears. Accept it: the normal visible Inno installer and
-      real unsigned-file Windows warning appear before any upgrade proceeds.
+      same confirm reappears. Accept it: the normal visible Inno installer
+      appears before any upgrade proceeds. Windows may also show its unsigned-
+      file reputation warning depending on policy and reputation; zone checks
+      must remain enabled, and Attachment Services must retain Mark-of-the-Web
+      where supported.
 - [ ] **Active-upload and retry exclusion.** Start an upload, then try to
       install a staged update. Expected: `Finish the active upload before
       installing the update.`, no Setup process, and `Install update` remains

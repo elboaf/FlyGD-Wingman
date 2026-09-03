@@ -85,8 +85,8 @@ def test_the_generator_runs_standalone_under_a_bare_interpreter():
 
 def test_release_tag_must_match_the_source_version(tmp_path):
     """The release workflow's gate, exercised directly rather than only
-    through the CLI: a tag that disagrees with wingman.__version__ must
-    stop the build before it produces an installer named for the wrong
+    through the CLI: a tag that disagrees with wingman.__version__ must stop
+    the source-versioned installer being published under a different release
     version."""
     sys.path.insert(0, str(ROOT / "packaging"))
     try:

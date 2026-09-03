@@ -6,21 +6,23 @@ Attachment Services, protected-file, ShellExecute, and process-handle seams as
 bridge or environment-variable route, and performs no network request in
 `serve` mode. Importing `update_harness.py` is inert on Linux and Windows.
 
-The only installer is `update_fixture.iss`: a no-payload, non-uninstallable,
-lowest-privilege Inno fixture. It uses only
-`Local\FlyGDWingmanUpdateHarness`. Native file commands accept only the
-compiled filename `Wingman-Update-Harness-Setup.exe`; symlinks are refused.
-Each invocation creates one temporary staging root and removes only that root.
-`attachment` may add Attachment Services metadata to the explicitly supplied
-fixture, and `shell-launch` explicitly starts that fixture. `lock-race` copies
-the fixture into the temporary root before attempting replacement, so its
-source is never changed.
+The provided installer source is `update_fixture.iss`: a no-payload,
+non-uninstallable, lowest-privilege Inno fixture. It uses only
+`Local\FlyGDWingmanUpdateHarness`. Native file commands verify the exact
+basename `Wingman-Update-Harness-Setup.exe` and refuse symlinks; those guards
+do not identify the file's contents. The operator must compile and use the
+provided fixture for every native command below. Each invocation creates one
+temporary staging root and removes only that root. `attachment` may add
+Attachment Services metadata to the explicitly supplied path, and
+`shell-launch` starts that path after the guard. `lock-race` copies the fixture
+into the temporary root before attempting replacement, so its source is never
+changed.
 
 Run these commands from the repository root in PowerShell on Windows. Install
 the locked development dependencies first (`uv sync --locked --extra dev`) and
 make sure Inno Setup's `iscc` is on `PATH`.
 
-## Compile the harmless fixture
+## Compile the provided no-payload fixture
 
 ```powershell
 iscc /O"$PWD\dist" tests\manual\update_fixture.iss
@@ -143,15 +145,17 @@ uv run python tests\manual\update_harness.py shell-launch `
 ```
 
 Expected: `launch_verified` runs real Attachment Services, verifies the file
-through the protected handle, and ShellExecute starts only the harmless Inno
-fixture. The harness prints a non-zero `returned process handle`, then
-`process handle closed: yes`. With `mutex-holder` active, the launched fixture
-shows the close/OK prompt. Without it, no close prompt appears. An unsigned
-local fixture may also show the normal Windows reputation warning; do not
-disable zone checks to suppress it.
+through the protected handle, and ShellExecute starts the supplied path. The
+harness guard proves only its exact basename and that it is not a symlink, so
+the operator must compile and supply the provided no-payload fixture above.
+The harness prints a non-zero `returned process handle`, then `process handle
+closed: yes`. With `mutex-holder` active, the launched fixture shows the
+close/OK prompt. Without it, no close prompt appears. Windows may show a
+reputation warning depending on local policy and the fixture's reputation; do
+not disable zone checks to suppress it.
 
 For a deterministic missing-file launch failure, use a deleted path with the
-required harmless fixture filename:
+required fixture basename:
 
 ```powershell
 $Missing = Join-Path $env:TEMP "Wingman-Update-Harness-Setup.exe"

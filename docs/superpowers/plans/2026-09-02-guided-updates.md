@@ -23,7 +23,7 @@
 - Installation is disabled outside a frozen Wingman build.
 - Installation refuses a claimed or active upload. New uploads and retries refuse an active update handoff.
 - Tray Quit refuses `handing_off`, `revalidating`, and `launching`; successful update launch owns one idempotent orderly shutdown.
-- Staging is confined to `paths.tmp_dir() / "updates"`; handed-off files have durable classification and `UPDATE_STALE_AFTER = timedelta(days=7)`.
+- Staging is confined to `paths.tmp_dir() / "updates"`; handed-off files have on-disk, process-restart-persistent classification and `UPDATE_STALE_AFTER = timedelta(days=7)`, measured from the marker's mtime.
 - Show availability via an accessible Settings-gear badge and Settings > General > About Wingman. No banner, tray notification, new destination, release-notes renderer, skipped-version state, or updater preference.
 - Automatic failures are quiet; manual failures are specific and retryable.
 - Every non-method `Api` attribute remains underscore-prefixed. Workers reach the page only through `_push`; every literal push is in `WM.HANDLERS` and registered.
@@ -268,10 +268,11 @@ def test_download_removes_partial_file_on_digest_mismatch(tmp_path):
 Add cases for interrupted reads, final byte count below metadata, a stream exceeding metadata, a stream exceeding 256 MiB, and duplicate partial names. Add cleanup tests proving:
 
 - ordinary `.partial` and `.ready.exe` files older than the policy are removed;
-- a `.handoff.json` sidecar classification survives process memory without renaming the executable;
-- handed-off files younger than seven days remain;
-- handed-off files at least seven days old are removed;
-- sharing violations are swallowed as safe retention; and
+- a `.handoff.json` sidecar classification persists across ordinary process restarts without renaming the executable or claiming power-loss durability;
+- a fresh marker protects its matching installer even when the installer is old;
+- pairs whose marker is at least seven days old are removed where possible;
+- stale orphan markers are removed independently;
+- sharing violations and partial pair deletions are best-effort safe retention; and
 - no file outside the dedicated staging directory is touched.
 
 - [ ] **Step 3: Run the focused tests and verify RED**
@@ -315,9 +316,9 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 Import `datetime`, `os`, `tempfile`, `urllib.parse`, `Path`, and the existing `atomicio` module. `download_release` must validate `release.url` before opening, build an opener containing `SafeRedirectHandler` when no opener is injected, create the staging directory and an exclusive `*.partial` file with `tempfile.mkstemp`, update SHA-256 while writing 1 MiB chunks, stop before writing a chunk that exceeds either bound, `flush` and `os.fsync`, compare exact byte count and digest, then atomically rename to `*.ready.exe`. Remove the partial on every exception while preserving the original `UpdateFailure` stage/code.
 
-- [ ] **Step 5: Implement durable classification and bounded cleanup**
+- [ ] **Step 5: Implement process-restart-persistent classification and bounded cleanup**
 
-Keep the installer path stable after shell launch. Durable classification is an atomic, fsynced sidecar in the same updater directory:
+Keep the installer path stable after shell launch. Classification is an atomically published sidecar in the same updater directory. `atomicio` fsyncs the sidecar file but not its parent directory, so this is persistent across ordinary process restarts, not guaranteed power-loss durability:
 
 ```python
 def write_handoff_marker(path: Path, release: ReleaseInfo) -> Path:
@@ -340,7 +341,7 @@ def remove_handoff_marker(marker: Path) -> None:
     marker.unlink(missing_ok=True)
 ```
 
-Do not rename an installer after `ShellExecuteExW` has started it. Cleanup accepts only generated `*.partial`, `*.ready.exe`, and matching `*.ready.exe.handoff.json` names, uses `lstat`, rejects symlinks and marker paths that escape the directory, compares age against `UPDATE_STALE_AFTER`, and catches `PermissionError`/sharing-related `OSError` without forcing deletion. Ordinary shutdown deletes an unmarked ready file; a valid marker preserves its matching installer until stale cleanup.
+Do not rename an installer after `ShellExecuteExW` has started it. Cleanup accepts only generated `*.partial`, `*.ready.exe`, and matching `*.ready.exe.handoff.json` names, uses `lstat`, and rejects symlinks and paths that escape the directory. An unmarked file ages from its own mtime. A matching marker's mtime starts retention and protects even an old installer until the marker is stale. Stale orphan markers are removed independently. Every unlink is best-effort, so a sharing violation or partial pair deletion retains the remainder for a later cleanup. Ordinary shutdown deletes an unmarked ready file but preserves one with a matching marker.
 
 - [ ] **Step 6: Run focused tests, full updater tests, and commit**
 
@@ -451,7 +452,7 @@ ATTACHMENT_CLIENT_GUID = "{F86ACFFD-F7CC-4C62-8FCE-C747D5D94DB7}"
 
 On Windows use `CreateFileW` with read access and `FILE_SHARE_READ` only, then read/hash through that handle (or an `msvcrt.open_osfhandle` wrapper that does not close ownership twice). Capture stable file identity with `GetFileInformationByHandle`; re-check it before shell launch. The context manager must close exactly once on every branch. The Linux-test fallback exists only behind the injected `locked_open` seam and must not be selected in a frozen Windows build.
 
-`verify_after_attachment` performs `save_attachment -> protected open -> identity/size/hash -> close`. `launch_verified` performs `save_attachment -> protected open -> identity/size/hash -> before_launch callback -> ShellExecuteExW while still open -> close protected handle`, returning the process handle. If `before_launch` raises, do not call the shell. This callback is the only place Task 6 writes the durable handoff marker without opening a post-verification replacement window.
+`verify_after_attachment` performs `save_attachment -> protected open -> identity/size/hash -> close`. `launch_verified` performs `save_attachment -> protected open -> identity/size/hash -> before_launch callback -> ShellExecuteExW while still open -> close protected handle`, returning the process handle. If `before_launch` raises, do not call the shell. This callback is the only place Task 6 writes the on-disk handoff marker without opening a post-verification replacement window.
 
 - [ ] **Step 6: Implement shell launch with explicit COM and flags**
 
@@ -465,7 +466,7 @@ info.lpParameters = None
 info.nShow = SW_SHOWNORMAL
 ```
 
-Initialize an STA with `CoInitializeEx(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)`, require `ShellExecuteExW` success and non-null `hProcess`, and never set `SEE_MASK_NOZONECHECKS`. Return the handle without waiting; `close_process_handle` owns `CloseHandle` after durable handoff classification.
+Initialize an STA with `CoInitializeEx(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)`, require `ShellExecuteExW` success and non-null `hProcess`, and never set `SEE_MASK_NOZONECHECKS`. Return the handle without waiting; `close_process_handle` owns `CloseHandle` after persistent on-disk handoff classification.
 
 - [ ] **Step 7: Run updater tests and commit**
 
@@ -789,7 +790,7 @@ def test_tray_quit_is_refused_during_every_handoff_phase(tmp_path):
         assert api._claim_quit() is False
 ```
 
-Also race `retry()` against installation; delete/replace/truncate the ready file before install; simulate shell failure/null process handle; assert handoff clears and state recovers; assert successful shell launch durably classifies before closing process handle and before shutdown callback; assert updater shutdown is idempotent and no worker push/mutation occurs after cleanup begins.
+Also race `retry()` against installation; delete/replace/truncate the ready file before install; simulate shell failure/null process handle; assert handoff clears and state recovers; assert successful shell launch writes its persistent on-disk classification before closing the process handle and before the shutdown callback; assert updater shutdown is idempotent and no worker push/mutation occurs after cleanup begins.
 
 - [ ] **Step 3: Run orchestration tests and verify RED**
 
@@ -853,9 +854,9 @@ def on_quit() -> None:
         destroy_windows()
 ```
 
-Assign `api._request_shutdown = destroy_windows` after defining it. The update worker reaches this callback only after shell success, durable handoff, and gate transition. Preserve the sig-bar-first reason/comment and close-hides behavior.
+Assign `api._request_shutdown = destroy_windows` after defining it. The update worker reaches this callback only after shell success, persistent on-disk handoff, and gate transition. Preserve the sig-bar-first reason/comment and close-hides behavior.
 
-Call `api.shutdown_updates()` in final cleanup before preview/skills shutdown; it removes unhanded ready files, preserves durable handed-off files, marks update state closed, and prevents later worker pushes.
+Call `api.shutdown_updates()` in final cleanup before preview/skills shutdown; it removes unhanded ready files, preserves files with matching handoff markers, marks update state closed, and prevents later worker pushes.
 
 - [ ] **Step 6: Compose auth and update work after page readiness**
 

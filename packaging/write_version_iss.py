@@ -65,11 +65,10 @@ def verify_release_tag(tag: str, source: Path = SOURCE) -> str:
     release.yml triggers on `push: tags: ["v*"]`, so nothing stops a tag
     being pushed that disagrees with wingman.__version__ -- the tag is
     typed by a human, the version is read from source, and until this check
-    the two were never compared. A mismatch here means the built installer
-    would carry one version number in its filename (from the tag, via the
-    release notes and any tag-derived naming) and a different one baked into
-    AppVersion, which is confusing at best and load-bearing at worst if
-    anything downstream keys off the tag.
+    the two were never compared. The installer filename and its baked-in
+    AppVersion both derive from source; the mismatch risk is attaching and
+    publishing that source-versioned installer under a differently versioned
+    tag and release.
     """
     version = read_version(source)
     expected = f"v{version}"

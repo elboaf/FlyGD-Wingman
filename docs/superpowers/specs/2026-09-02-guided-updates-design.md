@@ -213,25 +213,33 @@ The installer is opened only through `ShellExecuteExW` using the normal `open`
 verb. The call uses `SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS`, never
 `SEE_MASK_NOZONECHECKS`, and runs on a worker whose COM apartment is initialized
 as required by the Shell API. Success requires a non-null returned process
-handle; Wingman closes that handle after recording durable handoff and does not
-wait for Setup to finish. Direct `CreateProcess` or `subprocess.Popen` execution
-is forbidden because it does not guarantee the Windows shell's attachment-zone
-checks. The existing injectable `ShellExecuteExW` shape in
-`wingman/fightrecorder.py` is the repository pattern, adapted to the non-elevated
+handle; Wingman closes that handle after recording the handoff in an on-disk
+marker and does not wait for Setup to finish. Direct `CreateProcess` or
+`subprocess.Popen` execution is forbidden because it does not guarantee the
+Windows shell's attachment-zone checks. The existing injectable
+`ShellExecuteExW` shape in `wingman/fightrecorder.py` is the repository pattern,
+adapted to the non-elevated
 `open` verb.
 
-Partial or invalid files are removed immediately. A verified file is removed
-when an ordinary process exit can safely remove it or by bounded stale-file
-cleanup on a later launch. A successful handoff is durably classified within the
-dedicated staging directory, for example by an updater-owned state suffix or
-sidecar written before Wingman exits; cleanup must not infer handoff solely from
-process memory. A handed-off installer is not removed during Wingman's shutdown
-because Setup may still need it. `UPDATE_STALE_AFTER` is a named seven-day
-minimum age for removing abandoned handed-off files, well beyond an immediate
-post-install relaunch. A sharing violation or other in-use deletion failure is
-safe retention, not a reason to force deletion. Stale cleanup only touches files
-created inside the dedicated updater staging directory and never traverses or
-deletes arbitrary temporary files.
+Partial or invalid files are removed immediately when possible. A verified file
+is removed when an ordinary process exit can safely remove it or by bounded
+stale-file cleanup on a later launch. A successful handoff is classified by an
+on-disk sidecar written before Wingman exits; cleanup must not infer handoff
+solely from process memory. The sidecar is atomically published and its file
+contents are fsynced, but its parent directory is not, so the classification is
+persistent across ordinary process restarts without claiming power-loss
+durability.
+
+A handed-off installer is not removed during Wingman's shutdown because Setup
+may still need it. The marker's mtime starts the `UPDATE_STALE_AFTER` seven-day
+retention period: a fresh marker protects even an old matching installer. Once
+the marker is stale, cleanup attempts the installer and, if that succeeds, its
+marker; stale orphan markers are cleaned independently. Every deletion is
+best-effort, so a sharing violation or other failure safely retains that path,
+and a partial pair
+deletion leaves the remainder for a later cleanup. Stale cleanup only touches
+files created inside the dedicated updater staging directory and never
+traverses or deletes arbitrary temporary files.
 
 ### `wingman/ui/api.py`
 
@@ -297,9 +305,9 @@ handoff state after shutdown cleanup begins.
 
 Setup is shell-launched before orderly shutdown begins. Failure to obtain its
 process handle therefore leaves Wingman alive and able to clear handoff state.
-After a successful launch and durable handoff classification, the updater calls
-the idempotent shutdown operation. `AppMutex` prevents replacement while
-Wingman remains alive; if it detects the mutex, Setup presents its standard
+After a successful launch and persistent on-disk handoff classification, the
+updater calls the idempotent shutdown operation. `AppMutex` prevents replacement
+while Wingman remains alive; if it detects the mutex, Setup presents its standard
 close/OK-or-Cancel prompt rather than silently waiting.
 
 ### Web UI
@@ -424,10 +432,11 @@ A new `tests/test_updates.py` covers:
   launch, proving the held file identity cannot change;
 - `ShellExecuteExW` flags, normal `open` verb, required process handle, COM
   initialization, shell-launch failure, and prohibition of zone-check bypass;
-- ordinary-exit cleanup versus durable handed-off-file classification and
-  retention;
-- seven-day minimum-age stale cleanup constrained to the dedicated updater
-  directory, including safe retention on an in-use sharing violation; and
+- ordinary-exit cleanup versus process-restart-persistent handed-off-file
+  classification;
+- marker-age-based seven-day cleanup constrained to the dedicated updater
+  directory, including a fresh marker protecting an old installer, stale orphan
+  marker cleanup, and best-effort partial deletion; and
 - structured failure categories without real network access.
 
 ### API and lifecycle tests
