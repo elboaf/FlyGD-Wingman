@@ -114,9 +114,16 @@ def case_distinct_names_supported(where: Path) -> bool:
 def test_profiles_have_a_stable_path_tiebreaker(tmp_path):
     """os.scandir's order is filesystem-dependent, so two profiles differing
     only by case must not swap places between two renders of the same folder.
-    Windows can never hold such a pair, which is why this asserts a
-    tiebreaker the shipped app can never exercise: it is the Linux suite's
-    own determinism that is at stake, not a user-visible ordering."""
+
+    Whether such a pair can exist at all is a property of the FILESYSTEM,
+    not of the platform: a default NTFS volume folds case and cannot hold
+    one, but NTFS supports per-directory case sensitivity (`fsutil file
+    setCaseSensitiveInfo`, the flag WSL sets on its own directories), and a
+    macOS or WSL checkout can equally sit on a case-INSENSITIVE volume. That
+    is why the guard below probes the actual tmp_path instead of branching
+    on os.name, and why the tiebreaker is a real ordering rule rather than a
+    Linux-only curiosity.
+    """
     if not case_distinct_names_supported(tmp_path):
         pytest.skip(f"{tmp_path} cannot hold two names differing only by case")
     server = tmp_path / "server_tranquility"
