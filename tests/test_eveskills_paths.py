@@ -33,7 +33,14 @@ def test_the_placeholder_client_id_is_not_configured(monkeypatch):
     character`. Without it the button launches a browser at
     login.eveonline.com with a literal placeholder in the query string,
     and CCP's error page is not a recognisable diagnosis for 'this build
-    was never registered'."""
+    was never registered'.
+
+    Patched on `wingman.eveskills.application` itself, not on
+    `wingman.eveauth.application` -- this module re-DECLARES
+    `is_configured()` rather than importing it, precisely so that its own
+    `CLIENT_ID` global (the one this monkeypatch sets) is what the
+    function's body actually reads; see wingman/eveskills/application.py's
+    module docstring."""
     monkeypatch.setattr(
         application, "CLIENT_ID", "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID"
     )
@@ -97,3 +104,31 @@ def test_all_three_issuer_spellings_are_accepted():
             "https://login.eveonline.com/",
         }
     )
+
+
+def test_the_identity_constants_are_the_shared_eveauth_objects():
+    """Application identity now lives in `wingman.eveauth.application`;
+    this module changed no VALUE of its own for anything except `SCOPES`
+    (Skills' own ordered tuple, deliberately not re-exported by identity
+    -- see the module docstring). An identity check (`is`, not `==`) on
+    everything else is what would catch a future fork of this data that a
+    value-equality assertion could not."""
+    from wingman.eveauth import application as eveauth_application
+
+    for name in (
+        "CLIENT_ID",
+        "REDIRECT_HOST",
+        "REDIRECT_PORT",
+        "REDIRECT_PATH",
+        "REDIRECT_URI",
+        "USER_AGENT",
+        "SSO_AUTHORIZE",
+        "SSO_TOKEN",
+        "SSO_METADATA",
+        "SSO_HOST",
+        "ACCEPTED_ISSUERS",
+        "ESI_BASE",
+        "ESI_HOST",
+        "ESI_COMPATIBILITY_DATE",
+    ):
+        assert getattr(application, name) is getattr(eveauth_application, name)

@@ -84,6 +84,7 @@ packages = [
     "wingman.preview",
     "wingman.alerts",
     "wingman.evesettings",
+    "wingman.eveauth",
     "wingman.eveskills",
     "wingman.evefittings",
 ]

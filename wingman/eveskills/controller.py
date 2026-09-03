@@ -1543,7 +1543,11 @@ class SkillsController:
             # listening, and the user then sees a connection-refused page
             # while Wingman waits five minutes for a callback that already
             # happened.
-            self._launch_browser(sso.authorize_url(pkce))
+            # Explicit, not defaulted: authorize_url has no "every
+            # scope" fallback, and Skills must never ask for anything
+            # beyond its own two read-only scopes -- see
+            # eveauth/application.py's CAPABILITY_SCOPES.
+            self._launch_browser(sso.authorize_url(pkce, application.SCOPES))
             callback = listener.wait(pkce.state)
 
         if callback.error:

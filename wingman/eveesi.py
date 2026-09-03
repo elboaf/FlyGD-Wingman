@@ -22,13 +22,14 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-# eveesi.py sits above eveskills/ in the package but still depends on its
-# application identity constants (ESI_BASE, ESI_COMPATIBILITY_DATE):
-# those have not moved yet -- eveauth's extraction of shared application
-# identity is a later task -- and eveskills.application is preserved as a
-# compatibility import indefinitely, so this dependency does not need to
-# change when that extraction lands.
-from .eveskills import application
+# The shared application identity (ESI_BASE, ESI_COMPATIBILITY_DATE, and
+# everything else CCP registered against one client id) now lives in
+# eveauth.application. wingman.eveskills.application re-exports it for
+# backward compatibility, but this module reaches the owner directly
+# rather than through that compatibility layer, since eveesi.py sits
+# above both eveskills/ and eveauth/ and has no reason to route through
+# a Skills-specific module for a constant Skills does not own.
+from .eveauth import application
 
 MAX_ATTEMPTS = 3
 MAX_ERROR_BODY_BYTES = 8192

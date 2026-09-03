@@ -1197,7 +1197,7 @@ class FakeAuthSso:
             state="state-1", verifier="verifier-1", challenge="challenge-1"
         )
 
-    def authorize_url(self, pkce):
+    def authorize_url(self, pkce, scopes):
         return f"https://login.eveonline.com/v2/oauth/authorize?state={pkce.state}"
 
     def exchange_code(self, code, verifier):

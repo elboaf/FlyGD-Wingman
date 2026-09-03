@@ -748,3 +748,23 @@ def test_a_persistent_bind_conflict_still_fails_with_a_clear_message():
         assert str(port) in str(excinfo.value)
     finally:
         holder.close()
+
+
+def test_re_exported_names_are_the_shared_eveauth_objects():
+    """The loopback listener now lives in `wingman.eveauth.loopback`; this
+    module changed no behaviour of its own. An identity check (`is`, not
+    `==`) is what would catch a future fork of this logic that a
+    value-equality assertion could not."""
+    from wingman.eveauth import loopback as eveauth_loopback
+
+    for name in (
+        "Callback",
+        "CallbackTimeout",
+        "CallbackCancelled",
+        "LoopbackListener",
+        "parse_request",
+        "safe_oauth_code",
+        "MAX_LINE_BYTES",
+        "AUTH_TIMEOUT_S",
+    ):
+        assert getattr(loopback, name) is getattr(eveauth_loopback, name)
