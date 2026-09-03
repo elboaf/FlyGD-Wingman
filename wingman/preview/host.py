@@ -842,7 +842,21 @@ class PreviewHost:
         # what stops the older, self-discovered roster from being applied
         # last and overwriting it. Drains the slot, so the ordinary
         # WM_APP_ROSTER path cannot then apply the same snapshot twice.
-        self._apply_pending_roster(libs)
+        try:
+            self._apply_pending_roster(libs)
+        except Exception:
+            # Unlike the WM_APP_ROSTER path, this call is NOT inside a
+            # wndproc: an escape here unwinds _run itself, and the thread
+            # dies before the hook, the timer, _ready and the pump exist --
+            # previews inert for the session, and stop() then blocking for
+            # its whole timeout posting to a window nothing is pumping for.
+            # The same reasoning as the guarded _on_clients_changed call in
+            # reconciliation, one level up. _apply_pending_roster has put
+            # the snapshot back, so a later publication (or an explicit
+            # retry of the same generation) applies it; deliberately NOT
+            # reposted here, which would be a retry loop against a failure
+            # that is very likely to repeat.
+            logger.exception("Could not apply the startup roster")
         self._install_hook(libs)
         with self._lock:
             initial = dict(self._desired_hotkeys)
@@ -1013,7 +1027,9 @@ class PreviewHost:
         the next scan, losing the rect the user dragged it to.
 
         Called from WM_APP_ROSTER and once from _run, for the snapshot that
-        arrived before there was a window to post to.
+        arrived before there was a window to post to. Re-raises whatever
+        reconciliation raised -- both callers decide for themselves what a
+        failure means there -- but never at the cost of the snapshot.
         """
         with self._lock:
             snapshot, self._pending_roster = self._pending_roster, None
@@ -1026,7 +1042,23 @@ class PreviewHost:
                 self._last_roster_generation,
             )
             return
-        self._reconcile_roster(libs, snapshot)
+        try:
+            self._reconcile_roster(libs, snapshot)
+        except Exception:
+            # Put it back. It was popped before reconciliation ran, so
+            # without this a failure would discard the roster as well as
+            # leaving the windows half applied -- and the high-water mark is
+            # untouched below, so the retry is a real one rather than a
+            # snapshot that now looks stale.
+            #
+            # Not reposted: the caller decides that. A repost from here
+            # would spin the pump against a failure likely to repeat, and
+            # the producer publishes again on its own cadence anyway.
+            with self._lock:
+                pending = self._pending_roster
+                if pending is None or pending.generation < snapshot.generation:
+                    self._pending_roster = snapshot
+            raise
         # Recorded only once reconciliation has actually returned. A raise in
         # there leaves windows half reconciled, and marking the generation
         # spent first would make the republished snapshot that could repair

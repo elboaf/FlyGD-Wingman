@@ -4909,11 +4909,20 @@ class _StartupUser32(_RosterUser32):
 
     GetMessageW falls through to the catch-all and returns 0, which ends the
     pump loop immediately -- this test is about what _run does BEFORE it
-    starts pumping.
+    starts pumping. Every catch-all call is recorded, so a test can prove
+    startup carried on past a failure (SetTimer, and the rest).
     """
 
-    def __getattr__(self, _name):
-        return lambda *a, **k: 0
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.seen = []
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            self.seen.append((name, args))
+            return 0
+
+        return record
 
 
 class _RosterWindow:
@@ -5064,6 +5073,91 @@ def test_a_roster_from_before_the_window_existed_is_applied_at_startup(monkeypat
     assert h._pending_roster is None
     h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
     assert created.count("Alice") == 1
+
+
+def test_a_failed_startup_roster_does_not_kill_the_preview_thread(monkeypatch):
+    """The startup drain is the one call to it that is NOT inside a wndproc.
+
+    An escape there unwinds _run before the hook, the timer, _ready and the
+    pump exist: previews inert for the session, and stop() blocking for its
+    whole timeout posting to a window nothing is pumping for. The snapshot
+    must survive too -- it was popped before reconciliation ran -- and must
+    not be reposted from inside the failure, which would spin the pump
+    against a failure very likely to repeat.
+    """
+    created = []
+    h = _pump_host(monkeypatch, created)
+    h._hwnd = None  # as it is before the preview thread starts
+    user32 = _StartupUser32()
+
+    seen = []
+    reconcile = h._reconcile_roster
+
+    def flaky(libs, snapshot):
+        # The compatibility startup sweep reaches here too, with the legacy
+        # generation; only the shared snapshot is made to fail.
+        if snapshot.generation != 7:
+            reconcile(libs, snapshot)
+            return
+        seen.append(snapshot.generation)
+        if len(seen) == 1:
+            raise RuntimeError("thumbnail registration failed")
+        reconcile(libs, snapshot)
+
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(user32))
+    monkeypatch.setattr(h, "_create_host_window", lambda libs: 0x99)
+    monkeypatch.setattr(h, "_install_hook", lambda libs: None)
+    monkeypatch.setattr(host.discovery, "list_clients", list)
+    monkeypatch.setattr(h, "_reconcile_roster", flaky)
+
+    h.apply_roster(_roster(7, ("Alice", 0x1111)))
+
+    h._run()  # must return normally, having finished starting up
+
+    assert seen == [7]
+    assert created == []
+    # Startup carried on rather than unwinding: the sweep timer was armed
+    # and _ready was set, both of which come after the failed drain.
+    assert h._ready.is_set()
+    assert [name for name, _args in user32.seen].count("SetTimer") == 1
+    # Retryable: still pending, and the generation was never spent.
+    assert h._pending_roster.generation == 7
+    assert h._last_roster_generation == 0
+    # And not reposted from inside the failure -- a later publication or an
+    # explicit signal is what retries it.
+    assert user32.posted == []
+
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert seen == [7, 7]
+    assert created == ["Alice"]
+    assert h._last_roster_generation == 7
+    assert h._pending_roster is None
+
+    # Exactly once: a second signal has nothing left to apply.
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+    assert created == ["Alice"]
+
+
+def test_a_failed_drain_keeps_the_newer_pending_snapshot(monkeypatch):
+    """Restoring the failed snapshot must not undo a newer one that arrived
+    while reconciliation was running -- apply_roster is safe from any thread,
+    so that overlap is ordinary, and the newer roster is the true one."""
+    created = []
+    h = _pump_host(monkeypatch, created)
+
+    def flaky(libs, snapshot):
+        h.apply_roster(_roster(9, ("Bravo", 0x2222)))  # the producer moves on
+        raise RuntimeError("thumbnail registration failed")
+
+    monkeypatch.setattr(h, "_reconcile_roster", flaky)
+    h.apply_roster(_roster(8, ("Alice", 0x1111)))
+
+    with pytest.raises(RuntimeError):
+        h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert h._pending_roster.generation == 9
+    assert h._last_roster_generation == 0
 
 
 def test_a_failed_reconciliation_does_not_consume_the_generation(monkeypatch):
