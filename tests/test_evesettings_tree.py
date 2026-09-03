@@ -2,6 +2,7 @@
 so the whole module tests on Linux."""
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,37 @@ def test_profile_root_normalizes_to_canonical_triple(tmp_path):
     )
 
 
+def case_distinct_names_supported(where: Path) -> bool:
+    """Whether *where*'s filesystem can hold two names differing only by case.
+
+    Probed, not assumed from `os.name`: the pairing is not platform-wide in
+    either direction. Windows' own NTFS can be mounted case-sensitive
+    per-directory, and a macOS or WSL checkout on a case-INSENSITIVE volume
+    would fail a test that took `os.name != "nt"` as permission to create
+    such a pair. The tiebreaker being tested exists precisely for the
+    filesystems that CAN hold the pair, so the capability is what decides.
+    """
+    probe = where / ".case-probe"
+    probe.mkdir()
+    try:
+        (probe / "a").mkdir()
+        try:
+            (probe / "A").mkdir()
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        shutil.rmtree(probe)
+
+
 def test_profiles_have_a_stable_path_tiebreaker(tmp_path):
+    """os.scandir's order is filesystem-dependent, so two profiles differing
+    only by case must not swap places between two renders of the same folder.
+    Windows can never hold such a pair, which is why this asserts a
+    tiebreaker the shipped app can never exercise: it is the Linux suite's
+    own determinism that is at stake, not a user-visible ordering."""
+    if not case_distinct_names_supported(tmp_path):
+        pytest.skip(f"{tmp_path} cannot hold two names differing only by case")
     server = tmp_path / "server_tranquility"
     (server / "settings_alt").mkdir(parents=True)
     (server / "settings_Alt").mkdir()

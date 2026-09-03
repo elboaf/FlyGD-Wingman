@@ -2166,7 +2166,18 @@ def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
 
 
 def copy_profile_setup(tmp_path, monkeypatch, others=()):
-    """A root holding settings_Default (the source) plus named siblings."""
+    """A root holding settings_Default (the source) plus named siblings.
+
+    The EVE-client probe is stubbed CLOSED here for every copy test that
+    does not care about it. Left real, it short-circuits to CLOSED off
+    Windows (`sys.platform != "win32"`) and enumerates the developer's OWN
+    live windows on Windows -- so the whole profile-copy suite passed on
+    Linux and refused with "Copy not started" on a Windows machine that
+    happened to have any window titled "EVE..." open. That is test
+    isolation, not a softened rule: the production probe stays fail-closed,
+    and the running/unknown refusals are asserted by the tests that override
+    this stub deliberately (see probe_returning).
+    """
     source = eve_tree(tmp_path)
     for name in others:
         other = source.parent / f"{tree.PROFILE_PREFIX}{name}"
@@ -2175,6 +2186,11 @@ def copy_profile_setup(tmp_path, monkeypatch, others=()):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._alert = fakes.Alerts()
+    monkeypatch.setattr(
+        discovery_mod,
+        "probe_eve_client_state",
+        probe_returning(discovery_mod.EveClientState.CLOSED),
+    )
     return api, source
 
 

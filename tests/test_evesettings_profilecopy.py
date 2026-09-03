@@ -21,13 +21,25 @@ def _make_junction(link: Path, target: Path) -> None:
     unelevated user can create one, which is what makes a genuine
     reparse-point test usable on a stock CI runner rather than only on a
     developer's elevated shell.
+
+    A failure here fails the test rather than skipping it. `mklink /J`
+    working is the normal Windows case, so a silent skip would quietly
+    retire the only coverage of IO_REPARSE_TAG_MOUNT_POINT -- the tag
+    `Path.is_symlink()` does not report and `_is_reparse_point` exists for.
+    cmd's own message is surfaced so a genuinely unsupported volume (a
+    non-NTFS temp drive, say) names itself instead of arriving as a bare
+    non-zero exit code.
     """
-    subprocess.run(
+    result = subprocess.run(
         ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"mklink /J {link} {target} failed with {result.returncode}: "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
 
 
 @pytest.fixture
