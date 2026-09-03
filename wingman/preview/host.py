@@ -18,6 +18,7 @@ import time
 from ctypes import wintypes
 from dataclasses import dataclass, replace
 
+from ..telemetry.model import RosterClient, RosterSnapshot
 from . import (
     cycle,
     discovery,
@@ -63,6 +64,67 @@ PENDING_ALERTS_MAX = 10
 COPY_OK = "ok"
 COPY_MISSING = "missing"
 COPY_PERSIST_FAILED = "persist_failed"
+
+# The generation carried by a snapshot this module built for itself, in
+# _sweep's own direct discovery. Deliberately below every generation the
+# shared ClientDiscovery publishes (it counts from 1, and reserves 0 for
+# "no scan has completed"), because that path publishes nothing and must
+# not consume a number: a legacy sweep that recorded a generation would
+# make the first real shared snapshot look stale and be rejected. Retired
+# with the timer itself when the coordinator becomes the only producer.
+LEGACY_SWEEP_GENERATION = 0
+
+
+def _roster_stable_key(entry) -> str:
+    """The key every preview, layout and hotkey is filed under, for a
+    shared-roster record.
+
+    Mirrors discovery.py's own fallback for a client that is not past
+    character select. Not trusted to stay in step by hand: the two are
+    asserted equal in
+    tests/test_preview_host.py::test_the_roster_adapter_agrees_with_discovery_on_stable_keys,
+    because a drift here does not fail -- it silently keys a preview
+    against a name discovery never produces, and the saved layout,
+    exclusion and chord for that character all stop matching at once.
+    """
+    return entry.character or f"hwnd:0x{entry.hwnd:x}"
+
+
+def _preview_client(entry) -> discovery.Client:
+    """A shared-roster record in the shape preview state already speaks.
+
+    RosterClient carries no stable key -- nothing outside Preview is keyed
+    by one -- and a Fleet Metrics session Preview has no use for, while
+    every consumer in this module (windows, switching, alerts, hotkey
+    dispatch, the client registry) reads Client.stable_key. One adaptation
+    at the top of reconciliation keeps that single vocabulary rather than
+    teaching each of them a second one.
+    """
+    return discovery.Client(
+        entry.hwnd, entry.title, entry.pid, entry.character, _roster_stable_key(entry)
+    )
+
+
+def _legacy_snapshot(clients) -> RosterSnapshot:
+    """Raw discovery records as the one immutable snapshot _sweep applies.
+
+    Only the pre-coordinator path needs this: it lets the timer and the
+    shared roster reach the SAME reconciliation while the migration is
+    half done, so the two cannot drift apart in between.
+    """
+    return RosterSnapshot(
+        generation=LEGACY_SWEEP_GENERATION,
+        clients=tuple(
+            RosterClient(
+                hwnd=client.hwnd,
+                pid=client.pid,
+                title=client.title,
+                character=client.character,
+                session=None,
+            )
+            for client in clients
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -275,9 +337,10 @@ class PreviewHost:
         self._lock_default = lock_default
         # preview.excluded: characters opted out of previews entirely. Read
         # live like the rest, and read in THREE places rather than one --
-        # _sweep (no window), _registerable (no hotkey registration) and
-        # _cycle_keys (not a stop on the walk) -- because the opt-out is a
-        # statement about the character, not about one window.
+        # _reconcile_roster (no window), _registerable (no hotkey
+        # registration) and _cycle_keys (not a stop on the walk) -- because
+        # the opt-out is a statement about the character, not about one
+        # window.
         self._excluded = excluded
         # Same reasoning as _restore_positions/_show_labels/etc.: read
         # live so a Settings toggle mid-session reaches previews already
@@ -370,6 +433,21 @@ class PreviewHost:
         # Persistence and the in-memory cache are updated before they enter
         # this queue; the message only performs monitor-safe live movement.
         self._pending_layouts = {}
+        # The newest shared roster waiting to be reconciled, or None. Same
+        # shape as _desired_hotkeys/_pending_alerts -- PostMessageW carries
+        # integers only, so the immutable snapshot travels in a field under
+        # the lock and only the signal is posted. ONE slot rather than a
+        # queue, unlike the alerts: a roster is a complete statement of what
+        # is running, so an older one has nothing to add to a newer one, and
+        # reconciling both would create and destroy windows for a state that
+        # has already been superseded.
+        self._pending_roster = None
+        # The generation last reconciled, and the whole of the ordering the
+        # pump has. Written and read only on the preview thread (from
+        # _apply_pending_roster), so it needs no lock -- and reset by
+        # _teardown so a restarted host does not reject a restarted
+        # discovery's first snapshot as stale.
+        self._last_roster_generation = 0
         # Last sampled client-area size per character, refreshed every
         # sweep by _record_client_sizes. Read from the UI thread through
         # client_sizes(), like hotkey_status() below.
@@ -387,7 +465,7 @@ class PreviewHost:
         # its periodic timer, which must be killed exactly once on any exit.
         self._pending_activation_timer = False
         # Recorded by the foreground hook (an arbitrary thread) and
-        # resolved by _sweep, never the other way around -- see
+        # resolved by _reconcile_roster, never the other way around -- see
         # _install_hook and _apply_selection.
         self._foreground = 0
         # Two keys, deliberately, because two different questions are
@@ -474,6 +552,32 @@ class PreviewHost:
     def request_sweep(self) -> None:
         """Ask for an immediate sweep. Safe from any thread."""
         self._post(win32.WM_APP_SWEEP_NOW)
+
+    def apply_roster(self, snapshot) -> None:
+        """Hand the newest shared roster to the pump. Safe from any thread.
+
+        Nothing is reconciled here. The caller is the shared discovery's own
+        context, and every window, thumbnail and selection decision this
+        snapshot leads to has to happen on the thread that owns those HWNDs
+        -- so this only swaps the immutable value under the lock and posts
+        the signal, exactly as set_hotkeys and raise_alert do with theirs.
+
+        A snapshot that arrives behind one already waiting is DROPPED rather
+        than queued: generations are the only ordering the pump has, and the
+        newer one is a complete statement of what is running, so applying
+        the older one first would close previews whose clients never left
+        and reopen them a moment later at a default rect.
+        """
+        with self._lock:
+            pending = self._pending_roster
+            if pending is not None and snapshot.generation <= pending.generation:
+                return
+            self._pending_roster = snapshot
+        # Outside the lock, and after the swap: _post is a no-op until the
+        # preview thread has created _hwnd (start() returns before that), so
+        # a snapshot published in that gap is still the one the first drain
+        # finds -- the same pre-window-creation gap raise_alert documents.
+        self._post(win32.WM_APP_ROSTER)
 
     def raise_alert(self, character: str, event: str, spec: dict) -> None:
         """Queue an alert and nudge the pump. Safe from any thread.
@@ -803,6 +907,9 @@ class PreviewHost:
         if msg == win32.WM_APP_SWEEP_NOW:
             self._sweep(libs)
             return 0
+        if msg == win32.WM_APP_ROSTER:
+            self._apply_pending_roster(libs)
+            return 0
         if msg == win32.WM_APP_SHUTDOWN:
             self._teardown(libs)
             return 0
@@ -842,10 +949,10 @@ class PreviewHost:
 
         def on_event(hook, event, hwnd, obj, child, tid, ms):
             # Recorded, not resolved: this callback arrives on an arbitrary
-            # thread and must not touch a preview. _sweep resolves it, which
-            # is also the only place _clients is refreshed -- so a
-            # just-launched client's first focus cannot resolve against a
-            # stale registry.
+            # thread and must not touch a preview. _reconcile_roster
+            # resolves it, which is also the only place _clients is
+            # refreshed -- so a just-launched client's first focus cannot
+            # resolve against a stale registry.
             self._foreground = int(hwnd) if hwnd else 0
             self.request_sweep()
 
@@ -867,7 +974,56 @@ class PreviewHost:
             )
 
     def _sweep(self, libs) -> None:
-        clients = {c.stable_key: c for c in discovery.list_clients()}
+        """Discover directly, then reconcile: the pre-coordinator path.
+
+        A compatibility wrapper for as long as this host still owns a 700ms
+        timer and a hook that both call it. It adapts its raw records into
+        the same immutable snapshot the shared roster arrives as, so there
+        is exactly one reconciliation while the migration is half done.
+
+        It calls reconciliation DIRECTLY rather than going through
+        _apply_pending_roster: that gate is about ordering snapshots from a
+        producer, and this path has no producer and publishes nothing. Going
+        through it would burn a generation number and make the first real
+        shared snapshot look stale.
+        """
+        self._reconcile_roster(libs, _legacy_snapshot(discovery.list_clients()))
+
+    def _apply_pending_roster(self, libs) -> None:
+        """Reconcile the newest pending snapshot, once, on this thread.
+
+        Drains the slot before deciding anything, so a superseded signal --
+        two posts for one surviving snapshot, or one that raced the drain --
+        is a no-op rather than a second reconciliation of the same roster.
+
+        A generation that is not strictly newer is refused. A late delivery
+        is a statement about a roster that is already gone: acting on it
+        would close a preview whose client is still running and reopen it on
+        the next scan, losing the rect the user dragged it to.
+        """
+        with self._lock:
+            snapshot, self._pending_roster = self._pending_roster, None
+        if snapshot is None:
+            return
+        if snapshot.generation <= self._last_roster_generation:
+            logger.debug(
+                "Ignoring roster generation %s; %s was already applied",
+                snapshot.generation,
+                self._last_roster_generation,
+            )
+            return
+        self._last_roster_generation = snapshot.generation
+        self._reconcile_roster(libs, snapshot)
+
+    def _reconcile_roster(self, libs, snapshot) -> None:
+        """Bring windows, registry, callbacks and selection in line with
+        *snapshot*. Runs ON the preview thread only.
+
+        Consumes `snapshot.clients` and nothing else -- the generation is
+        the caller's ordering problem (_apply_pending_roster owns it), so
+        _sweep can reach here without one.
+        """
+        clients = {c.stable_key: c for c in map(_preview_client, snapshot.clients)}
         # A title change from a named character to character selection changes
         # the stable key even though the physical client continues. Capture the
         # live rect before reconciliation closes the named window. This is
@@ -1028,10 +1184,11 @@ class PreviewHost:
             self._selected_key = focus
         elif self._selected_key not in self._clients:
             # Sticky outlives the foreground, never the client. _clients was
-            # replaced wholesale in _sweep just above, so a character that
-            # has logged out is already gone from it; without this the ring
-            # would sit on a dead key for the session and then be handed
-            # straight back to whatever reappeared under the same name.
+            # replaced wholesale in _reconcile_roster just above, so a
+            # character that has logged out is already gone from it; without
+            # this the ring would sit on a dead key for the session and then
+            # be handed straight back to whatever reappeared under the same
+            # name.
             self._selected_key = None
 
         # Every window, every sweep, rather than a diff against the previous
@@ -1970,11 +2127,11 @@ class PreviewHost:
     def _labels_shown(self) -> bool:
         """Whether preview chrome draws a label band, read live.
 
-        Runs on the preview thread -- in _sweep for a newly created
-        window, and in the WM_APP_RESTYLE handler for every open one --
-        so it must not be the thing that kills the pump. A callable that
-        raises falls back to labels-on, the behaviour that shipped before
-        this toggle existed.
+        Runs on the preview thread -- in _reconcile_roster for a newly
+        created window, and in the WM_APP_RESTYLE handler for every open
+        one -- so it must not be the thing that kills the pump. A callable
+        that raises falls back to labels-on, the behaviour that shipped
+        before this toggle existed.
         """
         if self._show_labels is None:
             return True
@@ -2073,8 +2230,8 @@ class PreviewHost:
 
         The source of truth moved here from the saved layout entry's
         `locked` flag when Task 1 introduced the `preview.locked`
-        character-name list -- see the comment on the _sweep call site.
-        Same guard as _labels_shown.
+        character-name list -- see the comment on the _reconcile_roster call
+        site. Same guard as _labels_shown.
 
         Two inputs, resolved together and only here. `preview.lock_default`
         says what a character NOT in the list is, so the list holds
@@ -2321,8 +2478,9 @@ class PreviewHost:
         # every character is online and every chord registered while the
         # thread that owned them is gone and Windows holds none of them.
         # Replaced wholesale, not .clear()'d in place, for the same reason
-        # _sweep() and _apply_hotkeys() never mutate them in place either:
-        # a reader on another thread must never observe a half-cleared dict.
+        # _reconcile_roster() and _apply_hotkeys() never mutate them in
+        # place either: a reader on another thread must never observe a
+        # half-cleared dict.
         self._clients = {}
         self._hotkey_status = {}
         self._active_hotkeys = {}
@@ -2338,6 +2496,16 @@ class PreviewHost:
         # the first sweep has confirmed it is even running.
         with self._lock:
             self._pending_alerts = []
+            # And the roster that arrived with it: apply_roster is safe from
+            # any thread, so the shared discovery keeps filling this slot
+            # while the pump is torn down. A snapshot queued between stop()
+            # and the next enable would otherwise be the first thing a fresh
+            # pump reconciled -- windows for an hour-old roster. The
+            # generation goes back to zero for the same reason it is only
+            # ever compared: a restarted discovery counts from 1 again, and
+            # a remembered high-water mark would reject its whole session.
+            self._pending_roster = None
+            self._last_roster_generation = 0
         self._focused_key = None
         self._selected_key = None
         self._foreground = 0

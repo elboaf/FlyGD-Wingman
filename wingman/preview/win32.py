@@ -73,6 +73,10 @@ WM_APP_RESET_LAYOUTS = WM_APP + 6
 WM_APP_RESIZE_ONE = WM_APP + 7
 WM_APP_RESIZE_ALL = WM_APP + 8
 WM_APP_APPLY_LAYOUTS = WM_APP + 9
+# The shared roster, handed over by another thread. Carries no payload: a
+# snapshot cannot ride in wparam/lparam, so it travels in a field under the
+# host's lock and this only says "there is a newer one to read".
+WM_APP_ROSTER = WM_APP + 10
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02

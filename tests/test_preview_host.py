@@ -537,9 +537,15 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_RESIZE_ONE,
         host.win32.WM_APP_RESIZE_ALL,
         host.win32.WM_APP_APPLY_LAYOUTS,
+        host.win32.WM_APP_ROSTER,
     }
-    assert len(commands) == 9
+    assert len(commands) == 10
     assert all(c >= host.win32.WM_APP for c in commands)
+    # Contiguous from WM_APP+1, so a new command is added by extending the
+    # run rather than by picking a free-looking offset -- which is how two
+    # names end up sharing one value and silently running each other's
+    # handler.
+    assert commands == {host.win32.WM_APP + n for n in range(1, len(commands) + 1)}
 
 
 def test_raise_alert_queues_without_a_window():
@@ -4875,3 +4881,257 @@ def test_standalone_empty_group_activates_nothing(monkeypatch):
     h._on_hotkeys(libs, [1])
 
     assert activated == [], "a standalone empty group action must not activate anything"
+
+
+# ---- Shared rosters applied on the pump -----------------------------------
+#
+# The host is becoming a CONSUMER of wingman.telemetry.clients.ClientDiscovery
+# rather than a discoverer of its own. These pin the boundary that migration
+# crosses: a snapshot may be handed over from any thread, but every window,
+# thumbnail and selection decision still happens on the Win32 pump, and a
+# snapshot that lost a race must never be able to undo a newer one.
+
+
+class _RosterUser32(_FakeUser32):
+    """_FakeUser32 plus a recording PostMessageW, which apply_roster needs."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.posted = []
+
+    def PostMessageW(self, hwnd, msg, wparam, lparam):
+        self.posted.append((msg, wparam, lparam))
+        return 1
+
+
+class _RosterWindow:
+    def __init__(self, client, rect):
+        self.client = client
+        self.rect = rect
+        self.locked = False
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+    def set_focused(self, _focused):
+        pass
+
+    def set_selected(self, _selected):
+        pass
+
+
+def _roster(generation, *clients):
+    """A snapshot in the shape ClientDiscovery publishes.
+
+    *clients* are (character, hwnd) pairs; a character of None is a client
+    still at character selection, which the roster carries like any other.
+    """
+    from wingman.telemetry.model import RosterClient, RosterSnapshot
+
+    return RosterSnapshot(
+        generation=generation,
+        clients=tuple(
+            RosterClient(
+                hwnd=hwnd,
+                pid=4242,
+                title=f"EVE - {name}" if name else "EVE",
+                character=name,
+                session=None,
+            )
+            for name, hwnd in clients
+        ),
+    )
+
+
+def _pump_host(monkeypatch, created, windows=None):
+    """A host whose pump can be driven by hand, with discovery-free
+    placement stubbed exactly as the sweep tests stub it."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+
+    def fake_create(cls, libs, client, rect, **kwargs):
+        created.append(client.stable_key)
+        win = _RosterWindow(client, rect)
+        if windows is not None:
+            windows[client.stable_key] = win
+        return win
+
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_RosterUser32()))
+    monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
+    monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
+    return h
+
+
+def test_apply_roster_keeps_only_the_newest_snapshot_and_posts_a_signal(monkeypatch):
+    """PostMessageW carries integers only, so the immutable snapshot travels
+    in a field under the lock and only the signal is posted -- the same shape
+    raise_alert and set_hotkeys already use.
+
+    One slot rather than a queue: a roster is a complete statement of what is
+    running, so reconciling a superseded one would create and destroy windows
+    for a state that has already been replaced.
+    """
+    user32 = _RosterUser32()
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(user32))
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    h.apply_roster(_roster(1, ("Alice", 0x1111)))
+    h.apply_roster(_roster(3, ("Bravo", 0x2222)))
+    h.apply_roster(_roster(2, ("Carol", 0x3333)))  # lost the race; dropped
+
+    assert h._pending_roster.generation == 3
+    assert [c.character for c in h._pending_roster.clients] == ["Bravo"]
+    assert user32.posted == [(host.win32.WM_APP_ROSTER, 0, 0)] * 2
+
+
+def test_apply_roster_before_the_pump_exists_touches_no_win32(monkeypatch):
+    """start() returns before the preview thread has created _hwnd, and the
+    coordinator publishes from a thread of its own. A snapshot arriving in
+    that gap must be recorded without reaching PostMessageW -- calling into
+    user32 for a window that does not exist yet is the thread-affinity
+    violation this whole module is arranged to avoid."""
+
+    def explode():
+        raise AssertionError("apply_roster must not bind win32 without a window")
+
+    monkeypatch.setattr(host.win32, "bind", explode)
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h.apply_roster(_roster(1, ("Alice", 0x1111)))
+
+    assert h._pending_roster.generation == 1
+
+
+def test_the_roster_message_reconciles_on_the_pump(monkeypatch):
+    """apply_roster hands over a value; WM_APP_ROSTER is what makes a window."""
+    created = []
+    h = _pump_host(monkeypatch, created)
+
+    h.apply_roster(_roster(1, ("Alice", 0x1111)))
+
+    assert created == [] and h._clients == {}, (
+        "reconciliation must wait for the pump, not run on the caller's thread"
+    )
+
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert created == ["Alice"]
+    assert sorted(h._clients) == ["Alice"]
+    assert h._clients["Alice"].hwnd == 0x1111
+    # Drained, so a second signal for the same generation is a no-op rather
+    # than a rebuild of every window.
+    assert h._pending_roster is None
+
+
+def test_a_stale_generation_cannot_remove_or_recreate_previews(monkeypatch):
+    """Generations are the only ordering the pump has: a snapshot delivered
+    late is a statement about a roster that is already gone, and acting on it
+    would close a preview whose client is still running -- then reopen it on
+    the next scan, losing its live rect."""
+    created = []
+    windows = {}
+    h = _pump_host(monkeypatch, created, windows)
+
+    h.apply_roster(_roster(4, ("Alice", 0x1111), ("Bravo", 0x2222)))
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+    assert sorted(created) == ["Alice", "Bravo"]
+    created.clear()
+
+    h.apply_roster(_roster(3, ("Alice", 0x1111)))
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert created == [], "a stale generation must not recreate a preview"
+    assert sorted(h._windows) == ["Alice", "Bravo"]
+    assert windows["Bravo"].closed is False
+    assert sorted(h._clients) == ["Alice", "Bravo"]
+
+    # A signal with nothing pending -- a superseded post, or one that raced
+    # the drain -- must be a no-op rather than a reconciliation of nothing.
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+    assert sorted(h._windows) == ["Alice", "Bravo"]
+
+
+def test_a_newer_generation_still_removes_a_preview(monkeypatch):
+    """The other half of the gate: rejecting stale generations must not turn
+    into refusing to close a preview whose client really did quit."""
+    created = []
+    windows = {}
+    h = _pump_host(monkeypatch, created, windows)
+
+    h.apply_roster(_roster(4, ("Alice", 0x1111), ("Bravo", 0x2222)))
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    h.apply_roster(_roster(5, ("Alice", 0x1111)))
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert sorted(h._windows) == ["Alice"]
+    assert windows["Bravo"].closed is True
+    assert sorted(h._clients) == ["Alice"]
+
+
+def test_the_roster_adapter_agrees_with_discovery_on_stable_keys():
+    """RosterClient carries no stable key -- nothing outside Preview is keyed
+    by one -- so the host derives it. Asserted against discovery's own record
+    rather than retyped: the two falling out of step would key every preview,
+    layout and hotkey against a name discovery never produces."""
+    windows = [(0x1234, "EVE - Alice"), (0x9, "EVE")]
+    raw = host.discovery.list_clients(
+        enumerator=lambda: windows,
+        pids=lambda hwnd: 4242,
+        image_name=lambda pid: host.discovery.CLIENT_IMAGE,
+    )
+    assert [c.stable_key for c in raw] == ["Alice", "hwnd:0x9"]
+
+    snapshot = host._legacy_snapshot(raw)
+
+    assert [host._preview_client(c) for c in snapshot.clients] == raw
+
+
+def test_the_compatibility_sweep_reconciles_one_adapted_snapshot(monkeypatch):
+    """Until Task 9 removes it, the 700ms timer still discovers directly --
+    and now reaches the same reconciliation the pump-applied path does, so
+    both cannot drift apart while the migration is half done.
+
+    Its snapshot deliberately carries no generation: this path publishes
+    nothing, so it must not consume a generation number that would then make
+    the first real shared snapshot look stale.
+    """
+    seen = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Alice", hwnd=0x1111)]
+    )
+    monkeypatch.setattr(
+        h, "_reconcile_roster", lambda libs, snapshot: seen.append((libs, snapshot))
+    )
+
+    h._sweep(libs=None)
+
+    (libs, snapshot) = seen[0]
+    assert libs is None
+    assert [(c.character, c.hwnd) for c in snapshot.clients] == [("Alice", 0x1111)]
+    assert h._last_roster_generation == 0
+
+
+def test_teardown_forgets_a_pending_roster(monkeypatch):
+    """apply_roster is safe from any thread and keeps filling this while the
+    pump is torn down -- the same reason _pending_alerts is emptied here. A
+    snapshot queued between stop() and the next enable must not reconcile an
+    hour-old roster onto a freshly started pump."""
+
+    class _TeardownUser32(_RosterUser32):
+        def __getattr__(self, _name):
+            return lambda *a, **k: 0
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_TeardownUser32()))
+    h.apply_roster(_roster(7, ("Alice", 0x1111)))
+
+    h._teardown(_FakeLibs(_TeardownUser32()))
+
+    assert h._pending_roster is None
+    assert h._last_roster_generation == 0
