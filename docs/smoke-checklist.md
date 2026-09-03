@@ -2822,17 +2822,20 @@ headless.
       screen reader must not re-announce either line just because the
       disclosure state changed.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
-      Alerts. Each event offers the same five named swatches: Red, Amber,
-      Green, Cyan, and Magenta, and prints the selected name below its dots.
-      Change each event once and confirm the word follows the selected dot.
-      Event boxes align with the modifier boxes below; event names and the
-      Flashes/Speed line share the next inset, so no checkbox hangs by itself
-      at the card edge. They render as dark-theme controls rather than opening
-      a native Windows colour picker. Give two enabled events the same
-      colour. Expected: one warning below the table names both events and says
-      their preview pulses are indistinguishable; the warning is not repeated
-      under both rows. Disable either event or choose a distinct colour and it
-      clears without clearing a row-local save error.
+      Alerts. Each event offers the same five swatches: Red, Amber, Green,
+      Cyan, and Magenta — one line, vertically centered with the checkbox/
+      name, Sound and Test beside it, not a two-line control. Each swatch
+      announces its colour name to a screen reader (`aria-label`) and shows
+      it in its tooltip; nothing prints the selected name visibly below the
+      dots any more. Event boxes align with the modifier boxes below; event
+      names and the Flashes/Speed line share the next inset, so no checkbox
+      hangs by itself at the card edge. They render as dark-theme controls
+      rather than opening a native Windows colour picker. Give two enabled
+      events the same colour. Expected: one warning below the table names
+      both events and says their preview pulses are indistinguishable; the
+      warning is not repeated under both rows. Disable either event or
+      choose a distinct colour and it clears without clearing a row-local
+      save error.
 
 ### The alert render path
 

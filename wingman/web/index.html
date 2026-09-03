@@ -1236,6 +1236,15 @@
              first. -->
         <details id="alert-advanced">
           <summary>Advanced pulse behavior</summary>
+          <!-- Task 6. Three independent flex rows put Flashes/Speed at
+               whatever x the row's OWN name pushed them to ("Combat" and
+               "Decloak" sat close together, "Warp scramble" -- the longest
+               of the three -- pushed its pair ~58px further right). One
+               grid over all three rows, with the rows themselves
+               display:contents, is the same fix .alert-events and
+               #preview-binds already apply to the identical problem: see
+               .alert-advanced-body below. -->
+          <div class="alert-advanced-body">
           <div class="row alert-advanced-row">
             <span class="bind-group-name">Combat</span>
             <span class="alert-flash">
@@ -1282,6 +1291,7 @@
                 <option value="fast">Fast</option>
               </select>
             </span>
+          </div>
           </div>
         </details>
         <!-- Round 5, A4. These two were the third and fourth checkboxes on

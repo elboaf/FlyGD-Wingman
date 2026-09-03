@@ -2915,14 +2915,6 @@ button.btn:disabled,
 .swatch input:focus-visible + .dot {
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
-/* A word for the selected alert colour, below rather than beside the five
-   dots so the width-budgeted event grid does not gain another column. */
-.alert-events .swatches { flex-wrap: wrap; }
-.alert-events .swatch-name {
-  flex-basis: 100%; width: 0; min-width: 100%;
-  margin-top: 1px; text-align: center;
-  color: var(--text-dim); font-size: var(--fs-muted);
-}
 
 /* An event row reports its OWN failures. Twelve controls used to write
    into one shared .hint at the top of the card, each message overwriting
@@ -3051,6 +3043,31 @@ button.btn:disabled,
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
 #alert-advanced[open] > summary { margin-bottom: 10px; }
+/* Task 6. Three independent flex rows lined up each row's OWN name
+   against its OWN Flashes/Speed pair, so a longer name pushed its pair
+   further right -- "Warp scramble" (114.75px, measured at the 840x625
+   floor) sat noticeably right of "Combat" (56.58px) and "Decloak"
+   (62.30px), the same raggedness .alert-events solved for its own name
+   column above. One grid over all three rows fixes it here too: the rows
+   go display:contents so their children -- the name and the Flashes/Speed
+   pair -- become the grid's own items, sharing one set of tracks.
+
+   The name column is a measured PX width, not max-content. max-content
+   would resolve today's three known names correctly -- .alert-events uses
+   it for exactly that reason above -- but this disclosure was asked to
+   own a number instead of the DOM's current content, so a fourth event
+   with a longer name cannot silently resize it. 120px clears the longest
+   of the three (Warp scramble, 114.75px) with headroom, measured at the
+   840x625 floor -- the narrowest this card ever renders at (DESIGN.md) --
+   and the disclosure's own content (120px name + ~247px Flashes/Speed +
+   gap) stays well inside the card's 586px measure at that floor, so no
+   narrower-viewport rule is needed the way .alert-events' unreachable
+   720px one is. */
+.alert-advanced-body {
+  display: grid; grid-template-columns: 120px max-content;
+  align-items: center; row-gap: 10px; column-gap: 10px;
+}
+.alert-advanced-row { display: contents; }
 /* One row per event, each opening with its own name -- .bind-group-name,
    not a new class, since this is the same "name a subordinate group" job
    .bind-group already does on Previews. Flashes and Speed keep the flex

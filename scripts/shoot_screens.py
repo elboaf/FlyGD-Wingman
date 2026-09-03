@@ -258,14 +258,40 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  pane.scrollTop = pane.scrollHeight;"
         )
     if screen.key == "settings-previews-sticky-conflict":
-        # Task 5. Tanuki Solette's direct bind (Ctrl+Alt+Right) collides
-        # with cycle_next in the authoritative fixture -- the same
-        # direct-character/cycle conflict test_dev_harness.py already pins
-        # -- and her row is the FIRST offline row, directly under the
-        # sticky column header and the sticky Offline heading once the
-        # pane is scrolled past them. That makes her the one existing
-        # fixture conflict this capture can target without adding new
-        # dev.js data.
+        # Task 6. Tanuki Solette's row (the FIRST OFFLINE row) used to be
+        # the target here, staged behind BOTH the sticky column header and
+        # the sticky Offline heading. That left nothing further below her
+        # to scroll into: nudging her row behind both stickies clamped the
+        # pane at the same maximum scrollTop settings-previews-table
+        # already reaches by setting scrollTop = scrollHeight, so the two
+        # captures came out pixel-identical.
+        #
+        # Aiga Otsolen's direct bind (Ctrl+Alt+1) collides with an ACTIVE
+        # EVE bookmark keybind instead (bookmark_chords.active in the
+        # fixture), and she is the FIRST ONLINE character row -- directly
+        # under the sticky column header, with every other online row,
+        # the Offline heading and every offline row still beneath her. That
+        # gives this capture room to stage her row just behind the header
+        # without running out of scrollable content the way Tanuki's did.
+        # Only ONE sticky matters for her: the Offline heading opens the
+        # offline block, which starts after every online character, so it
+        # sits well below her row and never covers it.
+        #
+        # That headroom is not automatically enough, though: the roster
+        # card above #preview-binds (per-character size/lock/never-minimize
+        # controls for the fixture's twelve characters) is tall enough at
+        # the app's own default window (1040x680, window.py) that Aiga's
+        # row sits close to where the pane's OWN maximum scrollTop already
+        # is -- measured directly, aligning her row's cell to the pane's
+        # top asked for ~54px more scroll than the pane had before opening
+        # anything below her. Opening Aleksandrina Shadowbanes Voidstriders'
+        # Configure detail -- the same read-only disclosure
+        # settings-previews-detail already drives, well below Aiga in the
+        # offline block -- adds ~70px of legitimate, real content below her
+        # (no fabricated spacing, no bridge write: previews.js's Configure
+        # click handler only flips local state and re-renders), which is
+        # enough headroom to clear that ~54px gap and let this stage reach
+        # its true, non-clamped position instead of the pane's bottom.
         #
         # appendBindRow's owner-key contract (previews.js) is
         # 'character:' + character for a character row; bindConflictId then
@@ -276,16 +302,33 @@ def screen_setup_script(screen: Screen) -> str | None:
         # closing every inherited detail first (as the groups/narrow stages
         # already do) keeps that adjacency true here too.
         #
-        # The scroll position is measured live off the rendered stickies
-        # rather than a hardcoded pixel guess, so it holds if either
-        # sticky's height ever changes: scroll the row to the pane's top
-        # (which is exactly where both stickies pin once scrolled past),
-        # then nudge only far enough that the conflict text clears them,
-        # leaving the row itself at or behind the sticky-header transition
-        # -- the scenario this capture exists to show.
+        # The row itself is `display: contents` (style.css), which leaves
+        # it with no rendered box of its own -- calling scrollIntoView on
+        # it is a silent no-op, not an error, so the earlier Tanuki version
+        # of this script relied on the pane's scrollTop already being where
+        # it needed to be by coincidence. Its first rendered child carries
+        # the box the row would have had, so that child is what gets
+        # scrolled and the pane's own scrollTop is what gets read back,
+        # rather than trusting the contents element's own (always-zero)
+        # geometry.
+        #
+        # The scroll position is measured live off the rendered sticky
+        # header rather than a hardcoded pixel guess, so it holds if its
+        # height ever changes: scroll the row's cell toward the pane's top,
+        # then nudge only far enough that the conflict text clears the
+        # header, leaving the row itself at or behind the sticky-header
+        # transition -- the scenario this capture exists to show. Never a
+        # blanket `pane.scrollTop = pane.scrollHeight`: that is
+        # settings-previews-table's own mechanism, and reusing it here
+        # would reproduce the exact pixel-identical capture this rewrite
+        # exists to fix. A final bottom-clamp check throws explicitly if
+        # the nudge above still lands on that same maximum scrollTop --
+        # this stage must FAIL rather than silently ship a duplicate of
+        # the table capture again under a different name.
         fixture = load_dev_preview_fixture()
         payload_js = json.dumps(fixture)
-        owner_key_js = json.dumps("character:Tanuki Solette")
+        owner_key_js = json.dumps("character:Aiga Otsolen")
+        long_name = "Aleksandrina Shadowbanes Voidstriders"
         return (
             "(function () {\n"
             "  var payload = " + payload_js + ";\n"
@@ -300,29 +343,46 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  });\n"
             "  var pane = document.querySelector('.settings-pane');\n"
             "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  var extra = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!extra) {\n"
+            "    throw new Error(\n"
+            "      'Aleksandrina Shadowbanes Voidstriders Configure control '\n"
+            "      + 'is missing');\n"
+            "  }\n"
+            "  extra.click();\n"
+            "  var reopened = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!reopened || reopened.getAttribute('aria-expanded') !== 'true') {\n"
+            "    throw new Error(\n"
+            "      'Aleksandrina Shadowbanes Voidstriders detail did not '\n"
+            "      + 'open, so this stage has no extra scroll extent below '\n"
+            "      + 'Aiga to work with');\n"
+            "  }\n"
             "  var conflict = document.getElementById(\n"
             "    'preview-bind-conflict-' + encodeURIComponent("
             + owner_key_js
             + "));\n"
             "  if (!conflict) {\n"
-            "    throw new Error('Tanuki Solette conflict warning is missing');\n"
+            "    throw new Error('Aiga Otsolen conflict warning is missing');\n"
             "  }\n"
             "  var row = conflict.previousElementSibling;\n"
             "  if (!row || !row.classList.contains('row')) {\n"
             "    throw new Error(\n"
             "      'Conflict warning is not directly after its owning row');\n"
             "  }\n"
-            "  row.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "  var cell = row.firstElementChild;\n"
+            "  if (!cell) {\n"
+            "    throw new Error(\n"
+            "      'Owning row has no rendered cell to measure');\n"
+            "  }\n"
+            "  cell.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "  var headCell = document.querySelector(\n"
             "    '#preview-binds .bind-head > span');\n"
-            "  var offlineHeading = document.querySelector(\n"
-            "    '#preview-binds .bind-group:not(:empty)');\n"
-            "  if (!headCell || !offlineHeading) {\n"
-            "    throw new Error('Sticky preview headers are missing');\n"
+            "  if (!headCell) {\n"
+            "    throw new Error('Sticky preview header is missing');\n"
             "  }\n"
-            "  var coverBottom = Math.max(\n"
-            "    headCell.getBoundingClientRect().bottom,\n"
-            "    offlineHeading.getBoundingClientRect().bottom);\n"
+            "  var coverBottom = headCell.getBoundingClientRect().bottom;\n"
             "  var conflictTop = conflict.getBoundingClientRect().top;\n"
             "  if (conflictTop < coverBottom) {\n"
             "    pane.scrollTop += (coverBottom - conflictTop);\n"
@@ -332,6 +392,14 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  if (after.bottom <= paneRect.top || after.top >= paneRect.bottom) {\n"
             "    throw new Error(\n"
             "      'Conflict warning is not within the scrollport');\n"
+            "  }\n"
+            "  var maxScroll = pane.scrollHeight - pane.clientHeight;\n"
+            "  if (pane.scrollTop >= maxScroll - 1) {\n"
+            "    throw new Error(\n"
+            "      'Staging this row reached the panes bottom clamp, the '\n"
+            "      + 'exact pixel-identical capture this stage exists to '\n"
+            "      + 'avoid -- settings-previews-table already shows that '\n"
+            "      + 'state');\n"
             "  }\n"
             "}())"
         )

@@ -1488,31 +1488,47 @@ def test_every_offered_alert_colour_has_a_name():
     )
 
 
-def test_alert_swatches_show_the_selected_colour_name():
+def test_alert_swatches_do_not_render_a_redundant_colour_name_readout():
+    """Round 7. The five dots plus the accessible name on each radio (see
+    test_every_offered_alert_colour_has_a_name) already say what a sighted
+    user is picking; a sixth, visible "selected colour" word underneath the
+    row wrapped onto its own line and made the row two lines tall, breaking
+    the centerline every other control in the row (checkbox/name, Sound,
+    Test) shared. The fix removes the readout entirely -- not merely hides
+    it -- while keeping every accessible name in place.
+    """
     alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
-    assert "'span', 'swatch-name'" in alerts, (
-        "the alert palette must render its selected colour name for sighted users"
+    assert "swatch-name" not in alerts, (
+        "the dead .swatch-name readout element must be removed, not hidden"
     )
-    assert re.search(
-        r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
-        r"colourName\(colour\)\)",
-        alerts,
-    ), "the visible swatch name must follow initial and reverted values"
-    assert re.search(
-        r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
-        r"colourName\(wanted\)\)",
-        alerts,
-    ), "a successful colour change must update its visible name immediately"
+    assert "WM.make" not in alerts, (
+        "alerts.js used WM.make only to build the removed readout span"
+    )
 
-    style = re.search(r"\.alert-events \.swatch-name \{(.*?)\}", CSS, re.DOTALL)
-    assert style and "flex-basis: 100%" in style.group(1), (
-        "the colour name must sit below the fixed palette instead of beside it"
+    style = re.search(
+        r"\.alert-events \.swatch(?:es|-name)[^{]*\{(.*?)\}", CSS, re.DOTALL
     )
-    for prop in ("width: 0", "min-width: 100%"):
-        assert prop in style.group(1), (
-            f"the colour name needs `{prop}` so its word does not widen the "
-            "intrinsic swatch track"
-        )
+    assert style is None, "the dead .swatch-name CSS rule must be removed too"
+
+    # The accessible name itself must survive: every radio still announces
+    # its colour by name, and the collision note still has a word to use.
+    assert "input.setAttribute('aria-label', name)" in alerts, (
+        "removing the visible readout must not remove the accessible name"
+    )
+    assert "function colourName(hex)" in alerts, (
+        "colourName must survive: the collision note and the swatch tooltip "
+        "both still need to name a colour"
+    )
+
+
+def test_alert_palette_is_one_line_with_the_rest_of_its_row():
+    """Without the second-line readout, the swatches container has nothing
+    left to wrap onto a line of its own -- the flex-wrap that existed only
+    to host that line must go too, or a future addition could silently
+    reintroduce a second line under the same now-dead hook."""
+    assert not re.search(r"\.alert-events \.swatches\s*\{[^}]*flex-wrap", CSS), (
+        "the swatches row no longer has a second line to wrap; flex-wrap is dead"
+    )
 
 
 def test_the_alert_volume_note_finishes_its_thought():
@@ -1683,6 +1699,76 @@ def test_the_flashes_select_aria_label_names_the_visible_flashes_word():
             f"{event}'s Flashes select aria-label {select.group(1)!r} does not "
             "contain the visible label word 'Flashes' -- WCAG 2.5.3 Label in "
             "Name requires the accessible name to contain the visible label"
+        )
+
+
+def test_alert_advanced_rows_share_deliberate_fixed_columns():
+    """Round 7 (Task 6). The three Advanced rows used to be independent
+    flex rows: `.bind-group-name` sat beside `.alert-flash` with only a
+    gap between them, so a longer name pushed its own Flashes/Speed pair
+    further right than its neighbours' -- "Warp scramble" (114.75px,
+    measured at the 840x625 floor) versus "Combat" (56.58px) and "Decloak"
+    (62.30px). One grid over all three rows, with the rows themselves
+    display:contents, is the same fix `.alert-events` and `#preview-binds`
+    already apply to the identical problem.
+
+    The name column is a measured PX width, not `max-content`: unlike
+    `.alert-events`' own first track (which is deliberately max-content --
+    see that rule's own comment), this one is asked to own a number rather
+    than resolve today's three known strings, so a fourth, longer event
+    name cannot silently resize the whole disclosure.
+    """
+    advanced_body = re.search(r"\.alert-advanced-body \{(.*?)\}", CSS, re.DOTALL)
+    assert advanced_body, (
+        "the Advanced disclosure's rows must share one grid container "
+        "(.alert-advanced-body), the same technique .alert-events and "
+        "#preview-binds use for identical misalignment"
+    )
+    body_rule = advanced_body.group(1)
+    assert "display: grid" in body_rule, (
+        "the Advanced rows' shared container must be a grid"
+    )
+    columns = re.search(r"grid-template-columns:\s*([^;]+);", body_rule)
+    assert columns, "the shared grid must declare its column tracks"
+    first_track = columns.group(1).strip().split()[0]
+    assert first_track != "max-content", (
+        "the Advanced name column must be a measured px width, not "
+        "max-content -- a longer future event name must not silently "
+        "resize the whole disclosure"
+    )
+    assert re.search(r"^\d+px$", first_track), (
+        f"the Advanced name column ({first_track!r}) must be a fixed, measured px width"
+    )
+
+    row_display = re.search(r"\.alert-advanced-row \{(.*?)\}", CSS, re.DOTALL)
+    assert row_display and "display: contents" in row_display.group(1), (
+        "each Advanced row must be display:contents so its name and its "
+        "Flashes/Speed pair become the shared grid's own items"
+    )
+
+    # .alert-flash itself must still lay out as one flex line -- the
+    # existing test_flash_and_speed_share_one_collapsed_advanced_disclosure
+    # already pins this selector; this test only adds the column it now
+    # sits in, so the two must agree rather than one silently undoing
+    # the other.
+    advanced_flash = re.search(
+        r"\.alert-advanced-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert advanced_flash and "display: flex" in advanced_flash.group(1)
+
+    # The wrapper must exist in the markup around all three rows, inside
+    # the one shared #alert-advanced disclosure -- not a fourth copy of it.
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    assert advanced.group(1).count('class="alert-advanced-body"') == 1, (
+        "expected exactly one shared .alert-advanced-body grid wrapper "
+        "inside the one #alert-advanced disclosure"
+    )
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-flashes"' in advanced.group(1), (
+            f"{event}'s Flashes select must still be inside #alert-advanced"
         )
 
 
