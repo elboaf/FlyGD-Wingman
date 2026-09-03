@@ -5814,7 +5814,14 @@ class Api:
     def _eve_copy_profile_worker(self, plan) -> None:
         ok = False
         published = False
-        selection_persisted = False
+        # Whether the selection the page will see is the one this operation
+        # intends. Replacement does not move the selection, and the source
+        # it retains was persisted with the whole canonical triple before
+        # this worker was spawned -- so it is already true here, on every
+        # exit including a declined confirmation or a failed rollback.
+        # Creation is the only mode with a NEW selection to save, and only
+        # its own save decides this.
+        selection_persisted = plan.mode != "new"
         error_message = None
         # Retention runs only once the destination has settled -- after a
         # successful publication, or after a rollback that put the old one
@@ -5928,10 +5935,10 @@ class Api:
                     )
                     self._alert("warning", "Profile created", error_message)
             else:
-                # The source stays selected, and it already is: the
-                # canonical triple was persisted when the request was
-                # accepted, and replacement does not move the selection.
-                selection_persisted = True
+                # The source stays selected, and it already is -- see the
+                # initialiser above: the canonical triple was persisted
+                # when the request was accepted, and replacement never
+                # moves the selection.
                 self._status(
                     f"Replaced {plan.destination_name} with a copy of "
                     f"{plan.source_name}."

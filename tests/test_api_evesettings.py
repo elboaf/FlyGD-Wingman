@@ -2506,6 +2506,73 @@ def test_a_declined_replacement_creates_no_backup_and_changes_nothing(
     assert prunes == []
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
+    # Nothing was published, and the source the page still shows selected is
+    # the one persisted when the request was accepted.
+    assert payload["selection_persisted"] is True
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "declined",
+        "eve started",
+        "backup",
+        "rollback restored",
+        "rollback failed",
+        "raised",
+    ],
+)
+def test_a_replacement_that_never_publishes_still_reports_the_retained_selection(
+    tmp_path, monkeypatch, failure
+):
+    """Replacement never moves the selection, and the source it keeps was
+    persisted with the whole canonical triple before the worker started.
+    Reporting selection_persisted=False on these paths would tell the page
+    Wingman had forgotten a selection that is sitting in settings.json."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+
+    def refuse(*args, **kwargs):
+        raise OSError("the backup store is read-only")
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    if failure == "declined":
+        api._eve_confirm = lambda *args, **kwargs: False
+    elif failure == "eve started":
+        monkeypatch.setattr(
+            discovery_mod,
+            "probe_eve_client_state",
+            probe_returning(
+                discovery_mod.EveClientState.CLOSED,
+                discovery_mod.EveClientState.RUNNING,
+            ),
+        )
+    elif failure == "backup":
+        monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", refuse)
+    elif failure == "rollback restored":
+        failing_publication(monkeypatch, destination)
+    elif failure == "rollback failed":
+        failing_publication(monkeypatch, destination)
+        monkeypatch.setattr(api_mod.evesettings_backup, "restore", refuse)
+    else:
+        # A worker failure after acceptance that is not one of the handled
+        # arms: the outer catch must report the same retained selection.
+        monkeypatch.setattr(
+            api_mod.evesettings_profilecopy, "publish_replacement", explode
+        )
+    sent = fakes.record_pushes(api)
+
+    api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert payload["selection_persisted"] is True
+    stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
+    assert stored["eve_settings"]["profile"] == str(source)
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
 
@@ -2537,6 +2604,9 @@ def test_profile_copy_refuses_unless_the_probe_proves_eve_is_closed(
     assert fragment in api._alert.raised[0][2]
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
+    # New mode is the one with a destination selection to save, and it
+    # never got as far as making one.
+    assert payload["selection_persisted"] is False
     assert fragment in payload["error"]
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
@@ -2597,6 +2667,7 @@ def test_a_failed_destination_backup_leaves_the_destination_unchanged(
     assert api._alert.raised[0][1] == "Destination unchanged"
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
+    assert payload["selection_persisted"] is True
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
 
@@ -2652,6 +2723,7 @@ def test_a_failed_publication_rolls_back_from_the_backup_it_just_took(
     assert "restored" in api._alert.raised[0][2]
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
+    assert payload["selection_persisted"] is True
     assert "restored" in payload["error"]
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
@@ -2689,6 +2761,7 @@ def test_a_failed_rollback_names_the_backup_and_prunes_nothing(tmp_path, monkeyp
     assert "Backups" in body
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
+    assert payload["selection_persisted"] is True
     assert archives[0].name in payload["error"]
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
@@ -2709,6 +2782,7 @@ def test_an_unexpected_worker_failure_still_releases_and_completes_once(
 
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
+    assert payload["selection_persisted"] is False
     assert payload["error"]
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
