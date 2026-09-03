@@ -77,33 +77,39 @@ def create(api, hidden: bool = True):
     """
     import webview
 
-    section = api._state.settings.get("sig_bar") or {}
-    x, y = section.get("x"), section.get("y")
-    if x is None or y is None:
-        x, y = _default_placement(window_mod._system_scale)
+    # Covers the native create AND publication. Shutdown taking the same lock
+    # either waits and destroys this exact bar, or wins first and closes the
+    # lifecycle before WebView2 can allocate another window.
+    with api._sigbar_lifecycle_lock:
+        if api._sigbar_quitting:
+            return None
+        section = api._state.settings.get("sig_bar") or {}
+        x, y = section.get("x"), section.get("y")
+        if x is None or y is None:
+            x, y = _default_placement(window_mod._system_scale)
 
-    bar = webview.create_window(
-        "Wingman sig bar",
-        str(window_mod._web_dir() / "sigbar.html"),
-        js_api=api,
-        width=WIDTH,
-        height=HEIGHT,
-        x=x,
-        y=y,
-        frameless=True,
-        # The page marks its whole body as the drag region; nothing on the
-        # bar is clickable, so easy_drag=False stays honest here exactly as
-        # it does on the main window.
-        easy_drag=False,
-        on_top=True,
-        # The native surface paints before the first HTML frame; a mismatch
-        # is a white flash, same as the main window's BACKGROUND note.
-        background_color=window_mod.BACKGROUND,
-        min_size=MIN_SIZE,
-        hidden=hidden,
-    )
-    api._sigbar_window = bar
-    return bar
+        bar = webview.create_window(
+            "Wingman sig bar",
+            str(window_mod._web_dir() / "sigbar.html"),
+            js_api=api,
+            width=WIDTH,
+            height=HEIGHT,
+            x=x,
+            y=y,
+            frameless=True,
+            # The page marks its whole body as the drag region; nothing on the
+            # bar is clickable, so easy_drag=False stays honest here exactly as
+            # it does on the main window.
+            easy_drag=False,
+            on_top=True,
+            # The native surface paints before the first HTML frame; a mismatch
+            # is a white flash, same as the main window's BACKGROUND note.
+            background_color=window_mod.BACKGROUND,
+            min_size=MIN_SIZE,
+            hidden=hidden,
+        )
+        api._sigbar_window = bar
+        return bar
 
 
 def restore(api) -> None:
@@ -125,15 +131,26 @@ def restore(api) -> None:
     except Exception:
         logger.exception("sig bar window could not be created")
         return
+    if bar is None:
+        return
 
     def reveal() -> None:
+        shown = False
         try:
-            bar.show()
+            with api._sigbar_lifecycle_lock:
+                # The timer belongs to this exact creation. A shutdown or a
+                # replacement makes it stale; neither may resurrect the old
+                # native window after teardown has begun.
+                if api._sigbar_quitting or api._sigbar_window is not bar:
+                    return
+                bar.show()
+                shown = True
+        except Exception:
+            logger.exception("sig bar window could not be shown")
+        if shown:
             # Same instant-content rule as Api.toggle_sig_bar: the poll is
             # up to 3s away and an empty bar reads as broken.
             api._push_eve_status()
-        except Exception:
-            logger.exception("sig bar window could not be shown")
 
     threading.Timer(0.3, reveal).start()
 

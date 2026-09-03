@@ -737,22 +737,28 @@ def main() -> int:
         # Serialize the native calls, not just their bookkeeping. A concurrent
         # updater/tray request then observes the first call's result and can
         # retry its failure without repeating a successful destruction.
+        # LOCK ORDER: shutdown_lock, then Api._sigbar_lifecycle_lock. Sig-bar
+        # create/show paths never take shutdown_lock, so a creation already in
+        # progress can finish and be observed here without an inversion.
         with shutdown_lock:
-            # The sig bar must be destroyed FIRST. pywebview's WinForms loop is
-            # Application.Run() with no context: it pumps until Application.
-            # Exit(), which fires only when the LAST window is gone. Leaving
-            # the bar alive parks the process inside window_mod.run() forever
-            # after the user chose Quit -- reproduced, not theorised.
-            bar = api._sigbar_window
-            if bar is not None:
-                try:
-                    bar.destroy()
-                except Exception:
-                    logger.exception("Sig bar window did not destroy cleanly")
-                else:
-                    # Do not clear a replacement installed concurrently by
-                    # sig-bar lifecycle code while destroy() was in progress.
-                    if api._sigbar_window is bar:
+            with api._sigbar_lifecycle_lock:
+                # Close the lifecycle before inspecting the window. A creator
+                # that won the lock has already assigned its bar; one that lost
+                # refuses before allocating a native WebView2 window.
+                api._sigbar_quitting = True
+                # The sig bar must be destroyed FIRST. pywebview's WinForms loop
+                # is Application.Run() with no context: it pumps until
+                # Application.Exit(), which fires only when the LAST window is
+                # gone. Leaving the bar alive parks the process inside
+                # window_mod.run() forever after the user chose Quit --
+                # reproduced, not theorised.
+                bar = api._sigbar_window
+                if bar is not None:
+                    try:
+                        bar.destroy()
+                    except Exception:
+                        logger.exception("Sig bar window did not destroy cleanly")
+                    else:
                         api._sigbar_window = None
 
             if window is not None and not main_window_destroyed:
@@ -868,7 +874,7 @@ def main() -> int:
     shutdown_engine(engine)
     # Close updater state before subsystem teardown. This suppresses late
     # worker pushes and removes a ready file on ordinary Quit while retaining
-    # the durable marker/file pair already handed to Setup.
+    # the persistent on-disk marker/file pair already handed to Setup.
     api.shutdown_updates()
     # Last, and unconditional: a preview thread that outlives the window
     # still owns HWNDs, and Wingman leaves the tray but stays in Task

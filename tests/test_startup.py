@@ -246,6 +246,142 @@ def test_update_shutdown_callback_is_idempotent_and_destroys_sigbar_first(startu
     assert events.index("destroy_sigbar") < events.index("destroy_window")
 
 
+def test_create_finishing_after_shutdown_starts_is_seen_and_destroyed(
+    startup, monkeypatch
+):
+    from wingman.ui import sigbar
+
+    create_entered = threading.Event()
+    shutdown_waiting = threading.Event()
+    release_create = threading.Event()
+
+    class ObservedLock:
+        """Signal when shutdown reaches the lock held by create()."""
+
+        def __init__(self):
+            self._lock = threading.RLock()
+
+        def __enter__(self):
+            if not self._lock.acquire(blocking=False):
+                shutdown_waiting.set()
+                self._lock.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self._lock.release()
+
+    class FakeSigBar:
+        def __init__(self):
+            self.destroyed = 0
+
+        def destroy(self):
+            self.destroyed += 1
+
+    bar = FakeSigBar()
+
+    def create_window(*args, **kwargs):
+        create_entered.set()
+        assert release_create.wait(timeout=2)
+        return bar
+
+    monkeypatch.setitem(
+        sys.modules, "webview", SimpleNamespace(create_window=create_window)
+    )
+
+    def during_run():
+        api = startup.captured["api"]
+        api._state.settings["sig_bar"] = {"enabled": True, "x": 1, "y": 2}
+        api._sigbar_lifecycle_lock = ObservedLock()
+        creator = threading.Thread(target=lambda: sigbar.create(api, hidden=True))
+        creator.start()
+        assert create_entered.wait(timeout=2)
+
+        shutdown = threading.Thread(target=api._request_shutdown)
+        shutdown.start()
+        assert shutdown_waiting.wait(timeout=2)
+        release_create.set()
+        creator.join(timeout=2)
+        shutdown.join(timeout=2)
+        assert not creator.is_alive()
+        assert not shutdown.is_alive()
+
+    startup.captured["during_run"] = during_run
+
+    assert main_mod.main() == 0
+    assert bar.destroyed == 1
+    assert startup.captured["api"]._sigbar_window is None
+
+
+def test_shutdown_before_toggle_refuses_late_sigbar_creation(startup, monkeypatch):
+    from wingman.ui import sigbar
+
+    create_calls = []
+
+    def create_after_shutdown(*args, **kwargs):
+        create_calls.append(True)
+        return SimpleNamespace(show=lambda: None)
+
+    monkeypatch.setattr(sigbar, "create", create_after_shutdown)
+
+    def during_run():
+        api = startup.captured["api"]
+        api._request_shutdown()
+        api.toggle_sig_bar(True)
+
+    startup.captured["during_run"] = during_run
+
+    assert main_mod.main() == 0
+    assert create_calls == []
+    assert startup.captured["api"]._sigbar_window is None
+
+
+def test_delayed_reveal_does_not_show_a_bar_destroyed_by_shutdown(startup, monkeypatch):
+    from wingman.ui import sigbar
+
+    reveals = []
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            reveals.append(callback)
+
+        def start(self):
+            pass
+
+    class FakeSigBar:
+        def __init__(self):
+            self.destroyed = 0
+            self.shown = 0
+
+        def destroy(self):
+            self.destroyed += 1
+
+        def show(self):
+            self.shown += 1
+
+    bar = FakeSigBar()
+
+    def create(inner, hidden=True):
+        inner._sigbar_window = bar
+        return bar
+
+    monkeypatch.setattr(sigbar.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(sigbar, "create", create)
+
+    def during_run():
+        api = startup.captured["api"]
+        api._state.settings["sig_bar"] = {"enabled": True, "x": 1, "y": 2}
+        sigbar.restore(api)
+        assert len(reveals) == 1
+        api._request_shutdown()
+        reveals[0]()
+
+    startup.captured["during_run"] = during_run
+
+    assert main_mod.main() == 0
+    assert bar.destroyed == 1
+    assert bar.shown == 0
+
+
 def test_shutdown_retries_only_the_sigbar_after_its_destroy_fails(startup, caplog):
     attempts = []
 

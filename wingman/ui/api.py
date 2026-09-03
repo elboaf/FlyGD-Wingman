@@ -580,6 +580,16 @@ class Api:
         # _window above: a public attribute here reaches the js_api proxy
         # walk and the same RecursionError follows.
         self._sigbar_window = None
+        # Creation, assignment, showing, delayed reveal, and shutdown's
+        # destroy/clear are one lifecycle transaction at a time. RLock lets
+        # toggle_sig_bar hold the boundary while sigbar.create enforces it
+        # independently for startup restore.
+        #
+        # LOCK ORDER: main's shutdown_lock, then this lock. Sig-bar code never
+        # takes shutdown_lock, and neither lock is held while claiming the work
+        # gate; updater handoff marks quitting before it requests teardown.
+        self._sigbar_lifecycle_lock = threading.RLock()
+        self._sigbar_quitting = False
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -2873,8 +2883,9 @@ class Api:
             try:
                 request_shutdown()
             except Exception:
-                # Setup is already launched and durably classified. Per-window
-                # teardown failures are handled inside the retryable callback;
+                # Setup is already launched and classified by its on-disk
+                # handoff marker. Per-window teardown failures are handled
+                # inside the retryable callback;
                 # an unexpected boundary failure still cannot roll back Setup.
                 logger.exception("Window shutdown failed after installer launch")
 
@@ -3546,29 +3557,34 @@ class Api:
 
         on = bool(on)
         settings_mod.update_section(self._state.settings, "sig_bar", {"enabled": on})
-        bar = self._sigbar_window
-        logger.info(
-            "Sig bar toggle: requested %s, window %s.",
-            on,
-            "exists" if bar is not None else "not built yet",
-        )
+        shown = False
         try:
-            if on:
-                if bar is None:
-                    sigbar.create(self, hidden=False)
-                else:
-                    bar.show()
-                # The poll can be up to 3s away; a bar that opens empty for
-                # 3s reads as broken. The page pulls nothing at load, so
-                # this push is its content.
-                self._push_eve_status()
-            elif bar is not None:
-                bar.hide()
+            with self._sigbar_lifecycle_lock:
+                bar = self._sigbar_window
+                logger.info(
+                    "Sig bar toggle: requested %s, window %s.",
+                    on,
+                    "exists" if bar is not None else "not built yet",
+                )
+                if not self._sigbar_quitting:
+                    if on:
+                        if bar is None:
+                            bar = sigbar.create(self, hidden=False)
+                        else:
+                            bar.show()
+                        shown = bar is not None
+                    elif bar is not None:
+                        bar.hide()
         except Exception:
             # A bar that cannot appear is degraded chrome, not a failed
             # setting: the persisted choice stands and the next toggle
             # retries the window.
             logger.exception("sig bar window toggle failed")
+        if shown:
+            # The poll can be up to 3s away; a bar that opens empty for 3s
+            # reads as broken. The page pulls nothing at load, so this push
+            # is its content.
+            self._push_eve_status()
         logger.info(
             "Sig bar toggle done: enabled=%s, visible=%s.",
             self._state.settings["sig_bar"]["enabled"],
