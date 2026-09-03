@@ -117,6 +117,13 @@ def test_defaults_are_the_documented_values():
             "x": None,
             "y": None,
         },
+        # Off by default: starting this creates an additional WebView2 host
+        # and begins shared discovery work only fleet-multiboxers need.
+        "fleet_bar": {
+            "enabled": False,
+            "x": None,
+            "y": None,
+        },
     }
 
 
@@ -220,10 +227,19 @@ def test_load_ignores_unknown_keys(tmp_path):
 
 def test_save_then_load_roundtrips(tmp_path):
     p = tmp_path / "s.json"
-    settings.save({"privacy": "public", "category": "22", "notify_mode": "popup"}, p)
+    settings.save(
+        {
+            "privacy": "public",
+            "category": "22",
+            "notify_mode": "popup",
+            "fleet_bar": {"enabled": True, "x": -320, "y": 48},
+        },
+        p,
+    )
     assert settings.load(p)["privacy"] == "public"
     assert settings.load(p)["notify_mode"] == "popup"
     assert settings.load(p)["category"] == "22"
+    assert settings.load(p)["fleet_bar"] == {"enabled": True, "x": -320, "y": 48}
 
 
 def test_save_creates_parent_directory(tmp_path):

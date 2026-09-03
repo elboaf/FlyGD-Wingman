@@ -302,6 +302,13 @@ def _sig_bar_defaults() -> dict:
     }
 
 
+def _fleet_bar_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Off by default: this starts shared discovery/log work and creates an
+    # additional WebView2 host only after the user asks for it.
+    return {"enabled": False, "x": None, "y": None}
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -368,6 +375,11 @@ DEFAULTS = {
     # The floating sig bar's section: built by _sig_bar_defaults() for the
     # same fresh-dict-every-call reason as the three sections above.
     "sig_bar": _sig_bar_defaults(),
+    # The fleet combat bar's section: built by _fleet_bar_defaults() for
+    # the same fresh-dict-every-call reason as the sections above.  Off by
+    # default: starting it opens a second WebView2 host and begins shared
+    # discovery work that only fleet-multiboxers need.
+    "fleet_bar": _fleet_bar_defaults(),
 }
 
 VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -381,6 +393,7 @@ def _fresh_defaults() -> dict:
     data["preview"] = _preview_defaults()
     data["eve_settings"] = _eve_settings_defaults()
     data["sig_bar"] = _sig_bar_defaults()
+    data["fleet_bar"] = _fleet_bar_defaults()
     return data
 
 
@@ -691,6 +704,21 @@ def validated_sig_bar(raw) -> dict:
     return section
 
 
+def validated_fleet_bar(raw) -> dict:
+    """Same posture as validated_sig_bar: a malformed section falls back
+    whole, a malformed single value falls back alone."""
+    section = _fleet_bar_defaults()
+    if not isinstance(raw, dict):
+        return section
+    if isinstance(raw.get("enabled"), bool):
+        section["enabled"] = raw["enabled"]
+    for key in ("x", "y"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            section[key] = value
+    return section
+
+
 def validated_eve(raw) -> dict:
     section = _eve_defaults()
     if not isinstance(raw, dict):
@@ -785,6 +813,7 @@ def _normalize(data: dict) -> dict:
     data["preview"] = validated_preview(data.get("preview"))
     data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
     data["sig_bar"] = validated_sig_bar(data.get("sig_bar"))
+    data["fleet_bar"] = validated_fleet_bar(data.get("fleet_bar"))
     return data
 
 

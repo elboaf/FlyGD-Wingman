@@ -2718,6 +2718,8 @@ class Api:
                 running.append("Bookmarks")
             if self._state.settings.get("preview", {}).get("enabled"):
                 running.append("Previews")
+            if self._state.settings.get("fleet_bar", {}).get("enabled"):
+                running.append("Fleet Bar")
             if running:
                 return self._field_refused(
                     "Turn off " + " and ".join(running) + " first — hiding "
