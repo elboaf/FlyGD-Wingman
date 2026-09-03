@@ -1665,41 +1665,39 @@ def test_flash_and_speed_share_one_collapsed_advanced_disclosure():
     )
 
 
-def test_the_flashes_select_aria_label_names_the_visible_flashes_word():
-    """Each advanced-row Flashes select carries a visible `<label>Flashes
-    </label>` plus an `aria-label` that disambiguates it by owning event
-    (`aria-label="Combat flash count"`). A screen reader's accessible name
-    computation prefers the `aria-label` outright over the visible label
-    text, so the name it actually announces is "Combat flash count" --
-    which never contains the word "Flashes" the sighted user reads right
-    next to the control. That mismatch between visible label and
-    accessible name is exactly the failure WCAG 2.5.3 Label in Name
-    forbids: a voice-control or switch-access user who speaks the visible
-    word "Flashes" has no match to activate.
+def test_advanced_select_aria_labels_start_with_their_visible_labels():
+    """Each Advanced select needs its visible label plus its owning event.
 
-    The owner disambiguation is still needed -- three Flashes selects on
-    one page are not distinguishable by "Flashes" alone -- so the fix
-    keeps the owner in the name and puts the visible word first, e.g.
-    `aria-label="Flashes: Combat"`.
+    `aria-label` replaces the associated `<label>` in the accessible-name
+    computation, so it starts with the same word a sighted voice-control
+    user sees, then adds the event needed to distinguish three otherwise
+    identical controls. This satisfies WCAG 2.5.3 Label in Name and keeps
+    the spoken order consistent across Flashes and Speed.
     """
     advanced = re.search(
         r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
     )
     assert advanced, "the #alert-advanced disclosure markup is missing"
     body = advanced.group(1)
+    owners = {
+        "combat": "Combat",
+        "decloak": "Decloak",
+        "warp_scramble": "Warp scramble",
+    }
 
     for event in _ALERT_EVENT_IDS:
-        select = re.search(
-            rf'<select class="field" id="alert-event-{event}-flashes"\s+'
-            rf'aria-label="([^"]*)"',
-            body,
-        )
-        assert select, f"{event}'s Flashes select or its aria-label is missing"
-        assert "Flashes" in select.group(1), (
-            f"{event}'s Flashes select aria-label {select.group(1)!r} does not "
-            "contain the visible label word 'Flashes' -- WCAG 2.5.3 Label in "
-            "Name requires the accessible name to contain the visible label"
-        )
+        for control in ("flashes", "speed"):
+            visible = control.title()
+            select = re.search(
+                rf'<select class="field" id="alert-event-{event}-{control}"\s+'
+                rf'aria-label="([^"]*)"',
+                body,
+            )
+            assert select, f"{event}'s {visible} select or its aria-label is missing"
+            assert select.group(1) == f"{visible}: {owners[event]}", (
+                f"{event}'s {visible} select must start its accessible name "
+                "with the visible label, then disambiguate it by event"
+            )
 
 
 def test_alert_advanced_rows_share_deliberate_fixed_columns():
