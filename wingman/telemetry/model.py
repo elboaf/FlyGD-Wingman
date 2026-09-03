@@ -17,7 +17,15 @@ class ClientSessionId:
 
 @dataclass(frozen=True)
 class RosterClient:
-    session_id: ClientSessionId
+    hwnd: int
+    pid: int
+    title: str
+    character: str | None
+    # None for a client whose title is not currently character-derived (a
+    # generic character-selection title). Such clients still appear in the
+    # roster -- Preview identity and reconciliation need every window -- but
+    # carry no Fleet Metrics session.
+    session: ClientSessionId | None
 
 
 @dataclass(frozen=True)
