@@ -72,6 +72,13 @@ SCREENS = (
         True,
     ),
     Screen(
+        "settings-previews-sticky-conflict",
+        "Settings - Previews (conflict at sticky edge)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
         "settings-previews-detail",
         "Settings - Previews (detail)",
         "settings",
@@ -100,6 +107,13 @@ SCREENS = (
         True,
     ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
+    Screen(
+        "settings-alerts-advanced",
+        "Settings - Alerts (advanced pulse behavior)",
+        "settings",
+        "alerts",
+        True,
+    ),
     Screen("settings-general", "Settings - General", "settings", "general", False),
     Screen("profiles", "Profiles", "evesettings", None, True),
     Screen(
@@ -243,6 +257,84 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
             "  pane.scrollTop = pane.scrollHeight;"
         )
+    if screen.key == "settings-previews-sticky-conflict":
+        # Task 5. Tanuki Solette's direct bind (Ctrl+Alt+Right) collides
+        # with cycle_next in the authoritative fixture -- the same
+        # direct-character/cycle conflict test_dev_harness.py already pins
+        # -- and her row is the FIRST offline row, directly under the
+        # sticky column header and the sticky Offline heading once the
+        # pane is scrolled past them. That makes her the one existing
+        # fixture conflict this capture can target without adding new
+        # dev.js data.
+        #
+        # appendBindRow's owner-key contract (previews.js) is
+        # 'character:' + character for a character row; bindConflictId then
+        # keys the conflict div's id off encodeURIComponent(ownerKey). The
+        # conflict div is the row's very next sibling as long as that
+        # character's own Configure detail is not open (appendBindRow only
+        # inserts a detail between them when openDetailName matches), so
+        # closing every inherited detail first (as the groups/narrow stages
+        # already do) keeps that adjacency true here too.
+        #
+        # The scroll position is measured live off the rendered stickies
+        # rather than a hardcoded pixel guess, so it holds if either
+        # sticky's height ever changes: scroll the row to the pane's top
+        # (which is exactly where both stickies pin once scrolled past),
+        # then nudge only far enough that the conflict text clears them,
+        # leaving the row itself at or behind the sticky-header transition
+        # -- the scenario this capture exists to show.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        owner_key_js = json.dumps("character:Tanuki Solette")
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (button) {\n"
+            "    button.click();\n"
+            "  });\n"
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  var conflict = document.getElementById(\n"
+            "    'preview-bind-conflict-' + encodeURIComponent("
+            + owner_key_js
+            + "));\n"
+            "  if (!conflict) {\n"
+            "    throw new Error('Tanuki Solette conflict warning is missing');\n"
+            "  }\n"
+            "  var row = conflict.previousElementSibling;\n"
+            "  if (!row || !row.classList.contains('row')) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning is not directly after its owning row');\n"
+            "  }\n"
+            "  row.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "  var headCell = document.querySelector(\n"
+            "    '#preview-binds .bind-head > span');\n"
+            "  var offlineHeading = document.querySelector(\n"
+            "    '#preview-binds .bind-group:not(:empty)');\n"
+            "  if (!headCell || !offlineHeading) {\n"
+            "    throw new Error('Sticky preview headers are missing');\n"
+            "  }\n"
+            "  var coverBottom = Math.max(\n"
+            "    headCell.getBoundingClientRect().bottom,\n"
+            "    offlineHeading.getBoundingClientRect().bottom);\n"
+            "  var conflictTop = conflict.getBoundingClientRect().top;\n"
+            "  if (conflictTop < coverBottom) {\n"
+            "    pane.scrollTop += (coverBottom - conflictTop);\n"
+            "  }\n"
+            "  var paneRect = pane.getBoundingClientRect();\n"
+            "  var after = conflict.getBoundingClientRect();\n"
+            "  if (after.bottom <= paneRect.top || after.top >= paneRect.bottom) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning is not within the scrollport');\n"
+            "  }\n"
+            "}())"
+        )
     if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
         # Inject only the authoritative fixture, then drive the same Configure
         # and Copy controls a user reaches. Every required step fails closed:
@@ -334,6 +426,21 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  var heading = document.querySelector('#preview-roster-heading');\n"
             "  if (!heading) { throw new Error('Preview roster heading is missing'); }\n"
             "  heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
+    if screen.key == "settings-alerts-advanced":
+        # Task 5. Every id inside #alert-advanced is unchanged from the
+        # primary-table days (0fd49d8), and alerts.js has no listener on
+        # the disclosure's own toggle event, so opening it here is purely
+        # presentational -- no Api call, no click on any control inside it.
+        return (
+            "(function () {\n"
+            "  var details = document.getElementById('alert-advanced');\n"
+            "  if (!details) {\n"
+            "    throw new Error('Alerts advanced disclosure is missing');\n"
+            "  }\n"
+            "  details.open = true;\n"
+            "  details.scrollIntoView({block: 'center', behavior: 'instant'});\n"
             "}())"
         )
     return None

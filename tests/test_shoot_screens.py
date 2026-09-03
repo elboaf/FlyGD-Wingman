@@ -36,7 +36,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 17
+    assert len(to_shoot) == 19
     assert skipped == []
 
 
@@ -54,7 +54,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 13
+    assert len(skipped) == 15
 
 
 def _strip_js_comments(text: str) -> str:
@@ -125,6 +125,7 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         "settings-previews",
         "settings-previews-middle",
         "settings-previews-table",
+        "settings-previews-sticky-conflict",
         "settings-previews-detail",
         "settings-previews-copy",
         "settings-previews-groups",
@@ -302,6 +303,7 @@ def test_manifest_records_what_the_gate_skipped():
         "profiles-account-identity",
         "profiles-backups",
         "settings-alerts",
+        "settings-alerts-advanced",
         "settings-bookmarks",
         "settings-previews",
         "settings-previews-copy",
@@ -309,6 +311,7 @@ def test_manifest_records_what_the_gate_skipped():
         "settings-previews-groups",
         "settings-previews-middle",
         "settings-previews-narrow",
+        "settings-previews-sticky-conflict",
         "settings-previews-table",
         "skills",
     ]
@@ -527,9 +530,11 @@ def test_preview_group_stage_setup_scripts():
 
 
 def test_gate_on_shoots_every_screen_including_new_group_stages():
-    """The representative detail stage brings the gated capture set to 17."""
+    """The representative detail stage brought the gated capture set to 17;
+    Task 5's Alerts Advanced and Previews sticky-conflict stages bring it to
+    19 (see test_gate_on_shoots_nineteen_screens_after_task_5 below)."""
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 17
+    assert len(to_shoot) == 19
     assert skipped == []
 
 
@@ -1473,3 +1478,151 @@ def test_groups_stage_closes_inherited_detail_before_framing_management():
     assert expanded in script
     assert "No preview detail was closed" in script
     assert script.index(expanded) < script.index(".preview-group-manager")
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Alerts Advanced disclosure and Previews sticky-conflict captures
+# ---------------------------------------------------------------------------
+
+
+def test_alerts_advanced_stage_is_present_and_gated():
+    """Task 5: a dedicated capture opens #alert-advanced and frames it,
+    alongside -- not instead of -- the existing settings-alerts capture,
+    which still shows the primary rows/modifiers."""
+    keys = [s.key for s in shoot.SCREENS]
+    assert "settings-alerts" in keys, "the existing Alerts capture must stay"
+    assert "settings-alerts-advanced" in keys, (
+        "settings-alerts-advanced stage missing from SCREENS"
+    )
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    assert screen.route == "settings"
+    assert screen.section == "alerts"
+    assert screen.gated, "settings-alerts-advanced must be gated (EVE required)"
+
+
+def test_alerts_advanced_stage_opens_and_frames_the_disclosure():
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    script = shoot.screen_setup_script(screen)
+    assert script is not None, "settings-alerts-advanced needs a setup script"
+    assert "getElementById('alert-advanced')" in script
+    assert "details.open = true" in script
+    assert "scrollIntoView" in script
+    assert "throw new Error" in script
+
+
+def test_alerts_advanced_stage_does_not_touch_any_bridge_api():
+    """Opening a native <details> is presentation only -- alerts.js has no
+    listener on #alert-advanced (0fd49d8), so this capture must call no
+    Api method and must not simulate a click on any control inside it."""
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "pywebview.api" not in script
+    assert "WM.call(" not in script
+    assert ".click()" not in script
+
+
+def test_previews_sticky_conflict_stage_is_present_and_gated():
+    keys = [s.key for s in shoot.SCREENS]
+    assert "settings-previews-sticky-conflict" in keys, (
+        "settings-previews-sticky-conflict stage missing from SCREENS"
+    )
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    assert screen.route == "settings"
+    assert screen.section == "previews"
+    assert screen.gated, "settings-previews-sticky-conflict must be gated"
+
+
+def test_previews_sticky_conflict_stage_targets_tanukis_owner_prefixed_conflict():
+    """Tanuki Solette's direct bind (Ctrl+Alt+Right) collides with cycle_next
+    in the authoritative fixture (dev.js's fixture comment: "conflicts with
+    All forward"), and her row is the first offline row -- directly under
+    the sticky column header and the sticky Offline heading once the pane
+    is scrolled. That makes her the one fixture conflict this capture can
+    target without fabricating new dev.js data.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "typeof window.onPreviewHotkeys !== 'function'" in script
+    assert "window.onPreviewHotkeys(payload);" in script
+    assert "encodeURIComponent(" in script
+    assert "character:Tanuki Solette" in script
+    assert "preview-bind-conflict-" in script
+    assert "conflict.previousElementSibling" in script
+    assert "throw new Error" in script
+
+
+def test_previews_sticky_conflict_stage_measures_the_real_sticky_headers():
+    """The capture must not hardcode pixel offsets: it measures the
+    rendered column header and Offline heading live via getBoundingClientRect,
+    so it holds if either one's height ever changes."""
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "#preview-binds .bind-head > span" in script
+    assert "#preview-binds .bind-group:not(:empty)" in script
+    assert "getBoundingClientRect()" in script
+    assert "scrollTop" in script
+
+
+def test_previews_sticky_conflict_stage_fails_closed_when_the_owner_row_is_missing():
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "conflict warning is missing" in script.lower()
+    assert "owning row" in script.lower()
+    assert "sticky" in script.lower()
+    assert "scrollport" in script.lower()
+
+
+def test_previews_sticky_conflict_stage_is_read_only():
+    """Same contract as every other fixture-backed previews stage: no
+    bridge writer may be called."""
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    )
+    for writer in writers:
+        assert writer not in script
+
+
+def test_gate_on_shoots_nineteen_screens_after_task_5():
+    """Two new stages join the existing 17: Alerts Advanced and the Previews
+    sticky-conflict capture."""
+    to_shoot, skipped = shoot.screens_for_gate(True)
+    assert len(to_shoot) == 19
+    assert skipped == []
+
+
+def test_gate_off_skips_fifteen_screens_after_task_5():
+    to_shoot, skipped = shoot.screens_for_gate(False)
+    assert [s.key for s in to_shoot] == [
+        "uploader",
+        "settings-uploading",
+        "settings-general",
+        "dialog",
+    ]
+    assert len(skipped) == 15
