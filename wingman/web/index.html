@@ -1915,12 +1915,89 @@
     </section>
   </div>
 
-  <!-- MINIMAL SHELL (SDD task 6): fittings.js fills #fittings-empty from
-       fittings_state's unavailable-state stub. The two-pane curation
-       workspace the real controller answer will drive is Task 9's file,
-       not this markup. -->
+  <!-- The Fittings workspace (SDD task 9). Same two-pane vocabulary Skills
+       already establishes (rail + main pane; see .skills-rail/.skills-main
+       in style.css) rather than a new idiom: a collection rail on the
+       left, a paged, filterable fitting list with one expandable detail
+       row on the right. Selection stays page-owned (fitCheckedIds below)
+       until a curation request crosses the bridge; nothing here sends or
+       rebuilds the whole library on any event -- every list render comes
+       from the bounded page Python already decided.
+
+       Copy selected is deliberately the ONE `.btn.acc` on this route and
+       is reserved, not wired: preflight and execution belong to Task 10,
+       where FittingsController grows the copy engine this button would
+       drive. It stays permanently disabled with a title saying so, so the
+       one accent control this route will use is decided now rather than
+       added as a second accent later (test_no_container_offers_two_
+       primary_actions in test_page_conventions.py already assumes at
+       most one). -->
   <div class="route" id="route-fittings" aria-labelledby="nav-fittings">
-    <p class="empty" id="fittings-empty"></p>
+    <aside class="skills-rail" id="fittings-rail">
+      <div class="rail-block">
+        <p class="rail-count" id="fittings-counts"></p>
+        <button class="btn" id="fittings-refresh-all">Refresh characters</button>
+        <button class="btn" id="fittings-characters-open">Characters…</button>
+      </div>
+      <div class="rail-block rail-plans-block">
+        <div class="rail-head-row">
+          <span class="rail-head">Collections</span>
+        </div>
+        <div class="rail-plans" id="fittings-collections"></div>
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="fittings-collection-new">New collection</button>
+          <button class="linkbtn" id="fittings-collection-rename" disabled>Rename</button>
+          <button class="linkbtn" id="fittings-collection-delete" disabled>Delete</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="skills-main" id="fittings-main">
+      <header class="skills-head">
+        <h1 id="fittings-collection-name">All fittings</h1>
+        <span class="skills-plan-count" id="fittings-collection-count"></span>
+        <button class="btn acc" id="fittings-copy-selected" disabled
+                title="Copying selected fittings to characters is not available yet.">Copy selected</button>
+      </header>
+
+      <div class="skills-notices" id="fittings-notices" hidden></div>
+
+      <div class="skills-filterbar">
+        <input class="field" id="fittings-search" type="text" spellcheck="false"
+               aria-label="Search fittings"
+               placeholder="Search fittings">
+        <select class="field" id="fittings-ship-filter" aria-label="Filter by ship">
+          <option value="">All ships</option>
+        </select>
+        <button class="linkbtn" id="fittings-filter-clear" hidden>Clear filters</button>
+      </div>
+
+      <div class="fit-list" id="fittings-list"></div>
+      <div class="empty" id="fittings-empty"></div>
+
+      <div class="fit-pager" id="fittings-pager" hidden>
+        <button class="linkbtn" id="fittings-page-prev">Previous</button>
+        <span id="fittings-page-label"></span>
+        <button class="linkbtn" id="fittings-page-next">Next</button>
+      </div>
+    </section>
+
+    <!-- The Characters overlay: an app-owned modal, NOT the shared
+         #overlay/#dialog confirm/prompt layer (panel.js's queue answers a
+         single question at a time; this shows a whole roster). Page-
+         initiated confirmations inside it -- forgetting a character --
+         still go through WM.confirm, per DESIGN.md's "never a browser
+         dialog" rule. -->
+    <div class="overlay" id="fittings-characters-overlay" hidden>
+      <div class="dialog" id="fittings-characters-dialog" role="dialog"
+           aria-modal="true" aria-labelledby="fittings-characters-title">
+        <h2 id="fittings-characters-title">Characters</h2>
+        <div class="body" id="fittings-characters-body"></div>
+        <div class="buttons">
+          <button class="btn" id="fittings-characters-close">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="route" id="route-firstrun">

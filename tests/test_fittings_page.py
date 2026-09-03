@@ -105,8 +105,13 @@ def test_fittings_registers_the_enter_leave_contract():
 def test_entry_asks_python_for_state_exactly_once():
     """The route asks; Python does not push unprompted (app.js:139-148's
     rule, restated by skills.js's own `asked` guard). This is the interface
-    the Files list promises: 'route-enter call to fittings_state'."""
-    assert "WM.send('fittings_state')" in FITTINGS_JS
+    the Files list promises: 'route-enter call to fittings_state'.
+
+    Task 9 gave `fittings_state` a `filters` argument (collection scope,
+    search, ship, page), so the literal call is no longer the bare,
+    argument-less form Task 6's stub answered -- only that call still
+    happens exactly once per route entry."""
+    assert "WM.send('fittings_state', " in FITTINGS_JS
     assert "var asked" in FITTINGS_JS or "asked = " in FITTINGS_JS
 
 

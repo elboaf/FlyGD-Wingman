@@ -56,7 +56,8 @@
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSigBarState',
-                 'onSkills', 'onSkillsProgress'];
+                 'onSkills', 'onSkillsProgress',
+                 'onFittingsChanged', 'onFittingsProgress'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {

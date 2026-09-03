@@ -4794,6 +4794,106 @@ button.btn.danger:disabled {
    override they correct is real at every width). This one corrected
    nothing at any width the window has. */
 
+/* ====================== Fittings ======================================
+   The route reuses Skills' rail/main structure verbatim -- `.skills-rail`,
+   `.rail-block`, `.rail-plans`, `.rail-plan`, `.skills-main`,
+   `.skills-head`, `.skills-notices`, `.skills-filterbar` all apply
+   unchanged to index.html's #route-fittings markup, the same way
+   `.rail-plan`/`.rail-item`/`.fm-item` already share one rule across three
+   routes. What follows is only what Skills has no equivalent for: a
+   fitting row (name/ship/meta instead of a character's readiness), its
+   expanded detail (rack-grouped modules instead of a requirement list),
+   and the Characters overlay. */
+
+.fit-list { flex: 1; min-height: 0; overflow-y: auto; width: 100%; }
+.fit-row {
+  border-bottom: 1px solid var(--row-line);
+  border-left: 2px solid transparent;
+}
+.fit-row.open { background: var(--row-hover); border-left-color: var(--row-ring); }
+.fit-row-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+/* .check is a <label>; giving it its own class alongside keeps the
+   selection box out of the row's flex growth without a second wrapper
+   element -- the same shape .fit-char-row uses for its own two-column
+   layout further down. */
+.fit-select { flex: none; }
+.fit-row-toggle {
+  display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0;
+  background: none; border: 0; padding: 4px 0;
+  color: var(--text); font: inherit; font-size: var(--fs-body);
+  cursor: pointer; text-align: left;
+}
+.fit-row-toggle:hover { color: var(--text); }
+.fit-name {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fit-ship { flex: none; color: var(--text-dim); font-size: var(--fs-muted); }
+.fit-meta {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-align: right; color: var(--text-faint);
+  font-size: var(--fs-muted);
+}
+
+.fit-detail {
+  padding: 4px 10px 12px 29px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.fit-description { color: var(--text-dim); font-size: var(--fs-muted); }
+.fit-subhead {
+  font-size: var(--fs-label); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.fit-modules { display: flex; flex-direction: column; gap: 8px; }
+.fit-rack { display: flex; flex-direction: column; gap: 2px; }
+.fit-rack-name {
+  font-size: var(--fs-muted); color: var(--text-dim);
+}
+.fit-item-row {
+  display: flex; align-items: baseline; gap: 6px; padding-left: 8px;
+  font-size: var(--fs-muted);
+}
+.fit-item-qty { color: var(--text-faint); }
+.fit-aliases, .fit-presences, .fit-collections, .fit-supersession,
+.fit-metadata {
+  display: flex; flex-direction: column; gap: 4px;
+}
+/* .fit-metadata's own children default to align-items: stretch (a flex
+   column's own default), which is right for the name/description fields
+   but would stretch Save to the same full width too -- the only button
+   in this pane, and every other button in the app sizes to its label. */
+.fit-metadata button.btn { align-self: flex-start; }
+.fit-alias-row, .fit-presence-row {
+  font-size: var(--fs-muted); color: var(--text-dim);
+}
+.fit-presence-row { display: flex; align-items: baseline; gap: 8px; }
+.fit-presence-name { color: var(--text); }
+.fit-presence-meta { color: var(--text-faint); }
+.fit-description-field { min-height: 60px; resize: vertical; }
+
+.fit-pager {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  gap: 12px; padding-top: 4px; font-size: var(--fs-muted); color: var(--text-dim);
+}
+
+/* The Characters overlay: an app-owned modal reusing .overlay/.dialog
+   (style rules already shared with the confirm/prompt layer), not a
+   second dialog idiom. Its body is a plain roster, not a form, so it gets
+   its own row shape rather than .skills-detail-row's label+field layout. */
+#fittings-characters-dialog { width: min(520px, 92vw); }
+#fittings-characters-body {
+  display: flex; flex-direction: column; gap: 8px; max-height: 50vh;
+  overflow-y: auto;
+}
+.fit-char-row {
+  display: flex; flex-direction: column; gap: 4px; padding: 8px 0;
+  border-bottom: 1px solid var(--row-line);
+}
+.fit-char-row:last-child { border-bottom: 0; }
+.fit-char-name { color: var(--text); }
+.fit-char-status { color: var(--text-faint); font-size: var(--fs-muted); }
+.fit-char-actions { display: flex; align-items: center; gap: 8px; }
+
 /* ====================== reduced motion ==============================
    Both animations below are INFINITE and long-running -- `slide` for the
    entire duration of an ffmpeg stitch, `pulse` for as long as the Google

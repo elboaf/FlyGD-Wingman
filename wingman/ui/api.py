@@ -55,6 +55,7 @@ from .. import (
 from .. import settings as settings_mod
 from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
+from ..eveauth import application as eveauth_application
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import codec as evesettings_codec
 from ..evesettings import formations as evesettings_formations
@@ -198,16 +199,14 @@ def _empty_skills_state(warnings=None) -> dict:
 
 
 def _empty_fittings_state(warnings=None) -> dict:
-    """The Fittings route's only state today.
+    """The Fittings route's answer when no controller is wired.
 
-    The private `_fittings` controller slot may now be wired, but Task 9 owns
-    its public query APIs and payload shape. Until then this remains the
-    minimal-shell stub the SDD ledger's Task 6 ruling calls for, so the
-    route's one bridge call always resolves to a real method instead of a
-    dead button with `bridge: no such method` in the console behind it.
-    Same `warnings`-list convention as `_empty_skills_state`, so a later
-    real payload can keep the same key without the page needing a second
-    renderer.
+    Task 9 replaces the Task 6 stub with real `self._fittings.workspace(...)`
+    delegation; this remains only the safe fallback for a build where the
+    Fittings subsystem failed to construct (see `build_fittings_controller`).
+    Same `warnings`-list convention as `_empty_skills_state`, so the one
+    real payload shape (task 9's `workspace()`) can carry the same key
+    without the page needing a second renderer.
     """
     return {
         "available": False,
@@ -640,6 +639,21 @@ class Api:
         if handler == "onSkills":
             payload = _with_fetch_labels(payload)
         self._push(handler, payload)
+
+    def _push_fittings_changed(self, payload) -> None:
+        """Literal adapter for FittingsController's `changed` callback.
+
+        No presentation labels to add (unlike `_push_skills`): the payload
+        is a small semantic reason/id, never a rendered fitting list --
+        "no whole-library pushes" is the binding rule this method exists to
+        keep. The page re-queries `fittings_state` for whatever it is
+        currently viewing; this only tells it something changed.
+        """
+        self._push("onFittingsChanged", payload)
+
+    def _push_fittings_progress(self, payload) -> None:
+        """Literal adapter for FittingsController's `progress` callback."""
+        self._push("onFittingsProgress", payload)
 
     # The status strip is global chrome: it is the same strip on every
     # route, and app.js deliberately never tells Python which route is
@@ -5867,19 +5881,156 @@ class Api:
 
     # ---- EVE fittings ---
 
-    def fittings_state(self) -> dict:
-        """The Fittings route's state, until Task 9 replaces this with
-        controller delegation.
+    def fittings_state(self, filters=None) -> dict:
+        """The Fittings route's paged workspace: rail, roster, one page.
 
-        Task 6's ruling (see the SDD ledger) adds this stub ahead of the
-        private `_fittings` slot Task 8 wires, so the route's route-enter
-        call always answers rather than throwing at the console with a
-        dead route behind it. There is no controller to consult yet, so
-        this always answers "unavailable" -- it takes no arguments and its
-        answer does not vary, which is what lets fittings.js ask exactly
-        once and cache the result the same way skills.js does.
+        A thin delegate to `FittingsController.workspace`, which owns every
+        query decision (search, collection scope, sort, page bounds) --
+        see the design doc's "backend owns search/collection/sort/page".
+        `filters` is passed through unchanged; the controller is what
+        coerces and bounds it, so a caller that hands over the wrong shape
+        gets the controller's forgiving defaults rather than a second,
+        divergent validation here.
         """
-        return _empty_fittings_state()
+        if self._fittings is None:
+            return _empty_fittings_state(self._authority_warnings)
+        return self._fittings.workspace(filters)
+
+    def fittings_detail(self, entry_id) -> dict | None:
+        """One expanded fitting for the route's detail pane.
+
+        None means "no such entry" (already gone, or a stale page) --
+        distinct from `fittings_state`'s dict-shaped unavailable answer,
+        because the detail pane has nothing to render either way and the
+        page does not need to tell the two apart.
+        """
+        if self._fittings is None:
+            return None
+        return self._fittings.detail(entry_id)
+
+    def fittings_refresh(self, character_ids=None) -> bool:
+        """Start a refresh on a worker; returns before it finishes.
+
+        Unlike Skills' `refresh_characters`, `FittingsController.refresh` is
+        itself a blocking, sequential pass over every target character --
+        it has no internal spawn of its own (task 8's design). Spawning
+        here is what keeps this bridge call from blocking the caller for
+        the length of a multi-character ESI pass; the controller's own
+        `_refresh_gate` still makes concurrent refreshes single-flight, so
+        a second click here just asks a controller that is already busy
+        and gets its `busy` answer back on that worker instead of queuing
+        a second ESI pass.
+        """
+        if self._fittings is None:
+            return False
+        ids = list(character_ids) if isinstance(character_ids, list) else None
+        threading.Thread(
+            target=self._fittings_refresh_worker, args=(ids,), daemon=True
+        ).start()
+        return True
+
+    def _fittings_refresh_worker(self, character_ids) -> None:
+        try:
+            self._fittings.refresh(character_ids)
+        except Exception:
+            logger.exception("Fitting refresh failed")
+        finally:
+            # The controller's own `changed` callback already covers a
+            # resolved type-name batch; this is the one push guaranteed to
+            # fire when a refresh ends, successfully or not, so the page's
+            # "Refreshing..." state is never left stranded on a worker
+            # that raised before reaching that callback.
+            self._push_fittings_changed({"reason": "refresh"})
+
+    def fittings_enable_character(self, character_id) -> bool:
+        """Reauthorize one exact character for Fittings plus its existing
+        capabilities. Same shared `enable_capability` upgrade path the
+        design doc specifies; Fittings is simply its first caller.
+        """
+        if self._authority is None or isinstance(character_id, bool):
+            return False
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            return False
+        if wanted <= 0:
+            return False
+        result = self._authority.enable_capability(wanted, eveauth_application.FITTINGS)
+        if result.error:
+            self._alert(
+                "warning",
+                "Fittings not enabled" if not result.applied else "Fittings enabled",
+                result.error,
+            )
+        return bool(result.applied)
+
+    def fittings_cancel_auth(self) -> bool:
+        if self._authority is not None:
+            self._authority.cancel_auth()
+        return True
+
+    def fittings_forget_character(self, character_id) -> bool:
+        """Forget globally; Fittings cleanup runs as an authority participant."""
+        if self._authority is None or isinstance(character_id, bool):
+            return False
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            return False
+        if wanted <= 0:
+            return False
+        result = self._authority.forget(wanted)
+        if result.error:
+            self._alert(
+                "warning",
+                "Character removal incomplete"
+                if result.applied
+                else "Character not forgotten",
+                result.error,
+            )
+        return result.applied
+
+    # ---- EVE fittings: local curation ---
+    #
+    # Every method below is a thin delegate to FittingsController, which
+    # owns validation, persistence, and the `onFittingsChanged` notify.
+    # `self._fittings is None` answers the same safe no-op every other
+    # bridge method in this app answers when its subsystem is absent.
+
+    def fittings_create_collection(self, name) -> str:
+        if self._fittings is None:
+            return ""
+        return self._fittings.create_collection(name)
+
+    def fittings_rename_collection(self, collection_id, name) -> bool:
+        if self._fittings is None:
+            return False
+        return self._fittings.rename_collection(collection_id, name)
+
+    def fittings_delete_collection(self, collection_id) -> bool:
+        if self._fittings is None:
+            return False
+        return self._fittings.delete_collection(collection_id)
+
+    def fittings_update_metadata(self, entry_id, name, description) -> bool:
+        if self._fittings is None:
+            return False
+        return self._fittings.update_metadata(entry_id, name, description)
+
+    def fittings_set_membership(self, entry_id, collection_id, member) -> bool:
+        if self._fittings is None:
+            return False
+        return self._fittings.set_membership(entry_id, collection_id, member)
+
+    def fittings_set_supersession(self, entry_id, superseded_by) -> bool:
+        if self._fittings is None:
+            return False
+        return self._fittings.set_supersession(entry_id, superseded_by)
+
+    def fittings_delete_entry(self, entry_id) -> bool:
+        if self._fittings is None:
+            return False
+        return self._fittings.delete_entry(entry_id)
 
     def skills_character_detail(self, character_id, plan_name) -> dict:
         if self._skills is None:

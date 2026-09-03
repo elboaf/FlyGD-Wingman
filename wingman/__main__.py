@@ -683,6 +683,11 @@ def build_fittings_controller(api, authority):
             names_path=paths.eve_fittings_names_file(),
             authority=authority,
             alert=api._alert,
+            # Bound methods, never lambdas -- test_the_builder_passes_bound_
+            # methods_not_lambdas records what a lazily-resolved name in a
+            # lambda has already cost this app once (test_skills_wiring.py).
+            changed=api._push_fittings_changed,
+            progress=api._push_fittings_progress,
         )
     except Exception:
         # Fittings are additive. Corrupt or unavailable local state must not

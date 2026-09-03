@@ -293,17 +293,378 @@
     return Promise.resolve(skills);
   };
 
-  // Task 6's minimal shell: the only shape this stub has to answer is the
-  // same unavailable state Api.fittings_state (the real one, pre-Task-9)
-  // always returns, so the harness shows fittings.js's route exactly as
-  // it would render under Python today rather than inventing a workspace
-  // this file does not have yet.
-  api.fittings_state = function () {
-    console.log('DEV api.fittings_state()');
-    return Promise.resolve({
-      available: false,
-      warnings: ['The EVE fitting library is not available yet.']
+  // Task 9's fixture library: enough entries and characters to exercise
+  // every state the workspace can render by hand -- unfiled/filed/
+  // superseded scoping, search and ship filters, a >100-row page 2, an
+  // unresolved type name, a non-deployable (Invalid-flag) fit, and all
+  // four character-access states the Characters overlay can show. This
+  // module is the only file allowed to fabricate data (see the file
+  // banner), so this is where that fabrication lives rather than in
+  // fittings.js.
+  var fittings = {
+    auth_configured: true,
+    auth_in_progress: false,
+    refreshing: false,
+    characters: [
+      { character_id: 90000010, character_name: 'Aria Voss', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000011, character_name: 'Bex Talon', status: 'enabled',
+        fetched_utc: '2026-08-20T08:00:00+00:00',
+        error: 'ESI request failed (500): Internal Server Error', stale: true },
+      { character_id: 90000012, character_name: 'Cato Rune', status: 'enable',
+        fetched_utc: '', error: '', stale: false },
+      { character_id: 90000013, character_name: 'Dess Marlow',
+        status: 'reauthenticate', fetched_utc: '', error: '', stale: false }
+    ],
+    collections: [
+      { id: 'dev-alliance', name: 'Alliance' },
+      { id: 'dev-ratting', name: 'Ratting' }
+    ],
+    entries: [
+      { id: 'fit-rifter-solo', name: 'Rifter - Solo PvP', ship_type_id: 587,
+        ship_name: 'Rifter', description: 'Fast tackle, disengages on a scram.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-01T00:00:00+00:00',
+        updated_utc: '2026-08-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2456, type_name: '150mm Light AutoCannon II', quantity: 3 },
+          { location: 'medium', type_id: 3244, type_name: '1MN Afterburner II', quantity: 1 },
+          { location: 'low', type_id: 519, type_name: 'Gyrostabilizer II', quantity: 2 }
+        ],
+        aliases: [{ name: 'Rifter - Solo PvP', description: '' },
+                  { name: 'Rifter Tackle Fit', description: 'imported alias' }],
+        presences: [
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Rifter - Solo PvP',
+            first_seen_utc: '2026-08-01T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-1' },
+          { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Rifter Tackle Fit',
+            first_seen_utc: '2026-08-05T00:00:00+00:00',
+            last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
+        ] },
+      { id: 'fit-merlin-fleet', name: 'Merlin - Fleet Doctrine', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Standard fleet doctrine fit.',
+        collection_ids: ['dev-alliance'], superseded_by: null, deployable: true,
+        created_utc: '2026-09-01T00:00:00+00:00',
+        updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 },
+          { location: 'medium', type_id: 12613, type_name: 'Medium Shield Extender II', quantity: 2 },
+          { location: 'low', type_id: 519, type_name: 'Gyrostabilizer II', quantity: 1 }
+        ],
+        aliases: [{ name: 'Merlin - Fleet Doctrine', description: '' }],
+        presences: [
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Merlin - Fleet Doctrine',
+            first_seen_utc: '2026-09-01T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-3' }
+        ] },
+      { id: 'fit-merlin-old', name: 'Merlin - Old Doctrine', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Superseded by the current doctrine.',
+        collection_ids: ['dev-alliance'], superseded_by: 'fit-merlin-fleet', deployable: true,
+        created_utc: '2026-06-01T00:00:00+00:00',
+        updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 }
+        ],
+        aliases: [{ name: 'Merlin - Old Doctrine', description: '' }],
+        // No presence left on any character -- exercised as the entry the
+        // Delete flow can actually complete against in the harness.
+        presences: [] },
+      { id: 'fit-unresolved', name: 'Unnamed Import', ship_type_id: 99999,
+        ship_name: '', description: '',
+        collection_ids: ['dev-ratting'], superseded_by: null, deployable: true,
+        created_utc: '2026-09-02T00:00:00+00:00',
+        updated_utc: '2026-09-02T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 88888, type_name: '', quantity: 1 }],
+        aliases: [{ name: 'Unnamed Import', description: '' }],
+        presences: [] },
+      { id: 'fit-noncombat', name: 'Impairor - Rookie', ship_type_id: 590,
+        ship_name: 'Impairor', description: 'A rookie ship template; nothing to copy.',
+        collection_ids: [], superseded_by: null, deployable: false,
+        created_utc: '2026-07-01T00:00:00+00:00',
+        updated_utc: '2026-07-01T00:00:00+00:00',
+        items: [{ location: 'Invalid', type_id: 1, type_name: 'Rookie Fitting', quantity: 1 }],
+        aliases: [{ name: 'Impairor - Rookie', description: '' }],
+        presences: [] },
+      { id: 'fit-stale-owner', name: 'Punisher - Mission Runner', ship_type_id: 598,
+        ship_name: 'Punisher', description: 'Last confirmed before Bex went stale.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-10T00:00:00+00:00',
+        updated_utc: '2026-08-10T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2860, type_name: 'Small Focused Beam Laser II', quantity: 3 }],
+        aliases: [{ name: 'Punisher - Mission Runner', description: '' }],
+        presences: [
+          { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Punisher - Mission Runner',
+            first_seen_utc: '2026-08-10T00:00:00+00:00',
+            last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
+        ] }
+    ]
+  };
+
+  // Over one hundred filler entries so paging (page 2 of the "All
+  // fittings" scope) is reachable by hand rather than only by pytest.
+  (function () {
+    var ships = [
+      { id: 603, name: 'Merlin' }, { id: 587, name: 'Rifter' },
+      { id: 598, name: 'Punisher' }, { id: 594, name: 'Incursus' },
+      { id: 591, name: 'Tormentor' }
+    ];
+    for (var index = 0; index < 108; index += 1) {
+      var ship = ships[index % ships.length];
+      var label = (index < 9 ? '00' : index < 99 ? '0' : '') + (index + 1);
+      fittings.entries.push({
+        id: 'fit-gen-' + index, name: 'Generated Fit ' + label,
+        ship_type_id: ship.id, ship_name: ship.name,
+        description: '', collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-09-01T00:00:00+00:00', updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 1 }],
+        aliases: [{ name: 'Generated Fit ' + label, description: '' }],
+        presences: []
+      });
+    }
+  }());
+
+  var FIT_PAGE_SIZE = 100;
+
+  function fitScoped(collectionId) {
+    if (collectionId === 'unfiled') {
+      return fittings.entries.filter(function (e) { return !e.collection_ids.length; });
+    }
+    if (collectionId === 'superseded') {
+      return fittings.entries.filter(function (e) { return !!e.superseded_by; });
+    }
+    if (collectionId === 'all' || !collectionId) return fittings.entries.slice();
+    return fittings.entries.filter(function (e) {
+      return e.collection_ids.indexOf(collectionId) !== -1;
     });
+  }
+
+  function fitFiltered(scoped, search, shipTypeId) {
+    var out = shipTypeId
+      ? scoped.filter(function (e) { return e.ship_type_id === shipTypeId; })
+      : scoped;
+    var needle = (search || '').trim().toLowerCase();
+    if (!needle) return out;
+    return out.filter(function (e) {
+      if (e.name.toLowerCase().indexOf(needle) !== -1) return true;
+      if ((e.ship_name || '').toLowerCase().indexOf(needle) !== -1) return true;
+      return e.aliases.some(function (a) { return a.name.toLowerCase().indexOf(needle) !== -1; });
+    });
+  }
+
+  function fitCollectionSummaries() {
+    var unfiled = fittings.entries.filter(function (e) { return !e.collection_ids.length; }).length;
+    var superseded = fittings.entries.filter(function (e) { return !!e.superseded_by; }).length;
+    var counts = {};
+    fittings.collections.forEach(function (c) { counts[c.id] = 0; });
+    fittings.entries.forEach(function (e) {
+      e.collection_ids.forEach(function (id) {
+        if (id in counts) counts[id] += 1;
+      });
+    });
+    return [
+      { id: 'all', name: 'All fittings', count: fittings.entries.length },
+      { id: 'unfiled', name: 'Unfiled', count: unfiled },
+      { id: 'superseded', name: 'Superseded', count: superseded }
+    ].concat(fittings.collections.map(function (c) {
+      return { id: c.id, name: c.name, count: counts[c.id] };
+    }));
+  }
+
+  function fitShipOptions(scoped) {
+    var byId = {};
+    scoped.forEach(function (e) {
+      if (!(e.ship_type_id in byId)) byId[e.ship_type_id] = e.ship_name;
+    });
+    return Object.keys(byId).map(function (key) {
+      return { type_id: parseInt(key, 10), name: byId[key] };
+    }).sort(function (a, b) {
+      return (a.name || '').localeCompare(b.name || '') || a.type_id - b.type_id;
+    });
+  }
+
+  function fitSummaryRow(entry) {
+    return {
+      id: entry.id, name: entry.name, ship_type_id: entry.ship_type_id,
+      ship_name: entry.ship_name, collection_ids: entry.collection_ids.slice(),
+      is_unfiled: !entry.collection_ids.length, superseded_by: entry.superseded_by,
+      presence_count: entry.presences.length, deployable: entry.deployable,
+      updated_utc: entry.updated_utc
+    };
+  }
+
+  function fitPushChanged(reason) {
+    // Mirrors production timing: Python's push is fire-and-forget through
+    // evaluate_js, never synchronous with the bridge call that triggered it.
+    setTimeout(function () {
+      if (window.onFittingsChanged) window.onFittingsChanged({ reason: reason });
+    }, 0);
+  }
+
+  api.fittings_state = function (filters) {
+    console.log('DEV api.fittings_state(', filters, ')');
+    filters = filters || {};
+    var collectionId = filters.collection_id || 'all';
+    var page = filters.page && filters.page > 0 ? filters.page : 1;
+    var scoped = fitScoped(collectionId);
+    var filtered = fitFiltered(scoped, filters.search, filters.ship_type_id);
+    filtered = filtered.slice().sort(function (a, b) {
+      var an = a.name.toLowerCase();
+      var bn = b.name.toLowerCase();
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    var start = (page - 1) * FIT_PAGE_SIZE;
+    var rows = filtered.slice(start, start + FIT_PAGE_SIZE).map(fitSummaryRow);
+    return Promise.resolve({
+      available: true,
+      warnings: [],
+      collections: fitCollectionSummaries(),
+      characters: fittings.characters.map(function (ch) {
+        return { character_id: ch.character_id, character_name: ch.character_name,
+                 status: ch.status, fetched_utc: ch.fetched_utc, error: ch.error,
+                 stale: ch.stale };
+      }),
+      ships: fitShipOptions(scoped),
+      rows: rows,
+      total: filtered.length,
+      page: page,
+      page_size: FIT_PAGE_SIZE,
+      filters: { collection_id: collectionId, search: filters.search || '',
+                 ship_type_id: filters.ship_type_id || null },
+      auth_configured: fittings.auth_configured,
+      auth_in_progress: fittings.auth_in_progress,
+      refreshing: fittings.refreshing
+    });
+  };
+
+  api.fittings_detail = function (entryId) {
+    console.log('DEV api.fittings_detail(', entryId, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (!entry) return Promise.resolve(null);
+    return Promise.resolve({
+      id: entry.id, name: entry.name, description: entry.description,
+      ship_type_id: entry.ship_type_id, ship_name: entry.ship_name,
+      items: entry.items, deployable: entry.deployable,
+      collection_ids: entry.collection_ids.slice(), superseded_by: entry.superseded_by,
+      aliases: entry.aliases, presences: entry.presences,
+      created_utc: entry.created_utc, updated_utc: entry.updated_utc
+    });
+  };
+
+  api.fittings_refresh = function (characterIds) {
+    console.log('DEV api.fittings_refresh(', characterIds, ')');
+    fittings.refreshing = true;
+    var targets = characterIds || fittings.characters
+      .filter(function (c) { return c.status === 'enabled'; })
+      .map(function (c) { return c.character_id; });
+    var total = targets.length;
+    if (!total) { fittings.refreshing = false; return Promise.resolve(true); }
+    targets.forEach(function (characterId, index) {
+      setTimeout(function () {
+        if (window.onFittingsProgress) {
+          window.onFittingsProgress({ character_id: characterId, completed: index + 1,
+                                       total: total, error: '' });
+        }
+        if (index === total - 1) {
+          fittings.refreshing = false;
+          fitPushChanged('refresh');
+        }
+      }, (index + 1) * 350);
+    });
+    return Promise.resolve(true);
+  };
+
+  api.fittings_enable_character = function (characterId) {
+    console.log('DEV api.fittings_enable_character(', characterId, ')');
+    var character = fittings.characters.filter(function (c) {
+      return c.character_id === characterId;
+    })[0];
+    if (character) character.status = 'enabled';
+    fitPushChanged('character');
+    return Promise.resolve(!!character);
+  };
+
+  api.fittings_cancel_auth = function () {
+    console.log('DEV api.fittings_cancel_auth()');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_forget_character = function (characterId) {
+    console.log('DEV api.fittings_forget_character(', characterId, ')');
+    fittings.characters = fittings.characters.filter(function (c) {
+      return c.character_id !== characterId;
+    });
+    fitPushChanged('character');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_create_collection = function (name) {
+    console.log('DEV api.fittings_create_collection(', name, ')');
+    var id = 'dev-collection-' + (fittings.collections.length + 1);
+    fittings.collections.push({ id: id, name: name });
+    fitPushChanged('collection');
+    return Promise.resolve(id);
+  };
+
+  api.fittings_rename_collection = function (collectionId, name) {
+    console.log('DEV api.fittings_rename_collection(', collectionId, name, ')');
+    var collection = fittings.collections.filter(function (c) { return c.id === collectionId; })[0];
+    if (collection) collection.name = name;
+    fitPushChanged('collection');
+    return Promise.resolve(!!collection);
+  };
+
+  api.fittings_delete_collection = function (collectionId) {
+    console.log('DEV api.fittings_delete_collection(', collectionId, ')');
+    fittings.collections = fittings.collections.filter(function (c) { return c.id !== collectionId; });
+    fittings.entries.forEach(function (e) {
+      e.collection_ids = e.collection_ids.filter(function (id) { return id !== collectionId; });
+    });
+    fitPushChanged('collection');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_update_metadata = function (entryId, name, description) {
+    console.log('DEV api.fittings_update_metadata(', entryId, name, description, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) { entry.name = name; entry.description = description; }
+    fitPushChanged('metadata');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_set_membership = function (entryId, collectionId, member) {
+    console.log('DEV api.fittings_set_membership(', entryId, collectionId, member, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) {
+      var has = entry.collection_ids.indexOf(collectionId) !== -1;
+      if (member && !has) entry.collection_ids.push(collectionId);
+      if (!member && has) {
+        entry.collection_ids = entry.collection_ids.filter(function (id) { return id !== collectionId; });
+      }
+    }
+    fitPushChanged('collection_membership');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_set_supersession = function (entryId, supersededBy) {
+    console.log('DEV api.fittings_set_supersession(', entryId, supersededBy, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) entry.superseded_by = supersededBy || null;
+    fitPushChanged('supersession');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_delete_entry = function (entryId) {
+    console.log('DEV api.fittings_delete_entry(', entryId, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry && entry.presences.length) return Promise.resolve(false);
+    fittings.entries = fittings.entries.filter(function (e) { return e.id !== entryId; });
+    fittings.entries.forEach(function (e) {
+      if (e.superseded_by === entryId) e.superseded_by = null;
+    });
+    fitPushChanged('delete');
+    return Promise.resolve(!!entry);
   };
 
   api.skills_character_detail = function (id, plan) {
