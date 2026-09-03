@@ -5097,26 +5097,29 @@ class Api:
             self._eve_persist_selection(found)
             return True
 
-    def _eve_persist_selection(self, found, *, profile=None) -> None:
+    def _eve_persist_selection(self, found) -> None:
         """The one place that writes root/server/profile to settings.
 
-        Every explicit selection -- picker, Detect, and eve_settings_select
-        -- discovers a Tree first and persists ITS complete triple here,
-        rather than writing back whatever the caller was originally given.
-        A picked or typed value can be a server or a profile directory, or
-        a legacy root that pointed one or two levels too deep; discover()
-        already normalizes all of those, and persisting anything other
-        than its answer would let the stored root drift out of step with
-        the server/profile that were actually chosen alongside it.
+        Every explicit selection -- picker, Detect, eve_settings_select, and
+        the profile a copy creates -- discovers a Tree first and persists ITS
+        complete triple here, rather than writing back whatever the caller
+        was originally given. A picked or typed value can be a server or a
+        profile directory, or a legacy root that pointed one or two levels
+        too deep; discover() already normalizes all of those, and persisting
+        anything other than its answer would let the stored root drift out of
+        step with the server/profile that were actually chosen alongside it.
+        That is also why there is no per-leg override argument: a caller that
+        wants a particular profile remembered discovers it first (see
+        _eve_select_created_profile) so the whole triple stays consistent,
+        rather than pasting one leg over a Tree that disagrees with it.
         """
-        selected = profile if profile is not None else found.profile
         settings_mod.update_section(
             self._state.settings,
             "eve_settings",
             {
                 "root": str(found.root) if found.root else None,
                 "server": str(found.server) if found.server else None,
-                "profile": str(selected) if selected else None,
+                "profile": str(found.profile) if found.profile else None,
             },
         )
 

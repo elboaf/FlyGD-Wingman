@@ -268,8 +268,13 @@ def _recognized_members(profile: Path) -> list[Path]:
     """The recognized settings files directly inside *profile*, sorted by
     name for a deterministic staging order.
 
+    *profile* is a source for `stage_copy` and the DESTINATION for
+    `publish_replacement`, which is why nothing here says "source": a
+    message naming the wrong end of the copy is the one thing a user
+    reading a failed replacement cannot check.
+
     Both failure modes here abort the whole copy rather than ever
-    publishing a partial clone. A source that cannot be read (vanished,
+    publishing a partial clone. A profile that cannot be read (vanished,
     permission denied) raises instead of being read as "no recognized
     files", which would otherwise let an unreadable source silently
     publish an EMPTY profile. A recognized-looking name that turns out to
@@ -281,9 +286,7 @@ def _recognized_members(profile: Path) -> list[Path]:
     try:
         entries = list(os.scandir(str(profile)))
     except OSError as error:
-        raise OSError(
-            f"Could not read the source profile {profile}: {error}"
-        ) from error
+        raise OSError(f"Could not read the profile {profile}: {error}") from error
     members = []
     for entry in entries:
         if tree.file_kind(entry.path) is None:

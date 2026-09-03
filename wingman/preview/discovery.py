@@ -26,11 +26,12 @@ CLIENT_IMAGE = "exefile.exe"
 
 class EveClientState(enum.Enum):
     """Tri-state probe result for whole-profile writes.
-    
+
     CLOSED: No EVE clients or all candidates failed to resolve as clients.
     RUNNING: At least one EVE client window verified as exefile.exe.
     UNKNOWN: Errors occurred during probe; state cannot be determined.
     """
+
     CLOSED = "closed"
     RUNNING = "running"
     UNKNOWN = "unknown"
@@ -39,10 +40,11 @@ class EveClientState(enum.Enum):
 @dataclass(frozen=True)
 class EveClientProbe:
     """Result of a whole-profile write probe.
-    
+
     state: The tri-state result.
     errors: Exceptions caught during probing (enumeration, PID lookup, image lookup).
     """
+
     state: EveClientState
     errors: tuple[BaseException, ...] = ()
 
@@ -175,67 +177,77 @@ def flush_image_cache_periodically() -> None:
         _IMAGE_CACHE.clear()
 
 
-def probe_eve_client_state(enumerator=None, pids=None, image_name=None) -> EveClientProbe:
+def probe_eve_client_state(
+    enumerator=None, pids=None, image_name=None
+) -> EveClientProbe:
     """Tri-state probe for whole-profile writes: CLOSED, RUNNING, or UNKNOWN.
-    
-    Examines all windows beginning with TITLE_PREFIX ("EVE - "), collecting
-    errors for zero PIDs, None images, and caught exceptions. Returns:
-    - UNKNOWN if any errors occur (fail-closed for safety)
-    - RUNNING if at least one candidate verifies as CLIENT_IMAGE (exefile.exe)
-    - CLOSED otherwise (no EVE clients found)
-    
-    Does NOT route through list_clients().
+
+    Considers every window whose title starts with "EVE" -- the same wide net
+    list_clients casts, not TITLE_PREFIX's narrower "EVE - ". A client whose
+    title has not yet gained its character suffix (the launcher hand-off
+    window, a client still loading) is exactly the one this probe must not
+    miss, and TITLE_PREFIX would skip it silently.
+
+    Deliberately NOT routed through list_clients(): that function's whole
+    contract is to SKIP a window it cannot resolve, which is right for
+    drawing previews and wrong here. Every unresolvable candidate is
+    collected as an error instead, and any error at all makes the answer
+    UNKNOWN -- fail-closed, because the caller is about to rewrite a whole
+    profile and "probably closed" is a guess in the dangerous direction.
+    RUNNING needs one candidate verified as CLIENT_IMAGE; CLOSED is what is
+    left when nothing errored and nothing verified.
     """
     if sys.platform != "win32" and enumerator is None:
         return EveClientProbe(state=EveClientState.CLOSED)
-    
+
     enumerator = enumerator or evewindows._enumerate_windows
     pids = pids or _pid_for_window
     image_name = image_name or _image_name_for_pid
-    
+
     errors: list[BaseException] = []
     found_running = False
-    
+
     try:
         windows = enumerator()
-    except Exception as e:
-        errors.append(e)
+    except Exception as error:  # noqa: BLE001 - collected, not swallowed: it is returned on EveClientProbe.errors and forces UNKNOWN
+        errors.append(error)
         return EveClientProbe(state=EveClientState.UNKNOWN, errors=tuple(errors))
-    
-    # Examine every window starting with "EVE"
+
     for hwnd, title in windows:
         if not title.startswith("EVE"):
             continue
-        
-        # Try to resolve PID
+
         try:
             pid = pids(hwnd)
-        except Exception as e:
-            errors.append(e)
+        except Exception as error:  # noqa: BLE001 - collected, not swallowed: see the enumerator handler above
+            errors.append(error)
             continue
-        
-        # Fail-closed: zero PID is an error condition
+
+        # A zero PID is a failed lookup, not an absent client. Synthesised as
+        # an error so it reaches UNKNOWN rather than reading as "not a client".
         if not pid:
             errors.append(OSError(f"Zero PID for window 0x{hwnd:x}"))
             continue
-        
-        # Try to resolve image name
+
         try:
             resolved_image = image_name(pid)
-        except Exception as e:
-            errors.append(e)
+        except Exception as error:  # noqa: BLE001 - collected, not swallowed: see the enumerator handler above
+            errors.append(error)
             continue
-        
-        # Fail-closed: None image (access denied) is an error condition
+
+        # None means the process could not be opened. list_clients reads that
+        # as "owned by another user, not a client"; here it is unresolved, and
+        # an unresolved EVE-titled window is precisely the doubt this probe
+        # exists to report.
         if resolved_image is None:
-            errors.append(OSError(f"Cannot resolve image for PID {pid} (window 0x{hwnd:x})"))
+            errors.append(
+                OSError(f"Cannot resolve image for PID {pid} (window 0x{hwnd:x})")
+            )
             continue
-        
-        # Check if it's a real EVE client
+
         if resolved_image == CLIENT_IMAGE:
             found_running = True
-    
-    # Tri-state logic: UNKNOWN dominates, then RUNNING, then CLOSED
+
     if errors:
         return EveClientProbe(state=EveClientState.UNKNOWN, errors=tuple(errors))
     if found_running:

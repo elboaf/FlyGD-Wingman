@@ -133,8 +133,44 @@ def test_profile_probe_states(windows, pid, image, expected):
     assert result.state is expected
 
 
+def test_probe_reports_a_zero_pid_as_a_collected_error():
+    """A zero PID is a failed lookup, not an absent client.
+
+    The state alone cannot tell the two synthesised failures apart from a
+    caught exception, and _eve_profile_copy_refusal logs probe.errors as the
+    only account of WHY it refused a whole-profile write. An empty errors
+    tuple beside an UNKNOWN state would leave that refusal unexplainable."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(0x10, "EVE - Alice")],
+        pids=lambda _hwnd: 0,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], OSError)
+    assert "0x10" in str(result.errors[0])
+
+
+def test_probe_reports_an_unresolvable_image_as_a_collected_error():
+    """None from image_name means the process could not be opened.
+
+    list_clients reads that as "owned by another user, not a client" and
+    skips it; the probe must instead name it, for the same reason as the
+    zero-PID case above."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(0x10, "EVE - Alice")],
+        pids=lambda _hwnd: 7,
+        image_name=lambda _pid: None,
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], OSError)
+    assert "7" in str(result.errors[0])
+
+
 def test_probe_enumerator_exception_is_collected():
     """Enumerator exception collects as an error; probe returns UNKNOWN."""
+
     def boom():
         raise OSError("no window station")
 
@@ -150,6 +186,7 @@ def test_probe_enumerator_exception_is_collected():
 
 def test_probe_pid_exception_is_collected():
     """PID lookup exception collects as an error; with EVE window, returns UNKNOWN."""
+
     def boom(_hwnd):
         raise OSError("process disappeared")
 
@@ -164,6 +201,7 @@ def test_probe_pid_exception_is_collected():
 
 def test_probe_image_exception_is_collected():
     """Image lookup exception collects as an error; with EVE window, returns UNKNOWN."""
+
     def boom(_pid):
         raise OSError("access denied")
 
@@ -178,6 +216,7 @@ def test_probe_image_exception_is_collected():
 
 def test_probe_mixed_known_and_unresolved_returns_unknown():
     """UNKNOWN dominates: if any candidate has errors, probe returns UNKNOWN."""
+
     def pids(hwnd):
         if hwnd == 1:
             return 7
@@ -192,11 +231,16 @@ def test_probe_mixed_known_and_unresolved_returns_unknown():
     assert len(result.errors) > 0
 
 
-def test_probe_preserves_list_clients_strict_compatibility():
-    """list_clients with strict=True still works unchanged."""
-    # Existing behavior: strict=True propagates exceptions from enumerator
-    def boom():
-        raise OSError("no window station")
+def test_probe_does_not_widen_the_title_net_to_non_eve_windows():
+    """Only EVE-titled windows are probed at all.
 
-    with pytest.raises(OSError, match="no window station"):
-        discovery.list_clients(enumerator=boom, strict=True)
+    An unresolvable window that is not EVE's is not doubt about EVE, and
+    collecting it would make every machine with one locked-down process
+    permanently UNKNOWN -- a refusal the user could never clear."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(0x20, "Firefox")],
+        pids=lambda _hwnd: 0,
+        image_name=lambda _pid: None,
+    )
+    assert result.state is discovery.EveClientState.CLOSED
+    assert result.errors == ()
