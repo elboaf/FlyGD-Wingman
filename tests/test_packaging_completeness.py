@@ -24,6 +24,14 @@ MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
 MANUAL_UPDATE_HARNESS = ROOT / "tests" / "manual" / "update_harness.py"
 
 
+def test_readme_discloses_automatic_github_update_checks():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "GitHub release API" in readme
+    assert "once each time Wingman starts" in readme
+    assert "SHA-256" in readme
+    assert "does not prove publisher identity" in readme
+
+
 def test_every_subpackage_is_declared():
     with (ROOT / "pyproject.toml").open("rb") as fh:
         declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])

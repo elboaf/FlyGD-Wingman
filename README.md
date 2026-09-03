@@ -136,8 +136,9 @@ which requires this scope. Wingman makes no other YouTube API call.
 - **Your Google credentials are stored locally**, on your own computer, by the
   desktop application. See [Where credentials live](#where-credentials-live).
 - **Google OAuth tokens are not sent to any FlyGD server.** Wingman has no
-  backend. It talks to Google directly and to a Discord webhook you configure;
-  there is nothing else it can talk to.
+  backend. It talks directly to Google, to a Discord webhook you configure,
+  and to GitHub's release API for update checks; none of those requests sends
+  your Google OAuth token to FlyGD.
 - **Video data goes straight from your computer to Google.** The upload is a
   resumable upload made by the application to the YouTube Data API. It does
   not pass through any FlyGD-controlled infrastructure.
@@ -240,10 +241,22 @@ Notes:
 Python, FFmpeg, and the OAuth client configuration are bundled — there is no
 separate OBS script to install, and no Google Cloud project for you to set up.
 
+Once each time Wingman starts, it checks the GitHub release API in the
+background for a newer stable release. If one is available, the Settings gear
+shows a dot and **Settings → General → About Wingman** offers **Download
+update**. **Check again** repeats only the release check; the installer is not
+downloaded until you choose **Download update**, and it is never installed
+until you confirm. Wingman checks the downloaded size and GitHub-published
+SHA-256 before opening the normal visible installer. That SHA-256 provides
+same-channel integrity — it confirms that the download matches GitHub's
+release record — but it does not prove publisher identity because the asset
+and digest come from the same source.
+
 **Windows will warn you** that it "protected your PC": the installer and the
-application are not code-signed. Click **More info** → **Run anyway**. This
-happens once per machine, for the installer and for the first launch. This is
-about code signing, and is unrelated to Google sign-in.
+application are not code-signed. Guided updates keep this warning and the
+visible installer rather than bypassing either one. Click **More info** → **Run
+anyway**. This happens once per machine, for the installer and for the first
+launch. This is about code signing, and is unrelated to Google sign-in.
 
 ## Settings
 
@@ -274,16 +287,16 @@ and no telemetry. Everything it stores — your settings, your Google OAuth
 token, its log file, and temporary stitched video files — lives under
 `%LOCALAPPDATA%\FlyGD Wingman\` on your own machine.
 
-The application makes network connections to exactly two places, both of which
-you initiate:
+The application makes network connections to three places:
 
 | Destination | When | What is sent |
 |---|---|---|
+| GitHub release API and release downloads | The release API is checked once each time Wingman starts, including when Windows starts it hidden at sign-in. **Check again** makes another check; **Download update** explicitly downloads the installer. There is no polling or automatic download. | The installed Wingman version and ordinary network connection metadata. No Wingman settings, EVE or Google account data, filenames, recordings, or telemetry are sent. |
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
 | A Discord webhook you configure | You press **Upload** with **Also post combat logs to Discord** ticked | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
 
-Your Google account data is never sent to Discord, and no Google OAuth token
-ever leaves your machine. Full statement:
+Your Google account data is never sent to Discord or GitHub, and no Google
+OAuth token ever leaves your machine. Full statement:
 [Privacy Policy](https://wingman.zoolanders.vip/privacy) ·
 [Terms of Service](https://wingman.zoolanders.vip/terms).
 

@@ -20,8 +20,15 @@ Every rule below is here because it was broken and shipped:
 import pathlib
 import re
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+WEB = ROOT / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
+
+
+def test_design_records_the_global_badge_fetch_exception():
+    design = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    assert "update availability" in design.lower()
+    assert "after the page is ready" in design.lower()
 
 
 def _settings_route() -> str:
