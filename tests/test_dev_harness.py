@@ -114,7 +114,6 @@ def test_every_bridge_method_the_page_calls_has_a_double():
         "bookmarks.js: parse_bind",
         "bookmarks.js: reset_binds",
         "bookmarks.js: save_bookmarks",
-        "evesettings.js: eve_settings_copy_profile",
         "firstrun.js: skip_first_run",
         "list.js: open_recording_dir",
         "previews.js: alert_bookmarks",
@@ -459,6 +458,239 @@ def test_profiles_delayed_mutation_logs_every_received_argument():
         "the delayed mutation must preserve and log all arguments, including "
         "eve_settings_copy's third group-id argument"
     )
+
+
+# Task 7: the whole-profile copy double. Named by the scenario a session
+# needs to eyeball rather than by an implementation detail, so a driver or
+# a branch that stops being reachable from any of these names is caught
+# rather than silently orphaned.
+PROFILE_COPY_SCENARIOS = {
+    "multiple": "multiple profiles with Default selected",
+    "new-disclosure": "new profile disclosure",
+    "replace-disclosure": "replace profile disclosure",
+    "invalid-name": "invalid name",
+    "collision": "case-insensitive collision",
+    "busy": "accepted busy operation",
+    "created": "successful create with selected destination",
+    "replaced": "successful replace with retained source",
+    "eve-running": "EVE-running refusal",
+    "rollback-failed": "rollback failure",
+    "unsaved-selection": "created profile with unsaved selection",
+}
+
+
+def _profile_copy_stub_body() -> str:
+    match = re.search(
+        r"api\.eve_settings_copy_profile = function "
+        r"\(expectedSource, mode, destination\) \{(.*?)\n  \};",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, (
+        "dev.js must double eve_settings_copy_profile(expectedSource, mode, destination)"
+    )
+    return match.group(1)
+
+
+def _profile_copy_driver_body() -> str:
+    match = re.search(
+        r"function paintProfileCopyScenario\(\) \{(.*?)\n  \}", DEV_JS, re.DOTALL
+    )
+    assert match, (
+        "dev.js must drive every profile-copy checkpoint through real controls"
+    )
+    return match.group(1)
+
+
+def test_profile_copy_double_validates_the_frozen_source_before_anything_else():
+    """The stub's own contract, from the brief: a stale expected-source token
+    is refused inline, exactly as Api.eve_settings_copy_profile refuses it,
+    and never reaches a scenario branch."""
+    body = _profile_copy_stub_body()
+    guard = (
+        "if (expectedSource !== eve.profile) {\n"
+        "      return Promise.resolve({ accepted: false, "
+        "error: 'The selected profile changed.' });\n"
+        "    }"
+    )
+    assert guard in body
+    assert body.index(guard) < body.index("profileCopyScenario")
+
+
+def test_profile_copy_double_completes_through_the_single_profiles_handler():
+    """onEveSettingsDone is the one completion channel for every Profiles
+    mutation (test_bridge_contract.py pins this on the Python side); a
+    second handler here would let this double drift from what the bridge
+    can ever actually send."""
+    body = _profile_copy_stub_body()
+    assert "window.onEveSettingsDone(" in body
+    assert not re.search(r"window\.on(?!EveSettingsDone\b)\w*\(", body), (
+        "the profile-copy double must not push any handler but onEveSettingsDone"
+    )
+
+
+def test_profile_copy_scenario_selector_covers_every_named_checkpoint_once():
+    assert ".get('profile')" in DEV_JS
+    stub = _profile_copy_stub_body()
+    driver = _profile_copy_driver_body()
+    for key in PROFILE_COPY_SCENARIOS:
+        mentions = DEV_JS.count("'" + key + "'")
+        assert mentions >= 1, key
+    # "multiple" names the base fixture rather than a branch of its own, so
+    # it is a driver no-op; every other scenario must appear in BOTH the
+    # stub (what happens) and the driver (how a session reaches it).
+    for key in PROFILE_COPY_SCENARIOS:
+        if key == "multiple":
+            continue
+        assert "'" + key + "'" in driver, key
+    for key in (
+        "invalid-name",
+        "collision",
+        "busy",
+        "created",
+        "eve-running",
+        "rollback-failed",
+        "unsaved-selection",
+    ):
+        assert "'" + key + "'" in stub, key
+
+
+def test_profile_copy_scenario_requested_reopens_the_profiles_route():
+    assert "var profileCopyScenario = identitySearch.get('profile') || '';" in DEV_JS
+    assert "|| profileCopyScenario)" in DEV_JS
+
+
+def test_profile_copy_driver_opens_and_submits_through_real_controls():
+    """Every checkpoint but the two disclosures is reached by opening the
+    real panel and pressing the real submit button -- never a harness-only
+    shortcut a real session could not also take."""
+    driver = _profile_copy_driver_body()
+    assert "WM.el('es-profile-copy-open').click()" in driver
+    assert "WM.el('es-profile-copy-submit').click()" in driver
+    assert "WM.el('es-profile-copy-replace').click()" in driver
+
+
+def test_profile_copy_invalid_name_and_collision_are_canned_not_computed():
+    """Scenario-specific branches may return the approved inline errors, but
+    must not perform filesystem-like validation in JavaScript -- so neither
+    branch may examine the destination or mode it was actually sent."""
+    stub = _profile_copy_stub_body()
+    invalid = re.search(
+        r"if \(profileCopyScenario === 'invalid-name'\) \{(.*?)\n    \}",
+        stub,
+        re.DOTALL,
+    )
+    assert invalid, "the invalid-name checkpoint must have its own branch"
+    assert "Profile name cannot be empty." in invalid.group(1)
+    assert "destination" not in invalid.group(1)
+    collision = re.search(
+        r"if \(profileCopyScenario === 'collision'\) \{(.*?)\n    \}",
+        stub,
+        re.DOTALL,
+    )
+    assert collision, "the collision checkpoint must have its own branch"
+    assert "already exists" in collision.group(1)
+
+
+def test_profile_copy_busy_scenario_never_settles():
+    """The accepted-busy checkpoint exists to show the disabled controls
+    while a copy is in flight, so its own branch must suppress the
+    completion push the way the character-copy busy fixture already does."""
+    stub = _profile_copy_stub_body()
+    assert "if (profileCopyScenario === 'busy') return;" in stub
+    assert stub.index("if (profileCopyScenario === 'busy') return;") < stub.index(
+        "window.onEveSettingsDone("
+    )
+
+
+def test_profile_copy_created_scenario_selects_the_new_destination():
+    """Mirrors Api.eve_settings_copy_profile: a successful creation adds the
+    new profile to the list AND moves the selection onto it."""
+    stub = _profile_copy_stub_body()
+    created = re.search(
+        r"if \(profileCopyScenario === 'created'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert created, "the created checkpoint must have its own branch"
+    body = created.group(1)
+    assert "eve.profiles = eve.profiles.concat(" in body
+    assert "eve.profile = createdProfile.path;" in body
+
+
+def test_profile_copy_replaced_scenario_never_moves_the_selection():
+    """Replacement never moves the selection (design's own rule), so the
+    only `eve.profile =` assignment anywhere in the double must belong to
+    the created/unsaved-selection creation paths, never to replace."""
+    stub = _profile_copy_stub_body()
+    assignments = re.findall(r"eve\.profile = [^;]+;", stub)
+    assert assignments == ["eve.profile = createdProfile.path;"], assignments
+
+
+def test_profile_copy_eve_running_refusal_matches_the_python_message():
+    stub = _profile_copy_stub_body()
+    running = re.search(
+        r"if \(profileCopyScenario === 'eve-running'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert running, "the eve-running checkpoint must have its own branch"
+    body = running.group(1)
+    assert "payload.ok = false;" in body
+    assert "payload.published = false;" in body
+    assert "EVE is running. Close EVE and retry." in body
+
+
+def test_profile_copy_rollback_failure_names_backups_as_the_recovery_path():
+    """The message a caught, unrecovered publication failure shows: the
+    archive is now the only way back, and Backups is where it is restored
+    from -- see Api._eve_copy_profile_worker's own \"Restore ... from
+    Backups\" wording."""
+    stub = _profile_copy_stub_body()
+    rollback = re.search(
+        r"if \(profileCopyScenario === 'rollback-failed'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert rollback, "the rollback-failed checkpoint must have its own branch"
+    body = rollback.group(1)
+    assert "payload.ok = false;" in body
+    assert "payload.published = false;" in body
+    assert "could not put it back" in body
+    assert "from Backups." in body
+
+
+def test_profile_copy_unsaved_selection_matches_the_python_warning():
+    """Api._eve_select_created_profile's own failure text: the profile
+    exists and is offered back, but the selection itself was not saved."""
+    stub = _profile_copy_stub_body()
+    unsaved = re.search(
+        r"if \(profileCopyScenario === 'unsaved-selection'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert unsaved, "the unsaved-selection checkpoint must have its own branch"
+    body = unsaved.group(1)
+    assert "payload.selection_persisted = false;" in body
+    assert "could not remember the selection" in body
+    assert "Select it from Profile." in body
+    # And it must NOT move the selection -- that is exactly what it failed
+    # to do.
+    assert "eve.profile = " not in body
+
+
+def test_the_base_profiles_fixture_offers_a_second_profile_for_replace_targets():
+    """Every profile-copy checkpoint needs a real replace target, and
+    'multiple profiles with Default selected' names this as its own
+    checkpoint: the single-profile fixture before this task could never
+    show the Replace disclosure's destination dropdown populated."""
+    match = re.search(r"profiles: \[(.*?)\],\n", DEV_JS, re.DOTALL)
+    assert match, "dev.js must declare the fixture's profiles list"
+    paths = re.findall(r"path: '([^']+)'", match.group(1))
+    names = re.findall(r"name: '([^']+)'", match.group(1))
+    assert len(paths) >= 2, "the fixture needs a second profile as a replace target"
+    assert "Default" in names
+    assert "server: 'tq', profile: 'default'," in DEV_JS
 
 
 def _dev_preview_fixture() -> dict:

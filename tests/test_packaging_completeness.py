@@ -30,6 +30,21 @@ def test_every_subpackage_is_declared():
     assert on_disk <= declared, f"undeclared packages: {sorted(on_disk - declared)}"
 
 
+def test_profilecopy_module_ships_under_the_already_declared_evesettings_package():
+    """Whole-profile copy (wingman/evesettings/profilecopy.py) added no new
+    subpackage -- it is a module inside wingman.evesettings, which
+    pyproject.toml already lists. `test_every_subpackage_is_declared` above
+    only ever sees __init__.py directories, so it would stay silent if this
+    file were ever hoisted into its own undeclared subpackage (e.g.
+    wingman.evesettings.profilecopy as a package). This pins both halves of
+    that assumption directly, without touching pyproject.toml."""
+    module = ROOT / "wingman" / "evesettings" / "profilecopy.py"
+    assert module.is_file(), "profilecopy.py must live inside wingman/evesettings/"
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])
+    assert "wingman.evesettings" in declared
+
+
 CODEC = (
     ROOT
     / "packaging"
