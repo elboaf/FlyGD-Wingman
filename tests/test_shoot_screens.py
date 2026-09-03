@@ -1592,7 +1592,8 @@ def test_previews_sticky_conflict_stage_opens_the_lower_detail_before_positionin
     assert script is not None
 
     long_name = "Aleksandrina Shadowbanes Voidstriders"
-    detail_index = script.find(long_name)
+    detail_selector = f'[data-preview-configure="{long_name}"]'
+    detail_index = script.find(detail_selector)
     aiga_index = script.find("character:Aiga Otsolen")
     assert detail_index != -1, (
         "the script must reference Aleksandrina's Configure control"

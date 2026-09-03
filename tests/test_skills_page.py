@@ -727,6 +727,10 @@ def test_the_roster_has_its_own_persistent_heading():
         BODY,
     )
     assert heading, "the roster's persistent heading is gone"
+    assert heading.group(0).startswith("<h2"), (
+        "Characters is a section under the selected plan's h1, so it must not "
+        "skip directly to h3 in the document outline"
+    )
     assert heading.group(1).strip() == "Characters", (
         "the roster heading no longer names what it heads, in the same "
         "vocabulary the rest of the route already uses (Add character, "
