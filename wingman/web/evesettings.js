@@ -38,6 +38,12 @@
   var rosterAccountId = '';
   var additionAvailable = false;
   var identityRouteOpen = false;
+  // The identification generation last observed from Python (Task 5's
+  // compare-and-publish scheme). A response or push carrying an older
+  // number than this is stale -- superseded by a cancel, a restart, or a
+  // deletion the page has already applied -- and must be discarded rather
+  // than repainted.
+  var identificationGeneration = 0;
 
   function kind() {
     var checked = document.querySelector('input[name="es-kind"]:checked');
@@ -288,13 +294,14 @@
     var identified = accounts.filter(function (account) {
       return account.account_name;
     }).length;
-    var canIdentify = !!(state && state.accounts.length
-      && state.characters.length);
+    var canIdentify = !!(state && state.account_identity_available
+      && state.accounts.length && state.characters.length);
     // Discovery guidance only has meaning after Python has identified the
     // selected profile it searched. Before then, folder/profile setup owns
     // recovery; showing account guidance would diagnose an empty search.
     var profileSelected = !!(state && state.root && state.profile);
-    WM.el('es-account-tools').hidden = !accountsMode || !profileSelected;
+    WM.el('es-account-tools').hidden = !accountsMode || !profileSelected
+      || !(state && state.account_identity_available);
     WM.el('es-account-summary').textContent = identified + ' of '
       + accounts.length + ' accounts identified';
     WM.el('es-account-guidance').textContent = !accounts.length
@@ -450,6 +457,27 @@
         : step === 'roster' ? 'ai-roster-heading' : 'ai-intro-heading');
       heading.focus();
     }
+  }
+
+  function acceptIdentification(result) {
+    // Generation is the response's substance, not decoration (Task 5): a
+    // check whose candidate already lost the race, or a start/cancel that
+    // resolves after a newer one, carries a number this rejects on sight.
+    var generation = result && result.identification_generation;
+    if (typeof generation !== 'number') return false;
+    if (generation < identificationGeneration) return false;
+    identificationGeneration = generation;
+    return true;
+  }
+
+  // Shared by every route out of the focused flow: the ephemeral candidate,
+  // the character pending a name, and the roster in progress all belong to
+  // one identification pass and must not survive past it.
+  function clearIdentification() {
+    identifyCandidate = null;
+    pendingCharacterId = '';
+    rosterAccountId = '';
+    identityMessage = '';
   }
 
   function renderCandidate(payload) {
@@ -963,18 +991,13 @@
       renderIdentity();
     });
 
-    function clearIdentification() {
-      identifyCandidate = null;
-      pendingCharacterId = '';
-      rosterAccountId = '';
-      identityMessage = '';
-    }
-
     function backToProfiles() {
-      WM.send('eve_settings_identification_cancel').then(function () {
-        if (state) state.identification_active = false;
-        clearIdentification();
-        identityStep = 'idle';
+      WM.send('eve_settings_identification_cancel').then(function (result) {
+        if (acceptIdentification(result)) {
+          if (state) state.identification_active = false;
+          clearIdentification();
+          identityStep = 'idle';
+        }
         identityRouteOpen = false;
         WM.route('evesettings');
       });
@@ -1006,23 +1029,31 @@
 
     WM.el('es-identify-start').addEventListener('click', function () {
       WM.send('eve_settings_identification_start').then(function (result) {
-        var step = result && result.status === 'watching' ? 'watching' : 'idle';
+        if (!acceptIdentification(result)) return;
+        var step = result.status === 'watching' ? 'watching' : 'idle';
         if (state) state.identification_active = step === 'watching';
         clearIdentification();
-        paintIdentification(step, result && result.error);
+        paintIdentification(step, result.error);
         setBusy(busy);
       });
     });
 
     WM.el('es-identify-check').addEventListener('click', function () {
       WM.send('eve_settings_identification_check').then(function (result) {
-        if (result && result.status === 'candidate') {
+        if (!acceptIdentification(result)) return;
+        if (result.status === 'cancelled') {
+          // Binding ruling (Task 5 review): a generation-cancelled check
+          // must read as idle with no message, not fall through to the
+          // generic branch below and falsely paint watching/no-changes.
+          if (state) state.identification_active = false;
+          clearIdentification();
+          paintIdentification('idle');
+        } else if (result.status === 'candidate') {
           if (state) state.identification_active = true;
           renderCandidate(result);
         } else {
-          var busyError = result && result.status === 'busy';
-          var restart = result && (result.status === 'invalidated'
-            || result.status === 'error');
+          var busyError = result.status === 'busy';
+          var restart = result.status === 'invalidated' || result.status === 'error';
           if (restart) {
             if (state) state.identification_active = false;
             clearIdentification();
@@ -1035,12 +1066,12 @@
             result.error);
           } else {
             if (state) {
-              state.identification_active = !!result && (result.status === 'watching'
-                || result.status === 'none' || result.status === 'ambiguous');
+              state.identification_active = result.status === 'watching'
+                || result.status === 'none' || result.status === 'ambiguous';
             }
             identifyCandidate = null;
             pendingCharacterId = '';
-            paintIdentification('watching', result && result.error
+            paintIdentification('watching', result.error
               || 'No account and character changes were found. Make a small settings change in the client, then close it completely and check again.');
           }
         }
@@ -1049,7 +1080,8 @@
     });
 
     WM.el('es-identify-cancel').addEventListener('click', function () {
-      WM.send('eve_settings_identification_cancel').then(function () {
+      WM.send('eve_settings_identification_cancel').then(function (result) {
+        if (!acceptIdentification(result)) return;
         if (state) state.identification_active = false;
         clearIdentification();
         paintIdentification('idle');
@@ -1121,7 +1153,8 @@
     });
 
     WM.el('ai-identify-another').addEventListener('click', function () {
-      WM.send('eve_settings_identification_cancel').then(function () {
+      WM.send('eve_settings_identification_cancel').then(function (result) {
+        if (!acceptIdentification(result)) return;
         if (state) state.identification_active = false;
         clearIdentification();
         paintIdentification('idle');
@@ -1229,7 +1262,40 @@
     });
   }
 
-  WM.handle('onEveSettingsNames', function () { refresh(); });
+  WM.handle('onEveSettingsNames', function (payload) {
+    // The generation is observed before the ids are inspected, so a push
+    // that both advances the generation and invalidates the current
+    // candidate applies in that order regardless of whether it arrives
+    // before or after the promise from the check that offered it --
+    // event-before-promise and promise-before-event both land here.
+    if (acceptIdentification(payload)) {
+      var deletedIds = payload.deleted_candidate_ids || [];
+      var candidateIds = identifyCandidate
+        ? identifyCandidate.characters.map(function (character) {
+          return character.id;
+        })
+        : [];
+      var invalidatesCandidate = deletedIds.some(function (id) {
+        return candidateIds.indexOf(id) !== -1;
+      });
+      if (invalidatesCandidate) {
+        if (state) state.identification_active = false;
+        clearIdentification();
+        // Only paint and focus when the identity sub-screen is open;
+        // otherwise clear silently so returning to the route shows the
+        // correct idle state without stealing focus from another screen.
+        if (identityRouteOpen) {
+          paintIdentification('idle',
+            'That character was deleted. Start account identification again.');
+        } else {
+          identityStep = 'idle';
+          identityMessage =
+            'That character was deleted. Start account identification again.';
+        }
+      }
+    }
+    refresh();
+  });
 
   // The running-client probe answers after the state that triggered it was
   // already returned, so the pill is repainted in place. Only the pill: a

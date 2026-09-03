@@ -1689,3 +1689,121 @@ def test_preview_delete_removes_matched_group_and_only_its_memberships():
         normal.index(locate) < normal.index(remove) < normal.index("Object.keys(gbc)")
     )
     assert normal.index("Object.keys(gbc)") < normal.index("_devPushHotkeys();")
+
+
+# ---- dev harness: identification generation contract (Round 1 HIGH) ------
+
+
+def test_dev_fake_state_exposes_account_identity_available():
+    """The page now gates canIdentify and es-account-tools on
+    state.account_identity_available (Task 6).  The dev harness always
+    points at a Tranquility fixture, so this flag must be true or every
+    identity scenario renders with all controls hidden.
+    """
+    assert "account_identity_available: true" in DEV_JS, (
+        "dev.js does not set account_identity_available: true in the eve fake "
+        "state; identity controls will be hidden in every dev fixture"
+    )
+
+
+def test_dev_identification_generation_counter_exists():
+    """Task 5 added identification_generation to every identification
+    response.  The dev harness must carry a monotonic counter so that
+    acceptIdentification() in evesettings.js does not reject every stub
+    response as having no numeric generation field.
+    """
+    assert "var devIdentificationGeneration = 0;" in DEV_JS, (
+        "dev.js has no devIdentificationGeneration counter; every "
+        "identification stub response will be rejected by acceptIdentification()"
+    )
+
+
+def test_dev_identification_start_returns_identification_generation():
+    """Start bumps the counter and returns it; a stale check from before
+    the start is then rejected on the next acceptIdentification call.
+    """
+    start_body = DEV_JS.split("api.eve_settings_identification_start", 1)[1].split(
+        "\n  };\n", 1
+    )[0]
+    assert "devIdentificationGeneration += 1" in start_body, (
+        "eve_settings_identification_start does not bump devIdentificationGeneration"
+    )
+    assert "identification_generation: devIdentificationGeneration" in start_body, (
+        "eve_settings_identification_start does not include identification_generation "
+        "in its resolve payload"
+    )
+
+
+def test_dev_identification_cancel_returns_identification_generation():
+    """Cancel bumps the counter (matching Python semantics) and returns it
+    so that acceptIdentification() on the resolved promise advances the
+    retained generation and any racing check resolving later is rejected.
+    """
+    cancel_body = DEV_JS.split("api.eve_settings_identification_cancel", 1)[1].split(
+        "\n  };\n", 1
+    )[0]
+    assert "devIdentificationGeneration += 1" in cancel_body, (
+        "eve_settings_identification_cancel does not bump devIdentificationGeneration"
+    )
+    assert "identification_generation: devIdentificationGeneration" in cancel_body, (
+        "eve_settings_identification_cancel does not include "
+        "identification_generation in its resolve payload"
+    )
+
+
+def test_dev_push_eve_names_carries_generation_and_deleted_ids():
+    """The devPushEveNames helper (used by DEV console helpers that mutate
+    eve state) must pass identification_generation and deleted_candidate_ids
+    so that onEveSettingsNames' acceptIdentification gate passes and the
+    push is not silently dropped.
+    """
+    assert "function devPushEveNames()" in DEV_JS, (
+        "dev.js has no devPushEveNames helper"
+    )
+    helper_body = DEV_JS.split("function devPushEveNames()", 1)[1].split("}", 1)[0]
+    assert "identification_generation: devIdentificationGeneration" in helper_body, (
+        "devPushEveNames does not include identification_generation"
+    )
+    assert "deleted_candidate_ids: []" in helper_body, (
+        "devPushEveNames does not include deleted_candidate_ids"
+    )
+
+
+def test_dev_console_eve_helpers_use_dev_push_eve_names():
+    """eveNoFolder, eveUnreadable, and eveSelectiveAvailable all mutate
+    eve and then push onEveSettingsNames.  After Task 6 that push must
+    carry identification_generation, so they must go through
+    devPushEveNames rather than calling window.onEveSettingsNames() bare.
+    """
+    for helper in ("eveNoFolder", "eveUnreadable", "eveSelectiveAvailable"):
+        block = DEV_JS.split(helper + ":", 1)[1].split("\n    },", 1)[0]
+        assert "devPushEveNames()" in block, (
+            f"DEV.{helper} still calls window.onEveSettingsNames() bare "
+            "instead of devPushEveNames()"
+        )
+        assert "window.onEveSettingsNames()" not in block, (
+            f"DEV.{helper} calls window.onEveSettingsNames() without a payload"
+        )
+
+
+# ---- evesettings.js: hidden-route deleted-candidate guard (Round 1 MEDIUM) -
+
+
+def test_deleted_candidate_paint_is_guarded_by_identity_route_open():
+    """When a deletion push arrives while the account-identity sub-screen
+    is closed, the page must clear local state silently rather than calling
+    paintIdentification, which tries to focus an off-screen heading.  The
+    paint/focus call must only happen when identityRouteOpen is true.
+    """
+    src = EVE_SETTINGS_JS
+    handler = src.split("WM.handle('onEveSettingsNames'", 1)[1].split("\n  });", 1)[0]
+    invalid_branch = handler.split("invalidatesCandidate", 1)[1].split("\n    }", 1)[0]
+    assert "identityRouteOpen" in invalid_branch, (
+        "the invalidatesCandidate branch in onEveSettingsNames does not check "
+        "identityRouteOpen before calling paintIdentification; a deletion push "
+        "while on another screen will try to focus an off-screen heading"
+    )
+    assert "if (identityRouteOpen)" in invalid_branch, (
+        "identityRouteOpen check must be an explicit if-guard in the "
+        "invalidatesCandidate branch"
+    )
