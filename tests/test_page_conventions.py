@@ -3255,16 +3255,61 @@ def test_bind_conflict_names_its_owner_so_it_survives_a_sticky_scroll():
 def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
     """The warning and the control it explains must be associated by a
     stable id, not by DOM adjacency, so the association survives a
-    rerender and a scroll alike.
+    rerender and a scroll alike. The id is assigned in appendBindRow, not
+    inside makeBindConflict: it depends on the call site's own owner
+    identity (the character, or an explicit owner-kind token for a
+    cycle/group row), which makeBindConflict itself has no reason to know.
     """
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    assert "function bindConflictId(character, label)" in js
+    assert "function bindConflictId(ownerKey)" in js
     id_fn = js.split("function bindConflictId", 1)[1].split("\n  function ", 1)[0]
-    assert "encodeURIComponent(character)" in id_fn
-    assert "encodeURIComponent(label)" in id_fn
+    assert "encodeURIComponent(ownerKey)" in id_fn
 
-    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
-    assert "conflict.id = bindConflictId(character, label)" in block
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert (
+        "conflict.id = bindConflictId(character ? 'character:' + character : ownerKind)"
+        in append
+    )
+
+
+def test_bind_conflict_id_keys_off_owner_kind_not_display_label():
+    """A named group may legally be named exactly "All forward" or "All
+    back" -- create_preview_cycle_group and rename_preview_cycle_group only
+    enforce uniqueness among groups, never against the two fixed cycle
+    labels. A label-derived conflict id would then collide with the real
+    All-forward or All-back row's id, leaving aria-describedby pointing at
+    an ambiguous target. bindConflictId must therefore key off an explicit
+    owner kind supplied by each call site -- never off `label` at all --
+    and the fixed cycle rows and named-group rows must each pass a token
+    that cannot collide with the other kind's, whatever a group is named
+    or however its id is generated.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    assert "function bindConflictId(" in js, "bindConflictId is not defined"
+    id_fn = js.split("function bindConflictId(", 1)[1].split("\n  function ", 1)[0]
+    params = id_fn.split(") {", 1)[0]
+    assert "label" not in params, (
+        "bindConflictId must not accept the display label at all -- a "
+        "label-keyed id cannot distinguish a fixed cycle row from a named "
+        "group sharing its exact label"
+    )
+
+    # Each non-character row passes an explicit, fixed owner-kind token --
+    # not anything derived from `label` or `group.name` -- so a group
+    # named "All forward"/"All back" cannot alias the real cycle row.
+    assert "'cycle:next'" in js, (
+        "the All-forward row must pass a fixed owner-kind token distinct "
+        "from any group's own key"
+    )
+    assert "'cycle:prev'" in js, (
+        "the All-back row must pass a fixed owner-kind token distinct "
+        "from any group's own key"
+    )
+    assert "'group:' + group.id" in js, (
+        "a named-group row must key off its own stable group.id, not its "
+        "user-chosen (and therefore collidable) group.name"
+    )
 
 
 def test_bind_row_button_references_its_conflict_via_aria_describedby():

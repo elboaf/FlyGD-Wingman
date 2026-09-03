@@ -172,15 +172,19 @@
   // the button that owns the warning can point aria-describedby at the
   // exact node this render appends -- the association that lets a reader
   // who has scrolled the owning row under a sticky header still find out
-  // whose warning they are reading. Character rows key off the character:
-  // unique by construction, the same identity detailId() already keys on.
-  // Cycle and named-group rows have no character, so they key off their
-  // label instead -- unique between the two fixed cycle labels and
-  // enforced unique among named groups by create/rename_preview_cycle_group.
-  function bindConflictId(character, label) {
-    return character
-      ? 'preview-bind-conflict-character-' + encodeURIComponent(character)
-      : 'preview-bind-conflict-label-' + encodeURIComponent(label);
+  // whose warning they are reading.
+  //
+  // Keyed by an explicit OWNER KEY the caller builds (see appendBindRow),
+  // never by `label` alone: a named group is free to be named exactly
+  // "All forward" or "All back" -- create/rename_preview_cycle_group only
+  // enforce uniqueness among groups, not against the two fixed cycle
+  // labels -- so a label-derived id would collide with the real
+  // All-forward or All-back row's id and leave aria-describedby pointing
+  // at an ambiguous target. appendBindRow's `character:NAME`, `cycle:next`,
+  // `cycle:prev` and `group:ID` keys use disjoint literal prefixes, so no
+  // character name, group id, or group name can ever alias another kind's.
+  function bindConflictId(ownerKey) {
+    return 'preview-bind-conflict-' + encodeURIComponent(ownerKey);
   }
 
   function makeBindConflict(label, gesture, character, off) {
@@ -223,12 +227,7 @@
       text = label + ': ' + gesture + ' conflicts with an active EVE bookmark keybind.';
     }
     if (!text) { return null; }
-    var conflict = WM.make('div', 'preview-bind-conflict', text);
-    // The id makeRow's button references via aria-describedby, built from
-    // the same (character, label) pair passed in above -- see
-    // bindConflictId for why the two are keyed differently.
-    conflict.id = bindConflictId(character, label);
-    return conflict;
+    return WM.make('div', 'preview-bind-conflict', text);
   }
 
   // Ordered array of named preview cycle groups from the current hotkeys
@@ -1273,11 +1272,18 @@
     });
   }
 
-  function appendBindRow(label, gesture, online, onSet, character) {
+  function appendBindRow(label, gesture, online, onSet, character, ownerKind) {
     // Computed before makeRow so this row's bind button can point
-    // aria-describedby at the exact conflict node this render appends --
-    // see bindConflictId for why that reference must survive a scroll.
+    // aria-describedby at the exact conflict node this render appends.
+    // Keyed by the character when there is one, or else by `ownerKind` --
+    // the explicit, label-independent token each non-character call site
+    // below supplies -- never by `label` itself: see bindConflictId for
+    // why a label-derived id cannot tell a fixed cycle row apart from a
+    // named group sharing its exact label.
     var conflict = makeBindConflict(label, gesture, character, isExcluded(character));
+    if (conflict) {
+      conflict.id = bindConflictId(character ? 'character:' + character : ownerKind);
+    }
     host.appendChild(makeRow(label, gesture, online, onSet, character, conflict));
     if (character && openDetailName === character) {
       host.appendChild(makeCharacterDetail(character, isExcluded(character)));
@@ -1317,9 +1323,11 @@
     // have no online state to report. Dimming them while previews were
     // off was half of what made the whole list grey at once.
     appendBindRow('All forward', state.hotkeys.cycle_next,
-                  true, function (g) { setBind('cycle_next', g); });
+                  true, function (g) { setBind('cycle_next', g); },
+                  undefined, 'cycle:next');
     appendBindRow('All back', state.hotkeys.cycle_prev,
-                  true, function (g) { setBind('cycle_prev', g); });
+                  true, function (g) { setBind('cycle_prev', g); },
+                  undefined, 'cycle:prev');
 
     // Named group keybind rows. Each group gets its own row rendered by
     // the shared makeRow so it inherits the five-track shape and the same
@@ -1327,7 +1335,8 @@
     // character divider -- the task brief's wireframe B ordering.
     groups().forEach(function (group) {
       appendBindRow(group.name, group.cycle, true,
-                    function (g) { setGroupBind(group.id, g); });
+                    function (g) { setGroupBind(group.id, g); },
+                    undefined, 'group:' + group.id);
     });
 
     // Manage groups disclosure: Add/Rename…/Delete. Rendered after group
