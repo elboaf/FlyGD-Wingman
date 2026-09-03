@@ -155,17 +155,17 @@ def test_quit_refusal_keeps_handoff_reason_if_state_changes_before_alert(tmp_pat
     assert alerts == [("info", "Update", "Update installation is being prepared.")]
 
 
-def test_quit_refused_while_quitting_explains_update_shutdown(tmp_path):
+def test_quit_already_claimed_is_idempotently_permitted(tmp_path):
     window = FakeWindow()
     api = make_api(tmp_path, window)
     alerts = []
     api._alert = lambda *args: alerts.append(args)
     assert api._work_gate.claim_quit(force_upload=False)
 
-    assert api._claim_quit() is False
+    assert api._claim_quit() is True
 
-    assert window.shown == 1
-    assert alerts == [("info", "Update", "Update installation is being prepared.")]
+    assert window.shown == 0
+    assert alerts == []
 
 
 def test_quit_is_refused_with_information_during_each_handoff_phase(tmp_path):

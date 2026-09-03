@@ -13,6 +13,7 @@ page before run() is entered, and the work that used to run early must
 still run automatically.
 """
 
+import logging
 import sys
 import threading
 from types import SimpleNamespace
@@ -243,6 +244,113 @@ def test_update_shutdown_callback_is_idempotent_and_destroys_sigbar_first(startu
     assert main_mod.main() == 0
     assert startup.captured["window"].destroyed == 1
     assert events.index("destroy_sigbar") < events.index("destroy_window")
+
+
+def test_shutdown_retries_only_the_sigbar_after_its_destroy_fails(startup, caplog):
+    attempts = []
+
+    class FlakySigBar:
+        def destroy(self):
+            attempts.append("sigbar")
+            if len(attempts) == 1:
+                raise RuntimeError("sigbar destroy failed")
+
+    def during_run():
+        api = startup.captured["api"]
+        api._sigbar_window = FlakySigBar()
+        api._request_shutdown()
+        api._request_shutdown()
+
+    startup.captured["during_run"] = during_run
+
+    with caplog.at_level(logging.ERROR, logger=main_mod.__name__):
+        assert main_mod.main() == 0
+
+    assert attempts == ["sigbar", "sigbar"]
+    assert startup.captured["window"].destroyed == 1
+    assert startup.captured["api"]._sigbar_window is None
+    assert "Sig bar window did not destroy cleanly" in caplog.text
+    assert "sigbar destroy failed" in caplog.text
+
+
+def test_shutdown_retries_only_main_after_its_destroy_fails(startup, caplog):
+    main_attempts = []
+    sigbar_attempts = []
+
+    class FakeSigBar:
+        def destroy(self):
+            sigbar_attempts.append(True)
+
+    def during_run():
+        api = startup.captured["api"]
+        window = startup.captured["window"]
+        real_destroy = window.destroy
+
+        def flaky_destroy():
+            main_attempts.append(True)
+            if len(main_attempts) == 1:
+                raise RuntimeError("main destroy failed")
+            real_destroy()
+
+        window.destroy = flaky_destroy
+        api._sigbar_window = FakeSigBar()
+        api._request_shutdown()
+        api._request_shutdown()
+
+    startup.captured["during_run"] = during_run
+
+    with caplog.at_level(logging.ERROR, logger=main_mod.__name__):
+        assert main_mod.main() == 0
+
+    assert sigbar_attempts == [True]
+    assert main_attempts == [True, True]
+    assert startup.captured["window"].destroyed == 1
+    assert "Main window did not destroy cleanly" in caplog.text
+    assert "main destroy failed" in caplog.text
+
+
+def test_concurrent_quit_retries_a_failure_without_repeating_success(startup):
+    first_main_attempt = threading.Event()
+    release_failure = threading.Event()
+    main_attempts = []
+    sigbar_attempts = []
+
+    class FakeSigBar:
+        def destroy(self):
+            sigbar_attempts.append(True)
+
+    def during_run():
+        api = startup.captured["api"]
+        window = startup.captured["window"]
+        real_destroy = window.destroy
+
+        def flaky_destroy():
+            main_attempts.append(True)
+            if len(main_attempts) == 1:
+                first_main_attempt.set()
+                assert release_failure.wait(timeout=2)
+                raise RuntimeError("first concurrent destroy failed")
+            real_destroy()
+
+        window.destroy = flaky_destroy
+        api._sigbar_window = FakeSigBar()
+        first = threading.Thread(target=startup.captured["on_quit"])
+        second = threading.Thread(target=startup.captured["on_quit"])
+        first.start()
+        assert first_main_attempt.wait(timeout=2)
+        second.start()
+        release_failure.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+        assert not first.is_alive()
+        assert not second.is_alive()
+
+    startup.captured["during_run"] = during_run
+
+    assert main_mod.main() == 0
+    assert sigbar_attempts == [True]
+    assert main_attempts == [True, True]
+    assert startup.captured["window"].destroyed == 1
 
 
 def test_updater_cleanup_precedes_preview_and_skills_shutdown(startup):

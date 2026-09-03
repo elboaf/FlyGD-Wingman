@@ -81,13 +81,15 @@ def test_update_shutdown_is_idempotent_for_the_handoff_owner():
     assert gate.begin_update_shutdown()
     assert gate.begin_update_shutdown()
     assert gate.handoff_phase() == "launching"
+    assert gate.claim_quit(force_upload=False)
     assert not gate.claim_upload()
 
 
-def test_quitting_blocks_new_upload_and_handoff_claims():
+def test_quitting_is_idempotent_but_blocks_new_upload_and_handoff_claims():
     gate = api_mod._WorkGate()
     assert gate.claim_quit(force_upload=False)
 
+    assert gate.claim_quit(force_upload=False)
     assert not gate.claim_upload()
     assert not gate.claim_handoff("handing_off")
 

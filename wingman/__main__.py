@@ -719,7 +719,7 @@ def main() -> int:
     window = None
     poll_state = PollState()
     shutdown_lock = threading.Lock()
-    shutdown_started = False
+    main_window_destroyed = False
 
     def on_open() -> None:
         # Called on the pystray thread. show() and destroy() are safe from
@@ -732,30 +732,36 @@ def main() -> int:
             window.show()
 
     def destroy_windows() -> None:
-        """Unblock the GUI loop exactly once, whichever lifecycle owns exit."""
-        nonlocal shutdown_started
+        """Destroy each window once, retrying only targets that failed."""
+        nonlocal main_window_destroyed
+        # Serialize the native calls, not just their bookkeeping. A concurrent
+        # updater/tray request then observes the first call's result and can
+        # retry its failure without repeating a successful destruction.
         with shutdown_lock:
-            if shutdown_started:
-                return
-            # One-way by design: both tray Quit and a launched installer may
-            # arrive concurrently, and a partial second teardown is less safe
-            # than logging the original destruction failure.
-            shutdown_started = True
+            # The sig bar must be destroyed FIRST. pywebview's WinForms loop is
+            # Application.Run() with no context: it pumps until Application.
+            # Exit(), which fires only when the LAST window is gone. Leaving
+            # the bar alive parks the process inside window_mod.run() forever
+            # after the user chose Quit -- reproduced, not theorised.
+            bar = api._sigbar_window
+            if bar is not None:
+                try:
+                    bar.destroy()
+                except Exception:
+                    logger.exception("Sig bar window did not destroy cleanly")
+                else:
+                    # Do not clear a replacement installed concurrently by
+                    # sig-bar lifecycle code while destroy() was in progress.
+                    if api._sigbar_window is bar:
+                        api._sigbar_window = None
 
-        # The sig bar must be destroyed FIRST. pywebview's WinForms loop is
-        # Application.Run() with no context: it pumps until Application.
-        # Exit(), which fires only when the LAST window is gone. Leaving
-        # the bar alive parks the process inside window_mod.run() forever
-        # after the user chose Quit -- reproduced, not theorised.
-        bar = api._sigbar_window
-        if bar is not None:
-            try:
-                bar.destroy()
-                api._sigbar_window = None
-            except Exception:
-                logger.exception("Sig bar window did not destroy cleanly")
-        if window is not None:
-            window.destroy()  # unblocks window_mod.run() below
+            if window is not None and not main_window_destroyed:
+                try:
+                    window.destroy()  # unblocks window_mod.run() below
+                except Exception:
+                    logger.exception("Main window did not destroy cleanly")
+                else:
+                    main_window_destroyed = True
 
     def on_quit() -> None:
         # An upload runs on a daemon thread, so destroying the window here

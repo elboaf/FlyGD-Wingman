@@ -523,10 +523,10 @@ class _WorkGate:
 
     def claim_quit(self, *, force_upload: bool) -> _ClaimResult:
         with self._lock:
+            if self._quitting:
+                return _ClaimResult(True)
             if self._handoff:
                 return _ClaimResult(False, "handoff")
-            if self._quitting:
-                return _ClaimResult(False, "quitting")
             if self._upload and not force_upload:
                 return _ClaimResult(False, "upload")
             self._quitting = True
@@ -2873,9 +2873,9 @@ class Api:
             try:
                 request_shutdown()
             except Exception:
-                # Setup is already launched and durably classified. The shared
-                # teardown is one-way, so report the failure without rollback
-                # or a second destruction attempt.
+                # Setup is already launched and durably classified. Per-window
+                # teardown failures are handled inside the retryable callback;
+                # an unexpected boundary failure still cannot roll back Setup.
                 logger.exception("Window shutdown failed after installer launch")
 
     def _close_update_process(self, process: int) -> None:
