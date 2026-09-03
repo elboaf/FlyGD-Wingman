@@ -14,12 +14,20 @@ after someone edits the card is a question for here.
 import pathlib
 import re
 
+import pytest
+
 
 def _brace_block(text: str, marker: str) -> str:
     """The body of the first `{...}` block whose opening line contains
     `marker`, matched by brace DEPTH rather than by the first `}` -- a
     naive `{([^}]*)}` stops at the first nested rule's own close, which is
     exactly wrong for a block (an `@media` tier) that contains other rules.
+
+    Raises if the text runs out before depth returns to zero, rather than
+    silently returning whatever the scan reached: an unbalanced input (a
+    typo'd marker landing on the wrong open brace, or CSS/JS with a stray
+    unmatched `{`) must not hand back a truncated slice that a caller's
+    `in`/`not in` assertion can then pass on by accident.
     """
     start = text.index(marker)
     open_at = text.index("{", start) + 1
@@ -30,7 +38,20 @@ def _brace_block(text: str, marker: str) -> str:
         elif text[i] == "}":
             depth -= 1
         i += 1
+    if depth:
+        raise ValueError(
+            f"_brace_block: unterminated block for marker {marker!r} -- "
+            f"reached end of text with {depth} brace(s) still open"
+        )
     return text[open_at : i - 1]
+
+
+def test_brace_block_raises_on_unterminated_input():
+    """An opening brace with no matching close must raise rather than
+    return a truncated block: reaching EOF with nonzero depth is malformed
+    input, not a valid (if short) result."""
+    with pytest.raises(ValueError):
+        _brace_block("selector { still open", "selector")
 
 
 WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"

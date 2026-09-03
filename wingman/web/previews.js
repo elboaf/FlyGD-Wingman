@@ -159,11 +159,28 @@
   }
 
   function cycleOwners(gesture) {
+    // Each entry carries a STABLE OWNER KEY beside its rendered text --
+    // the same key appendBindRow builds for its own row (see
+    // bindConflictId) -- so makeBindConflict can tell a genuinely
+    // different owner apart from itself, or from any other owner, by
+    // identity rather than by comparing rendered text. A named group is
+    // free to be named exactly "All forward"/"All back", or to share a
+    // name with a character: create/rename_preview_cycle_group enforce
+    // uniqueness only among groups, never against those two fixed labels
+    // or a character name. Filtering by text alone would then drop a
+    // genuinely conflicting owner merely because its rendered text
+    // happened to match some other owner's label.
     var owners = [];
-    if (state.hotkeys.cycle_next === gesture) { owners.push('All forward'); }
-    if (state.hotkeys.cycle_prev === gesture) { owners.push('All back'); }
+    if (state.hotkeys.cycle_next === gesture) {
+      owners.push({key: 'cycle:next', text: 'All forward'});
+    }
+    if (state.hotkeys.cycle_prev === gesture) {
+      owners.push({key: 'cycle:prev', text: 'All back'});
+    }
     groups().forEach(function (group) {
-      if (group.cycle === gesture) { owners.push('cycle group ' + group.name); }
+      if (group.cycle === gesture) {
+        owners.push({key: 'group:' + group.id, text: 'cycle group ' + group.name});
+      }
     });
     return owners;
   }
@@ -187,7 +204,7 @@
     return 'preview-bind-conflict-' + encodeURIComponent(ownerKey);
   }
 
-  function makeBindConflict(label, gesture, character, off) {
+  function makeBindConflict(label, gesture, character, off, ownerKey) {
     // An opted-out character owns no preview registration. Its retained bind
     // is deliberately visible on the row, but it cannot conflict locally.
     if (off) { return null; }
@@ -208,17 +225,28 @@
     if (character && clash === 'duplicate') {
       // Direct-character sharing is a supported registration plan. On its
       // rows, name only the cycle owner that makes this chord incompatible.
+      // Filtered by the caller's own stable ownerKey, never by comparing
+      // rendered text against `label`: see cycleOwners for why a named
+      // group sharing this character's name must not be dropped as if it
+      // were a self-reference.
       var owners = cycleOwners(gesture).filter(function (owner) {
-        return owner !== 'cycle group ' + label;
-      });
+        return owner.key !== ownerKey;
+      }).map(function (owner) { return owner.text; });
       text = label + ': ' + gesture + ' conflicts with '
            + (owners.join(', ') || 'another cycle keybind') + '.';
     } else if (clash === 'duplicate') {
       // A cycle row has no supported shared-owner role: direct characters
       // using its chord are the incompatible registrations to identify.
-      var owners = cycleOwners(gesture).concat(sharers(gesture)).filter(function (owner) {
-        return owner !== label && owner !== 'cycle group ' + label;
-      });
+      // Sharer characters are wrapped with their own 'character:NAME' key
+      // -- not compared as bare strings -- so a character sharing this
+      // row's own label (e.g. a character literally named "All forward")
+      // is excluded only when it truly is this row's own owner, never for
+      // a text coincidence.
+      var owners = cycleOwners(gesture).concat(sharers(gesture).map(function (name) {
+        return {key: 'character:' + name, text: name};
+      })).filter(function (owner) {
+        return owner.key !== ownerKey;
+      }).map(function (owner) { return owner.text; });
       text = label + ': ' + gesture + ' conflicts with '
            + (owners.join(', ') || 'another cycle keybind') + '.';
     } else if (clash === 'refused' && registration[gesture] === false) {
@@ -1273,16 +1301,18 @@
   }
 
   function appendBindRow(label, gesture, online, onSet, character, ownerKind) {
-    // Computed before makeRow so this row's bind button can point
-    // aria-describedby at the exact conflict node this render appends.
-    // Keyed by the character when there is one, or else by `ownerKind` --
-    // the explicit, label-independent token each non-character call site
-    // below supplies -- never by `label` itself: see bindConflictId for
-    // why a label-derived id cannot tell a fixed cycle row apart from a
-    // named group sharing its exact label.
-    var conflict = makeBindConflict(label, gesture, character, isExcluded(character));
+    // Computed once, before makeRow, so this row's bind button can point
+    // aria-describedby at the exact conflict node this render appends AND
+    // so makeBindConflict filters cycleOwners()/sharers() against this
+    // row's own identity -- never against `label`, which a named group or
+    // character is free to share with a fixed cycle label or with each
+    // other: see bindConflictId and cycleOwners for why a label-derived
+    // comparison cannot tell a fixed cycle row, a named group, or a
+    // character apart from one another.
+    var ownerKey = character ? 'character:' + character : ownerKind;
+    var conflict = makeBindConflict(label, gesture, character, isExcluded(character), ownerKey);
     if (conflict) {
-      conflict.id = bindConflictId(character ? 'character:' + character : ownerKind);
+      conflict.id = bindConflictId(ownerKey);
     }
     host.appendChild(makeRow(label, gesture, online, onSet, character, conflict));
     if (character && openDetailName === character) {

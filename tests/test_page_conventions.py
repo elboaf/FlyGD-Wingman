@@ -3378,10 +3378,10 @@ def test_bind_conflict_names_its_owner_so_it_survives_a_sticky_scroll():
 def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
     """The warning and the control it explains must be associated by a
     stable id, not by DOM adjacency, so the association survives a
-    rerender and a scroll alike. The id is assigned in appendBindRow, not
-    inside makeBindConflict: it depends on the call site's own owner
-    identity (the character, or an explicit owner-kind token for a
-    cycle/group row), which makeBindConflict itself has no reason to know.
+    rerender and a scroll alike. The id is assigned in appendBindRow from
+    the SAME ownerKey makeBindConflict filters genuine owners by --
+    computed once, so the id a reader's aria-describedby follows and the
+    identity makeBindConflict excludes itself by can never drift apart.
     """
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     assert "function bindConflictId(ownerKey)" in js
@@ -3389,9 +3389,65 @@ def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
     assert "encodeURIComponent(ownerKey)" in id_fn
 
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
-    assert (
-        "conflict.id = bindConflictId(character ? 'character:' + character : ownerKind)"
-        in append
+    assert "var ownerKey = character ? 'character:' + character : ownerKind;" in append
+    assert "conflict.id = bindConflictId(ownerKey)" in append
+
+
+def test_cycle_owners_carry_a_stable_key_beside_their_rendered_text():
+    """cycleOwners must expose the same owner key each row's own conflict
+    id is built from (bindConflictId/appendBindRow) alongside the rendered
+    text, so makeBindConflict can tell a genuinely different owner apart
+    from itself by identity -- never by comparing rendered label text,
+    which a named group is free to share with a fixed cycle label or with
+    a character.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = js.split("function cycleOwners(gesture)", 1)[1].split("\n  function ", 1)[0]
+    assert "key: 'cycle:next'" in body
+    assert "key: 'cycle:prev'" in body
+    assert "key: 'group:' + group.id" in body
+    assert "text: 'All forward'" in body
+    assert "text: 'All back'" in body
+    assert "text: 'cycle group ' + group.name" in body
+
+
+def test_makebindconflict_filters_conflicting_owners_by_key_not_by_label():
+    """A named group may legally be named exactly "All forward"/"All
+    back", or share a name with a character -- create/rename_preview_cycle_
+    group enforce uniqueness only among groups, never against a character
+    or the two fixed cycle labels. Filtering cycleOwners()/sharers() by
+    comparing rendered TEXT against this row's own `label` therefore drops
+    a genuine conflicting owner whenever its rendered text happens to
+    match this row's label: rendering the fixed All-forward cycle row lost
+    a genuinely conflicting group actually named "All forward", and
+    rendering any cycle/group row lost a genuinely sharing character
+    actually named after that row's own label. makeBindConflict must
+    instead filter by comparing each owner's stable `.key` against the
+    caller's own `ownerKey`.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert "owner.key !== ownerKey" in block, (
+        "makeBindConflict must filter cycleOwners()/sharers() entries by "
+        "comparing owner.key against this row's own ownerKey"
+    )
+    assert "owner !== label" not in block, (
+        "filtering by `owner !== label` drops a genuine conflicting owner "
+        "whenever its rendered text matches this row's own label -- a "
+        "named group or character is free to share that label"
+    )
+    assert "'cycle group ' + label" not in block, (
+        "filtering by a label-derived 'cycle group ' + label string drops "
+        "a genuinely different group whenever it happens to share this "
+        "row's own label -- e.g. a group literally named 'All forward'"
+    )
+    # Sharer characters must be wrapped with their own stable owner key
+    # ('character:NAME'), not compared as bare name strings, so a
+    # character sharing a cycle/group row's own label is excluded (or
+    # kept) by identity and never dropped for a text coincidence.
+    assert "key: 'character:' + name" in block, (
+        "sharer characters must be wrapped with their own stable owner "
+        "key before being filtered, not compared as bare name strings"
     )
 
 
