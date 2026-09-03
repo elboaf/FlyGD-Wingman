@@ -2818,9 +2818,15 @@ class Api:
                     "launch", "shell", "installer launch returned no process"
                 )
         except Exception as exc:  # noqa: BLE001 - handoff failure must recover the app
-            if marker is not None:
+            marker_failure = (
+                isinstance(exc, updates_mod.UpdateFailure) and exc.stage == "cleanup"
+            )
+            marker_to_remove = marker
+            if marker_to_remove is None and marker_failure:
+                marker_to_remove = path.with_name(path.name + ".handoff.json")
+            if marker_to_remove is not None:
                 try:
-                    self._update_service.remove_handoff_marker(marker)
+                    self._update_service.remove_handoff_marker(marker_to_remove)
                 except Exception:
                     logger.warning(
                         "Could not remove failed updater handoff marker",
@@ -2846,10 +2852,17 @@ class Api:
             logger.error("Update handoff ownership was lost after Setup launch")
         self._push_update_status()
         self._close_update_process(process)
-        self._work_gate.begin_update_shutdown()
+        if not self._work_gate.begin_update_shutdown():
+            logger.error("Update handoff could not begin orderly shutdown")
         request_shutdown = self._request_shutdown
         if request_shutdown is not None:
-            request_shutdown()
+            try:
+                request_shutdown()
+            except Exception:
+                # Setup is already launched and durably classified. The shared
+                # teardown is one-way, so report the failure without rollback
+                # or a second destruction attempt.
+                logger.exception("Window shutdown failed after installer launch")
 
     def _close_update_process(self, process: int) -> None:
         try:
@@ -2858,9 +2871,11 @@ class Api:
             logger.warning("Could not close installer process handle", exc_info=True)
 
     def _finish_install_failure(self, exc: Exception, path: Path) -> None:
-        requires_download = not (
-            isinstance(exc, updates_mod.UpdateFailure) and exc.stage == "launch"
-        )
+        retry_ready = isinstance(exc, updates_mod.UpdateFailure) and exc.stage in {
+            "cleanup",
+            "launch",
+        }
+        requires_download = not retry_ready
         with self._update_lock:
             if self._update.state == "closed":
                 return
@@ -3056,6 +3071,8 @@ class Api:
         if isinstance(exc, updates_mod.UpdateFailure):
             if exc.stage == "launch":
                 return "Could not open the installer. Try again."
+            if exc.stage == "cleanup":
+                return "Could not prepare the installer. Try installing again."
             if exc.stage == "verify" and exc.code == "attachment":
                 return (
                     "Windows could not mark the installer as an internet download. "

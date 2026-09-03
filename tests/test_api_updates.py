@@ -1,5 +1,6 @@
 """Atomic work claims and updater lifecycle orchestration."""
 
+import logging
 import threading
 from pathlib import Path
 
@@ -428,6 +429,7 @@ class FakeUpdates:
         verify_failure=None,
         launch_failure=None,
         marker_failure=None,
+        partial_marker_on_failure=False,
         close_failure=None,
         block_download=False,
         block_launch=False,
@@ -440,6 +442,7 @@ class FakeUpdates:
         self._verify_failure = verify_failure
         self._launch_failure = launch_failure
         self._marker_failure = marker_failure
+        self._partial_marker_on_failure = partial_marker_on_failure
         self._close_failure = close_failure
         self._process_handle = process_handle
         self.check_calls = 0
@@ -524,9 +527,11 @@ class FakeUpdates:
     def write_handoff_marker(self, path, release):
         del release
         self.events.append("marker")
+        marker = path.with_name(path.name + ".handoff.json")
+        if self._partial_marker_on_failure:
+            marker.write_text("partial", encoding="utf-8")
         if self._marker_failure is not None:
             raise self._marker_failure
-        marker = path.with_name(path.name + ".handoff.json")
         marker.write_text("handed-off", encoding="utf-8")
         return marker
 
@@ -1132,20 +1137,29 @@ def test_final_file_mutation_returns_install_to_download_failed(tmp_path, mutati
     assert api._work_gate.handoff_phase() == ""
 
 
-def test_marker_failure_prevents_shell_launch_and_requires_a_new_download(tmp_path):
+def test_marker_failure_cleans_partial_marker_and_keeps_installer_ready(tmp_path):
     service = FakeUpdates(
         release=_release_info("4.9.0"),
         marker_failure=updates_mod.UpdateFailure(
             "cleanup", "filesystem", "marker write failed"
         ),
+        partial_marker_on_failure=True,
     )
     api, _window = _ready_api(tmp_path, service)
+    installer = service._staged
+    marker = installer.with_name(installer.name + ".handoff.json")
 
     api.install_update()
     _join_update(api)
 
-    assert service.events == ["launch_verified", "marker"]
-    assert api.update_status()["state"] == "download_failed"
+    assert service.events == ["launch_verified", "marker", "remove-marker"]
+    assert "shell" not in service.events
+    assert installer.exists()
+    assert not marker.exists()
+    status = api.update_status()
+    assert status["state"] == "ready"
+    assert status["can_install"] is True
+    assert status["error"] == "Could not prepare the installer. Try installing again."
     assert api._work_gate.handoff_phase() == ""
 
 
@@ -1240,6 +1254,86 @@ def test_successful_launch_classifies_closes_handle_then_requests_shutdown(tmp_p
         ("shutdown", "launching", "launching"),
     ]
     assert not api._work_gate.claim_upload()
+
+
+def test_shutdown_callback_failure_is_logged_without_rolling_back_launch(
+    tmp_path, caplog
+):
+    service = FakeUpdates(release=_release_info("4.9.0"), process_handle=91)
+    spawned = []
+
+    def spawn(**kwargs):
+        worker = threading.Thread(**kwargs)
+        spawned.append(worker)
+        return worker
+
+    api, _window = _ready_api(tmp_path, service, update_spawn=spawn)
+    shutdown_calls = []
+
+    def fail_shutdown():
+        shutdown_calls.append(True)
+        raise RuntimeError("window destroy failed")
+
+    api._request_shutdown = fail_shutdown
+
+    with caplog.at_level(logging.ERROR, logger=api_mod.__name__):
+        api.install_update()
+        _join_update(api, spawned[0])
+
+    marker = service._staged.with_name(service._staged.name + ".handoff.json")
+    assert service.events == [
+        "launch_verified",
+        "marker",
+        "shell",
+        "close-handle",
+    ]
+    assert marker.exists()
+    assert shutdown_calls == [True]
+    assert api.update_status()["state"] == "launching"
+    assert api._work_gate.handoff_phase() == "launching"
+    assert "remove-marker" not in service.events
+    assert any(
+        "Window shutdown failed after installer launch" in record.getMessage()
+        and record.exc_info is not None
+        for record in caplog.records
+    )
+
+
+def test_false_update_shutdown_transition_is_logged_after_handle_close(
+    tmp_path, caplog
+):
+    service = FakeUpdates(release=_release_info("4.9.0"), process_handle=92)
+    spawned = []
+
+    def spawn(**kwargs):
+        worker = threading.Thread(**kwargs)
+        spawned.append(worker)
+        return worker
+
+    api, _window = _ready_api(tmp_path, service, update_spawn=spawn)
+    shutdown = []
+    api._request_shutdown = lambda: shutdown.append(True)
+    api._work_gate.begin_update_shutdown = lambda: False
+
+    with caplog.at_level(logging.ERROR, logger=api_mod.__name__):
+        api.install_update()
+        _join_update(api, spawned[0])
+
+    marker = service._staged.with_name(service._staged.name + ".handoff.json")
+    assert service.events == [
+        "launch_verified",
+        "marker",
+        "shell",
+        "close-handle",
+    ]
+    assert shutdown == [True]
+    assert marker.exists()
+    assert api.update_status()["state"] == "launching"
+    assert api._work_gate.handoff_phase() == "launching"
+    assert any(
+        "Update handoff could not begin orderly shutdown" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_process_handle_close_failure_does_not_abandon_a_launched_installer(tmp_path):
