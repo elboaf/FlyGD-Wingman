@@ -55,7 +55,8 @@ The design was checked against ESI's OpenAPI document at `/meta/openapi.json` us
 - Create descriptions are at most 500 characters.
 - A create payload contains 1–512 item rows.
 - The read endpoint advertises a five-minute server and client cache.
-- The fitting rate-limit group advertises 150 tokens per 15 minutes. Observed fitting requests consume five tokens, so this design limits one copy operation to 20 creates and leaves budget for reads and reconciliation.
+- The fitting rate-limit group advertises 150 tokens per 15 minutes, bucketed by application and character. Current ESI policy charges by response class: two tokens for 2xx, one for 3xx, five for 4xx other than 429, and zero for 5xx. Wingman reads the remaining, used, and retry headers dynamically.
+- One copy operation is still limited to 20 creates as a conservative UX and worst-case-rejection bound, not because every request costs five tokens or because all characters share one fitting bucket.
 - The schema does not publish a per-character fitting-capacity limit. ESI remains authoritative for capacity failures.
 
 These facts must be represented by named constants and contract tests rather than retyped independently into logic and UI copy.
@@ -91,7 +92,9 @@ Existing grants remain valid for the capabilities their scopes satisfy. Missing 
 
 **Enable fittings** reauthorizes the selected character for the union of Wingman's scopes required by its enabled capabilities. The callback must identify the exact character whose row initiated the upgrade. Selecting another EVE character is refused and reported; it must not silently add or upgrade that character.
 
-A fitting-specific missing-scope response disables only Fittings. A definitively revoked refresh grant invalidates the grant globally. An owner-hash change also invalidates both capabilities and removes character-specific snapshots because the identity can no longer be trusted.
+Capability state comes from validated token claims, not from interpreting one ESI endpoint response as an OAuth verdict. Missing fitting scopes disable only Fittings. An ESI 401 or 403 never deletes the shared refresh token by itself; a 403 received despite the required claim is a capability or operation error. Only definitive SSO outcomes such as `invalid_grant`, a validated identity mismatch, or an owner-hash change invalidate the grant globally and remove character-specific snapshots.
+
+A fitting-upgrade save failure leaves the previous Skills-capable authority intact and does not mark Fittings enabled. If SSO rotates a refresh token and the new token cannot be persisted, the new token remains live in memory with a persistent-risk warning; Wingman must not roll back to a token known to have rotated away. Global-forget cleanup begins only after removal from shared authority has been persisted successfully.
 
 ### Component boundaries
 
@@ -119,6 +122,8 @@ Type-name enrichment is rebuildable cache data and is stored separately with str
 
 Each durable document has one writer. All read-modify-write operations and their save occur under that writer's re-entrant lock. Controllers coordinate through explicit events or service calls rather than editing one another's state.
 
+Bounds are refusal boundaries, never silent eviction boundaries. A remote snapshot exceeding fitting, item, alias, or file limits is non-authoritative and leaves prior presence unchanged. Collection and metadata mutations beyond local limits are refused without changing state. Curated fittings, collections, and presence are never pruned to make room. Alias retention is deterministic and never removes preferred metadata or the only deployment provenance. Operation records and result history have named count and age caps; completed history may be pruned oldest-first, but unresolved write intents may not. Exact constants are fixed from representative fixtures before implementation, and page/result payload limits are named constants rather than UI literals.
+
 ### Migration from the current Skills document
 
 The current `eve_skills.json` combines character credentials and Skills data. Migration must be resumable and prioritize never losing or resurrecting a credential:
@@ -137,7 +142,9 @@ Global forget removes the shared credential before pruning Skills snapshots and 
 
 ### Stable identity
 
-Each fitting has a stable, locally generated ID. A content fingerprint is a versioned derived lookup key, not the persistent record ID. This lets canonicalization evolve without losing preferred metadata, collections, or supersession history.
+Each fitting has a stable, locally generated ID. A content fingerprint is a versioned derived lookup key, not the persistent record ID. This lets digest formats evolve without losing preferred metadata, collections, or supersession history.
+
+A fingerprint-version migration that changes only serialization recomputes the index while preserving IDs. A canonicalization-rule change can merge or split entries and therefore requires an explicit, separately tested state migration; it may not silently recanonicalize the catalog at load time.
 
 A matching digest is not sufficient on its own: Wingman compares complete canonical content before merging entries.
 
@@ -159,13 +166,15 @@ Numbered slots normalize to rack classes:
 
 Cargo, DroneBay, and FighterBay remain distinct and quantity-sensitive. Charges and scripts remain content and therefore distinguish loadouts. Duplicate canonical rows are aggregated before deterministic sorting and hashing.
 
-Unknown flags are retained as distinct exact locations. They are never silently dropped, because dropping one could merge different loadouts. Invalid IDs, booleans masquerading as integers, non-positive quantities, excessive counts, and oversized payloads are refused or dropped according to explicit per-payload validation rules; malformed data must never normalize into valid-looking content.
+Validation rules differ by trust boundary. An authoritative ESI snapshot is all-or-nothing: an invalid fitting or item makes the complete refresh non-authoritative, retains prior presence, and reports malformed remote data. Tolerant per-entry dropping applies only while recovering a locally stored corrupt document, where losing one bad record is safer than losing every valid one.
+
+A flag outside the pinned compatibility-date schema makes an ESI snapshot malformed and non-authoritative. The schema-defined `Invalid` flag is retained as distinct canonical content rather than silently dropped, but the resulting library entry is visibly non-deployable because ESI would discard that row during create and fail to reproduce the stored content.
 
 ### Deployment template
 
-Canonicalization deliberately discards numbered slot order, while ESI creation requires exact numbered flags. Each library fitting therefore retains one validated deployment template with exact flags.
+Canonicalization deliberately discards numbered slot order, while ESI creation requires exact numbered flags. Every library entry retains a mandatory `source_template` with its observed exact flags. A deployable entry additionally retains an optional, validated `deployment_template`.
 
-The first accepted source layout becomes the template. Later equivalent layouts are retained as provenance but do not silently change deployment behavior. The template remains after all remote sources disappear. Module editing and template switching are outside the first release.
+The first accepted source layout becomes the source template and, when every row is accepted by the create schema and reproduces canonical content, the deployment template. Later equivalent layouts remain provenance but do not silently change deployment behavior. Both templates remain after all remote sources disappear. Entries containing schema-defined `Invalid` retain their source template but have no deployment template, remain readable and curatable, and classify as Unavailable for copy. Module editing and template switching are outside the first release.
 
 ### Curated metadata
 
@@ -174,7 +183,8 @@ A fitting entry stores:
 - stable local ID;
 - canonical ship and item IDs;
 - fingerprint version and digest;
-- exact deployment template;
+- mandatory exact source template;
+- optional validated deployment template;
 - editable preferred name and description;
 - bounded source aliases, including source descriptions;
 - collection IDs;
@@ -208,7 +218,7 @@ For each fittings-enabled character, retain the last authoritative snapshot:
 
 Remote fitting IDs identify presence on one character, not library identity. A delete-and-recreate may produce a new ID for the same canonical content.
 
-Only a complete successful GET may add or remove authoritative presence. A valid `304 Not Modified` confirms retained snapshot data and advances freshness without replacing it. A failed, malformed, unauthorized, or interrupted fetch retains the previous snapshot and marks it stale.
+Only a complete, schema-valid successful GET may add or remove authoritative presence. Snapshot validation is all-or-nothing; Wingman never drops one malformed remote fitting and then treats the truncated remainder as authoritative. A valid `304 Not Modified` confirms retained snapshot data and advances freshness without replacing it, except that it cannot resolve a pending or unknown create until a request made after the prior five-minute cache horizon returns authoritative content. A failed, malformed, unauthorized, oversized, or interrupted fetch retains the previous snapshot and marks it stale.
 
 A character transfer or global forget removes that character's snapshot and presence links while retaining independent library content.
 
@@ -266,9 +276,9 @@ The user selects library fittings, chooses target characters, and asks Wingman t
 Each fitting/character pair is classified as:
 
 - **Already present:** equivalent canonical content exists; skip regardless of name.
-- **Name conflict:** the preferred name matches different content after Unicode normalization and case-insensitive comparison; require an alternate name or skip that target.
+- **Name conflict:** the preferred name matches different content after NFC normalization and Unicode `casefold`; require an alternate name or skip that target.
 - **Ready:** content is absent and the name is available.
-- **Unavailable:** missing capability, stale inventory that cannot be refreshed, invalid deployment template, or known capacity problem.
+- **Unavailable:** missing capability, stale inventory that cannot be refreshed, invalid deployment template, unresolved prior write intent, or known capacity problem.
 
 An alternate name is validated against ESI's 50-character limit and against that target's current names. No “replace” option is offered.
 
@@ -281,14 +291,20 @@ One operation is limited to 20 creates. A larger selection is refused with instr
 - Only one fitting-copy operation runs at a time.
 - Targets and fittings are processed sequentially.
 - Each create uses the stored exact-slot template and chosen name/description.
-- Mutating POSTs are attempted once and never automatically retried.
-- Success records the returned remote fitting ID as locally known presence awaiting ESI confirmation.
+- Before every POST, Wingman persists a bounded operation record and per-pair `in_flight` intent. If that intent cannot be saved, nothing is sent.
+- The mutation transport performs exactly one network attempt and reports separately whether an HTTP response was received. It never folds a no-response failure into an ordinary synthetic status.
+- Only a schema-valid `201` response with a fitting ID is definite success.
+- A validated, deterministic 4xx rejection is Failed, except authorization and throttle statuses, which keep their specific meanings.
+- Timeout, no response, `408`, or `5xx` is Unknown unless ESI documents that the response guarantees non-creation.
+- Success transitions the intent to locally known presence awaiting ESI confirmation. A deterministic rejection records Failed. Unknown remains unresolved.
 - An ordinary rejection is recorded per pair and processing continues.
-- A fitting-group `420` or `429` stops the remaining operation to protect the shared ESI error and rate budgets.
+- A legacy-global `420` stops the remaining operation. A fitting-bucket `429` also stops the whole batch as a deliberately conservative product policy, even though fitting buckets are per application and character.
 - Cancellation takes effect before the next request. Completed writes remain completed.
 - Shutdown requests cancellation and waits only for a bounded in-flight request; the final result must not claim unattempted work completed.
 
-A transport failure after a request was sent may mean ESI created the fitting but the response was lost. This is **Unknown**, not Failed. Wingman does not offer an immediate retry for that pair. The target must be refreshed and reconciled first, accounting for the endpoint's five-minute cache.
+Every surviving `in_flight` intent is treated as Unknown on startup. Unknown target/content pairs are unavailable for preflight and cannot be retried until an authoritative refresh after the prior cache horizon reconciles them. A `304` against a representation that may predate the attempt does not resolve uncertainty.
+
+After each response, Wingman persists the outcome before advancing. If saving a known success fails, the batch stops and leaves the already-persisted intent unresolved, because the remote fitting exists but local state cannot safely prove it after restart.
 
 No successful write is rolled back because another pair failed. The result groups Success, Already present, Conflict/Skipped, Failed, Unknown, Unattempted due to throttle, and Cancelled.
 
@@ -356,7 +372,7 @@ User-visible states distinguish:
 - unknown create outcome requiring reconciliation; and
 - local mutation applied but not persisted.
 
-A failed refresh never clears valid snapshots, library entries, aliases, or presence. A failed local save must not be presented as durable. Errors are bounded, sanitized, token-redacted, and attached to the character or operation they affect.
+A failed refresh never clears valid snapshots, library entries, aliases, or presence. A failed local save must not be presented as durable. An unresolved write intent is durable safety state, not disposable result history, and blocks a repeat create until reconciliation. Errors are bounded, sanitized, token-redacted, and attached to the character or operation they affect.
 
 Copy results carry an operation ID so logs and UI outcomes can be correlated without logging bearer tokens or full user-controlled descriptions.
 
@@ -388,7 +404,8 @@ Copy results carry an operation ID so logs and UI outcomes can be correlated wit
 ### Fitting domain and persistence
 
 - Equivalent numbered-slot order produces the same canonical content.
-- Different racks, cargo, drones, fighters, charges, scripts, quantities, or unknown flags remain distinct.
+- Different racks, cargo, drones, fighters, charges, scripts, or quantities remain distinct.
+- A schema-unknown remote flag rejects the complete snapshot; schema-defined `Invalid` remains distinct and produces no deployment template.
 - Duplicate canonical rows aggregate deterministically.
 - Malformed IDs, booleans, quantities, flags, counts, and oversized payloads cannot produce valid-looking fits.
 - Digest matches still require canonical-content equality.
@@ -406,11 +423,15 @@ Copy results carry an operation ID so logs and UI outcomes can be correlated wit
 - Type-name failure does not block import.
 - Preflight covers present, conflict, ready, and unavailable pairs.
 - Execution revalidates stale preflight decisions.
-- Operation and write-count bounds are enforced.
-- Mutating POSTs are never retried.
+- Operation and write-count bounds are enforced without silently truncating authoritative data.
+- Intent is durably saved before send; save failure prevents the POST.
+- The mutation transport makes exactly one attempt and preserves response-received versus no-response outcomes.
+- Timeout, no response, `408`, and `5xx` are Unknown; only a valid `201` is definite success.
+- A success-result save failure stops the batch and leaves a recoverable unresolved intent.
+- Startup converts surviving `in_flight` intents to Unknown.
 - Success, rejection, ambiguous transport failure, cancellation, throttling, and partial results are distinct.
-- A `420` or `429` stops the remainder.
-- Unknown outcomes require refresh before retry.
+- A `420` or `429` stops the remainder under the documented policies.
+- Unknown outcomes require post-cache-horizon authoritative refresh before retry.
 
 ### Integration and UI contracts
 
@@ -445,10 +466,11 @@ A Windows/WebView2 smoke pass must cover:
 Implementation should proceed in vertical, testable slices:
 
 1. Shared authority and migration while preserving existing Skills behavior.
-2. Fitting domain model, persistence, and representative sanitized ESI fixtures.
-3. Read-only refresh, automatic import, deduplication, and type-name enrichment.
-4. Fittings destination, paging, details, collections, and curation.
-5. Scope upgrade, preflight, bounded additive copy, and result reconciliation.
-6. Packaging, dev fixtures, screenshots, documentation, and Windows smoke verification.
+2. Measure the four-destination title bar at the 840px floor before investing in the full route.
+3. Fitting domain model, persistence, durable write intents, and representative sanitized ESI fixtures.
+4. Read-only refresh, automatic import, deduplication, and type-name enrichment.
+5. Fittings destination, paging, details, collections, and curation.
+6. Scope upgrade, one-attempt mutation transport, preflight, bounded additive copy, and result reconciliation.
+7. Packaging, dev fixtures, screenshots, documentation, and Windows smoke verification.
 
-No slice may widen authorization or enable ESI writes before its capability-specific tests and user-visible consent path exist.
+No slice may widen authorization or enable ESI writes before its capability-specific tests and user-visible consent path exist. Before release, Wingman's registered EVE application must also be configured to permit both fitting scopes; a source change alone cannot widen the scopes accepted by the registered application.
