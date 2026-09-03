@@ -1,8 +1,52 @@
-"""EVE Online Personal Fittings: consolidate, curate, and copy loadouts.
+"""EVE Online Personal Fittings domain and durable local library."""
 
-Fittings shares its secure ESI transport with Skills (see
-`wingman.eveesi`) rather than duplicating retry, redaction, and
-redirect-refusal logic a second time. This package owns the pinned
-fitting contracts (`contracts.py`) plus, in later tasks, the fitting
-model, authority integration, and controller.
-"""
+from .model import (
+    FINGERPRINT_VERSION,
+    CanonicalContent,
+    CanonicalItem,
+    CharacterSnapshot,
+    Collection,
+    FittingsState,
+    LibraryEntry,
+    Presence,
+    RemoteFitting,
+    RemoteItem,
+    SourceAlias,
+    WriteIntent,
+    canonical_equal,
+    canonicalize,
+    deployment_template,
+    fingerprint,
+    new_library_entry,
+    normalized_name_key,
+    retain_aliases,
+    validate_remote_snapshot,
+    validate_supersession,
+)
+from .store import load_fittings, save_fittings
+
+__all__ = (
+    "FINGERPRINT_VERSION",
+    "CanonicalContent",
+    "CanonicalItem",
+    "CharacterSnapshot",
+    "Collection",
+    "FittingsState",
+    "LibraryEntry",
+    "Presence",
+    "RemoteFitting",
+    "RemoteItem",
+    "SourceAlias",
+    "WriteIntent",
+    "canonical_equal",
+    "canonicalize",
+    "deployment_template",
+    "fingerprint",
+    "load_fittings",
+    "new_library_entry",
+    "normalized_name_key",
+    "retain_aliases",
+    "save_fittings",
+    "validate_remote_snapshot",
+    "validate_supersession",
+)
