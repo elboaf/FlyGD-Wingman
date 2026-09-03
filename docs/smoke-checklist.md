@@ -4232,9 +4232,14 @@ behaviour a lexical guard cannot reach.
       control is inert is exactly what a missing script looks like —
       PyInstaller exits 0 when a `datas` entry resolves to nothing, and
       pywebview reports no error for a script that 404s.
-- [ ] **The frozen build reaches only CCP.** With previews and the uploader
-      idle, the only hosts this feature contacts are `login.eveonline.com`
-      and `esi.evetech.net`.
+- [ ] **The frozen Skills interaction reaches only CCP after startup traffic
+      is excluded.** Start the installed build with an HTTPS capture running
+      and wait for the automatic GitHub startup check to finish. Clear the
+      capture after the automatic GitHub startup check finishes, then perform
+      only the Skills interaction: add or refresh a character and inspect its
+      plan. Expected: only the Skills interaction contacts the network, and its
+      hosts are `login.eveonline.com` and `esi.evetech.net`; there is no FlyGD,
+      Google, Discord, or unrelated GitHub request in the cleared capture.
 
 ### Checking for and installing an update
 
@@ -4351,7 +4356,9 @@ behaviour a lexical guard cannot reach.
       inspect the live page:
 
       ```powershell
-      $Policy = Invoke-WebRequest https://wingman.zoolanders.vip/privacy
+      $Policy = Invoke-WebRequest `
+        -Uri https://wingman.zoolanders.vip/privacy `
+        -UserAgent "Mozilla/5.0 FlyGD-Wingman-release-verification"
       $Policy.Content | Select-String -Pattern "GitHub|hidden|sign-in|telemetry|Check again|Download update"
       ```
 

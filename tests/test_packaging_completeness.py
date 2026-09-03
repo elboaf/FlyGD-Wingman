@@ -32,6 +32,35 @@ def test_readme_discloses_automatic_github_update_checks():
     assert "does not prove publisher identity" in readme
 
 
+def test_readme_network_table_covers_eve_and_current_user_triggers():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "| CCP EVE SSO and ESI" in readme
+    assert "login.eveonline.com" in readme
+    assert "esi.evetech.net" in readme
+    assert "universe/names" in readme
+    assert "FightRecorder" in readme
+    assert not re.search(
+        r"makes network connections to (?:exactly )?"
+        r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten) places",
+        readme,
+        re.IGNORECASE,
+    )
+    for removed_copy in (
+        "Also post combat logs to Discord",
+        "combat logs go with it only while that box is ticked",
+        "Untick the box to upload the video alone",
+    ):
+        assert removed_copy not in readme
+
+
+def test_smoke_network_checks_scope_ccp_and_use_a_browser_user_agent():
+    smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
+    flat = " ".join(smoke.split())
+    assert "Clear the capture after the automatic GitHub startup check finishes" in flat
+    assert "only the Skills interaction" in flat
+    assert '-UserAgent "Mozilla/5.0 FlyGD-Wingman-release-verification"' in flat
+
+
 def test_every_subpackage_is_declared():
     with (ROOT / "pyproject.toml").open("rb") as fh:
         declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])

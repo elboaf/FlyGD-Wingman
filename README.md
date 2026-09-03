@@ -119,10 +119,10 @@ which requires this scope. Wingman makes no other YouTube API call.
 **What this means in practice:**
 
 - **Uploads only happen when you start them.** Wingman never uploads
-  automatically. A video is uploaded only after you tick it and press
-  **Upload**, and the combat logs go with it only while that box is ticked.
-  Detecting a new recording produces a notification and a list entry —
-  nothing more.
+  automatically. A video is uploaded only after you select it and press
+  **Upload**. If you configured a Discord webhook, matching combat logs are
+  posted there after the video publishes. Detecting a new recording produces
+  a notification and a list entry — nothing more.
 - **Sign-in only happens when you ask for it**, either via
   **Settings → Connect Google Account** or automatically at the moment of your
   first upload if you have not connected yet.
@@ -201,14 +201,13 @@ This feature is optional, off until you configure it, and **completely
 separate from Google sign-in**. It uses no Google credentials and sends no
 Google user data anywhere.
 
-With **Also post combat logs to Discord** ticked, an upload does a second
-thing once the video is published: it works out the time span the selected
-recordings cover, collects the EVE Online gamelog files from your local
-`Gamelogs` folder that overlap that span, zips them, and posts the archive to
-the Discord webhook URL you entered in Settings. That is the entire scope of
-the feature: local EVE log files, to a Discord channel you chose.
-
-Untick the box to upload the video alone.
+When a Discord webhook is configured, an upload does a second thing once the
+video is published: it works out the time span the selected recordings cover,
+collects the EVE Online gamelog files from your local `Gamelogs` folder that
+overlap that span, zips them, and posts the archive to the webhook URL you
+entered in Settings. That is the entire scope of the feature: local EVE log
+files, to a Discord channel you chose. Remove the webhook in Settings to upload
+videos without posting combat logs to Discord.
 
 Notes:
 
@@ -287,16 +286,18 @@ and no telemetry. Everything it stores — your settings, your Google OAuth
 token, its log file, and temporary stitched video files — lives under
 `%LOCALAPPDATA%\FlyGD Wingman\` on your own machine.
 
-The application makes network connections to three places:
+These features make the following network connections:
 
 | Destination | When | What is sent |
 |---|---|---|
-| GitHub release API and release downloads | The release API is checked once each time Wingman starts, including when Windows starts it hidden at sign-in. **Check again** makes another check; **Download update** explicitly downloads the installer. There is no polling or automatic download. | The installed Wingman version and ordinary network connection metadata. No Wingman settings, EVE or Google account data, filenames, recordings, or telemetry are sent. |
+| GitHub release APIs and release downloads | Wingman's release API is checked once each time Wingman starts, including when Windows starts it hidden at sign-in. **Check again** repeats that check and **Download update** explicitly downloads its installer; there is no polling or automatic download. Separately, FightRecorder stays local until you choose **Check for updates**, **Install**, or **Update** on its Settings card; those actions check its GitHub release and Install/Update downloads the plugin DLL. | The automatic Wingman check identifies the installed Wingman version in its User-Agent, and each request carries ordinary network connection metadata and identifies the repository or release asset requested. FightRecorder checks do not send the installed plugin version. No Wingman settings, EVE or Google account data, filenames, recordings, or telemetry are sent. |
+| CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You add or reconnect a Skills character; Wingman refreshes that character's skills and queue or resolves uncached skill-plan names; or Profiles resolves local character IDs to display names through the unauthenticated `universe/names` endpoint. | EVE SSO receives Wingman's registered client ID, redirect URI, requested read-only skills/queue scopes and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills and queue requests carry the character ID and EVE bearer access token. Unauthenticated universe requests carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
-| A Discord webhook you configure | You press **Upload** with **Also post combat logs to Discord** ticked | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
+| A Discord webhook you configure | You press **Upload** while a webhook is configured, after the video publishes successfully | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
 
-Your Google account data is never sent to Discord or GitHub, and no Google
-OAuth token ever leaves your machine. Full statement:
+Your Google account data and OAuth token go only to Google, never to Discord,
+GitHub, or CCP. EVE tokens go only to CCP's EVE SSO and ESI endpoints. Full
+statement:
 [Privacy Policy](https://wingman.zoolanders.vip/privacy) ·
 [Terms of Service](https://wingman.zoolanders.vip/terms).
 
