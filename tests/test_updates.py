@@ -563,6 +563,7 @@ def test_download_wraps_an_interrupted_read_and_removes_the_partial(tmp_path):
             opener=fake_opener(payload=b"installer-bytes", fail_after=0),
         )
     assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "network"
     assert list(tmp_path.iterdir()) == []
 
 
@@ -786,3 +787,155 @@ def test_cleanup_never_follows_or_removes_a_symlink(tmp_path):
 
 def test_cleanup_is_a_noop_on_a_missing_staging_directory(tmp_path):
     updates.cleanup_staging(tmp_path / "does-not-exist")
+
+
+# ---- fix round 1: filesystem failures map to UpdateFailure -----------------
+
+
+def test_download_wraps_a_staging_directory_creation_failure(tmp_path, monkeypatch):
+    release = release_info(payload=b"installer")
+    staging_root = tmp_path / "updates"
+
+    def raising_mkdir(self, *args, **kwargs):
+        raise PermissionError("cannot create directory")
+
+    monkeypatch.setattr(Path, "mkdir", raising_mkdir)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release, staging_root, opener=fake_opener(payload=b"installer")
+        )
+
+    assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "filesystem"
+    assert not staging_root.exists()
+
+
+def test_download_wraps_a_staging_file_creation_failure(tmp_path, monkeypatch):
+    release = release_info(payload=b"installer")
+
+    def raising_mkstemp(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(updates.tempfile, "mkstemp", raising_mkstemp)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"installer")
+        )
+
+    assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "filesystem"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_wraps_a_write_failure_and_removes_the_partial(tmp_path, monkeypatch):
+    release = release_info(payload=b"installer")
+    real_fdopen = updates.os.fdopen
+
+    def failing_fdopen(handle, mode):
+        real_stream = real_fdopen(handle, mode)
+
+        class _Wrapper:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return real_stream.__exit__(*exc)
+
+            def write(self, chunk):
+                raise OSError("disk full")
+
+            def flush(self):
+                real_stream.flush()
+
+            def fileno(self):
+                return real_stream.fileno()
+
+        return _Wrapper()
+
+    monkeypatch.setattr(updates.os, "fdopen", failing_fdopen)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"installer")
+        )
+
+    assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "filesystem"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_wraps_a_flush_or_fsync_failure_and_removes_the_partial(
+    tmp_path, monkeypatch
+):
+    release = release_info(payload=b"installer")
+
+    def raising_fsync(fd):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(updates.os, "fsync", raising_fsync)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"installer")
+        )
+
+    assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "filesystem"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_wraps_a_publish_replace_failure_and_removes_the_partial(
+    tmp_path, monkeypatch
+):
+    release = release_info(payload=b"installer")
+
+    def raising_replace(src, dst):
+        raise OSError("cannot rename across volumes")
+
+    monkeypatch.setattr(updates.os, "replace", raising_replace)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"installer")
+        )
+
+    assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "filesystem"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_handoff_marker_wraps_a_write_failure(tmp_path, monkeypatch):
+    release = release_info()
+    path = tmp_path / "update-abc123.ready.exe"
+    path.write_bytes(b"installer")
+
+    def raising_write_atomic(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(updates.atomicio, "write_atomic", raising_write_atomic)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.write_handoff_marker(path, release)
+
+    assert exc_info.value.stage == "cleanup"
+    assert exc_info.value.code == "filesystem"
+
+
+def test_remove_handoff_marker_wraps_a_removal_failure(tmp_path, monkeypatch):
+    release = release_info()
+    path = tmp_path / "update-abc123.ready.exe"
+    path.write_bytes(b"installer")
+    marker = updates.write_handoff_marker(path, release)
+
+    def raising_unlink(self, *args, **kwargs):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(Path, "unlink", raising_unlink)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.remove_handoff_marker(marker)
+
+    assert exc_info.value.stage == "cleanup"
+    assert exc_info.value.code == "filesystem"

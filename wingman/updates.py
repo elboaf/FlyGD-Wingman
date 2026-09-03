@@ -349,14 +349,26 @@ def download_release(
     """
     validate_download_origin(release.url)
     staging_root = Path(staging_root)
-    staging_root.mkdir(parents=True, exist_ok=True)
+    try:
+        staging_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise UpdateFailure(
+            "download",
+            "filesystem",
+            f"could not create the staging directory: {exc}",
+        ) from exc
 
     if opener is None:
         opener = urllib.request.build_opener(SafeRedirectHandler())
 
-    handle, tmp_name = tempfile.mkstemp(
-        dir=str(staging_root), prefix="update-", suffix=_PARTIAL_SUFFIX
-    )
+    try:
+        handle, tmp_name = tempfile.mkstemp(
+            dir=str(staging_root), prefix="update-", suffix=_PARTIAL_SUFFIX
+        )
+    except OSError as exc:
+        raise UpdateFailure(
+            "download", "filesystem", f"could not create a staging file: {exc}"
+        ) from exc
     tmp_path = Path(tmp_name)
     try:
         digest = hashlib.sha256()
@@ -383,11 +395,25 @@ def download_release(
                             f"download exceeded the expected size: {total} bytes",
                         )
                     digest.update(chunk)
-                    stream.write(chunk)
+                    try:
+                        stream.write(chunk)
+                    except OSError as exc:
+                        raise UpdateFailure(
+                            "download",
+                            "filesystem",
+                            f"could not write staged bytes: {exc}",
+                        ) from exc
                     if on_progress is not None:
                         on_progress(total, release.size)
-            stream.flush()
-            os.fsync(stream.fileno())
+            try:
+                stream.flush()
+                os.fsync(stream.fileno())
+            except OSError as exc:
+                raise UpdateFailure(
+                    "download",
+                    "filesystem",
+                    f"could not flush staged bytes to disk: {exc}",
+                ) from exc
 
         if total != release.size:
             raise UpdateFailure(
@@ -405,7 +431,14 @@ def download_release(
         ready_path = tmp_path.with_name(
             tmp_path.name[: -len(_PARTIAL_SUFFIX)] + _READY_SUFFIX
         )
-        os.replace(tmp_path, ready_path)
+        try:
+            os.replace(tmp_path, ready_path)
+        except OSError as exc:
+            raise UpdateFailure(
+                "download",
+                "filesystem",
+                f"could not publish the staged download: {exc}",
+            ) from exc
         return ready_path
     except BaseException:
         with contextlib.suppress(OSError):
@@ -431,16 +464,26 @@ def write_handoff_marker(path: Path, release: ReleaseInfo) -> Path:
         "sha256": release.sha256,
         "version": ".".join(map(str, release.version)),
     }
-    atomicio.write_atomic(
-        marker,
-        json.dumps(payload, sort_keys=True, separators=(",", ":")),
-    )
+    try:
+        atomicio.write_atomic(
+            marker,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        )
+    except OSError as exc:
+        raise UpdateFailure(
+            "cleanup", "filesystem", f"could not write the handoff marker: {exc}"
+        ) from exc
     return marker
 
 
 def remove_handoff_marker(marker: Path) -> None:
     """Remove a handoff sidecar, leaving the installer it describes intact."""
-    Path(marker).unlink(missing_ok=True)
+    try:
+        Path(marker).unlink(missing_ok=True)
+    except OSError as exc:
+        raise UpdateFailure(
+            "cleanup", "filesystem", f"could not remove the handoff marker: {exc}"
+        ) from exc
 
 
 def cleanup_staging(
