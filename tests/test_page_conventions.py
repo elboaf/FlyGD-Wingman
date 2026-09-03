@@ -1649,6 +1649,43 @@ def test_flash_and_speed_share_one_collapsed_advanced_disclosure():
     )
 
 
+def test_the_flashes_select_aria_label_names_the_visible_flashes_word():
+    """Each advanced-row Flashes select carries a visible `<label>Flashes
+    </label>` plus an `aria-label` that disambiguates it by owning event
+    (`aria-label="Combat flash count"`). A screen reader's accessible name
+    computation prefers the `aria-label` outright over the visible label
+    text, so the name it actually announces is "Combat flash count" --
+    which never contains the word "Flashes" the sighted user reads right
+    next to the control. That mismatch between visible label and
+    accessible name is exactly the failure WCAG 2.5.3 Label in Name
+    forbids: a voice-control or switch-access user who speaks the visible
+    word "Flashes" has no match to activate.
+
+    The owner disambiguation is still needed -- three Flashes selects on
+    one page are not distinguishable by "Flashes" alone -- so the fix
+    keeps the owner in the name and puts the visible word first, e.g.
+    `aria-label="Flashes: Combat"`.
+    """
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    body = advanced.group(1)
+
+    for event in _ALERT_EVENT_IDS:
+        select = re.search(
+            rf'<select class="field" id="alert-event-{event}-flashes"\s+'
+            rf'aria-label="([^"]*)"',
+            body,
+        )
+        assert select, f"{event}'s Flashes select or its aria-label is missing"
+        assert "Flashes" in select.group(1), (
+            f"{event}'s Flashes select aria-label {select.group(1)!r} does not "
+            "contain the visible label word 'Flashes' -- WCAG 2.5.3 Label in "
+            "Name requires the accessible name to contain the visible label"
+        )
+
+
 def test_two_enabled_alerts_on_one_colour_are_flagged():
     """Round 6, P1-1. Two alerts the same colour are one alert with two
     meanings, and nothing said so.

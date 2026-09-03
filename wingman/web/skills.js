@@ -802,7 +802,7 @@
    * Smaller than ui/copy.py's _COPY_NAME_CAP (6) on purpose, not just
    * coincidentally: that modal is a dialog the reader stopped at on
    * purpose and reads once, `shown`/`rest` derived the same way this row
-   * does (copy.py:554-556). A roster row is read in passing, across many
+   * does (copy.py:555-563). A roster row is read in passing, across many
    * rows in one scan, not opened and stopped at -- so it can afford fewer
    * names than a confirmation the user is already reading closely.
    */
