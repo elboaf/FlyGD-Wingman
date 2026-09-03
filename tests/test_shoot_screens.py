@@ -36,7 +36,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 17
+    assert len(to_shoot) == 18
     assert skipped == []
 
 
@@ -54,7 +54,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 13
+    assert len(skipped) == 14
 
 
 def _strip_js_comments(text: str) -> str:
@@ -298,6 +298,7 @@ def test_manifest_records_what_the_gate_skipped():
     )
     assert manifest["eve_shown"] is False
     assert sorted(manifest["skipped"]) == [
+        "fittings",
         "profiles",
         "profiles-account-identity",
         "profiles-backups",
@@ -527,9 +528,9 @@ def test_preview_group_stage_setup_scripts():
 
 
 def test_gate_on_shoots_every_screen_including_new_group_stages():
-    """The representative detail stage brings the gated capture set to 17."""
+    """The representative detail stage brings the gated capture set to 18."""
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 17
+    assert len(to_shoot) == 18
     assert skipped == []
 
 

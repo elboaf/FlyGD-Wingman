@@ -293,6 +293,19 @@
     return Promise.resolve(skills);
   };
 
+  // Task 6's minimal shell: the only shape this stub has to answer is the
+  // same unavailable state Api.fittings_state (the real one, pre-Task-9)
+  // always returns, so the harness shows fittings.js's route exactly as
+  // it would render under Python today rather than inventing a workspace
+  // this file does not have yet.
+  api.fittings_state = function () {
+    console.log('DEV api.fittings_state()');
+    return Promise.resolve({
+      available: false,
+      warnings: ['The EVE fitting library is not available yet.']
+    });
+  };
+
   api.skills_character_detail = function (id, plan) {
     console.log('DEV api.skills_character_detail(', id, plan, ')');
     return Promise.resolve({

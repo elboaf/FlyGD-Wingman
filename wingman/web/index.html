@@ -27,6 +27,7 @@
       <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
       <button class="navbtn" id="nav-evesettings" data-route="evesettings">Profiles</button>
       <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
+      <button class="navbtn" id="nav-fittings" data-route="fittings">Fittings</button>
     </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
@@ -1914,6 +1915,14 @@
     </section>
   </div>
 
+  <!-- MINIMAL SHELL (SDD task 6): fittings.js fills #fittings-empty from
+       fittings_state's unavailable-state stub. The two-pane curation
+       workspace the real controller answer will drive is Task 9's file,
+       not this markup. -->
+  <div class="route" id="route-fittings" aria-labelledby="nav-fittings">
+    <p class="empty" id="fittings-empty"></p>
+  </div>
+
   <div class="route" id="route-firstrun">
     <div class="firstrun">
       <!-- The heading names the PRODUCT, not this screen's task.
@@ -2070,6 +2079,7 @@
   <script src="panel.js"></script>
   <script src="settings.js"></script>
   <script src="skills.js"></script>
+  <script src="fittings.js"></script>
   <script src="firstrun.js"></script>
   <script src="dev.js"></script>
 </body>

@@ -146,6 +146,7 @@
                    firstrun: 'route-firstrun',
                    evesettings: 'route-evesettings',
                    skills: 'route-skills',
+                   fittings: 'route-fittings',
                    formations: 'route-formations',
                    accountidentity: 'route-accountidentity',
                    backups: 'route-backups' };
@@ -179,7 +180,8 @@
     WM.el('routenav').hidden = chromeless;
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'evesettings' || name === 'skills') {
+    if (name === 'main' || name === 'evesettings' || name === 'skills'
+        || name === 'fittings') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;
@@ -253,7 +255,8 @@
   // the gate off, a user standing in one has to be moved off it like
   // anyone standing on a hidden destination, or the nav disappears around
   // them and there is no way back.
-  WM.EVE_ROUTES = ['evesettings', 'skills', 'formations', 'accountidentity', 'backups'];
+  WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
+                   'accountidentity', 'backups'];
   // Alerts joined this list in round 5 (D1) when it stopped being a card
   // inside Previews and became a section. It is EVE-gated for the same
   // reason the other two are: it reads the EVE gamelogs folder and draws

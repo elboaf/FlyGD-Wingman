@@ -111,6 +111,7 @@ SCREENS = (
     ),
     Screen("profiles-backups", "Profiles - Backups", "backups", None, True),
     Screen("skills", "Skills", "skills", None, True),
+    Screen("fittings", "Fittings", "fittings", None, True),
     Screen("dialog", "Dialog", "main", None, False),
 )
 

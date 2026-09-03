@@ -197,6 +197,24 @@ def _empty_skills_state(warnings=None) -> dict:
     }
 
 
+def _empty_fittings_state(warnings=None) -> dict:
+    """The Fittings route's only state today.
+
+    There is no `_fittings` controller slot yet (Task 8 adds it) and no
+    real payload shape has been decided (Task 9 decides it) -- this is the
+    minimal-shell stub the SDD ledger's Task 6 ruling calls for, so the
+    route's one bridge call always resolves to a real method instead of a
+    dead button with `bridge: no such method` in the console behind it.
+    Same `warnings`-list convention as `_empty_skills_state`, so a later
+    real payload can keep the same key without the page needing a second
+    renderer.
+    """
+    return {
+        "available": False,
+        "warnings": list(warnings or ["The EVE fitting library is not available yet."]),
+    }
+
+
 def _close_media(media) -> None:
     """Release the file handle a MediaFileUpload holds, best effort.
 
@@ -5841,6 +5859,22 @@ class Api:
         if self._skills is None:
             return _empty_skills_state(self._authority_warnings)
         return _with_fetch_labels(self._skills.state_payload())
+
+    # ---- EVE fittings ---
+
+    def fittings_state(self) -> dict:
+        """The Fittings route's state, until Task 9 replaces this with
+        controller delegation.
+
+        Task 6's ruling (see the SDD ledger) adds this stub ahead of the
+        private `_fittings` slot Task 8 wires, so the route's route-enter
+        call always answers rather than throwing at the console with a
+        dead route behind it. There is no controller to consult yet, so
+        this always answers "unavailable" -- it takes no arguments and its
+        answer does not vary, which is what lets fittings.js ask exactly
+        once and cache the result the same way skills.js does.
+        """
+        return _empty_fittings_state()
 
     def skills_character_detail(self, character_id, plan_name) -> dict:
         if self._skills is None:

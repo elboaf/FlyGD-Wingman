@@ -87,13 +87,51 @@ written: at a floor of 840 CSS, 686px of unshrinkable content fits with
 | unshrinkable content | 686px | unchanged |
 | result | close button clipped | fits, with 154px spare |
 
-This is **not** a claim that `#38` was wrong. Three destinations stand on
+This is **not** a claim that `#38` was wrong. Four destinations stand on
 `PRODUCT.md`'s destination-vs-configuration test, which needs no pixel
 argument, and something was evidently observed. What is suspect is the
 recorded *reason* — and the reason is the tool the next contributor will
 reach for. Reproduce the clip or establish that it cannot be reproduced
 before relying on either number. Deliberately left open rather than
 guessed at.
+
+**Fourth destination, measured (SDD task 6, `2026-09-03-character-
+fittings`).** Adding Fittings brought the bar to four destinations, which
+is the one arithmetic this file warns against skipping two paragraphs
+above ("four features added one each without revisiting it"). Measured in
+headless Chromium (`google-chrome`, driven over CDP with `puppeteer-core`,
+loading `wingman/web/index.html?dev=1` so the fake API answers without a
+Python process) at the two CSS viewport widths this file already
+identifies as the floor — 840 (100% and every scaling below 200%) and 839
+(the 200%-only floor) — with `deviceScaleFactor: 1`:
+
+| | 840px | 839px |
+|---|---|---|
+| `document.scrollWidth == clientWidth` | 840 == 840 | 839 == 839 |
+| close button right edge | 834px | 833px |
+| drag region width (105px floor) | 379.9px | 378.9px |
+| destination labels visible | 4 (Uploader, Profiles, Skills, Fittings) | 4 |
+
+All four of Task 6's acceptance conditions hold at both widths: nothing
+overflows, the close button stays inside the titlebar, and the drag
+region is still more than 3.5x its 105px floor.
+
+**This does not resolve the "Unresolved" question directly above, and is
+not offered as a substitute for it.** This file's own opening rule is that
+nothing renders this page except a real Windows machine; headless
+Chromium is not WebView2 and cannot reproduce Windows' DPI rounding — the
+fact that makes an 840 logical minimum measure as 839 CSS px at 200% is a
+WinForms/Windows behaviour (`ui/window.py`'s `MinimumSize` /
+`ptMinTrackSize`), not a browser one, and no headless run can exercise it.
+What this measurement DOES confirm is the CSS layout arithmetic itself:
+that four destinations' worth of nav buttons, at these two exact pixel
+widths, do not overflow the titlebar — which is the "do the arithmetic"
+check Task 6 asked for before building the rest of Fittings. **The actual
+100%/125%/150%/200% Windows display-scaling smoke pass
+(`docs/smoke-checklist.md`) is still required and remains UNVERIFIED as of
+this task** — no real Windows/WebView2 environment was available to this
+change, and this measurement must not be read as having produced that
+evidence. Treat the smoke item as open until it is actually run.
 
 **What this means for `style.css`.** Every width media query below the
 floor is unreachable through the window. As of the merge that carried this

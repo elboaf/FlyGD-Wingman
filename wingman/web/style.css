@@ -506,7 +506,15 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 
 /* Peer destinations, visually distinct from the window actions on the
    right. Every pixel here is drag surface given up, so this stays tight;
-   past about four destinations the 44px bar needs rethinking. */
+   past about four destinations the 44px bar needs rethinking.
+
+   Four is what Fittings brought it to (SDD task 6). No rule in this block
+   changed to fit it -- .navbtn's padding is unchanged and the bar simply
+   grew by one more of the same button. DESIGN.md records the measured
+   check that this is still safe at the 840/839 CSS px floor rather than
+   assumed from the comment above; do not add a FIFTH destination on the
+   strength of that measurement without re-running it, per this file's own
+   "before adding a destination, do the arithmetic" rule. */
 .routenav { display: flex; gap: 2px; align-items: center; flex: none; }
 /* Required, not decorative: .routenav sets display, and an author rule
    beats the UA stylesheet's [hidden] { display: none } because author

@@ -1923,19 +1923,39 @@ only ever checked by hand.
 Requires a Windows machine with EVE running. None of this is covered by
 pytest — the engine is AutoHotkey.
 
-- [ ] **The title bar holds exactly three destinations** — Uploader,
-      Profiles, Skills — and the window still drags by the wordmark area.
-      Bookmarks and Previews are NOT here: they are sections of Settings,
-      reached through the gear. This item was written when there were two
-      destinations and went unchecked while three more were added; the
-      fifth pushed the bar past its width at 125% scaling. NOTE: that
-      recorded reason does not survive the floor correction — at 840 CSS
-      px the arithmetic says it should have fit. `DESIGN.md` carries it as
-      an open question. The three-destination rule itself rests on
-      `PRODUCT.md`'s destination-vs-configuration test and is unaffected.
+- [ ] **The title bar holds exactly four destinations** — Uploader,
+      Profiles, Skills, Fittings — and the window still drags by the
+      wordmark area. Bookmarks and Previews are NOT here: they are
+      sections of Settings, reached through the gear. This item was
+      written when there were two destinations and went unchecked while
+      three more were added; the fifth pushed the bar past its width at
+      125% scaling. NOTE: that recorded reason does not survive the floor
+      correction — at 840 CSS px the arithmetic says it should have fit.
+      `DESIGN.md` carries it as an open question, now with a headless
+      (non-Windows) CSS measurement at 840/839 CSS px alongside it — see
+      the item below, and do not treat that measurement as covering this
+      one. The four-destination rule itself rests on `PRODUCT.md`'s
+      destination-vs-configuration test and is unaffected.
+- [ ] **UNVERIFIED — reproduce `DESIGN.md`'s headless 840/839 CSS check on
+      real Windows/WebView2, at every display scaling.** `DESIGN.md`'s
+      "Fourth destination, measured" note records: `document.scrollWidth
+      == clientWidth`, the close button's right edge inside the titlebar,
+      a drag region ≥ 105 CSS px, and all four destination labels visible
+      — all confirmed in headless Chromium against `wingman/web/
+      index.html?dev=1` at CSS viewports 840x625 and 839x621,
+      `deviceScaleFactor: 1`. That is NOT a Windows/WebView2 result: it
+      cannot exercise the DPI rounding that makes an 840 logical minimum
+      measure as 839 CSS px at 200% in the first place (`ui/window.py`'s
+      `MinimumSize` / `ptMinTrackSize`), which is exactly the fact this
+      checklist's other display-scaling items exist to check. Restart at
+      100%, 125%, 150% and 200%, drag the window to its floor, and check
+      the same four conditions by hand (or via a real WebView2 CDP
+      session) at each. This item stays unchecked until that has actually
+      been done — do not check it off on the strength of the headless
+      number above.
 - [ ] **The bar survives its own minimum at 150% scaling.** Set Windows
       display scaling to 150%, restart, drag the window to its floor. The
-      three nav labels, the gear, minimize and close are ALL visible, and
+      four nav labels, the gear, minimize and close are ALL visible, and
       the wordmark area still drags. Nothing in the bar shrinks: the nav
       and the window buttons are flex:none and the drag region cannot go
       below the wordmark's own width, so an overflow here clips the close
