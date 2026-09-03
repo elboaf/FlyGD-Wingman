@@ -24,6 +24,14 @@ from . import __version__
 
 RELEASES_API = "https://api.github.com/repos/elboaf/FlyGD-Wingman/releases/latest"
 MAX_INSTALLER_BYTES = 256 * 1024 * 1024
+# The exact host and owner/repo the initial metadata URL must resolve to.
+# Task 2 owns the broader redirect-hop/CDN host allowlist for the actual
+# download; this is narrower and stricter on purpose -- at the metadata
+# stage nothing has been followed yet, so GitHub's own API response must
+# already point at this repository's release-download path, or the release
+# is not trustworthy enough to hand a URL to any later stage.
+_ASSET_URL_HOST = "github.com"
+_ASSET_URL_OWNER_REPO = "elboaf/FlyGD-Wingman"
 _VERSION_RE = re.compile(r"(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
 _DIGEST_RE = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 _CONTENT_TYPES = {"application/x-msdos-program", "application/octet-stream"}
@@ -119,7 +127,7 @@ def release_from_payload(payload: object, current_version: str) -> ReleaseInfo |
     asset = matches[0]
 
     url = asset.get("browser_download_url")
-    _validate_asset_url(url)
+    _validate_asset_url(url, tag=tag, asset_name=expected_name)
 
     size = asset.get("size")
     if (
@@ -157,18 +165,24 @@ def release_from_payload(payload: object, current_version: str) -> ReleaseInfo |
     )
 
 
-def _validate_asset_url(url: object) -> None:
-    """Basic URL sanity for the release metadata itself.
+def _validate_asset_url(url: object, *, tag: str, asset_name: str) -> None:
+    """The asset URL must be exactly the expected GitHub release-download URL.
 
-    This is deliberately not the full origin/host allowlist -- that lives
-    with the download stage (Task 2), which also validates every redirect
-    hop. Here we only reject shapes that could never be a legitimate GitHub
-    release-asset URL: non-HTTPS, embedded userinfo, and a non-default port.
+    This is deliberately narrower than a host allowlist: Task 2 owns
+    validating every redirect hop against a broader set of legitimate GitHub
+    hosts reached only *after* following an initial redirect. Here, at the
+    metadata-validation boundary, nothing has been followed yet -- the
+    *initial* URL GitHub's own API reported must match the already-validated
+    tag and asset filename exactly (scheme, default port, exact normalized
+    host, and exact path, with no query or fragment). Anything less would let
+    a release smuggle an arbitrary URL past validation inside a syntactically
+    valid HTTPS wrapper, in violation of "never return arbitrary release URLs
+    to the UI layer".
     """
     if not isinstance(url, str) or not url:
         raise UpdateFailure("check", "url", f"asset url is missing: {url!r}")
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https" or not parsed.netloc:
+    if parsed.scheme != "https":
         raise UpdateFailure("check", "url", f"asset url is not https: {url!r}")
     if "@" in parsed.netloc:
         raise UpdateFailure("check", "url", f"asset url contains userinfo: {url!r}")
@@ -181,6 +195,24 @@ def _validate_asset_url(url: object) -> None:
     if port is not None and port != 443:
         raise UpdateFailure(
             "check", "url", f"asset url uses a non-default port: {url!r}"
+        )
+    if parsed.hostname != _ASSET_URL_HOST:
+        raise UpdateFailure(
+            "check", "url", f"asset url has an unexpected host: {url!r}"
+        )
+    if parsed.query or parsed.fragment:
+        raise UpdateFailure(
+            "check", "url", f"asset url has a query or fragment: {url!r}"
+        )
+    expected = (
+        f"https://{_ASSET_URL_HOST}/{_ASSET_URL_OWNER_REPO}"
+        f"/releases/download/{tag}/{asset_name}"
+    )
+    if url != expected:
+        raise UpdateFailure(
+            "check",
+            "url",
+            f"asset url does not match the expected release path: {url!r}",
         )
 
 

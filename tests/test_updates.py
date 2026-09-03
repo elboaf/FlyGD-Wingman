@@ -252,6 +252,58 @@ def test_invalid_asset_url_raises_url_failure(url):
         updates.release_from_payload(payload, CURRENT)
 
 
+def test_asset_url_matching_the_validated_tag_and_filename_exactly_is_accepted():
+    payload = release_payload(tag="v4.9.0", version="4.9.0")
+    release = updates.release_from_payload(payload, CURRENT)
+    assert release.url == (
+        "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # wrong host entirely
+        "https://gitlab.com/elboaf/FlyGD-Wingman/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe",
+        # misleading suffix: not the exact github.com host
+        "https://github.com.evil.example/elboaf/FlyGD-Wingman/releases/"
+        "download/v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe",
+        # wrong owner
+        "https://github.com/attacker/FlyGD-Wingman/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe",
+        # wrong repository
+        "https://github.com/elboaf/other-repo/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe",
+        # tag in the path does not match the validated release tag
+        "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
+        "v9.9.9/FlyGD-Wingman-Setup-4.9.0.exe",
+        # asset filename in the path does not match the validated asset name
+        "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-9.9.9.exe",
+        # otherwise-exact URL with a trailing query string
+        "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe?x=1",
+        # otherwise-exact URL with a trailing fragment
+        "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
+        "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe#frag",
+    ],
+)
+def test_asset_url_must_match_the_validated_tag_and_filename_exactly(url):
+    """A syntactically valid HTTPS URL is not enough: it must be exactly
+    GitHub's release-download URL for *this* repository, the *validated*
+    tag, and the *validated* asset filename -- never an arbitrary release
+    URL smuggled past validation inside an otherwise-plausible wrapper.
+    """
+    asset = release_payload(tag="v4.9.0", version="4.9.0")["assets"][0]
+    asset["browser_download_url"] = url
+    payload = release_payload(tag="v4.9.0", version="4.9.0", assets=[asset])
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.release_from_payload(payload, CURRENT)
+    assert exc_info.value.code == "url"
+
+
 # ---- release_from_payload: content type ------------------------------------
 
 
