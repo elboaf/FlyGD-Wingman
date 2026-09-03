@@ -570,6 +570,96 @@ def test_profile_copy_driver_opens_and_submits_through_real_controls():
     assert "WM.el('es-profile-copy-replace').click()" in driver
 
 
+# Round 1 fix: what the scripted driver actually sends over the bridge for
+# every scenario that submits. Pinned here so the stub's own wiring check
+# (below) cannot silently drift from what paintProfileCopyScenario() really
+# does -- a driver change that stops matching this table, or a stub that
+# stops enforcing it, both fail loudly rather than one quietly rendering
+# the wrong checkpoint's outcome.
+PROFILE_COPY_SCENARIO_REQUESTS = {
+    "invalid-name": {"mode": "new", "destination": ""},
+    "collision": {"mode": "new", "destination": "dEfAuLt"},
+    "busy": {"mode": "new", "destination": "New Ops"},
+    "created": {"mode": "new", "destination": "New Ops"},
+    "unsaved-selection": {"mode": "new", "destination": "New Ops"},
+    "eve-running": {"mode": "new", "destination": "New Ops"},
+    "replaced": {"mode": "replace", "destination": "fleet"},
+    "rollback-failed": {"mode": "replace", "destination": "fleet"},
+}
+
+
+def _profile_copy_scenario_requests() -> dict:
+    match = re.search(
+        r"var PROFILE_COPY_SCENARIO_REQUESTS = \{(.*?)\n  \};", DEV_JS, re.DOTALL
+    )
+    assert match, (
+        "dev.js must declare the scripted per-scenario mode/destination table "
+        "the wiring check below validates against"
+    )
+    body = match.group(1)
+    entries = re.findall(
+        r"'([a-z-]+)':\s*\{\s*mode:\s*'([a-z]+)',\s*destination:\s*'([^']*)'\s*\}",
+        body,
+    )
+    assert entries, "the scenario request table must be parseable"
+    return {
+        key: {"mode": mode, "destination": destination}
+        for key, mode, destination in entries
+    }
+
+
+def test_profile_copy_scripted_requests_match_the_scenario_driver_exactly():
+    """Pins the exact mode/destination each scripted checkpoint sends,
+    including the collision fixture's case-varied 'dEfAuLt' against the
+    existing 'Default' profile -- a same-case duplicate would never
+    exercise the case-insensitive comparison this checkpoint exists to
+    show."""
+    assert _profile_copy_scenario_requests() == PROFILE_COPY_SCENARIO_REQUESTS
+
+
+def test_profile_copy_collision_scenario_types_a_case_varied_name():
+    """The collision checkpoint must not merely retype the exact existing
+    name -- it has to prove the comparison is case-insensitive, which only
+    a differently-cased collision can show."""
+    driver = _profile_copy_driver_body()
+    assert "WM.el('es-profile-copy-name').value = 'dEfAuLt';" in driver
+    assert "WM.el('es-profile-copy-name').value = 'Default';" not in driver
+    requests = _profile_copy_scenario_requests()
+    assert requests["collision"]["destination"] == "dEfAuLt"
+    assert requests["collision"]["destination"].casefold() == "default"
+    # And the existing profile it collides with really is spelled
+    # differently on disk, not the same string the driver typed.
+    assert "{ path: 'default', name: 'Default', file_count: 72 }" in DEV_JS
+
+
+def test_profile_copy_double_refuses_a_scripted_mode_or_destination_mismatch():
+    """A sender-wiring regression -- sendProfileCopy shipping the wrong mode,
+    or reading the wrong field's value -- must be refused rather than
+    silently accepted and rendered as if the intended checkpoint had fired.
+    This is a bridge-argument check only: it must not evaluate whether a
+    name is well-formed or a destination genuinely exists, which stays
+    Python's job."""
+    stub = _profile_copy_stub_body()
+    assert "PROFILE_COPY_SCENARIO_REQUESTS[profileCopyScenario]" in stub
+    assert "mode !== expectedRequest.mode" in stub
+    assert "destination !== expectedRequest.destination" in stub
+    # The check must run before ANY scenario-specific branch, so a mismatch
+    # is refused instead of falling into some other checkpoint's canned
+    # response.
+    wiring_check = stub.index("expectedRequest")
+    assert wiring_check < stub.index("profileCopyScenario === 'invalid-name'")
+    assert wiring_check < stub.index("profileCopyScenario === 'collision'")
+    assert wiring_check < stub.index("profileCopyScenario === 'busy'")
+    # No production validation logic (name rules, real collisions) may leak
+    # into this generic check -- it only ever compares against the fixed
+    # per-scenario table above.
+    guard = stub[
+        wiring_check : stub.index("\n    if (profileCopyScenario === 'invalid-name')")
+    ]
+    assert "validate_friendly_name" not in guard
+    assert "MAX_FRIENDLY_NAME_CHARS" not in guard
+
+
 def test_profile_copy_invalid_name_and_collision_are_canned_not_computed():
     """Scenario-specific branches may return the approved inline errors, but
     must not perform filesystem-like validation in JavaScript -- so neither

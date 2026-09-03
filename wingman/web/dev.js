@@ -1357,16 +1357,43 @@
   // named checkpoints in PROFILE_COPY_SCENARIOS
   // (tests/test_dev_harness.py), selected by ?dev=1&profile=<key> and
   // driven through the real panel by paintProfileCopyScenario() below.
-  // Scenario branches return the approved inline errors or completion
-  // flags; none of them inspects the mode or destination it was actually
-  // sent to decide whether that request was valid -- that is Python's
-  // job, and a double that second-guessed it would drift from the
-  // bridge it exists to imitate.
+  //
+  // Round 1 fix: PROFILE_COPY_SCENARIO_REQUESTS below pins the exact
+  // mode/destination each scripted checkpoint's driver sends, and the
+  // double refuses a request that does not match -- a sender-wiring
+  // regression (sendProfileCopy shipping the wrong mode, or reading the
+  // wrong field) is caught here rather than silently rendering some
+  // OTHER checkpoint's canned outcome. This is a bridge-argument check
+  // only: it never evaluates whether a name is well-formed or a
+  // destination genuinely collides on disk -- that stays Python's job,
+  // and a double that second-guessed it would drift from the bridge it
+  // exists to imitate.
+  var PROFILE_COPY_SCENARIO_REQUESTS = {
+    'invalid-name': { mode: 'new', destination: '' },
+    'collision': { mode: 'new', destination: 'dEfAuLt' },
+    'busy': { mode: 'new', destination: 'New Ops' },
+    'created': { mode: 'new', destination: 'New Ops' },
+    'unsaved-selection': { mode: 'new', destination: 'New Ops' },
+    'eve-running': { mode: 'new', destination: 'New Ops' },
+    'replaced': { mode: 'replace', destination: 'fleet' },
+    'rollback-failed': { mode: 'replace', destination: 'fleet' }
+  };
   api.eve_settings_copy_profile = function (expectedSource, mode, destination) {
     console.log('DEV api.eve_settings_copy_profile(', expectedSource, mode,
                 destination, ')');
     if (expectedSource !== eve.profile) {
       return Promise.resolve({ accepted: false, error: 'The selected profile changed.' });
+    }
+    var expectedRequest = PROFILE_COPY_SCENARIO_REQUESTS[profileCopyScenario];
+    if (expectedRequest
+        && (mode !== expectedRequest.mode || destination !== expectedRequest.destination)) {
+      return Promise.resolve({
+        accepted: false,
+        error: 'Dev harness: the \'' + profileCopyScenario + '\' checkpoint expected '
+          + 'mode=' + expectedRequest.mode + ' destination='
+          + JSON.stringify(expectedRequest.destination) + ', got mode=' + mode
+          + ' destination=' + JSON.stringify(destination) + '.'
+      });
     }
     if (profileCopyScenario === 'invalid-name') {
       return Promise.resolve({
@@ -1773,7 +1800,7 @@
       WM.el('es-profile-copy-replace').click();
       WM.el('es-profile-copy-destination').value = 'fleet';
     } else if (profileCopyScenario === 'collision') {
-      WM.el('es-profile-copy-name').value = 'Default';
+      WM.el('es-profile-copy-name').value = 'dEfAuLt';
     } else if (profileCopyScenario === 'invalid-name') {
       // No field to set: the checkpoint is a blank, untouched name field,
       // submitted as-is -- the same request an idle click would send.
