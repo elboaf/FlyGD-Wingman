@@ -123,6 +123,9 @@ class CharacterSnapshot:
     fetched_utc: datetime | None = None
     etag: str = ""
     error: str = ""
+    # Last schema-valid 200 import. Unlike fetched_utc, a 304 does not prove
+    # whether a locally-created fitting is now present or absent.
+    content_utc: datetime | None = None
 
     @property
     def stale(self) -> bool:

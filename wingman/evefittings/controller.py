@@ -483,6 +483,7 @@ class FittingsController:
                 fetched_utc=timestamp,
                 etag=etag,
                 error="",
+                content_utc=timestamp,
             ),
         )
         return replace(
@@ -565,6 +566,7 @@ class FittingsController:
             fetched_utc=fetched,
             etag=etag,
             error=_bounded_error(error),
+            content_utc=current.content_utc if current is not None else None,
         )
         snapshots = (
             *(
@@ -870,17 +872,19 @@ class FittingsController:
         return any(
             intent.character_id == character_id
             and intent.status == "failed"
-            and self._local_evidence_is_newer_locked(intent)
+            and self._local_evidence_is_current_locked(intent)
             and any(marker in intent.error.casefold() for marker in _CAPACITY_MARKERS)
             for intent in self._state.intents
         )
 
-    def _local_evidence_is_newer_locked(self, intent: WriteIntent) -> bool:
+    def _local_evidence_is_current_locked(self, intent: WriteIntent) -> bool:
         snapshot = self._snapshot_locked(intent.character_id)
-        if snapshot is None or snapshot.fetched_utc is None:
+        if snapshot is None or snapshot.content_utc is None:
             return True
         evidence_utc = intent.completed_utc or intent.sent_utc or intent.created_utc
-        return evidence_utc > snapshot.fetched_utc
+        # Equal timestamps are ambiguous at the persisted clock's precision;
+        # retain the local safety evidence until a strictly later 200 import.
+        return evidence_utc >= snapshot.content_utc
 
     def _content_present_locked(self, character_id: int, content) -> bool:
         entries = {entry.id: entry for entry in self._state.entries}
@@ -899,7 +903,7 @@ class FittingsController:
             intent.character_id == character_id
             and intent.content == content
             and intent.status == "success"
-            and self._local_evidence_is_newer_locked(intent)
+            and self._local_evidence_is_current_locked(intent)
             for intent in self._state.intents
         )
 

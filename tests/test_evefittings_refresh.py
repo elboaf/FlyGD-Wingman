@@ -4,9 +4,12 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from wingman.eveesi import EsiResponse
 from wingman.evefittings import contracts
 from wingman.evefittings.model import (
+    CharacterSnapshot,
     FittingsState,
     Presence,
     WriteIntent,
@@ -203,6 +206,7 @@ def test_valid_refresh_imports_and_records_discovery(tmp_path):
     assert presence.library_entry_id == entry.id
     assert presence.first_seen_utc == NOW
     assert presence.discovered_batch_id == result["batch_id"]
+    assert controller.character_status(42).content_utc == NOW
     assert load_fittings(state_path)[0] == controller.state
     assert authority.events == [("enter", 42), ("exit", 42)]
 
@@ -242,6 +246,7 @@ def test_later_empty_refresh_stops_treating_local_success_as_presence(tmp_path):
     assert controller.refresh([42])["ok"] is True
     result = controller.preflight_copy(["existing-entry"], [42])
 
+    assert controller.character_status(42).content_utc == NOW
     assert result["pairs"][0]["status"] == "ready"
     assert result["write_count"] == 1
 
@@ -289,6 +294,25 @@ def test_malformed_or_unknown_flag_refresh_retains_prior_presence_stale(tmp_path
     assert "unknown fitting flag" in snapshot.error
 
 
+def test_schema_invalid_200_does_not_advance_authoritative_content_time(tmp_path):
+    clock = [NOW]
+    malformed = fitting()
+    malformed["items"][0]["flag"] = "FutureSlot0"
+    controller, _authority, _esi, _path = make_controller(
+        tmp_path,
+        [response(200, [fitting()]), response(200, [malformed])],
+        now=lambda: clock[0],
+    )
+    assert controller.refresh([42])["ok"] is True
+    first_content_utc = controller.character_status(42).content_utc
+    clock[0] += timedelta(minutes=1)
+
+    assert controller.refresh([42])["ok"] is False
+
+    assert first_content_utc == NOW
+    assert controller.character_status(42).content_utc == first_content_utc
+
+
 def test_oversized_transport_failure_retains_prior_presence_stale(tmp_path):
     controller, _authority, _esi, _path = make_controller(
         tmp_path,
@@ -318,6 +342,7 @@ def test_304_confirms_retained_data_without_replacing_it(tmp_path):
     )
     controller.refresh([42])
     first = controller.state.presences[0]
+    content_utc = controller.character_status(42).content_utc
     clock[0] += timedelta(minutes=1)
 
     result = controller.refresh([42])
@@ -329,7 +354,68 @@ def test_304_confirms_retained_data_without_replacing_it(tmp_path):
     assert retained.discovered_batch_id == first.discovered_batch_id
     assert retained.last_confirmed_utc == clock[0]
     assert controller.character_status(42).fetched_utc == clock[0]
+    assert content_utc == NOW
+    assert controller.character_status(42).content_utc == content_utc
     assert esi.get_calls[-1][2] == '"one"'
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        ("success", "", "present"),
+        (
+            "failed",
+            "Character has reached the maximum number of fittings.",
+            "unavailable",
+        ),
+    ],
+)
+def test_304_does_not_supersede_newer_local_terminal_evidence(
+    tmp_path, status, error, expected
+):
+    fit = seeded_state().entries[0]
+    content_utc = NOW
+    evidence_utc = NOW + timedelta(minutes=1)
+    refreshed_utc = NOW + timedelta(minutes=2)
+    local = WriteIntent(
+        operation_id="post-content-evidence",
+        character_id=42,
+        library_entry_id=fit.id,
+        content=fit.content,
+        status=status,
+        created_utc=evidence_utc,
+        sent_utc=evidence_utc,
+        completed_utc=evidence_utc,
+        remote_fitting_id=99 if status == "success" else None,
+        error=error,
+    )
+    initial = FittingsState(
+        entries=(fit,),
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=content_utc,
+                content_utc=content_utc,
+                etag='"before-create"',
+            ),
+        ),
+        intents=(local,),
+    )
+    controller, _authority, _esi, _path = make_controller(
+        tmp_path,
+        [response(304)],
+        initial=initial,
+        now=lambda: refreshed_utc,
+    )
+
+    assert controller.refresh([42])["ok"] is True
+    result = controller.preflight_copy([fit.id], [42])
+
+    snapshot = controller.character_status(42)
+    assert snapshot.fetched_utc == refreshed_utc
+    assert snapshot.content_utc == content_utc
+    assert result["pairs"][0]["status"] == expected
+    assert result["write_count"] == 0
 
 
 def test_invalid_flag_import_is_retained_but_not_deployable(tmp_path):

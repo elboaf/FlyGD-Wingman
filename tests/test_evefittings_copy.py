@@ -414,6 +414,42 @@ def test_local_terminal_evidence_newer_than_snapshot_still_blocks(
     assert result["write_count"] == 0
 
 
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        ("success", "", "present"),
+        (
+            "failed",
+            "Character has reached the maximum number of fittings.",
+            "unavailable",
+        ),
+    ],
+)
+def test_local_terminal_evidence_tied_with_content_snapshot_still_blocks(
+    tmp_path, status, error, expected
+):
+    fit = ready_state().entries[0]
+    evidence_utc = NOW - timedelta(minutes=1)
+    state = FittingsState(
+        entries=(fit,),
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=evidence_utc,
+                etag='"etag-42"',
+            ),
+        ),
+        intents=(intent("tied-evidence", 42, fit, status=status, error=error),),
+    )
+    controller, _, _, _ = make_controller(tmp_path, state)
+
+    result = controller.preflight_copy([fit.id], [42])
+
+    assert result["pairs"][0]["status"] == expected
+    assert result["write_count"] == 0
+
+
 def test_preflight_refuses_more_than_twenty_actual_creates(tmp_path):
     character_ids = tuple(range(100, 121))
     state = ready_state(character_ids=character_ids)

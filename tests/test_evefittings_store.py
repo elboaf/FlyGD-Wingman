@@ -157,6 +157,36 @@ def test_presence_retains_discovery_and_confirmation_facts(tmp_path):
     assert loaded.presences[0].last_confirmed_utc == NOW
 
 
+def test_snapshot_round_trip_preserves_authoritative_content_time(tmp_path):
+    path = tmp_path / "eve_fittings.json"
+    content_utc = NOW - timedelta(minutes=5)
+    original = replace(
+        full_state(),
+        snapshots=(replace(full_state().snapshots[0], content_utc=content_utc),),
+    )
+
+    save_fittings(path, original)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    loaded, warnings = load_fittings(path)
+
+    assert document["snapshots"][0]["content_utc"] == content_utc.isoformat()
+    assert loaded.snapshots[0].content_utc == content_utc
+    assert warnings == ()
+
+
+def test_legacy_snapshot_without_content_time_falls_back_to_fetch_time(tmp_path):
+    path = tmp_path / "eve_fittings.json"
+    save_fittings(path, full_state())
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["snapshots"][0].pop("content_utc", None)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, warnings = load_fittings(path)
+
+    assert loaded.snapshots[0].content_utc == loaded.snapshots[0].fetched_utc
+    assert warnings == ()
+
+
 def test_authoritative_snapshot_and_unresolved_intent_are_separate_overlays(tmp_path):
     path = tmp_path / "eve_fittings.json"
     original = full_state()

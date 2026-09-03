@@ -485,6 +485,7 @@ def _snapshot_to_dict(snapshot: CharacterSnapshot) -> dict:
     return {
         "character_id": snapshot.character_id,
         "fetched_utc": _iso(snapshot.fetched_utc),
+        "content_utc": _iso(snapshot.content_utc),
         "etag": snapshot.etag,
         "error": snapshot.error,
     }
@@ -493,13 +494,20 @@ def _snapshot_to_dict(snapshot: CharacterSnapshot) -> dict:
 def _snapshot_from_dict(raw: object) -> CharacterSnapshot:
     if not isinstance(raw, dict):
         raise ValueError("Character snapshot must be an object.")
+    fetched_utc = _parse_utc(
+        raw.get("fetched_utc"), "Snapshot fetch time", required=False
+    )
+    # Documents written before content_utc predate additive-copy intents, so
+    # their fetch time is the best compatible authoritative-content baseline.
+    content_raw = (
+        raw.get("content_utc") if "content_utc" in raw else raw.get("fetched_utc")
+    )
     return CharacterSnapshot(
         character_id=_positive_int(raw.get("character_id"), "Snapshot character ID"),
-        fetched_utc=_parse_utc(
-            raw.get("fetched_utc"), "Snapshot fetch time", required=False
-        ),
+        fetched_utc=fetched_utc,
         etag=_text(raw.get("etag"), "Snapshot ETag", MAX_ETAG_CHARS),
         error=_text(raw.get("error"), "Snapshot error", MAX_ERROR_CHARS),
+        content_utc=_parse_utc(content_raw, "Snapshot content time", required=False),
     )
 
 
@@ -879,6 +887,13 @@ def _validate_snapshot_value(snapshot: object) -> None:
     _validate_datetime_value(
         snapshot.fetched_utc, "Snapshot fetch time", required=False
     )
+    _validate_datetime_value(
+        snapshot.content_utc, "Snapshot content time", required=False
+    )
+    if snapshot.content_utc is not None and (
+        snapshot.fetched_utc is None or snapshot.content_utc > snapshot.fetched_utc
+    ):
+        raise ValueError("Snapshot content time must not exceed its fetch time.")
     _text(snapshot.etag, "Snapshot ETag", MAX_ETAG_CHARS)
     _text(snapshot.error, "Snapshot error", MAX_ERROR_CHARS)
 
