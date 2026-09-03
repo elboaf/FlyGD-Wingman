@@ -209,6 +209,29 @@ def test_copy_has_preflight_progress_and_results_overlays():
     assert "write_count" in FITTINGS_JS
 
 
+def test_rejected_conflict_recheck_preserves_the_usable_preflight():
+    request = FITTINGS_JS[
+        FITTINGS_JS.index("function requestCopyPreflight") : FITTINGS_JS.index(
+            "function preflightSummary"
+        )
+    ]
+    rejected_at = request.index("if (!payload || !payload.accepted)")
+    accepted_assignment_at = request.index("copyPreflight = payload;")
+    rejection = request[rejected_at:accepted_assignment_at]
+
+    assert accepted_assignment_at > rejected_at
+    assert "renderCopyPreflight();" in rejection
+    assert "payload && payload.error" in rejection
+    assert (
+        "updateConflictReady();"
+        in FITTINGS_JS[
+            FITTINGS_JS.index("function renderCopyPreflight") : FITTINGS_JS.index(
+                "function conflictResolutionNode"
+            )
+        ]
+    )
+
+
 def test_copy_conflicts_offer_alternate_name_or_explicit_skip():
     assert "fit-copy-alternate" in FITTINGS_JS
     assert "Skip this pair" in FITTINGS_JS

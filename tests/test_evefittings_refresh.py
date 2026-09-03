@@ -219,6 +219,60 @@ def test_valid_empty_refresh_replaces_authoritative_presence(tmp_path):
     assert controller.state.entries[0].id == "existing-entry"
 
 
+def test_later_empty_refresh_stops_treating_local_success_as_presence(tmp_path):
+    def success_intent(entry):
+        return WriteIntent(
+            operation_id="successful-copy",
+            character_id=42,
+            library_entry_id=entry.id,
+            content=entry.content,
+            status="success",
+            created_utc=NOW - timedelta(minutes=2),
+            sent_utc=NOW - timedelta(minutes=2),
+            completed_utc=NOW - timedelta(minutes=1),
+            remote_fitting_id=99,
+        )
+
+    controller, _authority, _esi, _path = make_controller(
+        tmp_path,
+        [response(200, [])],
+        initial=seeded_state(intent=success_intent),
+    )
+
+    assert controller.refresh([42])["ok"] is True
+    result = controller.preflight_copy(["existing-entry"], [42])
+
+    assert result["pairs"][0]["status"] == "ready"
+    assert result["write_count"] == 1
+
+
+def test_later_refresh_clears_an_older_local_capacity_block(tmp_path):
+    def capacity_intent(entry):
+        return WriteIntent(
+            operation_id="capacity-failure",
+            character_id=42,
+            library_entry_id=entry.id,
+            content=entry.content,
+            status="failed",
+            created_utc=NOW - timedelta(minutes=2),
+            sent_utc=NOW - timedelta(minutes=2),
+            completed_utc=NOW - timedelta(minutes=1),
+            error="Character has reached the maximum number of fittings.",
+        )
+
+    controller, _authority, _esi, _path = make_controller(
+        tmp_path,
+        [response(200, [])],
+        initial=seeded_state(intent=capacity_intent),
+    )
+
+    assert controller.refresh([42])["ok"] is True
+    result = controller.preflight_copy(["existing-entry"], [42])
+
+    assert result["pairs"][0]["status"] == "ready"
+    assert result["write_count"] == 1
+
+
 def test_malformed_or_unknown_flag_refresh_retains_prior_presence_stale(tmp_path):
     malformed = fitting()
     malformed["items"][0]["flag"] = "FutureSlot0"

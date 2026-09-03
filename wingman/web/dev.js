@@ -724,25 +724,65 @@
     var characters = fittings.characters.filter(function (character) {
       return characterIds.indexOf(character.character_id) !== -1;
     });
+    var emptyCounts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    if (!entries.length || !characters.length) {
+      return Promise.resolve({
+        accepted: false, ticket_id: '', created_utc: '', write_count: 0,
+        counts: emptyCounts, requires_resolution: false, pairs: [],
+        error: 'Select fittings and target characters first.'
+      });
+    }
+
+    var usedNames = {};
+    fittings.entries.forEach(function (entry) {
+      entry.presences.forEach(function (presence) {
+        usedNames[presence.character_id + ':' + presence.source_name.toLowerCase()] = true;
+      });
+    });
+    var invalidChoices = {};
+    var choiceError = '';
+    Object.keys(names).forEach(function (key) {
+      if (typeof names[key] !== 'string' || !names[key].trim()) return;
+      var characterId = parseInt(key.slice(key.lastIndexOf(':') + 1), 10);
+      var nameKey = characterId + ':' + names[key].trim().toLowerCase();
+      if (usedNames[nameKey]) {
+        invalidChoices[key] = true;
+        if (!choiceError) choiceError = '\u201c' + names[key].trim()
+          + '\u201d is already used on this character.';
+      } else {
+        usedNames[nameKey] = true;
+      }
+    });
+
     var pairs = [];
     entries.forEach(function (entry) {
       characters.forEach(function (character) {
-        pairs.push(devCopyPair(entry, character, names));
+        var pair = devCopyPair(entry, character, names);
+        if (invalidChoices[pair.entry_id + ':' + pair.character_id]) {
+          pair.status = 'conflict';
+          pair.chosen_name = pair.fitting_name;
+        }
+        pairs.push(pair);
       });
     });
     var counts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
     pairs.forEach(function (pair) { counts[pair.status] += 1; });
-    var ticketId = 'dev-copy-' + (++fitCopyTicketIndex);
-    var requires = pairs.some(function (pair) {
+    var overLimit = counts.ready > 20;
+    var accepted = !choiceError && !overLimit;
+    var requires = accepted && pairs.some(function (pair) {
       return pair.status === 'conflict' && !pair.skipped;
     });
-    fitCopyTickets[ticketId] = { pairs: pairs, write_count: counts.ready };
+    var ticketId = accepted ? 'dev-copy-' + (++fitCopyTicketIndex) : '';
+    if (accepted) {
+      fitCopyTickets[ticketId] = { pairs: pairs, write_count: counts.ready };
+    }
     return Promise.resolve({
-      accepted: counts.ready <= 20, ticket_id: counts.ready <= 20 ? ticketId : '',
-      created_utc: new Date().toISOString(), write_count: counts.ready,
+      accepted: accepted, ticket_id: ticketId,
+      created_utc: accepted ? new Date().toISOString() : '',
+      write_count: accepted ? counts.ready : 0,
       counts: counts, requires_resolution: requires, pairs: pairs,
-      error: counts.ready > 20
-        ? 'Split this copy into batches of 20 fittings or fewer.' : ''
+      error: choiceError || (overLimit
+        ? 'Split this copy into batches of 20 fittings or fewer.' : '')
     });
   };
 

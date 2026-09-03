@@ -367,7 +367,7 @@ def test_known_capacity_failure_blocks_that_character(tmp_path):
     fit = ready_state().entries[0]
     state = FittingsState(
         entries=(fit,),
-        snapshots=(snapshot(42),),
+        snapshots=(snapshot(42, age=120),),
         intents=(
             intent(
                 "capacity-failure",
@@ -384,6 +384,34 @@ def test_known_capacity_failure_blocks_that_character(tmp_path):
 
     assert result["pairs"][0]["status"] == "unavailable"
     assert "capacity" in result["pairs"][0]["error"].lower()
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        ("success", "", "present"),
+        (
+            "failed",
+            "Character has reached the maximum number of fittings.",
+            "unavailable",
+        ),
+    ],
+)
+def test_local_terminal_evidence_newer_than_snapshot_still_blocks(
+    tmp_path, status, error, expected
+):
+    fit = ready_state().entries[0]
+    state = FittingsState(
+        entries=(fit,),
+        snapshots=(snapshot(42, age=120),),
+        intents=(intent("newer-evidence", 42, fit, status=status, error=error),),
+    )
+    controller, _, _, _ = make_controller(tmp_path, state)
+
+    result = controller.preflight_copy([fit.id], [42])
+
+    assert result["pairs"][0]["status"] == expected
+    assert result["write_count"] == 0
 
 
 def test_preflight_refuses_more_than_twenty_actual_creates(tmp_path):
@@ -514,8 +542,9 @@ def test_ordinary_four_hundred_persists_outcome_before_the_next_pair(tmp_path):
 
 
 def test_durable_success_blocks_an_immediate_duplicate_copy(tmp_path):
+    state = replace(ready_state(), snapshots=(snapshot(42, age=1),))
     controller, _, client, _ = make_controller(
-        tmp_path, ready_state(), replies=[mutation(201, {"fitting_id": 88})]
+        tmp_path, state, replies=[mutation(201, {"fitting_id": 88})]
     )
     first_ticket = ready_ticket(controller)
     first = controller.start_copy(first_ticket)

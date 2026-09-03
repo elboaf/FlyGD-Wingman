@@ -778,12 +778,16 @@
     WM.send('fittings_preflight_copy', visibleSelectedIds(), selectedTargetIds(), choices)
       .then(function (payload) {
         if (!copyOverlayOpen) return;
-        copyPreflight = payload;
-        WM.el('fittings-copy-status').textContent = payload && payload.error || '';
         if (!payload || !payload.accepted) {
+          var rejection = payload && payload.error
+            || 'The copy preflight could not be checked.';
           if (copyPhase === 'targets') renderCopyTargets();
+          else if (copyPhase === 'preflight' && copyPreflight) renderCopyPreflight();
+          WM.el('fittings-copy-status').textContent = rejection;
           return;
         }
+        copyPreflight = payload;
+        WM.el('fittings-copy-status').textContent = '';
         copyPhase = 'preflight';
         renderCopyPreflight();
       });

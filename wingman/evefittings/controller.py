@@ -870,9 +870,17 @@ class FittingsController:
         return any(
             intent.character_id == character_id
             and intent.status == "failed"
+            and self._local_evidence_is_newer_locked(intent)
             and any(marker in intent.error.casefold() for marker in _CAPACITY_MARKERS)
             for intent in self._state.intents
         )
+
+    def _local_evidence_is_newer_locked(self, intent: WriteIntent) -> bool:
+        snapshot = self._snapshot_locked(intent.character_id)
+        if snapshot is None or snapshot.fetched_utc is None:
+            return True
+        evidence_utc = intent.completed_utc or intent.sent_utc or intent.created_utc
+        return evidence_utc > snapshot.fetched_utc
 
     def _content_present_locked(self, character_id: int, content) -> bool:
         entries = {entry.id: entry for entry in self._state.entries}
@@ -884,13 +892,14 @@ class FittingsController:
         )
         if authoritative:
             return True
-        # A valid 201 is locally known presence until refresh reconciles it.
-        # Treating terminal success as ordinary disposable history here would
-        # immediately offer the same additive create again.
+        # A valid 201 is locally known presence until a newer authoritative
+        # refresh reconciles it. Ignoring a newer empty snapshot would turn
+        # disposable local evidence into a sticky remote fact.
         return any(
             intent.character_id == character_id
             and intent.content == content
             and intent.status == "success"
+            and self._local_evidence_is_newer_locked(intent)
             for intent in self._state.intents
         )
 

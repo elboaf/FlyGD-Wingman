@@ -82,6 +82,15 @@ def test_the_scan_found_both_sides():
     assert "get_settings" in stubbed and "list_rows" in stubbed
 
 
+def test_fittings_preflight_double_rejects_empty_and_duplicate_name_rechecks():
+    body = _fixture_body("api.fittings_preflight_copy = function")
+
+    assert "Select fittings and target characters first." in body
+    assert "is already used on" in body
+    assert re.search(r"accepted:\s*false", body)
+    assert re.search(r"requires_resolution:\s*false", body)
+
+
 def test_every_bridge_method_the_page_calls_has_a_double():
     """The general form of the `get_bookmarks` gap, and the reason this
     file exists rather than two fixture assertions.
