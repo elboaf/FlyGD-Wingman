@@ -379,6 +379,24 @@ class _EveContext:
 # What a context had already published: (id, name) pairs and deleted ids.
 _EVE_NO_FACTS: tuple[frozenset, frozenset] = (frozenset(), frozenset())
 
+
+@dataclass(frozen=True)
+class _EveCandidate:
+    """One offered account/character pair, and what authorized it.
+
+    `generation` is the identification generation the observation behind
+    this offer was made under. It travels WITH the pair rather than beside
+    it so a publication cannot half-happen: an offer that outlives its
+    generation -- cancelled, superseded, or invalidated by a learned
+    deletion -- is recognizable as stale by the value it carries, both here
+    and on the page one round trip later.
+    """
+
+    generation: int
+    account_id: str
+    character_ids: tuple[str, ...]
+
+
 # Saved account names and links carry no datasource, so this product reads
 # them as Tranquility's. Elsewhere they are not applied and not editable --
 # a migration would be disproportionate for a feature used off Tranquility
@@ -459,12 +477,26 @@ class Api:
         # independently -- so two operations approved moments apart could
         # otherwise interleave over the same files.
         self._eve_mutation = threading.Lock()
+        # Identification state is reached by the bridge thread (start,
+        # check, confirm, cancel) and by the resolver worker (a learned
+        # deletion invalidates the offer it names). Its own lock, held only
+        # to read, clear, or compare-and-publish the three fields below --
+        # never across discovery, an ESI call, a settings write or a
+        # dialog. LOCK ORDER IS FIXED: _eve_mutation may be taken before
+        # this one, NEVER after, so cleanup (which owns _eve_mutation) and
+        # a cancellation (which must never wait for it) cannot deadlock.
+        self._eve_identification_lock = threading.Lock()
+        # Monotonic for the process. Every invalidation -- cancel, restart,
+        # selection change, learned deletion -- claims a new number, which
+        # is what makes "this answer was computed before that event"
+        # decidable here and on the page.
+        self._eve_identification_generation = 0
         # A snapshot exists only during an explicit identification pass.
         # Timestamps are evidence for that pass, never durable identity.
         self._eve_identification = None
         # The latest observed account and the characters it offered. This is
         # ephemeral authorization for confirmation, not persisted identity.
-        self._eve_identification_candidate: tuple[str, tuple[str, ...]] | None = None
+        self._eve_identification_candidate: _EveCandidate | None = None
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
         # (datasource, character id) pairs ESI explicitly reported as
@@ -4722,10 +4754,51 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
-    def _eve_clear_identification(self) -> None:
-        """Discard the observation and any pair it authorized."""
+    def _eve_clear_identification(self) -> int:
+        """Discard the observation and any pair it authorized.
+
+        Claims a new generation as it goes, and returns it: everything
+        computed under the old number -- an in-flight publication here, a
+        rendered offer on the page -- is stale from this moment.
+        """
+        with self._eve_identification_lock:
+            return self._eve_clear_identification_locked()
+
+    def _eve_clear_identification_locked(self) -> int:
+        """_eve_clear_identification for a caller that already holds the lock."""
+        self._eve_identification_generation += 1
         self._eve_identification = None
         self._eve_identification_candidate = None
+        return self._eve_identification_generation
+
+    def _eve_generation(self) -> int:
+        """The identification generation, read atomically."""
+        with self._eve_identification_lock:
+            return self._eve_identification_generation
+
+    def _eve_identification_state(
+        self,
+    ) -> tuple[int, evesettings_identity.Snapshot | None, _EveCandidate | None]:
+        """Generation, observation and offer, as one coherent reading."""
+        with self._eve_identification_lock:
+            return (
+                self._eve_identification_generation,
+                self._eve_identification,
+                self._eve_identification_candidate,
+            )
+
+    def _eve_identification_cancelled_locked(self) -> dict:
+        """The answer to a pass whose generation was claimed by someone else.
+
+        No error text: nothing failed. The user (or a confirmed deletion)
+        ended this pass while it was still working, and the number tells
+        the page that this response is the older of the two it holds.
+        """
+        return {
+            "status": "cancelled",
+            "error": None,
+            "identification_generation": self._eve_identification_generation,
+        }
 
     def _eve_account_identity(self, account_id: str, names=None, links=None) -> dict:
         section = self._eve_section()
@@ -5426,9 +5499,12 @@ class Api:
             return {
                 "status": "busy",
                 "error": "Another Profiles operation is running.",
+                "identification_generation": self._eve_generation(),
             }
         try:
-            self._eve_clear_identification()
+            # The claim comes first: the previous observation dies here, so
+            # anything still working under the old number is already stale.
+            generation = self._eve_clear_identification()
             found = self._eve_discover()
             if not self._eve_account_identity_available(found):
                 raise ValueError(_EVE_IDENTITY_UNAVAILABLE)
@@ -5442,12 +5518,28 @@ class Api:
                 raise ValueError(
                     "This profile needs an account and a character to identify."
                 )
-            self._eve_identification = snapshot
+            # Compare-and-publish. The discovery above is filesystem work
+            # done off the state lock, and a cancellation that landed
+            # during it must win: either it ran before this and the claim
+            # no longer matches, or it runs after and clears what was
+            # published. There is no window in which neither is true.
+            with self._eve_identification_lock:
+                if self._eve_identification_generation != generation:
+                    return self._eve_identification_cancelled_locked()
+                self._eve_identification = snapshot
         except (OSError, ValueError) as error:
-            return {"status": "error", "error": str(error)}
+            return {
+                "status": "error",
+                "error": str(error),
+                "identification_generation": self._eve_generation(),
+            }
         finally:
             self._eve_mutation.release()
-        return {"status": "watching", "error": None}
+        return {
+            "status": "watching",
+            "error": None,
+            "identification_generation": generation,
+        }
 
     def eve_settings_identification_check(self) -> dict:
         # A worker can hold this lock while parked on a bridge confirmation.
@@ -5456,22 +5548,33 @@ class Api:
             return {
                 "status": "busy",
                 "error": "Another Profiles operation is running.",
+                "identification_generation": self._eve_generation(),
             }
         try:
-            snapshot = self._eve_identification
+            # A check speaks for the observation it reads, so it publishes
+            # under that observation's generation rather than claiming one
+            # of its own. Every status below carries the number it was
+            # computed under, and the page discards an answer older than
+            # the highest it has already seen.
+            generation, snapshot, _ = self._eve_identification_state()
             if snapshot is None:
                 return {
                     "status": "error",
                     "error": "Start account identification first.",
+                    "identification_generation": generation,
                 }
             # A new check supersedes every former offer, including one that
             # cannot compare because EVE has not closed yet.
-            self._eve_identification_candidate = None
+            with self._eve_identification_lock:
+                if self._eve_identification_generation != generation:
+                    return self._eve_identification_cancelled_locked()
+                self._eve_identification_candidate = None
             try:
                 if self._eve_client_running_strict():
                     return {
                         "status": "watching",
                         "error": "EVE is still running. Close that client, then check again.",
+                        "identification_generation": generation,
                     }
             except Exception:
                 # Fail closed: an unverified running state must not be treated as
@@ -5482,19 +5585,25 @@ class Api:
                 return {
                     "status": "watching",
                     "error": "Could not confirm that EVE is closed. Close it and try again.",
+                    "identification_generation": generation,
                 }
             found = self._eve_discover()
             changed = evesettings_identity.changes_since(snapshot, found)
             if changed.invalidated:
-                self._eve_clear_identification()
+                with self._eve_identification_lock:
+                    if self._eve_identification_generation != generation:
+                        return self._eve_identification_cancelled_locked()
+                    invalidated = self._eve_clear_identification_locked()
                 return {
                     "status": "invalidated",
                     "error": "The selected EVE profile changed. Start identification again.",
+                    "identification_generation": invalidated,
                 }
             if len(changed.accounts) > 1:
                 return {
                     "status": "ambiguous",
                     "error": "More than one account changed. Close the other EVE clients and start again.",
+                    "identification_generation": generation,
                 }
             # A deleted character's file can still be written by the client
             # that owned it, so it can still LOOK like the change that
@@ -5509,9 +5618,15 @@ class Api:
                 return {
                     "status": "none",
                     "error": "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
+                    "identification_generation": generation,
                 }
             account_id = changed.accounts[0]
-            self._eve_identification_candidate = (account_id, characters)
+            with self._eve_identification_lock:
+                if self._eve_identification_generation != generation:
+                    return self._eve_identification_cancelled_locked()
+                self._eve_identification_candidate = _EveCandidate(
+                    generation, account_id, characters
+                )
             return {
                 "status": "candidate",
                 "error": None,
@@ -5523,6 +5638,7 @@ class Api:
                     }
                     for character_id in characters
                 ],
+                "identification_generation": generation,
             }
         finally:
             self._eve_mutation.release()
@@ -5534,13 +5650,18 @@ class Api:
         with self._eve_identity_hold() as held:
             if not held:
                 return self._field_refused("Another Profiles operation is running.")
-            candidate = self._eve_identification_candidate
+            candidate = None
+            generation, _, offered = self._eve_identification_state()
+            # The generation is read WITH the offer, not beside it: an
+            # offer whose authorizing observation has been replaced is
+            # stale even if the object survived the swap.
+            if offered is not None and offered.generation == generation:
+                candidate = offered
             if candidate is None:
                 return self._field_refused("Start account identification again.")
-            candidate_account, candidate_characters = candidate
             if (
-                account_id != candidate_account
-                or character_id not in candidate_characters
+                account_id != candidate.account_id
+                or character_id not in candidate.character_ids
             ):
                 return self._field_refused("That account match is no longer available.")
             if not isinstance(account_name, str):
@@ -5549,7 +5670,17 @@ class Api:
             # character was gone; authorization is revalidated at the write.
             if self._eve_is_deleted(character_id):
                 return self._field_refused(_EVE_CHARACTER_DELETED)
+            # Pending cleanup first, exactly as the manual account edits do
+            # it: this write replaces the whole mapping, so a deleted link
+            # still saved for ANOTHER account would be carried along by it.
+            if not self._eve_prune_deleted_links_locked(
+                self._eve_deleted_ids(self._eve_discover())
+            ):
+                return self._field_refused(_EVE_CLEANUP_FAILED)
 
+            # Read the live section AFTER the prune: update_section replaces
+            # the nested dict object rather than mutating it, so a snapshot
+            # taken earlier would re-persist the links just removed.
             section = self._eve_section()
             names = dict(section.get("account_names") or {})
             cleaned_name, error = self._eve_validate_account_name(
@@ -5595,9 +5726,23 @@ class Api:
             self._eve_clear_identification()
             return self._field_ok()
 
-    def eve_settings_identification_cancel(self) -> bool:
-        self._eve_clear_identification()
-        return True
+    def eve_settings_identification_cancel(self) -> dict:
+        """End the pass. Never refused, never blocked, always a new number.
+
+        Takes only the identification-state lock. Route exit cancels, and
+        cleanup can own _eve_mutation for a whole ESI pass -- a cancel that
+        waited for it would freeze the page on the way out of Profiles.
+
+        The generation is the answer's substance, not decoration: a check
+        whose candidate is still in flight returns the OLD number, so the
+        page can drop it instead of rendering an offer the user just
+        cancelled.
+        """
+        return {
+            "status": "idle",
+            "error": None,
+            "identification_generation": self._eve_clear_identification(),
+        }
 
     def eve_settings_resolve_names(self) -> None:
         """Verify and name the selected profile's characters, off the bridge.
@@ -5704,13 +5849,14 @@ class Api:
         if self._eve_context(self._eve_discover()) != context:
             return
         changed = False
+        invalidated: tuple[str, ...] = ()
         deleted_ids = {
             str(ident)
             for ident in ids
             if (context.datasource, ident) in self._eve_deleted
         }
         if context.trusted and deleted_ids:
-            changed = self._eve_clean_deleted(context, deleted_ids)
+            changed, invalidated = self._eve_clean_deleted(context, deleted_ids)
         facts = (
             frozenset(
                 (ident, self._eve_names.names[ident])
@@ -5723,10 +5869,26 @@ class Api:
             self._eve_applied[context] = facts
             changed = True
         if changed:
-            self._push("onEveSettingsNames", {})
+            # Both keys always, the list empty when this pass invalidated
+            # nothing: the page decides from the values, never from whether
+            # a key happens to be present.
+            self._push(
+                "onEveSettingsNames",
+                {
+                    "identification_generation": self._eve_generation(),
+                    "deleted_candidate_ids": sorted(invalidated),
+                },
+            )
 
-    def _eve_clean_deleted(self, context: _EveContext, deleted_ids: set) -> bool:
-        """Remove confirmed deleted ids from saved metadata. True when it changed.
+    def _eve_clean_deleted(
+        self, context: _EveContext, deleted_ids: set
+    ) -> tuple[bool, tuple[str, ...]]:
+        """Remove confirmed deleted ids from saved metadata.
+
+        Returns (changed, invalidated_candidate_ids): whether anything the
+        page shows moved, and which offered character ids this pass
+        disqualified -- the page needs the ids to reset the one focused
+        step it may be sitting on.
 
         Waits for the mutation lock rather than declining like the bridge
         endpoints do: this is already a background thread, so waiting costs
@@ -5737,7 +5899,7 @@ class Api:
         """
         with self._eve_mutation:
             if self._eve_context(self._eve_discover()) != context:
-                return False
+                return False, ()
             before = self._eve_section().get("account_characters") or {}
             saved = {key: list(value) for key, value in before.items()}
             persisted = self._eve_prune_deleted_links_locked(deleted_ids)
@@ -5747,12 +5909,21 @@ class Api:
             )
             # The offer on screen may name a character ESI has just called
             # deleted. Confirming it would persist a link this pass exists
-            # to remove, so the whole observation goes.
-            candidate = self._eve_identification_candidate
-            if candidate and set(candidate[1]) & deleted_ids:
-                self._eve_clear_identification()
-                changed = True
-            return changed
+            # to remove, so the whole observation goes -- under the state
+            # lock, which this thread takes while holding _eve_mutation and
+            # never the other way round.
+            with self._eve_identification_lock:
+                candidate = self._eve_identification_candidate
+                invalidated: tuple[str, ...] = ()
+                if candidate is not None:
+                    invalidated = tuple(
+                        character_id
+                        for character_id in candidate.character_ids
+                        if character_id in deleted_ids
+                    )
+                if invalidated:
+                    self._eve_clear_identification_locked()
+            return changed or bool(invalidated), invalidated
 
     def _eve_begin(self, worker, args) -> bool:
         """Claim the mutation lock and hand the work to a thread.
