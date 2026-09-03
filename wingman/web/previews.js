@@ -168,6 +168,21 @@
     return owners;
   }
 
+  // A stable id for the (at most one) conflict message a bind can own, so
+  // the button that owns the warning can point aria-describedby at the
+  // exact node this render appends -- the association that lets a reader
+  // who has scrolled the owning row under a sticky header still find out
+  // whose warning they are reading. Character rows key off the character:
+  // unique by construction, the same identity detailId() already keys on.
+  // Cycle and named-group rows have no character, so they key off their
+  // label instead -- unique between the two fixed cycle labels and
+  // enforced unique among named groups by create/rename_preview_cycle_group.
+  function bindConflictId(character, label) {
+    return character
+      ? 'preview-bind-conflict-character-' + encodeURIComponent(character)
+      : 'preview-bind-conflict-label-' + encodeURIComponent(label);
+  }
+
   function makeBindConflict(label, gesture, character, off) {
     // An opted-out character owns no preview registration. Its retained bind
     // is deliberately visible on the row, but it cannot conflict locally.
@@ -179,26 +194,41 @@
     // truth for refused versus unknown registrations.
     var registration = state.registration || {};
     var text = '';
+    // Every branch below opens with `label + ': '` -- the owning character,
+    // cycle command, or named group. This message is a full-span sibling
+    // placed directly after the row it explains (appendBindRow), and that
+    // row can scroll out from under the sticky column or Offline heading
+    // while its own warning is still on screen a moment longer; without
+    // the name the reader would have to remember, or scroll back to check,
+    // whose row they are reading about.
     if (character && clash === 'duplicate') {
       // Direct-character sharing is a supported registration plan. On its
       // rows, name only the cycle owner that makes this chord incompatible.
       var owners = cycleOwners(gesture).filter(function (owner) {
         return owner !== 'cycle group ' + label;
       });
-      text = gesture + ' conflicts with ' + (owners.join(', ') || 'another cycle keybind') + '.';
+      text = label + ': ' + gesture + ' conflicts with '
+           + (owners.join(', ') || 'another cycle keybind') + '.';
     } else if (clash === 'duplicate') {
       // A cycle row has no supported shared-owner role: direct characters
       // using its chord are the incompatible registrations to identify.
       var owners = cycleOwners(gesture).concat(sharers(gesture)).filter(function (owner) {
         return owner !== label && owner !== 'cycle group ' + label;
       });
-      text = gesture + ' conflicts with ' + (owners.join(', ') || 'another cycle keybind') + '.';
+      text = label + ': ' + gesture + ' conflicts with '
+           + (owners.join(', ') || 'another cycle keybind') + '.';
     } else if (clash === 'refused' && registration[gesture] === false) {
-      text = gesture + ' is already owned by another application.';
+      text = label + ': ' + gesture + ' is already owned by another application.';
     } else if (bookmark === 'active') {
-      text = gesture + ' conflicts with an active EVE bookmark keybind.';
+      text = label + ': ' + gesture + ' conflicts with an active EVE bookmark keybind.';
     }
-    return text ? WM.make('div', 'preview-bind-conflict', text) : null;
+    if (!text) { return null; }
+    var conflict = WM.make('div', 'preview-bind-conflict', text);
+    // The id makeRow's button references via aria-describedby, built from
+    // the same (character, label) pair passed in above -- see
+    // bindConflictId for why the two are keyed differently.
+    conflict.id = bindConflictId(character, label);
+    return conflict;
   }
 
   // Ordered array of named preview cycle groups from the current hotkeys
@@ -208,7 +238,7 @@
     return state.hotkeys.groups || [];
   }
 
-  function makeRow(label, gesture, online, onSet, character) {
+  function makeRow(label, gesture, online, onSet, character, conflict) {
     var row = WM.make('div', 'row');
     var lab = WM.make('span', 'lab');
     // The name in a span of its own, not as `.lab`'s own text. The cell is
@@ -337,6 +367,17 @@
                      + 'goes to whichever of them is logged in.';
         button.title = button.title ? button.title + ' ' + shared : shared;
       }
+    }
+    // The programmatic link to this row's own conflict warning, keyed by
+    // the exact node appendBindRow is about to append -- not by DOM
+    // adjacency, which a sticky header can break by covering the row this
+    // button lives on while its warning is still on screen below it, or
+    // by covering the warning while this row is still visible above it.
+    // Wired only while a conflict exists for THIS render: `button` is
+    // freshly created every render, so there is no stale reference to
+    // avoid removing -- omitting the attribute here is what avoids it.
+    if (conflict) {
+      button.setAttribute('aria-describedby', conflict.id);
     }
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
@@ -1233,11 +1274,14 @@
   }
 
   function appendBindRow(label, gesture, online, onSet, character) {
-    host.appendChild(makeRow(label, gesture, online, onSet, character));
+    // Computed before makeRow so this row's bind button can point
+    // aria-describedby at the exact conflict node this render appends --
+    // see bindConflictId for why that reference must survive a scroll.
+    var conflict = makeBindConflict(label, gesture, character, isExcluded(character));
+    host.appendChild(makeRow(label, gesture, online, onSet, character, conflict));
     if (character && openDetailName === character) {
       host.appendChild(makeCharacterDetail(character, isExcluded(character)));
     }
-    var conflict = makeBindConflict(label, gesture, character, isExcluded(character));
     if (conflict) { host.appendChild(conflict); }
   }
 

@@ -3234,6 +3234,68 @@ def test_character_detail_precedes_its_conflict_copy():
     assert row < detail < conflict
 
 
+def test_bind_conflict_names_its_owner_so_it_survives_a_sticky_scroll():
+    """A conflict is a full-span sibling directly after the row it explains
+    (appendBindRow), and that row can scroll out from under the sticky
+    column or Offline heading while the warning below it is still on
+    screen. Every text-producing branch must therefore open with the
+    owning character, cycle command, or named group by name, rather than
+    counting on the reader having just seen the row above.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert block.count("label + ': ' + gesture") == 4, (
+        "makeBindConflict must open every conflict sentence with its own "
+        "label -- the owning character, cycle command, or named group -- "
+        "so the message names its owner even once the row it explains has "
+        "scrolled under a sticky header"
+    )
+
+
+def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
+    """The warning and the control it explains must be associated by a
+    stable id, not by DOM adjacency, so the association survives a
+    rerender and a scroll alike.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function bindConflictId(character, label)" in js
+    id_fn = js.split("function bindConflictId", 1)[1].split("\n  function ", 1)[0]
+    assert "encodeURIComponent(character)" in id_fn
+    assert "encodeURIComponent(label)" in id_fn
+
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert "conflict.id = bindConflictId(character, label)" in block
+
+
+def test_bind_row_button_references_its_conflict_via_aria_describedby():
+    """The bind button -- not a wrapper, and not the row -- carries the
+    programmatic association, wired only while a conflict is actually
+    rendered so a fresh button never points at a warning this render did
+    not append.
+    """
+    body = _makerow_body()
+    params = body.split(") {", 1)[0]
+    assert params == "label, gesture, online, onSet, character, conflict", (
+        "makeRow must accept the conflict element so its bind button can "
+        "reference the exact node id rendered for this row"
+    )
+    assert "if (conflict) {" in body
+    assert "button.setAttribute('aria-describedby', conflict.id)" in body
+
+    append = (
+        _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+        .split("function appendBindRow", 1)[1]
+        .split("function render()", 1)[0]
+    )
+    conflict_computed = append.index("var conflict = makeBindConflict(")
+    row_built = append.index("host.appendChild(makeRow")
+    assert conflict_computed < row_built, (
+        "the conflict element must exist before makeRow builds the button "
+        "that references its id"
+    )
+    assert "makeRow(label, gesture, online, onSet, character, conflict)" in append
+
+
 def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
     """Size has no authoritative redraw, and Copy's intent is installed only
     inside its refresh response. Cancellation and a failed copy therefore cannot

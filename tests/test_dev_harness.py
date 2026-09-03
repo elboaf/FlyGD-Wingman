@@ -586,6 +586,27 @@ def test_preview_fixture_covers_the_roster_states_screenshots_need():
     ), "fixture needs a direct-character/cycle-keybind conflict"
 
 
+def test_preview_fixture_covers_a_named_group_cycle_conflict():
+    """The same screenshot fixture must also exercise a named-group
+    keybind collision, not just the direct-character/cycle conflict above.
+
+    The warning-ownership fix (Task 2) applies uniformly to character,
+    cycle, and named-group rows; only a real collision in each keeps the
+    screenshot actually showing one.
+    """
+    fixture = _dev_preview_fixture()
+    groups = fixture["hotkeys"]["groups"]
+    by_cycle = {}
+    for group in groups:
+        cycle = group.get("cycle")
+        if cycle:
+            by_cycle.setdefault(cycle, []).append(group["name"])
+    assert any(len(names) >= 2 for names in by_cycle.values()), (
+        "fixture needs two named groups sharing one cycle keybind, so a "
+        "named-group conflict warning actually renders in the screenshot"
+    )
+
+
 def test_the_bookmark_fixture_uses_real_ahk_strings():
     """The mirror of the above, for the subsystem that really does use AHK.
 
