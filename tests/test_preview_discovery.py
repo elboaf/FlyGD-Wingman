@@ -109,3 +109,69 @@ def test_window_inspection_failure_is_skipped_by_default_but_strict_propagates()
 
 def test_strict_discovery_still_skips_an_inaccessible_process():
     assert _list(image_name=lambda pid: None, strict=True) == []
+
+
+# ---------------------------------------------------------------------------
+# enumerate_clients(): the failure-aware seam ClientDiscovery consumes
+# ---------------------------------------------------------------------------
+
+
+def test_enumerate_clients_reports_success_with_the_same_clients_as_list_clients():
+    result = discovery.enumerate_clients(
+        enumerator=lambda: WINDOWS, pids=PIDS.get, image_name=IMAGES.get
+    )
+    assert result.success is True
+    assert [c.character for c in result.clients] == ["Pilot One", "Pilot Two"]
+
+
+def test_enumerate_clients_reports_success_on_a_genuinely_empty_scan():
+    result = discovery.enumerate_clients(enumerator=list)
+    assert result.success is True
+    assert result.clients == []
+
+
+def test_enumerate_clients_reports_failure_on_enumerator_exception():
+    def boom():
+        raise OSError("no window station")
+
+    result = discovery.enumerate_clients(enumerator=boom)
+    assert result.success is False
+    assert result.clients == []
+
+
+def test_enumerate_clients_strict_still_propagates_an_enumerator_failure():
+    def boom():
+        raise OSError("no window station")
+
+    with pytest.raises(OSError, match="no window station"):
+        discovery.enumerate_clients(enumerator=boom, strict=True)
+
+
+def test_enumerate_clients_per_window_failure_is_not_an_enumeration_failure():
+    """A per-window pids()/image_name() failure only drops that window --
+    the top-level enumerator succeeded, so this is not the kind of
+    failure ClientDiscovery must treat as "the scan itself failed"."""
+
+    def pids(hwnd):
+        if hwnd == 0x10:
+            raise OSError("window disappeared")
+        return PIDS.get(hwnd)
+
+    result = discovery.enumerate_clients(
+        enumerator=lambda: WINDOWS, pids=pids, image_name=IMAGES.get
+    )
+    assert result.success is True
+    assert [c.character for c in result.clients] == ["Pilot Two"]
+
+
+def test_list_clients_is_the_clients_of_enumerate_clients():
+    """list_clients() remains a thin compatibility adapter: same clients
+    on success, and the same empty-list collapse on failure it always had."""
+
+    def boom():
+        raise OSError("no window station")
+
+    assert discovery.list_clients(enumerator=lambda: WINDOWS) == list(
+        discovery.enumerate_clients(enumerator=lambda: WINDOWS).clients
+    )
+    assert discovery.list_clients(enumerator=boom) == []

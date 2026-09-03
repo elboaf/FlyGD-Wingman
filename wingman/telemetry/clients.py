@@ -1,13 +1,15 @@
 """Shared EVE client discovery with stable per-session identity.
 
-Owns nothing about *what* a window is -- ``preview.discovery.list_clients``
-remains the sole raw Win32 enumerator, unchanged, so window-acceptance and
-identity rules (title prefix, process image name, stable key) stay defined
-in exactly one place.  This module adds the thing multiple features need on
-top of that raw enumeration: one shared scan cadence, fan-out to independent
-subscribers, and a *session* identity that survives an ordinary unchanged
-scan but renews on disappearance, HWND/PID change, or a generic-title
-transition.
+Owns nothing about *what* a window is -- ``preview.discovery`` remains the
+sole raw Win32 enumerator, unchanged, so window-acceptance and identity
+rules (title prefix, process image name, stable key) stay defined in
+exactly one place.  This service consumes that module's failure-aware
+``enumerate_clients()`` seam (see "Failure isolation" below), not its
+plain-list ``list_clients()`` compatibility adapter.  This module adds the
+thing multiple features need on top of that raw enumeration: one shared
+scan cadence, fan-out to independent subscribers, and a *session* identity
+that survives an ordinary unchanged scan but renews on disappearance,
+HWND/PID change, or a generic-title transition.
 
 Session identity
 -----------------
@@ -24,6 +26,17 @@ added to the session map: it still appears in the roster snapshot (Preview
 identity and reconciliation need every window, named or not) but carries
 ``session is None``.
 
+Failure isolation
+------------------
+``enumerate_clients()`` distinguishes a genuinely empty scan
+(``success=True, clients=[]``) from a failed one (``success=False``): a
+plain empty list cannot carry that distinction, and this service's
+stable-session pruning must never treat "the enumerator raised" as
+authoritative proof that every client vanished.  A failed scan therefore
+records the error, publishes nothing, and leaves every tracked session key
+and the last published snapshot untouched.  The next scan that genuinely
+succeeds -- even an empty one -- resumes normal reconciliation and pruning.
+
 This module deliberately never reads preview exclusion or any other
 setting.  "Excluded from preview thumbnails" is a Preview-only concept
 applied downstream; the shared roster is raw truth for every consumer.
@@ -32,17 +45,22 @@ Concurrency model
 ------------------
 One owned worker context performs every scan; ``scan_once()`` is the
 synchronous test seam used with ``_noop_thread_factory``, mirroring
-``telemetry.gamelogs.GameLogStream``.  ``_lock`` guards the session map,
+``telemetry.gamelogs.GameLogStream``.  ``_scan_lock`` (non-reentrant)
+serializes ``scan_once()`` itself, so a manual/test call and the worker's
+own call can never run the enumerator concurrently -- one waits for the
+other's whole cycle (enumerate, reconcile, and the state mutation) to
+finish before starting its own.  ``_lock`` guards the session map,
 generation counter, and latest snapshot; subscriber callbacks are always
-invoked outside it, and one raising callback does not stop delivery to the
-others.  ``_lifecycle_lock`` makes ``start``/``stop`` atomic, following the
-same idempotent, bounded-join, timeout-retains-worker shape as
-``GameLogStream``.
+invoked outside both locks, and one raising callback does not stop
+delivery to the others.  ``_lifecycle_lock`` makes ``start``/``stop``
+atomic, following the same idempotent, bounded-join, timeout-retains-worker
+shape as ``GameLogStream``.
 
 Injected seams for testing
 ---------------------------
 ``_thread_factory``, ``_wait_fn``, and ``_enumerate_clients`` (defaults to
-``preview.discovery.list_clients``).
+``preview.discovery.enumerate_clients``, returning an
+``EnumerationResult``).
 """
 
 from __future__ import annotations
@@ -113,7 +131,9 @@ class ClientDiscovery:
         *,
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _wait_fn: Callable[[threading.Event, float], None] | None = None,
-        _enumerate_clients: Callable[[], list] = discovery.list_clients,
+        _enumerate_clients: Callable[
+            [], discovery.EnumerationResult
+        ] = discovery.enumerate_clients,
     ) -> None:
         self._thread_factory = _thread_factory
         self._wait_fn = _wait_fn or (lambda ev, t: ev.wait(t))
@@ -121,12 +141,20 @@ class ClientDiscovery:
 
         self._subscribers: list[Callable[[RosterSnapshot], None]] = []
         # (hwnd, pid, character) -> the generation it was first seen in.
-        # Pruned the instant a tuple is absent from a scan.
+        # Pruned the instant a tuple is absent from a scan that genuinely
+        # succeeded. A failed scan touches neither this map nor _latest.
         self._sessions: dict[_SessionKey, int] = {}
         self._next_generation = 1
         self._latest = _EMPTY_SNAPSHOT
+        # Set on a failed scan, cleared on the next successful one. Private
+        # state, not a health surface -- this task does not add one.
+        self._last_error: str | None = None
 
         self._lock = threading.Lock()
+        # Serializes scan_once() end to end (enumerate + reconcile), so a
+        # manual/test caller and the worker thread can never run the
+        # enumerator concurrently.
+        self._scan_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -240,53 +268,77 @@ class ClientDiscovery:
 
     def scan_once(self) -> None:
         """One complete enumerate + reconcile + publish cycle, synchronous
-        on the caller's thread."""
-        try:
-            clients = list(self._enumerate_clients())
-        except Exception:
-            logger.exception("Could not enumerate EVE clients")
-            clients = []
+        on the caller's thread.
 
-        with self._lock:
-            generation = self._next_generation
-            self._next_generation += 1
+        Serialized end to end by ``_scan_lock``: a concurrent caller (the
+        worker thread or another manual/test call) waits for this whole
+        cycle to finish rather than running its own enumerator call at the
+        same time.
 
-            current_keys: set[_SessionKey] = set()
-            roster_clients = []
-            for client in clients:
-                session = None
-                if client.character is not None:
-                    key = (client.hwnd, client.pid, client.character)
-                    current_keys.add(key)
-                    first_seen = self._sessions.get(key, generation)
-                    self._sessions[key] = first_seen
-                    session = ClientSessionId(
-                        hwnd=client.hwnd,
-                        pid=client.pid,
-                        character=client.character,
-                        first_seen_generation=first_seen,
+        A failed enumeration (``EnumerationResult(success=False, ...)`` or
+        the callable raising directly) records the error and returns
+        without touching session state or the latest snapshot, and without
+        publishing anything -- an enumerator failure must never be read as
+        proof that every client disappeared.
+        """
+        with self._scan_lock:
+            try:
+                result = self._enumerate_clients()
+                success = result.success
+                clients = list(result.clients) if success else []
+            except Exception:
+                logger.exception("Could not enumerate EVE clients")
+                success = False
+                clients = []
+
+            if not success:
+                with self._lock:
+                    self._last_error = "client enumeration failed"
+                return
+
+            with self._lock:
+                self._last_error = None
+                generation = self._next_generation
+                self._next_generation += 1
+
+                current_keys: set[_SessionKey] = set()
+                roster_clients = []
+                for client in clients:
+                    session = None
+                    if client.character is not None:
+                        key = (client.hwnd, client.pid, client.character)
+                        current_keys.add(key)
+                        first_seen = self._sessions.get(key, generation)
+                        self._sessions[key] = first_seen
+                        session = ClientSessionId(
+                            hwnd=client.hwnd,
+                            pid=client.pid,
+                            character=client.character,
+                            first_seen_generation=first_seen,
+                        )
+                    roster_clients.append(
+                        RosterClient(
+                            hwnd=client.hwnd,
+                            pid=client.pid,
+                            title=client.title,
+                            character=client.character,
+                            session=session,
+                        )
                     )
-                roster_clients.append(
-                    RosterClient(
-                        hwnd=client.hwnd,
-                        pid=client.pid,
-                        title=client.title,
-                        character=client.character,
-                        session=session,
-                    )
+
+                # Prune tuples no longer present: a later reappearance must
+                # be treated as a new session, never as continuity. Only
+                # reached on a successful scan -- a failed one returned
+                # above and left this map alone.
+                for key in list(self._sessions):
+                    if key not in current_keys:
+                        del self._sessions[key]
+
+                snapshot = RosterSnapshot(
+                    generation=generation, clients=tuple(roster_clients)
                 )
-
-            # Prune tuples no longer present: a later reappearance must be
-            # treated as a new session, never as continuity.
-            for key in list(self._sessions):
-                if key not in current_keys:
-                    del self._sessions[key]
-
-            snapshot = RosterSnapshot(
-                generation=generation, clients=tuple(roster_clients)
-            )
-            self._latest = snapshot
-            subs = list(self._subscribers)
+                self._latest = snapshot
+                subs = list(self._subscribers)
 
         for callback in subs:
             try:
