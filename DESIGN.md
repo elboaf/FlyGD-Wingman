@@ -107,14 +107,19 @@ identifies as the floor — 840 (100% and every scaling below 200%) and 839
 
 | | 840px | 839px |
 |---|---|---|
+| titlebar client width (`.titlebar` rect) | 840px | 839px |
 | `document.scrollWidth == clientWidth` | 840 == 840 | 839 == 839 |
-| close button right edge | 834px | 833px |
-| drag region width (105px floor) | 379.9px | 378.9px |
+| drag region width, left/right edge (105px floor) | 379.9px, 16–395.9 | 378.9px, 16–394.9 |
+| nav (`#routenav`) left/right edge | 405.9 / 672 | 404.9 / 671 |
+| gear (`#btn-settings`) left/right edge | 682 / 726 | 681 / 725 |
+| minimize (`#btn-minimize`) left/right edge | 736 / 780 | 735 / 779 |
+| close (`#btn-close`) left/right edge | 790 / 834 | 789 / 833 |
 | destination labels visible | 4 (Uploader, Profiles, Skills, Fittings) | 4 |
 
 All four of Task 6's acceptance conditions hold at both widths: nothing
-overflows, the close button stays inside the titlebar, and the drag
-region is still more than 3.5x its 105px floor.
+overflows (every edge above sits inside the 840/839 titlebar client
+width), the close button's right edge (834/833) stays inside it, and the
+drag region is still more than 3.5x its 105px floor.
 
 **This does not resolve the "Unresolved" question directly above, and is
 not offered as a substitute for it.** This file's own opening rule is that

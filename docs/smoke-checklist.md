@@ -1938,21 +1938,22 @@ pytest — the engine is AutoHotkey.
       destination-vs-configuration test and is unaffected.
 - [ ] **UNVERIFIED — reproduce `DESIGN.md`'s headless 840/839 CSS check on
       real Windows/WebView2, at every display scaling.** `DESIGN.md`'s
-      "Fourth destination, measured" note records: `document.scrollWidth
-      == clientWidth`, the close button's right edge inside the titlebar,
-      a drag region ≥ 105 CSS px, and all four destination labels visible
-      — all confirmed in headless Chromium against `wingman/web/
-      index.html?dev=1` at CSS viewports 840x625 and 839x621,
-      `deviceScaleFactor: 1`. That is NOT a Windows/WebView2 result: it
-      cannot exercise the DPI rounding that makes an 840 logical minimum
-      measure as 839 CSS px at 200% in the first place (`ui/window.py`'s
-      `MinimumSize` / `ptMinTrackSize`), which is exactly the fact this
-      checklist's other display-scaling items exist to check. Restart at
-      100%, 125%, 150% and 200%, drag the window to its floor, and check
-      the same four conditions by hand (or via a real WebView2 CDP
-      session) at each. This item stays unchecked until that has actually
-      been done — do not check it off on the strength of the headless
-      number above.
+      "Fourth destination, measured" note records titlebar client width,
+      `document.scrollWidth == clientWidth`, the drag region's width and
+      edges, the nav's left/right edges, and every window control's
+      (gear/minimize/close) left/right edge — all confirmed in headless
+      Chromium against `wingman/web/index.html?dev=1` at CSS viewports
+      840x625 and 839x621, `deviceScaleFactor: 1`, with every edge inside
+      the titlebar's own client width and all four destination labels
+      visible. That is NOT a Windows/WebView2 result: it cannot exercise
+      the DPI rounding that makes an 840 logical minimum measure as 839
+      CSS px at 200% in the first place (`ui/window.py`'s `MinimumSize` /
+      `ptMinTrackSize`), which is exactly the fact this checklist's other
+      display-scaling items exist to check. Restart at 100%, 125%, 150%
+      and 200%, drag the window to its floor, and check the same values
+      by hand (or via a real WebView2 CDP session) at each. This item
+      stays unchecked until that has actually been done — do not check it
+      off on the strength of the headless numbers above.
 - [ ] **The bar survives its own minimum at 150% scaling.** Set Windows
       display scaling to 150%, restart, drag the window to its floor. The
       four nav labels, the gear, minimize and close are ALL visible, and
