@@ -71,12 +71,17 @@ def estimate(
 
     total_seconds = Fraction(0)
 
+    # One casefolded index, built before the loop instead of a linear scan
+    # per requirement -- and casefold(), not lower(), because
+    # evaluator.evaluate() resolves the same name from the same mapping
+    # with casefold(). The two answers are printed in one roster row, and
+    # the two folds disagree on a handful of names (German eszett, Greek
+    # final sigma), which is enough for a scored requirement to sit beside
+    # an estimate claiming its metadata is missing.
+    lookup = {str(name).casefold(): sid for name, sid in skill_ids.items()}
+
     for req in requirements:
-        skill_id = None
-        for sname, sid in skill_ids.items():
-            if sname.lower() == req.skill_name.lower():
-                skill_id = sid
-                break
+        skill_id = lookup.get(req.skill_name.casefold())
 
         if skill_id is None:
             return TrainingEstimate(None, METADATA_UNAVAILABLE)

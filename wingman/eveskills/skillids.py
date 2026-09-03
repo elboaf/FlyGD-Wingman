@@ -15,6 +15,7 @@ TriffSkillsController.cs (~503-615).
 import concurrent.futures
 import contextlib
 import json
+import math
 import os
 import stat as stat_module
 import threading
@@ -427,6 +428,22 @@ def _training_metadata_from_type(data, fetched_utc) -> "SkillTrainingMetadata | 
             continue
         value = item.get("value")
         if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        # json.loads accepts NaN, Infinity and -Infinity by default, so a
+        # malformed body really can put one here -- and every check below
+        # converts with int(), which RAISES on those three (ValueError for
+        # a NaN, OverflowError for an infinity) instead of comparing
+        # False. That raise leaves _fetch, unwinds future.result(), and
+        # costs the WHOLE staged pass its answers rather than this one
+        # type its metadata. Dropping the value here is what keeps the
+        # damage local: the id simply reads as absent below, so this
+        # function returns None like any other malformed type.
+        #
+        # Only floats are screened. math.isfinite() converts its argument
+        # to a float first, so passing a huge int would raise the very
+        # OverflowError this is here to avoid, and an int is finite by
+        # construction anyway.
+        if isinstance(value, float) and not math.isfinite(value):
             continue
         values[attribute_id] = value
 

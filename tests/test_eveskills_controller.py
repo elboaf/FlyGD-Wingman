@@ -2615,18 +2615,37 @@ def test_metadata_backfill_publishes_every_answer_or_none(tmp_path):
     controller = None
     observed = []
     lock_free = []
+    # The probes themselves are serialized. Two of them run concurrently on
+    # the fetch's worker threads, and one probe holding the state lock
+    # would make the other's non-blocking acquire fail -- reporting the
+    # test's own instrumentation as the production bug it is looking for.
+    probe_gate = threading.Lock()
 
     def observe(path):
         # Runs on the backfill's own worker threads, i.e. WHILE it is in
         # flight. A lock it cannot take here is a lock the fetch is holding
         # across the network, which is the rule this asserts rather than
         # hangs on.
-        taken = controller._lock.acquire(blocking=False)
-        lock_free.append(taken)
-        if taken:
-            controller._lock.release()
-        controller.state_payload()
-        observed.append(len(controller._cache.training_metadata(clock.value)))
+        with probe_gate:
+            taken = controller._lock.acquire(blocking=False)
+            lock_free.append(taken)
+            if not taken:
+                # Return, do not read the payload: state_payload() takes
+                # the same lock BLOCKING, and the thread that already
+                # holds it is waiting on this pool to finish -- so the
+                # regression this test exists to catch would hang the
+                # suite instead of failing it. The assertion below is what
+                # reports it.
+                return
+            try:
+                # Both reads happen under the lock this probe just proved
+                # was free: a merge cannot land between the payload and
+                # the count, so a half-merged pass cannot be sampled as a
+                # whole one.
+                controller.state_payload()
+                observed.append(len(controller._cache.training_metadata(clock.value)))
+            finally:
+                controller._lock.release()
 
     controller, _, _ = build(
         tmp_path,
@@ -2642,9 +2661,9 @@ def test_metadata_backfill_publishes_every_answer_or_none(tmp_path):
 
     controller.refresh_characters()
 
+    assert lock_free == [True, True], "the fetch held the state lock across ESI"
     assert len(observed) == 2
     assert set(observed) <= {0, 2}  # never one entry of a two-entry merge
-    assert all(lock_free)
     assert len(controller._cache.training_metadata(clock.value)) == 2
 
 

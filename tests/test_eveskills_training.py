@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from wingman.eveskills import plans, training
+from wingman.eveskills import evaluator, plans, training
 
 NOW = datetime(2026, 9, 2, tzinfo=UTC)
 ATTRS = {
@@ -178,9 +178,56 @@ def test_multiple_skills_with_different_attribute_pairs_accumulate():
             3449: META_RANK_3,
         },
     )
-    assert result.status == training.AVAILABLE
-    assert result.seconds > 0
+    # Exact, not merely positive: a lookup that resolved both
+    # requirements to the SAME id would still sum to something positive.
+    # Gunnery II is 1,415 SP over perception/willpower (2264s exactly);
+    # Navigation II is rank 3, so 4,245 SP over charisma/memory
+    # (254700/29 s); the single final ceiling lands on 11,047.
+    assert result == training.TrainingEstimate(11047, training.AVAILABLE)
     assert isinstance(result.seconds, int)
+
+
+def test_a_name_folds_here_exactly_as_it_folds_for_readiness():
+    """The readiness and the estimate are two halves of one roster row,
+    built from the identical id mapping, so they must agree about whether
+    a name is known. lower() and casefold() disagree on the German
+    eszett -- "STRASSE" lowers to "strasse" but "stra\u00dfe" lowers to
+    itself -- which is enough for a scored requirement to sit beside a
+    blank estimate that claims the metadata is missing."""
+    skill_ids = {"Stra\u00dfe": 3300}
+    requirements = [req("STRASSE", 1)]
+
+    analysis = evaluator.evaluate(
+        requirements, skill_ids, {3300: 0}, {3300: 0}, (), True
+    )
+    result = training.estimate(
+        requirements,
+        skill_ids,
+        {3300: 0},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={3300: META},
+    )
+
+    assert analysis.requirements[0].state != evaluator.UNKNOWN
+    # 250 SP at 75 SP/2min: the estimate resolved the same id readiness did.
+    assert result == training.TrainingEstimate(400, training.AVAILABLE)
+
+
+def test_an_arbitrarily_cased_mapping_still_resolves():
+    """skill_ids arrives folded from the cache today, but this module is
+    pure and takes whatever it is handed -- a mapping keyed on the
+    spelling ESI returned must keep resolving."""
+    result = training.estimate(
+        [req("gUnNeRy", 1)],
+        {"GUNNERY": 3300},
+        {3300: 0},
+        skill_points_complete=True,
+        attributes=ATTRS,
+        metadata={3300: META},
+    )
+
+    assert result == training.TrainingEstimate(400, training.AVAILABLE)
 
 
 def test_arbitrary_extra_fields_in_attributes_do_not_affect_estimate():

@@ -986,3 +986,75 @@ def test_fetch_training_metadata_rejects_a_non_integer_rank():
     )
     assert accepted == {}
     assert failures == {"Gunnery": skillids.REASON_METADATA_UNAVAILABLE}
+
+
+def _body_with(attribute_id: int, value) -> dict:
+    """TYPE_BODY with one dogma value replaced, ids and shape untouched."""
+    return {
+        "group_id": 255,
+        "dogma_attributes": [
+            {**item, "value": value} if item["attribute_id"] == attribute_id else item
+            for item in TYPE_BODY["dogma_attributes"]
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="inf"),
+        pytest.param(float("-inf"), id="-inf"),
+    ],
+)
+@pytest.mark.parametrize(
+    "attribute_id",
+    [
+        pytest.param(skillids.DOGMA_SKILL_TIME_CONSTANT, id="rank"),
+        pytest.param(skillids.DOGMA_PRIMARY_ATTRIBUTE, id="primary"),
+        pytest.param(skillids.DOGMA_SECONDARY_ATTRIBUTE, id="secondary"),
+    ],
+)
+def test_fetch_training_metadata_rejects_a_non_finite_dogma_value(attribute_id, value):
+    """json.loads accepts NaN/Infinity/-Infinity by default, so a body can
+    carry one -- and every value here is checked with int(), which RAISES
+    on those three (ValueError for a NaN, OverflowError for an infinity)
+    rather than comparing False. A raise is not a rejection: it leaves the
+    decoder, so it has to be screened out before the conversion."""
+    client = FakeEsi(types={3300: _body_with(attribute_id, value)})
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300),), client, NOW, max_workers=1
+    )
+    assert accepted == {}
+    assert failures == {"Gunnery": skillids.REASON_METADATA_UNAVAILABLE}
+
+
+def test_one_non_finite_type_costs_only_its_own_metadata():
+    """The staged fetch's whole point is that one bad type costs one
+    entry. A raise inside a worker unwinds future.result() instead, which
+    discards every OTHER answer in the same pass -- the controller logs
+    the exception and merges nothing, so one malformed skill blanks the
+    estimate for the entire plan until the next refresh."""
+    nav_body = {
+        "group_id": 255,
+        "dogma_attributes": [
+            {"attribute_id": 275, "value": 3.0},
+            {"attribute_id": 180, "value": 165.0},
+            {"attribute_id": 181, "value": 166.0},
+        ],
+    }
+    client = FakeEsi(
+        types={
+            3300: _body_with(skillids.DOGMA_SKILL_TIME_CONSTANT, float("nan")),
+            3449: nav_body,
+        }
+    )
+
+    accepted, failures = skillids.fetch_training_metadata(
+        (("Gunnery", 3300), ("Navigation", 3449)), client, NOW, max_workers=2
+    )
+
+    assert accepted == {
+        3449: training.SkillTrainingMetadata(3, "intelligence", "memory", NOW)
+    }
+    assert failures == {"Gunnery": skillids.REASON_METADATA_UNAVAILABLE}
