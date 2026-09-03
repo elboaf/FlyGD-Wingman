@@ -36,6 +36,116 @@ class Health(NamedTuple):
     characters: tuple[str, ...]
 
 
+class AlertPolicy:
+    """The decision core: cooldowns, NPC filter, sound, and dispatch.
+
+    Extracted from AlertService._handle() so the policy can be unit-tested
+    directly and later wired into a coordinator without owning a thread.
+    AlertService owns the lifecycle and delegates _handle() here; nothing
+    else changes in this task.
+
+    All inputs are callables, not captured values, for the same reason
+    AlertService takes them that way -- settings._normalize reassigns
+    data["preview"] wholesale, so a subtree captured at construction is
+    orphaned after the first write.
+    """
+
+    def __init__(self, config, sound, focused, on_alert):
+        self._config = config
+        self._sound = sound
+        self._focused = focused
+        self._on_alert = on_alert
+        # (character, event) -> when it last dispatched.
+        self._cooldowns = {}
+
+    def _focused_character(self):
+        """The foreground client's character, or None if it cannot be had.
+
+        Guarded because it crosses to the preview host: a raise here would
+        cost the whole poll -- every alert in it, for every character --
+        to spare one client a sound it did not need. Swallowed at debug
+        level rather than warning: this runs once a second, and a host
+        that has gone away would otherwise fill the log a user sends us
+        with the least interesting line in it.
+        """
+        try:
+            return self._focused()
+        except Exception:
+            # Caught broadly on purpose (no noqa needed -- logging the
+            # exception satisfies BLE001, the same way alertframes.push
+            # does it): losing the suppression is recoverable, losing the
+            # poll is not.
+            logger.debug("Could not read the focused client", exc_info=True)
+            return None
+
+    def handle(self, events, now: float) -> list[tuple[str, str, str]]:
+        """Filter, apply cooldowns, play sound, dispatch.
+
+        Returns the dispatched (character, event, colour) triples, which is
+        what the tests assert on.
+        """
+        cfg = self._config() or {}
+        table = cfg.get("events") or {}
+        pve = bool(cfg.get("pve_filter"))
+        # Absent means full volume: an upgrading install's settings.json
+        # predates the key, and defaulting to anything else would silence
+        # alerts for everyone who already had them.
+        volume = cfg.get("volume", 100)
+        # Read once per poll rather than once per event. A poll's events
+        # were all read from the log in the same tick, so one answer for
+        # the batch is as true as any other -- and this crosses to the
+        # preview thread, which is not something to do per line.
+        focused = self._focused_character()
+        dispatched = []
+        for event in events:
+            spec = table.get(event.event)
+            if not spec or not spec.get("enabled"):
+                continue
+            if (
+                pve
+                and event.event in patterns.FILTERED_EVENTS
+                and patterns.is_likely_npc(event.source)
+            ):
+                continue
+            key = (event.character, event.event)
+            last = self._cooldowns.get(key)
+            if last is not None and now - last < spec.get("cooldown_s", 0):
+                # Checked before anything else happens: a suppressed event
+                # is invisible everywhere, sound included.
+                continue
+            self._cooldowns[key] = now
+            sound_id = spec.get("sound") or "none"
+            # The client you are already looking at gets the flash and not
+            # the noise. The sound is the part that INTERRUPTS, and there
+            # is nothing to interrupt you from when the fight is already
+            # filling your screen -- while the ring is free, is where the
+            # event happened, and is what tells you which of the three
+            # things just fired.
+            silent = event.character == focused
+            if sound_id != "none" and not silent:
+                self._sound(sound_id, volume)
+            # persist_until_selected is global but travels merged into the
+            # per-event spec, so PreviewWindow.arm_alert reads one dict and
+            # the host does not have to know the section's shape.
+            payload = dict(spec)
+            persist = bool(cfg.get("persist_until_selected"))
+            if silent:
+                # Silent implies timed, decided HERE rather than left to
+                # arm_alert's own `focused` read. The two run on different
+                # threads with a queue between them, so a client that lost
+                # the foreground in that gap would otherwise get the worst
+                # pairing available: no sound, because this thread saw it
+                # focused, AND a ring that pulses until acknowledged,
+                # because the preview thread saw it was not. One decision,
+                # taken once, keeps "you are looking at it" meaning the
+                # same thing to both halves of the alert.
+                persist = False
+            payload["persist_until_selected"] = persist
+            self._on_alert(event.character, event.event, payload)
+            dispatched.append((event.character, event.event, spec.get("color")))
+        return dispatched
+
+
 class AlertService:
     def __init__(
         self,
@@ -64,8 +174,12 @@ class AlertService:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._tailer = None
-        # (character, event) -> when it last dispatched.
-        self._cooldowns = {}
+        self._policy = AlertPolicy(
+            config=self._config,
+            sound=self._sound,
+            focused=self._focused,
+            on_alert=self._on_alert,
+        )
         self._last_poll = None
         self._last_error = None
 
@@ -156,7 +270,7 @@ class AlertService:
             self._stop = stop_event
             new_tailer = tailer.Tailer(folder)
             self._tailer = new_tailer
-            self._cooldowns.clear()
+            self._policy._cooldowns.clear()
             self._thread = threading.Thread(
                 target=self._run,
                 args=(stop_event, new_tailer),
@@ -238,92 +352,11 @@ class AlertService:
 
     # ---- the decision core -----------------------------------------------
 
-    def _focused_character(self):
-        """The foreground client's character, or None if it cannot be had.
-
-        Guarded because it crosses to the preview host: a raise here would
-        cost the whole poll -- every alert in it, for every character --
-        to spare one client a sound it did not need. Swallowed at debug
-        level rather than warning: this runs once a second, and a host
-        that has gone away would otherwise fill the log a user sends us
-        with the least interesting line in it.
-        """
-        try:
-            return self._focused()
-        except Exception:
-            # Caught broadly on purpose (no noqa needed -- logging the
-            # exception satisfies BLE001, the same way alertframes.push
-            # does it): losing the suppression is recoverable, losing the
-            # poll is not.
-            logger.debug("Could not read the focused client", exc_info=True)
-            return None
-
     def _handle(self, events, now: float) -> list[tuple[str, str, str]]:
-        """Filter, apply cooldowns, play sound, dispatch.
-
-        Returns the dispatched (character, event, colour) triples, which is
-        what the tests assert on.
+        """Delegate to the policy. AlertPolicy.handle() owns the decision;
+        AlertService owns only the thread and Tailer lifecycle.
         """
-        cfg = self._config() or {}
-        table = cfg.get("events") or {}
-        pve = bool(cfg.get("pve_filter"))
-        # Absent means full volume: an upgrading install's settings.json
-        # predates the key, and defaulting to anything else would silence
-        # alerts for everyone who already had them.
-        volume = cfg.get("volume", 100)
-        # Read once per poll rather than once per event. A poll's events
-        # were all read from the log in the same tick, so one answer for
-        # the batch is as true as any other -- and this crosses to the
-        # preview thread, which is not something to do per line.
-        focused = self._focused_character()
-        dispatched = []
-        for event in events:
-            spec = table.get(event.event)
-            if not spec or not spec.get("enabled"):
-                continue
-            if (
-                pve
-                and event.event in patterns.FILTERED_EVENTS
-                and patterns.is_likely_npc(event.source)
-            ):
-                continue
-            key = (event.character, event.event)
-            last = self._cooldowns.get(key)
-            if last is not None and now - last < spec.get("cooldown_s", 0):
-                # Checked before anything else happens: a suppressed event
-                # is invisible everywhere, sound included.
-                continue
-            self._cooldowns[key] = now
-            sound_id = spec.get("sound") or "none"
-            # The client you are already looking at gets the flash and not
-            # the noise. The sound is the part that INTERRUPTS, and there
-            # is nothing to interrupt you from when the fight is already
-            # filling your screen -- while the ring is free, is where the
-            # event happened, and is what tells you which of the three
-            # things just fired.
-            silent = event.character == focused
-            if sound_id != "none" and not silent:
-                self._sound(sound_id, volume)
-            # persist_until_selected is global but travels merged into the
-            # per-event spec, so PreviewWindow.arm_alert reads one dict and
-            # the host does not have to know the section's shape.
-            payload = dict(spec)
-            persist = bool(cfg.get("persist_until_selected"))
-            if silent:
-                # Silent implies timed, decided HERE rather than left to
-                # arm_alert's own `focused` read. The two run on different
-                # threads with a queue between them, so a client that lost
-                # the foreground in that gap would otherwise get the worst
-                # pairing available: no sound, because this thread saw it
-                # focused, AND a ring that pulses until acknowledged,
-                # because the preview thread saw it was not. One decision,
-                # taken once, keeps "you are looking at it" meaning the
-                # same thing to both halves of the alert.
-                persist = False
-            payload["persist_until_selected"] = persist
-            self._on_alert(event.character, event.event, payload)
-            dispatched.append((event.character, event.event, spec.get("color")))
-        return dispatched
+        return self._policy.handle(events, now)
 
 
 def sound_path(sound_id: str) -> Path | None:

@@ -2,6 +2,9 @@
 
 _handle takes `now` and returns what it dispatched, so the whole decision
 layer is covered without a thread or a clock.
+
+AlertPolicy tests (Steps 1-2 of Task 3) exercise the extracted decision
+core directly, without any thread or Tailer involvement.
 """
 
 import threading
@@ -498,4 +501,91 @@ def test_an_alert_you_can_hear_still_persists():
         focused=lambda: "Alice",
     )
     s._handle([tailer.Event("Bravo", "combat", PLAYER)], 0.0)
+    assert seen[0]["persist_until_selected"] is True
+
+
+# ---- AlertPolicy direct tests (Task 3: Separate Alert Policy) ---------------
+#
+# These exercise the extracted decision core via AlertPolicy.handle() directly,
+# without any thread or Tailer. The four scenarios mirror the most important
+# guarantees already proven for AlertService._handle(), so green here confirms
+# the extraction preserved exact behavior.
+
+
+def _policy(config=None, sounds=None, focused=None):
+    """Build an AlertPolicy with the same injectable fakes as _service()."""
+    cfg = config or _config()
+    return service.AlertPolicy(
+        config=lambda: cfg,
+        sound=(
+            (lambda sid, vol: sounds.append((sid, vol)))
+            if sounds is not None
+            else lambda _id, _vol: None
+        ),
+        focused=focused if focused is not None else lambda: None,
+        on_alert=lambda *a: None,
+    )
+
+
+def test_policy_cooldown_separation_between_characters():
+    """One character's combat cooldown must not silence another character's
+    alert -- the whole point of per-(character, event) keys in _cooldowns."""
+    p = _policy()
+    out1 = p.handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    out2 = p.handle([tailer.Event("Bravo", "combat", PLAYER)], 0.5)
+    assert [e[1] for e in out1] == ["combat"]
+    assert [e[1] for e in out2] == ["combat"]
+
+
+def test_policy_pve_filter_blocks_npc_combat():
+    """An NPC attacker on a filtered event must produce no dispatch when
+    pve_filter is enabled -- Sleeper sites would otherwise keep the ring
+    pulsing constantly."""
+    p = _policy()
+    out = p.handle([tailer.Event("Alice", "combat", NPC)], 0.0)
+    assert out == []
+
+
+def test_policy_foreground_sound_suppression():
+    """The focused character must get the flash but no sound -- sound is
+    the interruption, and you are already watching the fight on screen."""
+    sounds = []
+    p = _policy(sounds=sounds, focused=lambda: "Alice")
+    out = p.handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    # Flash dispatched (non-empty result)
+    assert [e[1] for e in out] == ["combat"]
+    # Sound suppressed
+    assert sounds == []
+
+
+def test_policy_silent_alert_forces_timed_dispatch():
+    """When the focused character triggers an alert, persist_until_selected
+    must be forced to False here -- decided in one place so both the poll
+    thread and the preview thread agree on what 'focused' means."""
+    cfg = _config()
+    cfg["persist_until_selected"] = True
+    seen = []
+    p = service.AlertPolicy(
+        config=lambda: cfg,
+        sound=lambda _id, _vol: None,
+        focused=lambda: "Alice",
+        on_alert=lambda character, event, spec: seen.append(spec),
+    )
+    p.handle([tailer.Event("Alice", "combat", PLAYER)], 0.0)
+    assert seen[0]["persist_until_selected"] is False
+
+
+def test_policy_persistent_dispatch_for_unfocused_character():
+    """A character NOT in the foreground must get a persistent alert when
+    persist_until_selected is True -- they need acknowledgement to clear."""
+    cfg = _config()
+    cfg["persist_until_selected"] = True
+    seen = []
+    p = service.AlertPolicy(
+        config=lambda: cfg,
+        sound=lambda _id, _vol: None,
+        focused=lambda: "Alice",
+        on_alert=lambda character, event, spec: seen.append(spec),
+    )
+    p.handle([tailer.Event("Bravo", "combat", PLAYER)], 0.0)
     assert seen[0]["persist_until_selected"] is True
