@@ -649,9 +649,9 @@ def test_copy_followup_tracks_only_a_successful_copy_lifecycle():
         CODE,
         re.DOTALL,
     )
-    assert root and "var previousRoot = state && state.root;" in root.group(1)
+    assert root and "var previous = contextOf(state);" in root.group(1)
     assert "clearCopyFollowup();" not in root.group(1).split("WM.send", 1)[0]
-    assert "payload && payload.root !== previousRoot" in root.group(1)
+    assert "payload && contextChanged(previous, payload)" in root.group(1)
     for name, handler in (
         ("server/profile", select),
         ("kind", kind),
@@ -1460,7 +1460,7 @@ def test_root_changes_repaint_cleared_targets_and_commit_state():
     root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
     assert root
     changed = re.search(
-        r"if \(payload && payload\.root !== previousRoot\) \{(.*?)\n            \}",
+        r"if \(payload && contextChanged\(previous, payload\)\) \{(.*?)\n            \}",
         root.group(1),
         re.DOTALL,
     )
@@ -1716,13 +1716,42 @@ def test_root_change_resets_profile_copy_only_when_the_root_actually_changed():
     root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
     assert root
     before, _, after = root.group(1).partition(
-        "if (payload && payload.root !== previousRoot)"
+        "if (payload && contextChanged(previous, payload))"
     )
     assert "resetProfileCopy();" not in before, (
         "a no-op or refused root change must not close the disclosure"
     )
     changed = re.search(r"\{(.*?)\n            \}", after, re.DOTALL)
     assert changed and "resetProfileCopy();" in changed.group(1)
+
+
+def test_chooseroot_compares_the_full_persisted_context_not_only_root():
+    """Fix round 1. A folder pick can silently change the SERVER or the
+    PROFILE too -- discover()'s own fallback when the prior selection no
+    longer resolves on the newly picked tree -- so a same-root pick that
+    moved the profile out from under an open disclosure or a ticked roster
+    used to go unnoticed: the old condition compared `payload.root` alone.
+    """
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert root
+    assert "var previous = contextOf(state);" in root.group(1), (
+        "chooseRoot must capture the full context before the pick, not root alone"
+    )
+    assert "payload.root !== previousRoot" not in root.group(1), (
+        "chooseRoot still compares root alone; a same-root server/profile "
+        "fallback would go unnoticed"
+    )
+
+
+def test_context_comparison_covers_root_server_and_profile():
+    fn = re.search(
+        r"function contextChanged\(before, after\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert fn, "the full-context comparison helper is gone"
+    body = fn.group(1)
+    assert "before.root !== next.root" in body
+    assert "before.server !== next.server" in body
+    assert "before.profile !== next.profile" in body
 
 
 def test_selection_change_resets_profile_copy_only_when_accepted():
@@ -1736,7 +1765,51 @@ def test_selection_change_resets_profile_copy_only_when_accepted():
     then = re.search(
         r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", handler.group(1), re.DOTALL
     )
-    assert then and "if (accepted) resetProfileCopy();" in then.group(1)
+    assert then
+    accepted_branch = re.search(
+        r"if \(accepted\) \{(.*?)\n\s*\}", then.group(1), re.DOTALL
+    )
+    assert accepted_branch and "resetProfileCopy();" in accepted_branch.group(1)
+
+
+def test_refused_selection_change_retains_selection_and_disclosure():
+    """Fix round 1. `selected = {}` and `clearCopyFollowup()` used to run
+    the instant the control changed, before `eve_settings_select` had even
+    been asked -- so a refused or no-op selection change silently dropped
+    the ticked roster and the open New/Replace disclosure anyway. Every
+    clearing statement must sit behind the accepted branch instead.
+    """
+    handler = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    before_send = body.split("WM.send", 1)[0]
+    assert "selected = {}" not in before_send, (
+        "the roster selection is cleared before Python answers"
+    )
+    assert "clearCopyFollowup();" not in before_send, (
+        "the copy follow-up is cleared before Python answers"
+    )
+    assert "resetProfileCopy();" not in before_send, (
+        "the disclosure is reset before Python answers"
+    )
+
+    then = re.search(
+        r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", body, re.DOTALL
+    )
+    assert then
+    accepted_branch = re.search(
+        r"if \(accepted\) \{(.*?)\n\s*\}", then.group(1), re.DOTALL
+    )
+    assert accepted_branch, "the clearing statements must be gated on `accepted`"
+    branch_body = accepted_branch.group(1)
+    assert "clearCopyFollowup();" in branch_body
+    assert "selected = {};" in branch_body
+    assert "resetProfileCopy();" in branch_body
 
 
 def test_profile_copy_controls_join_busy_state_while_navigation_stays_enabled():

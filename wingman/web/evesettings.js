@@ -123,6 +123,26 @@
     return match ? match.name : '';
   }
 
+  // The full accepted-selection context, as staleness actually decides it.
+  // A root pick can silently change the server and/or profile too --
+  // discover()'s own fallback when the prior selection no longer resolves
+  // on the new tree -- so comparing root alone missed a same-root pick
+  // that moved the profile out from under an open disclosure or a ticked
+  // roster while leaving root untouched.
+  function contextOf(payload) {
+    return {
+      root: (payload && payload.root) || '',
+      server: (payload && payload.server) || '',
+      profile: (payload && payload.profile) || ''
+    };
+  }
+
+  function contextChanged(before, after) {
+    var next = contextOf(after);
+    return before.root !== next.root || before.server !== next.server
+      || before.profile !== next.profile;
+  }
+
   // R5: each name carries its noun. Collapsed, this row read `Folder
   // <path> Tranquility - Default`: one labelled value beside two unlabelled
   // ones, though the server and the profile decide what a copy will hit
@@ -1022,10 +1042,10 @@
     // given the user. refresh() is what shows the outcome, in every case.
     function chooseRoot(method) {
       return function () {
-        var previousRoot = state && state.root;
+        var previous = contextOf(state);
         WM.send(method).then(function () {
           refresh().then(function (payload) {
-            if (payload && payload.root !== previousRoot) {
+            if (payload && contextChanged(previous, payload)) {
               clearCopyFollowup();
               selected = {};
               resetProfileCopy();
@@ -1047,17 +1067,18 @@
 
     ['es-server', 'es-profile'].forEach(function (id) {
       WM.el(id).addEventListener('change', function () {
-        // A source picked in the old settings set does not exist in the new
-        // one, so the selection is dropped rather than carried.
-        clearCopyFollowup();
-        selected = {};
         WM.send('eve_settings_select', WM.el('es-server').value,
                 WM.el('es-profile').value).then(function (accepted) {
-          // The disclosure names a source token by path; only an ACCEPTED
-          // change can have moved it out from under that token, so a
-          // refused or no-op select must not close a disclosure the user
-          // is mid-way through.
-          if (accepted) resetProfileCopy();
+          if (accepted) {
+            // A source picked in the old settings set does not exist in
+            // the new one, so the selection is dropped rather than
+            // carried -- but only once Python has actually accepted the
+            // change. A refused or no-op select must retain both the
+            // roster selection and the disclosure exactly as they were.
+            clearCopyFollowup();
+            selected = {};
+            resetProfileCopy();
+          }
           refresh();
           WM.send('eve_settings_resolve_names');
         });
