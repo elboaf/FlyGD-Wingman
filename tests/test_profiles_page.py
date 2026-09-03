@@ -1729,3 +1729,40 @@ def test_manual_identity_management_is_a_labelled_subordinate_group():
     assert "border-top" in rule.group(1), (
         "the group boundary must be visible, not only programmatic"
     )
+
+
+# ---- undefined --border custom property ----------------------------------
+
+
+def test_profiles_boundaries_use_the_defined_panel_border_token():
+    """`--border` is never declared in `:root` -- only `--panel-border` is
+    (style.css:73) -- so every `var(--border)` on this page silently
+    computes invalid and the declaration is dropped, leaving the boundary
+    unstyled. Six rules on this route carried it: the Backups retention
+    disclosure and archive row, the sticky commit-context bar, and the
+    Account Identity manual-management separator, identity boundary and
+    linked-character row. Each must use the same `--panel-border` token
+    every working boundary on the page already uses (e.g. .es-backup-head,
+    style.css:3163), and none may still reference the undefined name.
+    """
+    selectors = [
+        "#es-retention",
+        ".es-backup-row",
+        ".es-commit-context",
+        ".es-identity",
+        ".es-manual-identity",
+        ".es-linked-character",
+    ]
+    for selector in selectors:
+        rule = _brace_block(CSS, selector + " {")
+        assert "var(--panel-border)" in rule, (
+            f"{selector} must use the defined --panel-border token for its border"
+        )
+        assert "var(--border)" not in rule, (
+            f"{selector} still references the undefined --border custom property"
+        )
+
+    assert "var(--border)" not in CSS, (
+        "no rule on the page may reference the undefined --border custom "
+        "property; every boundary must use --panel-border instead"
+    )

@@ -2752,7 +2752,7 @@ button.btn:disabled,
    existing controls sit behind a native disclosure rather than leading the
    archive. */
 #es-retention {
-  padding-block: 8px; border-block: 1px solid var(--border);
+  padding-block: 8px; border-block: 1px solid var(--panel-border);
 }
 #es-retention[hidden] { display: none; }
 #es-retention > summary {
@@ -2791,7 +2791,7 @@ button.btn:disabled,
 #es-backup-head[hidden], .es-backup-grid[hidden], .es-backup-head[hidden] {
   display: none;
 }
-.es-backup-row { padding: 7px 8px; border-top: 1px solid var(--border); }
+.es-backup-row { padding: 7px 8px; border-top: 1px solid var(--panel-border); }
 .es-backup-row:first-child { border-top: 0; }
 .bk-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .bk-menu { position: relative; }
@@ -3160,7 +3160,7 @@ button.btn:disabled,
 .es-commit-context {
   position: sticky; top: 0; z-index: 1;
   margin: 0 0 12px; padding: 10px 0;
-  border-bottom: 1px solid var(--border); background: var(--panel);
+  border-bottom: 1px solid var(--panel-border); background: var(--panel);
   max-width: 586px;
 }
 .es-commit-context > .hint { margin: 6px 0 0; }
@@ -3296,7 +3296,7 @@ button.btn:disabled,
 .ai-manage-toggle { align-self: flex-start; }
 .es-identity {
   display: flex; flex-direction: column; gap: 10px;
-  padding-top: 14px; border-top: 1px solid var(--border);
+  padding-top: 14px; border-top: 1px solid var(--panel-border);
 }
 /* The guided five-step flow above is the primary path; this toggle and its
    disclosure are the fallback for fixing a wrong link or renaming an
@@ -3306,7 +3306,7 @@ button.btn:disabled,
    marking the boundary. */
 .es-manual-identity {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-  margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--border);
+  margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--panel-border);
 }
 .es-manual-identity-label {
   margin: 0; color: var(--text-label); font-size: var(--fs-muted);
@@ -3315,7 +3315,7 @@ button.btn:disabled,
 .es-account-characters { width: 100%; }
 .es-linked-character {
   display: flex; align-items: center; justify-content: space-between;
-  min-height: 30px; border-bottom: 1px solid var(--border);
+  min-height: 30px; border-bottom: 1px solid var(--panel-border);
 }
 .es-linked-character:last-child { border-bottom: 0; }
 #es-identity-account, #es-character-add, #ai-roster-character { flex: 1; }
