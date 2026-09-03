@@ -250,6 +250,67 @@ class TestFailureIsolation:
 
 
 # ---------------------------------------------------------------------------
+# Backward-compatible plain-list enumerator (the brief's original shape)
+# ---------------------------------------------------------------------------
+
+
+class TestPlainListEnumeratorShape:
+    """``_enumerate_clients`` must still accept the task brief's original
+    ``Callable[[], list[Client]]`` shape -- a bare iterable with no way to
+    express failure -- alongside the newer failure-aware
+    ``EnumerationResult``. Every such call is treated as successful."""
+
+    def test_list_returning_enumerator_is_a_successful_scan(self):
+        def enumerate_clients():
+            return [ALICE]
+
+        disco = _discovery(_enumerate_clients=enumerate_clients)
+        received = _collect(disco)
+        disco.scan_once()
+        assert received[0].clients[0].character == "Alice"
+        assert _sessions(received[0])["Alice"].first_seen_generation == 1
+
+    def test_tuple_returning_enumerator_is_also_accepted(self):
+        def enumerate_clients():
+            return (ALICE, BOB)
+
+        disco = _discovery(_enumerate_clients=enumerate_clients)
+        received = _collect(disco)
+        disco.scan_once()
+        assert {c.character for c in received[0].clients} == {"Alice", "Bob"}
+
+    def test_empty_list_from_a_list_returning_enumerator_is_authoritative(self):
+        """Unlike EnumerationResult(False, ...), a bare empty list has no
+        way to signal failure -- it is a genuine empty scan and prunes
+        exactly as the production seam's own empty success does."""
+        calls = {"n": 0}
+
+        def enumerate_clients():
+            calls["n"] += 1
+            return [ALICE] if calls["n"] in (1, 3) else []
+
+        disco = _discovery(_enumerate_clients=enumerate_clients)
+        received = _collect(disco)
+        disco.scan_once()  # [ALICE]
+        first = _sessions(received[0])["Alice"].first_seen_generation
+        disco.scan_once()  # [] -- authoritative, prunes Alice
+        assert _sessions(received[1]) == {}
+        disco.scan_once()  # [ALICE] again -- must be a new session
+        second = _sessions(received[2])["Alice"].first_seen_generation
+        assert second != first
+        assert second == received[2].generation
+
+    def test_list_returning_enumerator_still_prunes_on_ordinary_disappearance(self):
+        disco = _discovery(_enumerate_clients=lambda: [ALICE, BOB])
+        received = _collect(disco)
+        disco.scan_once()
+        disco._enumerate_clients = lambda: [ALICE]
+        disco.scan_once()
+        assert _sessions(received[1]).get("Bob") is None
+        assert all(c.character != "Bob" for c in received[1].clients)
+
+
+# ---------------------------------------------------------------------------
 # Fan-out, request_scan, isolation, and settings independence
 # ---------------------------------------------------------------------------
 

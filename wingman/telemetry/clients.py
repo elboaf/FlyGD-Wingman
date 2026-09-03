@@ -58,16 +58,21 @@ shape as ``GameLogStream``.
 
 Injected seams for testing
 ---------------------------
-``_thread_factory``, ``_wait_fn``, and ``_enumerate_clients`` (defaults to
-``preview.discovery.enumerate_clients``, returning an
-``EnumerationResult``).
+``_thread_factory``, ``_wait_fn``, and ``_enumerate_clients``. The latter
+defaults to ``preview.discovery.enumerate_clients`` and may return either
+an ``EnumerationResult`` (honoring its ``success``/``clients`` split) or a
+plain ``Client`` iterable -- the shape the task brief originally specified
+-- which ``_normalize_scan_result`` treats as an always-successful scan,
+including an authoritative empty one. Only ``EnumerationResult`` can
+report ``success=False``; a bare list/iterable has no way to express
+failure and is never pruning-suppressed.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from ..preview import discovery
 from .model import ClientSessionId, RosterClient, RosterSnapshot
@@ -80,6 +85,28 @@ logger = logging.getLogger(__name__)
 SCAN_INTERVAL_S = 0.7
 
 _SessionKey = tuple[int, int, str]
+
+# The two shapes an injected `_enumerate_clients` collaborator may return:
+# the failure-aware production seam, or a plain Client iterable (the task
+# brief's original `Callable[[], list[Client]]` contract, still accepted
+# for any existing list-returning fake).
+ScanResult = discovery.EnumerationResult | Iterable[discovery.Client]
+
+
+def _normalize_scan_result(result: ScanResult) -> tuple[bool, list]:
+    """Narrow either accepted ``_enumerate_clients`` return shape to a
+    plain ``(success, clients)`` pair.
+
+    An explicit ``isinstance`` check, not exception-based duck typing:
+    ``EnumerationResult`` alone can report failure; every other iterable
+    (list, tuple, generator of ``Client``) has no way to express "the scan
+    failed" and is therefore always a successful scan -- including a
+    genuinely empty one, which stays authoritative for pruning exactly as
+    it did for the production seam.
+    """
+    if isinstance(result, discovery.EnumerationResult):
+        return result.success, list(result.clients) if result.success else []
+    return True, list(result)
 
 
 def _noop_thread_factory(
@@ -131,9 +158,7 @@ class ClientDiscovery:
         *,
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _wait_fn: Callable[[threading.Event, float], None] | None = None,
-        _enumerate_clients: Callable[
-            [], discovery.EnumerationResult
-        ] = discovery.enumerate_clients,
+        _enumerate_clients: Callable[[], ScanResult] = discovery.enumerate_clients,
     ) -> None:
         self._thread_factory = _thread_factory
         self._wait_fn = _wait_fn or (lambda ev, t: ev.wait(t))
@@ -279,13 +304,13 @@ class ClientDiscovery:
         the callable raising directly) records the error and returns
         without touching session state or the latest snapshot, and without
         publishing anything -- an enumerator failure must never be read as
-        proof that every client disappeared.
+        proof that every client disappeared. A plain ``Client`` iterable
+        (no ``EnumerationResult``) is always a successful scan, per
+        ``_normalize_scan_result``.
         """
         with self._scan_lock:
             try:
-                result = self._enumerate_clients()
-                success = result.success
-                clients = list(result.clients) if success else []
+                success, clients = _normalize_scan_result(self._enumerate_clients())
             except Exception:
                 logger.exception("Could not enumerate EVE clients")
                 success = False
