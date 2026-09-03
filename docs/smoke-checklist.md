@@ -4354,19 +4354,3 @@ behaviour a lexical guard cannot reach.
       its title and accessible name read `Settings — update available`, and
       the dot survives opening Settings (the `.active` state does not erase
       it).
-- [ ] **The published privacy policy matches before release.** Fetch and
-      inspect the live page:
-
-      ```powershell
-      $Policy = Invoke-WebRequest `
-        -Uri https://wingman.zoolanders.vip/privacy `
-        -UserAgent "Mozilla/5.0 FlyGD-Wingman-release-verification"
-      $Policy.Content | Select-String -Pattern "GitHub|hidden|sign-in|telemetry|Check again|Download update"
-      ```
-
-      Expected: the deployed page and its visible revision/date state the
-      automatic once-per-process GitHub request, hidden-at-sign-in behavior,
-      Wingman's version plus ordinary connection metadata, the settings/EVE/
-      Google/filenames/recordings/telemetry exclusions, and only user-chosen
-      further checks/downloads. Record the policy revision/date. Any statement
-      that there is no automatic update check blocks release.

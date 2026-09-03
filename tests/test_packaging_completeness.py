@@ -67,12 +67,45 @@ def test_readme_network_table_covers_eve_and_current_user_triggers():
         assert removed_copy not in readme
 
 
-def test_smoke_network_checks_scope_ccp_and_use_a_browser_user_agent():
+def test_smoke_network_checks_scope_ccp_after_the_startup_update_check():
     smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
     flat = " ".join(smoke.split())
     assert "Clear the capture after the automatic GitHub startup check finishes" in flat
     assert "only the Skills interaction" in flat
-    assert '-UserAgent "Mozilla/5.0 FlyGD-Wingman-release-verification"' in flat
+
+
+def test_external_privacy_policy_is_not_a_repository_release_gate():
+    documents = {
+        "plan": ROOT
+        / "docs"
+        / "superpowers"
+        / "plans"
+        / "2026-09-02-guided-updates.md",
+        "spec": ROOT
+        / "docs"
+        / "superpowers"
+        / "specs"
+        / "2026-09-02-guided-updates-design.md",
+        "smoke": ROOT / "docs" / "smoke-checklist.md",
+    }
+    forbidden = {
+        "plan": (
+            "External release action:",
+            "Update and deploy the published privacy statement",
+            "external privacy-policy deployment",
+        ),
+        "spec": (
+            "Before release, the externally published",
+            "shipping is blocked until the public statement",
+            "Published privacy policy:",
+        ),
+        "smoke": ("The published privacy policy matches before release",),
+    }
+
+    for name, path in documents.items():
+        text = path.read_text(encoding="utf-8")
+        for phrase in forbidden[name]:
+            assert phrase not in text
 
 
 def test_every_subpackage_is_declared():

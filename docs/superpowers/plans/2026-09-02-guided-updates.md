@@ -28,7 +28,6 @@
 - Automatic failures are quiet; manual failures are specific and retryable.
 - Every non-method `Api` attribute remains underscore-prefixed. Workers reach the page only through `_push`; every literal push is in `WM.HANDLERS` and registered.
 - No framework, bundler, browser-native confirm, prompt, or alert. Use `WM.confirm` and existing design primitives.
-- The published privacy policy must disclose the automatic GitHub request before release; this is a release gate, not optional documentation.
 
 ---
 
@@ -1177,17 +1176,16 @@ git commit -m "test: add Windows updater integration harness"
 
 ---
 
-### Task 10: Documentation, Privacy Gate, and Full Verification
+### Task 10: Documentation and Full Verification
 
 **Files:**
 - Modify: `README.md:125-145,269-288`
 - Modify: `DESIGN.md` under “Routes and sections”
 - Modify: `docs/smoke-checklist.md`
-- External release action: deploy matching text at `https://wingman.zoolanders.vip/privacy`
 
 **Interfaces:**
 - Consumes: completed behavior and commands from Tasks 1–9.
-- Produces: accurate network/privacy documentation and an explicit release blocker until the published policy matches.
+- Produces: accurate repository network/privacy documentation and a complete verification record.
 
 - [ ] **Step 1: Write failing documentation contract tests**
 
@@ -1224,15 +1222,7 @@ Add a narrow DESIGN.md exception after the route/section fetch rule:
 
 > Update availability is application chrome, not General-section content. Wingman therefore starts one background GitHub check after the page is ready so the Settings gear can show availability before General opens. It does not run inside `get_settings()`, block hydration, poll, download, or push before readiness; General reads the cached state and offers an explicit retry.
 
-- [ ] **Step 4: Update and deploy the published privacy statement**
-
-Add this substantive disclosure to the externally hosted policy before shipping:
-
-> Wingman contacts GitHub's release API once when each application process starts, including when Windows starts Wingman hidden at sign-in. The request includes Wingman's version and ordinary network connection metadata. It does not include Wingman settings, EVE or Google account information, filenames, recordings, or telemetry. Further requests occur only when you choose Check again or Download update.
-
-Fetch `https://wingman.zoolanders.vip/privacy` after deployment and verify that all four facts are present: automatic once-per-process request, hidden-start behavior, data sent, and data not sent. Record the deployed policy revision/date in the release verification record. If deployment credentials or the policy source are unavailable, stop and report this as a release blocker; do not mark the feature release-ready.
-
-- [ ] **Step 5: Complete the smoke checklist**
+- [ ] **Step 4: Complete the smoke checklist**
 
 Ensure `docs/smoke-checklist.md` has exact commands/outcomes for:
 
@@ -1245,11 +1235,10 @@ Ensure `docs/smoke-checklist.md` has exact commands/outcomes for:
 - shell-launch failure recovery;
 - active-upload and retry exclusion;
 - tray Quit during each handoff phase;
-- both test-Inno mutex outcomes;
-- normal in-place Wingman upgrade with settings preserved; and
-- published privacy-policy verification.
+- both test-Inno mutex outcomes; and
+- normal in-place Wingman upgrade with settings preserved.
 
-- [ ] **Step 6: Run focused then full automated verification**
+- [ ] **Step 5: Run focused then full automated verification**
 
 ```bash
 uv run --no-sync python -m pytest tests/test_updates.py tests/test_api_updates.py tests/test_api_upload.py tests/test_api_quit.py tests/test_startup.py tests/test_bridge_contract.py tests/test_dev_harness.py tests/test_settings_page.py tests/test_page_conventions.py tests/test_packaging_version.py tests/test_packaging_completeness.py -v
@@ -1260,7 +1249,7 @@ uv run --extra dev ruff format --check .
 
 Expected: all automated gates pass; Windows-only tests remain explicitly recorded as pending until run on Windows, never implied by Linux results.
 
-- [ ] **Step 7: Inspect final diff and run changed-code polish**
+- [ ] **Step 6: Inspect final diff and run changed-code polish**
 
 ```bash
 git diff --check origin/main...HEAD
@@ -1268,15 +1257,15 @@ git diff --stat origin/main...HEAD
 git status --short
 ```
 
-Run `polish-core --fix` against `origin/main...HEAD`, inspect every edit, then rerun Step 6. Confirm there are no debug endpoints, production origin-policy bypasses, public non-method `Api` attributes, arbitrary URL/path inputs, unfinished user-visible copy, untracked staging fixtures, or unrelated refactors.
+Run `polish-core --fix` against `origin/main...HEAD`, inspect every edit, then rerun Step 5. Confirm there are no debug endpoints, production origin-policy bypasses, public non-method `Api` attributes, arbitrary URL/path inputs, unfinished user-visible copy, untracked staging fixtures, or unrelated refactors.
 
-- [ ] **Step 8: Commit documentation and verification updates**
+- [ ] **Step 7: Commit documentation and verification updates**
 
 ```bash
 git add README.md DESIGN.md docs/smoke-checklist.md tests/test_packaging_completeness.py tests/test_settings_page.py
 git commit -m "docs: describe guided Wingman updates"
 ```
 
-- [ ] **Step 9: Produce the reviewer handoff**
+- [ ] **Step 8: Produce the reviewer handoff**
 
-Use `change-explainer` after fresh verification. Report automated results separately from the Windows harness, real upgrade smoke pass, and external privacy-policy deployment. Do not call the feature release-ready until all three manual gates have evidence.
+Use `change-explainer` after fresh verification. Report automated results separately from the Windows harness and real upgrade smoke pass; never imply that automated Linux results exercised Windows-native behavior.

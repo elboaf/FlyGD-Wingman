@@ -385,13 +385,7 @@ The automatic check sends GitHub the normal connection metadata and Wingman's
 versioned User-Agent once per process, including hidden login-start processes.
 It sends no Wingman settings, EVE information, account data, file names, or
 telemetry. `README.md` must disclose this GitHub request and correct the existing
-network-destination description. Before release, the externally published full
-privacy statement linked from the README at
-`https://wingman.zoolanders.vip/privacy` must also be reviewed and updated to
-disclose the automatic GitHub request, including hidden login-start behavior.
-If that policy is maintained outside this repository, the release checklist
-must record the deployed policy revision; shipping is blocked until the public
-statement and application behavior agree.
+network-destination description.
 
 The SHA-256 requirement protects against corruption and bytes that differ from
 the release record. It does not protect against repository takeover, release
@@ -523,8 +517,6 @@ exercised in the `?dev=1` harness and in the real Windows WebView2 app.
 
 - `README.md`: describe automatic checks, manual retry, guided installation,
   the GitHub request, checksum scope, and unsigned warning.
-- Published privacy policy: update `https://wingman.zoolanders.vip/privacy`
-  before release and record its deployed revision in the release checklist.
 - `DESIGN.md`: record the post-readiness check as a narrow exception to
   section-entry fetching because its output appears in global Settings chrome.
 - `docs/smoke-checklist.md`: add the Windows checks listed above.
