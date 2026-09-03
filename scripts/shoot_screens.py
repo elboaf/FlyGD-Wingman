@@ -72,6 +72,13 @@ SCREENS = (
         True,
     ),
     Screen(
+        "settings-previews-sticky-conflict",
+        "Settings - Previews (conflict at sticky edge)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
         "settings-previews-detail",
         "Settings - Previews (detail)",
         "settings",
@@ -100,6 +107,13 @@ SCREENS = (
         True,
     ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
+    Screen(
+        "settings-alerts-advanced",
+        "Settings - Alerts (advanced pulse behavior)",
+        "settings",
+        "alerts",
+        True,
+    ),
     Screen("settings-general", "Settings - General", "settings", "general", False),
     Screen("profiles", "Profiles", "evesettings", None, True),
     Screen(
@@ -243,6 +257,152 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
             "  pane.scrollTop = pane.scrollHeight;"
         )
+    if screen.key == "settings-previews-sticky-conflict":
+        # Task 6. Tanuki Solette's row (the FIRST OFFLINE row) used to be
+        # the target here, staged behind BOTH the sticky column header and
+        # the sticky Offline heading. That left nothing further below her
+        # to scroll into: nudging her row behind both stickies clamped the
+        # pane at the same maximum scrollTop settings-previews-table
+        # already reaches by setting scrollTop = scrollHeight, so the two
+        # captures came out pixel-identical.
+        #
+        # Aiga Otsolen's direct bind (Ctrl+Alt+1) collides with an ACTIVE
+        # EVE bookmark keybind instead (bookmark_chords.active in the
+        # fixture), and she is the FIRST ONLINE character row -- directly
+        # under the sticky column header, with every other online row,
+        # the Offline heading and every offline row still beneath her. That
+        # gives this capture room to stage her row just behind the header
+        # without running out of scrollable content the way Tanuki's did.
+        # Only ONE sticky matters for her: the Offline heading opens the
+        # offline block, which starts after every online character, so it
+        # sits well below her row and never covers it.
+        #
+        # That headroom is not automatically enough, though: the roster
+        # card above #preview-binds (per-character size/lock/never-minimize
+        # controls for the fixture's twelve characters) is tall enough at
+        # the app's own default window (1040x680, window.py) that Aiga's
+        # row sits close to where the pane's OWN maximum scrollTop already
+        # is -- measured directly, aligning her row's cell to the pane's
+        # top asked for ~54px more scroll than the pane had before opening
+        # anything below her. Opening Aleksandrina Shadowbanes Voidstriders'
+        # Configure detail -- the same read-only disclosure
+        # settings-previews-detail already drives, well below Aiga in the
+        # offline block -- adds ~70px of legitimate, real content below her
+        # (no fabricated spacing, no bridge write: previews.js's Configure
+        # click handler only flips local state and re-renders), which is
+        # enough headroom to clear that ~54px gap and let this stage reach
+        # its true, non-clamped position instead of the pane's bottom.
+        #
+        # appendBindRow's owner-key contract (previews.js) is
+        # 'character:' + character for a character row; bindConflictId then
+        # keys the conflict div's id off encodeURIComponent(ownerKey). The
+        # conflict div is the row's very next sibling as long as that
+        # character's own Configure detail is not open (appendBindRow only
+        # inserts a detail between them when openDetailName matches), so
+        # closing every inherited detail first (as the groups/narrow stages
+        # already do) keeps that adjacency true here too.
+        #
+        # The row itself is `display: contents` (style.css), which leaves
+        # it with no rendered box of its own -- calling scrollIntoView on
+        # it is a silent no-op, not an error, so the earlier Tanuki version
+        # of this script relied on the pane's scrollTop already being where
+        # it needed to be by coincidence. Its first rendered child carries
+        # the box the row would have had, so that child is what gets
+        # scrolled and the pane's own scrollTop is what gets read back,
+        # rather than trusting the contents element's own (always-zero)
+        # geometry.
+        #
+        # The scroll position is measured live off the rendered sticky
+        # header rather than a hardcoded pixel guess, so it holds if its
+        # height ever changes: scroll the row's cell toward the pane's top,
+        # then nudge only far enough that the conflict text clears the
+        # header, leaving the row itself at or behind the sticky-header
+        # transition -- the scenario this capture exists to show. Never a
+        # blanket `pane.scrollTop = pane.scrollHeight`: that is
+        # settings-previews-table's own mechanism, and reusing it here
+        # would reproduce the exact pixel-identical capture this rewrite
+        # exists to fix. A final bottom-clamp check throws explicitly if
+        # the nudge above still lands on that same maximum scrollTop --
+        # this stage must FAIL rather than silently ship a duplicate of
+        # the table capture again under a different name.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        owner_key_js = json.dumps("character:Aiga Otsolen")
+        long_name = "Aleksandrina Shadowbanes Voidstriders"
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (button) {\n"
+            "    button.click();\n"
+            "  });\n"
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  var extra = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!extra) {\n"
+            "    throw new Error(\n"
+            "      'Aleksandrina Shadowbanes Voidstriders Configure control '\n"
+            "      + 'is missing');\n"
+            "  }\n"
+            "  extra.click();\n"
+            "  var reopened = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!reopened || reopened.getAttribute('aria-expanded') !== 'true') {\n"
+            "    throw new Error(\n"
+            "      'Aleksandrina Shadowbanes Voidstriders detail did not '\n"
+            "      + 'open, so this stage has no extra scroll extent below '\n"
+            "      + 'Aiga to work with');\n"
+            "  }\n"
+            "  var conflict = document.getElementById(\n"
+            "    'preview-bind-conflict-' + encodeURIComponent("
+            + owner_key_js
+            + "));\n"
+            "  if (!conflict) {\n"
+            "    throw new Error('Aiga Otsolen conflict warning is missing');\n"
+            "  }\n"
+            "  var row = conflict.previousElementSibling;\n"
+            "  if (!row || !row.classList.contains('row')) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning is not directly after its owning row');\n"
+            "  }\n"
+            "  var cell = row.firstElementChild;\n"
+            "  if (!cell) {\n"
+            "    throw new Error(\n"
+            "      'Owning row has no rendered cell to measure');\n"
+            "  }\n"
+            "  cell.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "  var headCell = document.querySelector(\n"
+            "    '#preview-binds .bind-head > span');\n"
+            "  if (!headCell) {\n"
+            "    throw new Error('Sticky preview header is missing');\n"
+            "  }\n"
+            "  var coverBottom = headCell.getBoundingClientRect().bottom;\n"
+            "  var conflictTop = conflict.getBoundingClientRect().top;\n"
+            "  if (conflictTop < coverBottom) {\n"
+            "    pane.scrollTop += (coverBottom - conflictTop);\n"
+            "  }\n"
+            "  var paneRect = pane.getBoundingClientRect();\n"
+            "  var after = conflict.getBoundingClientRect();\n"
+            "  if (after.bottom <= paneRect.top || after.top >= paneRect.bottom) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning is not within the scrollport');\n"
+            "  }\n"
+            "  var maxScroll = pane.scrollHeight - pane.clientHeight;\n"
+            "  if (pane.scrollTop >= maxScroll - 1) {\n"
+            "    throw new Error(\n"
+            "      'Staging this row reached the panes bottom clamp, the '\n"
+            "      + 'exact pixel-identical capture this stage exists to '\n"
+            "      + 'avoid -- settings-previews-table already shows that '\n"
+            "      + 'state');\n"
+            "  }\n"
+            "}())"
+        )
     if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
         # Inject only the authoritative fixture, then drive the same Configure
         # and Copy controls a user reaches. Every required step fails closed:
@@ -334,6 +494,21 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  var heading = document.querySelector('#preview-roster-heading');\n"
             "  if (!heading) { throw new Error('Preview roster heading is missing'); }\n"
             "  heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
+    if screen.key == "settings-alerts-advanced":
+        # Task 5. Every id inside #alert-advanced is unchanged from the
+        # primary-table days (0fd49d8), and alerts.js has no listener on
+        # the disclosure's own toggle event, so opening it here is purely
+        # presentational -- no Api call, no click on any control inside it.
+        return (
+            "(function () {\n"
+            "  var details = document.getElementById('alert-advanced');\n"
+            "  if (!details) {\n"
+            "    throw new Error('Alerts advanced disclosure is missing');\n"
+            "  }\n"
+            "  details.open = true;\n"
+            "  details.scrollIntoView({block: 'center', behavior: 'instant'});\n"
             "}())"
         )
     return None

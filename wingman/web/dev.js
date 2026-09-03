@@ -333,6 +333,20 @@
   // one so the roster's catch-all bucket is visible in the browser. The
   // Unscored row is the common case, not padding: every character is
   // Unscored between authorisation and its first refresh.
+  //
+  // Task 6 adds every sort/status edge byTrainingFinishThenName and
+  // byTrainingRemainingThenName exist to handle, on top of the original
+  // nine: a third Training row so the two dated ones are out of name
+  // order (Zuelo finishes before Bel despite sorting after it
+  // alphabetically); a Missing tie (Zara/Aveline Castellane, inserted in
+  // that order so array order alone cannot stand in for the name
+  // tie-break); a Missing row with an unavailable estimate
+  // (Petra Ilyenko); and a Missing row carrying both `queued_count` and
+  // `missing_count` above zero with a long character name and the
+  // longest skill name EVE has (.skills-main's own CSS comment measures
+  // it). Every character below now carries all three of Task 5's
+  // estimate fields, matching what a real payload always sends once a
+  // plan is selected.
   var skills = {
     auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
@@ -355,29 +369,47 @@
         needs_reauth: false, stale: false, readiness: 'Ready',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 14, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // Ready: every plan skill is already trained and active, so
+        // there is nothing left to train.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 2, character_name: 'Zuelo Parvi',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
-        estimated_finish_utc: '2026-08-26T12:00:00+00:00',
+        // Earlier than Bel Ansgar (character_id 10) below despite sorting
+        // AFTER it alphabetically -- byTrainingFinishThenName must put
+        // Zuelo first, which a name sort would get backwards.
+        estimated_finish_utc: '2026-08-25T09:00:00+00:00',
         queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 2,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        training_remaining_seconds: 45000,
+        training_remaining_label: '12h 30m', training_estimate_status: 'available' },
       { character_id: 3, character_name: 'Kaska Rin',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
         estimated_finish_utc: '', queue_timing_unknown: true,
         active_count: 13, trained_inactive_count: 0, queued_count: 1,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // A timing-unknown queue does not stop the SEPARATE plan-wide
+        // estimate from being available -- the two are different
+        // computations (EVE's queue fact vs training.estimate()).
+        training_remaining_seconds: 93600,
+        training_remaining_label: '1d 2h', training_estimate_status: 'available' },
       { character_id: 4, character_name: 'Delen Vok',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Locked',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 11, trained_inactive_count: 3, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 0, group: 'Logi Wing',
+        // Locked is an inactive-clone problem, not a training one: the
+        // trained_inactive skills are already paid for.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 5, character_name: 'Gustav Oswaldo',
         fetched_utc: '2026-08-23T20:00:00+00:00',
         fetched_label: 'Last fetched 17h ago',
@@ -390,7 +422,13 @@
         // (controller._ROSTER_NAME_CAP).
         missing_names: ['Heavy Assault Cruisers V',
                         'Tactical Shield Manipulation V',
-                        'Gunnery V'] },
+                        'Gunnery V'],
+        // Task 6: stale carries a REAL training estimate, same as a fresh
+        // row -- the last successful refresh is what it is scored
+        // against, and the multi-week case (the largest duration in the
+        // fixture, so it sorts last among available estimates).
+        training_remaining_seconds: 1296000,
+        training_remaining_label: '15d 0h', training_estimate_status: 'available' },
       { character_id: 6, character_name: 'Nera Tal',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
@@ -399,28 +437,111 @@
         active_count: 12, trained_inactive_count: 0, queued_count: 0,
         missing_count: 2, unknown_count: 0, group: 'Wolfpack',
         // Under the cap, so no remainder clause.
-        missing_names: ['Motion Prediction V', 'Sharpshooter IV'] },
+        missing_names: ['Motion Prediction V', 'Sharpshooter IV'],
+        // The short case -- smallest duration in the fixture, so it sorts
+        // first among available estimates.
+        training_remaining_seconds: 5400,
+        training_remaining_label: '1h 30m', training_estimate_status: 'available' },
       { character_id: 7, character_name: 'Orin Kesh',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Unknown',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 13, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 1, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 1, group: 'Logi Wing',
+        // A skill this build has never resolved an id for -- the
+        // metadata_unavailable case.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'metadata_unavailable' },
       { character_id: 8, character_name: 'Tavi Solen', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: 'The refresh token was rejected', needs_reauth: true,
         stale: false, readiness: 'Unscored', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' },
+        missing_count: 0, unknown_count: 0, group: '',
+        // No snapshot at all -- skill_points_complete is never true, so
+        // this is the refresh_required case, not the empty ("no plan")
+        // status: a plan IS selected here, and Unscored is the only
+        // readiness this status can pair with.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
       { character_id: 9, character_name: 'Mira Halcyon', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: '', needs_reauth: false, stale: false,
         readiness: 'Ascendant', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' }
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
+      { character_id: 10, character_name: 'Bel Ansgar',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Training',
+        // Later than Zuelo Parvi (character_id 2) above -- the two dated
+        // Training rows are deliberately out of name order.
+        estimated_finish_utc: '2026-08-27T21:00:00+00:00',
+        queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 3,
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: 100800,
+        training_remaining_label: '1d 4h', training_estimate_status: 'available' },
+      // The tie-break pair. Inserted Zara-then-Aveline -- alphabetically
+      // backwards -- so a fixture whose array order already matched the
+      // name order could not make byTrainingRemainingThenName's tie-break
+      // pass by accident.
+      { character_id: 11, character_name: 'Zara Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 9, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 3, unknown_count: 0, group: '',
+        missing_names: ['Advanced Spaceship Command III',
+                        'Target Painting IV'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 12, character_name: 'Aveline Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 2, unknown_count: 0, group: '',
+        missing_names: ['Signature Focusing V'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 13, character_name: 'Petra Ilyenko',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 7, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 4, unknown_count: 0, group: '',
+        missing_names: ['Cynosural Field Theory V', 'Titan Synergy V'],
+        // Confirmed but unusable attributes (attributes_fetched_utc set,
+        // attributes_error non-empty) -- the unavailable case, which must
+        // sort last regardless of missing_count.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'attributes_unavailable' },
+      { character_id: 14,
+        // Long enough to exercise .skills-main's 240px --name-col ellipsis.
+        character_name: 'Konstantina Alexandrovna Winterbourne',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 11, trained_inactive_count: 0,
+        // Both above zero: some of this plan is already queued while the
+        // rest is entirely untrained, which is what makes the overall
+        // readiness Missing even though training has started.
+        queued_count: 2, missing_count: 3, unknown_count: 0, group: '',
+        // The exact skill .skills-main's own CSS comment measures as the
+        // longest name EVE has (39 characters).
+        missing_names: ['Heavy Assault Missile Specialization V'],
+        training_remaining_seconds: 604800,
+        training_remaining_label: '7d 0h', training_estimate_status: 'available' }
     ],
     plan_issues: [
       { file_name: 'Broken.txt', message: 'The file was rejected.',
@@ -1045,6 +1166,17 @@
   // the harness cannot show that a LIVE upload survives a trip to Skills
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
+  // Pushes an onEveSettingsNames payload carrying the current
+  // devIdentificationGeneration so acceptIdentification() in evesettings.js
+  // accepts it. deleted_candidate_ids is always empty here — the console
+  // helpers only change structural state, not character existence.
+  function devPushEveNames() {
+    window.onEveSettingsNames({
+      identification_generation: devIdentificationGeneration,
+      deleted_candidate_ids: []
+    });
+  }
+
   window.DEV = {
     // `busy` defaults to true -- a percentage arriving usually means a live
     // transfer -- but it is a PARAMETER because the two payloads that carry
@@ -1147,16 +1279,16 @@
       eve.root = ''; eve.server = ''; eve.profile = '';
       eve.servers = []; eve.profiles = [];
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveUnreadable: function () {
       eve.unreadable = true;
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveSelectiveAvailable: function (available) {
       eve.selective_copy_available = !!available;
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     skillsEmpty: function () {
       skills.characters = [];
@@ -1250,6 +1382,10 @@
     eve_running: null,
     identification_active: selectedIdentityScenario.stage !== 'intro'
       && selectedIdentityScenario.stage !== 'manage',
+    // True unconditionally: the dev harness always points at a Tranquility
+    // fixture. Without this the canIdentify guard Task 6 added hides every
+    // identity control and all identification scenarios render as inert.
+    account_identity_available: true,
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
@@ -1447,6 +1583,12 @@
     return Promise.resolve({ accepted: true, error: null });
   };
   var pendingDevCandidate = null;
+  // Monotonic counter matching Task 5's Python generation scheme: bumped
+  // on every start and cancel so a stale promise from a superseded pass
+  // is rejected by acceptIdentification() the same way it would be in
+  // production. Carried by start/check/cancel responses and by every
+  // onEveSettingsNames push.
+  var devIdentificationGeneration = 0;
 
   function devAccount(accountId) {
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
@@ -1542,16 +1684,25 @@
   api.eve_settings_identification_start = function () {
     pendingDevCandidate = null;
     eve.identification_active = true;
-    return Promise.resolve({ status: 'watching', error: null });
+    // Bump the generation so any in-flight check promise resolves stale.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'watching', error: null,
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_check = function () {
     var result = selectedIdentityScenario.check
       || { status: 'watching', error: null };
     pendingDevCandidate = result.status === 'candidate' ? result : null;
-    if (result.status !== 'candidate') return Promise.resolve(result);
+    if (result.status !== 'candidate') {
+      return Promise.resolve(Object.assign({}, result,
+        { identification_generation: devIdentificationGeneration }));
+    }
     var account = devAccount(result.account_id);
     return Promise.resolve({
       status: 'candidate', error: null,
+      identification_generation: devIdentificationGeneration,
       account: { id: account.id, primary: account.display_name,
                  secondary: account.display_meta, option: account.name },
       characters: result.character_ids.map(devCharacter).filter(Boolean)
@@ -1560,7 +1711,12 @@
   api.eve_settings_identification_cancel = function () {
     pendingDevCandidate = null;
     eve.identification_active = false;
-    return Promise.resolve(true);
+    // Bump so any racing check that resolves after this cancel is rejected.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'cancelled',
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_confirm = function (accountId, characterId, name) {
     var offered = pendingDevCandidate

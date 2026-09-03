@@ -2807,18 +2807,35 @@ headless.
       and survive a restart. An alert already pulsing when you change them
       finishes at its old rate — the values are read when an alert is
       armed, not per frame.
+- [ ] **Advanced pulse behavior opens and closes by keyboard, and fits at
+      the 840px floor.** Settings > Alerts. Expected: `#alert-advanced`
+      starts collapsed under the table, titled `Advanced pulse behavior`.
+      Tab to its summary and press Enter or Space — no mouse required — to
+      open it; press it again to close it. With it open at the 840x625
+      window floor, `document.documentElement.scrollWidth` must equal
+      `clientWidth`, and none of its three rows (Combat, Warp scramble,
+      Decloak) wraps its Flashes/Speed pair onto a second line.
+- [ ] **Opening it does not disturb the card's live regions.** With the
+      disclosure open or closed, `#alerts-health` and `#alerts-status`
+      (both `role="status"`) keep whatever text they already held —
+      alerts.js has no listener on `#alert-advanced`'s `toggle` event, so a
+      screen reader must not re-announce either line just because the
+      disclosure state changed.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
-      Alerts. Each event offers the same five named swatches: Red, Amber,
-      Green, Cyan, and Magenta, and prints the selected name below its dots.
-      Change each event once and confirm the word follows the selected dot.
-      Event boxes align with the modifier boxes below; event names and the
-      Flashes/Speed line share the next inset, so no checkbox hangs by itself
-      at the card edge. They render as dark-theme controls rather than opening
-      a native Windows colour picker. Give two enabled events the same
-      colour. Expected: one warning below the table names both events and says
-      their preview pulses are indistinguishable; the warning is not repeated
-      under both rows. Disable either event or choose a distinct colour and it
-      clears without clearing a row-local save error.
+      Alerts. Each event offers the same five swatches: Red, Amber, Green,
+      Cyan, and Magenta — one line, vertically centered with the checkbox/
+      name, Sound and Test beside it, not a two-line control. Each swatch
+      announces its colour name to a screen reader (`aria-label`) and shows
+      it in its tooltip; nothing prints the selected name visibly below the
+      dots any more. Event boxes align with the modifier boxes below; event
+      names and the Flashes/Speed line share the next inset, so no checkbox
+      hangs by itself at the card edge. They render as dark-theme controls
+      rather than opening a native Windows colour picker. Give two enabled
+      events the same colour. Expected: one warning below the table names
+      both events and says their preview pulses are indistinguishable; the
+      warning is not repeated under both rows. Disable either event or
+      choose a distinct colour and it clears without clearing a row-local
+      save error.
 
 ### The alert render path
 
@@ -2917,6 +2934,14 @@ so these are the checks that matter and only a Windows machine can run them.
       sits directly beneath that context when the codec is available, without
       becoming another card or route. In Accounts mode, the Copy card contains
       **Identify accounts…**; none of these tools is an inline card below Copy.
+- [ ] **Profile tools are named for what they are, not for who they seem
+      scoped to.** Inspect the **Backups…** / **Edit formations…** tool
+      group with a screen reader or the accessibility pane. Expected: its
+      accessible name is `Profile tools` via `aria-labelledby`, not an
+      `aria-label` claiming the group belongs only to the selected
+      server/profile — `eve_settings_backup_dir()` is one fixed store, not
+      scoped to that selection, so switching profiles must not change what
+      the group's name implies it is showing.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -3008,6 +3033,17 @@ so these are the checks that matter and only a Windows machine can run them.
       the prose, the `Copy from` row and the filter row are all still held to
       the old 586px measure on purpose, so a filter row narrower than the
       roster beneath it is correct here, not a bug.
+- [ ] **The copy commit bar widens with the roster above the 840px floor,
+      and only there.** With a folder chosen, put the window at its floor
+      and note the commit bar (`Copy to selected`, its count, source, and
+      the EVE pill) — it is capped to the card's ~586px prose measure
+      alongside the rest of the setup controls. Drag the window past
+      841px CSS width. Expected: the bar now spans the roster's full width
+      below it, and the count and source sit grouped together rather than
+      leaving a bare gap before the pill. Return to the floor (or measure
+      at exactly 840px): the bar reverts to the capped layout — the
+      widening is gated behind `min-width: 841px` and must not appear at
+      or below it.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a
@@ -3037,6 +3073,15 @@ so these are the checks that matter and only a Windows machine can run them.
       label was added for.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
+- [ ] **Identify accounts composes correctly at wide widths and keeps
+      manual management subordinate.** Open `Identify accounts…` in a
+      window past the floor. Expected: the guided flow's ~620px-capped
+      column centres in the available width rather than sitting flush
+      against the left edge. Below the guided flow, `Manage account names
+      and character links…` is a single visibly and programmatically
+      labelled disclosure group. Confirm with a screen reader or the
+      accessibility pane that its name is `Manual management` and that the
+      disclosure's own ids, copy, and behavior are otherwise unchanged.
 - [ ] **Identify one account through a controlled client session.** Switch to
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
@@ -3116,6 +3161,70 @@ so these are the checks that matter and only a Windows machine can run them.
       start a copy: `Identify accounts…` is disabled until it finishes. Leave
       the identity sub-screen with `‹ Profiles` during an observation and return:
       the observation was cancelled.
+- [ ] **Cancelling a check in flight reads as idle, not a false no-changes
+      message.** Start identification, launch a character, close it, then
+      press `Check changes` and immediately press `‹ Profiles` (or `Cancel`)
+      before the check would normally finish. Expected: the sub-screen
+      returns to Prepare with no leftover "No account and character changes
+      were found" text and no candidate offered — the cancelled check must
+      not be mistaken for one that genuinely found nothing.
+- [ ] **A deleted character retracts an offered candidate mid-flow.** Get
+      Wingman to offer a candidate (`Check changes` reaches Confirm
+      character), then, before confirming, have ESI/Wingman confirm that
+      character deleted (e.g. the resolver's next pass on a known deleted
+      ID). Expected: the candidate is withdrawn automatically, the
+      sub-screen returns to Prepare, and the status line reads exactly
+      `That character was deleted. Start account identification again.`
+      rather than silently keeping a stale offer on screen.
+- [ ] **Account identity controls are unavailable on a non-Tranquility
+      folder.** Point the EVE folder at a Serenity, Singularity, or
+      unrecognized shard directory. Expected: in Accounts mode, `Identify
+      accounts…` and the account-tools row are hidden entirely (not merely
+      disabled), account rows fall back to `Account <id>`, and copy/backup
+      for that profile's characters and accounts remain fully available.
+- [ ] **A deleted character may appear before ESI answers, then disappears.**
+      Open Profiles with a known deleted local character file. Expected: the
+      character may render in the list initially (before ESI resolves), then
+      disappears once ESI confirms the deletion. The row stays hidden on
+      subsequent refreshes in that process. After restart it may briefly
+      reappear, then disappears once ESI reconfirms deletion.
+- [ ] **Selected source or target disappearing leaves copy controls coherent.**
+      Set up a copy with source and targets selected. During in-flight ESI
+      resolution for deleted characters, remove a selected target from the
+      roster (delete its `.dat` file). Expected: the Copy card remains usable,
+      the selection updates, and completion succeeds for surviving targets
+      without errors or corrupted state.
+- [ ] **The deleted account link is absent after refresh and restart.**
+      Identify and link a Tranquility character to an account, then confirm
+      that character is deleted via ESI. Refresh the Profiles route and
+      restart the app. Expected: the link is removed from Wingman's persisted
+      account-character metadata; the account and other characters survive
+      intact. Inspect `settings.json` to confirm the character ID is absent
+      from `account_characters` for that account.
+- [ ] **Active and unresolved characters remain usable.** With an active
+      character, a character pending ESI resolution (network down), and a
+      confirmed deleted character all in the same profile: Expected: active
+      and unresolved characters remain visible, selectable, and copyable; only
+      the confirmed-deleted row hides. The unresolved character persists
+      across route refresh and Wingman restart.
+- [ ] **The deleted character's local `.dat` and backup remain intact and
+      listed.** After deletion filtering hides a character from Profiles and
+      removes its account link, verify its `core_char_<id>.dat` file still
+      exists in the profile folder unchanged. Open Backups and confirm the
+      character's backup (if one exists) is still listed and restorable.
+- [ ] **Switching profiles during in-flight resolution settles the latest
+      profile.** Start resolution for profile A (Characters mode), switch to
+      profile B while ESI requests are pending. Expected: profile A's in-flight
+      pass finishes, then one coalesced trailing pass automatically resolves the
+      latest selected profile without another user action; no deletion filtering
+      or cleanup from stale passes mutate the current context.
+- [ ] **A misleadingly named `tranquil*` directory remains untrusted and
+      non-destructive.** Point the EVE folder at a directory named
+      `tranquility_backup` or `fake_tranquility_other`. Expected: Profiles
+      opens normally; character names use fallback resolution; no deletion
+      filtering or account-link cleanup occurs, regardless of the directory
+      name. In Accounts mode, identity controls remain unavailable. Copy and
+      backup remain fully available.
 - [ ] **Inspect every deterministic identity fixture in a browser.** Open
       `?dev=1&identity=<state>` for `idle`, `waiting`, `none`, `ambiguous`,
       `candidate-multiple`, `pending-name`, `existing-name`, `roster-one`,
@@ -3356,6 +3465,15 @@ with real `settings_*` folders can still prove.
       Alt. Expected: the button reads `Back up Default profile` and `Back up Alt
       profile`; with no profile selected it reads `Back up profile` and is
       disabled.
+- [ ] **Backups' Origin column aligns with the target's name, not its id.**
+      Open Backups with a mixed history of automatic and manual entries.
+      Expected: each row's `.es-backup-grid` aligns to the row's start, so
+      Origin sits level with the target's name line rather than between
+      the name and its raw id beneath it. Origin's text reads in a
+      distinct, slightly dimmer colour than Date — not the same faint
+      colour the target's own secondary (raw id) line uses — so the two
+      read as separate columns; Origin still names only Automatic or
+      Manual, nothing else.
 - [ ] Check the packaged build: Profiles and Backups open, and the folder picker
       opens.
 
@@ -3572,6 +3690,33 @@ against a placeholder id; only these items are blocked on the registration.
       Check the second case at the window floor — that is the one the
       list's `min-height: 0` exists for. Collapse it again and the list
       returns to its height.
+- [ ] **The plan-file actions sit directly below the plan list, above
+      `What is a plan?`.** With plans present, read down the Plans block:
+      the list, then `Open plans folder` / `Reload plans`, then the `What
+      is a plan?` disclosure last. They act on the folder the list above
+      them reads from, so they no longer wait behind an explanation almost
+      nobody opens. Reordering costs no height: `<details>` and the
+      actions row are both `flex: none` siblings of the same shrinkable
+      list, so the four-plan-row floor measured against the block is
+      unaffected.
+- [ ] **The roster has its own persistent heading, like Groups and Plans.**
+      Above the filter bar and the character list, a `Characters` heading
+      (the route's own vocabulary — Add character, Filter characters, N
+      characters added) sits in the same `.rail-head` treatment the Groups
+      and Plans blocks already use, with only a hairline boundary added.
+      It is inert text — no tabindex, no click handler — confirming the
+      roster is the third of the rail's three independent scroll regions,
+      not the one region with no label above its own scrollbar.
+- [ ] **A collapsed row's missing-skill names stay legible at a glance.**
+      With a character missing three or more skills for the selected plan,
+      its collapsed roster row shows at most two names before `and N
+      more` — a smaller cap than the plan-issues disclosure's own list
+      (which spells out every requirement) and smaller again than the copy
+      confirm dialog's name cap, because a roster row is scanned in
+      passing across many rows rather than opened and read like a dialog.
+      Confirm the `N` in `and N more` matches the character's real missing
+      count minus the two names shown, not the number of names the
+      payload happened to include.
 - [ ] **An empty roster names the control.** With no characters
       authorised, the roster reads `No characters yet. Press “Add
       character” to sign one in with EVE SSO.` — the name on the button,
@@ -3688,18 +3833,101 @@ against a placeholder id; only these items are blocked on the registration.
       resolving after the switch and rendering under the wrong plan is a
       silent bug — the row looks populated and correct, but every
       requirement on it belongs to the plan you left.
-- [ ] **LOAD-BEARING: the roster group order and the within-group sort are
-      both exactly right.** Launch with `?dev=1` (it seeds one character
-      per bucket) and confirm the groups appear top to bottom in this
-      order: `Ready`, `Training`, `Locked`, `Missing`, `Unknown`,
-      `Unscored`, then the catch-all bucket last. Within `Missing`, with
-      more than one character in it, confirm the character with the
-      **fewest** missing requirements sorts first. Nothing under `tests/`
-      exercises this grouping or ordering at all — it lives entirely in
-      `skills.js` — so this item is the only thing standing between a
-      regression here and a release. A silent reorder or a resorted
-      `Missing` group would not error or throw; it would just be wrong,
-      and nothing else in this checklist or the suite would catch it.
+- [ ] **LOAD-BEARING: the roster group order is exactly right.** Launch
+      with `?dev=1` (it seeds one character per bucket) and confirm the
+      groups appear top to bottom in this order: `Ready`, `Training`,
+      `Locked`, `Missing`, `Unknown`, `Unscored`, then the catch-all
+      bucket last. Nothing under `tests/` exercises this grouping at
+      all — it lives entirely in `skills.js` — so this item is the only
+      thing standing between a regression here and a release. A silent
+      reorder would not error or throw; it would just be wrong, and
+      nothing else in this checklist or the suite would catch it.
+- [ ] **`Missing` sorts by training time, not by requirement count.**
+      Same `?dev=1` roster. Confirm the `Missing` group reads top to
+      bottom: Nera Tal (`1h 30m`), Aveline Castellane (`2d 0h`), Zara
+      Castellane (`2d 0h`), Konstantina Alexandrovna Winterbourne
+      (`7d 0h`), Gustav Oswaldo (`15d 0h`), then Petra Ilyenko last with
+      no duration shown at all. Aveline before Zara is the deliberate
+      tie-break: the fixture gives the two characters the identical raw
+      `172800` seconds on purpose, so the sort can only separate them by
+      falling through to character name — and it must do that on the RAW
+      seconds, never on a text comparison of the rendered `2d 0h` label,
+      which would not even distinguish the tie. A character with no
+      usable estimate (Petra: confirmed but unusable attributes) sorts
+      last regardless of how few requirements it is missing, the same
+      way a `Training` row with no queue finish sorts last below.
+- [ ] **`Training` sorts by real queue finish, not by name.** Same
+      roster. Confirm the order is Zuelo Parvi (finishes 2026-08-25),
+      Bel Ansgar (finishes 2026-08-27, later, despite sorting
+      alphabetically before Zuelo), then Kaska Rin last. Kaska's own
+      queue is `queue_timing_unknown`, so it has no finish to compare —
+      and her row still shows her OWN plan-wide training estimate
+      (`1d 2h`) beside `timing unknown`, because that is a different
+      computation (training.estimate() over the whole plan) from EVE's
+      queue-finish fact, and the missing fact must not borrow the
+      other's number to fake a sort position.
+- [ ] **A mixed row's duration includes SP already queued.** Still
+      `?dev=1`, expand Konstantina Alexandrovna Winterbourne
+      (`queued_count: 2`, `missing_count: 3`). Confirm her status line
+      reads `3 unqueued · 7d 0h training remaining` — the duration is
+      the WHOLE plan's remaining SP, not just the three unqueued skills,
+      because `training.estimate()` is handed every requirement in the
+      plan and only zeroes a skill's own contribution once ITS SP
+      threshold is met, queued or not. If a future change scoped the
+      estimate to `missing_names` alone, this row's duration would read
+      shorter than the plan will actually take, silently.
+- [ ] **`Stale` still carries a full training estimate.** Expand Gustav
+      Oswaldo (`stale: true`, last refresh failed). Confirm the `Stale`
+      badge sits beside his name AND the status line still reads a real
+      duration — `6 unqueued · 15d 0h training remaining` — rather than
+      falling back to `training time unavailable`. The estimate is
+      scored against the LAST successful refresh, which is exactly what
+      stale data is, not against the failed one.
+- [ ] **The estimate assumptions live only in the tooltip, never as
+      permanent copy.** With a plan selected, confirm no sentence about
+      Omega speed, current attributes, implants or unlisted requirements
+      is printed anywhere on the page by default. Hover the ⓘ button
+      beside the plan heading: the tooltip `Estimates use current
+      attributes at Omega speed. Implants and requirements not listed in
+      this plan are excluded.` appears, and clears when the mouse moves
+      away. Tab to the same button instead: the identical tooltip
+      appears on keyboard focus alone, with no hover. Press Escape while
+      it is focused: the tooltip is dismissed but focus visibly stays on
+      the button — it must not move to the next control. Tab away and
+      back (or click elsewhere, then click or Tab back to the button):
+      the tooltip reopens. A suppression that survived a real blur would
+      mean the button permanently omitted its own explanation for the
+      rest of the session.
+- [ ] **No plan selected, and a character whose attributes were never
+      confirmed, both avoid a misleading zero.** Clear the plan
+      selection: every roster row becomes `Unscored` and carries no
+      status line at all — not `0 unqueued` and not `0m` — because an
+      empty `training_estimate_status` means no estimate was ever asked
+      for (Task 5's ruling), never a fifth failure worth a phrase.
+      Reselect a plan and expand Petra Ilyenko
+      (`attributes_unavailable` — the same outcome a pre-attributes
+      build produces for a character it has never confirmed attributes
+      for). Confirm her status reads `4 unqueued · training time
+      unavailable`, never `4 unqueued · 0m training remaining`: `0m` is
+      `training.estimate()`'s real answer for an already-trained target
+      and must never stand in for a number the estimator could not
+      compute at all.
+- [ ] **At the 840x625 floor, long names still read as themselves and
+      every collapsed status stays on one line.** Drag the window to its
+      floor with `?dev=1` loaded. Confirm Konstantina Alexandrovna
+      Winterbourne's name ellipsises at the 240px name-column cap rather
+      than overflowing or wrapping: `text-overflow: ellipsis` truncates
+      from the end, so enough of the PREFIX stays visible to tell her
+      apart from every other row at a glance — `.skills-name` carries no
+      `title`, so this is the only identity the collapsed row offers, not
+      a fallback for a full string recoverable on hover. Then confirm the
+      roster's worst case for the status column: Gustav Oswaldo, whose
+      `Stale` badge and `6 unqueued · 15d 0h training remaining` status
+      sit on the same line as his name. Neither wraps to a second line,
+      neither is cut off without an ellipsis, and the badge and status do
+      not overlap the name or each other — the chevron, badge and status
+      are all `flex: none`, so the name column is the only thing that
+      gives way, and this row is where it has to give way the most.
 - [ ] **The Groups block sits above Plans and its list stays capped.**
       With `?dev=1`'s seeded groups, confirm the rail lists `All` followed
       by every seeded group, top to bottom, each member count matching the
@@ -3874,6 +4102,19 @@ behaviour a lexical guard cannot reach.
       normal edge of the opaque sticky layer, not overlap inside it. This is the
       whole reason both are sticky — a label that scrolls off the controls it
       explains recreates the original context-loss defect.
+- [ ] **A conflict warning still names its owner once its row is behind the
+      sticky headers.** Same scroll-to-bottom scenario, using a character
+      whose direct bind collides with a cycle keybind (the dev fixture's
+      Tanuki Solette, whose chord matches `All forward`). Scroll until her
+      row sits fully or partly behind the column headers/`OFFLINE` heading
+      while the warning directly below it is still visible. Expected: the
+      warning's own sentence still opens with `Tanuki Solette: …` rather
+      than assuming the row above it is on screen, and her `Keybind` button
+      still points `aria-describedby` at that exact warning's id. Confirm
+      with a screen reader or the accessibility pane: focusing the button
+      announces its own label (the chord) followed by the description, and
+      the description text alone still names the owner even though the row
+      it explains may be hidden.
 - [ ] **The rule above the column headers is one line, not four dashes.**
       `.row` is `display: contents` in this grid, so a border on the
       header CELLS is cut by every 10px column gap. It is drawn by an

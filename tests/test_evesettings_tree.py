@@ -480,3 +480,39 @@ def test_a_symlinked_keep_does_not_escape_the_root(tmp_path):
     assert link.parent == games
     servers, _unreadable, _too_broad = tree._servers_in(games, keep=link)
     assert servers == [], "a symlink walked the selection outside the root"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["tranquility", "c_ccp_eve_tq_tranquility", "c_eve_sharedcache_tq_tranquility"],
+)
+def test_trusted_tranquility_server_names(name):
+    assert tree.is_tranquility_server(Path("C:/EVE") / name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "TRANQUILITY",
+        "TrAnQuIlItY",
+        "C_CCP_EVE_TQ_TRANQUILITY",
+        "C_EVE_SHAREDCACHE_TQ_TRANQUILITY",
+    ],
+)
+def test_trusted_tranquility_server_names_case_insensitive(name):
+    """Windows paths are case-insensitive; accept mixed-case examples."""
+    assert tree.is_tranquility_server(Path("C:/EVE") / name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "fake_tranquility_other",
+        "tranquility_backup",
+        "mytranquilfolder",
+        "server_singularity",
+        "server_serenity",
+    ],
+)
+def test_display_heuristics_do_not_authorize_tranquility_cleanup(name):
+    assert tree.is_tranquility_server(Path("C:/EVE") / name) is False

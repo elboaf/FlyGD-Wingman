@@ -1,3 +1,4 @@
+import copy
 import json
 
 import pytest
@@ -563,3 +564,40 @@ def test_a_stored_duration_is_dropped_rather_than_honoured():
 def test_the_default_flash_settings_reproduce_the_duration_that_shipped():
     combat = settings.validated_alerts({})["events"]["combat"]
     assert alert_state.duration_for(combat["flash_rate"], combat["pulses"]) == 1200
+
+
+def test_save_publishes_the_complete_document_through_atomic_io(tmp_path, monkeypatch):
+    target = tmp_path / "settings.json"
+    seen = []
+    monkeypatch.setattr(
+        settings.atomicio,
+        "write_atomic",
+        lambda path, text, encoding="utf-8": seen.append((path, text, encoding)),
+    )
+    data = settings.load(target)
+
+    settings.save(data, target)
+
+    assert seen[0][0] == target
+    assert json.loads(seen[0][1])["privacy"] == data["privacy"]
+    assert seen[0][2] == "utf-8"
+
+
+def test_update_restores_memory_and_keeps_old_file_when_atomic_publish_fails(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "settings.json"
+    target.write_text('{"sentinel": "old"}', encoding="utf-8")
+    data = settings.load()
+    before = copy.deepcopy(data)
+    monkeypatch.setattr(
+        settings.atomicio,
+        "write_atomic",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked")),
+    )
+
+    with pytest.raises(OSError, match="locked"):
+        settings.update_section(data, "eve_settings", {"auto_keep": 7}, target)
+
+    assert data == before
+    assert target.read_text(encoding="utf-8") == '{"sentinel": "old"}'
