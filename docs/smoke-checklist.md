@@ -3133,8 +3133,9 @@ so these are the checks that matter and only a Windows machine can run them.
 - [ ] **A deleted character may appear before ESI answers, then disappears.**
       Open Profiles with a known deleted local character file. Expected: the
       character may render in the list initially (before ESI resolves), then
-      disappears once ESI confirms the deletion. The row is not shown on
-      subsequent refreshes or after restart.
+      disappears once ESI confirms the deletion. The row stays hidden on
+      subsequent refreshes in that process. After restart it may briefly
+      reappear, then disappears once ESI reconfirms deletion.
 - [ ] **Selected source or target disappearing leaves copy controls coherent.**
       Set up a copy with source and targets selected. During in-flight ESI
       resolution for deleted characters, remove a selected target from the
@@ -3161,10 +3162,10 @@ so these are the checks that matter and only a Windows machine can run them.
       character's backup (if one exists) is still listed and restorable.
 - [ ] **Switching profiles during in-flight resolution settles the latest
       profile.** Start resolution for profile A (Characters mode), switch to
-      profile B while ESI requests are pending. Expected: profile B resolves
-      without waiting for profile A's requests to complete; switching again
-      resolves the latest selected profile; no deletion filtering or cleanup
-      from stale passes mutate the current context.
+      profile B while ESI requests are pending. Expected: profile A's in-flight
+      pass finishes, then one coalesced trailing pass automatically resolves the
+      latest selected profile without another user action; no deletion filtering
+      or cleanup from stale passes mutate the current context.
 - [ ] **A misleadingly named `tranquil*` directory remains untrusted and
       non-destructive.** Point the EVE folder at a directory named
       `tranquility_backup` or `fake_tranquility_other`. Expected: Profiles
