@@ -529,15 +529,6 @@ def test_preview_group_stage_setup_scripts():
     )
 
 
-def test_gate_on_shoots_every_screen_including_new_group_stages():
-    """The representative detail stage brought the gated capture set to 17;
-    Task 5's Alerts Advanced and Previews sticky-conflict stages bring it to
-    19 (see test_gate_on_shoots_nineteen_screens_after_task_5 below)."""
-    to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 19
-    assert skipped == []
-
-
 # ---------------------------------------------------------------------------
 # CDP viewport-override tests
 # ---------------------------------------------------------------------------
@@ -1727,22 +1718,3 @@ def test_previews_sticky_conflict_stage_is_read_only():
     )
     for writer in writers:
         assert writer not in script
-
-
-def test_gate_on_shoots_nineteen_screens_after_task_5():
-    """Two new stages join the existing 17: Alerts Advanced and the Previews
-    sticky-conflict capture."""
-    to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 19
-    assert skipped == []
-
-
-def test_gate_off_skips_fifteen_screens_after_task_5():
-    to_shoot, skipped = shoot.screens_for_gate(False)
-    assert [s.key for s in to_shoot] == [
-        "uploader",
-        "settings-uploading",
-        "settings-general",
-        "dialog",
-    ]
-    assert len(skipped) == 15

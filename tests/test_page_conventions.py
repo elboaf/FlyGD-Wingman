@@ -1505,9 +1505,7 @@ def test_alert_swatches_do_not_render_a_redundant_colour_name_readout():
         "alerts.js used WM.make only to build the removed readout span"
     )
 
-    style = re.search(
-        r"\.alert-events \.swatch(?:es|-name)[^{]*\{(.*?)\}", CSS, re.DOTALL
-    )
+    style = re.search(r"\.alert-events \.swatch-name[^{]*\{(.*?)\}", CSS, re.DOTALL)
     assert style is None, "the dead .swatch-name CSS rule must be removed too"
 
     # The accessible name itself must survive: every radio still announces

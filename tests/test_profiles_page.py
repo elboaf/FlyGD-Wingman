@@ -1750,6 +1750,11 @@ def test_manual_identity_management_is_a_labelled_subordinate_group():
     assert "border-top" in rule.group(1), (
         "the group boundary must be visible, not only programmatic"
     )
+    assert "align-items: flex-start" not in rule.group(1), (
+        "the wrapper must keep column flex's default stretch so the expanded "
+        "identity panel uses the full workflow width; the toggle already has "
+        "its own align-self rule"
+    )
 
 
 # ---- undefined --border custom property ----------------------------------
