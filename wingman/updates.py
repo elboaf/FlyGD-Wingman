@@ -15,16 +15,19 @@ real `urllib.request.urlopen`.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import datetime
 import hashlib
 import json
 import os
 import re
 import stat
+import sys
 import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from . import __version__, atomicio
@@ -562,3 +565,434 @@ def cleanup_staging(
         if marker_path is not None:
             with contextlib.suppress(OSError):
                 marker_path.unlink(missing_ok=True)
+
+
+# ---- Task 3: attachment security, protected verification, shell launch ----
+
+CLSID_ATTACHMENT_SERVICES = "{4125DD96-E03A-4103-8F70-E0597D803B9C}"
+IID_IATTACHMENT_EXECUTE = "{73DB1241-1E85-4581-8E4F-A81E1D0F8C57}"
+ATTACHMENT_CLIENT_GUID = "{F86ACFFD-F7CC-4C62-8FCE-C747D5D94DB7}"
+
+CLSCTX_INPROC_SERVER = 0x1
+COINIT_APARTMENTTHREADED = 0x2
+COINIT_DISABLE_OLE1DDE = 0x4
+SEE_MASK_NOCLOSEPROCESS = 0x00000040
+SEE_MASK_NOASYNC = 0x00000100
+SEE_MASK_NOZONECHECKS = 0x00800000
+SW_SHOWNORMAL = 1
+ERROR_CANCELLED = 1223
+_GENERIC_READ = 0x80000000
+_FILE_SHARE_READ = 0x00000001
+_OPEN_EXISTING = 3
+_FILE_ATTRIBUTE_NORMAL = 0x00000080
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+_VERIFY_CHUNK_BYTES = 64 * 1024
+_STDCALL = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+_get_last_error = getattr(ctypes, "get_last_error", lambda: 0)
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+class _FILETIME(ctypes.Structure):
+    _fields_ = [
+        ("dwLowDateTime", ctypes.c_uint32),
+        ("dwHighDateTime", ctypes.c_uint32),
+    ]
+
+
+class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("dwFileAttributes", ctypes.c_uint32),
+        ("ftCreationTime", _FILETIME),
+        ("ftLastAccessTime", _FILETIME),
+        ("ftLastWriteTime", _FILETIME),
+        ("dwVolumeSerialNumber", ctypes.c_uint32),
+        ("nFileSizeHigh", ctypes.c_uint32),
+        ("nFileSizeLow", ctypes.c_uint32),
+        ("nNumberOfLinks", ctypes.c_uint32),
+        ("nFileIndexHigh", ctypes.c_uint32),
+        ("nFileIndexLow", ctypes.c_uint32),
+    ]
+
+
+class _SHELLEXECUTEINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_uint32),
+        ("fMask", ctypes.c_uint32),
+        ("hwnd", ctypes.c_void_p),
+        ("lpVerb", ctypes.c_wchar_p),
+        ("lpFile", ctypes.c_wchar_p),
+        ("lpParameters", ctypes.c_wchar_p),
+        ("lpDirectory", ctypes.c_wchar_p),
+        ("nShow", ctypes.c_int32),
+        ("hInstApp", ctypes.c_void_p),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", ctypes.c_wchar_p),
+        ("hkeyClass", ctypes.c_void_p),
+        ("dwHotKey", ctypes.c_uint32),
+        ("hIconOrMonitor", ctypes.c_void_p),
+        ("hProcess", ctypes.c_void_p),
+    ]
+
+
+@dataclass(frozen=True)
+class _Win32Libs:
+    ole32: object
+    kernel32: object
+    shell32: object
+
+
+@lru_cache(maxsize=1)
+def _load_win32_libs() -> _Win32Libs:
+    """Bind pointer-width-sensitive native calls only on the Windows path."""
+    ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    ole32.CoInitializeEx.restype = ctypes.c_int32
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoUninitialize.restype = None
+    ole32.CLSIDFromString.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.POINTER(_GUID),
+    ]
+    ole32.CLSIDFromString.restype = ctypes.c_int32
+    ole32.CoCreateInstance.argtypes = [
+        ctypes.POINTER(_GUID),
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(_GUID),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    ole32.CoCreateInstance.restype = ctypes.c_int32
+
+    kernel32.CreateFileW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.GetFileInformationByHandle.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION),
+    ]
+    kernel32.GetFileInformationByHandle.restype = ctypes.c_int32
+    kernel32.ReadFile.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_void_p,
+    ]
+    kernel32.ReadFile.restype = ctypes.c_int32
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int32
+
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_SHELLEXECUTEINFO)]
+    shell32.ShellExecuteExW.restype = ctypes.c_int32
+    return _Win32Libs(ole32=ole32, kernel32=kernel32, shell32=shell32)
+
+
+def _hresult_failed(result: int) -> bool:
+    return ctypes.c_int32(result).value < 0
+
+
+def _hex_hresult(result: int) -> str:
+    return f"0x{ctypes.c_uint32(result).value:08x}"
+
+
+def _require_hresult(result: int, stage: str, code: str) -> None:
+    if _hresult_failed(result):
+        raise UpdateFailure(stage, code, _hex_hresult(result))
+
+
+def _guid_from_string(value: str, ole32) -> _GUID:
+    guid = _GUID()
+    result = ole32.CLSIDFromString(value, ctypes.byref(guid))
+    _require_hresult(result, "verify", "attachment")
+    return guid
+
+
+def _com_method(interface, index, restype, *argtypes):
+    vtable = ctypes.cast(
+        interface, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))
+    ).contents
+    prototype = _STDCALL(restype, ctypes.c_void_p, *argtypes)
+    return prototype(vtable[index])
+
+
+def save_attachment(path: Path, source_url: str) -> None:
+    """Submit a staged installer to Windows Attachment Services.
+
+    Attachment Services may replace, delete, truncate, or quarantine the file,
+    so callers must treat success only as permission to perform a new protected
+    verification pass. This function owns both its COM reference and this
+    thread's successful COM initialization count on every branch.
+    """
+    libs = _load_win32_libs()
+    ole32 = libs.ole32
+    result = ole32.CoInitializeEx(
+        None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE
+    )
+    _require_hresult(result, "verify", "attachment")
+    interface = ctypes.c_void_p()
+    try:
+        clsid = _guid_from_string(CLSID_ATTACHMENT_SERVICES, ole32)
+        iid = _guid_from_string(IID_IATTACHMENT_EXECUTE, ole32)
+        client_guid = _guid_from_string(ATTACHMENT_CLIENT_GUID, ole32)
+        result = ole32.CoCreateInstance(
+            ctypes.byref(clsid),
+            None,
+            CLSCTX_INPROC_SERVER,
+            ctypes.byref(iid),
+            ctypes.byref(interface),
+        )
+        _require_hresult(result, "verify", "attachment")
+        if not interface.value:
+            raise UpdateFailure("verify", "attachment", "null COM interface")
+
+        # IUnknown = 0..2; IAttachmentExecute: SetClientGuid = 4,
+        # SetLocalPath = 5, SetSource = 7, Save = 11.
+        set_client_guid = _com_method(
+            interface, 4, ctypes.c_int32, ctypes.POINTER(_GUID)
+        )
+        set_local_path = _com_method(interface, 5, ctypes.c_int32, ctypes.c_wchar_p)
+        set_source = _com_method(interface, 7, ctypes.c_int32, ctypes.c_wchar_p)
+        save = _com_method(interface, 11, ctypes.c_int32)
+        _require_hresult(
+            set_client_guid(interface, ctypes.byref(client_guid)),
+            "verify",
+            "attachment",
+        )
+        _require_hresult(set_local_path(interface, str(path)), "verify", "attachment")
+        _require_hresult(set_source(interface, source_url), "verify", "attachment")
+        _require_hresult(save(interface), "verify", "attachment")
+    finally:
+        if interface.value:
+            release = _com_method(interface, 2, ctypes.c_uint32)
+            release(interface)
+        ole32.CoUninitialize()
+
+
+class _PortableLockedFile:
+    """Held-descriptor test fallback; frozen Windows always uses CreateFileW."""
+
+    def __init__(self, path: Path):
+        # This object is itself the context manager that owns the stream.
+        self._stream = Path(path).open("rb")  # noqa: SIM115
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._stream.close()
+        return False
+
+    def identity_and_size(self):
+        info = os.fstat(self._stream.fileno())
+        return ((info.st_dev, info.st_ino), info.st_size)
+
+    def sha256(self):
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: self._stream.read(_VERIFY_CHUNK_BYTES), b""):
+            digest.update(chunk)
+        return digest.hexdigest()
+
+
+class _WindowsLockedFile:
+    """A read handle that denies every writer and delete/rename attempt."""
+
+    def __init__(self, path: Path, kernel32):
+        self._kernel32 = kernel32
+        self._handle = kernel32.CreateFileW(
+            str(path),
+            _GENERIC_READ,
+            _FILE_SHARE_READ,
+            None,
+            _OPEN_EXISTING,
+            _FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+        if self._handle == _INVALID_HANDLE_VALUE:
+            error = _get_last_error()
+            self._handle = None
+            raise OSError(error, f"CreateFileW failed with error {error}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        handle = self._handle
+        self._handle = None
+        if handle is not None and not self._kernel32.CloseHandle(handle):
+            error = _get_last_error()
+            detail = f"CloseHandle failed with error {error}"
+            if exc[1] is not None:
+                exc[1].add_note(detail)
+            else:
+                raise UpdateFailure("verify", "file", detail)
+        return False
+
+    def identity_and_size(self):
+        info = _BY_HANDLE_FILE_INFORMATION()
+        if not self._kernel32.GetFileInformationByHandle(
+            self._handle, ctypes.byref(info)
+        ):
+            error = _get_last_error()
+            raise OSError(
+                error, f"GetFileInformationByHandle failed with error {error}"
+            )
+        identity = (
+            info.dwVolumeSerialNumber,
+            (info.nFileIndexHigh << 32) | info.nFileIndexLow,
+        )
+        size = (info.nFileSizeHigh << 32) | info.nFileSizeLow
+        return identity, size
+
+    def sha256(self):
+        digest = hashlib.sha256()
+        buffer = ctypes.create_string_buffer(_VERIFY_CHUNK_BYTES)
+        while True:
+            read = ctypes.c_uint32()
+            if not self._kernel32.ReadFile(
+                self._handle,
+                buffer,
+                len(buffer),
+                ctypes.byref(read),
+                None,
+            ):
+                error = _get_last_error()
+                raise OSError(error, f"ReadFile failed with error {error}")
+            if not read.value:
+                return digest.hexdigest()
+            digest.update(buffer.raw[: read.value])
+
+
+def _open_locked(path: Path):
+    if sys.platform == "win32":
+        return _WindowsLockedFile(path, _load_win32_libs().kernel32)
+    return _PortableLockedFile(path)
+
+
+def _locked_manager(path: Path, locked_open):
+    try:
+        opener = _open_locked if locked_open is None else locked_open
+        return opener(path)
+    except OSError as exc:
+        raise UpdateFailure("verify", "file", str(exc)) from exc
+
+
+def _locked_value(operation):
+    try:
+        return operation()
+    except OSError as exc:
+        raise UpdateFailure("verify", "file", str(exc)) from exc
+
+
+def _verify_locked(release: ReleaseInfo, locked):
+    identity, size = _locked_value(locked.identity_and_size)
+    if size != release.size:
+        raise UpdateFailure(
+            "verify",
+            "size",
+            f"installer size mismatch: expected {release.size} bytes, got {size}",
+        )
+    digest = _locked_value(locked.sha256)
+    if digest != release.sha256:
+        raise UpdateFailure(
+            "verify", "checksum", "installer does not match the expected checksum"
+        )
+    return identity, size
+
+
+def _require_same_locked_file(locked, expected_identity, expected_size) -> None:
+    identity, size = _locked_value(locked.identity_and_size)
+    if identity != expected_identity:
+        raise UpdateFailure("verify", "identity", "installer identity changed")
+    if size != expected_size:
+        raise UpdateFailure("verify", "size", "installer size changed")
+
+
+def verify_after_attachment(
+    release: ReleaseInfo,
+    path: Path,
+    *,
+    attachment=save_attachment,
+    locked_open=None,
+) -> None:
+    """Run attachment processing, then verify through one protected handle."""
+    path = Path(path)
+    attachment(path, release.url)
+    with _locked_manager(path, locked_open) as locked:
+        identity, size = _verify_locked(release, locked)
+        _require_same_locked_file(locked, identity, size)
+
+
+def launch_verified(
+    release: ReleaseInfo,
+    path: Path,
+    *,
+    before_launch=None,
+    attachment=save_attachment,
+    locked_open=None,
+    shell_execute=None,
+) -> int:
+    """Verify and shell-launch *path* without opening a replacement window."""
+    path = Path(path)
+    attachment(path, release.url)
+    if shell_execute is None:
+        shell_execute = _shell_execute
+    with _locked_manager(path, locked_open) as locked:
+        identity, size = _verify_locked(release, locked)
+        if before_launch is not None:
+            before_launch()
+        _require_same_locked_file(locked, identity, size)
+        return shell_execute(path)
+
+
+def _shell_execute(path: Path, *, libs=None) -> int:
+    """Launch with zone checks and transfer the returned process handle."""
+    if libs is None:
+        libs = _load_win32_libs()
+    result = libs.ole32.CoInitializeEx(
+        None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE
+    )
+    _require_hresult(result, "launch", "com")
+    try:
+        info = _SHELLEXECUTEINFO()
+        info.cbSize = ctypes.sizeof(info)
+        info.fMask = SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS
+        info.lpVerb = "open"
+        info.lpFile = str(path)
+        info.lpParameters = None
+        info.nShow = SW_SHOWNORMAL
+        if not libs.shell32.ShellExecuteExW(ctypes.byref(info)):
+            error = _get_last_error()
+            code = "cancelled" if error == ERROR_CANCELLED else "shell"
+            raise UpdateFailure("launch", code, f"ShellExecuteExW error {error}")
+        if not info.hProcess:
+            raise UpdateFailure(
+                "launch", "shell", "ShellExecuteExW returned no process"
+            )
+        return int(info.hProcess)
+    finally:
+        libs.ole32.CoUninitialize()
+
+
+def close_process_handle(handle: int) -> None:
+    """Release the process handle returned by `launch_verified` exactly once."""
+    if not _load_win32_libs().kernel32.CloseHandle(handle):
+        error = _get_last_error()
+        raise UpdateFailure("launch", "close-handle", f"CloseHandle error {error}")

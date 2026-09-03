@@ -7,13 +7,16 @@ every later update task (download, staging, install, UI) trusts a
 ReleaseInfo it received from here rather than re-validating the payload.
 """
 
+import ctypes
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -967,3 +970,740 @@ def test_remove_handoff_marker_wraps_a_removal_failure(tmp_path, monkeypatch):
 
     assert exc_info.value.stage == "cleanup"
     assert exc_info.value.code == "filesystem"
+
+
+# ---- attachment, protected verification, and shell launch -----------------
+
+
+def write_installer(tmp_path, payload=b"verified"):
+    path = tmp_path / "update-native.ready.exe"
+    path.write_bytes(payload)
+    return path
+
+
+def fail_if_called(*args, **kwargs):
+    raise AssertionError("this dependency must not be called")
+
+
+class FakeLockedFile:
+    """The high-level protected-file seam used by Linux unit tests."""
+
+    def __init__(self, path, events, *, snapshots=None):
+        self.path = Path(path)
+        self.events = events
+        self.snapshots = iter(snapshots) if snapshots is not None else None
+        self.closed = 0
+
+    def __enter__(self):
+        self.events.append("open-locked")
+        return self
+
+    def __exit__(self, *exc):
+        self.closed += 1
+        self.events.append("close-locked")
+        return False
+
+    def identity_and_size(self):
+        if self.snapshots is not None:
+            return next(self.snapshots)
+        return ((1, 2), self.path.stat().st_size)
+
+    def sha256(self):
+        self.events.append("hash")
+        return hashlib.sha256(self.path.read_bytes()).hexdigest()
+
+
+def test_launch_orders_attachment_lock_hash_marker_shell_then_close(tmp_path):
+    events = []
+    path = write_installer(tmp_path, b"verified")
+    release = release_info(payload=b"verified")
+    handle = FakeLockedFile(path, events)
+
+    process = updates.launch_verified(
+        release,
+        path,
+        attachment=lambda p, u: events.append("attachment"),
+        locked_open=lambda p: handle,
+        before_launch=lambda: events.append("marker"),
+        shell_execute=lambda locked_path: events.append("shell") or 42,
+    )
+
+    assert process == 42
+    assert events == [
+        "attachment",
+        "open-locked",
+        "hash",
+        "marker",
+        "shell",
+        "close-locked",
+    ]
+    assert handle.closed == 1
+
+
+def test_attachment_receives_the_verified_path_and_release_source_url(tmp_path):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    seen = []
+
+    updates.verify_after_attachment(
+        release,
+        path,
+        attachment=lambda attachment_path, source_url: seen.append(
+            (attachment_path, source_url)
+        ),
+        locked_open=lambda p: FakeLockedFile(p, []),
+    )
+
+    assert seen == [(path, release.url)]
+
+
+def test_attachment_success_that_replaces_file_is_rehashed_and_rejected(tmp_path):
+    path = write_installer(tmp_path, b"verified")
+    release = release_info(payload=b"verified")
+
+    def replace_after_scan(_path, _url):
+        path.write_bytes(b"altered!")
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.launch_verified(
+            release,
+            path,
+            attachment=replace_after_scan,
+            shell_execute=fail_if_called,
+        )
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "checksum"
+
+
+def test_attachment_success_that_deletes_file_is_rejected_before_shell(tmp_path):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: path.unlink(),
+            shell_execute=fail_if_called,
+        )
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "file"
+
+
+def test_attachment_success_that_truncates_file_is_rejected_before_shell(tmp_path):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: path.write_bytes(b""),
+            shell_execute=fail_if_called,
+        )
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "size"
+
+
+def test_attachment_quarantine_that_moves_file_is_rejected_before_shell(tmp_path):
+    path = write_installer(tmp_path)
+    quarantine = tmp_path / "quarantined.exe"
+    release = release_info(payload=b"verified")
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: path.replace(quarantine),
+            shell_execute=fail_if_called,
+        )
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "file"
+
+
+def test_identity_change_after_hash_is_rejected_and_locked_handle_closes(tmp_path):
+    events = []
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    handle = FakeLockedFile(
+        path,
+        events,
+        snapshots=[((7, 11), len(b"verified")), ((7, 12), len(b"verified"))],
+    )
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: events.append("attachment"),
+            locked_open=lambda p: handle,
+            shell_execute=fail_if_called,
+        )
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "identity"
+    assert events[-1] == "close-locked"
+    assert handle.closed == 1
+
+
+def test_attachment_failure_prevents_protected_open_and_shell(tmp_path):
+    events = []
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+
+    def rejected_attachment(_path, _url):
+        events.append("attachment")
+        raise updates.UpdateFailure("verify", "attachment", "blocked")
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.launch_verified(
+            release,
+            path,
+            attachment=rejected_attachment,
+            locked_open=fail_if_called,
+            shell_execute=fail_if_called,
+        )
+
+    assert exc_info.value.code == "attachment"
+    assert events == ["attachment"]
+
+
+def test_verify_after_attachment_closes_the_protected_handle(tmp_path):
+    events = []
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    handle = FakeLockedFile(path, events)
+
+    updates.verify_after_attachment(
+        release,
+        path,
+        attachment=lambda p, u: events.append("attachment"),
+        locked_open=lambda p: handle,
+    )
+
+    assert events == ["attachment", "open-locked", "hash", "close-locked"]
+    assert handle.closed == 1
+
+
+def test_before_launch_failure_prevents_shell_and_closes_protected_handle(tmp_path):
+    events = []
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    handle = FakeLockedFile(path, events)
+
+    def fail_marker():
+        events.append("marker")
+        raise OSError("marker write failed")
+
+    with pytest.raises(OSError, match="marker write failed"):
+        updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: events.append("attachment"),
+            locked_open=lambda p: handle,
+            before_launch=fail_marker,
+            shell_execute=fail_if_called,
+        )
+
+    assert events == [
+        "attachment",
+        "open-locked",
+        "hash",
+        "marker",
+        "close-locked",
+    ]
+    assert handle.closed == 1
+
+
+class _BarrierLockedFile:
+    """Models Windows' write/delete denial while allowing held-handle reads."""
+
+    def __init__(self, path, hashed):
+        self.path = Path(path)
+        self.hashed = hashed
+        self.active = False
+        self.stream = None
+
+    def __enter__(self):
+        self.stream = self.path.open("rb")
+        self.active = True
+        return self
+
+    def __exit__(self, *exc):
+        self.active = False
+        self.stream.close()
+        return False
+
+    def identity_and_size(self):
+        stat_result = os.fstat(self.stream.fileno())
+        return ((stat_result.st_dev, stat_result.st_ino), stat_result.st_size)
+
+    def sha256(self):
+        digest = hashlib.sha256(self.stream.read()).hexdigest()
+        self.hashed.set()
+        return digest
+
+    def replace(self, payload):
+        if self.active:
+            raise PermissionError("sharing violation")
+        self.path.write_bytes(payload)
+
+
+def test_replacement_after_hash_is_denied_until_shell_receives_verified_path(tmp_path):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    hashed = threading.Event()
+    replacement_done = threading.Event()
+    replacement_errors = []
+    shell_paths = []
+    handle = _BarrierLockedFile(path, hashed)
+
+    def replace_after_hash():
+        assert hashed.wait(2)
+        try:
+            handle.replace(b"different")
+        except PermissionError as exc:
+            replacement_errors.append(str(exc))
+        finally:
+            replacement_done.set()
+
+    replacement = threading.Thread(target=replace_after_hash)
+    replacement.start()
+    try:
+        process = updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: None,
+            locked_open=lambda p: handle,
+            before_launch=lambda: replacement_done.wait(2),
+            shell_execute=lambda shell_path: shell_paths.append(shell_path) or 91,
+        )
+    finally:
+        replacement.join(2)
+
+    assert process == 91
+    assert replacement_errors == ["sharing violation"]
+    assert shell_paths == [path]
+    assert path.read_bytes() == b"verified"
+
+
+def test_shell_failure_still_closes_the_protected_file_exactly_once(tmp_path):
+    events = []
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    handle = FakeLockedFile(path, events)
+
+    def rejected_shell(_path):
+        events.append("shell")
+        raise updates.UpdateFailure("launch", "shell", "rejected")
+
+    with pytest.raises(updates.UpdateFailure, match="rejected"):
+        updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: events.append("attachment"),
+            locked_open=lambda p: handle,
+            shell_execute=rejected_shell,
+        )
+
+    assert events[-2:] == ["shell", "close-locked"]
+    assert handle.closed == 1
+
+
+class FakeLockedKernel32:
+    def __init__(self, payload, *, close_success=True):
+        self.payload = payload
+        self.close_success = close_success
+        self.offset = 0
+        self.create_calls = []
+        self.info_handles = []
+        self.read_handles = []
+        self.closed_handles = []
+
+    def CreateFileW(self, *args):
+        self.create_calls.append(args)
+        return 77
+
+    def GetFileInformationByHandle(self, handle, output):
+        self.info_handles.append(handle)
+        info = ctypes.cast(
+            output, ctypes.POINTER(updates._BY_HANDLE_FILE_INFORMATION)
+        ).contents
+        info.dwVolumeSerialNumber = 9
+        info.nFileIndexHigh = 1
+        info.nFileIndexLow = 5
+        info.nFileSizeHigh = 0
+        info.nFileSizeLow = len(self.payload)
+        return True
+
+    def ReadFile(self, handle, buffer, size, bytes_read, overlapped):
+        self.read_handles.append(handle)
+        chunk = self.payload[self.offset : self.offset + size]
+        self.offset += len(chunk)
+        if chunk:
+            ctypes.memmove(buffer, chunk, len(chunk))
+        ctypes.cast(bytes_read, ctypes.POINTER(ctypes.c_uint32)).contents.value = len(
+            chunk
+        )
+        return True
+
+    def CloseHandle(self, handle):
+        self.closed_handles.append(handle)
+        return self.close_success
+
+
+def test_locked_windows_file_denies_write_delete_and_hashes_held_handle():
+    kernel32 = FakeLockedKernel32(b"verified")
+
+    with updates._WindowsLockedFile(
+        Path("C:/Temp/update.ready.exe"), kernel32
+    ) as locked:
+        identity, size = locked.identity_and_size()
+        digest = locked.sha256()
+
+    assert kernel32.create_calls == [
+        (
+            "C:/Temp/update.ready.exe",
+            0x80000000,
+            0x00000001,
+            None,
+            3,
+            0x00000080,
+            None,
+        )
+    ]
+    assert identity == (9, (1 << 32) | 5)
+    assert size == len(b"verified")
+    assert digest == hashlib.sha256(b"verified").hexdigest()
+    assert kernel32.info_handles == [77]
+    assert set(kernel32.read_handles) == {77}
+    assert kernel32.closed_handles == [77]
+
+
+def test_locked_windows_file_reports_close_failure_after_one_attempt(monkeypatch):
+    kernel32 = FakeLockedKernel32(b"verified", close_success=False)
+    monkeypatch.setattr(updates, "_get_last_error", lambda: 6)
+
+    with (
+        pytest.raises(updates.UpdateFailure) as exc_info,
+        updates._WindowsLockedFile(Path("C:/Temp/update.ready.exe"), kernel32),
+    ):
+        pass
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "file"
+    assert kernel32.closed_handles == [77]
+
+
+def test_locked_close_failure_does_not_mask_the_primary_failure(monkeypatch):
+    kernel32 = FakeLockedKernel32(b"verified", close_success=False)
+    monkeypatch.setattr(updates, "_get_last_error", lambda: 6)
+
+    with (
+        pytest.raises(RuntimeError, match="primary") as exc_info,
+        updates._WindowsLockedFile(Path("C:/Temp/update.ready.exe"), kernel32),
+    ):
+        raise RuntimeError("primary")
+
+    assert exc_info.value.__notes__ == ["CloseHandle failed with error 6"]
+    assert kernel32.closed_handles == [77]
+
+
+_STDCALL = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+
+
+class FakeAttachmentWin32:
+    """A real ctypes COM vtable backed by Python callbacks."""
+
+    def __init__(self, *, coinit_hresult=0, create_hresult=0, fail_method=None):
+        self.ole32 = self
+        self.kernel32 = self
+        self.shell32 = self
+        self.coinit_hresult = coinit_hresult
+        self.create_hresult = create_hresult
+        self.fail_method = fail_method
+        self.coinit_flags = []
+        self.parsed_guids = []
+        self.create_calls = []
+        self.attachment_calls = []
+        self.release_calls = 0
+        self.uninitialize_calls = 0
+        self._callbacks = []
+        self._build_attachment_object()
+
+    def _result(self, method):
+        if self.fail_method == method:
+            return ctypes.c_int32(0x80004005).value
+        return 0
+
+    def _build_attachment_object(self):
+        release_type = _STDCALL(ctypes.c_uint32, ctypes.c_void_p)
+        guid_type = _STDCALL(
+            ctypes.c_int32, ctypes.c_void_p, ctypes.POINTER(updates._GUID)
+        )
+        string_type = _STDCALL(ctypes.c_int32, ctypes.c_void_p, ctypes.c_wchar_p)
+        save_type = _STDCALL(ctypes.c_int32, ctypes.c_void_p)
+
+        @release_type
+        def release(_this):
+            self.release_calls += 1
+            return 0
+
+        @guid_type
+        def set_client_guid(_this, guid):
+            self.attachment_calls.append(("SetClientGuid", guid.contents.Data1))
+            return self._result("SetClientGuid")
+
+        @string_type
+        def set_local_path(_this, value):
+            self.attachment_calls.append(("SetLocalPath", value))
+            return self._result("SetLocalPath")
+
+        @string_type
+        def set_source(_this, value):
+            self.attachment_calls.append(("SetSource", value))
+            return self._result("SetSource")
+
+        @save_type
+        def save(_this):
+            self.attachment_calls.append(("Save", None))
+            return self._result("Save")
+
+        self._callbacks.extend(
+            [release, set_client_guid, set_local_path, set_source, save]
+        )
+        self._vtable = (ctypes.c_void_p * 15)()
+        self._vtable[2] = ctypes.cast(release, ctypes.c_void_p).value
+        self._vtable[4] = ctypes.cast(set_client_guid, ctypes.c_void_p).value
+        self._vtable[5] = ctypes.cast(set_local_path, ctypes.c_void_p).value
+        self._vtable[7] = ctypes.cast(set_source, ctypes.c_void_p).value
+        self._vtable[11] = ctypes.cast(save, ctypes.c_void_p).value
+
+        class _ComObject(ctypes.Structure):
+            _fields_ = [("vtable", ctypes.POINTER(ctypes.c_void_p))]
+
+        self._object = _ComObject(
+            ctypes.cast(self._vtable, ctypes.POINTER(ctypes.c_void_p))
+        )
+
+    def CoInitializeEx(self, reserved, flags):
+        self.coinit_flags.append(flags)
+        return self.coinit_hresult
+
+    def CoUninitialize(self):
+        self.uninitialize_calls += 1
+
+    def CLSIDFromString(self, text, output):
+        self.parsed_guids.append(text)
+        guid = ctypes.cast(output, ctypes.POINTER(updates._GUID)).contents
+        guid.Data1 = len(self.parsed_guids)
+        return 0
+
+    def CoCreateInstance(self, clsid, outer, context, iid, output):
+        clsid_value = ctypes.cast(clsid, ctypes.POINTER(updates._GUID)).contents.Data1
+        iid_value = ctypes.cast(iid, ctypes.POINTER(updates._GUID)).contents.Data1
+        self.create_calls.append((clsid_value, context, iid_value))
+        if self.create_hresult < 0:
+            return self.create_hresult
+        ctypes.cast(
+            output, ctypes.POINTER(ctypes.c_void_p)
+        ).contents.value = ctypes.addressof(self._object)
+        return self.create_hresult
+
+
+def test_attachment_services_sets_guid_path_source_then_saves(tmp_path, monkeypatch):
+    path = write_installer(tmp_path)
+    calls = FakeAttachmentWin32()
+    monkeypatch.setattr(updates, "_load_win32_libs", lambda: calls)
+
+    updates.save_attachment(path, "https://github.com/source.exe")
+
+    assert calls.parsed_guids == [
+        updates.CLSID_ATTACHMENT_SERVICES,
+        updates.IID_IATTACHMENT_EXECUTE,
+        updates.ATTACHMENT_CLIENT_GUID,
+    ]
+    assert calls.create_calls == [(1, updates.CLSCTX_INPROC_SERVER, 2)]
+    assert calls.attachment_calls == [
+        ("SetClientGuid", 3),
+        ("SetLocalPath", str(path)),
+        ("SetSource", "https://github.com/source.exe"),
+        ("Save", None),
+    ]
+    assert calls.coinit_flags == [
+        updates.COINIT_APARTMENTTHREADED | updates.COINIT_DISABLE_OLE1DDE
+    ]
+    assert calls.release_calls == 1
+    assert calls.uninitialize_calls == 1
+
+
+@pytest.mark.parametrize(
+    "method", ["SetClientGuid", "SetLocalPath", "SetSource", "Save"]
+)
+def test_attachment_hresult_failure_releases_interface_and_uninitializes(
+    tmp_path, monkeypatch, method
+):
+    path = write_installer(tmp_path)
+    calls = FakeAttachmentWin32(fail_method=method)
+    monkeypatch.setattr(updates, "_load_win32_libs", lambda: calls)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.save_attachment(path, "https://github.com/source.exe")
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "attachment"
+    assert exc_info.value.detail == "0x80004005"
+    assert calls.release_calls == 1
+    assert calls.uninitialize_calls == 1
+
+
+def test_attachment_com_initialization_failure_does_not_uninitialize(
+    tmp_path, monkeypatch
+):
+    path = write_installer(tmp_path)
+    calls = FakeAttachmentWin32(coinit_hresult=ctypes.c_int32(0x80004005).value)
+    monkeypatch.setattr(updates, "_load_win32_libs", lambda: calls)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.save_attachment(path, "https://github.com/source.exe")
+
+    assert exc_info.value.code == "attachment"
+    assert exc_info.value.detail == "0x80004005"
+    assert calls.create_calls == []
+    assert calls.release_calls == 0
+    assert calls.uninitialize_calls == 0
+
+
+class FakeShellWin32:
+    def __init__(self, *, process_handle=123, shell_success=True, coinit_hresult=0):
+        self.ole32 = self
+        self.kernel32 = self
+        self.shell32 = self
+        self.process_handle = process_handle
+        self.shell_success = shell_success
+        self.coinit_hresult = coinit_hresult
+        self.coinit_flags = []
+        self.uninitialize_calls = 0
+        self.shell_calls = 0
+        self.shell_info = None
+        self.closed_handles = []
+
+    def CoInitializeEx(self, reserved, flags):
+        self.coinit_flags.append(flags)
+        return self.coinit_hresult
+
+    def CoUninitialize(self):
+        self.uninitialize_calls += 1
+
+    def ShellExecuteExW(self, info_pointer):
+        self.shell_calls += 1
+        info = ctypes.cast(
+            info_pointer, ctypes.POINTER(updates._SHELLEXECUTEINFO)
+        ).contents
+        info.hProcess = self.process_handle
+        self.shell_info = SimpleNamespace(
+            cbSize=info.cbSize,
+            fMask=info.fMask,
+            lpVerb=info.lpVerb,
+            lpFile=info.lpFile,
+            lpParameters=info.lpParameters,
+            nShow=info.nShow,
+            hProcess=info.hProcess,
+        )
+        return self.shell_success
+
+    def CloseHandle(self, handle):
+        self.closed_handles.append(handle)
+        return True
+
+
+def test_shell_launch_uses_zone_checked_open_and_returns_a_process_handle():
+    calls = FakeShellWin32(process_handle=123)
+
+    assert updates._shell_execute(Path("C:/Temp/update.ready.exe"), libs=calls) == 123
+
+    info = calls.shell_info
+    assert info.cbSize == ctypes.sizeof(updates._SHELLEXECUTEINFO)
+    assert info.lpVerb == "open"
+    assert info.lpFile == str(Path("C:/Temp/update.ready.exe"))
+    assert info.lpParameters is None
+    assert info.nShow == updates.SW_SHOWNORMAL
+    assert info.fMask == updates.SEE_MASK_NOASYNC | updates.SEE_MASK_NOCLOSEPROCESS
+    assert not info.fMask & updates.SEE_MASK_NOZONECHECKS
+    assert calls.coinit_flags == [
+        updates.COINIT_APARTMENTTHREADED | updates.COINIT_DISABLE_OLE1DDE
+    ]
+    assert calls.uninitialize_calls == 1
+
+
+def test_shell_execute_failure_is_typed_and_uninitializes(monkeypatch):
+    calls = FakeShellWin32(shell_success=False)
+    monkeypatch.setattr(updates, "_get_last_error", lambda: 5)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates._shell_execute(Path("C:/Temp/update.ready.exe"), libs=calls)
+
+    assert exc_info.value.stage == "launch"
+    assert exc_info.value.code == "shell"
+    assert calls.uninitialize_calls == 1
+
+
+def test_shell_execute_reports_user_cancellation(monkeypatch):
+    calls = FakeShellWin32(shell_success=False)
+    monkeypatch.setattr(updates, "_get_last_error", lambda: updates.ERROR_CANCELLED)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates._shell_execute(Path("C:/Temp/update.ready.exe"), libs=calls)
+
+    assert exc_info.value.stage == "launch"
+    assert exc_info.value.code == "cancelled"
+    assert calls.uninitialize_calls == 1
+
+
+def test_shell_execute_rejects_a_null_process_handle():
+    calls = FakeShellWin32(process_handle=0)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates._shell_execute(Path("C:/Temp/update.ready.exe"), libs=calls)
+
+    assert exc_info.value.stage == "launch"
+    assert exc_info.value.code == "shell"
+    assert calls.uninitialize_calls == 1
+
+
+def test_shell_com_initialization_failure_never_calls_shell_or_uninitialize():
+    calls = FakeShellWin32(coinit_hresult=ctypes.c_int32(0x80004005).value)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates._shell_execute(Path("C:/Temp/update.ready.exe"), libs=calls)
+
+    assert exc_info.value.stage == "launch"
+    assert exc_info.value.code == "com"
+    assert exc_info.value.detail == "0x80004005"
+    assert calls.shell_calls == 0
+    assert calls.uninitialize_calls == 0
+
+
+def test_shell_returned_process_handle_is_closed_only_by_explicit_owner(
+    tmp_path, monkeypatch
+):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    calls = FakeShellWin32(process_handle=321)
+    monkeypatch.setattr(updates, "_load_win32_libs", lambda: calls)
+
+    process = updates.launch_verified(
+        release,
+        path,
+        attachment=lambda p, u: None,
+        shell_execute=lambda p: 321,
+    )
+
+    assert process == 321
+    assert calls.closed_handles == []
+    updates.close_process_handle(process)
+    assert calls.closed_handles == [321]
