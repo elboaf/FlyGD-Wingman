@@ -283,6 +283,17 @@ def _append_rate_limit(error: str, headers, token=None) -> str:
     complete, untruncated assembly first guarantees the whole token is
     still there to match against, and only the (now token-free) result is
     ever truncated.
+
+    The same hazard exists one level down, per header value, and is fixed
+    the same way: each raw value is redacted BEFORE its own per-value
+    _sanitize call, not after. A single header value is exactly as
+    attacker-controlled as the combined string, and _sanitize's own
+    2048-character cap applies to it independently -- a full token
+    crossing THAT boundary would leave an unredacted prefix sitting in
+    the per-value text, and the later combined-string redact cannot
+    recover it: by the time the combined string is built, the value
+    already lost the other half of the token, and an exact substring
+    match against a fragment can never succeed.
     """
     if headers is None:
         return error
@@ -290,7 +301,7 @@ def _append_rate_limit(error: str, headers, token=None) -> str:
     for name in ("X-Esi-Error-Limit-Remain", "X-Esi-Error-Limit-Reset", "Retry-After"):
         value = headers.get(name)
         if value is not None:
-            parts.append(f"{name}={_sanitize(str(value))}")
+            parts.append(f"{name}={_sanitize(_redact(str(value), token))}")
     if not parts:
         return error
     combined = f"{error} ({'; '.join(parts)})"

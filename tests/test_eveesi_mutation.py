@@ -468,6 +468,47 @@ def test_a_token_split_by_the_final_sanitize_boundary_in_rate_limit_headers_is_s
     assert "[redacted]" in result.error
 
 
+def test_a_token_split_by_a_single_header_values_own_sanitize_boundary_is_still_redacted():
+    """Round 2 fixed the redact-vs-sanitize ordering for the fully
+    assembled "error (headers...)" string, but each header VALUE was
+    still passed through its own per-value _sanitize call before any
+    redaction ran at all. _sanitize's 2048-character cap applies
+    independently to that single raw value -- a token crossing THIS
+    boundary, inside one header value, before the combined string is
+    ever assembled, leaves an unredacted prefix that the later
+    combined-string redact cannot recover: by the time the combined
+    string is built, the value has already lost the other half of the
+    token, and an exact substring match against a mere fragment can never
+    succeed. This test places a real token so its exact midpoint lands on
+    ONE header value's own 2048-character cutoff, with the rest of the
+    assembled string (a short "boom" error) kept well clear of that
+    boundary so only the per-value cut is exercised.
+    """
+    token = "eyJhbGciOiJSUzI1NiJ9.super-secret-access-token-crossing-boundary.sig"
+    half = len(token) // 2
+    # Sized so the raw header value's own _sanitize call (2048 characters,
+    # applied to this value alone) cuts exactly at the token's midpoint:
+    # filler_len + half == _SANITIZE_MAX_CHARS.
+    filler_len = eveesi._SANITIZE_MAX_CHARS - half
+    assert filler_len > 0, "token too long for this boundary construction"
+    value = ("p" * filler_len) + token
+    headers = _headers(Retry_After=value)
+    transport = FakeTransport(
+        _http_error(429, json.dumps({"error": "boom"}).encode(), headers)
+    )
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=token)
+
+    # The exact fragment a pre-fix implementation would leave unredacted:
+    # the first half of the token, surviving the per-value truncation
+    # because it landed before that value's own 2048-character cut, with
+    # no redaction having run yet to recognize it.
+    leaked_prefix = token[:half]
+    assert leaked_prefix not in result.error
+    assert token not in result.error
+    assert "[redacted]" in result.error
+
+
 def test_a_long_no_response_exception_message_is_bounded():
     def transport(request, timeout=None):
         raise ConnectionResetError("x" * 5000)
