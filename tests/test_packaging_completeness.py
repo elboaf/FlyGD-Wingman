@@ -308,6 +308,59 @@ def test_manual_update_fixture_is_inert_and_separate_from_production():
         assert production_identity not in text
 
 
+def _os_error_with_winerror(code):
+    error = OSError(code, f"Windows error {code}")
+    error.winerror = code
+    return error
+
+
+@pytest.mark.parametrize("code", [5, 32])
+def test_manual_update_harness_accepts_only_known_replacement_denials(code):
+    harness = _load_manual_update_harness()
+
+    assert (
+        harness._replacement_denial_code({"error": _os_error_with_winerror(code)})
+        == code
+    )
+
+
+def test_manual_update_harness_rejects_other_replacement_errors():
+    harness = _load_manual_update_harness()
+
+    with pytest.raises(RuntimeError, match=r"unexpected error code 87"):
+        harness._replacement_denial_code({"error": _os_error_with_winerror(87)})
+
+
+def test_manual_update_harness_rejects_successful_replacement():
+    harness = _load_manual_update_harness()
+
+    with pytest.raises(RuntimeError, match="replacement unexpectedly succeeded"):
+        harness._replacement_denial_code({"replaced": True})
+
+
+def test_manual_update_harness_reports_replacement_barrier_timeout():
+    harness = _load_manual_update_harness()
+
+    with pytest.raises(RuntimeError, match="timed out waiting for the barrier"):
+        harness._replacement_denial_code({"timed_out": True})
+
+
+@pytest.mark.parametrize(
+    ("during", "after"),
+    [
+        (("changed-identity", 10), ("original-identity", 10, "original-digest")),
+        (("original-identity", 11), ("original-identity", 10, "original-digest")),
+        (("original-identity", 10), ("original-identity", 10, "changed-digest")),
+    ],
+)
+def test_manual_update_harness_rejects_mutated_lock_race_facts(during, after):
+    harness = _load_manual_update_harness()
+    before = ("original-identity", 10, "original-digest")
+
+    with pytest.raises(RuntimeError, match="identity, size, or digest changed"):
+        harness._require_unchanged_file_facts(before, during, after)
+
+
 def test_manual_update_harness_pins_its_deliberate_production_seams():
     tree = ast.parse(MANUAL_UPDATE_HARNESS.read_text(encoding="utf-8"))
     referenced = {

@@ -119,9 +119,11 @@ $SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/t
 - [ ] **The protected handle wins a real replacement race.** Run:
       `uv run python tests\manual\update_harness.py lock-race
       --i-understand-this-launches-a-test-exe $Fixture`. Expected:
-      `safe retention: sharing violation (winerror=32)` followed by unchanged
-      identity, size, and SHA-256. The command races only a temporary staged
-      copy and removes that staging root.
+      `safe retention: replacement denied (winerror=5)` or the same line with
+      `winerror=32`, followed by unchanged identity, size, and SHA-256. The
+      command prints the actual code; success, any other code, timeout, or
+      mutation must fail. It races only a temporary staged copy and removes
+      that staging root.
 - [ ] **The fixture mutex produces deterministic prompt/no-prompt runs.** In
       one terminal run
       `uv run python tests\manual\update_harness.py mutex-holder`; in another,

@@ -86,19 +86,21 @@ uv run python tests\manual\update_harness.py lock-race `
   $Fixture
 ```
 
-Expected:
+Expected (the harness prints the actual Windows error code):
 
 ```text
-safe retention: sharing violation (winerror=32)
+safe retention: replacement denied (winerror=5)
 identity unchanged: yes (...)
 size unchanged: yes (...)
 sha256 unchanged: yes (...)
 ```
 
-The production protected handle is held while a barrier releases the
-replacement thread. Any successful replacement, a non-sharing-violation
-failure, or changed identity/digest makes the harness exit non-zero. The race
-uses a staged copy; the compiled source fixture remains untouched.
+Windows may instead print `winerror=32`; only access denied (5) and sharing
+violation (32) are accepted replacement denials. The production protected
+handle is held while a barrier releases the replacement thread. Any successful
+replacement, any other error code, a timeout, or changed identity, size, or
+digest makes the harness exit non-zero. The race uses a staged copy; the
+compiled source fixture remains untouched.
 
 ## Deterministic fixture-mutex behavior
 

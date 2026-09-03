@@ -28,7 +28,7 @@ _SERVE_URL = (
     "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
     "v0.0.0/Wingman-Update-Harness-Setup.exe"
 )
-_ERROR_SHARING_VIOLATION = 32
+_REPLACEMENT_DENIAL_ERRORS = frozenset((5, 32))
 
 
 class _FixtureOpener:
@@ -165,6 +165,39 @@ def _attachment(args, staging_root: Path) -> None:
     print(f"Zone.Identifier: {zone}")
 
 
+def _replacement_denial_code(result: dict[str, OSError | bool]) -> int:
+    if result.get("timed_out"):
+        raise RuntimeError("replacement thread timed out waiting for the barrier")
+    if result.get("replaced"):
+        raise RuntimeError("replacement unexpectedly succeeded")
+
+    error = result.get("error")
+    if not isinstance(error, OSError):
+        raise RuntimeError("replacement thread did not report an outcome")
+    code = getattr(error, "winerror", None)
+    if code not in _REPLACEMENT_DENIAL_ERRORS:
+        raise RuntimeError(
+            f"replacement failed with unexpected error code {code}: {error}"
+        )
+    return code
+
+
+def _require_unchanged_file_facts(
+    before: tuple[object, int, str],
+    during: tuple[object, int],
+    after: tuple[object, int, str],
+) -> None:
+    identity_before, size_before, digest_before = before
+    identity_during, size_during = during
+    identity_after, size_after, digest_after = after
+    if not (
+        identity_before == identity_during == identity_after
+        and size_before == size_during == size_after
+        and digest_before == digest_after
+    ):
+        raise RuntimeError("protected fixture identity, size, or digest changed")
+
+
 def _lock_race(args, staging_root: Path) -> None:
     _require_windows()
     source = _require_fixture(args.path)
@@ -216,20 +249,16 @@ def _lock_race(args, staging_root: Path) -> None:
 
     if replacement_thread.is_alive():
         raise RuntimeError("replacement thread did not stop")
-    error = result.get("error")
-    if not isinstance(error, OSError):
-        raise RuntimeError("replacement unexpectedly succeeded")
-    if getattr(error, "winerror", None) != _ERROR_SHARING_VIOLATION:
-        raise RuntimeError(f"replacement failed without sharing violation: {error}")
+    denial_code = _replacement_denial_code(result)
 
     identity_after, size_after, digest_after = _file_facts(staged)
-    unchanged_identity = identity_before == identity_during == identity_after
-    unchanged_size = size_before == size_during == size_after
-    unchanged_digest = digest_before == digest_after
-    if not (unchanged_identity and unchanged_size and unchanged_digest):
-        raise RuntimeError("protected fixture identity, size, or digest changed")
+    _require_unchanged_file_facts(
+        (identity_before, size_before, digest_before),
+        (identity_during, size_during),
+        (identity_after, size_after, digest_after),
+    )
 
-    print("safe retention: sharing violation (winerror=32)")
+    print(f"safe retention: replacement denied (winerror={denial_code})")
     print(f"identity unchanged: yes ({identity_after})")
     print(f"size unchanged: yes ({size_after})")
     print(f"sha256 unchanged: yes ({digest_after})")
