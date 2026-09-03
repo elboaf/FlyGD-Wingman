@@ -2129,6 +2129,75 @@ def test_a_later_edit_retries_the_pending_cleanup_before_applying(
     assert api._eve_section()["account_characters"] == {"10": ["20"]}
 
 
+def test_second_account_deleted_link_absent_after_retry_cleanup_and_character_edit(
+    tmp_path, monkeypatch
+):
+    """Regression: section was captured before _eve_prune_deleted_links_locked;
+    update_section replaces the nested dict, so reading associations from the
+    stale snapshot re-persisted a deleted link from an unedited second account.
+
+    Scenario: account 11 holds deleted character 21; cleanup fails once;
+    editing account 10's characters retries cleanup and succeeds; id 21 must
+    be absent both in memory and after a fresh reload from disk.
+    """
+    eve_tree(
+        tmp_path,
+        files=(
+            "core_user_10.dat",
+            "core_user_11.dat",
+            "core_char_20.dat",
+            "core_char_21.dat",
+        ),
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "Alpha", "11": "Beta"}
+    # Account 11 links to character 21, which ESI has confirmed deleted.
+    section["account_characters"] = {"10": ["20"], "11": ["21"]}
+    mark_deleted(api, 21)
+
+    # First cleanup attempt fails (simulates a previous write error leaving a
+    # pending state).
+    original = api_mod.settings_mod.update_section
+    calls = []
+
+    def fail_first(data, name, values):
+        if not calls:
+            calls.append(values)
+            raise OSError("disk full")
+        return original(data, name, values)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", fail_first)
+    # Trigger the first (failing) cleanup attempt via set_account_name.
+    result = api.eve_settings_set_account_name("10", "Alpha")
+    assert result["applied"] is False
+    assert result["error"] == "Could not remove deleted character links."
+
+    # Restore normal writes; next edit retries cleanup then applies its own
+    # change.  Before the fix, the stale section snapshot re-persisted id 21.
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", original)
+    result = api.eve_settings_set_account_characters("10", ["20"])
+    assert result["applied"] is True, result.get("error")
+
+    # Deleted id must be absent in memory ...
+    saved = api._eve_section().get("account_characters") or {}
+    all_saved_ids = [cid for ids in saved.values() for cid in ids]
+    assert "21" not in all_saved_ids, f"deleted id 21 still in memory: {saved}"
+    # ... and absent after a fresh reload from disk.
+    import wingman.settings as settings_mod_check
+
+    reloaded = settings_mod_check.load(tmp_path / "settings.json").get(
+        "eve_settings", {}
+    )
+    reloaded_ids = [
+        cid
+        for ids in (reloaded.get("account_characters") or {}).values()
+        for cid in ids
+    ]
+    assert "21" not in reloaded_ids, f"deleted id 21 persisted on disk: {reloaded}"
+
+
 def test_cleanup_rereads_the_links_only_after_taking_the_mutation_lock(
     tmp_path, monkeypatch
 ):

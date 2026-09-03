@@ -5380,6 +5380,11 @@ class Api:
             deleted_ids = self._eve_deleted_ids(found)
             if not self._eve_prune_deleted_links_locked(deleted_ids):
                 return self._field_refused(_EVE_CLEANUP_FAILED)
+            # Re-read live section: update_section replaces the nested dict
+            # object, so the snapshot taken above is stale after the prune.
+            # Reading associations from it would re-persist a deleted link
+            # that the prune just removed from another account.
+            section = self._eve_section()
             associations = {
                 key: list(value)
                 for key, value in (section.get("account_characters") or {}).items()
