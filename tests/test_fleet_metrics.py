@@ -177,10 +177,21 @@ class TestBinding:
         assert row.log_status == NO_LOG
         assert row.ewar == ()
 
-        # Rebinding the new session must start from a clean deque/deadline:
-        # a fact for the OLD source generation/identity must stay rejected.
-        metrics.consume(_env(8, _lifecycle("Alice", generation=2)))
+        # The OLD source's fact, actually consumed AFTER the session already
+        # changed, must be rejected outright -- there is no bound source for
+        # the new session yet, so it cannot silently reappear once one
+        # binds.
+        metrics.consume(_env(8, _damage("Alice", 999, NOW)))
         row = _row(metrics.snapshot(9, HEALTH), "Alice")
+        assert row.dps is None
+        assert row.log_status == NO_LOG
+
+        # Rebinding the new session must start from a clean deque/deadline:
+        # a fact for the OLD source generation/identity must stay rejected,
+        # and the OLD fact consumed above must not have been queued for
+        # later delivery once binding happens.
+        metrics.consume(_env(10, _lifecycle("Alice", generation=2)))
+        row = _row(metrics.snapshot(11, HEALTH), "Alice")
         assert row.dps == 0
         assert row.ewar == ()
 
@@ -196,6 +207,40 @@ class TestBinding:
         # rotation/relog at the log level, roster session unchanged).
         metrics.consume(_env(6, _lifecycle("Alice", generation=2)))
         row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        assert row.dps == 0
+        assert row.ewar == ()
+        assert row.log_status is None
+
+    def test_retirement_clears_source_before_same_source_rebind(self):
+        metrics, _, _ = _metrics()
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        source_id = _source_id()
+        metrics.consume(_env(2, _lifecycle("Alice", generation=1, source_id=source_id)))
+        metrics.consume(_env(3, _damage("Alice", 100, NOW)))
+        metrics.consume(_env(4, _tackle("Alice", NOW)))
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").dps == 10
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+
+        # The source retires (folder loss, character logged out of the
+        # gamelog stream, etc.) -- same generation/source_id, just inactive.
+        metrics.consume(
+            _env(
+                6,
+                _lifecycle("Alice", generation=1, source_id=source_id, active=False),
+            )
+        )
+        row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        assert row.dps is None
+        assert row.log_status == NO_LOG
+        assert row.ewar == ()
+
+        # A later active lifecycle reuses the EXACT SAME generation/source_id
+        # (a legitimate request_source republish, not a bug). Because
+        # source_generation/source_id were cleared on retirement, the
+        # "changed source" check still fires and the old damage/tackle
+        # cannot leak through as if they belonged to this fresh bind.
+        metrics.consume(_env(8, _lifecycle("Alice", generation=1, source_id=source_id)))
+        row = _row(metrics.snapshot(9, HEALTH), "Alice")
         assert row.dps == 0
         assert row.ewar == ()
         assert row.log_status is None
@@ -335,6 +380,66 @@ class TestDps:
 
 
 # ---------------------------------------------------------------------------
+# Fact sequencing: staleness/duplication independent of lifecycle binding
+# ---------------------------------------------------------------------------
+
+
+class TestFactSequencing:
+    def _bound(self, metrics_and_boxes):
+        metrics, utc_box, mono_box = metrics_and_boxes
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        return metrics, utc_box, mono_box
+
+    def test_duplicate_fact_sequence_does_not_double_count_dps(self):
+        metrics, _, _ = self._bound(_metrics())
+        duplicate_envelope = _env(3, _damage("Alice", 100, NOW))
+        metrics.consume(duplicate_envelope)
+        # The exact same envelope (same sequence) delivered twice -- a
+        # redelivery, not a new fact.
+        metrics.consume(duplicate_envelope)
+        row = _row(metrics.snapshot(4, HEALTH), "Alice")
+        assert row.dps == 10  # not 20
+
+    def test_out_of_order_fact_does_not_roll_back_tackle_deadline(self):
+        metrics, _, mono_box = self._bound(_metrics(mono=100.0))
+        # Sequence 5 accepted first: 8s remaining -> deadline at mono 108.0.
+        metrics.consume(_env(5, _tackle("Alice", NOW)))
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+
+        # An OLDER-sequence fact arrives late (e.g. a delayed filesystem
+        # read) carrying a much shorter remaining lifetime. Even though its
+        # sequence (4) is newer than the lifecycle bind (2), it is not newer
+        # than the last ACCEPTED fact (5) and must be rejected -- it must
+        # not roll the deadline backward to its own, shorter, remainder.
+        stale_occurred_at = NOW - datetime.timedelta(seconds=7)  # ~1s if applied
+        metrics.consume(_env(4, _tackle("Alice", stale_occurred_at)))
+
+        # Past when the (rejected) stale fact's own deadline would have
+        # expired, but well before the real one at mono 108.0.
+        mono_box[0] = 100.0 + 7.5
+        assert _row(metrics.snapshot(7, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+
+    def test_rejected_future_fact_does_not_consume_sequence(self):
+        metrics, _, _ = self._bound(_metrics())
+        # Rejected: more than two seconds in the future.
+        far_future = NOW + datetime.timedelta(seconds=3)
+        metrics.consume(_env(5, _damage("Alice", 999, far_future)))
+        row = _row(metrics.snapshot(6, HEALTH), "Alice")
+        assert row.dps == 0
+        assert metrics.snapshot(7, HEALTH).metric_error is not None
+
+        # A corrected fact reusing the SAME sequence number is still
+        # accepted: the rejected far-future fact never advanced
+        # last_fact_sequence, so this is the chosen behaviour, not an
+        # accident of a coincidentally-higher sequence.
+        metrics.consume(_env(5, _damage("Alice", 100, NOW)))
+        row = _row(metrics.snapshot(8, HEALTH), "Alice")
+        assert row.dps == 10
+        assert metrics.snapshot(9, HEALTH).metric_error is None
+
+
+# ---------------------------------------------------------------------------
 # Incoming tackle
 # ---------------------------------------------------------------------------
 
@@ -375,14 +480,26 @@ class TestTackle:
 
     def test_accepted_refresh_moves_the_deadline(self):
         metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
-        metrics.consume(_env(3, _tackle("Alice", NOW)))
+        metrics.consume(_env(3, _tackle("Alice", NOW)))  # original deadline: mono 108.0
         mono_box[0] = 100.0 + 6.0
         assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+
         # A newer fact refreshes the deadline from the new "now".
         utc_box[0] = NOW + datetime.timedelta(seconds=6)
-        metrics.consume(_env(5, _tackle("Alice", utc_box[0])))
-        mono_box[0] = 100.0 + 6.0 + 7.999
+        metrics.consume(_env(5, _tackle("Alice", utc_box[0])))  # refreshed: mono 114.0
+
+        # Still present just PAST the ORIGINAL (un-refreshed) deadline --
+        # proves the refresh actually moved it forward rather than leaving
+        # it where it was.
+        mono_box[0] = 100.0 + 8.5
         assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+
+        # Present just before the REFRESHED deadline...
+        mono_box[0] = 100.0 + 6.0 + 7.999
+        assert _row(metrics.snapshot(7, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+        # ...and expired just after it.
+        mono_box[0] = 100.0 + 6.0 + 8.001
+        assert _row(metrics.snapshot(8, HEALTH), "Alice").ewar == ()
 
     def test_expiry_without_another_fact(self):
         metrics, _, mono_box = self._bound(_metrics(mono=100.0))
@@ -397,6 +514,17 @@ class TestTackle:
         metrics.consume(_env(3, _tackle("Alice", NOW, source_id=wrong_source)))
         row = _row(metrics.snapshot(4, HEALTH), "Alice")
         assert row.ewar == ()
+
+    def test_valid_tackle_clears_metric_error_from_future_damage(self):
+        metrics, _, _ = self._bound(_metrics(mono=100.0))
+        future = NOW + datetime.timedelta(seconds=5)
+        metrics.consume(_env(3, _damage("Alice", 100, future)))
+        assert metrics.snapshot(4, HEALTH).metric_error is not None
+
+        metrics.consume(_env(5, _tackle("Alice", NOW)))
+        snap = metrics.snapshot(6, HEALTH)
+        assert snap.metric_error is None
+        assert _row(snap, "Alice").ewar == (TACKLE_TAG,)
 
 
 # ---------------------------------------------------------------------------

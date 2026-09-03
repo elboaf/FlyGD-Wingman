@@ -42,17 +42,37 @@ cross-session envelope from rolling this join backward:
   identity differs from what is currently bound clears the damage deque and
   the tackle deadline before adopting the new source -- old combat cannot
   leak across a truncation/relog/rotation boundary. A retiring
-  (``active=False``) lifecycle unbinds the row (back to ``NO LOG``) without
-  touching the deque/deadline; any fact for that now-unbound source is
-  rejected by the bound-source identity check below, matching "delayed
-  facts from retired sources are ignored".
+  (``active=False``) lifecycle fully clears the row: bound source
+  generation/identity, the damage deque, the tackle deadline, and the
+  per-source fact-ordering floor described below. This is deliberate and
+  not merely cosmetic -- without it, a later active lifecycle that happens
+  to reuse the SAME retired ``SourceId``/generation (a legitimate
+  ``request_source`` republish, not a bug) would see an unchanged
+  ``source_generation``/``source_id`` on rebind, skip the "changed source"
+  clear, and silently resurrect the old deque/deadline as if they were
+  fresh. Clearing on retirement, not only on a detected change, closes that
+  gap. Any fact for a retired (now-unbound) source is separately rejected
+  by the bound-source check below, matching "delayed facts from retired
+  sources are ignored".
 
 A ``CombatFact`` is accepted only when the row is currently bound AND the
 fact's ``(source_generation, source_id)`` equals the row's bound source AND
 the fact's telemetry sequence exceeds the sequence of the lifecycle
-envelope that bound it. This is what makes a delayed fact from a source
-that has since been superseded inert even though its generation/identity
-pair might coincidentally still look current in some other field.
+envelope that bound it AND the fact's sequence exceeds the last fact
+sequence already accepted for that same bind (``last_fact_sequence``,
+reset to ``None`` on every lifecycle bind). This last guard is what a
+lifecycle-sequence check alone cannot provide: two facts belonging to the
+SAME still-current source can themselves arrive out of order or
+duplicated, and only a per-source fact-ordering floor stops a duplicate
+from double-counting damage or a stale-but-still-"newer-than-the-bind"
+fact from rolling a tackle deadline backward. Only a fact that is actually
+accepted under the timestamp/horizon rules below advances
+``last_fact_sequence`` -- a fact rejected for being too far in the future
+does NOT consume its sequence number, so a differently-timestamped
+correction sharing that same sequence can still be accepted. (Real
+coordinator sequences are unique and monotonic; this only matters for this
+module's own defensive ordering guarantee, not for a real duplicate
+sequence ever being reused in practice.)
 
 Outgoing DPS
 ------------
@@ -68,9 +88,10 @@ sampled once per fact:
 * more than two seconds in the future is dropped AND recorded as
   ``FleetSnapshot.metric_error`` -- one-second log-timestamp precision and
   polling boundaries do not explain a two-second-plus skew. Up to two
-  seconds is instead clamped to ``now``. The next accepted damage fact (any
-  character) clears the transient diagnostic, matching "a later accepted
-  timestamp clears that transient metric diagnostic".
+  seconds is instead clamped to ``now``. The next accepted metric fact of
+  EITHER kind -- outgoing damage or incoming tackle, any character --
+  clears the transient diagnostic, matching "a later accepted timestamp
+  clears that transient metric diagnostic".
 
 The deque is re-pruned to the window on every ``consume()`` damage
 ingestion AND on every ``snapshot()`` call, which is what produces one-second
@@ -166,6 +187,11 @@ class _CharacterState:
     source_id: SourceId | None = None
     source_lifecycle_seq: int | None = None
     bound: bool = False
+    # Per-bind fact-ordering floor: reset to None on every lifecycle bind
+    # (see _consume_source) so a duplicate or out-of-order fact for the
+    # SAME still-current source cannot double-count damage or roll a
+    # tackle deadline backward.
+    last_fact_sequence: int | None = None
     damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
     tackle_deadline: float | None = None
 
@@ -249,7 +275,18 @@ class FleetMetrics:
 
         state.source_lifecycle_seq = sequence
         if not lifecycle.active:
+            # Full clear, not just an unbind: a later active lifecycle that
+            # reuses the SAME retired generation/SourceId (a legitimate
+            # request_source republish) must not see an unchanged
+            # source_generation/source_id and skip the "changed source"
+            # clear below -- that would resurrect this retired source's old
+            # damage/tackle as if they belonged to the fresh bind.
             state.bound = False
+            state.source_generation = None
+            state.source_id = None
+            state.last_fact_sequence = None
+            state.damage.clear()
+            state.tackle_deadline = None
             return
 
         changed = (
@@ -262,6 +299,11 @@ class FleetMetrics:
         state.source_generation = lifecycle.generation
         state.source_id = lifecycle.source_id
         state.bound = True
+        # Every accepted active lifecycle is a fresh bind event, whether or
+        # not the source identity itself changed: the fact-ordering floor
+        # starts over so a fact legitimately delivered before this bind
+        # cannot be confused with one delivered after it.
+        state.last_fact_sequence = None
 
     def _consume_fact(self, sequence: int, fact: CombatFact) -> None:
         state = self._states.get(fact.character)
@@ -277,20 +319,33 @@ class FleetMetrics:
             and sequence <= state.source_lifecycle_seq
         ):
             return  # Stale relative to the binding lifecycle envelope.
+        if (
+            state.last_fact_sequence is not None
+            and sequence <= state.last_fact_sequence
+        ):
+            return  # Stale or duplicate relative to a fact already accepted.
 
+        accepted = False
         if fact.kind == "outgoing_damage":
-            self._ingest_damage(state, fact)
+            accepted = self._ingest_damage(state, fact)
         elif fact.kind == "incoming_tackle":
-            self._ingest_tackle(state, fact)
+            accepted = self._ingest_tackle(state, fact)
 
-    def _ingest_damage(self, state: _CharacterState, fact: CombatFact) -> None:
+        if accepted:
+            # Only an actually-accepted fact advances the floor: a fact
+            # rejected for being too far in the future must not consume its
+            # sequence number, so a differently-timestamped correction
+            # sharing that same sequence can still be accepted afterward.
+            state.last_fact_sequence = sequence
+
+    def _ingest_damage(self, state: _CharacterState, fact: CombatFact) -> bool:
         if fact.amount is None or fact.occurred_at is None:
-            return  # A malformed/missing timestamp suppresses only this fact.
+            return False  # A malformed/missing timestamp suppresses only this fact.
 
         now = self._utc_now()
         _prune_damage(state, now)
         if fact.occurred_at <= now - DPS_WINDOW:
-            return  # Ordinary catch-up on old lines: not a diagnostic.
+            return False  # Ordinary catch-up on old lines: not a diagnostic.
 
         occurred_at = fact.occurred_at
         if occurred_at > now:
@@ -299,20 +354,23 @@ class FleetMetrics:
                 self._metric_error = (
                     f"future outgoing damage timestamp for {fact.character}"
                 )
-                return
+                return False
             occurred_at = now  # Tolerate log/poll precision.
 
         state.damage.append((occurred_at, fact.amount))
         self._metric_error = None  # A later accepted timestamp clears it.
+        return True
 
-    def _ingest_tackle(self, state: _CharacterState, fact: CombatFact) -> None:
+    def _ingest_tackle(self, state: _CharacterState, fact: CombatFact) -> bool:
         if fact.occurred_at is None:
-            return
+            return False
         remaining = fact.occurred_at + TACKLE_LIFETIME - self._utc_now()
         if remaining <= datetime.timedelta(0):
-            return  # A genuinely stale event grants no fresh lifetime.
+            return False  # A genuinely stale event grants no fresh lifetime.
         remaining = min(remaining, TACKLE_LIFETIME)
         state.tackle_deadline = self._clock() + remaining.total_seconds()
+        self._metric_error = None  # A later accepted metric fact clears it too.
+        return True
 
     # ------------------------------------------------------------------
     # Snapshot
