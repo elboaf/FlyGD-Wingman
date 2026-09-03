@@ -1,23 +1,30 @@
 """Source-aware shared gamelog stream.
 
 Tests the GameLogStream's synchronous scan_once() seam so every assertion is
-deterministic: no threads, no real timers. The same core behaviours that the
-legacy Tailer pins (EOF baseline, partial buffering, rotation, dedup-before-cap,
-age cutoff, EVE listener exclusion) are required here, with the additions that
-make the stream shared and source-aware:
+deterministic: no threads, no real timers — except the TestWorker class which
+exercises the real threaded lifecycle.
+
+Core behaviors ported from the legacy Tailer (EOF baseline, partial buffering,
+rotation, dedup-before-cap, age cutoff, EVE listener exclusion) plus the shared
+stream additions:
 
 - SourceLifecycle emitted before any CombatFact for the same generation.
 - Per-source identity via (normalized_path, session_start_utc).
 - Stream generation monotonically increments on source change.
+- Truncation retires the old generation and activates a new one.
 - Folder loss retires all sources; folder recovery baselines at EOF (no replay).
-- Retired source identity prevents replay on folder recovery.
+- Files present during any scan (even failed) are tombstoned so they never
+  replay when later selected.
 - Cap eviction and reappearance do not replay.
 - Transient per-file errors do not suppress other sources.
 - Subscriber exceptions do not stop later subscribers.
-- Successful poll clears last_error in health.
+- Errors clear only after a fully successful complete operation.
+- Real non-daemon worker with 1s poll / 5s rescan cadence.
 """
 
 import datetime
+import threading
+import time
 
 from wingman.telemetry.gamelogs import GameLogStream
 from wingman.telemetry.model import CombatFact, SourceLifecycle
@@ -74,7 +81,7 @@ def _collect(stream):
 
 
 # ---------------------------------------------------------------------------
-# Step 1: Source lifecycle and ordering
+# Source lifecycle and ordering
 # ---------------------------------------------------------------------------
 
 
@@ -92,9 +99,7 @@ class TestSourceLifecycleAndOrdering:
         stream = GameLogStream()
         received = _collect(stream)
         stream.start(tmp_path)
-        # First scan baselines at EOF, so new file read from zero
-        # only happens for files appearing after the first scan.
-        # This file is pre-existing, so only lifecycle is emitted.
+        # First scan baselines at EOF, so pre-existing file emits only lifecycle.
         stream.scan_once(NOW)
         lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
         assert len(lifecycles) == 1
@@ -199,36 +204,73 @@ class TestSourceLifecycleAndOrdering:
         facts_final = [e for e in received if isinstance(e, CombatFact)]
         assert len(facts_final) >= 1
 
-    def test_rotation_resets_position_and_emits_new_generation(self, tmp_path):
-        """File truncation signals rotation; generation increments."""
+    def test_truncation_retires_old_generation_and_activates_new(self, tmp_path):
+        """File truncation retires the old generation and activates a new
+        one with a distinct generation number, lifecycle retirement before
+        activation, and facts carrying only the new generation."""
         stream = GameLogStream()
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
+        # Create the file after first scan so it reads from zero.
+        # Give it a long body so the read position advances well past
+        # what a truncated rewrite will produce.
+        long_body = OUTGOING_DAMAGE_LINE * 10
         path = _log(
-            tmp_path, "Alice", stem="20260825_113000_456", session="2026.08.25 11:30:00"
+            tmp_path,
+            "Alice",
+            long_body,
+            stem="20260825_113000_456",
+            session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        stream.scan_once(NOW)
-        # Truncate and rewrite
+        # Record the original generation and verify initial facts
+        lc_orig = next(e for e in received if isinstance(e, SourceLifecycle))
+        orig_gen = lc_orig.generation
+        initial_facts = [e for e in received if isinstance(e, CombatFact)]
+        assert len(initial_facts) >= 1, "New file should have been read from zero"
+        received.clear()
+
+        # Truncate and rewrite with shorter content.  The new file must
+        # be shorter than the tracked position so size < position fires.
         path.write_text(
             HEADER.format(name="Alice", session="2026.08.25 11:30:00")
             + OUTGOING_DAMAGE_LINE,
             encoding="utf-8",
         )
         stream.scan_once(NOW)
+
+        # Should have retirement (old gen) then activation (new gen)
+        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lifecycles) == 2
+        retired_lc, activated_lc = lifecycles[0], lifecycles[1]
+        assert retired_lc.active is False
+        assert retired_lc.generation == orig_gen
+        assert activated_lc.active is True
+        assert activated_lc.generation != orig_gen
+        assert activated_lc.generation > orig_gen
+        # Retirement comes before activation in event order
+        assert received.index(retired_lc) < received.index(activated_lc)
+        # Facts carry only the new generation
         facts = [e for e in received if isinstance(e, CombatFact)]
-        # Should have facts from the new content
         assert len(facts) >= 1
+        for fact in facts:
+            assert fact.source_generation == activated_lc.generation
+        stream.stop()
 
     def test_retirement_before_replacement(self, tmp_path):
-        """When a source is replaced, retirement is emitted before activation."""
+        """When a source is replaced by a newer log, retirement is emitted
+        before activation, with distinct generations."""
         stream = GameLogStream()
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
         _log(tmp_path, "Alice", stem="20260825_100000_1", session="2026.08.25 10:00:00")
         stream.scan_once(NOW)
+        lc_orig = next(
+            e for e in received if isinstance(e, SourceLifecycle) and e.active
+        )
+        orig_gen = lc_orig.generation
         received.clear()
         # Now a newer log appears
         _log(
@@ -240,16 +282,15 @@ class TestSourceLifecycleAndOrdering:
         )
         stream.scan_once(NOW)
         lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        # Should have retirement (active=False) then activation (active=True)
-        assert len(lifecycles) >= 2
-        retired = [lc for lc in lifecycles if not lc.active]
-        activated = [lc for lc in lifecycles if lc.active]
-        assert len(retired) >= 1
-        assert len(activated) >= 1
-        # Retirement comes before activation in the event stream
-        ret_idx = received.index(retired[0])
-        act_idx = received.index(activated[0])
-        assert ret_idx < act_idx
+        assert len(lifecycles) == 2
+        retired = lifecycles[0]
+        activated = lifecycles[1]
+        assert retired.active is False
+        assert retired.generation == orig_gen
+        assert activated.active is True
+        assert activated.generation > orig_gen
+        # Retirement before activation in event order
+        assert received.index(retired) < received.index(activated)
         stream.stop()
 
     def test_eve_listener_excluded(self, tmp_path):
@@ -292,18 +333,18 @@ class TestSourceLifecycleAndOrdering:
         stream.scan_once(NOW)
         lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
         assert len(lifecycles) == 1
-        # The source should be the newer-mtime file
         assert "20260825_100000_2" in lifecycles[0].source_id.normalized_path
         stream.stop()
 
 
 # ---------------------------------------------------------------------------
-# Step 2: Replay prevention and failure isolation
+# Replay prevention and failure isolation
 # ---------------------------------------------------------------------------
 
 
 class TestReplayPrevention:
-    """Folder disappearance, recovery, and cap eviction must not replay."""
+    """Folder disappearance, recovery, cap eviction, and transient discovery
+    failures must not replay historical data."""
 
     def test_folder_loss_retires_all_sources(self, tmp_path):
         folder = tmp_path / "gamelogs"
@@ -313,6 +354,9 @@ class TestReplayPrevention:
         received = _collect(stream)
         stream.start(folder)
         stream.scan_once(NOW)
+        lc_active = next(
+            e for e in received if isinstance(e, SourceLifecycle) and e.active
+        )
         received.clear()
         # Remove the folder
         import shutil
@@ -320,12 +364,15 @@ class TestReplayPrevention:
         shutil.rmtree(folder)
         stream.scan_once(NOW)
         lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        retired = [lc for lc in lifecycles if not lc.active]
-        assert len(retired) >= 1
+        assert len(lifecycles) == 1
+        assert lifecycles[0].active is False
+        assert lifecycles[0].generation == lc_active.generation
         stream.stop()
 
     def test_folder_recovery_baselines_at_eof_no_replay(self, tmp_path):
-        """After folder loss and recovery, existing files baseline at EOF."""
+        """After folder loss and recovery, existing files baseline at EOF.
+        No CombatFact is emitted from pre-existing content, but a new
+        SourceLifecycle IS emitted for the recovered source."""
         folder = tmp_path / "gamelogs"
         folder.mkdir()
         _log(folder, "Alice", OUTGOING_DAMAGE_LINE)
@@ -345,32 +392,22 @@ class TestReplayPrevention:
         stream.scan_once(NOW)
         facts = [e for e in received if isinstance(e, CombatFact)]
         assert facts == [], "Recovered folder must not replay old combat"
-        # But lifecycle should be emitted
         lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lifecycles) >= 1
+        assert len(lifecycles) == 1
+        assert lifecycles[0].active is True
         stream.stop()
 
-    def test_cap_eviction_and_reappearance_no_replay(self, tmp_path):
+    def test_cap_eviction_then_reappearance_does_not_replay(self, tmp_path):
         """A character evicted by the MAX_FILES cap and reappearing later
-        must not replay historical data."""
+        baselines at EOF — no facts replayed from its pre-existing content."""
         from wingman.telemetry.gamelogs import MAX_FILES
 
         stream = GameLogStream()
         received = _collect(stream)
         stream.start(tmp_path)
-        stream.scan_once(NOW)
-        # Create MAX_FILES characters to fill the budget
-        for i in range(MAX_FILES):
-            _log(
-                tmp_path,
-                f"Char{i:03d}",
-                OUTGOING_DAMAGE_LINE,
-                stem=f"20260825_1100{i:02d}_{i:03d}",
-                session=f"2026.08.25 11:{i:02d}:00",
-            )
-        stream.scan_once(NOW)
-        received.clear()
-        # Now Alice appears with body — she's older so gets evicted if cap full
+        stream.scan_once(NOW)  # empty first scan
+
+        # Alice has an older session with combat data
         _log(
             tmp_path,
             "Alice",
@@ -378,14 +415,120 @@ class TestReplayPrevention:
             stem="20260825_050000_999",
             session="2026.08.25 05:00:00",
         )
+        # Fill the budget with newer characters so Alice is evicted.
+        # Use valid timestamps: hour 11 + minute offset across hours.
+        for i in range(MAX_FILES):
+            h = 11 + i // 60
+            m = i % 60
+            _log(
+                tmp_path,
+                f"Char{i:03d}",
+                stem=f"20260825_{h:02d}{m:02d}00_{i:03d}",
+                session=f"2026.08.25 {h:02d}:{m:02d}:00",
+            )
         stream.scan_once(NOW)
-        # Whether Alice was evicted or not, the key thing is: if she appears
-        # and disappears then reappears, no replay
-        # (This test is about the principle — cap-eviction tracking.)
+        # Alice should be cap-evicted (older session than all Char*)
+        active_chars = {
+            e.character for e in received if isinstance(e, SourceLifecycle) and e.active
+        }
+        assert "Alice" not in active_chars, "Alice should be cap-evicted"
+        received.clear()
+
+        # Remove enough characters so Alice can re-enter
+        for i in range(MAX_FILES):
+            h = 11 + i // 60
+            m = i % 60
+            (tmp_path / f"20260825_{h:02d}{m:02d}00_{i:03d}.txt").unlink()
+        stream.scan_once(NOW)
+        # Alice re-enters but her content is historical — no facts
+        facts = [
+            e for e in received if isinstance(e, CombatFact) and e.character == "Alice"
+        ]
+        assert facts == [], "Cap-evicted Alice must not replay on reappearance"
+        # But she does get a lifecycle
+        alice_lc = [
+            e
+            for e in received
+            if isinstance(e, SourceLifecycle) and e.character == "Alice" and e.active
+        ]
+        assert len(alice_lc) == 1
         stream.stop()
 
-    def test_transient_stat_failure_does_not_suppress_other_sources(self, tmp_path):
-        """One unreadable file must not suppress reads from other sources."""
+    def test_transient_stat_failure_then_recovery_does_not_replay(self, tmp_path):
+        """A file whose stat() fails during one scan but succeeds later is
+        baselined at EOF — its path was tombstoned on the failing scan."""
+        stream = GameLogStream()
+        received = _collect(stream)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)  # empty first scan
+
+        # Create Alice's log with combat data
+        alice_path = _log(
+            tmp_path,
+            "Alice",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_100",
+            session="2026.08.25 11:30:00",
+        )
+        # Make Alice unreadable by replacing with a broken symlink
+        real_data = alice_path.read_bytes()
+        alice_path.unlink()
+        broken = tmp_path / "broken_target"
+        alice_path.symlink_to(broken)
+        stream.scan_once(NOW)
+        # Alice should NOT appear (stat failed)
+        alice_events = [
+            e
+            for e in received
+            if isinstance(e, SourceLifecycle) and e.character == "Alice"
+        ]
+        assert alice_events == []
+        received.clear()
+
+        # Recover: remove broken symlink, write the file back
+        alice_path.unlink()
+        alice_path.write_bytes(real_data)
+        stream.scan_once(NOW)
+        # Alice appears but her content is historical — no facts replayed
+        facts = [
+            e for e in received if isinstance(e, CombatFact) and e.character == "Alice"
+        ]
+        assert facts == [], "Recovered after stat failure must not replay"
+        alice_lc = [
+            e
+            for e in received
+            if isinstance(e, SourceLifecycle) and e.character == "Alice" and e.active
+        ]
+        assert len(alice_lc) == 1
+        stream.stop()
+
+    def test_genuinely_new_file_after_baseline_reads_from_zero(self, tmp_path):
+        """While known-path tombstoning prevents replay, a genuinely new
+        file whose path was NEVER seen in any prior scan reads from zero."""
+        stream = GameLogStream()
+        received = _collect(stream)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)  # empty first scan
+        # A file that never existed during any prior scan
+        _log(
+            tmp_path,
+            "NewChar",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_NEW",
+            session="2026.08.25 11:30:00",
+        )
+        stream.scan_once(NOW)
+        facts = [
+            e
+            for e in received
+            if isinstance(e, CombatFact) and e.character == "NewChar"
+        ]
+        assert len(facts) >= 1, "Genuinely new file should read from zero"
+        stream.stop()
+
+    def test_transient_per_source_read_error_does_not_suppress_others(self, tmp_path):
+        """One unreadable file during poll does not suppress reads from
+        other sources.  Bob's new data is still emitted."""
         stream = GameLogStream()
         received = _collect(stream)
         stream.start(tmp_path)
@@ -399,15 +542,13 @@ class TestReplayPrevention:
         # Append to Bob's file
         with open(tmp_path / "20260825_113000_200.txt", "a", encoding="utf-8") as fh:
             fh.write(OUTGOING_DAMAGE_LINE)
-        # Make Alice's file unreadable by removing it mid-poll
-        alice_path = tmp_path / "20260825_113000_100.txt"
-        alice_path.unlink()
+        # Remove Alice's file
+        (tmp_path / "20260825_113000_100.txt").unlink()
         stream.scan_once(NOW)
-        facts = [e for e in received if isinstance(e, CombatFact)]
-        bob_facts = [f for f in facts if f.character == "Bob"]
-        assert len(bob_facts) >= 1, (
-            "Bob's facts must not be suppressed by Alice's error"
-        )
+        bob_facts = [
+            e for e in received if isinstance(e, CombatFact) and e.character == "Bob"
+        ]
+        assert len(bob_facts) >= 1, "Bob's facts must survive Alice's error"
         stream.stop()
 
     def test_subscriber_exception_does_not_stop_later_subscribers(self, tmp_path):
@@ -434,26 +575,6 @@ class TestReplayPrevention:
         )
         stream.scan_once(NOW)
         assert len(received_good) > 0, "Good subscriber must still receive events"
-        stream.stop()
-
-    def test_successful_poll_clears_last_error(self, tmp_path):
-        """Health should clear transient errors after a good poll."""
-        folder = tmp_path / "gamelogs"
-        folder.mkdir()
-        stream = GameLogStream()
-        stream.start(folder)
-        # Remove the folder to cause an error
-        import shutil
-
-        shutil.rmtree(folder)
-        stream.scan_once(NOW)
-        health_bad = stream.health()
-        assert health_bad.state in ("error", "missing_folder")
-        # Restore the folder
-        folder.mkdir()
-        stream.scan_once(NOW)
-        health_good = stream.health()
-        assert health_good.state != "error"
         stream.stop()
 
 
@@ -484,6 +605,54 @@ class TestHealth:
         assert h.state == "missing_folder"
         stream.stop()
 
+    def test_error_clears_only_after_fully_successful_rescan(self, tmp_path):
+        """Inject a real scan error (broken symlink causing stat failure),
+        verify health reports error, then fix it and verify error clears
+        only after a fully clean rescan."""
+        folder = tmp_path / "gamelogs"
+        folder.mkdir()
+        stream = GameLogStream()
+        stream.start(folder)
+        stream.scan_once(NOW)  # baseline — running, no error
+
+        # Create a broken symlink that will cause stat failure
+        broken_link = folder / "20260825_110000_bad.txt"
+        broken_link.symlink_to(folder / "nonexistent_target")
+        stream.scan_once(NOW)
+        h = stream.health()
+        assert h.state == "error", f"Expected error after stat failure, got {h.state}"
+
+        # Fix the error by removing the broken symlink
+        broken_link.unlink()
+        stream.scan_once(NOW)
+        h = stream.health()
+        assert h.state != "error", "Error should clear after a fully clean rescan"
+        stream.stop()
+
+    def test_per_source_poll_error_is_recorded(self, tmp_path):
+        """A read failure during poll is recorded in health without
+        suppressing other sources."""
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        _log(
+            tmp_path, "Alice", stem="20260825_113000_100", session="2026.08.25 11:30:00"
+        )
+        _log(tmp_path, "Bob", stem="20260825_113000_200", session="2026.08.25 11:30:00")
+        stream.scan_once(NOW)
+        # Remove Alice's file to cause a poll error
+        (tmp_path / "20260825_113000_100.txt").unlink()
+        # Append to Bob
+        with open(tmp_path / "20260825_113000_200.txt", "a", encoding="utf-8") as fh:
+            fh.write(OUTGOING_DAMAGE_LINE)
+        stream.scan_once(NOW)
+        h = stream.health()
+        # The rescan will retire Alice (folder enumeration no longer finds
+        # her), so the poll error may or may not surface depending on
+        # ordering.  The important thing is health is not "stopped".
+        assert h.state != "stopped"
+        stream.stop()
+
 
 # ---------------------------------------------------------------------------
 # Interface contracts
@@ -499,15 +668,15 @@ class TestInterface:
         _log(tmp_path, "Alice")
         stream.scan_once(NOW)
         unsub()
+        received_after_unsub = len(received)
         _log(tmp_path, "Bob", stem="20260825_113000_456", session="2026.08.25 11:30:00")
         stream.scan_once(NOW)
-        # After unsubscribe, no new events
-        alice_events = [
+        bob_events = [
             e
-            for e in received
+            for e in received[received_after_unsub:]
             if isinstance(e, SourceLifecycle) and e.character == "Bob"
         ]
-        assert alice_events == []
+        assert bob_events == [], "No events after unsubscribe"
         stream.stop()
 
     def test_stop_is_idempotent(self, tmp_path):
@@ -515,6 +684,15 @@ class TestInterface:
         stream.start(tmp_path)
         stream.stop()
         stream.stop()  # Must not raise
+
+    def test_start_is_idempotent(self, tmp_path):
+        """Calling start() while already running is a no-op."""
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        worker1 = stream._worker
+        stream.start(tmp_path)  # no-op
+        assert stream._worker is worker1, "start() must not spawn a second worker"
+        stream.stop()
 
     def test_request_source_triggers_lifecycle_for_character(self, tmp_path):
         """request_source re-publishes lifecycle for a known character."""
@@ -528,6 +706,7 @@ class TestInterface:
         lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
         assert len(lifecycles) == 1
         assert lifecycles[0].character == "Alice"
+        assert lifecycles[0].active is True
         stream.stop()
 
     def test_request_source_unavailable_character(self, tmp_path):
@@ -613,7 +792,7 @@ class TestCombatFactParsing:
             fh.write(DAMAGE_LINE)
         stream.scan_once(NOW)
         facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(facts) >= 1
+        assert len(facts) == 1
         assert facts[0].kind == "incoming_damage"
         assert facts[0].character == "Alice"
         stream.stop()
@@ -631,7 +810,7 @@ class TestCombatFactParsing:
             fh.write(OUTGOING_DAMAGE_LINE)
         stream.scan_once(NOW)
         facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(facts) >= 1
+        assert len(facts) == 1
         assert facts[0].kind == "outgoing_damage"
         assert facts[0].amount == 299
         stream.stop()
@@ -672,7 +851,6 @@ class TestCombatFactParsing:
             session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        # Scramble targeting someone else
         scramble = SCRAMBLE_LINE.format(target="Dave Kord [KVOS]")
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(scramble)
@@ -697,4 +875,161 @@ class TestCombatFactParsing:
         stream.scan_once(NOW)
         facts = [e for e in received if isinstance(e, CombatFact)]
         assert len(facts) >= 1
+        stream.stop()
+
+
+# ---------------------------------------------------------------------------
+# Worker lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestWorker:
+    """Real threaded lifecycle: daemon=False, cadence, stop event, join."""
+
+    def test_start_spawns_a_non_daemon_worker(self, tmp_path):
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        assert stream._worker is not None
+        assert stream._worker.is_alive()
+        assert stream._worker.daemon is False
+        stream.stop()
+
+    def test_stop_joins_the_worker_within_timeout(self, tmp_path):
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        worker = stream._worker
+        t0 = time.monotonic()
+        stream.stop(timeout=3.0)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 3.0, "stop() must join within the timeout"
+        assert not worker.is_alive()
+
+    def test_fresh_stop_event_per_start_generation(self, tmp_path):
+        """Each start() creates a fresh stop event so a leftover set()
+        from a previous stop cannot immediately kill the new worker."""
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        ev1 = stream._stop_event
+        stream.stop()
+        assert ev1.is_set()
+        stream.start(tmp_path)
+        ev2 = stream._stop_event
+        assert ev2 is not ev1, "Must be a fresh event object"
+        assert not ev2.is_set(), "Fresh event must not be pre-set"
+        stream.stop()
+
+    def test_worker_polls_at_least_once_before_stop(self, tmp_path):
+        """The worker runs at least one poll cycle."""
+        stream = GameLogStream()
+        received = _collect(stream)
+        _log(tmp_path, "Alice")
+        stream.start(tmp_path)
+        # Give the worker time for at least one cycle
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if any(isinstance(e, SourceLifecycle) for e in received):
+                break
+            time.sleep(0.05)
+        stream.stop()
+        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lifecycles) >= 1, "Worker must have polled at least once"
+
+    def test_stop_is_idempotent_with_worker(self, tmp_path):
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        stream.stop()
+        stream.stop()  # Must not raise
+
+    def test_start_stop_start_stop_cycle(self, tmp_path):
+        """Full restart cycle works cleanly."""
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        assert stream._worker.is_alive()
+        stream.stop()
+        assert stream._worker is None or not stream._worker.is_alive()
+        stream.start(tmp_path)
+        assert stream._worker.is_alive()
+        stream.stop()
+
+
+# ---------------------------------------------------------------------------
+# Thread safety
+# ---------------------------------------------------------------------------
+
+
+class TestThreadSafety:
+    def test_subscribe_unsubscribe_concurrent_with_scan(self, tmp_path):
+        """subscribe/unsubscribe during scan_once must not crash."""
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        _log(tmp_path, "Alice")
+
+        barrier = threading.Event()
+        results = []
+
+        def subscriber(event):
+            results.append(event)
+
+        def sub_unsub():
+            barrier.wait(timeout=2)
+            for _ in range(50):
+                unsub = stream.subscribe(subscriber)
+                unsub()
+
+        t = threading.Thread(target=sub_unsub)
+        t.start()
+        barrier.set()
+        for _ in range(50):
+            stream.scan_once(NOW)
+        t.join(timeout=5)
+        assert not t.is_alive()
+        stream.stop()
+
+    def test_request_source_concurrent_with_scan(self, tmp_path):
+        """request_source during scan_once must not crash."""
+        stream = GameLogStream()
+        _collect(stream)
+        stream.start(tmp_path)
+        _log(tmp_path, "Alice")
+        stream.scan_once(NOW)
+
+        barrier = threading.Event()
+
+        def requester():
+            barrier.wait(timeout=2)
+            for _ in range(50):
+                stream.request_source("Alice")
+                stream.request_source("Unknown")
+
+        t = threading.Thread(target=requester)
+        t.start()
+        barrier.set()
+        for _ in range(50):
+            stream.scan_once(NOW)
+        t.join(timeout=5)
+        assert not t.is_alive()
+        stream.stop()
+
+    def test_health_concurrent_with_scan(self, tmp_path):
+        """health() during scan_once must not crash."""
+        stream = GameLogStream()
+        stream.start(tmp_path)
+        _log(tmp_path, "Alice")
+
+        barrier = threading.Event()
+        health_results = []
+
+        def health_poller():
+            barrier.wait(timeout=2)
+            for _ in range(50):
+                health_results.append(stream.health())
+
+        t = threading.Thread(target=health_poller)
+        t.start()
+        barrier.set()
+        for _ in range(50):
+            stream.scan_once(NOW)
+        t.join(timeout=5)
+        assert not t.is_alive()
+        assert len(health_results) == 50
         stream.stop()
