@@ -1045,6 +1045,17 @@
   // the harness cannot show that a LIVE upload survives a trip to Skills
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
+  // Pushes an onEveSettingsNames payload carrying the current
+  // devIdentificationGeneration so acceptIdentification() in evesettings.js
+  // accepts it. deleted_candidate_ids is always empty here — the console
+  // helpers only change structural state, not character existence.
+  function devPushEveNames() {
+    window.onEveSettingsNames({
+      identification_generation: devIdentificationGeneration,
+      deleted_candidate_ids: []
+    });
+  }
+
   window.DEV = {
     // `busy` defaults to true -- a percentage arriving usually means a live
     // transfer -- but it is a PARAMETER because the two payloads that carry
@@ -1147,16 +1158,16 @@
       eve.root = ''; eve.server = ''; eve.profile = '';
       eve.servers = []; eve.profiles = [];
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveUnreadable: function () {
       eve.unreadable = true;
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveSelectiveAvailable: function (available) {
       eve.selective_copy_available = !!available;
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     skillsEmpty: function () {
       skills.characters = [];
@@ -1246,6 +1257,10 @@
     eve_running: null,
     identification_active: selectedIdentityScenario.stage !== 'intro'
       && selectedIdentityScenario.stage !== 'manage',
+    // True unconditionally: the dev harness always points at a Tranquility
+    // fixture. Without this the canIdentify guard Task 6 added hides every
+    // identity control and all identification scenarios render as inert.
+    account_identity_available: true,
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
@@ -1341,6 +1356,12 @@
     return Promise.resolve(null);
   };
   var pendingDevCandidate = null;
+  // Monotonic counter matching Task 5's Python generation scheme: bumped
+  // on every start and cancel so a stale promise from a superseded pass
+  // is rejected by acceptIdentification() the same way it would be in
+  // production. Carried by start/check/cancel responses and by every
+  // onEveSettingsNames push.
+  var devIdentificationGeneration = 0;
 
   function devAccount(accountId) {
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
@@ -1436,16 +1457,25 @@
   api.eve_settings_identification_start = function () {
     pendingDevCandidate = null;
     eve.identification_active = true;
-    return Promise.resolve({ status: 'watching', error: null });
+    // Bump the generation so any in-flight check promise resolves stale.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'watching', error: null,
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_check = function () {
     var result = selectedIdentityScenario.check
       || { status: 'watching', error: null };
     pendingDevCandidate = result.status === 'candidate' ? result : null;
-    if (result.status !== 'candidate') return Promise.resolve(result);
+    if (result.status !== 'candidate') {
+      return Promise.resolve(Object.assign({}, result,
+        { identification_generation: devIdentificationGeneration }));
+    }
     var account = devAccount(result.account_id);
     return Promise.resolve({
       status: 'candidate', error: null,
+      identification_generation: devIdentificationGeneration,
       account: { id: account.id, primary: account.display_name,
                  secondary: account.display_meta, option: account.name },
       characters: result.character_ids.map(devCharacter).filter(Boolean)
@@ -1454,7 +1484,12 @@
   api.eve_settings_identification_cancel = function () {
     pendingDevCandidate = null;
     eve.identification_active = false;
-    return Promise.resolve(true);
+    // Bump so any racing check that resolves after this cancel is rejected.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'cancelled',
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_confirm = function (accountId, characterId, name) {
     var offered = pendingDevCandidate

@@ -1281,8 +1281,17 @@
       if (invalidatesCandidate) {
         if (state) state.identification_active = false;
         clearIdentification();
-        paintIdentification('idle',
-          'That character was deleted. Start account identification again.');
+        // Only paint and focus when the identity sub-screen is open;
+        // otherwise clear silently so returning to the route shows the
+        // correct idle state without stealing focus from another screen.
+        if (identityRouteOpen) {
+          paintIdentification('idle',
+            'That character was deleted. Start account identification again.');
+        } else {
+          identityStep = 'idle';
+          identityMessage =
+            'That character was deleted. Start account identification again.';
+        }
       }
     }
     refresh();
