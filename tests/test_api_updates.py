@@ -778,9 +778,11 @@ def test_update_check_worker_construction_and_start_failures_roll_back_state(
     tmp_path, update_spawn
 ):
     api, _window = _update_api(tmp_path, FakeUpdates(), update_spawn=update_spawn)
+    sent = fakes.record_pushes(api)
 
     status = api.check_for_updates()
 
+    assert fakes.payloads(sent, "onUpdateStatus")[-1] == status
     assert status["state"] == "idle"
     assert status["can_check"] is True
     assert status["error"] == "Could not start checking for updates. Try again."
@@ -849,6 +851,52 @@ def test_update_check_releases_the_lock_before_spawn_and_push(tmp_path):
     assert events == ["construct", "onUpdateStatus", "start", "onUpdateStatus"]
 
 
+def test_page_ready_cleans_stale_staging_before_the_automatic_check(tmp_path):
+    class OrderedUpdates(FakeUpdates):
+        def latest_release(self, current_version=updates_mod.__version__):
+            self.events.append("check")
+            return super().latest_release(current_version)
+
+        def cleanup_staging(self, staging_root):
+            self.events.append("cleanup")
+            super().cleanup_staging(staging_root)
+
+    service = OrderedUpdates(release=_release_info("4.9.0"))
+    api, _window = _update_api(tmp_path, service)
+    api.refresh_auth = lambda: None
+
+    api._page_ready()
+    _join_update(api)
+    api._cleanup_update_staging_once()
+
+    assert service.events == ["cleanup", "check"]
+    assert service.cleanup_calls == [api._update_staging_root()]
+    assert api.update_status()["state"] == "available"
+
+
+def test_page_ready_logs_cleanup_failure_and_still_checks_for_updates(tmp_path, caplog):
+    class FailingCleanupUpdates(FakeUpdates):
+        def cleanup_staging(self, staging_root):
+            self.cleanup_calls.append(Path(staging_root))
+            raise OSError("staging directory is locked")
+
+    service = FailingCleanupUpdates(release=_release_info("4.9.0"))
+    api, _window = _update_api(tmp_path, service)
+    api.refresh_auth = lambda: None
+
+    with caplog.at_level(logging.WARNING, logger=api_mod.__name__):
+        api._page_ready()
+        _join_update(api)
+
+    assert service.check_calls == 1
+    assert api.update_status()["state"] == "available"
+    assert any(
+        "Could not clean updater staging at startup" in record.getMessage()
+        and record.exc_info is not None
+        for record in caplog.records
+    )
+
+
 def test_get_settings_does_not_call_the_update_service(tmp_path):
     service = FakeUpdates(release=_release_info("4.9.0"))
     api, _window = _update_api(tmp_path, service)
@@ -856,6 +904,7 @@ def test_get_settings_does_not_call_the_update_service(tmp_path):
     api.get_settings()
 
     assert service.check_calls == 0
+    assert service.cleanup_calls == []
 
 
 def test_update_runtime_attributes_are_private(tmp_path):
@@ -973,9 +1022,11 @@ def test_download_worker_construction_and_start_failures_are_retryable(
 ):
     service = FakeUpdates(release=_release_info("4.9.0"))
     api, _window = _available_api(tmp_path, service, update_spawn=update_spawn)
+    sent = fakes.record_pushes(api)
 
     status = api.download_update()
 
+    assert fakes.payloads(sent, "onUpdateStatus")[-1] == status
     assert status["state"] == "download_failed"
     assert status["can_download"] is True
     assert status["error"] == "Could not start downloading the update. Try again."
@@ -1363,9 +1414,11 @@ def test_install_worker_construction_and_start_failures_release_handoff(
 ):
     service = FakeUpdates(release=_release_info("4.9.0"))
     api, _window = _ready_api(tmp_path, service, update_spawn=update_spawn)
+    sent = fakes.record_pushes(api)
 
     status = api.install_update()
 
+    assert fakes.payloads(sent, "onUpdateStatus")[-1] == status
     assert status["state"] == "ready"
     assert status["error"] == "Could not start installing the update. Try again."
     assert api._work_gate.handoff_phase() == ""

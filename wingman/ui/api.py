@@ -694,6 +694,7 @@ class Api:
         self._work_gate = _WorkGate()
         self._update_lock = threading.Lock()
         self._update = _UpdateRuntime()
+        self._update_staging_cleaned = False
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
         # The standalone combat-log post, and Play. Separate handles rather
@@ -2638,7 +2639,20 @@ class Api:
     def _page_ready(self) -> None:
         """Start optional network work only after WebView2 owns the page."""
         self.refresh_auth()
+        self._cleanup_update_staging_once()
         self._start_update_check(automatic=True)
+
+    def _cleanup_update_staging_once(self) -> None:
+        with self._update_lock:
+            if self._update_staging_cleaned:
+                return
+            # Claim the attempt before I/O. A locked staging directory is retried
+            # on the next launch, not repeatedly during this one.
+            self._update_staging_cleaned = True
+        try:
+            self._update_service.cleanup_staging(self._update_staging_root())
+        except Exception:
+            logger.warning("Could not clean updater staging at startup", exc_info=True)
 
     def download_update(self) -> dict:
         with self._update_lock:

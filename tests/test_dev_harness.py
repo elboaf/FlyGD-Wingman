@@ -183,6 +183,78 @@ def test_update_action_methods_have_dev_doubles():
     assert "api.install_update = function" in DEV_JS
 
 
+def test_dev_update_permissions_match_the_production_state_matrix():
+    match = re.search(
+        r"var DEV_UPDATE_PERMISSIONS = JSON\.parse\('(.*?)'\);",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, "dev.js must declare one exact updater permission matrix"
+    assert json.loads(match.group(1)) == {
+        "idle": {"can_check": True, "can_download": False, "can_install": False},
+        "checking": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "current": {
+            "can_check": True,
+            "can_download": False,
+            "can_install": False,
+        },
+        "unavailable": {
+            "can_check": True,
+            "can_download": False,
+            "can_install": False,
+        },
+        "available": {
+            "can_check": True,
+            "can_download": True,
+            "can_install": False,
+        },
+        "check_failed": {
+            "can_check": True,
+            "can_download": True,
+            "can_install": False,
+        },
+        "download_failed": {
+            "can_check": True,
+            "can_download": True,
+            "can_install": False,
+        },
+        "downloading": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "ready": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": True,
+        },
+        "handing_off": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "revalidating": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "launching": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "closed": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+    }
+
+
 def test_dev_update_state_selects_by_query_string():
     """`?dev=1&update=<state>` must return the exact production payload
     shape for whichever state is asked for, not a single fixed fixture --

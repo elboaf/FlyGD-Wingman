@@ -517,14 +517,38 @@ def test_renderer_reads_only_payload_booleans_for_permission():
         )
 
 
-def test_confirm_fires_once_on_a_true_downloading_to_ready_transition():
+def test_update_error_takes_precedence_over_normal_state_copy():
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    status_text = settings_js[settings_js.index("function updateStatusText(") :]
+    status_text = status_text[: status_text.index("\n  }\n")]
+
+    assert status_text.index("p.error") < status_text.index("switch (p.state)")
+
+
+def test_update_actions_render_only_from_backend_pushes():
+    """Action return values can arrive after a fast worker's newer push.
+
+    Only the cached General-entry read may render its method return; all
+    state-changing actions use onUpdateStatus as their authoritative path.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    for method in ("check_for_updates", "download_update", "install_update"):
+        send = settings_js.index(f"WM.send('{method}')")
+        statement = settings_js[send : settings_js.index(";", send) + 1]
+        assert "renderUpdate" not in statement
+        assert ".then(" not in statement
+
+    cached_read = settings_js.index("WM.send('update_status')")
+    statement = settings_js[cached_read : settings_js.index(";", cached_read) + 1]
+    assert "renderUpdate" in statement
+
+
+def test_confirm_fires_once_on_a_true_downloading_to_installable_transition():
     """The transition check must be one function taking the previous
-    phase, not a copy re-derived at each of the three render entry points
-    (general-entry read, a button's own resolved promise, and the
-    `wm:update-status` push listener) -- three copies is three chances for
-    one of them to auto-confirm on a phase it never actually crossed, or
-    for a cached `ready` seen on first paint to pop a dialog nobody asked
-    for.
+    phase, not a copy re-derived at each render entry point (the cached
+    General read and the `wm:update-status` push listener). Separate copies
+    could auto-confirm on a phase one path never crossed, while rendering
+    action returns could move the shared phase backwards after a newer push.
     """
     settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
     assert re.search(
@@ -539,9 +563,15 @@ def test_confirm_fires_once_on_a_true_downloading_to_ready_transition():
     # variable, so a transition detected by one entry point cannot be missed
     # or double-counted by another.
     assert settings_js.count("updatePhase = ") >= 1
+    renderer = settings_js[settings_js.index("function renderUpdate(") :]
+    renderer = renderer[: renderer.index("\n  }\n")]
+    assert re.search(
+        r"justFinishedDownloading\([^)]*\)\s*&&\s*p\.can_install",
+        renderer,
+    ), "source checkouts must not receive an unusable automatic Install prompt"
     calls = len(re.findall(r"renderUpdate\(", settings_js))
-    assert calls >= 4, (
-        "expected renderUpdate to be the one renderer called from the "
-        "general-entry read, all three button handlers and the push "
-        f"listener; found only {calls} call sites"
+    assert calls == 3, (
+        "expected renderUpdate only in its declaration, the cached General read, "
+        "and the push listener; action returns must not repaint stale state; "
+        f"found {calls} occurrences"
     )

@@ -45,16 +45,16 @@
 
   // ---- Update status (About card) --------------------------------------
   // Task 5's bridge contract lands in app.js, which also owns the gear
-  // badge; this is the card's own renderer, reached from three places --
-  // the General-entry read below, each button's own resolved promise, and
-  // every later `onUpdateStatus` push -- so ONE function is the only place
-  // that paints text, progress and button state from the payload.
+  // badge; this is the card's own renderer, reached from the cached
+  // General-entry read below and every later `onUpdateStatus` push. Action
+  // return values are deliberately ignored: a fast worker can push newer
+  // state before its bridge method's older snapshot resolves.
 
   // The phase last painted, so a downloading -> ready transition can be
-  // caught exactly once regardless of which of the three callers observes
-  // it. Updated by renderUpdate itself, never read or written elsewhere,
-  // so there is exactly one copy for three call sites to share -- a copy
-  // per caller would let a push the general-entry read never saw confirm
+  // caught exactly once regardless of which delivery observes it. Updated
+  // by renderUpdate itself, never read or written elsewhere, so there is
+  // exactly one copy for both render paths to share -- a copy per caller
+  // would let a push the general-entry read never saw confirm
   // twice, or a page freshly opened onto an already-`ready` cache confirm
   // on a transition that happened in a previous session.
   var updatePhase = null;
@@ -66,6 +66,7 @@
   // silent startup check must not read as a specific diagnosis nobody
   // asked for.
   function updateStatusText(p) {
+    if (p.error) { return p.error; }
     switch (p.state) {
       case 'checking': return 'Checking for updates\u2026';
       case 'current': return 'Wingman is up to date.';
@@ -122,7 +123,9 @@
     // Automatic and exactly once: a general-entry read that lands on an
     // already-cached `ready` (previous === null) must not pop the dialog
     // a user never asked for -- only an observed transition may.
-    if (justFinishedDownloading(previous, p.state)) { confirmInstall(); }
+    if (justFinishedDownloading(previous, p.state) && p.can_install) {
+      confirmInstall();
+    }
   }
 
   // Also the click handler for the Install button itself: every click
@@ -131,17 +134,15 @@
   function confirmInstall() {
     WM.confirm('Install update?',
                'Wingman will close and open the normal installer.').then(function (ok) {
-      if (ok) {
-        WM.send('install_update').then(function (p) { if (p) renderUpdate(p); });
-      }
+      if (ok) { WM.send('install_update'); }
     });
   }
 
   WM.el('btn-update-check').addEventListener('click', function () {
-    WM.send('check_for_updates').then(function (p) { if (p) renderUpdate(p); });
+    WM.send('check_for_updates');
   });
   WM.el('btn-update-download').addEventListener('click', function () {
-    WM.send('download_update').then(function (p) { if (p) renderUpdate(p); });
+    WM.send('download_update');
   });
   WM.el('btn-update-install').addEventListener('click', confirmInstall);
 

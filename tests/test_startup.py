@@ -130,6 +130,9 @@ def startup(monkeypatch, tmp_path):
     def spy_refresh_auth(self):
         order.append("refresh_auth")
 
+    def spy_update_cleanup(self):
+        order.append("update_cleanup")
+
     def spy_update_check(self, automatic):
         order.append("update_check")
         captured.setdefault("automatic_checks", []).append(automatic)
@@ -145,6 +148,12 @@ def startup(monkeypatch, tmp_path):
         order.append("shutdown_skills")
 
     monkeypatch.setattr(main_mod.api_mod.Api, "refresh_auth", spy_refresh_auth)
+    monkeypatch.setattr(
+        main_mod.api_mod.Api,
+        "_cleanup_update_staging_once",
+        spy_update_cleanup,
+        raising=False,
+    )
     monkeypatch.setattr(main_mod.api_mod.Api, "_start_update_check", spy_update_check)
     monkeypatch.setattr(
         main_mod.api_mod.Api,
@@ -172,10 +181,12 @@ def test_nothing_touches_the_page_before_the_gui_loop_starts(startup):
     assert main_mod.main() == 0
     order = startup.order
     assert "refresh_auth" in order, "the auth check must still run at startup"
+    assert "update_cleanup" in order, "stale updater staging must be cleaned at startup"
     assert "update_check" in order, "the update check must run at startup"
     assert order.index("run") < order.index("refresh_auth")
-    assert order.index("run") < order.index("update_check"), (
-        f"startup work ran before the GUI loop: {order}"
+    assert order.index("run") < order.index("update_cleanup")
+    assert order.index("update_cleanup") < order.index("update_check"), (
+        f"startup updater work ran out of order: {order}"
     )
 
 
