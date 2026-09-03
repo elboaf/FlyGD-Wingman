@@ -4875,6 +4875,17 @@ button.btn.danger:disabled {
   flex: none; display: flex; align-items: center; justify-content: center;
   gap: 12px; padding-top: 4px; font-size: var(--fs-muted); color: var(--text-dim);
 }
+/* Shipped in 5473d52 without this: #fittings-pager carries a static
+   `hidden` attribute in index.html, but `.fit-pager` sets its own
+   `display`, so a single-page or unavailable workspace rendered the
+   pager anyway (and could read "Page undefined of 1" besides -- see
+   fittings.js's renderPager, which now also defaults that). Same trap
+   the banner above test_every_hidden_element_can_actually_hide
+   describes; this instance evaded that generic detector because its
+   `display: flex` sits mid-declaration on a shared line
+   (`flex: none; display: flex; ...`) rather than at the start of its own
+   CSS line, which is what that detector's regex anchors on. */
+.fit-pager[hidden] { display: none; }
 
 /* The Characters overlay: an app-owned modal reusing .overlay/.dialog
    (style rules already shared with the confirm/prompt layer), not a

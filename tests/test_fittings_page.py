@@ -15,6 +15,11 @@ WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 APP_JS = (WEB / "app.js").read_text(encoding="utf-8")
 FITTINGS_JS = (WEB / "fittings.js").read_text(encoding="utf-8")
+# Comments stripped before any rule parsing, same as test_page_conventions.py:
+# a naive selector capture otherwise swallows a leading block comment.
+CSS = re.sub(
+    r"/\*.*?\*/", "", (WEB / "style.css").read_text(encoding="utf-8"), flags=re.DOTALL
+)
 
 
 def test_the_nav_button_exists_and_points_at_the_route():
@@ -123,3 +128,66 @@ def test_fittings_state_bridge_call_matches_a_real_api_method():
     from wingman.ui.api import Api
 
     assert callable(getattr(Api, "fittings_state", None))
+
+
+def test_the_pager_can_actually_hide():
+    r"""Round 1 fix for a Major found after 5473d52 shipped: `#fittings-pager`
+    carries a static `hidden` attribute in index.html, and `.fit-pager`
+    sets its own `display`, so without a `.fit-pager[hidden]` override a
+    single-page or an unavailable workspace rendered the pager anyway --
+    the exact trap test_page_conventions.py's
+    test_every_hidden_element_can_actually_hide exists to catch.
+
+    That generic detector missed this instance because its display-search
+    anchors to the start of a CSS line
+    (`re.search(r"(?m)^\s*display\s*:", block)`), and `.fit-pager` declares
+    `display: flex` mid-line, after `flex: none; ` on the same line --
+    never at a line start. This test parses the actual declaration block
+    instead of anchoring to line starts, so it does not share that blind
+    spot and fails against 5473d52.
+    """
+    assert re.search(
+        r'<div class="fit-pager" id="fittings-pager"[^>]*\bhidden\b', HTML
+    ), "#fittings-pager no longer carries a static hidden attribute"
+
+    block_match = re.search(r"(?<![\w-])\.fit-pager\s*\{([^{}]*)\}", CSS)
+    assert block_match, "no bare .fit-pager rule found in style.css"
+    assert re.search(r"display\s*:\s*\w+", block_match.group(1)), (
+        "this test's own premise (that .fit-pager sets a display the UA "
+        "[hidden] rule cannot beat) no longer holds -- if that is now "
+        "true some other way, this assertion should be revisited rather "
+        "than just deleted"
+    )
+
+    override_match = re.search(r"\.fit-pager\[hidden\]\s*\{([^{}]*)\}", CSS)
+    assert override_match, (
+        "style.css has no .fit-pager[hidden] rule, so #fittings-pager stays "
+        "visible when its `hidden` attribute is set -- a single-page or "
+        "unavailable Fittings workspace would show the pager"
+    )
+    assert re.search(r"display\s*:\s*none", override_match.group(1)), (
+        ".fit-pager[hidden] exists but does not set display: none"
+    )
+
+
+def test_render_pager_defaults_page_when_the_payload_has_none():
+    """Defence in depth alongside the CSS fix above: an unavailable
+    payload (`{available: false, warnings: [...]}`) has no `page` key, and
+    render() does not gate on `available` before calling renderPager, so
+    if the CSS guard above ever regresses this must not also read 'Page
+    undefined of 1' instead of a sane default."""
+    match = re.search(r"function renderPager\(\) \{([\s\S]*?)\n  \}", FITTINGS_JS)
+    assert match, "fittings.js's renderPager() was not found in the expected shape"
+    body = match.group(1)
+    assert re.search(r"var page = STATE\.page \|\| 1;", body), (
+        "renderPager no longer defaults a missing/undefined STATE.page, so a "
+        "malformed or unavailable payload can render 'Page undefined of N' "
+        "in the pager's text content even while it is hidden"
+    )
+    # STATE.page_size is a different field and must not trip this -- only a
+    # bare `STATE.page` read outside the one defaulting line is the problem.
+    bare_reads = re.findall(r"STATE\.page(?!_size)\b", body)
+    assert bare_reads == ["STATE.page"], (
+        "renderPager reads STATE.page directly somewhere other than the "
+        "defaulted `page` variable: " + repr(bare_reads)
+    )

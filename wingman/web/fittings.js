@@ -604,13 +604,20 @@
 
   function renderPager() {
     var pager = WM.el('fittings-pager');
+    // Defaulted the same defensive way pageSize/totalPages already were:
+    // an unavailable payload (`{available: false, warnings: [...]}`) has
+    // no `page` key at all, and render() does not gate on `available`
+    // before calling this, so a malformed/unavailable payload must not
+    // read "Page undefined of 1" even while [hidden] is doing its job --
+    // see the .fit-pager[hidden] rule this pairs with in style.css.
+    var page = STATE.page || 1;
     var pageSize = STATE.page_size || 1;
     var totalPages = Math.max(1, Math.ceil((STATE.total || 0) / pageSize));
     pager.hidden = totalPages <= 1;
     WM.el('fittings-page-label').textContent =
-      'Page ' + STATE.page + ' of ' + totalPages;
-    WM.el('fittings-page-prev').disabled = STATE.page <= 1;
-    WM.el('fittings-page-next').disabled = STATE.page >= totalPages;
+      'Page ' + page + ' of ' + totalPages;
+    WM.el('fittings-page-prev').disabled = page <= 1;
+    WM.el('fittings-page-next').disabled = page >= totalPages;
   }
 
   WM.el('fittings-page-prev').addEventListener('click', function () {
