@@ -174,7 +174,7 @@ def _with_fetch_labels(payload: dict) -> dict:
     return out
 
 
-def _empty_skills_state() -> dict:
+def _empty_skills_state(warnings=None) -> dict:
     """The state payload when there is no controller at all.
 
     Same keys as the real one so skills.js has exactly one renderer. A
@@ -192,7 +192,7 @@ def _empty_skills_state() -> dict:
         "plans": [],
         "characters": [],
         "plan_issues": [],
-        "warnings": ["The EVE skills subsystem is unavailable."],
+        "warnings": list(warnings or ["The EVE skills subsystem is unavailable."]),
         "plans_updated_utc": "",
     }
 
@@ -393,6 +393,8 @@ class Api:
         timer=threading.Timer,
         preview_host=None,
         skills=None,
+        authority=None,
+        authority_warnings=(),
         alerts=None,
     ):
         self._state = state
@@ -447,6 +449,11 @@ class Api:
         # returns a safe value, which is what lets the page render the route
         # without probing for a capability first.
         self._skills = skills
+        self._authority = authority
+        # Migration/load failures must survive until the route asks for state;
+        # pushing a dialog during construction happens before WebView handlers
+        # exist and silently drops the only actionable recovery message.
+        self._authority_warnings = list(authority_warnings)
 
         # None off the happy path -- pre-Windows-check, off Linux in tests,
         # and when the gamelogs feature is otherwise unavailable. Every
@@ -5832,7 +5839,7 @@ class Api:
     def skills_state(self) -> dict:
         """Everything the Skills route renders, in one call."""
         if self._skills is None:
-            return _empty_skills_state()
+            return _empty_skills_state(self._authority_warnings)
         return _with_fetch_labels(self._skills.state_payload())
 
     def skills_character_detail(self, character_id, plan_name) -> dict:
@@ -5872,6 +5879,11 @@ class Api:
         # Do not claim a copy succeeded before that operation has completed.
         return text
 
+    def _eve_authority_changed(self) -> None:
+        """Publish shared auth state only after a Skills controller exists."""
+        if self._skills is not None:
+            self._skills._push_state(force=True)
+
     def skills_add_character(self) -> bool:
         """Start an interactive EVE sign-in. Returns before it finishes.
 
@@ -5881,20 +5893,35 @@ class Api:
         above records that returning None from a no-op WAS the bug, and that
         it cost a checkbox that reverted on every successful toggle.
         """
-        if self._skills is not None:
-            self._skills.authenticate()
+        if self._authority is not None:
+            self._authority.authenticate_skills()
         return True
 
     def skills_cancel_auth(self) -> bool:
-        if self._skills is not None:
-            self._skills.cancel_auth()
+        if self._authority is not None:
+            self._authority.cancel_auth()
         return True
 
     def skills_forget_character(self, character_id) -> bool:
-        """False is meaningful here: nothing was forgotten."""
-        if self._skills is None:
+        """Forget globally; Skills cleanup runs as an authority participant."""
+        if self._authority is None or isinstance(character_id, bool):
             return False
-        return self._skills.forget(character_id)
+        try:
+            wanted = int(character_id)
+        except (TypeError, ValueError):
+            return False
+        if wanted <= 0:
+            return False
+        result = self._authority.forget(wanted)
+        if result.error:
+            self._alert(
+                "warning",
+                "Character removal incomplete"
+                if result.applied
+                else "Character not forgotten",
+                result.error,
+            )
+        return result.applied
 
     def skills_refresh(self) -> bool:
         if self._skills is not None:
@@ -5937,17 +5964,19 @@ class Api:
         return self._skills.delete_group(name)
 
     def shutdown_skills(self) -> None:
-        """Tear the subsystem down on the way out. main() only.
-
-        Not a façade -- the page never calls it, exactly as it never calls
-        shutdown_previews(). Runs on every exit path, so like
-        shutdown_engine() it must never be the thing that raises: a live
-        loopback socket on the fixed redirect port would make the NEXT
-        launch's sign-in fail to bind, and there is no fallback port.
-        """
+        """Stop Skills workers before shared authority. main() only."""
         if self._skills is None:
             return
         try:
             self._skills.shutdown()
         except Exception:
             logger.exception("EVE skills subsystem did not stop cleanly")
+
+    def shutdown_authority(self) -> None:
+        """Stop shared EVE authorization after every feature consumer."""
+        if self._authority is None:
+            return
+        try:
+            self._authority.shutdown()
+        except Exception:
+            logger.exception("EVE authority did not stop cleanly")

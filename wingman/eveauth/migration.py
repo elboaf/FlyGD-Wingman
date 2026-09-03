@@ -9,6 +9,7 @@ from pathlib import Path
 from ..eveskills import state as skills_state
 from .state import (
     MAX_REFRESH_TOKEN_BLOB_CHARS,
+    MAX_SCOPES,
     ROW_DEGRADATION_WARNING_PREFIX,
     AuthorityCharacter,
     AuthorityState,
@@ -27,6 +28,7 @@ class LegacyDisposition(Enum):
 @dataclass(frozen=True)
 class LegacyLoadResult:
     state: skills_state.SkillsState | None
+    authority: AuthorityState | None
     disposition: LegacyDisposition
     warnings: tuple[str, ...] = ()
     error: str = ""
@@ -49,7 +51,53 @@ class MigrationResult:
     error: str = ""
 
 
-def _read_legacy_document(path: Path) -> skills_state.SkillsState:
+def _legacy_scopes(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    scopes = []
+    for item in raw:
+        if len(scopes) >= MAX_SCOPES:
+            break
+        if isinstance(item, str) and item and item not in scopes:
+            scopes.append(item)
+    return tuple(scopes)
+
+
+def _legacy_authority(raw: dict) -> AuthorityState:
+    """Parse the old credential fields after Skills stops owning them.
+
+    This mirrors the legacy normalisation order: scan the complete list, let
+    the last duplicate value win while retaining its first position, then cap
+    the deduplicated roster. Migration is the only remaining code allowed to
+    know the old combined document shape.
+    """
+    by_id: dict[int, AuthorityCharacter] = {}
+    for item in raw["characters"]:
+        if not isinstance(item, dict):
+            continue
+        character_id = skills_state._coerce_int(item.get("character_id"))
+        if character_id is None or character_id <= 0:
+            continue
+        blob = item.get("refresh_token_blob")
+        blob = blob if isinstance(blob, str) else ""
+        rejected_blob = len(blob) > MAX_REFRESH_TOKEN_BLOB_CHARS
+        name = item.get("character_name")
+        owner_hash = item.get("owner_hash")
+        by_id[character_id] = AuthorityCharacter(
+            character_id=character_id,
+            character_name=name.strip() if isinstance(name, str) else "",
+            owner_hash=owner_hash.strip() if isinstance(owner_hash, str) else "",
+            scopes=_legacy_scopes(item.get("scopes")),
+            authenticated_utc=skills_state._parse_utc(item.get("authenticated_utc")),
+            needs_reauth=item.get("needs_reauth") is True or rejected_blob,
+            refresh_token_blob="" if rejected_blob else blob,
+        )
+    return AuthorityState(list(by_id.values())[: skills_state.MAX_CHARACTERS])
+
+
+def _read_legacy_document(
+    path: Path,
+) -> tuple[skills_state.SkillsState, AuthorityState]:
     limit = skills_state.MAX_STATE_FILE_BYTES
     if path.stat().st_size > limit:
         raise ValueError(f"{path.name} exceeds the {limit // (1024 * 1024)} MiB limit.")
@@ -63,11 +111,11 @@ def _read_legacy_document(path: Path) -> skills_state.SkillsState:
         # an empty state. Migration cannot: empty becomes authoritative and the
         # next writes permanently remove the only credential evidence.
         raise ValueError("Legacy Skills state has an invalid document shape.")
-    return skills_state.from_dict(raw)
+    return skills_state.from_dict(raw), _legacy_authority(raw)
 
 
 def _failed_legacy(error: str, warnings: tuple[str, ...] = ()) -> LegacyLoadResult:
-    return LegacyLoadResult(None, LegacyDisposition.FAILED, warnings, error)
+    return LegacyLoadResult(None, None, LegacyDisposition.FAILED, warnings, error)
 
 
 def inspect_legacy_skills(path: Path) -> LegacyLoadResult:
@@ -75,13 +123,13 @@ def inspect_legacy_skills(path: Path) -> LegacyLoadResult:
     path = Path(path)
     backup = path.with_name(path.name + ".bak")
     try:
-        state = _read_legacy_document(path)
+        state, authority = _read_legacy_document(path)
     except FileNotFoundError:
         try:
-            recovered = _read_legacy_document(backup)
+            recovered, recovered_authority = _read_legacy_document(backup)
         except FileNotFoundError:
             return LegacyLoadResult(
-                skills_state.SkillsState(), LegacyDisposition.ABSENT
+                skills_state.SkillsState(), AuthorityState(), LegacyDisposition.ABSENT
             )
         except (OSError, ValueError, RecursionError) as exc:
             return _failed_legacy(
@@ -89,6 +137,7 @@ def inspect_legacy_skills(path: Path) -> LegacyLoadResult:
             )
         return LegacyLoadResult(
             recovered,
+            recovered_authority,
             LegacyDisposition.RECOVERED,
             (f"{path.name} was missing; using {backup.name} without rewriting it.",),
         )
@@ -98,7 +147,7 @@ def inspect_legacy_skills(path: Path) -> LegacyLoadResult:
         return _failed_legacy(f"{path.name} could not be read ({exc}).")
     except (ValueError, RecursionError) as primary_error:
         try:
-            recovered = _read_legacy_document(backup)
+            recovered, recovered_authority = _read_legacy_document(backup)
         except (OSError, ValueError, RecursionError) as backup_error:
             return _failed_legacy(
                 f"{path.name} was invalid ({primary_error}) and its backup could "
@@ -106,13 +155,14 @@ def inspect_legacy_skills(path: Path) -> LegacyLoadResult:
             )
         return LegacyLoadResult(
             recovered,
+            recovered_authority,
             LegacyDisposition.RECOVERED,
             (
                 f"{path.name} was invalid; using backup {backup.name} without "
                 "moving or rewriting either file.",
             ),
         )
-    return LegacyLoadResult(state, LegacyDisposition.LOADED)
+    return LegacyLoadResult(state, authority, LegacyDisposition.LOADED)
 
 
 def _authority_evidence(path: Path) -> tuple[bool, str]:
@@ -145,25 +195,6 @@ def _authority_rows_degraded(warnings: tuple[str, ...]) -> bool:
     return any(
         warning.startswith(ROW_DEGRADATION_WARNING_PREFIX) for warning in warnings
     )
-
-
-def _authority_from_legacy(legacy: skills_state.SkillsState) -> AuthorityState:
-    characters = []
-    for character in legacy.characters:
-        blob = character.refresh_token_blob
-        rejected_blob = len(blob) > MAX_REFRESH_TOKEN_BLOB_CHARS
-        characters.append(
-            AuthorityCharacter(
-                character_id=character.character_id,
-                character_name=character.character_name,
-                owner_hash=character.owner_hash,
-                scopes=tuple(character.scopes),
-                authenticated_utc=character.authenticated_utc,
-                needs_reauth=character.needs_reauth or rejected_blob,
-                refresh_token_blob="" if rejected_blob else blob,
-            )
-        )
-    return AuthorityState(characters)
 
 
 def _strip_authority(legacy: skills_state.SkillsState) -> skills_state.SkillsState:
@@ -250,7 +281,9 @@ def migrate_legacy_skills(
 
     stripped = _strip_authority(legacy.state)
     if authority is None:
-        authority = _authority_from_legacy(legacy.state)
+        if legacy.authority is None:  # Defensive: failed inspection returned above.
+            return MigrationResult(None, None, False, warnings, legacy.error)
+        authority = legacy.authority
         try:
             authority_saver(authority_path, authority)
         except (OSError, ValueError) as exc:

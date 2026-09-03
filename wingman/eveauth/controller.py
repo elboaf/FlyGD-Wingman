@@ -155,6 +155,11 @@ class AuthorityController:
         with self._lock:
             return tuple(self._snapshot(row) for row in self._state.characters)
 
+    @property
+    def auth_in_progress(self) -> bool:
+        with self._lock:
+            return self._auth_in_progress
+
     def character(self, character_id: int) -> AuthorityCharacter | None:
         wanted = self._coerce_character_id(character_id)
         if wanted is None:
@@ -678,7 +683,7 @@ class AuthorityController:
                 self._alert(
                     "warning",
                     "Sign-in not completed",
-                    "The character is no longer at the lifecycle generation that started this sign-in.",
+                    "The character was forgotten or is no longer at the authorisation generation that started this sign-in.",
                 )
                 return False
             if owner_changed and expected_character_id is not None:
@@ -688,6 +693,14 @@ class AuthorityController:
                     "warning",
                     "Sign-in not completed",
                     "Character ownership changed; re-authenticate the character.",
+                )
+                return False
+            if current is None and len(self.characters) >= state_mod.MAX_CHARACTERS:
+                self._alert(
+                    "warning",
+                    "Too many characters",
+                    f"Wingman stores at most {state_mod.MAX_CHARACTERS} characters. "
+                    "Forget one before adding another.",
                 )
                 return False
 

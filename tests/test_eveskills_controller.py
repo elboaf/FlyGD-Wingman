@@ -7,12 +7,20 @@ for the state file, the id cache, and the plans folder.
 
 import json
 import threading
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from wingman.eveauth import application as eveauth_application
+from wingman.eveauth import state as authority_state_mod
+from wingman.eveauth.controller import (
+    AccessTokenResult,
+    AuthorityCharacter,
+    AuthorityController,
+    MutationResult,
+)
 from wingman.eveskills import application
 from wingman.eveskills import esi as esi_mod
 from wingman.eveskills import jwt as jwt_mod
@@ -38,6 +46,87 @@ class Clock:
         self.value = self.value + timedelta(seconds=seconds)
 
 
+class FakeAuthority:
+    """Shared-authority seam; authentication details have their own suite."""
+
+    def __init__(self, characters=(), *, token_results=None):
+        self._characters = {
+            character.character_id: character for character in characters
+        }
+        self._participant = None
+        self._auth_in_progress = False
+        self.token_results = list(token_results or ())
+        self.access_calls = []
+        self.lifecycle_calls = []
+        self.forget_calls = []
+        self.shutdown_calls = 0
+
+    @property
+    def characters(self):
+        return tuple(self._characters.values())
+
+    @property
+    def auth_in_progress(self):
+        return self._auth_in_progress
+
+    def character(self, character_id):
+        return self._characters.get(int(character_id))
+
+    def capability_status(self, character_id, capability):
+        character = self.character(character_id)
+        if character is None:
+            return "missing"
+        if character.needs_reauth:
+            return "reauthenticate"
+        required = eveauth_application.CAPABILITY_SCOPES[capability]
+        return "enabled" if required.issubset(character.scopes) else "enable"
+
+    @contextmanager
+    def lifecycle(self, character_id, capability):
+        self.lifecycle_calls.append((character_id, capability))
+        if self.capability_status(character_id, capability) != "enabled":
+            raise PermissionError("capability not enabled")
+        yield SimpleNamespace(
+            character=self.character(character_id), capability=capability
+        )
+
+    def access_token(self, character_id, capability, *, rejected_token=None):
+        self.access_calls.append((character_id, capability, rejected_token))
+        if self.token_results:
+            result = self.token_results.pop(0)
+            if self.token_results:
+                return result
+            self.token_results.append(result)
+            return result
+        token = "access-2" if rejected_token is not None else "access-1"
+        return AccessTokenResult(token, "", False)
+
+    def authenticate_skills(self):
+        return MutationResult(True, True, "")
+
+    def cancel_auth(self):
+        pass
+
+    def forget(self, character_id):
+        character_id = int(character_id)
+        self.forget_calls.append(character_id)
+        if self._participant is not None:
+            prepared = self._participant.prepare_forget(character_id)
+            if not prepared.applied:
+                return prepared
+        self._characters.pop(character_id, None)
+        if self._participant is not None:
+            self._participant.authority_removed(character_id)
+        return MutationResult(True, True, "")
+
+    def register_participant(self, participant):
+        self._participant = participant
+        participant.reconcile_characters(self.characters)
+
+    def shutdown(self):
+        self.shutdown_calls += 1
+
+
 class DeferredSpawn:
     """Captures worker targets instead of starting threads.
 
@@ -57,7 +146,15 @@ class DeferredSpawn:
         self.targets.pop(0)()
 
 
-def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
+def build(
+    tmp_path,
+    *,
+    plans=None,
+    characters=(),
+    selected="",
+    authority_characters=None,
+    **kwargs,
+):
     """A controller over a fresh tmp state dir, with its pushes recorded."""
     plans_dir = tmp_path / "skill_plans"
     plans_dir.mkdir(exist_ok=True)  # Exists, so nothing is seeded.
@@ -72,33 +169,208 @@ def build(tmp_path, *, plans=None, characters=(), selected="", **kwargs):
 
     pushed = []
     alerts = []
+    authority = kwargs.pop("authority", None)
     sso = kwargs.pop("sso", None)
-    # Refresh tests hand in a fake SSO that mints plain, non-JWT access
-    # tokens ("access-1"). Item 3 wires a real jwt.validate call into the
-    # refresh path by default, so every one of those tests would otherwise
-    # break on a token it never asked to have validated. Fakes that know
-    # what identity they stand for (`identity_for`) supply a matching
-    # validator here; a test that wants to exercise identity/owner-hash
-    # mismatches passes its own `validate_token=` and this default steps
-    # aside for it.
-    if (
-        sso is not None
-        and "validate_token" not in kwargs
-        and hasattr(sso, "identity_for")
+    roster = authority_characters
+    if roster is None:
+        authority_source = list(characters)
+        if not authority_source and (tmp_path / "eve_skills.json").exists():
+            loaded, _warnings = state_mod.load(tmp_path / "eve_skills.json")
+            authority_source = loaded.characters
+        roster = [
+            AuthorityCharacter(
+                character_id=character.character_id,
+                character_name=f"Character {character.character_id}",
+                owner_hash="",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+            for character in authority_source
+        ]
+    if authority is None and sso is not None:
+        persistent = authority_state_mod.AuthorityState(
+            [
+                authority_state_mod.AuthorityCharacter(
+                    character_id=character.character_id,
+                    character_name=character.character_name,
+                    owner_hash=character.owner_hash,
+                    scopes=character.scopes,
+                    authenticated_utc=character.authenticated_utc,
+                    needs_reauth=character.needs_reauth,
+                    refresh_token_blob="blob",
+                )
+                for character in roster
+            ]
+        )
+        authority_path = tmp_path / "eve_authority.json"
+        authority_state_mod.save_authority(authority_path, persistent)
+        validate = kwargs.pop("validate_token", None)
+        if validate is None and hasattr(sso, "identity_for"):
+            validate = sso.identity_for
+        authority = AuthorityController(
+            state_path=authority_path,
+            authority=persistent,
+            alert=lambda kind, title, body: alerts.append((kind, title, body)),
+            changed=lambda: None,
+            key_source=kwargs.pop("key_source", None),
+            spawn=kwargs.get("spawn", threading.Thread),
+            launch_browser=kwargs.pop("launch_browser", lambda _url: None),
+            now=kwargs.get("now", Clock()),
+            sso=sso,
+            listener_factory=kwargs.pop("listener_factory", None),
+            validate_token=validate,
+            wrap_token=lambda token: token,
+            unwrap_token=lambda blob: blob or None,
+        )
+    elif authority is None:
+        authority = FakeAuthority(roster)
+    for obsolete in (
+        "validate_token",
+        "key_source",
+        "listener_factory",
+        "launch_browser",
     ):
-        kwargs["validate_token"] = sso.identity_for
+        kwargs.pop(obsolete, None)
     controller = SkillsController(
         state_path=tmp_path / "eve_skills.json",
         cache_path=tmp_path / "eve_skills_cache.json",
         plans_dir=plans_dir,
         push=lambda handler, payload: pushed.append((handler, payload)),
         alert=lambda kind, title, body: alerts.append((kind, title, body)),
+        authority=authority,
         client=kwargs.pop("client", None) or object(),
         now=kwargs.pop("now", Clock()),
-        sso=sso,
         **kwargs,
     )
+    authority.register_participant(controller)
+    pushed.clear()  # Registration reconciliation is startup, not a page event.
     return controller, pushed, alerts
+
+
+def test_skills_state_contains_only_feature_data():
+    """Moving credential writes out of Skills is incomplete if a feature
+    row can still retain shared identity or credential fields."""
+    character = state_mod.Character(character_id=95)
+
+    for field in (
+        "character_name",
+        "owner_hash",
+        "scopes",
+        "authenticated_utc",
+        "needs_reauth",
+        "refresh_token_blob",
+    ):
+        assert not hasattr(character, field)
+
+
+def test_character_identity_is_joined_from_shared_authority(tmp_path):
+    """A stale name in Skills must never win over the app-wide identity."""
+    authority = FakeAuthority(
+        [
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Authority Name",
+                owner_hash="owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=3,
+            )
+        ]
+    )
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        authority=authority,
+    )
+
+    row = controller.state_payload()["characters"][0]
+
+    assert row["character_name"] == "Authority Name"
+    assert row["needs_reauth"] is False
+
+
+def test_authority_persistence_warning_survives_a_skills_error(tmp_path):
+    authority = FakeAuthority(
+        [
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Aiga",
+                owner_hash="owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+                persistence_error="The rotated EVE token could not be saved.",
+            )
+        ]
+    )
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95, error="ESI is unavailable.")],
+        authority=authority,
+    )
+
+    error = controller.state_payload()["characters"][0]["error"]
+
+    assert "ESI is unavailable." in error
+    assert "token could not be saved" in error
+
+
+def test_refresh_requests_only_skills_and_ignores_missing_fitting_scopes(tmp_path):
+    authority = FakeAuthority(
+        [
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Skills Pilot",
+                owner_hash="owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ]
+    )
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        authority=authority,
+        client=FakeEsi(),
+        spawn=DirectSpawn(),
+    )
+
+    controller.refresh_characters()
+
+    assert authority.capability_status(95, eveauth_application.FITTINGS) == "enable"
+    assert authority.lifecycle_calls == [(95, eveauth_application.SKILLS)]
+    assert authority.access_calls
+    assert {capability for _, capability, _ in authority.access_calls} == {
+        eveauth_application.SKILLS
+    }
+    assert controller.state_payload()["characters"][0]["needs_reauth"] is False
+
+
+def test_startup_reconciliation_save_warning_survives_until_route_read(tmp_path):
+    """A pre-WebView alert is dropped, so startup failures belong in state."""
+    authority = FakeAuthority([])
+    controller, _pushed, _alerts = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        authority=authority,
+    )
+    # Recreate the first registration path because build() registers once.
+    controller._reconciled_once = False
+    controller._state.upsert(state_mod.Character(character_id=95))
+    controller._save_locked = lambda: False
+
+    controller.reconcile_characters(())
+
+    assert any(
+        "reconciliation could not be saved" in warning
+        for warning in controller.state_payload()["warnings"]
+    )
 
 
 def test_the_state_lock_is_re_entrant(tmp_path):
@@ -134,7 +406,7 @@ def test_a_character_with_no_snapshot_is_unscored_with_zero_counts(tmp_path):
     still render -- the expanded row is the ONLY surface for forgetting or
     re-authenticating, so a character with no row is a character that cannot
     be repaired."""
-    character = state_mod.Character(character_id=95, character_name="Zuelo Parvi")
+    character = state_mod.Character(character_id=95)
     controller, _, _ = build(
         tmp_path,
         characters=[character],
@@ -156,9 +428,7 @@ def test_a_character_with_no_snapshot_is_unscored_with_zero_counts(tmp_path):
 def test_with_no_plan_selected_every_character_is_unscored(tmp_path):
     """Not an error state: the route opens with nothing selected, and forty
     rows reading Unscored is the correct first frame."""
-    character = state_mod.Character(
-        character_id=95, character_name="Aiga", fetched_utc=T0
-    )
+    character = state_mod.Character(character_id=95, fetched_utc=T0)
     controller, _, _ = build(
         tmp_path, characters=[character], plans={"Interceptor": "Navigation V\n"}
     )
@@ -447,7 +717,7 @@ def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
     while one is running must still produce fresh data -- otherwise the
     button silently does nothing during the twenty seconds a forty-character
     pass takes, which reads as a broken button."""
-    character = state_mod.Character(character_id=95, refresh_token_blob="blob")
+    character = state_mod.Character(character_id=95)
     esi = FakeEsi()
     controller = None
     esi.on_get = lambda path: controller.refresh_characters()  # once; see below
@@ -470,7 +740,7 @@ def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
     pass that succeeds. Ported from TriffSkillsController.cs:385, which
     re-kicks on any exit path as long as a request is still pending, not
     only on a clean one."""
-    character = state_mod.Character(character_id=95, refresh_token_blob="blob")
+    character = state_mod.Character(character_id=95)
     esi = FakeEsi()
     controller = None
 
@@ -497,10 +767,17 @@ def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
 def with_snapshot(**kwargs):
     """A character that already has committed data, so a later refresh has
     something to preserve or overwrite."""
+    for authority_field in (
+        "character_name",
+        "owner_hash",
+        "scopes",
+        "authenticated_utc",
+        "needs_reauth",
+        "refresh_token_blob",
+    ):
+        kwargs.pop(authority_field, None)
     defaults = dict(
         character_id=95,
-        character_name="Aiga Otsolen",
-        refresh_token_blob="blob",
         fetched_utc=T0,
         active_levels={3327: 3},
         trained_levels={3327: 3},
@@ -586,8 +863,10 @@ def test_a_failing_queue_call_commits_nothing_at_all(tmp_path):
     assert ch.active_levels == {3327: 3}, "the fresh skills must NOT be kept"
     assert ch.skills_etag == '"old-s"', "nor the etag that would hide it next time"
     assert ch.fetched_utc == T0, "fetched_utc must not move"
-    assert ch.error and ch.needs_reauth is False
-    assert controller.state_payload()["characters"][0]["stale"] is True
+    assert ch.error
+    row = controller.state_payload()["characters"][0]
+    assert row["needs_reauth"] is False
+    assert row["stale"] is True
 
 
 def test_a_failing_skills_call_skips_the_queue_call_entirely(tmp_path):
@@ -610,17 +889,19 @@ def test_cached_skill_data_survives_a_failure(tmp_path):
 
 
 @pytest.mark.parametrize("status", [401, 403])
-def test_a_definitive_failure_needs_reauth_and_deletes_the_token(tmp_path, status):
-    """403, and 401 that survives one retry, are definitive: the grant is
-    gone or no longer carries the scope, and only a fresh consent screen
-    fixes either. Keeping the token would retry a dead grant on every
-    refresh forever."""
+def test_an_endpoint_rejection_does_not_delete_the_shared_grant(tmp_path, status):
+    """An endpoint response is a Skills operation error, not OAuth evidence.
+    The shared grant may still be valid for Skills and Fittings, so only an
+    SSO refresh or validated identity outcome may invalidate it."""
     esi = FakeEsi(skills=[esi_response(status, error="denied")])
     controller, _, _ = run_refresh(tmp_path, esi)
 
     ch = controller._state.characters[0]
-    assert ch.needs_reauth is True
-    assert ch.refresh_token_blob == ""
+    authority = controller._authority.character(95)
+    assert authority.needs_reauth is False
+    assert controller._authority._state.characters[0].refresh_token_blob.startswith(
+        "refresh-"
+    )
     assert ch.error == (
         "EVE rejected the stored authorisation. Re-authenticate this character."
     )
@@ -642,9 +923,9 @@ def test_a_transient_failure_does_not_ask_for_re_authentication(tmp_path):
     esi = FakeEsi(skills=[esi_response(503, error="busy")])
     controller, _, _ = run_refresh(tmp_path, esi)
 
-    ch = controller._state.characters[0]
-    assert ch.needs_reauth is False
-    assert ch.refresh_token_blob == "refresh-1"
+    authority = controller._authority.character(95)
+    assert authority.needs_reauth is False
+    assert controller._authority._state.characters[0].refresh_token_blob == "refresh-1"
 
 
 def test_a_definitive_oauth_error_is_definitive_here_too(tmp_path):
@@ -661,8 +942,9 @@ def test_a_definitive_oauth_error_is_definitive_here_too(tmp_path):
     )
     controller.refresh_characters()
 
-    ch = controller._state.characters[0]
-    assert ch.needs_reauth is True and ch.refresh_token_blob == ""
+    authority = controller._authority.character(95)
+    assert authority.needs_reauth is True
+    assert controller._authority._state.characters[0].refresh_token_blob == ""
     assert esi.calls == [], "no ESI call is worth making without a token"
 
 
@@ -678,8 +960,9 @@ def test_a_transient_oauth_error_keeps_the_token(tmp_path):
     )
     controller.refresh_characters()
 
-    ch = controller._state.characters[0]
-    assert ch.needs_reauth is False and ch.refresh_token_blob == "blob"
+    authority = controller._authority.character(95)
+    assert authority.needs_reauth is False
+    assert controller._authority._state.characters[0].refresh_token_blob == "blob"
 
 
 def test_a_cached_token_is_reused_across_both_calls(tmp_path):
@@ -778,7 +1061,7 @@ def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
     controller.refresh_characters()
 
     assert len(sso.refreshes) == 1
-    assert controller._state.characters[0].refresh_token_blob == "blob"
+    assert controller._authority._state.characters[0].refresh_token_blob == "blob"
 
 
 def test_a_whitespace_only_refresh_token_does_not_wipe_the_stored_one(tmp_path):
@@ -818,7 +1101,7 @@ def test_a_whitespace_only_refresh_token_does_not_wipe_the_stored_one(tmp_path):
     controller.refresh_characters()
 
     assert len(sso.refreshes) == 1
-    assert controller._state.characters[0].refresh_token_blob == "blob"
+    assert controller._authority._state.characters[0].refresh_token_blob == "blob"
 
 
 def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path):
@@ -841,15 +1124,21 @@ def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path)
         sso=FakeSso(),
         spawn=DirectSpawn(),
     )
-    controller._save_locked = lambda: False
 
-    token, _error, definitive = controller._access_token(character.character_id)
+    def fail_save(_path, _authority):
+        raise OSError("disk full")
+
+    controller._authority._save_authority = fail_save
+
+    token, warning, invalidated = controller._access_token(character.character_id)
 
     assert token == "access-1", "the refresh itself still succeeded"
-    assert definitive is False
-    ch = controller._state.characters[0]
-    assert ch.refresh_token_blob == "refresh-1", "rotated correctly in memory"
-    assert ch.error == ("Fresh data is in memory but was not saved for offline use.")
+    assert invalidated is False
+    assert "could not be saved" in warning
+    assert (
+        controller._authority._state.characters[0].refresh_token_blob == "refresh-1"
+    ), "rotated correctly in memory"
+    assert "could not be saved" in controller.state_payload()["characters"][0]["error"]
 
 
 def test_a_refreshed_token_for_a_different_character_forces_reauth(tmp_path):
@@ -878,8 +1167,9 @@ def test_a_refreshed_token_for_a_different_character_forces_reauth(tmp_path):
     )
     controller.refresh_characters()
 
-    ch = controller._state.characters[0]
-    assert ch.needs_reauth is True and ch.refresh_token_blob == ""
+    authority = controller._authority.character(95)
+    assert authority.needs_reauth is True
+    assert controller._authority._state.characters[0].refresh_token_blob == ""
     assert esi.calls == [], "no ESI call is worth making on an untrusted token"
 
 
@@ -901,7 +1191,18 @@ def test_a_changed_owner_hash_forces_reauth(tmp_path):
     esi = FakeEsi()
     controller, _, _ = build(
         tmp_path,
-        characters=[with_snapshot(owner_hash="old-owner")],
+        characters=[with_snapshot()],
+        authority_characters=[
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Aiga Otsolen",
+                owner_hash="old-owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ],
         client=esi,
         sso=FakeSso(),
         validate_token=transferred_identity,
@@ -910,7 +1211,9 @@ def test_a_changed_owner_hash_forces_reauth(tmp_path):
     controller.refresh_characters()
 
     ch = controller._state.characters[0]
-    assert ch.needs_reauth is True and ch.refresh_token_blob == ""
+    authority = controller._authority.character(95)
+    assert authority.needs_reauth is True
+    assert controller._authority._state.characters[0].refresh_token_blob == ""
     assert ch.error == "Character ownership changed. Re-authenticate this character."
     assert esi.calls == []
 
@@ -932,7 +1235,18 @@ def test_a_blank_owner_hash_on_either_side_skips_the_comparison(tmp_path):
 
     controller, _, _ = build(
         tmp_path,
-        characters=[with_snapshot(owner_hash="old-owner")],
+        characters=[with_snapshot()],
+        authority_characters=[
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Aiga Otsolen",
+                owner_hash="old-owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ],
         client=FakeEsi(),
         sso=FakeSso(),
         validate_token=blank_hash_identity,
@@ -940,9 +1254,8 @@ def test_a_blank_owner_hash_on_either_side_skips_the_comparison(tmp_path):
     )
     controller.refresh_characters()
 
-    ch = controller._state.characters[0]
-    assert ch.needs_reauth is False
-    assert ch.error == ""
+    assert controller._authority.character(95).needs_reauth is False
+    assert controller._state.characters[0].error == ""
 
 
 def test_esi_calls_happen_with_the_state_lock_released(tmp_path):
@@ -1015,15 +1328,32 @@ def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
 def test_progress_is_pushed_once_per_character(tmp_path):
     """A forty-character pass is eighty sequential requests. Without a
     per-character push the window looks hung for the duration."""
-    characters = [
-        with_snapshot(character_id=1, character_name="A"),
-        with_snapshot(character_id=2, character_name="B"),
+    characters = [with_snapshot(character_id=1), with_snapshot(character_id=2)]
+    authority_characters = [
+        AuthorityCharacter(
+            character_id=1,
+            character_name="A",
+            owner_hash="",
+            scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+            authenticated_utc=T0,
+            needs_reauth=False,
+            generation=0,
+        ),
+        AuthorityCharacter(
+            character_id=2,
+            character_name="B",
+            owner_hash="",
+            scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+            authenticated_utc=T0,
+            needs_reauth=False,
+            generation=0,
+        ),
     ]
     controller, pushed, _ = build(
         tmp_path,
         characters=characters,
+        authority_characters=authority_characters,
         client=FakeEsi(),
-        sso=FakeSso(identities=[(1, ""), (2, "")]),
         spawn=DirectSpawn(),
     )
 
@@ -1116,14 +1446,17 @@ def test_forget_rejects_a_non_positive_id(tmp_path):
     assert controller.state_payload()["characters"][0]["character_id"] == 95
 
 
-def test_a_forget_save_failure_rolls_back_and_warns(tmp_path):
-    controller, _, alerts = build(tmp_path, characters=[with_snapshot()])
-    controller._save_locked = lambda: False  # Simulate an unwritable disk.
+def test_prepare_forget_is_check_only_until_authority_removal(tmp_path):
+    """There is no participant abort hook, so prepare must not mutate or save."""
+    controller, _, _ = build(tmp_path, characters=[with_snapshot()])
+    controller._save_locked = lambda: (_ for _ in ()).throw(
+        AssertionError("prepare must not save")
+    )
 
-    assert controller.forget(95) is False
+    result = controller.prepare_forget(95)
 
-    assert controller.state_payload()["characters"][0]["character_id"] == 95
-    assert alerts and alerts[-1][0] == "warning"
+    assert result == MutationResult(True, True, "")
+    assert controller._state.find(95) is not None
 
 
 # ----- interactive sign-in ------------------------------------------------
@@ -1350,13 +1683,43 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
     assert found.error == ""
 
 
+def test_re_authentication_still_kicks_off_a_skills_refresh(tmp_path, monkeypatch):
+    """The shared authority move must not leave a repaired row stale."""
+    esi = FakeEsi()
+    controller, _, _alerts, _, _ = build_auth(
+        tmp_path,
+        monkeypatch,
+        characters=[with_snapshot()],
+        client=esi,
+        validate_token=lambda *a, **k: IDENTITY,
+    )
+
+    controller.authenticate()
+
+    assert [call[0] for call in esi.calls] == [
+        "/v4/characters/95/skills/",
+        "/v2/characters/95/skillqueue/",
+    ]
+
+
 def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     """A different account now owns this character. Its cached skills,
     queue and etags describe someone else's training."""
     controller, _, _, _, _ = build_auth(
         tmp_path,
         monkeypatch,
-        characters=[with_snapshot(owner_hash="old-hash")],
+        characters=[with_snapshot()],
+        authority_characters=[
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Aiga Otsolen",
+                owner_hash="old-hash",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ],
         validate_token=lambda *a, **k: IDENTITY,
     )
 
@@ -1410,7 +1773,18 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
     controller, _, alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
-        characters=[with_snapshot(owner_hash="hash-1")],
+        characters=[with_snapshot()],
+        authority_characters=[
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Aiga Otsolen",
+                owner_hash="hash-1",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ],
         validate_token=lambda *a, **k: blank_identity,
     )
 
@@ -1420,13 +1794,17 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
     found = reloaded.find(95)
     assert found.active_levels == {3327: 3}
     assert found.error == ""
-    assert found.owner_hash == "hash-1"
+    assert controller._authority.character(95).owner_hash == "hash-1"
     assert not any("ownership" in body.lower() for _, _, body in alerts)
 
 
 def test_a_sign_in_save_failure_rolls_back_a_new_character(tmp_path, monkeypatch):
     controller, _, alerts, _, _ = build_auth(tmp_path, monkeypatch)
-    controller._save_locked = lambda: False  # Simulate an unwritable disk.
+
+    def fail_authority_save(_path, _authority):
+        raise OSError("disk full")
+
+    controller._authority._save_authority = fail_authority_save
 
     controller.authenticate()
 
@@ -1445,7 +1823,11 @@ def test_a_sign_in_save_failure_rolls_back_an_existing_character(tmp_path, monke
         characters=[with_snapshot(owner_hash="hash-1")],
         validate_token=lambda *a, **k: IDENTITY,
     )
-    controller._save_locked = lambda: False  # Simulate an unwritable disk.
+
+    def fail_authority_save(_path, _authority):
+        raise OSError("disk full")
+
+    controller._authority._save_authority = fail_authority_save
 
     controller.authenticate()
 
@@ -1564,8 +1946,8 @@ def test_a_spawn_failure_releases_the_latch(tmp_path, monkeypatch):
     controller.authenticate()
 
     assert any("Sign-in failed" in title for _, title, _ in alerts)
-    assert controller._auth_in_progress is False
-    assert controller._auth_latch.acquire(blocking=False)
+    assert controller._authority.auth_in_progress is False
+    assert controller._authority._auth_latch.acquire(blocking=False)
 
 
 # ----- character_detail ---------------------------------------------------
@@ -1675,7 +2057,7 @@ def test_shutdown_stops_a_refresh_pass_between_characters(tmp_path):
         tmp_path,
         characters=[
             with_snapshot(character_id=95),
-            with_snapshot(character_id=96, character_name="B"),
+            with_snapshot(character_id=96),
         ],
         client=esi,
         sso=FakeSso(),
@@ -1753,9 +2135,9 @@ def _seed_cache(tmp_path, mapping):
 def _ch(character_id, name, group="", ready=False):
     """A character with a snapshot, so it scores rather than reading Unscored."""
     levels = {NAVIGATION_ID: 5} if ready else {}
+    del name  # Display identity comes from shared authority in build().
     return state_mod.Character(
         character_id=character_id,
-        character_name=name,
         group=group,
         fetched_utc=T0,
         active_levels=dict(levels),

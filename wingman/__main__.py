@@ -595,7 +595,35 @@ def build_alert_service(state, host):
         return None
 
 
-def build_skills_controller(api):
+def migrate_eve_authority():
+    """Run the one-way credential split before constructing EVE controllers."""
+    from .eveauth.migration import migrate_legacy_skills
+
+    return migrate_legacy_skills(
+        paths.eve_skills_file(),
+        paths.eve_authority_file(),
+    )
+
+
+def build_authority_controller(api, migration):
+    """Build shared authority only from a completed, non-lossy migration."""
+    if not migration.completed or migration.authority is None:
+        return None
+    try:
+        from .eveauth.controller import AuthorityController
+
+        return AuthorityController(
+            state_path=paths.eve_authority_file(),
+            authority=migration.authority,
+            alert=api._alert,
+            changed=api._eve_authority_changed,
+        )
+    except Exception:
+        logger.exception("EVE authority subsystem unavailable")
+        return None
+
+
+def build_skills_controller(api, authority, *, startup_warnings=()):
     """The EVE skills controller, or None where it cannot be built.
 
     NOT Windows-gated, unlike build_preview_host: twelve of the thirteen
@@ -616,6 +644,8 @@ def build_skills_controller(api):
     try:
         from .eveskills.controller import SkillsController
 
+        if authority is None:
+            return None
         return SkillsController(
             state_path=paths.eve_skills_file(),
             cache_path=paths.eve_skills_cache_file(),
@@ -631,12 +661,61 @@ def build_skills_controller(api):
             # (D3/S6). Its docstring holds the whole account.
             push=api._push_skills,
             alert=api._alert,
+            authority=authority,
+            startup_warnings=startup_warnings,
         )
     except Exception:
         # Skills are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.
         logger.exception("EVE skills subsystem unavailable")
         return None
+
+
+def wire_eve_controllers(api):
+    """Migrate, compose, then register Skills as an authority participant."""
+    try:
+        migration = migrate_eve_authority()
+    except Exception as exc:
+        logger.exception("EVE authority migration failed unexpectedly")
+        api._authority_warnings = [
+            f"EVE identity migration could not run ({exc}). Restart Wingman to retry."
+        ]
+        return None, None
+
+    startup_warnings = list(migration.warnings)
+    if not migration.completed:
+        startup_warnings.append(
+            migration.error
+            or "EVE identity migration did not complete. Restart Wingman to retry."
+        )
+        api._authority_warnings = startup_warnings
+        return None, None
+
+    authority = build_authority_controller(api, migration)
+    if authority is None:
+        startup_warnings.append(
+            "Shared EVE authority is unavailable. Restart Wingman to retry."
+        )
+        api._authority_warnings = startup_warnings
+        return None, None
+
+    api._authority = authority
+    skills = build_skills_controller(api, authority, startup_warnings=startup_warnings)
+    if skills is None:
+        api._authority_warnings = [
+            *startup_warnings,
+            "The EVE skills subsystem is unavailable.",
+        ]
+        return authority, None
+    api._skills = skills
+    authority.register_participant(skills)
+    return authority, skills
+
+
+def shutdown_eve_controllers(api) -> None:
+    """Stop feature workers before the authority they consume."""
+    api.shutdown_skills()
+    api.shutdown_authority()
 
 
 def shutdown_engine(engine) -> None:
@@ -708,11 +787,10 @@ def main() -> int:
         alerts=build_alert_service(state, preview_host),
     )
     api_box["api"] = api
-    # After construction, not through the constructor: the controller needs
-    # the Api's own _push and _alert. Same shape, and same reason, as
-    # ui/window.py assigning api._window after create_window(), and as the
-    # api_box hand-off directly above.
-    api._skills = build_skills_controller(api)
+    # Migration and authority composition happen after Api construction so
+    # warnings have a durable route payload and callbacks bind eagerly. They
+    # still happen before the window starts and before any EVE feature work.
+    wire_eve_controllers(api)
 
     w = None
     scheduler = None
@@ -856,7 +934,7 @@ def main() -> int:
     # redirect URI is registered with CCP so there is no fallback port to
     # move to -- so both teardowns run here, unconditionally, in order.
     api.shutdown_previews()
-    api.shutdown_skills()
+    shutdown_eve_controllers(api)
     return 0
 
 

@@ -42,7 +42,7 @@ def test_inspection_loads_a_valid_legacy_document(tmp_path):
     assert result.disposition is LegacyDisposition.LOADED
     assert result.state is not None
     assert result.state.selected_plan_name == "Interceptors"
-    assert result.state.characters[0].refresh_token_blob == "QUJD"
+    assert result.authority.characters[0].refresh_token_blob == "QUJD"
     assert result.warnings == ()
     assert result.error == ""
 
@@ -87,7 +87,7 @@ def test_malformed_legacy_envelope_recovers_from_valid_backup_without_mutation(
 
     assert result.disposition is LegacyDisposition.RECOVERED
     assert result.state is not None
-    assert result.state.characters[0].refresh_token_blob == "QUJD"
+    assert result.authority.characters[0].refresh_token_blob == "QUJD"
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
@@ -234,12 +234,15 @@ def test_migration_saves_authority_before_stripped_skills(tmp_path):
     character = stripped.characters[0]
     assert character.character_id == 90000001
     assert character.active_levels == {3300: 5}
-    assert character.character_name == ""
-    assert character.owner_hash == ""
-    assert character.scopes == ()
-    assert character.authenticated_utc is None
-    assert character.needs_reauth is False
-    assert character.refresh_token_blob == ""
+    for field in (
+        "character_name",
+        "owner_hash",
+        "scopes",
+        "authenticated_utc",
+        "needs_reauth",
+        "refresh_token_blob",
+    ):
+        assert not hasattr(character, field)
 
 
 def test_failed_legacy_inspection_writes_neither_document_nor_marker(tmp_path):
@@ -315,7 +318,7 @@ def test_interruption_after_authority_save_resumes_without_reimporting_credentia
     loaded_skills, warnings = skills_state.load(legacy_path)
     assert warnings == []
     assert loaded_skills.authority_migrated is True
-    assert loaded_skills.characters[0].refresh_token_blob == ""
+    assert not hasattr(loaded_skills.characters[0], "refresh_token_blob")
     reloaded_authority, warnings = load_authority(authority_path)
     assert warnings == ()
     assert reloaded_authority == saved_authority
@@ -343,7 +346,7 @@ def test_existing_valid_authority_is_one_way_authoritative(tmp_path):
     assert loaded_authority == existing
     loaded_skills, _warnings = skills_state.load(legacy_path)
     assert loaded_skills.authority_migrated is True
-    assert loaded_skills.characters[0].refresh_token_blob == ""
+    assert not hasattr(loaded_skills.characters[0], "refresh_token_blob")
 
 
 def test_genuine_empty_existing_authority_is_one_way_authoritative(tmp_path):
@@ -359,7 +362,7 @@ def test_genuine_empty_existing_authority_is_one_way_authoritative(tmp_path):
     loaded_skills, warnings = skills_state.load(legacy_path)
     assert warnings == []
     assert loaded_skills.authority_migrated is True
-    assert loaded_skills.characters[0].refresh_token_blob == ""
+    assert not hasattr(loaded_skills.characters[0], "refresh_token_blob")
 
 
 def test_all_dropped_authority_rows_fail_closed_without_stripping_legacy(tmp_path):
