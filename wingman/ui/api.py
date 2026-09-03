@@ -53,6 +53,7 @@ from .. import (
     uploader,
 )
 from .. import settings as settings_mod
+from .. import updates as updates_mod
 from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..evesettings import backup as evesettings_backup
@@ -456,6 +457,101 @@ class AppState:
     engine: object | None = None
 
 
+@dataclass(frozen=True)
+class _ClaimResult:
+    """One locked claim decision, including why a caller was refused."""
+
+    ok: bool
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+class _WorkGate:
+    """Atomically arbitrate uploads, updater handoff, and process shutdown.
+
+    The lock protects state transitions only. Prompts, page pushes, I/O, worker
+    creation, and shutdown all happen after it has been released so no external
+    operation can park every claimant behind it.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._upload = False
+        self._handoff = ""
+        self._quitting = False
+
+    def claim_upload(self) -> _ClaimResult:
+        with self._lock:
+            if self._handoff:
+                return _ClaimResult(False, "handoff")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
+            if self._upload:
+                return _ClaimResult(False, "upload")
+            self._upload = True
+            return _ClaimResult(True)
+
+    def upload_claimed(self) -> bool:
+        with self._lock:
+            return self._upload
+
+    def release_upload(self) -> None:
+        with self._lock:
+            self._upload = False
+
+    def claim_handoff(self, phase: str) -> _ClaimResult:
+        with self._lock:
+            if self._upload:
+                return _ClaimResult(False, "upload")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
+            # The updater's own runtime lock excludes a second installer.
+            # Reusing this transition lets that owner advance the phase
+            # without releasing the claim between revalidation and launch.
+            self._handoff = phase
+            return _ClaimResult(True)
+
+    def release_handoff(self) -> None:
+        with self._lock:
+            self._handoff = ""
+
+    def handoff_phase(self) -> str:
+        with self._lock:
+            return self._handoff
+
+    def claim_quit(self, *, force_upload: bool) -> _ClaimResult:
+        with self._lock:
+            if self._quitting:
+                return _ClaimResult(True)
+            if self._handoff:
+                return _ClaimResult(False, "handoff")
+            if self._upload and not force_upload:
+                return _ClaimResult(False, "upload")
+            self._quitting = True
+            return _ClaimResult(True)
+
+    def begin_update_shutdown(self) -> bool:
+        with self._lock:
+            if not self._handoff:
+                return False
+            self._quitting = True
+            return True
+
+
+@dataclass
+class _UpdateRuntime:
+    state: str = "idle"
+    release: updates_mod.ReleaseInfo | None = None
+    staged: Path | None = None
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    error: str = ""
+    automatic_failure: bool = False
+    worker: threading.Thread | None = None
+
+
 class Api:
     """JS-callable methods only. Every other attribute underscore-prefixed."""
 
@@ -474,6 +570,9 @@ class Api:
         preview_host=None,
         skills=None,
         alerts=None,
+        update_service=updates_mod,
+        update_spawn=threading.Thread,
+        is_frozen=lambda: bool(getattr(sys, "frozen", False)),
     ):
         self._state = state
         self._window = None  # assigned by ui.window.create()
@@ -481,6 +580,16 @@ class Api:
         # _window above: a public attribute here reaches the js_api proxy
         # walk and the same RecursionError follows.
         self._sigbar_window = None
+        # Creation, assignment, showing, delayed reveal, and shutdown's
+        # destroy/clear are one lifecycle transaction at a time. RLock lets
+        # toggle_sig_bar hold the boundary while sigbar.create enforces it
+        # independently for startup restore.
+        #
+        # LOCK ORDER: main's shutdown_lock, then this lock. Sig-bar code never
+        # takes shutdown_lock, and neither lock is held while claiming the work
+        # gate; updater handoff marks quitting before it requests teardown.
+        self._sigbar_lifecycle_lock = threading.RLock()
+        self._sigbar_quitting = False
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -575,6 +684,13 @@ class Api:
         self._spawn = spawn
         self._probe = probe
         self._timer = timer
+        self._update_service = update_service
+        self._update_spawn = update_spawn
+        self._is_frozen = is_frozen
+        # Assigned by main() once its idempotent window teardown exists.
+        # Tests and partial construction leave it unset; a successful native
+        # launch still closes its process handle and owns the work gate.
+        self._request_shutdown = None
         self._probe_queue: queue.Queue = queue.Queue()
         # Every list_rows() bumps this. A probe result carrying a stale
         # generation refers to rows that have since been replaced, and is
@@ -582,6 +698,13 @@ class Api:
         self._generation = 0
         self._drain: Scheduler | None = None
 
+        # The claim exists before a worker handle and survives through its
+        # target's finally. Thread liveness has a pre-start gap and therefore
+        # cannot arbitrate concurrent pywebview bridge calls.
+        self._work_gate = _WorkGate()
+        self._update_lock = threading.Lock()
+        self._update = _UpdateRuntime()
+        self._update_staging_cleaned = False
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
         # The standalone combat-log post, and Play. Separate handles rather
@@ -591,13 +714,11 @@ class Api:
         # and Play is fire-and-forget with nothing to guard at all.
         self._logs_thread: threading.Thread | None = None
         self._play_thread: threading.Thread | None = None
-        # The log post's guard is a CLAIMED FLAG, not `thread.is_alive()`
-        # like _busy(). is_alive() answers False for a thread that has been
-        # created and not yet started, so assigning the handle before
-        # .start() -- which is what makes the upload guard safe enough --
-        # leaves a window where a second call sees "idle" and dispatches a
-        # second post. pywebview serves each bridge call on its own thread,
-        # so two fast clicks really can arrive concurrently.
+        # The log post has its own claimed flag rather than sharing the
+        # upload/update/Quit gate: its shorter lifecycle deliberately does
+        # not defer polling or require Quit confirmation. It still cannot
+        # use thread liveness because pywebview bridge calls are concurrent
+        # and a newly constructed thread is not alive before start().
         self._logs_lock = threading.Lock()
         self._logs_running = False
         self._retry_state: RetryState | None = None
@@ -1423,10 +1544,11 @@ class Api:
         three different sentences from this one predicate, and each would
         become false for a log post:
 
-        - `_confirm_quit_if_busy` renders `format_quit_confirm(_last_pct)`,
-          which says "An upload is N% complete" -- during a log post there
-          is no upload and `_last_pct` is a stale number from a previous
-          job. A log post is seconds long and loses a Discord post, not a
+        - `_claim_quit` renders `format_quit_confirm(_last_pct)` when its
+          atomic claim reports an upload. That says "An upload is N% complete" --
+          during a log post there is no upload and `_last_pct` is a stale
+          number from a previous job. A log post is seconds long and loses a
+          Discord post, not a
           multi-gigabyte transfer, so Quit does not ask about it at all.
         - `start_upload` says "An upload is already in progress", which a
           log post is not. It refuses on `_logs_busy` separately, in its own
@@ -1436,7 +1558,7 @@ class Api:
           rows, so deferring for it would make the list go stale for
           nothing.
         """
-        return self._upload_thread is not None and self._upload_thread.is_alive()
+        return self._work_gate.upload_claimed()
 
     def _logs_busy(self) -> bool:
         """Is a standalone combat-log post claimed or running?
@@ -1447,19 +1569,23 @@ class Api:
         beside `_logs_lock`.
 
         "Exclude each other" is intent, not an atomic transition: this and
-        `_busy()` are read separately by two check-then-act callers,
-        exactly as start_upload's own upload-versus-upload guard has always
-        worked. Both are reached by clicking a button, and a human cannot
-        click two at once.
+        `_busy()` are read separately by two check-then-act callers. The work
+        gate deliberately serializes upload, updater handoff, and Quit only;
+        standalone log-post separation remains unchanged.
         """
         with self._logs_lock:
             return self._logs_running
 
-    def _confirm_quit_if_busy(self) -> bool:
-        """Answer "may the app exit now?" for the tray's Quit item.
+    def _update_installation_preparing(self, *, show_window: bool) -> None:
+        if show_window and self._window is not None:
+            self._window.show()
+        self._alert("info", "Update", "Update installation is being prepared.")
+
+    def _claim_quit(self) -> bool:
+        """Answer "may the app exit now?" and atomically close the work gate.
 
         Quit destroys the window, which returns from the GUI loop and ends
-        the process. `_upload_thread` is a daemon, so an upload in flight
+        the process. The upload worker is a daemon, so an upload in flight
         dies mid-chunk: no message, no log line, and a multi-gigabyte
         transfer discarded by one menu click. This is the only thing
         standing between that click and the discard.
@@ -1487,21 +1613,36 @@ class Api:
         silence as "stay running" costs a second click, reading it as
         "quit" costs the upload.
         """
-        if not self._busy():
+        claim = self._work_gate.claim_quit(force_upload=False)
+        if claim:
             return True
+        if claim.reason != "upload":
+            self._update_installation_preparing(show_window=True)
+            return False
+
         window = self._window
         if window is None:
             # No page to ask and no way to warn. Refusing here would make
             # Quit inert with nothing on screen explaining why, which is a
             # worse failure than the discard this guard exists to prevent.
             logger.warning("Quit requested with an upload running and no window.")
+        else:
+            window.show()
+            if not self._ask(
+                "Upload in progress",
+                copy_mod.format_quit_confirm(self._last_pct),
+                timeout=QUIT_CONFIRM_TIMEOUT_S,
+            ):
+                return False
+
+        claim = self._work_gate.claim_quit(force_upload=True)
+        if claim:
             return True
-        window.show()
-        return self._ask(
-            "Upload in progress",
-            copy_mod.format_quit_confirm(self._last_pct),
-            timeout=QUIT_CONFIRM_TIMEOUT_S,
-        )
+
+        # An updater can win after a confirmed upload ends but before Quit
+        # takes its claim. Never destroy the window under that handoff.
+        self._update_installation_preparing(show_window=True)
+        return False
 
     def start_upload(self, title, description, stitch, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
@@ -1541,9 +1682,6 @@ class Api:
         if stitch and len(pairs) < 2:
             self._alert("warning", "Stitch", "Select at least two videos to stitch.")
             return
-        if self._busy():
-            self._alert("warning", "Busy", "An upload is already in progress.")
-            return
         if self._logs_busy():
             # Its own sentence. Reusing the line above would say an upload
             # is running when none is, on the one screen where the user can
@@ -1568,15 +1706,35 @@ class Api:
             # snapshotted here -- Settings is reachable between them.
             logs=True,
         )
-        # Cleared per dispatch, not per process: a stop answered by the
-        # PREVIOUS job would otherwise abort this one before its first chunk
-        # and report "Stopped. Nothing was uploaded." for a job the user
-        # just started. Retry clears it for the same reason.
-        self._cancel.clear()
-        self._upload_thread = threading.Thread(
-            target=self._confirm_then_upload, args=(job,), daemon=True
-        )
-        self._upload_thread.start()
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            if claim.reason == "upload":
+                self._alert("warning", "Busy", "An upload is already in progress.")
+            else:
+                self._update_installation_preparing(show_window=False)
+            return
+        try:
+            # Cleared per dispatch, not per process: a stop answered by the
+            # PREVIOUS job would otherwise abort this one before its first chunk
+            # and report "Stopped. Nothing was uploaded." for a job the user
+            # just started. Retry clears it for the same reason.
+            self._cancel.clear()
+            self._upload_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._confirm_then_upload, job),
+                daemon=True,
+            )
+            self._upload_thread.start()
+        except Exception:
+            self._upload_thread = None
+            self._work_gate.release_upload()
+            raise
+
+    def _run_claimed_upload(self, target, *args) -> None:
+        try:
+            target(*args)
+        finally:
+            self._work_gate.release_upload()
 
     def _confirm_then_upload(self, job: UploadJob) -> None:
         # The confirm runs on the worker, not in start_upload, because
@@ -1936,14 +2094,29 @@ class Api:
         state = self._retry_state
         if state is None:
             return
-        # Disabled immediately, not by the worker: the click that got here
-        # must not be repeatable while the resume is being set up.
-        self._push("onRetryAvailable", {"available": False})
-        self._cancel.clear()
-        self._upload_thread = threading.Thread(
-            target=self._retry_worker, args=(state,), daemon=True
-        )
-        self._upload_thread.start()
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            self._push("onRetryAvailable", {"available": False})
+            if claim.reason == "upload":
+                self._alert("warning", "Busy", "An upload is already in progress.")
+            else:
+                self._update_installation_preparing(show_window=False)
+            return
+        try:
+            # Disabled immediately, not by the worker: the click that got here
+            # must not be repeatable while the resume is being set up.
+            self._push("onRetryAvailable", {"available": False})
+            self._cancel.clear()
+            self._upload_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._retry_worker, state),
+                daemon=True,
+            )
+            self._upload_thread.start()
+        except Exception:
+            self._upload_thread = None
+            self._work_gate.release_upload()
+            raise
 
     def _retry_worker(self, state: RetryState) -> None:
         """Resume the interrupted upload, then finish the rest of the job."""
@@ -2467,6 +2640,522 @@ class Api:
         """
         return self._settings_payload()
 
+    def update_status(self) -> dict:
+        return self._update_snapshot()
+
+    def check_for_updates(self) -> dict:
+        return self._start_update_check(automatic=False)
+
+    def _page_ready(self) -> None:
+        """Start optional network work only after WebView2 owns the page."""
+        self.refresh_auth()
+        self._cleanup_update_staging_once()
+        self._start_update_check(automatic=True)
+
+    def _cleanup_update_staging_once(self) -> None:
+        with self._update_lock:
+            if self._update_staging_cleaned:
+                return
+            # Claim the attempt before I/O. A locked staging directory is retried
+            # on the next launch, not repeatedly during this one.
+            self._update_staging_cleaned = True
+        try:
+            self._update_service.cleanup_staging(self._update_staging_root())
+        except Exception:
+            logger.warning("Could not clean updater staging at startup", exc_info=True)
+
+    def download_update(self) -> dict:
+        with self._update_lock:
+            if (
+                self._update.state
+                not in {
+                    "available",
+                    "check_failed",
+                    "download_failed",
+                }
+                or self._update.release is None
+            ):
+                return self._update_snapshot_locked()
+            release = self._update.release
+            self._update.state = "downloading"
+            self._update.staged = None
+            self._update.downloaded_bytes = 0
+            self._update.total_bytes = release.size
+            self._update.error = ""
+            snapshot = self._update_snapshot_locked()
+        try:
+            worker = self._update_spawn(
+                target=self._update_download_worker,
+                args=(release,),
+                daemon=True,
+                name="wingman-update-download",
+            )
+        except Exception:  # noqa: BLE001 - construction failure becomes retryable status
+            return self._rollback_update_start("download")
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure becomes retryable status
+            return self._rollback_update_start("download")
+        return snapshot
+
+    def _update_download_worker(self, release: updates_mod.ReleaseInfo) -> None:
+        path = None
+
+        def progress(done: int, total: int) -> None:
+            with self._update_lock:
+                if self._update.state != "downloading":
+                    return
+                self._update.downloaded_bytes = done
+                self._update.total_bytes = total
+            self._push_update_status()
+
+        try:
+            path = self._update_service.download_release(
+                release,
+                self._update_staging_root(),
+                on_progress=progress,
+            )
+            with self._update_lock:
+                closed = self._update.state == "closed"
+            if closed:
+                self._remove_unhanded_update(path)
+                return
+            self._update_service.verify_after_attachment(release, path)
+        except Exception as exc:
+            if path is not None:
+                self._remove_unhanded_update(path)
+            logger.debug("Wingman update download failed", exc_info=True)
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                self._update.worker = None
+                self._update.state = "download_failed"
+                self._update.staged = None
+                self._update.error = self._update_download_error(exc)
+            self._push_update_status()
+            return
+
+        with self._update_lock:
+            if self._update.state == "closed":
+                closed = True
+            else:
+                closed = False
+                self._update.worker = None
+                self._update.state = "ready"
+                self._update.staged = Path(path)
+                self._update.downloaded_bytes = release.size
+                self._update.total_bytes = release.size
+                self._update.error = ""
+        if closed:
+            self._remove_unhanded_update(path)
+            return
+        self._push_update_status()
+
+    def install_update(self) -> dict:
+        if not self._is_frozen():
+            return self._update_snapshot()
+        # Reserve the runtime phase before consulting the work gate. That
+        # reservation is the owner token Task 4 deliberately did not add to
+        # _WorkGate, and avoids nesting the two locks.
+        with self._update_lock:
+            if (
+                self._update.state != "ready"
+                or self._update.release is None
+                or self._update.staged is None
+            ):
+                return self._update_snapshot_locked()
+            release = self._update.release
+            path = self._update.staged
+            self._update.state = "handing_off"
+            self._update.error = ""
+            snapshot = self._update_snapshot_locked()
+
+        claim = self._work_gate.claim_handoff("handing_off")
+        if not claim:
+            with self._update_lock:
+                if self._update.state == "handing_off":
+                    self._update.state = "ready"
+                    if claim.reason == "upload":
+                        self._update.error = (
+                            "Finish the active upload before installing the update."
+                        )
+                    snapshot = self._update_snapshot_locked()
+            self._push_update_status()
+            return snapshot
+
+        try:
+            worker = self._update_spawn(
+                target=self._update_install_worker,
+                args=(release, path),
+                daemon=True,
+                name="wingman-update-install",
+            )
+        except Exception:  # noqa: BLE001 - construction failure rolls back handoff
+            return self._rollback_update_start("install")
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure rolls back handoff
+            return self._rollback_update_start("install")
+        return snapshot
+
+    def _update_install_worker(
+        self, release: updates_mod.ReleaseInfo, path: Path
+    ) -> None:
+        with self._update_lock:
+            if self._update.state != "handing_off":
+                return
+            self._update.state = "revalidating"
+        if not self._work_gate.claim_handoff("revalidating"):
+            self._finish_install_failure(
+                updates_mod.UpdateFailure(
+                    "launch", "claim", "update handoff ownership was lost"
+                ),
+                path,
+            )
+            return
+        self._push_update_status()
+
+        marker = None
+
+        def before_launch() -> None:
+            nonlocal marker
+            marker = self._update_service.write_handoff_marker(path, release)
+
+        try:
+            process = self._update_service.launch_verified(
+                release,
+                path,
+                before_launch=before_launch,
+            )
+            if not process:
+                raise updates_mod.UpdateFailure(
+                    "launch", "shell", "installer launch returned no process"
+                )
+        except Exception as exc:  # noqa: BLE001 - handoff failure must recover the app
+            marker_failure = (
+                isinstance(exc, updates_mod.UpdateFailure) and exc.stage == "cleanup"
+            )
+            marker_to_remove = marker
+            if marker_to_remove is None and marker_failure:
+                marker_to_remove = path.with_name(path.name + ".handoff.json")
+            if marker_to_remove is not None:
+                try:
+                    self._update_service.remove_handoff_marker(marker_to_remove)
+                except Exception:
+                    logger.warning(
+                        "Could not remove failed updater handoff marker",
+                        exc_info=True,
+                    )
+            self._finish_install_failure(exc, path)
+            return
+
+        with self._update_lock:
+            if self._update.state == "closed":
+                closed = True
+            else:
+                closed = False
+                self._update.state = "launching"
+                self._update.worker = None
+        if closed:
+            self._close_update_process(process)
+            return
+        if not self._work_gate.claim_handoff("launching"):
+            # This cannot happen while this runtime owns `revalidating`, but
+            # retain the launched process handle even if lifecycle state is
+            # corrupted: Setup already exists and must not be leaked.
+            logger.error("Update handoff ownership was lost after Setup launch")
+        self._push_update_status()
+        self._close_update_process(process)
+        if not self._work_gate.begin_update_shutdown():
+            logger.error("Update handoff could not begin orderly shutdown")
+        request_shutdown = self._request_shutdown
+        if request_shutdown is not None:
+            try:
+                request_shutdown()
+            except Exception:
+                # Setup is already launched and classified by its on-disk
+                # handoff marker. Per-window teardown failures are handled
+                # inside the retryable callback;
+                # an unexpected boundary failure still cannot roll back Setup.
+                logger.exception("Window shutdown failed after installer launch")
+
+    def _close_update_process(self, process: int) -> None:
+        try:
+            self._update_service.close_process_handle(process)
+        except Exception:
+            logger.warning("Could not close installer process handle", exc_info=True)
+
+    def _finish_install_failure(self, exc: Exception, path: Path) -> None:
+        retry_ready = isinstance(exc, updates_mod.UpdateFailure) and exc.stage in {
+            "cleanup",
+            "launch",
+        }
+        requires_download = not retry_ready
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+        self._work_gate.release_handoff()
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            self._update.worker = None
+            self._update.state = "download_failed" if requires_download else "ready"
+            if requires_download:
+                self._update.staged = None
+            self._update.error = self._update_install_error(exc)
+        if requires_download:
+            self._remove_unhanded_update(path)
+        self._push_update_status()
+
+    def _rollback_update_start(self, stage: str) -> dict:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+        if stage == "install":
+            self._work_gate.release_handoff()
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = None
+            self._update.state = "ready" if stage == "install" else "download_failed"
+            self._update.error = self._update_start_error(stage)
+            snapshot = self._update_snapshot_locked()
+        self._push_update_status()
+        return snapshot
+
+    def shutdown_updates(self) -> None:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            preserve = self._update.state == "launching"
+            staged = self._update.staged
+            self._update.state = "closed"
+            self._update.staged = None
+            self._update.worker = None
+            self._update.error = ""
+        if staged is not None and not preserve:
+            self._remove_unhanded_update(staged)
+        self._update_service.cleanup_staging(self._update_staging_root())
+
+    @staticmethod
+    def _update_staging_root() -> Path:
+        return paths.tmp_dir() / "updates"
+
+    @staticmethod
+    def _remove_unhanded_update(path: Path) -> None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            # A native scanner or Setup may still have the file. Stale cleanup
+            # retries later; forcing deletion is never safe on this path.
+            logger.warning("Could not remove updater staging file", exc_info=True)
+
+    def _start_update_check(self, automatic: bool) -> dict:
+        allowed = {
+            "idle",
+            "current",
+            "available",
+            "unavailable",
+            "check_failed",
+            "download_failed",
+        }
+        previous = None
+        with self._update_lock:
+            if self._update.state == "checking":
+                if not automatic:
+                    self._update.automatic_failure = False
+                return self._update_snapshot_locked()
+            if self._update.state not in allowed:
+                return self._update_snapshot_locked()
+            previous = replace(self._update)
+            self._update.state = "checking"
+            self._update.error = ""
+            self._update.automatic_failure = automatic
+            snapshot = self._update_snapshot_locked()
+        try:
+            worker = self._update_spawn(
+                target=self._update_check_worker,
+                args=(),
+                daemon=True,
+            )
+        except Exception:  # noqa: BLE001 - construction failure becomes retryable update status
+            return self._rollback_update_check(previous, automatic)
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure becomes retryable update status
+            return self._rollback_update_check(previous, automatic)
+        return snapshot
+
+    def _rollback_update_check(self, previous: _UpdateRuntime, automatic: bool) -> dict:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update = replace(previous)
+            if not automatic:
+                self._update.error = self._update_start_error("check")
+            snapshot = self._update_snapshot_locked()
+        self._push_update_status()
+        return snapshot
+
+    def _update_check_worker(self) -> None:
+        try:
+            release = self._update_service.latest_release(_version)
+        except Exception as exc:
+            logger.debug("Wingman update check failed", exc_info=True)
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                automatic = self._update.automatic_failure
+                self._update.worker = None
+                self._update.automatic_failure = False
+                if automatic:
+                    self._update.state = (
+                        "available"
+                        if self._update.release is not None
+                        else "unavailable"
+                    )
+                    self._update.error = ""
+                else:
+                    self._update.state = "check_failed"
+                    self._update.error = self._update_check_error(exc)
+        else:
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                self._update.worker = None
+                self._update.automatic_failure = False
+                self._update.error = ""
+                self._update.staged = None
+                self._update.downloaded_bytes = 0
+                self._update.total_bytes = 0
+                if release is None:
+                    self._update.release = None
+                    self._update.state = "current"
+                else:
+                    self._update.release = release
+                    self._update.state = "available"
+        self._push_update_status()
+
+    @staticmethod
+    def _update_check_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "check" and exc.code == "network":
+                return (
+                    "Could not check for updates. Check your internet connection "
+                    "and try again."
+                )
+            if exc.stage == "check":
+                return (
+                    "Could not check for updates. The latest release could not "
+                    "be verified."
+                )
+        return "Could not check for updates. Try again."
+
+    @staticmethod
+    def _update_download_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "download" and exc.code == "network":
+                return (
+                    "Could not download the update. Check your internet connection "
+                    "and try again."
+                )
+            if exc.code == "checksum":
+                return (
+                    "The download did not match the release checksum. "
+                    "It was not installed."
+                )
+            if exc.stage == "download" and exc.code == "filesystem":
+                return (
+                    "Could not save the update. Check available disk space "
+                    "and try again."
+                )
+            if exc.stage == "verify" and exc.code == "attachment":
+                return (
+                    "Windows could not mark the installer as an internet download. "
+                    "It was not installed."
+                )
+        return "Could not download the update. Try again."
+
+    @staticmethod
+    def _update_install_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "launch":
+                return "Could not open the installer. Try again."
+            if exc.stage == "cleanup":
+                return "Could not prepare the installer. Try installing again."
+            if exc.stage == "verify" and exc.code == "attachment":
+                return (
+                    "Windows could not mark the installer as an internet download. "
+                    "Download it again."
+                )
+        return (
+            "The downloaded installer changed or is no longer available. "
+            "Download it again."
+        )
+
+    @staticmethod
+    def _update_start_error(stage: str) -> str:
+        if stage == "check":
+            return "Could not start checking for updates. Try again."
+        if stage == "download":
+            return "Could not start downloading the update. Try again."
+        return "Could not start installing the update. Try again."
+
+    def _update_snapshot(self) -> dict:
+        with self._update_lock:
+            return self._update_snapshot_locked()
+
+    def _update_snapshot_locked(self) -> dict:
+        release = self._update.release
+        state = self._update.state
+        update_available = release is not None
+        available_version = ""
+        if release is not None:
+            available_version = ".".join(str(part) for part in release.version)
+        return {
+            "state": state,
+            "installed_version": _version,
+            "available_version": available_version,
+            "update_available": update_available,
+            "downloaded_bytes": self._update.downloaded_bytes,
+            "total_bytes": self._update.total_bytes,
+            "can_check": state
+            in {
+                "idle",
+                "current",
+                "available",
+                "unavailable",
+                "check_failed",
+                "download_failed",
+            },
+            "can_download": update_available
+            and state in {"available", "check_failed", "download_failed"},
+            "can_install": state == "ready" and self._is_frozen(),
+            "error": self._update.error,
+        }
+
+    def _push_update_status(self) -> None:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            snapshot = self._update_snapshot_locked()
+        self._push("onUpdateStatus", snapshot)
+
     def pick_folder(self, which: str) -> str:
         """Native folder picker, seeded with what is configured now."""
         if which == "gamelogs":
@@ -2868,29 +3557,34 @@ class Api:
 
         on = bool(on)
         settings_mod.update_section(self._state.settings, "sig_bar", {"enabled": on})
-        bar = self._sigbar_window
-        logger.info(
-            "Sig bar toggle: requested %s, window %s.",
-            on,
-            "exists" if bar is not None else "not built yet",
-        )
+        shown = False
         try:
-            if on:
-                if bar is None:
-                    sigbar.create(self, hidden=False)
-                else:
-                    bar.show()
-                # The poll can be up to 3s away; a bar that opens empty for
-                # 3s reads as broken. The page pulls nothing at load, so
-                # this push is its content.
-                self._push_eve_status()
-            elif bar is not None:
-                bar.hide()
+            with self._sigbar_lifecycle_lock:
+                bar = self._sigbar_window
+                logger.info(
+                    "Sig bar toggle: requested %s, window %s.",
+                    on,
+                    "exists" if bar is not None else "not built yet",
+                )
+                if not self._sigbar_quitting:
+                    if on:
+                        if bar is None:
+                            bar = sigbar.create(self, hidden=False)
+                        else:
+                            bar.show()
+                        shown = bar is not None
+                    elif bar is not None:
+                        bar.hide()
         except Exception:
             # A bar that cannot appear is degraded chrome, not a failed
             # setting: the persisted choice stands and the next toggle
             # retries the window.
             logger.exception("sig bar window toggle failed")
+        if shown:
+            # The poll can be up to 3s away; a bar that opens empty for 3s
+            # reads as broken. The page pulls nothing at load, so this push
+            # is its content.
+            self._push_eve_status()
         logger.info(
             "Sig bar toggle done: enabled=%s, visible=%s.",
             self._state.settings["sig_bar"]["enabled"],

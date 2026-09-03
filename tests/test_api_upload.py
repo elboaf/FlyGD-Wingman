@@ -51,6 +51,7 @@ def test_stitching_one_recording_is_refused_with_its_own_message(tmp_path):
 def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     gate = threading.Event()
+    assert api._work_gate.claim_upload()
     api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
     api._upload_thread.start()
     try:
@@ -61,6 +62,7 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
     finally:
         gate.set()
         api._upload_thread.join(timeout=5)
+        api._work_gate.release_upload()
 
 
 def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tmp_path):
@@ -1146,6 +1148,7 @@ def test_an_unrelated_worker_cannot_settle_the_strip_mid_upload(monkeypatch, tmp
     api, _window, _rows = api_with(tmp_path)
     sent = fakes.record_pushes(api)
     gate = threading.Event()
+    assert api._work_gate.claim_upload()
     api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
     api._upload_thread.start()
     try:
@@ -1156,6 +1159,7 @@ def test_an_unrelated_worker_cannot_settle_the_strip_mid_upload(monkeypatch, tmp
     finally:
         gate.set()
         api._upload_thread.join(timeout=5)
+        api._work_gate.release_upload()
 
     # And with nothing running it settles, as it always did.
     api.copy_path("r1")

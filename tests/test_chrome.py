@@ -12,10 +12,14 @@ itself part of what these tests assert.
 """
 
 import sys
+from pathlib import Path
 
 import pytest
 
 from wingman.ui import chrome
+
+WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
+APP_JS = (WEB / "app.js").read_text(encoding="utf-8")
 
 # 1000x600 at (100, 100). Deliberately not square and not at the origin, so
 # a transposed or origin-relative bug cannot pass by coincidence.
@@ -157,3 +161,14 @@ def test_enable_resize_survives_a_window_with_no_native_handle():
         native = None
 
     assert chrome.enable_resize(NotShownYet()) is False
+
+
+def test_the_settings_gear_badge_updates_its_accessible_name_from_update_status():
+    assert "function renderUpdateBadge(payload)" in APP_JS
+    assert "var available = !!payload.update_available;" in APP_JS
+    title_line = "gear.title = available ? 'Settings — update available' : 'Settings';"
+
+    assert "gear.classList.toggle('update-available', available);" in APP_JS
+    assert title_line in APP_JS
+    assert "gear.setAttribute('aria-label', gear.title);" in APP_JS
+    assert "new CustomEvent('wm:update-status', {detail: payload})" in APP_JS

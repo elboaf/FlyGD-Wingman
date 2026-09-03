@@ -49,6 +49,26 @@ Run on Windows against a real install before each release.
       renames the state directory on first launch. If two entries appear,
       or the old state directory is still there afterward, one of those two
       steps is broken.
+- [ ] **A normal in-place Wingman upgrade preserves current settings and
+      sign-in.** Install the previous 4.x release, change a visible setting,
+      sign in, quit Wingman, and save the state before running the candidate:
+
+      ```powershell
+      $State = Join-Path $env:LOCALAPPDATA "FlyGD Wingman"
+      Copy-Item "$State\settings.json" "$env:TEMP\wingman-settings-before.json"
+      Copy-Item "$State\token.json" "$env:TEMP\wingman-token-before.json"
+      $Installer = Get-ChildItem .\dist\FlyGD-Wingman-Setup-*.exe |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      Start-Process -FilePath $Installer.FullName -Wait
+      ```
+
+      Expected: the visible Inno wizard recognises the existing install and
+      replaces it in place; Add/Remove Programs still has exactly one FlyGD
+      Wingman entry; the changed setting remains selected after launch; and
+      `Compare-Object (Get-Content "$env:TEMP\wingman-token-before.json")
+      (Get-Content "$State\token.json")` prints nothing. The application
+      remains signed in. This is the ordinary same-AppId update path, separate
+      from the pre-4.0 identity migration above.
 - [ ] **Upgrading resets the "start at login" task to checked, even if the
       3.x user had turned it off.** Because `AppId` changed in 4.0, Inno
       treats the install as fresh and does not carry forward [Tasks]
@@ -68,6 +88,83 @@ Run on Windows against a real install before each release.
 - [ ] Window title bar and tray-icon tooltip both read **FlyGD Wingman**
 - [ ] A "new recording(s) ready to upload" notification is titled
       **FlyGD Wingman**
+
+## Guided updater native harness
+
+Run the checkout-only fixture before each release on Windows; the complete
+commands and expected output are in `tests/manual/README.md`. These checks must
+use `tests/manual/update_fixture.iss`, never an installed application binary.
+
+```powershell
+iscc /O"$PWD\dist" tests\manual\update_fixture.iss
+$Fixture = Join-Path $PWD "dist\Wingman-Update-Harness-Setup.exe"
+$SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe"
+```
+
+- [ ] **Injected download modes preserve production validation and cleanup.**
+      Run `uv run python tests\manual\update_harness.py serve --mode complete`,
+      then repeat with `truncated` and `checksum-mismatch`. Expected: complete
+      prints verified identity/size/digest and marker create/remove; truncated
+      fails with `code=size`; checksum mismatch fails with `code=checksum`;
+      both faults print `partial retention: none`; every run prints
+      `temporary staging root removed: yes` and makes no network request.
+- [ ] **Attachment Services handles the fixture and preserves MOTW where
+      supported.** Run: `uv run python
+      tests\manual\update_harness.py attachment
+      --i-understand-this-launches-a-test-exe $Fixture $SourceUrl`, then
+      `Get-Item -LiteralPath $Fixture -Stream *`. Expected on a filesystem and
+      policy that support Mark-of-the-Web: identity, size and digest print and
+      `Zone.Identifier` is present and listed. This is the real Attachment
+      Services path, not a fabricated alternate data stream. A local policy
+      rejection or quarantine remains a typed failure rather than a reason to
+      bypass it.
+- [ ] **The protected handle wins a real replacement race.** Run:
+      `uv run python tests\manual\update_harness.py lock-race
+      --i-understand-this-launches-a-test-exe $Fixture`. Expected:
+      `safe retention: replacement denied (winerror=5)` or the same line with
+      `winerror=32`, followed by unchanged identity, size, and SHA-256. The
+      command prints the actual code; success, any other code, timeout, or
+      mutation must fail. It races only a temporary staged copy and removes
+      that staging root.
+- [ ] **The fixture mutex produces deterministic prompt/no-prompt runs.** In
+      one terminal run
+      `uv run python tests\manual\update_harness.py mutex-holder`; in another,
+      open `dist\Wingman-Update-Harness-Setup.exe`. Expected: Inno's close/OK
+      prompt. Press Enter in the holder, open the fixture again, and expect no
+      app-close prompt.
+- [ ] **Verified ShellExecute transfers and closes its process handle.** Run:
+
+      ```powershell
+      uv run python tests\manual\update_harness.py shell-launch `
+        --i-understand-this-launches-a-test-exe `
+        dist\Wingman-Update-Harness-Setup.exe `
+        https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe
+      ```
+
+      Expected: the normal visible Inno fixture starts, a non-zero process
+      handle prints, and `process handle closed: yes` follows. Windows may show
+      a SmartScreen/Mark-of-the-Web reputation warning depending on local
+      policy and the fixture's reputation. If it appears, choose **More info →
+      Run anyway** only for this compiled no-payload fixture. Neither the
+      harness nor Wingman disables zone checks. Repeat with the fixture mutex
+      held to get the close/OK prompt. For the deterministic launch-failure
+      command, create and remove the required basename before invoking the
+      harness:
+
+      ```powershell
+      $Missing = Join-Path $env:TEMP "Wingman-Update-Harness-Setup.exe"
+      Copy-Item -LiteralPath $Fixture -Destination $Missing -Force
+      Remove-Item -LiteralPath $Missing
+      uv run python tests\manual\update_harness.py shell-launch `
+        --i-understand-this-launches-a-test-exe $Missing $SourceUrl
+      $LASTEXITCODE
+      ```
+
+      Expected: no process opens, `updater failure` prints, and the exit code
+      is 1. The successful path must use real Attachment Services and retain
+      Mark-of-the-Web where supported, must leave zone checks enabled, and must
+      show the normal visible installer; reputation UI itself is policy- and
+      reputation-dependent.
 
 ## WebView2 runtime
 
@@ -4142,6 +4239,126 @@ behaviour a lexical guard cannot reach.
       control is inert is exactly what a missing script looks like —
       PyInstaller exits 0 when a `datas` entry resolves to nothing, and
       pywebview reports no error for a script that 404s.
-- [ ] **The frozen build reaches only CCP.** With previews and the uploader
-      idle, the only hosts this feature contacts are `login.eveonline.com`
-      and `esi.evetech.net`.
+- [ ] **The frozen Skills interaction reaches only CCP after startup traffic
+      is excluded.** Start the installed build with an HTTPS capture running
+      and wait for the automatic GitHub startup check to finish. Clear the
+      capture after the automatic GitHub startup check finishes, then perform
+      only the Skills interaction: add or refresh a character and inspect its
+      plan. Expected: only the Skills interaction contacts the network, and its
+      hosts are `login.eveonline.com` and `esi.evetech.net`; there is no FlyGD,
+      Google, Discord, or unrelated GitHub request in the cleared capture.
+
+### Checking for and installing an update
+
+- [ ] **Every deterministic dev state fits and is keyboard-operable.** From
+      the checkout, serve the browser-only harness with
+      `uv run python -m http.server 8765 --directory wingman/web`, set the
+      browser viewport to 840x625, and open each of:
+
+      ```text
+      http://127.0.0.1:8765/index.html?dev=1&update=idle
+      http://127.0.0.1:8765/index.html?dev=1&update=checking
+      http://127.0.0.1:8765/index.html?dev=1&update=current
+      http://127.0.0.1:8765/index.html?dev=1&update=unavailable
+      http://127.0.0.1:8765/index.html?dev=1&update=available
+      http://127.0.0.1:8765/index.html?dev=1&update=downloading
+      http://127.0.0.1:8765/index.html?dev=1&update=ready
+      http://127.0.0.1:8765/index.html?dev=1&update=error
+      ```
+
+      Expected: each state has the documented status, progress, and button
+      set; General's licence line, Start-on-login checkbox, and `msg-about`
+      remain reachable; and no horizontal scrollbar appears. In every state,
+      Tab reaches each visible action with a focus ring and Enter/Space behaves
+      like a click. Repeat `downloading`, `ready`, and `error` in the real
+      Windows WebView2 app; pytest never renders either path.
+- [ ] **The automatic check is once per process, including hidden login
+      starts.** With an HTTPS monitor filtered to
+      `api.github.com/repos/elboaf/FlyGD-Wingman/releases/latest`, fully quit
+      Wingman, launch it normally, and leave it running for five minutes.
+      Expected: one non-blocking request after the page is ready and no polling.
+      Quit, then launch the installed `Wingman.exe --hidden`; expected: exactly
+      one request again even though no window opens. Opening General only reads
+      the cached result and creates no request.
+- [ ] **Current.** With no newer release published, Settings > General shows
+      `Wingman is up to date.` and `Check again` is the only visible button.
+- [ ] **Checking and manual retry.** Click `Check again`. Exactly one new API
+      request occurs, the line reads `Checking for updates…`, and the button
+      disables for the round trip. Repeated clicks cannot create concurrent
+      requests.
+- [ ] **Available.** With a newer stable release published, the card names the
+      version and shows `Download update`; `Install update` stays hidden.
+- [ ] **Automatic offline check fails quietly.** Disconnect networking and
+      relaunch. No dialog, banner, badge, or retry stack appears; General reads
+      the neutral `Update status unavailable.`, not a specific network error.
+- [ ] **Manual failure names the stage.** With networking still down, click
+      `Check again`. The card shows Python's stage-specific failure and leaves
+      an explicit retry rather than the neutral automatic-failure sentence.
+- [ ] **Progress.** Reconnect and click `Download update`. The download starts
+      only now. Its progress bar is determinate from the first tick, advances
+      to full, and the status reads `Downloading the update…` throughout.
+- [ ] **Post-attachment mutation is rejected.** Let a real download reach
+      `Update downloaded. Ready to install.`, decline its automatic install
+      prompt, then alter the newest already-marked staging file:
+
+      ```powershell
+      $Ready = Get-ChildItem "$env:LOCALAPPDATA\FlyGD Wingman\tmp\updates\*.ready.exe" |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      Add-Content -LiteralPath $Ready -Value "post-attachment mutation"
+      ```
+
+      Click `Install update`. Expected: no Setup process opens; the card says
+      the installer changed or is unavailable, returns to a download-required
+      state, and removes the invalid staged file. Do not run the altered file.
+- [ ] **Declined install.** On a fresh valid download, `Install update?` pops
+      automatically once. Cancel it. The card remains on `Update downloaded.
+      Ready to install.` with `Install update` visible and enabled -- not
+      reverted to `Download update` or stuck disabled.
+- [ ] **Retained Install action confirms again.** Click `Install update`; the
+      same confirm reappears. Accept it: the normal visible Inno installer
+      appears before any upgrade proceeds. Windows may also show its unsigned-
+      file reputation warning depending on policy and reputation; zone checks
+      must remain enabled, and Attachment Services must retain Mark-of-the-Web
+      where supported.
+- [ ] **Active-upload and retry exclusion.** Start an upload, then try to
+      install a staged update. Expected: `Finish the active upload before
+      installing the update.`, no Setup process, and `Install update` remains
+      available; after the upload finishes, normal install still works. On the
+      Windows checkout also run:
+
+      ```powershell
+      uv run --no-sync python -m pytest tests/test_api_updates.py `
+        -k "upload_and_handoff_race or retry_and_handoff_race or retry_refused_during_handoff" -v
+      ```
+
+      Expected: all selected cases pass, proving a claimed handoff also refuses
+      both a new upload and Retry rather than racing launch or shutdown.
+- [ ] **Tray Quit is refused in every handoff phase.** On Windows run:
+
+      ```powershell
+      uv run --no-sync python -m pytest `
+        tests/test_api_quit.py::test_quit_is_refused_with_information_during_each_handoff_phase `
+        tests/test_api_updates.py::test_quit_is_refused_during_each_handoff_phase -v
+      ```
+
+      Expected: both tests pass for `handing_off`, `revalidating`, and
+      `launching`. During a real install handoff, choosing tray **Quit** must
+      raise/show Wingman, report `Update installation is being prepared.`, and
+      leave the app alive until the updater-owned orderly shutdown begins.
+- [ ] **Shell-launch failure recovers without stranding Wingman.** Run the
+      deleted-path `shell-launch` case in **Guided updater native harness** and
+      the focused recovery cases:
+
+      ```powershell
+      uv run --no-sync python -m pytest tests/test_api_updates.py `
+        -k "shell_failure_removes_marker_and_recovers_ready_state" -v
+      ```
+
+      Expected: no installer process, no handoff marker, Wingman remains
+      responsive, the card returns to enabled `Install update`, and a later
+      retry can succeed.
+- [ ] **Gear tooltip and accessible name.** Before any check completes, the
+      gear's accessible name reads `Settings`. Once an update is available,
+      its title and accessible name read `Settings — update available`, and
+      the dot survives opening Settings (the `.active` state does not erase
+      it).

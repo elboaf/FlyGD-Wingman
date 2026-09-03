@@ -498,8 +498,21 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
 }
 .winbtn:hover { background: var(--hover); color: var(--text); }
 .winbtn.close:hover { background: var(--danger-solid); color: var(--on-accent); }
-.winbtn.gear { font-size: 15px; }
+.winbtn.gear { font-size: 15px; position: relative; }
 .winbtn.gear.active { background: var(--hover); color: var(--brand-text); }
+/* One accent, --ok, on a control that otherwise never carries one: a gear
+   badge is not a screen's primary action, so this is deliberately not
+   --brand. `pointer-events: none` -- the dot is decorative, and the
+   gear's own title/aria-label (app.js's renderUpdateBadge) already carry
+   the accessible state; a second hit target here would only shrink the
+   gear's own click area at its own edge. Coexists with .active: opening
+   Settings while an update is available must not erase the badge, so
+   this rule adds a layer rather than replacing the active background. */
+.winbtn.gear.update-available::after {
+  content: ''; position: absolute; top: 6px; right: 8px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
+  pointer-events: none;
+}
 /* The sig-bar toggle (#btn-sigbar) shares the gear's active treatment:
    glyph colour, not a fill, so the strip's one accent stays scarce. */
 .winbtn.active { background: var(--hover); color: var(--brand-text); }
@@ -4135,6 +4148,25 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    one severity reads the same everywhere in the app. */
 .field-msg.warn { color: var(--warn); }
 .field-msg.err { color: var(--err); }
+/* Determinate: the size of a GitHub release asset is known before the
+   download starts, so this never has to fake an indeterminate state the
+   way the ffmpeg stitch bar (.track.indeterminate) does. `display: block`
+   for full width under the status line, which is why it needs its own
+   `[hidden]` override just below -- the same trap `.routenav` and
+   `.field-msg` above are guarded against. */
+#update-progress {
+  display: block; width: 100%; height: 6px; margin-top: 8px;
+  appearance: none; border: none; border-radius: 3px;
+  background: var(--track);
+}
+#update-progress[hidden] { display: none; }
+#update-progress::-webkit-progress-bar {
+  background: var(--track); border-radius: 3px;
+}
+#update-progress::-webkit-progress-value {
+  background: linear-gradient(90deg, var(--brand-deep), var(--brand));
+  border-radius: 3px; transition: width .12s linear;
+}
 /* A live region that is display:none when text lands may never announce it.
    Keep the relationship-level alert warning mounted, matching the two
    card-level alert status regions DESIGN.md names as the exception. */
@@ -5013,4 +5045,5 @@ button.btn.danger:disabled {
     opacity: .45;
   }
   .pill.warn .led { animation: none; }
+  #update-progress::-webkit-progress-value { transition: none; }
 }

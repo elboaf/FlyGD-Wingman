@@ -52,6 +52,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Nothing before this compared the pushed tag to wingman.__version__.
+      # `push: tags: ["v*"]` accepts any tag matching that glob, typed by a
+      # human, so a tag pushed one version behind (or ahead of) source would
+      # build and publish an installer whose AppVersion disagreed with the
+      # release it was attached to. Runs with a bare `python`, same as the
+      # step below it -- write_version_iss.py is already in ci.yml's
+      # bare-Python allowlist and stays stdlib-only for that reason.
+      - name: Verify release tag matches source version
+        run: python packaging/write_version_iss.py --expect-tag "${{ github.ref_name }}"
+
       - uses: ./.github/actions/build-installer
         with:
           # Always true for a release: shipping an installer that cannot

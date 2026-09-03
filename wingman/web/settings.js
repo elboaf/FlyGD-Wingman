@@ -42,6 +42,138 @@
 
   var current = {};    // last settings dict from Python
   var detected = {};   // detected-folder suggestions from the same payload
+
+  // ---- Update status (About card) --------------------------------------
+  // Task 5's bridge contract lands in app.js, which also owns the gear
+  // badge; this is the card's own renderer, reached from the cached
+  // General-entry read below and every later `onUpdateStatus` push. Action
+  // return values are deliberately ignored: a fast worker can push newer
+  // state before its bridge method's older snapshot resolves.
+
+  // The phase last painted, so a downloading -> ready transition can be
+  // caught exactly once regardless of which delivery observes it. Updated
+  // by renderUpdate itself, never read or written elsewhere, so there is
+  // exactly one copy for both render paths to share -- a copy per caller
+  // would let a push the general-entry read never saw confirm
+  // twice, or a page freshly opened onto an already-`ready` cache confirm
+  // on a transition that happened in a previous session.
+  var updatePhase = null;
+
+  // Phase cannot establish freshness: download progress produces several
+  // distinct `downloading` pushes. Every accepted render advances this so a
+  // cached General-entry read can tell that any newer card payload arrived.
+  var updateRenderGeneration = 0;
+
+  // Copy for every state the card can be in. Automatic check failures
+  // recover to `unavailable` with `error` left blank (ui/api.py's
+  // `_update_check_worker`), which is what makes this the one state whose
+  // text is not the payload's own error string -- a network hiccup on the
+  // silent startup check must not read as a specific diagnosis nobody
+  // asked for.
+  function updateStatusText(p) {
+    if (p.error) { return p.error; }
+    switch (p.state) {
+      case 'checking': return 'Checking for updates\u2026';
+      case 'current': return 'Wingman is up to date.';
+      case 'unavailable': return 'Update status unavailable.';
+      case 'available':
+        return 'An update is available'
+          + (p.available_version ? ' (' + p.available_version + ')' : '') + '.';
+      case 'downloading': return 'Downloading the update\u2026';
+      case 'ready': return 'Update downloaded. Ready to install.';
+      case 'check_failed':
+      case 'download_failed':
+        return p.error || 'The update did not happen.';
+      case 'handing_off': return 'Preparing to install\u2026';
+      case 'revalidating': return 'Verifying the update\u2026';
+      case 'launching': return 'Opening the installer\u2026';
+      default: return 'Update status not checked.';
+    }
+  }
+
+  // The one true/false the transition rule needs, factored out so it
+  // takes (previous, next) rather than reaching into module state itself
+  // -- a pure predicate is what keeps "exactly once" provable by reading
+  // one function instead of tracing three call sites.
+  function justFinishedDownloading(previous, next) {
+    return previous === 'downloading' && next === 'ready';
+  }
+
+  function renderUpdate(p) {
+    if (!p) { return; }
+    updateRenderGeneration += 1;
+    var previous = updatePhase;
+    updatePhase = p.state;
+
+    WM.el('update-status').textContent = updateStatusText(p);
+
+    var progress = WM.el('update-progress');
+    progress.hidden = p.state !== 'downloading';
+    progress.max = p.total_bytes || 1;
+    progress.value = p.downloaded_bytes || 0;
+
+    // Every permission below is read from the payload as Python computed
+    // it -- can_check/can_download/can_install -- never re-derived from
+    // p.state here, so this card can never offer an action the backend
+    // has already refused.
+    WM.setEnabled('btn-update-check', !!p.can_check);
+
+    var downloadBtn = WM.el('btn-update-download');
+    downloadBtn.hidden = !p.can_download;
+    WM.setEnabled(downloadBtn, !!p.can_download);
+
+    var installBtn = WM.el('btn-update-install');
+    installBtn.hidden = !p.can_install;
+    WM.setEnabled(installBtn, !!p.can_install);
+
+    // Automatic and exactly once: a general-entry read that lands on an
+    // already-cached `ready` (previous === null) must not pop the dialog
+    // a user never asked for -- only an observed transition may.
+    if (justFinishedDownloading(previous, p.state) && p.can_install) {
+      confirmInstall();
+    }
+  }
+
+  // Also the click handler for the Install button itself: every click
+  // confirms again, whether or not the automatic transition above already
+  // asked once and was declined.
+  function confirmInstall() {
+    WM.confirm('Install update?',
+               'Wingman will close and open the normal installer.').then(function (ok) {
+      if (ok) { WM.send('install_update'); }
+    });
+  }
+
+  WM.el('btn-update-check').addEventListener('click', function () {
+    WM.send('check_for_updates');
+  });
+  WM.el('btn-update-download').addEventListener('click', function () {
+    WM.send('download_update');
+  });
+  WM.el('btn-update-install').addEventListener('click', confirmInstall);
+
+  // Every later push -- check progress, download progress, install-phase
+  // advancement -- arrives here, dispatched by app.js's renderUpdateBadge
+  // (which owns the gear) alongside its own badge repaint.
+  document.addEventListener('wm:update-status', function (ev) {
+    renderUpdate(ev.detail || {});
+  });
+
+  // The read that fills the card, scoped the same way alerts.js/
+  // bookmarks.js/previews.js scope their own section fetches: on entry to
+  // THIS section only, not on every section change, or General would poll
+  // network state for a screen nobody is looking at. update_status() is a
+  // read of cached state -- a running automatic check is not restarted.
+  document.addEventListener('wm:section', function (ev) {
+    if (ev.detail === 'general') {
+      var cardGenerationAtRead = updateRenderGeneration;
+      WM.send('update_status').then(function (p) {
+        if (p && updateRenderGeneration === cardGenerationAtRead) {
+          renderUpdate(p);
+        }
+      });
+    }
+  });
   // Fetched once from Python rather than duplicated here: ui/copy.py's
   // AUTH_STATES is the tested source, and a second table in JavaScript
   // would drift the moment a label changes.
