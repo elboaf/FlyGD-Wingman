@@ -7,9 +7,9 @@ re-validating the payload, so validation here is deliberately strict and
 fails closed: anything that does not exactly match the expected shape raises
 `UpdateFailure` rather than being coerced or ignored.
 
-Importable and fully testable on Linux -- `latest_release` takes an injected
-`urlopen`, so nothing here touches the network unless a caller supplies the
-real `urllib.request.urlopen`.
+Importable and fully testable on Linux through injected transports. Production
+uses real network paths for both release metadata and installer downloads;
+tests replace those boundaries without weakening their validation.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from . import __version__, atomicio
 logger = logging.getLogger(__name__)
 
 RELEASES_API = "https://api.github.com/repos/elboaf/FlyGD-Wingman/releases/latest"
+MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 MAX_INSTALLER_BYTES = 256 * 1024 * 1024
 # The exact host and owner/repo the initial metadata URL must resolve to.
 # Task 2 owns the broader redirect-hop/CDN host allowlist for the actual
@@ -264,9 +265,22 @@ def latest_release(
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
+            # One byte past the cap distinguishes oversize from an exactly
+            # full response without ever buffering the rest of the body.
+            raw = response.read(MAX_RELEASE_METADATA_BYTES + 1)
     except OSError as exc:
         raise UpdateFailure("check", "network", str(exc)) from exc
+
+    if not isinstance(raw, bytes):
+        raise UpdateFailure(
+            "check", "metadata", "release metadata response is not bytes"
+        )
+    if len(raw) > MAX_RELEASE_METADATA_BYTES:
+        raise UpdateFailure(
+            "check",
+            "metadata",
+            "release metadata exceeded the 1 MiB limit",
+        )
 
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -298,6 +312,7 @@ UPDATE_STALE_AFTER = datetime.timedelta(days=7)
 _PARTIAL_SUFFIX = ".partial"
 _READY_SUFFIX = ".ready.exe"
 _MARKER_SUFFIX = ".handoff.json"
+_UPDATE_PREFIX = "update-"
 
 
 def validate_download_origin(url: str) -> None:
@@ -355,10 +370,11 @@ def download_release(
     cannot make Wingman buffer or persist an unbounded amount of data before
     the final digest check would have caught it anyway. Success requires
     the exact advertised byte count *and* a matching SHA-256; either
-    mismatch -- like any other failure -- removes the partial file rather
-    than leaving debris behind. The destination filename is drawn from
-    `tempfile.mkstemp`'s own randomness, so it stays unpredictable and never
-    collides between concurrent or repeated downloads.
+    mismatch -- like any other failure -- makes a best-effort attempt to
+    remove the partial file; an unlink failure must not replace the original
+    updater error. The destination filename is drawn from `tempfile.mkstemp`'s
+    own randomness, so it stays unpredictable and never collides between
+    concurrent or repeated downloads.
     """
     validate_download_origin(release.url)
     staging_root = Path(staging_root)
@@ -376,7 +392,7 @@ def download_release(
 
     try:
         handle, tmp_name = tempfile.mkstemp(
-            dir=str(staging_root), prefix="update-", suffix=_PARTIAL_SUFFIX
+            dir=str(staging_root), prefix=_UPDATE_PREFIX, suffix=_PARTIAL_SUFFIX
         )
     except OSError as exc:
         raise UpdateFailure(
@@ -471,13 +487,13 @@ def download_release(
 
 
 def write_handoff_marker(path: Path, release: ReleaseInfo) -> Path:
-    """Durably classify *path* as handed-off without renaming it.
+    """Persistently classify *path* as handed-off without renaming it.
 
-    Wingman must never rename an installer after `ShellExecuteExW` has
-    started it, so classification is a separate atomic, fsynced sidecar
-    beside the installer rather than a rename or an in-memory flag -- this
-    is what lets `cleanup_staging` correctly retain a handed-off installer
-    even across a process restart, purely from what is on disk.
+    Wingman must never rename an installer after `ShellExecuteExW` has started
+    it, so classification is a separate atomically published sidecar rather
+    than a rename or an in-memory flag. `atomicio` fsyncs the sidecar contents
+    but not its parent directory, so this survives ordinary process restarts
+    without claiming power-loss durability.
     """
     path = Path(path)
     if not path.name.endswith(_READY_SUFFIX):
@@ -513,23 +529,26 @@ def remove_handoff_marker(marker: Path) -> None:
 def cleanup_staging(
     staging_root: Path, *, now: datetime.datetime | None = None
 ) -> None:
-    """Remove abandoned updater files at least `UPDATE_STALE_AFTER` old.
+    """Remove updater-generated staging files after their retention period.
 
-    Constrained entirely to *staging_root*: only files matching this
-    module's own generated names (`*.partial`, `*.ready.exe`, and a matching
-    `*.ready.exe.handoff.json` sidecar) are ever considered, the directory
-    is never traversed recursively, symlinks are never followed or removed
-    (`lstat`/`follow_symlinks=False` throughout), and a name that resolves
-    outside *staging_root* is skipped rather than deleted. A handoff marker
-    classifies its matching installer as handed-off purely by filename
-    correlation on disk, which is what lets that classification survive a
-    process restart without ever renaming the installer. A sharing
-    violation or other in-use deletion failure is caught and treated as safe
-    retention, never forced.
+    The dedicated root must itself be a real directory, never a symlink or a
+    Windows reparse point/junction, and cleanup does not recurse. Child
+    symlinks and names without the updater's `update-` prefix are retained.
+    Unmarked files age from their own mtime; a handed-off installer's seven-day
+    retention starts when its matching marker is written, so only the marker's
+    mtime controls that pair. Stale orphan markers are removed independently.
+    Every unlink is best-effort: sharing violations and other failures safely
+    retain the affected file.
     """
     staging_root = Path(staging_root)
     try:
-        if not staging_root.is_dir():
+        root_stat = staging_root.lstat()
+        root_attributes = getattr(root_stat, "st_file_attributes", 0)
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or stat.S_ISLNK(root_stat.st_mode)
+            or root_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
             return
         resolved_root = staging_root.resolve()
         entries = list(os.scandir(staging_root))
@@ -540,41 +559,55 @@ def cleanup_staging(
         now = datetime.datetime.now(datetime.UTC)
     cutoff = now - UPDATE_STALE_AFTER
 
-    marker_names = set()
+    existing_names = {entry.name for entry in entries}
+    markers = {}
     candidates = []
     for entry in entries:
+        if not entry.name.startswith(_UPDATE_PREFIX):
+            continue
         try:
-            st = entry.stat(follow_symlinks=False)
+            entry_stat = entry.stat(follow_symlinks=False)
         except OSError:
             continue
-        if stat.S_ISLNK(st.st_mode):
+        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISREG(entry_stat.st_mode):
             continue
         if entry.name.endswith(_READY_SUFFIX + _MARKER_SUFFIX):
-            marker_names.add(entry.name[: -len(_MARKER_SUFFIX)])
+            installer_name = entry.name[: -len(_MARKER_SUFFIX)]
+            markers[installer_name] = (entry.name, entry_stat)
         elif entry.name.endswith(_PARTIAL_SUFFIX) or entry.name.endswith(_READY_SUFFIX):
-            candidates.append((entry.name, st))
+            candidates.append((entry.name, entry_stat))
 
-    for name, st in candidates:
-        mtime = datetime.datetime.fromtimestamp(st.st_mtime, datetime.UTC)
+    for name, entry_stat in candidates:
+        marker = markers.get(name)
+        age_stat = marker[1] if marker is not None else entry_stat
+        mtime = datetime.datetime.fromtimestamp(age_stat.st_mtime, datetime.UTC)
         if mtime > cutoff:
             continue
         path = staging_root / name
         try:
             if path.resolve().parent != resolved_root:
                 continue
-        except OSError:
-            continue
-        marker_path = (
-            staging_root / (name + _MARKER_SUFFIX) if name in marker_names else None
-        )
-        try:
             path.unlink()
         except OSError:
-            # Sharing violation or similar in-use failure: safe retention.
             continue
-        if marker_path is not None:
+        if marker is not None:
+            marker_path = staging_root / marker[0]
             with contextlib.suppress(OSError):
                 marker_path.unlink(missing_ok=True)
+
+    for installer_name, (marker_name, marker_stat) in markers.items():
+        if installer_name in existing_names:
+            continue
+        mtime = datetime.datetime.fromtimestamp(marker_stat.st_mtime, datetime.UTC)
+        if mtime > cutoff:
+            continue
+        marker_path = staging_root / marker_name
+        try:
+            if marker_path.resolve().parent != resolved_root:
+                continue
+            marker_path.unlink()
+        except OSError:
+            continue
 
 
 # ---- Task 3: attachment security, protected verification, shell launch ----
@@ -979,7 +1012,7 @@ def launch_verified(
             raise
         # Setup has started and its process handle has transferred to our caller.
         # Reporting launch failure here would orphan that handle and misclassify
-        # the durable handoff, so preserve ownership and leave a diagnostic.
+        # the persistent handoff, so preserve ownership and leave a diagnostic.
         logger.warning(
             "Protected installer handle close failed after shell launch; "
             "process handle %s remains owned by caller",

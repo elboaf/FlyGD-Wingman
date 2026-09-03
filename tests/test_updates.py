@@ -1,16 +1,16 @@
-"""Release discovery: strict version parsing and release metadata validation.
+"""Release discovery, bounded download, staging, and launch tests.
 
-Headless and networkless: latest_release() takes an injected urlopen, so
-nothing here touches the network. This module is the sole boundary that
-decides whether a GitHub release is a legitimate, installable update --
-every later update task (download, staging, install, UI) trusts a
-ReleaseInfo it received from here rather than re-validating the payload.
+Network calls are injected throughout so this suite stays headless and
+networkless while exercising the module's real metadata and installer download
+paths. The module is the sole boundary that decides whether a GitHub release is
+a legitimate, installable update; later stages trust its ReleaseInfo.
 """
 
 import ctypes
 import hashlib
 import json
 import os
+import stat
 import threading
 import time
 import urllib.request
@@ -346,8 +346,8 @@ class _JsonResponse:
     def __exit__(self, *args):
         return False
 
-    def read(self):
-        return self._body
+    def read(self, size=-1):
+        return self._body if size < 0 else self._body[:size]
 
 
 def test_latest_release_sends_the_documented_headers_and_parses_the_body():
@@ -399,11 +399,51 @@ def test_latest_release_wraps_a_malformed_json_body():
         def __exit__(self, *args):
             return False
 
-        def read(self):
+        def read(self, size=-1):
             return b"not json"
 
     with pytest.raises(updates.UpdateFailure) as exc_info:
         updates.latest_release(CURRENT, urlopen=lambda r, timeout: _BadResponse())
+    assert exc_info.value.stage == "check"
+    assert exc_info.value.code == "metadata"
+
+
+def test_latest_release_reads_only_one_byte_past_the_metadata_limit():
+    seen = []
+
+    class _OversizedResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, size=-1):
+            seen.append(size)
+            return b"x" * size
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.latest_release(CURRENT, urlopen=lambda r, timeout: _OversizedResponse())
+
+    assert seen == [updates.MAX_RELEASE_METADATA_BYTES + 1]
+    assert exc_info.value.stage == "check"
+    assert exc_info.value.code == "metadata"
+
+
+def test_latest_release_rejects_a_non_bytes_body_as_metadata_failure():
+    class _TextResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, size=-1):
+            return "{}"
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.latest_release(CURRENT, urlopen=lambda r, timeout: _TextResponse())
+
     assert exc_info.value.stage == "check"
     assert exc_info.value.code == "metadata"
 
@@ -719,12 +759,27 @@ def test_cleanup_keeps_a_handed_off_file_younger_than_seven_days(tmp_path):
     assert marker.exists()
 
 
-def test_cleanup_removes_a_handed_off_file_at_least_seven_days_old(tmp_path):
+def test_cleanup_keeps_an_old_installer_with_a_fresh_handoff_marker(tmp_path):
     release = release_info()
     ready = tmp_path / "update-eee.ready.exe"
     ready.write_bytes(b"x")
-    marker = updates.write_handoff_marker(ready, release)
     _age_file(ready, 8)
+    marker = updates.write_handoff_marker(ready, release)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert ready.exists()
+    assert marker.exists()
+
+
+def test_cleanup_removes_a_handoff_when_its_marker_is_at_least_seven_days_old(
+    tmp_path,
+):
+    release = release_info()
+    ready = tmp_path / "update-old-marker.ready.exe"
+    ready.write_bytes(b"x")
+    marker = updates.write_handoff_marker(ready, release)
+    _age_file(marker, 8)
 
     updates.cleanup_staging(tmp_path)
 
@@ -786,6 +841,98 @@ def test_cleanup_never_follows_or_removes_a_symlink(tmp_path):
     finally:
         link.unlink(missing_ok=True)
         real_target.unlink(missing_ok=True)
+
+
+def test_cleanup_rejects_a_symlink_staging_root(tmp_path):
+    real_root = tmp_path / "real-staging"
+    real_root.mkdir()
+    stale = real_root / "update-root-link.ready.exe"
+    stale.write_bytes(b"x")
+    _age_file(stale, 8)
+    linked_root = tmp_path / "linked-staging"
+    try:
+        linked_root.symlink_to(real_root, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not supported in this environment")
+
+    updates.cleanup_staging(linked_root)
+
+    assert linked_root.is_symlink()
+    assert stale.exists()
+
+
+def test_cleanup_rejects_a_windows_reparse_point_staging_root(tmp_path, monkeypatch):
+    stale = tmp_path / "update-junction.ready.exe"
+    stale.write_bytes(b"x")
+    _age_file(stale, 8)
+    real_lstat = Path.lstat
+
+    def reparse_lstat(self):
+        if self == tmp_path:
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR,
+                st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
+            )
+        return real_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", reparse_lstat)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert stale.exists()
+
+
+def test_cleanup_removes_only_stale_orphan_handoff_markers(tmp_path):
+    stale = tmp_path / "update-orphan-old.ready.exe.handoff.json"
+    stale.write_text("{}", encoding="utf-8")
+    _age_file(stale, 8)
+    fresh = tmp_path / "update-orphan-new.ready.exe.handoff.json"
+    fresh.write_text("{}", encoding="utf-8")
+    _age_file(fresh, 1)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert not stale.exists()
+    assert fresh.exists()
+
+
+def test_cleanup_safely_retains_an_orphan_marker_when_unlink_fails(
+    tmp_path, monkeypatch
+):
+    marker = tmp_path / "update-orphan-locked.ready.exe.handoff.json"
+    marker.write_text("{}", encoding="utf-8")
+    _age_file(marker, 8)
+    attempted = False
+    real_unlink = Path.unlink
+
+    def locked_unlink(self, *args, **kwargs):
+        nonlocal attempted
+        if self == marker:
+            attempted = True
+            raise PermissionError("in use")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert attempted
+    assert marker.exists()
+
+
+def test_cleanup_ignores_non_updater_names_even_when_stale(tmp_path):
+    foreign_partial = tmp_path / "foreign.partial"
+    foreign_ready = tmp_path / "foreign.ready.exe"
+    foreign_marker = tmp_path / "foreign.ready.exe.handoff.json"
+    for path in (foreign_partial, foreign_ready, foreign_marker):
+        path.write_bytes(b"x")
+        _age_file(path, 8)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert foreign_partial.exists()
+    assert foreign_ready.exists()
+    assert foreign_marker.exists()
 
 
 def test_cleanup_is_a_noop_on_a_missing_staging_directory(tmp_path):
