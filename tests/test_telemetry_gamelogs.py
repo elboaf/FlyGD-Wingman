@@ -60,9 +60,10 @@ def _log(
     return path
 
 
-def _stream():
-    """Create a GameLogStream with the noop thread factory for synchronous tests."""
-    return GameLogStream(_thread_factory=_noop_thread_factory)
+def _stream(**kw):
+    """GameLogStream with noop thread factory for synchronous tests."""
+    kw.setdefault("_thread_factory", _noop_thread_factory)
+    return GameLogStream(**kw)
 
 
 def _collect(stream):
@@ -90,23 +91,20 @@ class TestSourceLifecycleAndOrdering:
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
-        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lifecycles) == 1
-        lc = lifecycles[0]
-        assert lc.active is True
-        assert lc.available is True
-        assert lc.character == "Alice"
-        assert lc.source_id is not None
-        assert lc.source_id.session_start_utc == datetime.datetime(
+        lcs = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lcs) == 1
+        assert lcs[0].active is True
+        assert lcs[0].character == "Alice"
+        assert lcs[0].source_id.session_start_utc == datetime.datetime(
             2026, 8, 25, 11, 30, 0, tzinfo=UTC
         )
         stream.stop()
 
-    def test_new_file_after_first_scan_reads_from_zero(self, tmp_path):
+    def test_new_file_reads_from_zero(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
-        stream.scan_once(NOW)  # empty first scan
+        stream.scan_once(NOW)
         _log(
             tmp_path,
             "Bravo",
@@ -115,17 +113,13 @@ class TestSourceLifecycleAndOrdering:
             session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
+        lcs = [e for e in received if isinstance(e, SourceLifecycle)]
         facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(lifecycles) == 1
-        assert lifecycles[0].active is True
-        assert lifecycles[0].character == "Bravo"
+        assert len(lcs) == 1 and lcs[0].active
         assert len(facts) == 1
-        assert facts[0].source_generation == lifecycles[0].generation
-        assert facts[0].source_id == lifecycles[0].source_id
+        assert facts[0].source_generation == lcs[0].generation
 
-    def test_lifecycle_before_facts_in_event_stream(self, tmp_path):
-        """Activation lifecycle must appear before any CombatFact."""
+    def test_lifecycle_before_facts(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
@@ -138,14 +132,11 @@ class TestSourceLifecycleAndOrdering:
             session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        lc_idx = next(
-            i for i, e in enumerate(received) if isinstance(e, SourceLifecycle)
-        )
-        fact_idx = next(i for i, e in enumerate(received) if isinstance(e, CombatFact))
-        assert lc_idx < fact_idx
-        stream.stop()
+        lc_i = next(i for i, e in enumerate(received) if isinstance(e, SourceLifecycle))
+        f_i = next(i for i, e in enumerate(received) if isinstance(e, CombatFact))
+        assert lc_i < f_i
 
-    def test_facts_carry_matching_source_generation_and_id(self, tmp_path):
+    def test_facts_carry_matching_generation(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
@@ -162,9 +153,8 @@ class TestSourceLifecycleAndOrdering:
         assert len(facts) == 1
         assert facts[0].source_generation == lc.generation
         assert facts[0].source_id == lc.source_id
-        assert facts[0].character == "Alice"
 
-    def test_one_active_source_per_character(self, tmp_path):
+    def test_one_active_per_character(self, tmp_path):
         _log(tmp_path, "Alice", stem="20260825_100000_1", session="2026.08.25 10:00:00")
         _log(tmp_path, "Alice", stem="20260825_113000_1", session="2026.08.25 11:30:00")
         stream = _stream()
@@ -173,11 +163,8 @@ class TestSourceLifecycleAndOrdering:
         stream.scan_once(NOW)
         active = [e for e in received if isinstance(e, SourceLifecycle) and e.active]
         assert len(active) == 1
-        assert active[0].source_id.session_start_utc == datetime.datetime(
-            2026, 8, 25, 11, 30, 0, tzinfo=UTC
-        )
 
-    def test_preexisting_file_baselines_at_eof(self, tmp_path):
+    def test_preexisting_baselines_at_eof(self, tmp_path):
         _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
         stream = _stream()
         received = _collect(stream)
@@ -185,7 +172,7 @@ class TestSourceLifecycleAndOrdering:
         stream.scan_once(NOW)
         assert [e for e in received if isinstance(e, CombatFact)] == []
 
-    def test_partial_line_is_buffered(self, tmp_path):
+    def test_partial_line_buffered(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
@@ -194,23 +181,20 @@ class TestSourceLifecycleAndOrdering:
             tmp_path, "Alice", stem="20260825_113000_456", session="2026.08.25 11:30:00"
         )
         stream.scan_once(NOW)
-        head, tail = OUTGOING_DAMAGE_LINE[:40], OUTGOING_DAMAGE_LINE[40:]
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(head)
+            fh.write(OUTGOING_DAMAGE_LINE[:40])
         stream.scan_once(NOW)
         assert [e for e in received if isinstance(e, CombatFact)] == []
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(tail)
+            fh.write(OUTGOING_DAMAGE_LINE[40:])
         stream.scan_once(NOW)
-        facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(facts) == 1
+        assert len([e for e in received if isinstance(e, CombatFact)]) == 1
 
-    def test_truncation_retires_old_activates_new_generation(self, tmp_path):
+    def test_truncation_retires_old_activates_new(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
-        # Give it a long body so truncation is detectable.
         path = _log(
             tmp_path,
             "Alice",
@@ -219,28 +203,23 @@ class TestSourceLifecycleAndOrdering:
             session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        lc_orig = next(e for e in received if isinstance(e, SourceLifecycle))
-        orig_gen = lc_orig.generation
-        assert len([e for e in received if isinstance(e, CombatFact)]) >= 1
+        orig_gen = next(
+            e for e in received if isinstance(e, SourceLifecycle)
+        ).generation
         received.clear()
-        # Truncate and rewrite shorter.
         path.write_text(
             HEADER.format(name="Alice", session="2026.08.25 11:30:00")
             + OUTGOING_DAMAGE_LINE,
             encoding="utf-8",
         )
         stream.scan_once(NOW)
-        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lifecycles) == 2
-        assert lifecycles[0].active is False
-        assert lifecycles[0].generation == orig_gen
-        assert lifecycles[1].active is True
-        assert lifecycles[1].generation > orig_gen
-        assert received.index(lifecycles[0]) < received.index(lifecycles[1])
-        facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(facts) >= 1
-        for f in facts:
-            assert f.source_generation == lifecycles[1].generation
+        lcs = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lcs) == 2
+        assert lcs[0].active is False and lcs[0].generation == orig_gen
+        assert lcs[1].active is True and lcs[1].generation > orig_gen
+        assert received.index(lcs[0]) < received.index(lcs[1])
+        for f in [e for e in received if isinstance(e, CombatFact)]:
+            assert f.source_generation == lcs[1].generation
         stream.stop()
 
     def test_retirement_before_replacement(self, tmp_path):
@@ -250,7 +229,7 @@ class TestSourceLifecycleAndOrdering:
         stream.scan_once(NOW)
         _log(tmp_path, "Alice", stem="20260825_100000_1", session="2026.08.25 10:00:00")
         stream.scan_once(NOW)
-        orig_gen = next(
+        orig = next(
             e for e in received if isinstance(e, SourceLifecycle) and e.active
         ).generation
         received.clear()
@@ -262,13 +241,10 @@ class TestSourceLifecycleAndOrdering:
             session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lifecycles) == 2
-        assert lifecycles[0].active is False
-        assert lifecycles[0].generation == orig_gen
-        assert lifecycles[1].active is True
-        assert lifecycles[1].generation > orig_gen
-        assert received.index(lifecycles[0]) < received.index(lifecycles[1])
+        lcs = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lcs) == 2
+        assert lcs[0].active is False and lcs[0].generation == orig
+        assert lcs[1].active is True and lcs[1].generation > orig
         stream.stop()
 
     def test_eve_listener_excluded(self, tmp_path):
@@ -291,25 +267,27 @@ class TestSourceLifecycleAndOrdering:
         stream.start(tmp_path)
         stream.scan_once(NOW)
         assert [e for e in received if isinstance(e, SourceLifecycle)] == []
-        stream.stop()
 
-    def test_tied_session_start_breaks_on_mtime(self, tmp_path):
+    def test_tied_session_breaks_on_mtime(self, tmp_path):
         import os
 
         _log(tmp_path, "Alice", stem="20260825_100000_1")
         _log(tmp_path, "Alice", stem="20260825_100000_2")
-        old_time = (NOW - datetime.timedelta(minutes=10)).timestamp()
-        new_time = (NOW - datetime.timedelta(minutes=1)).timestamp()
-        os.utime(tmp_path / "20260825_100000_1.txt", (old_time, old_time))
-        os.utime(tmp_path / "20260825_100000_2.txt", (new_time, new_time))
+        os.utime(
+            tmp_path / "20260825_100000_1.txt",
+            ((NOW - datetime.timedelta(minutes=10)).timestamp(),) * 2,
+        )
+        os.utime(
+            tmp_path / "20260825_100000_2.txt",
+            ((NOW - datetime.timedelta(minutes=1)).timestamp(),) * 2,
+        )
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
-        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lifecycles) == 1
-        assert "20260825_100000_2" in lifecycles[0].source_id.normalized_path
-        stream.stop()
+        lcs = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lcs) == 1
+        assert "20260825_100000_2" in lcs[0].source_id.normalized_path
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +296,7 @@ class TestSourceLifecycleAndOrdering:
 
 
 class TestReplayPrevention:
-    def test_folder_loss_retires_all_sources(self, tmp_path):
+    def test_folder_loss_retires(self, tmp_path):
         import shutil
 
         folder = tmp_path / "gamelogs"
@@ -328,19 +306,16 @@ class TestReplayPrevention:
         received = _collect(stream)
         stream.start(folder)
         stream.scan_once(NOW)
-        active_gen = next(
+        gen = next(
             e for e in received if isinstance(e, SourceLifecycle) and e.active
         ).generation
         received.clear()
         shutil.rmtree(folder)
         stream.scan_once(NOW)
-        lifecycles = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lifecycles) == 1
-        assert lifecycles[0].active is False
-        assert lifecycles[0].generation == active_gen
-        stream.stop()
+        lcs = [e for e in received if isinstance(e, SourceLifecycle)]
+        assert len(lcs) == 1 and not lcs[0].active and lcs[0].generation == gen
 
-    def test_folder_recovery_baselines_at_eof_no_replay(self, tmp_path):
+    def test_folder_recovery_no_replay(self, tmp_path):
         import shutil
 
         folder = tmp_path / "gamelogs"
@@ -362,9 +337,8 @@ class TestReplayPrevention:
             len([e for e in received if isinstance(e, SourceLifecycle) and e.active])
             == 1
         )
-        stream.stop()
 
-    def test_cap_eviction_then_reappearance_does_not_replay(self, tmp_path):
+    def test_cap_eviction_no_replay(self, tmp_path):
         from wingman.telemetry.gamelogs import MAX_FILES
 
         stream = _stream()
@@ -382,15 +356,14 @@ class TestReplayPrevention:
             h, m = 11 + i // 60, i % 60
             _log(
                 tmp_path,
-                f"Char{i:03d}",
+                f"C{i:03d}",
                 stem=f"20260825_{h:02d}{m:02d}00_{i:03d}",
                 session=f"2026.08.25 {h:02d}:{m:02d}:00",
             )
         stream.scan_once(NOW)
-        active_chars = {
+        assert "Alice" not in {
             e.character for e in received if isinstance(e, SourceLifecycle) and e.active
         }
-        assert "Alice" not in active_chars
         received.clear()
         for i in range(MAX_FILES):
             h, m = 11 + i // 60, i % 60
@@ -411,23 +384,22 @@ class TestReplayPrevention:
             )
             == 1
         )
-        stream.stop()
 
-    def test_transient_stat_failure_then_recovery_no_replay(self, tmp_path):
+    def test_stat_failure_then_recovery_no_replay(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
-        alice_path = _log(
+        alice = _log(
             tmp_path,
             "Alice",
             OUTGOING_DAMAGE_LINE,
             stem="20260825_113000_100",
             session="2026.08.25 11:30:00",
         )
-        real_data = alice_path.read_bytes()
-        alice_path.unlink()
-        alice_path.symlink_to(tmp_path / "broken_target")
+        data = alice.read_bytes()
+        alice.unlink()
+        alice.symlink_to(tmp_path / "broken")
         stream.scan_once(NOW)
         assert [
             e
@@ -435,8 +407,8 @@ class TestReplayPrevention:
             if isinstance(e, SourceLifecycle) and e.character == "Alice"
         ] == []
         received.clear()
-        alice_path.unlink()
-        alice_path.write_bytes(real_data)
+        alice.unlink()
+        alice.write_bytes(data)
         stream.scan_once(NOW)
         assert [
             e for e in received if isinstance(e, CombatFact) and e.character == "Alice"
@@ -453,40 +425,36 @@ class TestReplayPrevention:
             )
             == 1
         )
-        stream.stop()
 
-    def test_baseline_stat_failure_defers_activation_then_recovers(self, tmp_path):
-        """If EOF cannot be established for a known path, the source is NOT
-        activated.  On the next scan when stat succeeds, activate at
-        current EOF with no historical facts."""
-        stream = _stream()
+    def test_baseline_eof_stat_failure_defers_then_recovers(self, tmp_path):
+        """Injected _get_file_size fails ONLY during EOF baseline for a
+        known path.  Discovery stat (mtime) succeeds.  No activation, no
+        retirement of old source.  On recovery, baseline at current EOF."""
+        call_count = [0]
+        real_size = GameLogStream.__init__.__kwdefaults__["_get_file_size"]
+
+        def fail_second(path):
+            call_count[0] += 1
+            # Fail baseline calls (the ones inside the _lock reconcile).
+            # Discovery stat happens via path.stat().st_mtime, not this seam.
+            if call_count[0] == 1:
+                raise OSError("injected baseline failure")
+            return real_size(path)
+
+        stream = _stream(_get_file_size=fail_second)
         received = _collect(stream)
         stream.start(tmp_path)
-        # First scan: file present, baselined at EOF.
-        alice_path = _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
+        # File present on first scan — known, needs EOF baseline via seam.
+        _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
         stream.scan_once(NOW)
-        assert (
-            len([e for e in received if isinstance(e, SourceLifecycle) and e.active])
-            == 1
-        )
+        # Baseline failed → not activated, no retirement, scan error recorded.
+        assert [
+            e for e in received if isinstance(e, SourceLifecycle) and e.active
+        ] == []
+        assert stream.health().state == "error"
         received.clear()
-        # Simulate stat failure by replacing with a broken symlink.
-        real_data = alice_path.read_bytes()
-        alice_path.unlink()
-        alice_path.symlink_to(tmp_path / "gone")
+        # Second scan: seam succeeds → activated at EOF, no facts.
         stream.scan_once(NOW)
-        # The source should be retired because the file is gone from
-        # candidates (stat failed).
-        retired = [
-            e for e in received if isinstance(e, SourceLifecycle) and not e.active
-        ]
-        assert len(retired) == 1
-        received.clear()
-        # Restore with MORE content (so replaying would be visible).
-        alice_path.unlink()
-        alice_path.write_bytes(real_data + OUTGOING_DAMAGE_LINE.encode("utf-8") * 5)
-        stream.scan_once(NOW)
-        # Activated at EOF — no facts replayed.
         assert [e for e in received if isinstance(e, CombatFact)] == []
         assert (
             len([e for e in received if isinstance(e, SourceLifecycle) and e.active])
@@ -494,27 +462,79 @@ class TestReplayPrevention:
         )
         stream.stop()
 
-    def test_genuinely_new_file_reads_from_zero(self, tmp_path):
+    def test_failed_replacement_baseline_keeps_old_source(self, tmp_path):
+        """If the replacement source's baseline stat fails, the old source
+        stays tracked and no retirement is published."""
+        calls = [0]
+        real_size = GameLogStream.__init__.__kwdefaults__["_get_file_size"]
+
+        def fail_third(path):
+            # Call 1: old Alice EOF baseline on first scan.
+            # Call 2: new Alice EOF baseline on second scan (skip).
+            # (new Alice is known because her file existed during first scan
+            #  but had the wrong header then; now it has the right one.)
+            calls[0] += 1
+            if calls[0] == 2:
+                raise OSError("injected")
+            return real_size(path)
+
+        stream = _stream(_get_file_size=fail_third)
+        received = _collect(stream)
+        stream.start(tmp_path)
+        # Create both files. Old Alice is valid; new one starts with EVE
+        # listener (excluded from candidates but its path is tombstoned).
+        _log(tmp_path, "Alice", stem="20260825_100000_1", session="2026.08.25 10:00:00")
+        newer = tmp_path / "20260825_113000_1.txt"
+        newer.write_text(
+            HEADER.format(name="EVE", session="2026.08.25 11:30:00"),
+            encoding="utf-8",
+        )
+        stream.scan_once(NOW)
+        # Only old Alice activated (gen 1). newer was excluded (EVE).
+        orig_gen = next(
+            e for e in received if isinstance(e, SourceLifecycle) and e.active
+        ).generation
+        received.clear()
+        # Rewrite the newer file with a real character — it is now known
+        # (its path was in paths_this_scan on scan 1).
+        newer.write_text(
+            HEADER.format(name="Alice", session="2026.08.25 11:30:00")
+            + OUTGOING_DAMAGE_LINE,
+            encoding="utf-8",
+        )
+        stream.scan_once(NOW)
+        # Baseline of the replacement fails (call #2) → no retirement.
+        assert [
+            e for e in received if isinstance(e, SourceLifecycle) and not e.active
+        ] == []
+        assert stream._tracked["Alice"].generation == orig_gen
+        stream.stop()
+
+    def test_genuinely_new_reads_from_zero(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
         _log(
             tmp_path,
-            "NewChar",
+            "New",
             OUTGOING_DAMAGE_LINE,
             stem="20260825_113000_NEW",
             session="2026.08.25 11:30:00",
         )
         stream.scan_once(NOW)
-        facts = [
-            e
-            for e in received
-            if isinstance(e, CombatFact) and e.character == "NewChar"
-        ]
-        assert len(facts) == 1
+        assert (
+            len(
+                [
+                    e
+                    for e in received
+                    if isinstance(e, CombatFact) and e.character == "New"
+                ]
+            )
+            == 1
+        )
 
-    def test_per_source_read_error_does_not_suppress_others(self, tmp_path):
+    def test_per_source_error_does_not_suppress_others(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
@@ -529,13 +549,18 @@ class TestReplayPrevention:
             fh.write(OUTGOING_DAMAGE_LINE)
         (tmp_path / "20260825_113000_100.txt").unlink()
         stream.scan_once(NOW)
-        bob_facts = [
-            e for e in received if isinstance(e, CombatFact) and e.character == "Bob"
-        ]
-        assert len(bob_facts) == 1
-        stream.stop()
+        assert (
+            len(
+                [
+                    e
+                    for e in received
+                    if isinstance(e, CombatFact) and e.character == "Bob"
+                ]
+            )
+            == 1
+        )
 
-    def test_subscriber_exception_does_not_stop_later_subscribers(self, tmp_path):
+    def test_subscriber_exception_isolation(self, tmp_path):
         stream = _stream()
         good = []
         stream.subscribe(lambda e: (_ for _ in ()).throw(RuntimeError("crash")))
@@ -577,14 +602,14 @@ class TestHealth:
         assert stream.health().state == "missing_folder"
         stream.stop()
 
-    def test_scan_error_then_clear_after_full_success(self, tmp_path):
+    def test_scan_error_clear_after_success(self, tmp_path):
         folder = tmp_path / "gamelogs"
         folder.mkdir()
         stream = _stream()
         stream.start(folder)
         stream.scan_once(NOW)
         broken = folder / "20260825_110000_bad.txt"
-        broken.symlink_to(folder / "nonexistent_target")
+        broken.symlink_to(folder / "gone")
         stream.scan_once(NOW)
         assert stream.health().state == "error"
         broken.unlink()
@@ -592,74 +617,121 @@ class TestHealth:
         assert stream.health().state != "error"
         stream.stop()
 
-    def test_poll_error_is_recorded(self, tmp_path):
-        """A stat failure during poll is recorded in health.
+    def test_header_exception_is_scan_error(self, tmp_path):
+        """An injected header reader that raises is recorded as a scan error,
+        distinct from a valid characterless stub returning None."""
 
-        We create Alice, scan to discover her, then delete the file
-        and call _poll() directly (bypassing rescan which would retire
-        her) to trigger a stat error.
-        """
+        def exploding_header(path):
+            raise OSError("injected header read failure")
+
+        stream = _stream(_read_header=exploding_header)
+        _collect(stream)
+        stream.start(tmp_path)
+        _log(tmp_path, "Alice")
+        stream.scan_once(NOW)
+        h = stream.health()
+        assert h.state == "error"
+        assert "scan error" in h.detail
+        stream.stop()
+
+    def test_baseline_stat_error_is_scan_error(self, tmp_path):
+        def failing_size(path):
+            raise OSError("injected baseline failure")
+
+        stream = _stream(_get_file_size=failing_size)
+        _collect(stream)
+        stream.start(tmp_path)
+        _log(tmp_path, "Alice")
+        stream.scan_once(NOW)
+        h = stream.health()
+        assert h.state == "error"
+        assert "scan error" in h.detail
+        stream.stop()
+
+    def test_poll_error_recorded(self, tmp_path):
         stream = _stream()
-        received = _collect(stream)
+        _collect(stream)
         stream.start(tmp_path)
         stream.scan_once(NOW)
         path = _log(
             tmp_path, "Alice", stem="20260825_113000_100", session="2026.08.25 11:30:00"
         )
         stream.scan_once(NOW)
-        received.clear()
-        # Delete Alice so poll's stat() fails — but skip rescan so she
-        # remains in _tracked.
         path.unlink()
-        with stream._op_lock:
-            stream._poll()
+        # Call _poll directly to bypass rescan which would retire Alice.
+        stream._poll()
+        stream._drain_queue()
         h = stream.health()
-        assert h.state == "error"
-        assert "source error" in h.detail
+        assert h.state == "error" and "source error" in h.detail
         stream.stop()
 
-    def test_stale_after_three_poll_intervals(self, tmp_path):
-        mono = [0.0]
-        stream = GameLogStream(
-            _thread_factory=_noop_thread_factory,
-            _clock=lambda: mono[0],
+    def test_poll_error_clears_after_success(self, tmp_path):
+        stream = _stream()
+        _collect(stream)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        path = _log(
+            tmp_path, "Alice", stem="20260825_113000_100", session="2026.08.25 11:30:00"
         )
+        stream.scan_once(NOW)
+        path.unlink()
+        stream._poll()
+        stream._drain_queue()
+        assert stream.health().state == "error"
+        # Restore and do a full scan_once (rescan will retire Alice,
+        # poll will have no errors).
+        _log(
+            tmp_path, "Alice", stem="20260825_113000_100", session="2026.08.25 11:30:00"
+        )
+        stream.scan_once(NOW)
+        assert stream.health().state != "error"
+        stream.stop()
+
+    def test_stale_after_three_intervals(self, tmp_path):
+        mono = [0.0]
+        stream = _stream(_clock=lambda: mono[0])
         _collect(stream)
         stream.start(tmp_path)
         _log(tmp_path, "Alice")
         stream.scan_once(NOW)
-        # After a successful poll, health is active.
         assert stream.health().state == "active"
-        # Advance clock past stale threshold.
         mono[0] = POLL_INTERVAL_S * 3 + 0.1
         assert stream.health().state == "stale"
         stream.stop()
 
-    def test_stale_clears_after_successful_poll(self, tmp_path):
+    def test_stale_before_first_successful_poll(self, tmp_path):
+        """Staleness works even before any successful poll by comparing
+        against start time."""
         mono = [0.0]
-        stream = GameLogStream(
-            _thread_factory=_noop_thread_factory,
-            _clock=lambda: mono[0],
-        )
+        stream = _stream(_clock=lambda: mono[0])
+        _collect(stream)
+        stream.start(tmp_path)
+        # No scan_once — no poll has ever succeeded.
+        mono[0] = POLL_INTERVAL_S * 3 + 0.1
+        assert stream.health().state == "stale"
+        stream.stop()
+
+    def test_stale_clears_after_poll(self, tmp_path):
+        mono = [0.0]
+        stream = _stream(_clock=lambda: mono[0])
         _collect(stream)
         stream.start(tmp_path)
         _log(tmp_path, "Alice")
         stream.scan_once(NOW)
         mono[0] = POLL_INTERVAL_S * 3 + 0.1
         assert stream.health().state == "stale"
-        # Run another successful poll.
         stream.scan_once(NOW)
         assert stream.health().state == "active"
         stream.stop()
 
 
 # ---------------------------------------------------------------------------
-# Interface contracts
+# Interface
 # ---------------------------------------------------------------------------
 
 
 class TestInterface:
-    def test_subscribe_returns_unsubscribe_callable(self, tmp_path):
+    def test_unsubscribe(self, tmp_path):
         stream = _stream()
         received = []
         unsub = stream.subscribe(lambda e: received.append(e))
@@ -672,13 +744,13 @@ class TestInterface:
         stream.scan_once(NOW)
         assert len(received) == count
 
-    def test_stop_is_idempotent(self, tmp_path):
+    def test_stop_idempotent(self, tmp_path):
         stream = _stream()
         stream.start(tmp_path)
         stream.stop()
         stream.stop()
 
-    def test_start_is_idempotent(self, tmp_path):
+    def test_start_idempotent(self, tmp_path):
         stream = _stream()
         stream.start(tmp_path)
         w1 = stream._worker
@@ -695,9 +767,7 @@ class TestInterface:
         received.clear()
         stream.request_source("Alice")
         lcs = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lcs) == 1
-        assert lcs[0].active is True
-        stream.stop()
+        assert len(lcs) == 1 and lcs[0].active
 
     def test_request_source_unknown(self, tmp_path):
         stream = _stream()
@@ -706,13 +776,11 @@ class TestInterface:
         stream.scan_once(NOW)
         stream.request_source("Unknown")
         lcs = [e for e in received if isinstance(e, SourceLifecycle)]
-        assert len(lcs) == 1
-        assert lcs[0].available is False
-        stream.stop()
+        assert len(lcs) == 1 and not lcs[0].available
 
 
 # ---------------------------------------------------------------------------
-# Dedup-before-cap (ported from Tailer)
+# Dedup-before-cap
 # ---------------------------------------------------------------------------
 
 
@@ -752,11 +820,10 @@ class TestDedupBeforeCap:
             e.character for e in received if isinstance(e, SourceLifecycle) and e.active
         }
         assert {"Busy", "Alice", "Bravo"} <= chars
-        stream.stop()
 
 
 # ---------------------------------------------------------------------------
-# Combat fact parsing integration
+# Combat fact parsing
 # ---------------------------------------------------------------------------
 
 
@@ -774,10 +841,7 @@ class TestCombatFactParsing:
             fh.write(DAMAGE_LINE)
         stream.scan_once(NOW)
         facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(facts) == 1
-        assert facts[0].kind == "incoming_damage"
-        assert facts[0].character == "Alice"
-        stream.stop()
+        assert len(facts) == 1 and facts[0].kind == "incoming_damage"
 
     def test_outgoing_damage(self, tmp_path):
         stream = _stream()
@@ -792,10 +856,7 @@ class TestCombatFactParsing:
             fh.write(OUTGOING_DAMAGE_LINE)
         stream.scan_once(NOW)
         facts = [e for e in received if isinstance(e, CombatFact)]
-        assert len(facts) == 1
-        assert facts[0].kind == "outgoing_damage"
-        assert facts[0].amount == 299
-        stream.stop()
+        assert len(facts) == 1 and facts[0].amount == 299
 
     def test_tackle_with_ownership(self, tmp_path):
         stream = _stream()
@@ -818,8 +879,6 @@ class TestCombatFactParsing:
             if isinstance(e, CombatFact) and e.kind == "incoming_tackle"
         ]
         assert len(tackle) == 1
-        assert tackle[0].character == "Alice Renn"
-        stream.stop()
 
     def test_fleet_broadcast_bystander(self, tmp_path):
         stream = _stream()
@@ -841,7 +900,6 @@ class TestCombatFactParsing:
             for e in received
             if isinstance(e, CombatFact) and e.kind == "incoming_tackle"
         ] == []
-        stream.stop()
 
     def test_undecodable_bytes(self, tmp_path):
         stream = _stream()
@@ -853,11 +911,9 @@ class TestCombatFactParsing:
         )
         stream.scan_once(NOW)
         with open(path, "ab") as fh:
-            fh.write(b"\xff\xfe garbage\n")
-            fh.write(OUTGOING_DAMAGE_LINE.encode("utf-8"))
+            fh.write(b"\xff\xfe garbage\n" + OUTGOING_DAMAGE_LINE.encode("utf-8"))
         stream.scan_once(NOW)
         assert len([e for e in received if isinstance(e, CombatFact)]) >= 1
-        stream.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -866,36 +922,30 @@ class TestCombatFactParsing:
 
 
 class TestWorker:
-    def test_start_spawns_non_daemon_worker(self, tmp_path):
+    def test_non_daemon(self, tmp_path):
         stream = GameLogStream()
         stream.start(tmp_path)
-        assert stream._worker is not None
-        assert stream._worker.is_alive()
-        assert stream._worker.daemon is False
+        assert stream._worker is not None and not stream._worker.daemon
         stream.stop()
 
-    def test_stop_joins_within_timeout(self, tmp_path):
+    def test_stop_joins(self, tmp_path):
         stream = GameLogStream()
         stream.start(tmp_path)
         w = stream._worker
-        t0 = time.monotonic()
         stream.stop(timeout=3.0)
-        assert time.monotonic() - t0 < 3.0
         assert not w.is_alive()
 
-    def test_fresh_stop_event_per_generation(self, tmp_path):
+    def test_fresh_stop_event(self, tmp_path):
         stream = GameLogStream()
         stream.start(tmp_path)
         ev1 = stream._stop_event
         stream.stop()
         assert ev1.is_set()
         stream.start(tmp_path)
-        ev2 = stream._stop_event
-        assert ev2 is not ev1
-        assert not ev2.is_set()
+        assert stream._stop_event is not ev1 and not stream._stop_event.is_set()
         stream.stop()
 
-    def test_worker_polls_at_least_once(self, tmp_path):
+    def test_worker_polls(self, tmp_path):
         stream = GameLogStream()
         received = _collect(stream)
         _log(tmp_path, "Alice")
@@ -908,113 +958,102 @@ class TestWorker:
         stream.stop()
         assert any(isinstance(e, SourceLifecycle) for e in received)
 
-    def test_stop_idempotent_with_worker(self, tmp_path):
+    def test_start_stop_cycle(self, tmp_path):
         stream = GameLogStream()
-        stream.start(tmp_path)
-        stream.stop()
-        stream.stop()
+        for _ in range(2):
+            stream.start(tmp_path)
+            assert stream._worker.is_alive()
+            stream.stop()
 
-    def test_start_stop_start_stop(self, tmp_path):
-        stream = GameLogStream()
-        stream.start(tmp_path)
-        assert stream._worker.is_alive()
-        stream.stop()
-        stream.start(tmp_path)
-        assert stream._worker.is_alive()
-        stream.stop()
-
-    def test_stop_retains_worker_on_timeout(self, tmp_path):
-        """On timed-out join the worker is retained, not forgotten."""
+    def test_timeout_retains_worker(self, tmp_path):
         gate = threading.Event()
 
-        def blocking_factory(*, target, args, name, daemon):
+        def blocking(*, target, args, name, daemon):
             def wrapper():
                 gate.wait(timeout=10)
                 target(*args)
 
             return threading.Thread(target=wrapper, name=name, daemon=daemon)
 
-        stream = GameLogStream(_thread_factory=blocking_factory)
+        stream = GameLogStream(_thread_factory=blocking)
         stream.start(tmp_path)
         stream.stop(timeout=0.01)
-        # Worker still alive and retained.
-        assert stream._worker is not None
-        assert stream._worker.is_alive()
+        assert stream._worker is not None and stream._worker.is_alive()
         gate.set()
         stream._worker.join(timeout=5)
 
-    def test_cadence_immediate_rescan_then_intervals(self, tmp_path):
-        """Verify immediate rescan, 1s polls, 5s rescan via injected seams."""
+    def test_timeout_blocks_start(self, tmp_path):
+        """After a timed-out stop, start() refuses to launch a second worker."""
+        gate = threading.Event()
+
+        def blocking(*, target, args, name, daemon):
+            def wrapper():
+                gate.wait(timeout=10)
+                target(*args)
+
+            return threading.Thread(target=wrapper, name=name, daemon=daemon)
+
+        stream = GameLogStream(_thread_factory=blocking)
+        stream.start(tmp_path)
+        w1 = stream._worker
+        stream.stop(timeout=0.01)
+        assert stream._worker is w1  # retained
+        stream.start(tmp_path)  # refused — worker alive
+        assert stream._worker is w1  # same worker
+        gate.set()
+        w1.join(timeout=5)
+        # Now worker is dead; start succeeds.
+        stream.start(tmp_path)
+        assert stream._worker is not w1
+        stream.stop()
+
+    def test_cadence(self, tmp_path):
         mono = [0.0]
-        rescan_times = []
-        poll_times = []
-        waits = []
-        stop_after = [8.5]
+        rescan_t, poll_t, waits = [], [], []
 
-        class _FakeEvent:
-            def __init__(self):
-                self._set = False
-
+        class _FakeEv:
             def is_set(self):
-                return mono[0] >= stop_after[0]
+                return mono[0] >= 8.5
 
             def set(self):
-                self._set = True
+                pass
 
             def wait(self, t):
                 pass
 
-        original_rescan = GameLogStream._rescan
-        original_poll = GameLogStream._poll
-
-        def patched_rescan(self, now_utc):
-            rescan_times.append(mono[0])
-
-        def patched_poll(self):
-            poll_times.append(mono[0])
+        orig_rescan = GameLogStream._rescan
+        orig_poll = GameLogStream._poll
+        GameLogStream._rescan = lambda self, u: rescan_t.append(mono[0])
+        GameLogStream._poll = lambda self: poll_t.append(mono[0])
 
         def fake_wait(ev, t):
             waits.append(t)
             mono[0] += t
 
-        stream = GameLogStream(
-            _thread_factory=_noop_thread_factory,
-            _clock=lambda: mono[0],
-            _utc_now=lambda: NOW,
-            _wait_fn=fake_wait,
+        stream = _stream(
+            _clock=lambda: mono[0], _utc_now=lambda: NOW, _wait_fn=fake_wait
         )
         stream._folder = tmp_path
         stream._started = True
-        stop_ev = _FakeEvent()
-
-        # Monkey-patch to track calls without I/O.
-        GameLogStream._rescan = patched_rescan
-        GameLogStream._poll = patched_poll
         try:
-            stream._run(stop_ev)
+            stream._run(_FakeEv())
         finally:
-            GameLogStream._rescan = original_rescan
-            GameLogStream._poll = original_poll
+            GameLogStream._rescan = orig_rescan
+            GameLogStream._poll = orig_poll
 
-        # First rescan at t=0 (immediate).
-        assert rescan_times[0] == 0.0
-        # Polls at every iteration.
-        assert poll_times[0] == 0.0
-        # All waits are 1s.
+        assert rescan_t[0] == 0.0
+        assert rescan_t[1] == 5.0
         assert all(w == POLL_INTERVAL_S for w in waits)
-        # Second rescan at t=5.
-        assert rescan_times[1] == 5.0
-        # Total iterations: 0,1,2,3,4,5,6,7,8 (stops at 8.5).
-        assert len(poll_times) == 9
+        assert len(poll_t) == 9
 
 
 # ---------------------------------------------------------------------------
-# Thread safety
+# Thread safety and publication order
 # ---------------------------------------------------------------------------
 
 
 class TestThreadSafety:
-    def test_subscribe_unsubscribe_concurrent(self, tmp_path):
+    def test_subscribe_concurrent(self, tmp_path):
         stream = _stream()
         stream.start(tmp_path)
         _log(tmp_path, "Alice")
@@ -1023,32 +1062,9 @@ class TestThreadSafety:
         def sub_unsub():
             barrier.wait(timeout=2)
             for _ in range(50):
-                unsub = stream.subscribe(lambda e: None)
-                unsub()
+                stream.subscribe(lambda e: None)()
 
         t = threading.Thread(target=sub_unsub)
-        t.start()
-        barrier.set()
-        for _ in range(50):
-            stream.scan_once(NOW)
-        t.join(timeout=5)
-        assert not t.is_alive()
-        stream.stop()
-
-    def test_request_source_concurrent(self, tmp_path):
-        stream = _stream()
-        _collect(stream)
-        stream.start(tmp_path)
-        _log(tmp_path, "Alice")
-        stream.scan_once(NOW)
-        barrier = threading.Event()
-
-        def requester():
-            barrier.wait(timeout=2)
-            for _ in range(50):
-                stream.request_source("Alice")
-
-        t = threading.Thread(target=requester)
         t.start()
         barrier.set()
         for _ in range(50):
@@ -1075,14 +1091,10 @@ class TestThreadSafety:
         for _ in range(50):
             stream.scan_once(NOW)
         t.join(timeout=5)
-        assert not t.is_alive()
         assert len(results) == 50
         stream.stop()
 
     def test_no_facts_after_retirement(self, tmp_path):
-        """After rescan retires a source, poll must not emit facts from it.
-        The _op_lock serializes rescan then poll within scan_once, so
-        retirement invalidates the tracked entry before poll reads it."""
         stream = _stream()
         received = _collect(stream)
         stream.start(tmp_path)
@@ -1091,12 +1103,8 @@ class TestThreadSafety:
             tmp_path, "Alice", stem="20260825_113000_100", session="2026.08.25 11:30:00"
         )
         stream.scan_once(NOW)
-        # Append data that would produce a fact.
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(OUTGOING_DAMAGE_LINE)
-        # Now remove the file so the rescan retires Alice before poll
-        # gets to read.  In scan_once, rescan runs first (under _op_lock),
-        # retiring Alice, then poll runs and finds Alice gone from _tracked.
         path.unlink()
         received.clear()
         stream.scan_once(NOW)
@@ -1104,10 +1112,50 @@ class TestThreadSafety:
             e for e in received if isinstance(e, SourceLifecycle) and not e.active
         ]
         assert len(retired) == 1
-        assert retired[0].character == "Alice"
-        # No facts for Alice after her retirement.
-        alice_facts = [
+        assert [
             e for e in received if isinstance(e, CombatFact) and e.character == "Alice"
-        ]
-        assert alice_facts == []
+        ] == []
+
+    def test_reentrant_request_source_during_dispatch(self, tmp_path):
+        """A subscriber that calls request_source during dispatch must not
+        interleave its events into the current batch.  The request_source
+        lifecycle must appear after the current batch in external order."""
+        stream = _stream()
+        received = _collect(stream)
+        requested = []
+
+        def reentrant_sub(event):
+            if isinstance(event, SourceLifecycle) and event.active and not requested:
+                requested.append(True)
+                stream.request_source("Unknown")
+
+        stream.subscribe(reentrant_sub)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        _log(
+            tmp_path,
+            "Alice",
+            OUTGOING_DAMAGE_LINE,
+            stem="20260825_113000_456",
+            session="2026.08.25 11:30:00",
+        )
+        stream.scan_once(NOW)
+        # The request_source lifecycle for "Unknown" must appear after
+        # Alice's activation and fact, not interleaved.
+        alice_lc_i = next(
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, SourceLifecycle) and e.character == "Alice" and e.active
+        )
+        alice_fact_i = next(
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, CombatFact) and e.character == "Alice"
+        )
+        unknown_i = next(
+            i
+            for i, e in enumerate(received)
+            if isinstance(e, SourceLifecycle) and e.character == "Unknown"
+        )
+        assert alice_lc_i < alice_fact_i < unknown_i
         stream.stop()

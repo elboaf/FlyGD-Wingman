@@ -12,21 +12,34 @@ Tailer is NOT deleted or production-rewired here.
 
 Concurrency model
 -----------------
-``_op_lock`` (RLock) serializes every operation that reads tracked state AND
-publishes events: ``scan_once``, ``request_source``, and every worker
-iteration.  Within one operation, ``_lock`` (Lock) guards brief state
-reads/writes; subscribers are NEVER called under ``_lock``.  Because
-``_op_lock`` is held across both rescan and poll in ``scan_once``, an
-activation lifecycle is guaranteed to publish before any facts for that
-generation.
+``_lock`` (Lock) guards all mutable state.  Subscribers are NEVER called
+under ``_lock``.
 
-``_lifecycle_lock`` (Lock) makes ``start`` / ``stop`` atomic so a concurrent
-``stop`` cannot return before the worker has been created and started.
+Each operation (``scan_once``, ``request_source``, worker iteration) builds
+an ordered event batch under ``_lock``, then appends it to ``_dispatch_queue``
+(a list guarded by ``_dispatch_lock``).  A single ``_drain_queue`` call
+delivers the batches in FIFO order on the caller's thread.  Because rescan
+and poll run inside one ``scan_once`` call, rescan's activation lifecycle
+is guaranteed to be enqueued — and therefore delivered — before poll's facts.
+A reentrant callback that triggers ``request_source`` appends its batch
+*behind* the current batch; the drainer delivers it in order after the
+current batch completes, so no interleaving is possible.
 
-``scan_once(now_utc)`` is the deterministic test seam.  It acquires
-``_op_lock`` and runs one rescan + poll on the caller's thread.  Tests inject
-a no-op thread factory so ``start()`` sets up folder/state without spawning a
-real thread.
+``_lifecycle_lock`` (Lock) makes ``start`` / ``stop`` atomic.  ``start``
+refuses to launch a second worker while a timed-out worker is still alive.
+``stop`` retains the worker reference on timeout so a later ``stop`` can
+retry joining.  Only once the worker is confirmed dead may ``start`` create
+a fresh generation.
+
+``scan_once(now_utc)`` is the deterministic test seam.  Tests inject
+``_noop_thread_factory`` so ``start()`` sets up folder/state without
+spawning a real thread.
+
+Injected seams for testing
+--------------------------
+``_thread_factory``, ``_clock`` (monotonic), ``_utc_now``, ``_wait_fn``,
+``_read_header`` (wraps ``combatlog.parse_header`` with readable-open guard),
+``_get_file_size`` (wraps ``path.stat().st_size``).
 """
 
 from __future__ import annotations
@@ -51,10 +64,7 @@ UTC = datetime.UTC
 # alerts/tailer.py.
 MAX_AGE = datetime.timedelta(hours=12)
 
-# Matches combatlog.MAX_FILES.  Six clients that each relog once inside the
-# cutoff is already twelve real logs before stubs, and combatlog.py:48-50
-# records that character-less stubs are 47% of a real folder -- which is
-# why the cap is applied AFTER header filtering, not before.
+# Matches combatlog.MAX_FILES.
 MAX_FILES = 64
 
 # Worker cadence.
@@ -73,13 +83,12 @@ def _noop_thread_factory(
     class _NoopThread:
         def __init__(self) -> None:
             self.daemon = daemon
-            self._alive = False
 
         def start(self) -> None:
             pass
 
         def is_alive(self) -> bool:
-            return self._alive
+            return False
 
         def join(self, timeout: float | None = None) -> None:
             pass
@@ -91,6 +100,25 @@ def _real_thread_factory(
     *, target: Callable, args: tuple, name: str, daemon: bool
 ) -> threading.Thread:
     return threading.Thread(target=target, args=args, name=name, daemon=daemon)
+
+
+def _default_read_header(path: Path) -> combatlog.LogHeader | None:
+    """Production header reader: readable-open guard before parse_header.
+
+    Distinguishes inaccessible files (raises OSError) from valid
+    characterless stubs (returns None without error).
+    """
+    # Guard: can we open the file at all?  parse_header catches its own
+    # OSError internally and returns None, so a permission error would be
+    # silently conflated with a characterless stub.  The explicit open
+    # surfaces I/O failures as exceptions for the caller to record.
+    with open(path, "rb") as fh:
+        fh.read(1)
+    return combatlog.parse_header(path)
+
+
+def _default_get_file_size(path: Path) -> int:
+    return path.stat().st_size
 
 
 class _Tracked:
@@ -126,7 +154,6 @@ class GameLogStream:
         health() -> StreamHealth
 
     Inject ``_thread_factory=_noop_thread_factory`` for synchronous tests.
-    Inject ``_clock`` (monotonic) and ``_utc_now`` for cadence tests.
     """
 
     def __init__(
@@ -136,38 +163,42 @@ class GameLogStream:
         _clock: Callable[[], float] = time.monotonic,
         _utc_now: Callable[[], datetime.datetime] | None = None,
         _wait_fn: Callable[[threading.Event, float], None] | None = None,
+        _read_header: Callable[
+            [Path], combatlog.LogHeader | None
+        ] = _default_read_header,
+        _get_file_size: Callable[[Path], int] = _default_get_file_size,
     ) -> None:
         self._thread_factory = _thread_factory
         self._clock = _clock
         self._utc_now = _utc_now or (lambda: datetime.datetime.now(tz=UTC))
         self._wait_fn = _wait_fn or (lambda ev, t: ev.wait(t))
+        self._read_header = _read_header
+        self._get_file_size = _get_file_size
+
         self._folder: Path | None = None
         self._tracked: dict[str, _Tracked] = {}
         self._subscribers: list[Callable] = []
         self._next_generation = 1
         self._seen_first_scan = False
-        # Every absolute path ever observed during any scan (whether
-        # selected, failed, or cap-evicted).  Paths are committed AFTER
-        # selection decisions each scan so a file first appearing in the
-        # current scan is not mistakenly treated as previously known.
         self._known_paths: set[str] = set()
-        # Tracks identities of sources that have been retired.  Prevents
-        # replay when a folder disappears and returns.
         self._retired_source_ids: set[SourceId] = set()
         self._started = False
+        self._started_mono: float | None = None
 
-        # Health tracking.  Errors clear only after a fully successful
-        # complete operation.
+        # Health tracking.
         self._last_error: str | None = None
         self._scan_errors: list[str] = []
         self._poll_errors: dict[str, str] = {}
         self._last_successful_poll_mono: float | None = None
         self._last_successful_rescan_mono: float | None = None
 
-        # _lock: brief state reads/writes.  Never call subscribers under it.
+        # _lock: guards ALL mutable state.  Never call subscribers under it.
         self._lock = threading.Lock()
-        # _op_lock: serializes operations that read state AND publish events.
-        self._op_lock = threading.RLock()
+        # _dispatch_queue + _dispatch_lock: serialized event delivery.
+        # Each operation appends an ordered batch; _drain_queue delivers
+        # them in FIFO order outside _lock.
+        self._dispatch_queue: list[list[SourceLifecycle | CombatFact]] = []
+        self._dispatch_lock = threading.Lock()
         # _lifecycle_lock: makes start/stop atomic.
         self._lifecycle_lock = threading.Lock()
         self._worker: threading.Thread | None = None
@@ -195,26 +226,25 @@ class GameLogStream:
     def start(self, folder: Path) -> None:
         """Begin streaming.  Spawns a worker via the thread factory.
 
-        Idempotent: calling start() while already running is a no-op.
-        The lifecycle lock makes start/stop atomic — a concurrent stop()
-        cannot return before the worker has been created and started.
+        Idempotent.  Refuses to launch while a timed-out worker is alive.
         """
         with self._lifecycle_lock:
             with self._lock:
+                # Refuse if already running OR a timed-out worker is alive.
                 if self._started:
+                    return
+                if self._worker is not None and self._worker.is_alive():
                     return
                 self._folder = Path(folder)
                 self._started = True
+                self._started_mono = self._clock()
                 self._last_error = None
                 self._scan_errors = []
                 self._poll_errors = {}
                 self._last_successful_poll_mono = None
                 self._last_successful_rescan_mono = None
-                # Fresh stop event per start generation.
                 self._stop_event = threading.Event()
                 stop_ev = self._stop_event
-            # Worker created and started inside lifecycle_lock so stop()
-            # cannot see _started=True without a live worker.
             worker = self._thread_factory(
                 target=self._run,
                 args=(stop_ev,),
@@ -228,8 +258,9 @@ class GameLogStream:
     def stop(self, timeout: float = 3.0) -> None:
         """Signal the worker and join with a bounded timeout.  Idempotent.
 
-        On timeout the worker reference is RETAINED for later join/reconcile
-        — never forgotten.
+        On timeout the worker is RETAINED and ``_started`` stays False so
+        a later ``stop`` can retry joining.  ``start`` checks
+        ``is_alive()`` and refuses to launch a second worker.
         """
         with self._lifecycle_lock:
             with self._lock:
@@ -240,49 +271,45 @@ class GameLogStream:
                 stop_ev.set()
                 worker.join(timeout)
                 with self._lock:
-                    # Clear only if it terminated; on timeout retain for
-                    # later reconcile.
                     if not worker.is_alive():
                         self._worker = None
 
     def _run(self, stop_event: threading.Event) -> None:
         """Worker loop: immediate rescan, then 1-second poll / 5-second rescan."""
-        # Force an immediate rescan on the first iteration.
         last_rescan = self._clock() - RESCAN_INTERVAL_S
         while not stop_event.is_set():
             now_mono = self._clock()
             now_utc = self._utc_now()
             do_rescan = (now_mono - last_rescan) >= RESCAN_INTERVAL_S
-            with self._op_lock:
-                if do_rescan:
-                    self._rescan(now_utc)
-                    last_rescan = self._clock()
-                self._poll()
+            if do_rescan:
+                self._rescan(now_utc)
+                last_rescan = self._clock()
+            self._poll()
+            self._drain_queue()
             self._wait_fn(stop_event, POLL_INTERVAL_S)
 
     def request_source(self, character: str) -> None:
         """Re-publish lifecycle for a character, or unavailable if unknown."""
-        with self._op_lock:
-            with self._lock:
-                tracked = self._tracked.get(character)
-                if tracked is not None:
-                    event = SourceLifecycle(
-                        character=character,
-                        generation=tracked.generation,
-                        source_id=tracked.source_id,
-                        available=True,
-                        active=True,
-                    )
-                else:
-                    event = SourceLifecycle(
-                        character=character,
-                        generation=0,
-                        source_id=None,
-                        available=False,
-                        active=False,
-                    )
-                subs = list(self._subscribers)
-            _dispatch(event, subs)
+        with self._lock:
+            tracked = self._tracked.get(character)
+            if tracked is not None:
+                event = SourceLifecycle(
+                    character=character,
+                    generation=tracked.generation,
+                    source_id=tracked.source_id,
+                    available=True,
+                    active=True,
+                )
+            else:
+                event = SourceLifecycle(
+                    character=character,
+                    generation=0,
+                    source_id=None,
+                    available=False,
+                    active=False,
+                )
+        self._enqueue([event])
+        self._drain_queue()
 
     def health(self) -> StreamHealth:
         with self._lock:
@@ -302,9 +329,12 @@ class GameLogStream:
                     state="error",
                     detail=f"{len(self._poll_errors)} source error(s)",
                 )
-            # Stale: had a successful poll once but none recently.
-            if self._last_successful_poll_mono is not None:
-                age = self._clock() - self._last_successful_poll_mono
+            # Stale: check against last successful poll or start time.
+            ref = self._last_successful_poll_mono
+            if ref is None:
+                ref = self._started_mono
+            if ref is not None:
+                age = self._clock() - ref
                 if age > _STALE_POLLS * POLL_INTERVAL_S:
                     return StreamHealth(state="stale", detail=f"{age:.1f}s since poll")
             if self._tracked:
@@ -314,60 +344,77 @@ class GameLogStream:
             return StreamHealth(state="running")
 
     # ------------------------------------------------------------------
+    # Dispatch queue
+    # ------------------------------------------------------------------
+
+    def _enqueue(self, batch: list[SourceLifecycle | CombatFact]) -> None:
+        if batch:
+            with self._dispatch_lock:
+                self._dispatch_queue.append(batch)
+
+    def _drain_queue(self) -> None:
+        """Deliver all queued batches in FIFO order.
+
+        Called outside ``_lock``.  A reentrant callback that calls
+        ``request_source`` appends behind the current batch; the loop
+        picks it up on the next iteration.
+        """
+        while True:
+            with self._dispatch_lock:
+                if not self._dispatch_queue:
+                    return
+                batch = self._dispatch_queue.pop(0)
+            with self._lock:
+                subs = list(self._subscribers)
+            for event in batch:
+                for callback in subs:
+                    try:
+                        callback(event)
+                    except Exception:
+                        logger.exception("Subscriber raised during dispatch")
+
+    # ------------------------------------------------------------------
     # Core: synchronous scan + poll (deterministic test seam)
     # ------------------------------------------------------------------
 
     def scan_once(self, now_utc: datetime.datetime) -> None:
         """One complete rescan + poll cycle on the caller's thread.
 
-        Acquires ``_op_lock`` so rescan's activation lifecycle is
-        guaranteed to publish before poll's facts.  Production code uses
-        ``start()`` / ``stop()`` which run the worker.
+        Rescan enqueues lifecycle events, poll enqueues fact events, then
+        ``_drain_queue`` delivers them all in order.
         """
-        with self._op_lock:
-            self._rescan(now_utc)
-            self._poll()
+        self._rescan(now_utc)
+        self._poll()
+        self._drain_queue()
 
     def _rescan(self, now_utc: datetime.datetime) -> None:
         """Discover logs and reconcile tracked sources.
 
-        Caller holds ``_op_lock``.  ``_lock`` acquired briefly for state.
-        Subscribers called outside ``_lock`` but inside ``_op_lock``.
+        Acquires ``_lock`` for state.  Enqueues lifecycle events.
         """
         with self._lock:
             folder = self._folder
         if folder is None:
             return
 
-        # -- Enumerate (I/O, outside _lock) ---
         try:
             entries = list(folder.glob("*.txt"))
         except OSError:
             logger.debug("Gamelogs folder unreadable: %s", folder)
             events = self._retire_all_sources(error=f"Folder unreadable: {folder}")
-            with self._lock:
-                subs = list(self._subscribers)
-            for ev in events:
-                _dispatch(ev, subs)
+            self._enqueue(events)
             return
 
         if not entries and not folder.exists():
             events = self._retire_all_sources(error=None)
-            with self._lock:
-                subs = list(self._subscribers)
-            for ev in events:
-                _dispatch(ev, subs)
+            self._enqueue(events)
             return
 
-        # -- Build candidate list (I/O-heavy, outside _lock) ---
         cutoff = now_utc - MAX_AGE
         candidates = []
         scan_errors: list[str] = []
-        # Paths seen this scan — committed to _known_paths AFTER selection
-        # decisions so a new file in this scan is not misidentified as
-        # previously known.  Uses absolute() (not resolve()) because a
-        # broken symlink's resolve() differs from the real file.
         paths_this_scan: set[str] = set()
+
         for path in entries:
             paths_this_scan.add(str(path.absolute()))
             try:
@@ -377,39 +424,24 @@ class GameLogStream:
                 continue
             if mtime < cutoff:
                 continue
-            header = combatlog.parse_header(path)
+            try:
+                header = self._read_header(path)
+            except OSError as exc:
+                scan_errors.append(f"header {path.name}: {exc}")
+                continue
             if header is None:
-                # Unparseable header or character-less stub.  parse_header
-                # returns None for both; the path is tombstoned via
-                # paths_this_scan regardless.
                 continue
             if header.listener.strip().upper() == "EVE":
                 continue
             candidates.append((header, path, mtime))
 
         # -- Dedup to one log per character FIRST, then cap ---
-        # Capping before dedup lets one character with more than MAX_FILES
-        # sessions inside the window (a client that relogged repeatedly)
-        # consume the whole budget on its own, silently starving every
-        # other character — no error, no log line, they just stop alerting.
-        #
-        # session_start alone is not a total order: two logs for the same
-        # character can carry an identical "Session Started" header (the
-        # same relog, or a client that copies its header verbatim), and
-        # list.sort() is stable, so a tie falls through to glob()'s
-        # enumeration order — which is filesystem-dependent and differs
-        # between platforms. mtime as the tie-break makes the newest write
-        # win everywhere: the more recently written file is the live one.
         candidates.sort(key=lambda c: (c[0].session_start, c[2]), reverse=True)
         best: dict[str, tuple] = {}
         for header, path, mtime in candidates:
             best.setdefault(header.listener, (header, path, mtime))
-        # `best`'s insertion order already tracks each character's most
-        # recent session.  Slicing keeps the MAX_FILES most recently
-        # active characters.
         best = dict(list(best.items())[:MAX_FILES])
 
-        # -- Reconcile under _lock, collect events ---
         events: list[SourceLifecycle] = []
         with self._lock:
             # Retire characters no longer in best
@@ -436,9 +468,28 @@ class GameLogStream:
                 existing = self._tracked.get(character)
 
                 if existing is not None and existing.source_id == source_id:
-                    continue  # Same file, no change
+                    continue
 
-                # Retire the old source if being replaced
+                # Determine initial read position BEFORE retiring old.
+                path_key = str(path.absolute())
+                is_known = (
+                    not self._seen_first_scan
+                    or source_id in self._retired_source_ids
+                    or path_key in self._known_paths
+                )
+                if is_known:
+                    try:
+                        start = self._get_file_size(path)
+                    except OSError as exc:
+                        # Cannot baseline — do NOT activate, do NOT retire
+                        # the old source.  Record an error and retry next
+                        # scan.
+                        scan_errors.append(f"baseline {path.name}: {exc}")
+                        continue
+                else:
+                    start = 0
+
+                # Only now retire the old source (new baseline succeeded).
                 if existing is not None:
                     self._retired_source_ids.add(existing.source_id)
                     events.append(
@@ -451,29 +502,8 @@ class GameLogStream:
                         )
                     )
 
-                # Determine initial read position.
-                path_key = str(path.absolute())
-                is_known = (
-                    not self._seen_first_scan
-                    or source_id in self._retired_source_ids
-                    or path_key in self._known_paths
-                )
-                if is_known:
-                    try:
-                        start = path.stat().st_size
-                    except OSError:
-                        # Cannot determine EOF.  Do NOT fall back to zero
-                        # and do NOT activate.  The path stays in
-                        # _known_paths so the next scan that CAN stat it
-                        # will baseline at EOF.
-                        continue
-                else:
-                    # Genuinely new file, read from zero.
-                    start = 0
-
                 gen = self._next_generation
                 self._next_generation += 1
-
                 self._tracked[character] = _Tracked(
                     character=character,
                     path=path,
@@ -493,24 +523,15 @@ class GameLogStream:
 
             self._seen_first_scan = True
             self._known_paths.update(paths_this_scan)
-
-            # Health: clear only when zero errors.
             self._scan_errors = scan_errors
             if not scan_errors:
                 self._last_successful_rescan_mono = self._clock()
                 self._last_error = None
 
-            subs = list(self._subscribers)
-
-        # -- Dispatch outside _lock, inside _op_lock ---
-        for ev in events:
-            _dispatch(ev, subs)
+        self._enqueue(events)
 
     def _retire_all_sources(self, *, error: str | None) -> list[SourceLifecycle]:
-        """Retire every tracked source (folder loss).
-
-        Acquires ``_lock`` internally.  Returns events to dispatch.
-        """
+        """Retire every tracked source (folder loss)."""
         events: list[SourceLifecycle] = []
         with self._lock:
             for character, tracked in list(self._tracked.items()):
@@ -530,15 +551,9 @@ class GameLogStream:
         return events
 
     def _poll(self) -> None:
-        """Read appended data from all tracked files and dispatch facts.
-
-        Caller holds ``_op_lock``.  Per-source errors are recorded without
-        suppressing other sources.  Errors clear only after a fully
-        successful complete poll.
-        """
+        """Read appended data from all tracked files.  Enqueues fact events."""
         with self._lock:
             snapshot = list(self._tracked.items())
-            subs = list(self._subscribers)
 
         all_events: list[SourceLifecycle | CombatFact] = []
         poll_errors: dict[str, str] = {}
@@ -554,18 +569,12 @@ class GameLogStream:
             if not poll_errors:
                 self._last_successful_poll_mono = self._clock()
 
-        for ev in all_events:
-            _dispatch(ev, subs)
+        self._enqueue(all_events)
 
     def _read_source(
         self, character: str, tracked: _Tracked
     ) -> tuple[list[SourceLifecycle | CombatFact], str | None]:
-        """Read new data from one tracked file.
-
-        On truncation (size < position), retire old generation and activate
-        a new one.  Before emitting each fact, verify the tracked object is
-        still current by looking it up in ``_tracked`` by character.
-        """
+        """Read new data from one tracked file."""
         events: list[SourceLifecycle | CombatFact] = []
         try:
             size = tracked.path.stat().st_size
@@ -573,7 +582,6 @@ class GameLogStream:
             return [], f"stat: {exc}"
 
         if size < tracked.position:
-            # File shrank — treat as rotation.
             old_gen = tracked.generation
             old_sid = tracked.source_id
             with self._lock:
@@ -619,12 +627,7 @@ class GameLogStream:
         for line in lines:
             if not line.strip():
                 continue
-            # Before emitting, verify the tracked object is still the
-            # current one for this character.  A concurrent rescan (when
-            # running under the real worker) could have retired this
-            # source.  The _op_lock serializes scan_once iterations so
-            # this cannot happen in the synchronous test path, but it is
-            # the safety net for the threaded path.
+            # Verify tracked object is still current before emitting.
             with self._lock:
                 current = self._tracked.get(character)
                 if current is not tracked:
@@ -646,17 +649,3 @@ class GameLogStream:
                 )
 
         return events, None
-
-
-# ------------------------------------------------------------------
-# Module-level dispatch — never called under _lock.
-# ------------------------------------------------------------------
-
-
-def _dispatch(event: SourceLifecycle | CombatFact, subscribers: list[Callable]) -> None:
-    """Deliver to every subscriber with callback isolation."""
-    for callback in subscribers:
-        try:
-            callback(event)
-        except Exception:
-            logger.exception("Subscriber raised during dispatch")
