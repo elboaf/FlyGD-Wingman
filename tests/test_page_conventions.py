@@ -1488,31 +1488,45 @@ def test_every_offered_alert_colour_has_a_name():
     )
 
 
-def test_alert_swatches_show_the_selected_colour_name():
+def test_alert_swatches_do_not_render_a_redundant_colour_name_readout():
+    """Round 7. The five dots plus the accessible name on each radio (see
+    test_every_offered_alert_colour_has_a_name) already say what a sighted
+    user is picking; a sixth, visible "selected colour" word underneath the
+    row wrapped onto its own line and made the row two lines tall, breaking
+    the centerline every other control in the row (checkbox/name, Sound,
+    Test) shared. The fix removes the readout entirely -- not merely hides
+    it -- while keeping every accessible name in place.
+    """
     alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
-    assert "'span', 'swatch-name'" in alerts, (
-        "the alert palette must render its selected colour name for sighted users"
+    assert "swatch-name" not in alerts, (
+        "the dead .swatch-name readout element must be removed, not hidden"
     )
-    assert re.search(
-        r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
-        r"colourName\(colour\)\)",
-        alerts,
-    ), "the visible swatch name must follow initial and reverted values"
-    assert re.search(
-        r"setText\(row\.colors\.querySelector\('\.swatch-name'\),\s*"
-        r"colourName\(wanted\)\)",
-        alerts,
-    ), "a successful colour change must update its visible name immediately"
+    assert "WM.make" not in alerts, (
+        "alerts.js used WM.make only to build the removed readout span"
+    )
 
-    style = re.search(r"\.alert-events \.swatch-name \{(.*?)\}", CSS, re.DOTALL)
-    assert style and "flex-basis: 100%" in style.group(1), (
-        "the colour name must sit below the fixed palette instead of beside it"
+    style = re.search(r"\.alert-events \.swatch-name[^{]*\{(.*?)\}", CSS, re.DOTALL)
+    assert style is None, "the dead .swatch-name CSS rule must be removed too"
+
+    # The accessible name itself must survive: every radio still announces
+    # its colour by name, and the collision note still has a word to use.
+    assert "input.setAttribute('aria-label', name)" in alerts, (
+        "removing the visible readout must not remove the accessible name"
     )
-    for prop in ("width: 0", "min-width: 100%"):
-        assert prop in style.group(1), (
-            f"the colour name needs `{prop}` so its word does not widen the "
-            "intrinsic swatch track"
-        )
+    assert "function colourName(hex)" in alerts, (
+        "colourName must survive: the collision note and the swatch tooltip "
+        "both still need to name a colour"
+    )
+
+
+def test_alert_palette_is_one_line_with_the_rest_of_its_row():
+    """Without the second-line readout, the swatches container has nothing
+    left to wrap onto a line of its own -- the flex-wrap that existed only
+    to host that line must go too, or a future addition could silently
+    reintroduce a second line under the same now-dead hook."""
+    assert not re.search(r"\.alert-events \.swatches\s*\{[^}]*flex-wrap", CSS), (
+        "the swatches row no longer has a second line to wrap; flex-wrap is dead"
+    )
 
 
 def test_the_alert_volume_note_finishes_its_thought():
@@ -1522,6 +1536,15 @@ def test_the_alert_volume_note_finishes_its_thought():
 
 
 def test_alert_event_controls_share_deliberate_box_and_text_rails():
+    """Flashes and Speed used to be the fourth rail checked here -- a
+    second grid line beginning at the same 48px text rail as the event
+    name. Task 1 moved both out of the row entirely, into the shared
+    #alert-advanced disclosure, so that rail no longer describes anything
+    inside `.alert-events .alert-row`.
+    `test_flash_and_speed_share_one_collapsed_advanced_disclosure` is the
+    guard for where they went instead; this one keeps checking the three
+    rails that are still inside the row.
+    """
     event_box = re.search(
         r"\.alert-events \.alert-row > \.check \{(.*?)\}", CSS, re.DOTALL
     )
@@ -1534,19 +1557,215 @@ def test_alert_event_controls_share_deliberate_box_and_text_rails():
         "the Event header must align with event label text, not hang over its box"
     )
 
-    flash = re.search(
-        r"\.alert-events \.alert-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
-    )
-    assert flash and re.search(r"margin:\s*2px 0 2px 48px", flash.group(1)), (
-        "Flashes and Speed must begin on the event text rail"
-    )
-
     message = re.search(
         r"\.alert-events \.alert-row > \.field-msg \{(.*?)\}", CSS, re.DOTALL
     )
     assert message and "padding-left: 48px" in message.group(1), (
         "an event write outcome must align with the event text it describes"
     )
+
+
+def test_flash_and_speed_share_one_collapsed_advanced_disclosure():
+    """Task 1. Flashes and Speed used to be a second grid line under every
+    event row -- two label/select pairs beneath four tracks already tight
+    at the 840 floor (`.alert-events`' own comment: "the sound column is
+    the only one allowed to give"). Both are secondary to the row's
+    primary decision -- is this event on, what colour, what sound, does it
+    work -- so they move into one shared native `<details>` disclosure,
+    collapsed by default, below the table, rather than repeating a second
+    line three times.
+
+    A row in the primary table is atomic after this: one enable box, one
+    swatch group, one sound select, one Test button, and its own status
+    line (still visible outside the disclosure, since a write outcome must
+    stay readable without opening anything first).
+    """
+    events_block = re.search(
+        r'<div class="alert-events">(.*?\n\s*</div>\s*\n)\s*<!-- A colour collision',
+        HTML,
+        re.DOTALL,
+    )
+    assert events_block, "the alert-events table markup has moved or been renamed"
+    table = events_block.group(1)
+
+    assert "alert-flash" not in table, (
+        "Flashes/Speed still render inside the primary event table; they "
+        "must move into the shared advanced disclosure so a row stays one "
+        "enable box, one swatch group, one sound and one Test button"
+    )
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-msg"' in table, (
+            f"the {event} row's status line must stay in the primary table, "
+            "outside the collapsed disclosure, so a write outcome stays "
+            "visible without opening anything"
+        )
+        assert f'id="alert-event-{event}-flashes"' not in table, (
+            f"{event}'s Flashes select must move out of the primary table"
+        )
+        assert f'id="alert-event-{event}-speed"' not in table, (
+            f"{event}'s Speed select must move out of the primary table"
+        )
+
+    disclosures = re.findall(r'<details id="alert-advanced"[^>]*>', HTML)
+    assert len(disclosures) == 1, (
+        f"expected exactly one #alert-advanced disclosure, found {len(disclosures)}"
+    )
+    assert "open" not in disclosures[0], (
+        "the advanced disclosure must be collapsed by default"
+    )
+
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    body = advanced.group(1)
+
+    summary = re.search(r"<summary>([^<]*)</summary>", body)
+    assert summary and summary.group(1).strip() == "Advanced pulse behavior", (
+        "the disclosure must be titled exactly 'Advanced pulse behavior'"
+    )
+
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-flashes"' in body, (
+            f"{event}'s Flashes select is missing from the advanced disclosure"
+        )
+        assert f'id="alert-event-{event}-speed"' in body, (
+            f"{event}'s Speed select is missing from the advanced disclosure"
+        )
+        # Each row must visibly and accessibly name its event -- a named
+        # group heading before the pair, not just position in a list a
+        # screen reader flattens. Structural (a name element immediately
+        # precedes the pair), not the display text itself, which stays
+        # the checkbox label's job to own -- see alerts.js's eventLabel().
+        row = re.search(
+            rf'<span class="bind-group-name">[^<]+</span>\s*'
+            rf'<span class="alert-flash">.*?'
+            rf'id="alert-event-{event}-flashes"',
+            body,
+            re.DOTALL,
+        )
+        assert row, (
+            f"{event}'s advanced row must visibly name its event immediately "
+            "before its Flashes/Speed controls"
+        )
+
+    # The old grid-row alignment is gone with the row it used to sit in;
+    # the disclosure lays Flashes/Speed out as a plain flex line instead.
+    assert not re.search(r"\.alert-events \.alert-row > \.alert-flash \{", CSS), (
+        "a grid-row rule for .alert-flash survives inside .alert-events, but "
+        "it no longer renders there"
+    )
+    advanced_flash = re.search(
+        r"\.alert-advanced-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert advanced_flash and "display: flex" in advanced_flash.group(1), (
+        "Flashes/Speed must still lay out as one flex line inside the disclosure"
+    )
+
+
+def test_advanced_select_aria_labels_start_with_their_visible_labels():
+    """Each Advanced select needs its visible label plus its owning event.
+
+    `aria-label` replaces the associated `<label>` in the accessible-name
+    computation, so it starts with the same word a sighted voice-control
+    user sees, then adds the event needed to distinguish three otherwise
+    identical controls. This satisfies WCAG 2.5.3 Label in Name and keeps
+    the spoken order consistent across Flashes and Speed.
+    """
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    body = advanced.group(1)
+    owners = {
+        "combat": "Combat",
+        "decloak": "Decloak",
+        "warp_scramble": "Warp scramble",
+    }
+
+    for event in _ALERT_EVENT_IDS:
+        for control in ("flashes", "speed"):
+            visible = control.title()
+            select = re.search(
+                rf'<select class="field" id="alert-event-{event}-{control}"\s+'
+                rf'aria-label="([^"]*)"',
+                body,
+            )
+            assert select, f"{event}'s {visible} select or its aria-label is missing"
+            assert select.group(1) == f"{visible}: {owners[event]}", (
+                f"{event}'s {visible} select must start its accessible name "
+                "with the visible label, then disambiguate it by event"
+            )
+
+
+def test_alert_advanced_rows_share_deliberate_fixed_columns():
+    """Round 7 (Task 6). The three Advanced rows used to be independent
+    flex rows: `.bind-group-name` sat beside `.alert-flash` with only a
+    gap between them, so a longer name pushed its own Flashes/Speed pair
+    further right than its neighbours' -- "Warp scramble" (114.75px,
+    measured at the 840x625 floor) versus "Combat" (56.58px) and "Decloak"
+    (62.30px). One grid over all three rows, with the rows themselves
+    display:contents, is the same fix `.alert-events` and `#preview-binds`
+    already apply to the identical problem.
+
+    The name column is a measured PX width, not `max-content`: unlike
+    `.alert-events`' own first track (which is deliberately max-content --
+    see that rule's own comment), this one is asked to own a number rather
+    than resolve today's three known strings, so a fourth, longer event
+    name cannot silently resize the whole disclosure.
+    """
+    advanced_body = re.search(r"\.alert-advanced-body \{(.*?)\}", CSS, re.DOTALL)
+    assert advanced_body, (
+        "the Advanced disclosure's rows must share one grid container "
+        "(.alert-advanced-body), the same technique .alert-events and "
+        "#preview-binds use for identical misalignment"
+    )
+    body_rule = advanced_body.group(1)
+    assert "display: grid" in body_rule, (
+        "the Advanced rows' shared container must be a grid"
+    )
+    columns = re.search(r"grid-template-columns:\s*([^;]+);", body_rule)
+    assert columns, "the shared grid must declare its column tracks"
+    first_track = columns.group(1).strip().split()[0]
+    assert first_track != "max-content", (
+        "the Advanced name column must be a measured px width, not "
+        "max-content -- a longer future event name must not silently "
+        "resize the whole disclosure"
+    )
+    assert re.search(r"^\d+px$", first_track), (
+        f"the Advanced name column ({first_track!r}) must be a fixed, measured px width"
+    )
+
+    row_display = re.search(r"\.alert-advanced-row \{(.*?)\}", CSS, re.DOTALL)
+    assert row_display and "display: contents" in row_display.group(1), (
+        "each Advanced row must be display:contents so its name and its "
+        "Flashes/Speed pair become the shared grid's own items"
+    )
+
+    # .alert-flash itself must still lay out as one flex line -- the
+    # existing test_flash_and_speed_share_one_collapsed_advanced_disclosure
+    # already pins this selector; this test only adds the column it now
+    # sits in, so the two must agree rather than one silently undoing
+    # the other.
+    advanced_flash = re.search(
+        r"\.alert-advanced-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert advanced_flash and "display: flex" in advanced_flash.group(1)
+
+    # The wrapper must exist in the markup around all three rows, inside
+    # the one shared #alert-advanced disclosure -- not a fourth copy of it.
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    assert advanced.group(1).count('class="alert-advanced-body"') == 1, (
+        "expected exactly one shared .alert-advanced-body grid wrapper "
+        "inside the one #alert-advanced disclosure"
+    )
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-flashes"' in advanced.group(1), (
+            f"{event}'s Flashes select must still be inside #alert-advanced"
+        )
 
 
 def test_two_enabled_alerts_on_one_colour_are_flagged():
@@ -3132,6 +3351,169 @@ def test_character_detail_precedes_its_conflict_copy():
     detail = append.index("host.appendChild(makeCharacterDetail")
     conflict = append.index("host.appendChild(conflict)")
     assert row < detail < conflict
+
+
+def test_bind_conflict_names_its_owner_so_it_survives_a_sticky_scroll():
+    """A conflict is a full-span sibling directly after the row it explains
+    (appendBindRow), and that row can scroll out from under the sticky
+    column or Offline heading while the warning below it is still on
+    screen. Every text-producing branch must therefore open with the
+    owning character, cycle command, or named group by name, rather than
+    counting on the reader having just seen the row above.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert block.count("label + ': ' + gesture") == 4, (
+        "makeBindConflict must open every conflict sentence with its own "
+        "label -- the owning character, cycle command, or named group -- "
+        "so the message names its owner even once the row it explains has "
+        "scrolled under a sticky header"
+    )
+
+
+def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
+    """The warning and the control it explains must be associated by a
+    stable id, not by DOM adjacency, so the association survives a
+    rerender and a scroll alike. The id is assigned in appendBindRow from
+    the SAME ownerKey makeBindConflict filters genuine owners by --
+    computed once, so the id a reader's aria-describedby follows and the
+    identity makeBindConflict excludes itself by can never drift apart.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function bindConflictId(ownerKey)" in js
+    id_fn = js.split("function bindConflictId", 1)[1].split("\n  function ", 1)[0]
+    assert "encodeURIComponent(ownerKey)" in id_fn
+
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert "var ownerKey = character ? 'character:' + character : ownerKind;" in append
+    assert "conflict.id = bindConflictId(ownerKey)" in append
+
+
+def test_cycle_owners_carry_a_stable_key_beside_their_rendered_text():
+    """cycleOwners must expose the same owner key each row's own conflict
+    id is built from (bindConflictId/appendBindRow) alongside the rendered
+    text, so makeBindConflict can tell a genuinely different owner apart
+    from itself by identity -- never by comparing rendered label text,
+    which a named group is free to share with a fixed cycle label or with
+    a character.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = js.split("function cycleOwners(gesture)", 1)[1].split("\n  function ", 1)[0]
+    assert "key: 'cycle:next'" in body
+    assert "key: 'cycle:prev'" in body
+    assert "key: 'group:' + group.id" in body
+    assert "text: 'All forward'" in body
+    assert "text: 'All back'" in body
+    assert "text: 'cycle group ' + group.name" in body
+
+
+def test_makebindconflict_filters_conflicting_owners_by_key_not_by_label():
+    """A named group may legally be named exactly "All forward"/"All
+    back", or share a name with a character -- create/rename_preview_cycle_
+    group enforce uniqueness only among groups, never against a character
+    or the two fixed cycle labels. Filtering cycleOwners()/sharers() by
+    comparing rendered TEXT against this row's own `label` therefore drops
+    a genuine conflicting owner whenever its rendered text happens to
+    match this row's label: rendering the fixed All-forward cycle row lost
+    a genuinely conflicting group actually named "All forward", and
+    rendering any cycle/group row lost a genuinely sharing character
+    actually named after that row's own label. makeBindConflict must
+    instead filter by comparing each owner's stable `.key` against the
+    caller's own `ownerKey`.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert "owner.key !== ownerKey" in block, (
+        "makeBindConflict must filter cycleOwners()/sharers() entries by "
+        "comparing owner.key against this row's own ownerKey"
+    )
+    assert "owner !== label" not in block, (
+        "filtering by `owner !== label` drops a genuine conflicting owner "
+        "whenever its rendered text matches this row's own label -- a "
+        "named group or character is free to share that label"
+    )
+    assert "'cycle group ' + label" not in block, (
+        "filtering by a label-derived 'cycle group ' + label string drops "
+        "a genuinely different group whenever it happens to share this "
+        "row's own label -- e.g. a group literally named 'All forward'"
+    )
+    # Sharer characters must be wrapped with their own stable owner key
+    # ('character:NAME'), not compared as bare name strings, so a
+    # character sharing a cycle/group row's own label is excluded (or
+    # kept) by identity and never dropped for a text coincidence.
+    assert "key: 'character:' + name" in block, (
+        "sharer characters must be wrapped with their own stable owner "
+        "key before being filtered, not compared as bare name strings"
+    )
+
+
+def test_bind_conflict_id_keys_off_owner_kind_not_display_label():
+    """A named group may legally be named exactly "All forward" or "All
+    back" -- create_preview_cycle_group and rename_preview_cycle_group only
+    enforce uniqueness among groups, never against the two fixed cycle
+    labels. A label-derived conflict id would then collide with the real
+    All-forward or All-back row's id, leaving aria-describedby pointing at
+    an ambiguous target. bindConflictId must therefore key off an explicit
+    owner kind supplied by each call site -- never off `label` at all --
+    and the fixed cycle rows and named-group rows must each pass a token
+    that cannot collide with the other kind's, whatever a group is named
+    or however its id is generated.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    assert "function bindConflictId(" in js, "bindConflictId is not defined"
+    id_fn = js.split("function bindConflictId(", 1)[1].split("\n  function ", 1)[0]
+    params = id_fn.split(") {", 1)[0]
+    assert "label" not in params, (
+        "bindConflictId must not accept the display label at all -- a "
+        "label-keyed id cannot distinguish a fixed cycle row from a named "
+        "group sharing its exact label"
+    )
+
+    # Each non-character row passes an explicit, fixed owner-kind token --
+    # not anything derived from `label` or `group.name` -- so a group
+    # named "All forward"/"All back" cannot alias the real cycle row.
+    assert "'cycle:next'" in js, (
+        "the All-forward row must pass a fixed owner-kind token distinct "
+        "from any group's own key"
+    )
+    assert "'cycle:prev'" in js, (
+        "the All-back row must pass a fixed owner-kind token distinct "
+        "from any group's own key"
+    )
+    assert "'group:' + group.id" in js, (
+        "a named-group row must key off its own stable group.id, not its "
+        "user-chosen (and therefore collidable) group.name"
+    )
+
+
+def test_bind_row_button_references_its_conflict_via_aria_describedby():
+    """The bind button -- not a wrapper, and not the row -- carries the
+    programmatic association, wired only while a conflict is actually
+    rendered so a fresh button never points at a warning this render did
+    not append.
+    """
+    body = _makerow_body()
+    params = body.split(") {", 1)[0]
+    assert params == "label, gesture, online, onSet, character, conflict", (
+        "makeRow must accept the conflict element so its bind button can "
+        "reference the exact node id rendered for this row"
+    )
+    assert "if (conflict) {" in body
+    assert "button.setAttribute('aria-describedby', conflict.id)" in body
+
+    append = (
+        _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+        .split("function appendBindRow", 1)[1]
+        .split("function render()", 1)[0]
+    )
+    conflict_computed = append.index("var conflict = makeBindConflict(")
+    row_built = append.index("host.appendChild(makeRow")
+    assert conflict_computed < row_built, (
+        "the conflict element must exist before makeRow builds the button "
+        "that references its id"
+    )
+    assert "makeRow(label, gesture, online, onSet, character, conflict)" in append
 
 
 def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():

@@ -884,6 +884,21 @@
     renderRoster();
   });
 
+  /* Two, not controller._ROSTER_NAME_CAP's three. That backend cap
+   * bounds the PAYLOAD -- evaluator.missing_names's own docstring calls
+   * it "a payload bound, not a display decision" -- and the display
+   * decision belongs here, independently of it: if the payload cap ever
+   * moves, this does not have to move with it, and vice versa.
+   *
+   * Smaller than ui/copy.py's _COPY_NAME_CAP (6) on purpose, not just
+   * coincidentally: that modal is a dialog the reader stopped at on
+   * purpose and reads once, `shown`/`rest` derived the same way this row
+   * does (copy.py:555-563). A roster row is read in passing, across many
+   * rows in one scan, not opened and stopped at -- so it can afford fewer
+   * names than a confirmation the user is already reading closely.
+   */
+  var ROSTER_ROW_NAME_CAP = 2;
+
   function rowNode(ch) {
     var row = WM.make('div', 'skills-row');
     if (expanded[ch.character_id]) row.classList.add('open');
@@ -938,17 +953,24 @@
     // hide WHICH nine behind a row expand. The names ride the roster
     // payload -- see controller._ROSTER_NAME_CAP; they are taken off the
     // same tuple missing_count counts, so they cannot disagree with the
-    // number to their left.
+    // number to their left. The row shows fewer of them still, capped
+    // again below at ROSTER_ROW_NAME_CAP.
     //
     // Appended to the ROW, not to `top`: it is a second line under the
     // name, and putting it in the button's flex row would make it compete
     // with the status for the same track. The row stays one click target
     // either way -- this span is inside the <button>'s sibling, so it does
     // not nest interactive content.
-    var names = ch.missing_names || [];
-    if (names.length) {
-      var rest = ch.missing_count - names.length;
-      var text = names.join(', ');
+    var shown = (ch.missing_names || []).slice(0, ROSTER_ROW_NAME_CAP);
+    if (shown.length) {
+      // Derived from `shown.length`, NOT from `ch.missing_names.length`:
+      // the payload can carry up to controller._ROSTER_NAME_CAP names,
+      // capped again here to ROSTER_ROW_NAME_CAP for what this row prints.
+      // Deriving the remainder from the payload's own length would make a
+      // payload-cap change silently change what "and N more" states
+      // without either cap actually moving on its own.
+      var rest = ch.missing_count - shown.length;
+      var text = shown.join(', ');
       // The remainder is stated, never implied by a truncation: `and 6
       // more` is a fact, a trailing ellipsis is a mystery. Same rule
       // ui/copy.py's _COPY_NAME_CAP follows for the copy confirm.

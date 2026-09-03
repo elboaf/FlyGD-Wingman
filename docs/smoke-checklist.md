@@ -2807,18 +2807,35 @@ headless.
       and survive a restart. An alert already pulsing when you change them
       finishes at its old rate — the values are read when an alert is
       armed, not per frame.
+- [ ] **Advanced pulse behavior opens and closes by keyboard, and fits at
+      the 840px floor.** Settings > Alerts. Expected: `#alert-advanced`
+      starts collapsed under the table, titled `Advanced pulse behavior`.
+      Tab to its summary and press Enter or Space — no mouse required — to
+      open it; press it again to close it. With it open at the 840x625
+      window floor, `document.documentElement.scrollWidth` must equal
+      `clientWidth`, and none of its three rows (Combat, Warp scramble,
+      Decloak) wraps its Flashes/Speed pair onto a second line.
+- [ ] **Opening it does not disturb the card's live regions.** With the
+      disclosure open or closed, `#alerts-health` and `#alerts-status`
+      (both `role="status"`) keep whatever text they already held —
+      alerts.js has no listener on `#alert-advanced`'s `toggle` event, so a
+      screen reader must not re-announce either line just because the
+      disclosure state changed.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
-      Alerts. Each event offers the same five named swatches: Red, Amber,
-      Green, Cyan, and Magenta, and prints the selected name below its dots.
-      Change each event once and confirm the word follows the selected dot.
-      Event boxes align with the modifier boxes below; event names and the
-      Flashes/Speed line share the next inset, so no checkbox hangs by itself
-      at the card edge. They render as dark-theme controls rather than opening
-      a native Windows colour picker. Give two enabled events the same
-      colour. Expected: one warning below the table names both events and says
-      their preview pulses are indistinguishable; the warning is not repeated
-      under both rows. Disable either event or choose a distinct colour and it
-      clears without clearing a row-local save error.
+      Alerts. Each event offers the same five swatches: Red, Amber, Green,
+      Cyan, and Magenta — one line, vertically centered with the checkbox/
+      name, Sound and Test beside it, not a two-line control. Each swatch
+      announces its colour name to a screen reader (`aria-label`) and shows
+      it in its tooltip; nothing prints the selected name visibly below the
+      dots any more. Event boxes align with the modifier boxes below; event
+      names and the Flashes/Speed line share the next inset, so no checkbox
+      hangs by itself at the card edge. They render as dark-theme controls
+      rather than opening a native Windows colour picker. Give two enabled
+      events the same colour. Expected: one warning below the table names
+      both events and says their preview pulses are indistinguishable; the
+      warning is not repeated under both rows. Disable either event or
+      choose a distinct colour and it clears without clearing a row-local
+      save error.
 
 ### The alert render path
 
@@ -2917,6 +2934,14 @@ so these are the checks that matter and only a Windows machine can run them.
       sits directly beneath that context when the codec is available, without
       becoming another card or route. In Accounts mode, the Copy card contains
       **Identify accounts…**; none of these tools is an inline card below Copy.
+- [ ] **Profile tools are named for what they are, not for who they seem
+      scoped to.** Inspect the **Backups…** / **Edit formations…** tool
+      group with a screen reader or the accessibility pane. Expected: its
+      accessible name is `Profile tools` via `aria-labelledby`, not an
+      `aria-label` claiming the group belongs only to the selected
+      server/profile — `eve_settings_backup_dir()` is one fixed store, not
+      scoped to that selection, so switching profiles must not change what
+      the group's name implies it is showing.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -3003,6 +3028,17 @@ so these are the checks that matter and only a Windows machine can run them.
       the prose, the `Copy from` row and the filter row are all still held to
       the old 586px measure on purpose, so a filter row narrower than the
       roster beneath it is correct here, not a bug.
+- [ ] **The copy commit bar widens with the roster above the 840px floor,
+      and only there.** With a folder chosen, put the window at its floor
+      and note the commit bar (`Copy to selected`, its count, source, and
+      the EVE pill) — it is capped to the card's ~586px prose measure
+      alongside the rest of the setup controls. Drag the window past
+      841px CSS width. Expected: the bar now spans the roster's full width
+      below it, and the count and source sit grouped together rather than
+      leaving a bare gap before the pill. Return to the floor (or measure
+      at exactly 840px): the bar reverts to the capped layout — the
+      widening is gated behind `min-width: 841px` and must not appear at
+      or below it.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a
@@ -3030,6 +3066,15 @@ so these are the checks that matter and only a Windows machine can run them.
       label was added for.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
+- [ ] **Identify accounts composes correctly at wide widths and keeps
+      manual management subordinate.** Open `Identify accounts…` in a
+      window past the floor. Expected: the guided flow's ~620px-capped
+      column centres in the available width rather than sitting flush
+      against the left edge. Below the guided flow, `Manage account names
+      and character links…` is a single visibly and programmatically
+      labelled disclosure group. Confirm with a screen reader or the
+      accessibility pane that its name is `Manual management` and that the
+      disclosure's own ids, copy, and behavior are otherwise unchanged.
 - [ ] **Identify one account through a controlled client session.** Switch to
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
@@ -3218,6 +3263,15 @@ so these are the checks that matter and only a Windows machine can run them.
       Alt. Expected: the button reads `Back up Default profile` and `Back up Alt
       profile`; with no profile selected it reads `Back up profile` and is
       disabled.
+- [ ] **Backups' Origin column aligns with the target's name, not its id.**
+      Open Backups with a mixed history of automatic and manual entries.
+      Expected: each row's `.es-backup-grid` aligns to the row's start, so
+      Origin sits level with the target's name line rather than between
+      the name and its raw id beneath it. Origin's text reads in a
+      distinct, slightly dimmer colour than Date — not the same faint
+      colour the target's own secondary (raw id) line uses — so the two
+      read as separate columns; Origin still names only Automatic or
+      Manual, nothing else.
 - [ ] Check the packaged build: Profiles and Backups open, and the folder picker
       opens.
 
@@ -3434,6 +3488,33 @@ against a placeholder id; only these items are blocked on the registration.
       Check the second case at the window floor — that is the one the
       list's `min-height: 0` exists for. Collapse it again and the list
       returns to its height.
+- [ ] **The plan-file actions sit directly below the plan list, above
+      `What is a plan?`.** With plans present, read down the Plans block:
+      the list, then `Open plans folder` / `Reload plans`, then the `What
+      is a plan?` disclosure last. They act on the folder the list above
+      them reads from, so they no longer wait behind an explanation almost
+      nobody opens. Reordering costs no height: `<details>` and the
+      actions row are both `flex: none` siblings of the same shrinkable
+      list, so the four-plan-row floor measured against the block is
+      unaffected.
+- [ ] **The roster has its own persistent heading, like Groups and Plans.**
+      Above the filter bar and the character list, a `Characters` heading
+      (the route's own vocabulary — Add character, Filter characters, N
+      characters added) sits in the same `.rail-head` treatment the Groups
+      and Plans blocks already use, with only a hairline boundary added.
+      It is inert text — no tabindex, no click handler — confirming the
+      roster is the third of the rail's three independent scroll regions,
+      not the one region with no label above its own scrollbar.
+- [ ] **A collapsed row's missing-skill names stay legible at a glance.**
+      With a character missing three or more skills for the selected plan,
+      its collapsed roster row shows at most two names before `and N
+      more` — a smaller cap than the plan-issues disclosure's own list
+      (which spells out every requirement) and smaller again than the copy
+      confirm dialog's name cap, because a roster row is scanned in
+      passing across many rows rather than opened and read like a dialog.
+      Confirm the `N` in `and N more` matches the character's real missing
+      count minus the two names shown, not the number of names the
+      payload happened to include.
 - [ ] **An empty roster names the control.** With no characters
       authorised, the roster reads `No characters yet. Press “Add
       character” to sign one in with EVE SSO.` — the name on the button,
@@ -3819,6 +3900,19 @@ behaviour a lexical guard cannot reach.
       normal edge of the opaque sticky layer, not overlap inside it. This is the
       whole reason both are sticky — a label that scrolls off the controls it
       explains recreates the original context-loss defect.
+- [ ] **A conflict warning still names its owner once its row is behind the
+      sticky headers.** Same scroll-to-bottom scenario, using a character
+      whose direct bind collides with a cycle keybind (the dev fixture's
+      Tanuki Solette, whose chord matches `All forward`). Scroll until her
+      row sits fully or partly behind the column headers/`OFFLINE` heading
+      while the warning directly below it is still visible. Expected: the
+      warning's own sentence still opens with `Tanuki Solette: …` rather
+      than assuming the row above it is on screen, and her `Keybind` button
+      still points `aria-describedby` at that exact warning's id. Confirm
+      with a screen reader or the accessibility pane: focusing the button
+      announces its own label (the chord) followed by the description, and
+      the description text alone still names the owner even though the row
+      it explains may be hidden.
 - [ ] **The rule above the column headers is one line, not four dashes.**
       `.row` is `display: contents` in this grid, so a border on the
       header CELLS is cut by every 10px column gap. It is drawn by an

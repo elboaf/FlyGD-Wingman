@@ -186,6 +186,31 @@ def test_the_plan_file_actions_do_not_set_the_rails_width_floor():
     )
 
 
+def test_the_plan_file_actions_sit_directly_below_the_plan_list():
+    """They act on the folder the visible list reads from, so they belong
+    immediately under it -- not after \"What is a plan?\", an explanation
+    almost nobody opens, and not after the block's own flexible slack
+    (.rail-plans-block's comment: the slack is the block's own, at its
+    foot). Reordering the two costs nothing: both `<details>` and the
+    actions row are `flex: none` siblings of the same shrinkable list, so
+    the block's total height, and the four-plan-row floor measured against
+    it, do not move either way.
+    """
+    opens = RAIL.find('<div class="rail-block rail-plans-block">')
+    assert opens != -1, "the plans block left the rail"
+    scoped = RAIL[opens:]
+    list_at = scoped.find('id="skills-plans"')
+    actions_at = scoped.find('id="skills-open-folder"')
+    about_at = scoped.find('<details class="rail-about">')
+    assert list_at != -1 and actions_at != -1 and about_at != -1, (
+        "the plan list, its actions, or its disclosure left the plans block"
+    )
+    assert list_at < actions_at < about_at, (
+        "the plan-file actions must sit directly below the plan list and "
+        "before the explanatory disclosure that used to precede them"
+    )
+
+
 # ---- the words ---------------------------------------------------------
 
 
@@ -582,10 +607,14 @@ def test_the_roster_row_names_what_is_missing_from_the_same_tuple():
     )
 
     # Lexical: the page states the remainder rather than truncating, and
-    # derives it from missing_count rather than from the list's length.
-    assert "ch.missing_count - names.length" in SKILLS, (
-        "the remainder must be missing_count minus what was sent; a "
-        "hard-coded cap here is a second copy of _ROSTER_NAME_CAP"
+    # derives it from missing_count minus what the ROW shows -- not from
+    # the payload's own length. See
+    # test_the_roster_row_caps_its_own_shown_names_below_the_payload for
+    # why those are no longer the same length.
+    assert "ch.missing_count - shown.length" in SKILLS, (
+        "the remainder must be missing_count minus what the row actually "
+        "shows; deriving it from the payload's length instead would make "
+        "a payload-cap change silently change the stated remainder"
     )
     assert "' and ' + rest + ' more'" in SKILLS, (
         "a truncation with no stated remainder hides how much is missing"
@@ -609,6 +638,45 @@ def test_the_roster_row_names_what_is_missing_from_the_same_tuple():
     assert copy_cap and int(cap.group(1)) <= int(copy_cap.group(1)), (
         "the roster cap must not exceed the copy confirm's: a row read by "
         "scanning cannot carry more names than a modal read on purpose"
+    )
+
+
+def test_the_roster_row_caps_its_own_shown_names_below_the_payload():
+    """Round 6 sent up to three names per row (controller._ROSTER_NAME_CAP)
+    and the row printed every one it received. A collapsed roster's job is
+    to be scanned across many rows, not read one at a time -- the same
+    reasoning ui/copy.py's _COPY_NAME_CAP already applies to a modal read
+    on purpose, and a scanned row can afford fewer names than that, not
+    more. ROSTER_ROW_NAME_CAP is the page's OWN, independent cap: smaller
+    than the payload's, and free to move without the payload cap moving
+    with it, because the two answer different questions -- one bounds an
+    evaluation cost, this one bounds a read.
+    """
+    cap = re.search(r"var ROSTER_ROW_NAME_CAP = (\d+);", CODE)
+    assert cap, "the roster row's own name cap is gone"
+    assert int(cap.group(1)) == 2
+
+    controller = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "wingman"
+        / "eveskills"
+        / "controller.py"
+    ).read_text(encoding="utf-8")
+    backend_cap = re.search(r"_ROSTER_NAME_CAP = (\d+)", controller)
+    assert backend_cap, "the payload's own name cap is gone"
+    assert int(cap.group(1)) <= int(backend_cap.group(1)), (
+        "the row must not show more names than the payload can ever carry"
+    )
+
+    row = re.search(r"function rowNode\(ch\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert row, "rowNode() is gone"
+    body = row.group(1)
+    assert "slice(0, ROSTER_ROW_NAME_CAP)" in body, (
+        "the row no longer caps how many missing names it shows to ROSTER_ROW_NAME_CAP"
+    )
+    assert "missing_names.length" not in body and "names.length" not in body, (
+        "the remainder must not be derived from the payload's own length "
+        "again -- see the constant's comment"
     )
 
 
@@ -705,6 +773,64 @@ def test_the_groups_list_is_scroll_capped():
     assert block, "no .rail-groups rule in style.css"
     assert "overflow-y" in block.group(1)
     assert "max-height" in block.group(1)
+
+
+def test_the_roster_has_its_own_persistent_heading():
+    """Groups and Plans are two of the route's three independent scroll
+    regions, and each already carries a persistent `.rail-head` above its
+    own scrollbar. The roster -- the third -- carried none: only the
+    filter bar sat above it, and Clear filter hides itself until a filter
+    is typed. This reuses the exact same class rather than inventing a
+    new heading treatment, so it costs no new .14em rule (see
+    test_the_uppercase_tracked_labels_split_headings_from_sub_labels,
+    which still expects exactly four).
+
+    Inert text, not a control: no tabindex, no click handler, nothing
+    skills.js has to wire up.
+    """
+    heading = re.search(
+        r'<h[1-6][^>]*class="[^"]*\brail-head\b[^"]*\bskills-roster-head\b[^"]*"[^>]*>'
+        r"([^<]*)</h[1-6]>",
+        BODY,
+    )
+    assert heading, "the roster's persistent heading is gone"
+    assert heading.group(0).startswith("<h2"), (
+        "Characters is a section under the selected plan's h1, so it must not "
+        "skip directly to h3 in the document outline"
+    )
+    assert heading.group(1).strip() == "Characters", (
+        "the roster heading no longer names what it heads, in the same "
+        "vocabulary the rest of the route already uses (Add character, "
+        "Filter characters, N characters added)"
+    )
+    assert "tabindex" not in heading.group(0), (
+        "the roster heading must stay inert text, not a new keyboard stop"
+    )
+
+    # It must sit BEFORE the roster it heads, and before the filter that
+    # scopes it -- the heading marks where the plan-scoped pane header ends
+    # and the character-scoped region begins.
+    head_at = BODY.find(heading.group(0))
+    filter_at = BODY.find('class="skills-filterbar"')
+    roster_at = BODY.find('id="skills-roster"')
+    assert head_at != -1 and filter_at != -1 and roster_at != -1
+    assert head_at < filter_at < roster_at, (
+        "the roster heading must precede both the filter bar and the roster it names"
+    )
+
+    rule = re.search(r"\.skills-roster-head\s*\{([^}]*)\}", CSS)
+    assert rule, ".skills-roster-head has no rule of its own"
+    assert "var(--panel-border)" in rule.group(1), (
+        "the boundary must use the existing panel-border token, not a new "
+        "colour or the undefined --border custom property some Profiles "
+        "rules carry"
+    )
+    assert "var(--border)" not in rule.group(1)
+    assert "letter-spacing" not in rule.group(1) and "color" not in rule.group(1), (
+        "the heading treatment itself belongs to .rail-head alone; this "
+        "rule may only add the boundary, not a second copy of the label "
+        "styling"
+    )
 
 
 def test_the_group_count_says_what_it_counts():
