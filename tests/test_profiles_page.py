@@ -1624,11 +1624,19 @@ def test_profile_copy_hidden_overrides_exist_for_every_display_setting_selector(
     )
 
 
-def test_profile_copy_state_carries_exactly_six_fields():
+def test_profile_copy_state_carries_exactly_seven_fields():
     match = re.search(r"var profileCopy = \{(.*?)\n  \};", CODE, re.DOTALL)
     assert match, "the module-level profileCopy state is gone"
     fields = set(re.findall(r"(\w+):", match.group(1)))
-    assert fields == {"open", "source", "mode", "name", "destination", "error"}
+    assert fields == {
+        "open",
+        "source",
+        "mode",
+        "name",
+        "destination",
+        "error",
+        "destinationInvalid",
+    }
 
 
 def test_open_profile_copy_freezes_the_source_from_state_profile():
@@ -1689,10 +1697,12 @@ def test_a_vanished_replace_destination_asks_for_a_fresh_choice():
     assert render
     body = render.group(1)
     assert re.search(
-        r"var vanished = !!previous && !options\.filter\(function \(profile\) \{\s*"
-        r"return profile\.path === previous;\s*\}\)\.length;",
+        r"if \(previous && !options\.filter\(function \(profile\) \{\s*"
+        r"return profile\.path === previous;\s*\}\)\.length\) \{\s*"
+        r"profileCopy\.destinationInvalid = true;\s*\}",
         body,
     )
+    assert "var vanished = profileCopy.destinationInvalid;" in body
     assert "if (vanished) {" in body
     assert "repick.value = '';" in body
     assert "repick.disabled = true;" in body
@@ -1702,12 +1712,59 @@ def test_a_vanished_replace_destination_asks_for_a_fresh_choice():
         body
     )
     # Choosing a real destination has to repaint, or the submit this state
-    # disabled stays dead until some unrelated repaint happens by.
-    assert re.search(
-        r"WM\.el\('es-profile-copy-destination'\)\s*"
-        r"\.addEventListener\('change', renderProfileCopy\);",
+    # disabled stays dead until some unrelated repaint happens by -- and it
+    # must be the one thing that clears the latched invalid flag back.
+    change_handler = re.search(
+        r"WM\.el\('es-profile-copy-destination'\)\.addEventListener\("
+        r"'change', function \(\) \{(.*?)\n\s*\}\);",
         CODE,
+        re.DOTALL,
     )
+    assert change_handler
+    assert "profileCopy.destinationInvalid = false;" in change_handler.group(1)
+    assert "renderProfileCopy();" in change_handler.group(1)
+
+
+def test_a_vanished_destination_survives_a_second_ordinary_repaint():
+    """The prior fix computed `vanished` fresh on every call from the
+    destination select's OWN live `.value` -- but the very same call had
+    just replaced that value with the disabled placeholder's `''`. A
+    second, unrelated repaint (a poll, a busy toggle, any of the many
+    other triggers that call renderProfileCopy() -- setBusy(), refresh(),
+    the mode radios) reads that `''` back, sees no previous value to have
+    vanished, and lets the browser's own default -- the first remaining
+    profile -- silently reappear as though re-picked, submit re-enabled
+    under it with nobody having chosen anything.
+
+    So the invalidated state cannot live only in what the DOM's `.value`
+    happens to read at the top of this call; it has to survive on
+    `profileCopy` itself across repaints, and only a genuine user pick --
+    the destination select's OWN 'change' event, which can only fire for
+    one of the enabled real options, never the disabled placeholder --
+    may clear it back.
+    """
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    # Set when a chosen destination first vanishes...
+    assert re.search(r"profileCopy\.destinationInvalid = true;", body)
+    # ...and READ from profileCopy on every call, not recomputed solely from
+    # the select's own live value (which this same function just wrote).
+    assert re.search(r"var vanished = profileCopy\.destinationInvalid\b", body)
+
+    # Only the destination select's own change handler may clear it, and it
+    # must do so before repainting -- not the generic renderProfileCopy the
+    # mode radios and every other trigger on this route call directly.
+    change_handler = re.search(
+        r"WM\.el\('es-profile-copy-destination'\)\s*"
+        r"\.addEventListener\('change', function \(\) \{(.*?)\n\s*\}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert change_handler, "the destination select needs its own change handler"
+    handler_body = change_handler.group(1)
+    assert "profileCopy.destinationInvalid = false;" in handler_body
+    assert "renderProfileCopy();" in handler_body
 
 
 def test_send_profile_copy_examines_accepted_not_truthiness():

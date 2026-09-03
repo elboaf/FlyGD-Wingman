@@ -50,7 +50,19 @@
     mode: 'new',
     name: '',
     destination: '',
-    error: ''
+    error: '',
+    // Set on the render that first notices the chosen Replace destination
+    // is gone, and read back on every render after -- never re-derived
+    // from the destination select's own live value, because THIS function
+    // is what just overwrote that value with the placeholder's ''. A
+    // second, unrelated repaint (a poll, setBusy(), the mode radios) that
+    // read the DOM instead would see its own prior output, conclude
+    // nothing had vanished, and let the browser's default -- the first
+    // remaining profile -- silently reappear as though re-picked. Cleared
+    // only by the destination select's own 'change' handler, which can
+    // only fire for one of the enabled real options -- never this
+    // disabled placeholder.
+    destinationInvalid: false
   };
 
   function kind() {
@@ -181,7 +193,8 @@
 
   function resetProfileCopy() {
     profileCopy = {
-      open: false, source: '', mode: 'new', name: '', destination: '', error: ''
+      open: false, source: '', mode: 'new', name: '', destination: '', error: '',
+      destinationInvalid: false
     };
     renderProfileCopy();
   }
@@ -190,7 +203,7 @@
     if (!state || !state.profile) return;
     profileCopy = {
       open: true, source: state.profile, mode: 'new',
-      name: '', destination: '', error: ''
+      name: '', destination: '', error: '', destinationInvalid: false
     };
     renderProfileCopy();
     WM.el('es-profile-copy-name').value = '';
@@ -225,9 +238,23 @@
     // as though the user had picked it, for the one operation on this
     // screen that overwrites a whole profile. So the choice is taken away
     // rather than moved, and the panel asks for it again.
-    var vanished = !!previous && !options.filter(function (profile) {
+    //
+    // Latched onto profileCopy rather than recomputed from `previous` on
+    // every call: a few lines down this same function replaces the
+    // select's value with the placeholder's '', and the very next repaint
+    // -- setBusy(), a mode-radio change, refresh()'s poll, any of the
+    // several other triggers that call renderProfileCopy() -- would then
+    // read that '' back, see nothing to have vanished, and let the
+    // browser's default silently reappear as though re-picked. Only the
+    // destination select's own 'change' handler clears the flag, and it
+    // can only fire for one of the enabled real options below -- never
+    // this disabled placeholder.
+    if (previous && !options.filter(function (profile) {
       return profile.path === previous;
-    }).length;
+    }).length) {
+      profileCopy.destinationInvalid = true;
+    }
+    var vanished = profileCopy.destinationInvalid;
     destinationSelect.innerHTML = '';
     if (!options.length) {
       var placeholder = document.createElement('option');
@@ -1084,8 +1111,15 @@
     // submit while the select sits on the "Choose a profile" placeholder a
     // vanished destination leaves behind, so picking a real one has to
     // repaint or the button stays dead until some other repaint happens by.
-    WM.el('es-profile-copy-destination')
-      .addEventListener('change', renderProfileCopy);
+    // A dedicated handler, not renderProfileCopy directly: this is the
+    // ONLY event that may prove the invalidated destination has been
+    // replaced with a real choice (the placeholder option is disabled and
+    // cannot itself fire 'change'), so it is also the only place
+    // profileCopy.destinationInvalid is cleared back to false.
+    WM.el('es-profile-copy-destination').addEventListener('change', function () {
+      profileCopy.destinationInvalid = false;
+      renderProfileCopy();
+    });
 
     // Profiles 4. Both controls answer the same question -- where is the
     // EVE settings folder. A changed root drops the old selection (its
