@@ -280,7 +280,7 @@
      Five sizes, and the RATIOS are what the scale is, so they are stated
      here rather than left to be re-derived off the values:
 
-       --fs-head   17px   1.31 over body    h1 x2, .dialog h3
+       --fs-head   17px   1.31 over body    h1 x2, .dialog h2
        --fs-body   13px   --                the content, and card/rail headings
        --fs-mono   12px   0.92 of body      monospace and tabular cells
        --fs-muted  12px   1.08 under body   column headers, counts, hints
@@ -304,7 +304,7 @@
      that reads as a heading rather than as bold body.
 
      Deliberately narrow blast radius: --fs-head has exactly three users
-     (h1, .dialog h3, and the skills plan title), all of them real
+     (h1, .dialog h2, and the skills plan title), all of them real
      headings. Re-checked in round 5 and still three: the skills plan title
      IS one of the two h1 elements, so the rule count is two and the user
      count is three. The muted/mono/label steps are NOT touched — widening
@@ -566,13 +566,20 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    "the two uppercase tracked section labels ... above --text-faint
    BECAUSE THEY ARE HEADINGS", and both carry weight 600. Those two move
    together. The remaining two are subordinate and stay at --fs-label --
-   .bind-group-name is a divider INSIDE a card (--text-dim, and its own
-   comment asks to be one step quieter than a card heading) and
-   .alert-head > span is a column header (--text-faint, which the :root
-   note defends at length as below the data it labels). The four still
-   agree on the TREATMENT -- uppercase, .14em -- and now differ on size
-   along the split the colour tokens were already making. Do not
-   "restore" them to one size. */
+   .bind-group-name is a divider INSIDE a card and .alert-head > span is a
+   column header (--text-faint, which the :root note defends at length as
+   below the data it labels). The four still agree on the TREATMENT --
+   uppercase, .14em -- and now differ on size. Do not "restore" them to one
+   size.
+
+   This paragraph used to add that .bind-group-name was --text-dim and to
+   rest its argument on "the split the colour tokens were already making".
+   Both halves are gone because the first was a bug: --text-dim (#9aa2b1)
+   is BRIGHTER than --text-label (#8b93a1), so the dividers out-ranked the
+   headings they sit under and there was no split to appeal to. The
+   divider is --text-label now and the rank is carried by size alone --
+   which is the dimension that cannot invert when a token moves
+   underneath it. See .bind-group-name's own note. */
 .card > h2 {
   font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); margin-bottom: 12px; font-weight: 600;
@@ -819,6 +826,7 @@ button.btn:disabled,
 .rail-plan:focus-visible,
 .rail-item:focus-visible,
 .skills-row-top:focus-visible,
+.skills-estimate-info:focus-visible,
 .ctxmenu button:focus-visible,
 .linkish:focus-visible,
 .list-head > span:focus-visible {
@@ -1128,21 +1136,13 @@ button.btn:disabled,
    changing under the pointer, which is how it read as "every column, every
    visit". Reserving the width unconditionally costs the label 12px it was
    never entitled to keep and makes the header stop moving. */
-/* Round 6, P2-2. `visibility: hidden` until a column carried .sorted, and
-   the list opens in delivery order with nothing sorted -- so on first
-   open all four headers had ZERO affordance and read as static labels.
-   Sixteen recordings differing only in a timestamp make Size and Length
-   the fast route to "which one was the good fight", and the whole
-   mechanism was built and then hidden behind knowing it was there.
-
-   opacity, not visibility, so the glyph is present-but-quiet rather than
-   absent: .28 is legible as a mark without competing with the label, and
-   the width was already reserved unconditionally by the rule above (see
-   its note -- reserving it is what stopped the header moving on click),
-   so nothing reflows at any of the three levels. */
+/* Keep the inactive glyph transparent: showing every triangle made all
+   columns look sorted at once. Opacity, not visibility or removal, keeps
+   the width reserved unconditionally, so hover and sorting never reflow
+   a header label. */
 .list-head > span::after {
   content: "\25B2"; font-size: 8px; flex: none;
-  width: 8px; opacity: .28;
+  width: 8px; opacity: 0;
 }
 .list-head > span:hover::after { opacity: .7; }
 .list-head > span.sorted::after { opacity: 1; }
@@ -1338,6 +1338,14 @@ button.btn:disabled,
   cursor: pointer;
 }
 .ctxmenu button:hover:not(:disabled) { background: var(--hover); }
+/* The menu holds two object classes now -- the recording on disk (Play,
+   Rename) and the video it became (Copy link, Open in browser) -- and
+   until the first pair arrived it read entirely as the second. A 1px rule
+   is the whole of the distinction; it sets no display, so it needs no
+   [hidden] override. */
+.ctxsep {
+  height: 1px; margin: 4px 6px; background: var(--panel-border);
+}
 
 /* ---- tooltips (replaces tooltip.py's borderless Toplevel) -----------
    DELAY_MS 450 is preserved as a transition-delay: long enough not to fire
@@ -1357,7 +1365,13 @@ button.btn:disabled,
   opacity: 0; visibility: hidden;
   transition: opacity .1s linear .45s, visibility 0s linear .45s;
 }
-[data-tip]:hover::after { opacity: 1; visibility: visible; }
+/* Task 6. Every list.js caller of this primitive is a <span> that only a
+   mouse can rest on; the Skills estimate info button is a real <button>,
+   and native `title` does not reliably open on keyboard focus at all -- so
+   this primitive is extended from hover-only to hover plus :focus-visible
+   rather than duplicated for one caller. */
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after { opacity: 1; visibility: visible; }
 /* Any click means the user is acting, not asking. */
 [data-tip]:active::after { opacity: 0; visibility: hidden; transition: none; }
 
@@ -1529,12 +1543,10 @@ button.btn:disabled,
 .check.inert input:not(:checked) + .box {
   background: var(--sunken);
 }
-/* The Size column's cell for a character that cannot be sized yet.
-   Carries a title explaining how to make one settable, and therefore has
-   to be HOVERABLE: as an empty span it computed to 46.44 x 0 and
-   elementFromPoint at its centre returned null, so the explanation could
-   never be reached. The dash gives it a line box, and says "nothing here"
-   to someone who never hovers at all. */
+/* The Saved geometry detail's Size… placeholder for a character that cannot
+   be sized yet. It carries a title explaining how to make one settable, and
+   therefore has to be HOVERABLE: an empty span has no hover target. The dash
+   gives it a line box and says the missing action is expected. */
 .size-none { color: var(--text-faint); cursor: default; }
 
 /* The per-character exceptions to a global preview default. Sits directly
@@ -1559,6 +1571,62 @@ button.btn:disabled,
    leaves most of its width empty. */
 .pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
 .pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
+
+/* Prose that TEACHES rather than prose that warns, folded away.
+
+   The card carried 1706 characters of resting hint -- 6.3x Alerts, 2.6x a
+   Bookmarks card holding eighteen keybinds -- which is what made a section
+   only 156px taller than Bookmarks read as substantially longer. Every
+   sentence had been argued for individually; nothing had ever counted
+   them, which is the same failure DESIGN.md records one level down for
+   per-control dependence notes.
+
+   The line this draws is deliberately narrow, because most of that prose
+   is load-bearing and stays exactly where it is: a sentence that states a
+   COST or a behaviour the control's own label does not imply is resting
+   text. A sentence that teaches the product -- which gesture moves a
+   preview -- is read on the visit where the feature is switched on and is
+   noise on every visit after it. Only that kind goes behind a summary.
+
+   Sized and coloured like .pv-exc's summary rather than as a new
+   vocabulary: this card already has a disclosure pattern and a second one
+   that looked different would read as a different KIND of thing. It is not
+   .pv-exc itself because that class carries a 24px indent and a 20px
+   tail for a checkbox list, neither of which a paragraph wants. */
+.hint-more { font-size: var(--fs-muted); }
+.hint-more summary { cursor: pointer; color: var(--text-dim); }
+.hint-more summary:hover { color: var(--text); }
+/* The .hint inside is already --fs-muted and --text-faint; it only needs
+   taking off the summary's own line and indenting to the summary's text,
+   clear of the disclosure triangle.
+
+   The [hidden] override is the trap this sheet documents in six other
+   places: an author rule that sets a display beats the UA stylesheet's
+   `[hidden] { display: none }` at any specificity. Nothing hides this hint
+   today; the pairing is the convention, and the guard that checks it
+   cannot see a compound selector like this one. */
+.hint-more > .hint { display: block; margin: 6px 0 0 16px; }
+.hint-more > .hint[hidden] { display: none; }
+
+/* Two controls on this card were full-measure because nothing said
+   otherwise: `.settings .row > .field { flex: 1 }` and
+   `input[type=range] { flex: 1 }` make full-measure the default once the
+   label stacks above the row.
+
+   Measured at the 840 floor. The size field was 586px holding a value like
+   `480x300` -- seven characters in a box wide enough for a URL, which
+   reads as an empty field rather than a filled one, and was the second
+   thing on this card that looked broken without being broken. 12ch holds
+   `1920x1080` with slack; the field is free text, so the floor is the
+   longest value it can take, not the longest it usually shows.
+
+   The slider is capped for a different reason: its readout is `flex: none`
+   at the end of the row, so a 546px track parked `100%` at x=765 -- 556px
+   from the label it belongs to, nearly against the card edge, with the one
+   number saying what the slider is set to as far as it can get from the
+   hand setting it. 260px keeps the pair readable together. */
+#preview-default-size { flex: 0 1 12ch; }
+#preview-opacity { flex: 0 1 260px; }
 
 /* The Previews master switch owns the block under it instead of sitting in
    it. Seven of the nine controls below are gated on this one, and the card
@@ -1646,9 +1714,25 @@ button.btn:disabled,
 
    `:empty` and `[hidden]` both re-evaluate when settings.js writes a
    message in, so the row returns on its own. That is why this is a
-   display rule and not a `hidden` attribute somebody has to clear. */
-.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty),
-.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]) {
+   display rule and not a `hidden` attribute somebody has to clear.
+
+   AND THE ROW MUST HOLD NO CONTROL. That is what the three `:not()`s on
+   the end are for, and they are not defensive: without them this rule hid
+   `Apply to open previews` -- an empty `.lab`, a `<button>`, and a status
+   slot that only ever fills in AFTER the button has been clicked. The
+   control appeared once you had performed the action it was the only
+   route to, which is to say never. It shipped that way, and nothing could
+   see it: the rule is correct in isolation, the markup is correct in
+   isolation, and pytest reads this page without rendering it, so the two
+   only met on a real machine.
+
+   Fixing it by giving the status a default sentence was the first idea
+   and is the wrong one twice over -- it re-adds the line this rule exists
+   to remove, and it leaves the trap armed for the next row that pairs a
+   control with a silent status slot.
+   tests/test_page_conventions.py pins the predicate instead. */
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint:empty):not(:has(> button)):not(:has(> input)):not(:has(> select)),
+.settings .row:has(> .lab:empty):not(:has(> .hint[role])):has(> .hint[hidden]):not(:has(> button)):not(:has(> input)):not(:has(> select)) {
   display: none;
 }
 
@@ -2001,17 +2085,17 @@ button.btn:disabled,
   border-radius: var(--radius); padding: 18px 20px 16px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
 }
-.dialog h3 {
+.dialog h2 {
   font-size: var(--fs-head); font-weight: 620; margin-bottom: 10px;
   display: flex; align-items: center; gap: 9px;
 }
-.dialog h3::before {
+.dialog h2::before {
   content: ""; width: 3px; height: 15px; border-radius: 2px; flex: none;
   background: var(--text-faint);
 }
-.dialog.error h3::before   { background: var(--err); }
-.dialog.warning h3::before { background: var(--warn); }
-.dialog.confirm h3::before {
+.dialog.error h2::before   { background: var(--err); }
+.dialog.warning h2::before { background: var(--warn); }
+.dialog.confirm h2::before {
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
 }
 /* A destructive confirm takes --danger, the token minted at :root for
@@ -2020,7 +2104,7 @@ button.btn:disabled,
    .dialog.confirm and equal specificity (0,2,0), which is what lets a
    dialog carry both classes -- panel.js sets `dialog confirm destructive`
    so a page that never passes the flag is unchanged. */
-.dialog.confirm.destructive h3::before { background: var(--danger); }
+.dialog.confirm.destructive h2::before { background: var(--danger); }
 .dialog .body {
   /* format_upload_confirm composes a multi-line body with the exact
      (n/total) titles in it; pre-wrap is what keeps that layout. */
@@ -2147,7 +2231,19 @@ button.btn:disabled,
    a divider inside a card rather than a second card heading. It was one
    step quieter in COLOUR only -- both were --fs-label -- until round 5's
    G3 raised .card > h2 to --fs-body and left this at --fs-label, which is
-   the same claim now made in two dimensions instead of one. */
+   the same claim now made in two dimensions instead of one.
+
+   AND ONE OF THOSE TWO DIMENSIONS POINTED THE WRONG WAY. This was
+   --text-dim (#9aa2b1) under a heading at --text-label (#8b93a1): the
+   subhead was BRIGHTER than the heading it is subordinate to, so Previews'
+   four dividers out-ranked the card title above them and the card read as
+   five peer bands rather than one card with sections. The comment above
+   describing this as "one step quieter" had been false since G3 and is
+   left standing because it is the argument, not the measurement.
+
+   The rank is now carried by SIZE alone -- --fs-label under the heading's
+   --fs-body -- with both at --text-label. Size is the dimension that
+   cannot invert by a token moving underneath it. */
 .bind-group {
   grid-column: 1 / -1;
   display: flex; align-items: baseline; gap: 9px;
@@ -2156,7 +2252,7 @@ button.btn:disabled,
 }
 .bind-group-name {
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text-label);
 }
 /* No producer. The offline legend it once qualified became a per-row
    `.off-tag`, and round 6 made it a sticky group heading instead. Kept
@@ -2185,8 +2281,15 @@ button.btn:disabled,
    not sort, and the rule about ordering an arrow before a right-aligned
    label exists for the lists that do. */
 .bind-head > span {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center;
+  height: var(--preview-bind-head-height);
   font-size: var(--fs-muted); color: var(--text-dim);
-  white-space: nowrap; padding-bottom: 2px;
+  white-space: nowrap;
+  background: var(--panel);
+  /* Each span is a separate grid item. Paint across the following gap so
+     row text cannot flash between the cells while the pane scrolls. */
+  box-shadow: 10px 0 var(--panel);
 }
 /* The rule that opens the table is drawn by an EMPTY `.bind-group` before
    the header row (previews.js), not by the header cells themselves.
@@ -2243,16 +2346,16 @@ button.btn:disabled,
    as a second surface; the card's gradient has already resolved to
    --panel by 78%, which is above where this list starts.
 
-   `top: 0` and not the header row's height: the column headers are not
-   sticky, so there is nothing above this to clear. Make them sticky and
-   this number becomes their height.
+   The column headers now stay at the top of the pane. This heading uses
+   their measured height rather than `top: 0`, so the two sticky layers
+   stack instead of covering one another.
 
    `:not(:empty)` because the rule that opens the table is an EMPTY
    .bind-group of the same class, and pinning a bare hairline to the top
    of the pane would leave a stray line floating over the rows. Named
    groups stick; rules do not. */
 #preview-binds .bind-group:not(:empty) {
-  position: sticky; top: 0; z-index: 1;
+  position: sticky; top: var(--preview-bind-head-height); z-index: 1;
   background: var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
@@ -2260,38 +2363,39 @@ button.btn:disabled,
 #preview-binds .bind-group:empty { margin-top: 12px; padding-top: 8px; }
 
 #preview-binds {
+  /* 12px muted text at the shared line-height needs 18px; four more pixels
+     keep its sticky background clear of the first row without adding a
+     second scroll container. */
+  --preview-bind-head-height: 22px;
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
-  /* A fixed name column, four content-sized control tracks, then one
+  /* A bounded name column, four content-sized control tracks, then one
      flexible one. The character name sits in track 1 rather than taking a
      line of its own -- the `.lab` override below no longer spans -- and
-     the four that follow size the CONTROLS beside it: Preview, bind button,
-     the keybind actions cell (Clear/Edit… together, `.rowacts`), and the
-     Geometry actions cell (Size…/Copy… together) -- exactly the four
-     children previews.js's makeRow appends after the label. Clear and Edit… used to be two of those children, one track
-     each; they now share the one `.rowacts` span, which is what dropped
-     the count from five. Lock and Never minimize used to sit here too, as
-     a sixth and a conditional seventh; both now render once, in their own
-     disclosures under their global toggles, rather than as a track on
-     every row. The trailing minmax(0, 1fr) absorbs the leftover width so
-     the four stay packed at the start instead of spreading.
+     the four that follow size the controls beside it: Preview, bind button,
+     the keybind actions cell (Clear/Edit… together, `.rowacts`), and
+     Configure. Rare group and geometry controls sit in the full-grid
+     disclosure below the character row, so they do not widen the scan line.
+     Clear and Edit… used to be two of those children, one track each; they
+     now share the one `.rowacts` span, which is what dropped the count from
+     five. Lock and Never minimize used to sit here too, as a sixth and a
+     conditional seventh; both now render once, in their own disclosures
+     under their global toggles, rather than as a track on every row. The
+     trailing minmax(0, 1fr) absorbs the leftover width so the four stay
+     packed at the start instead of spreading.
 
      THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
      this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. `minmax(150px, 260px)`
+     in, so the bind button moves between sessions. `minmax(210px, 320px)`
      keeps the stability B1 bought -- both ends are lengths, so the track
      never consults the roster -- while dropping the cross-list half of
      its rule. Bookmarks still stacks, because "Convert EvE-Scout
      Bookmarks" is 189.6px and genuinely needs its own line.
 
-     Round 6 raised the ceiling from a flat 150px. At 150 a name was
-     ellipsized to 106px (the track less the `offline` tag) on a window
-     with 191px of empty gutter beside the card -- the truncation was not
-     paying for anything. The floor stays 150 so the 840 floor is
-     unaffected; the 260 ceiling is only reachable once the card is wide
-     enough, which it now is (see the max-width block below). Names wider
-     than the resolved track still ellipsize and still carry a `title`.
+     The 210px floor and 320px ceiling reclaim enough collapsed-row space
+     for names without returning to content-sized tracks. Names wider than
+     the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2304,14 +2408,19 @@ button.btn:disabled,
      display:contents, so the grid sees one flat stream of cells and cannot
      tell one row from the next; a row that contributed fewer children
      would pull the following row's children up into its empty columns.
-     That is why makeRow always appends exactly one of {the opt-out
-     checkbox} and {the Size control or its filler} -- cycle forward/back
-     have no character, and without the filler those two rows would
-     misalign every row after them. Change the number of per-row children
-     and this number changes with it -- test_page_conventions.py now
-     DERIVES the expected count from makeRow's own appends rather than
-     trusting this comment. */
-  grid-template-columns: minmax(150px, 260px) repeat(4, max-content) minmax(0, 1fr);
+     That is why makeRow appends the same collapsed identity, Preview,
+     keybind, action and Configure cells for character and cycle rows.
+     Character-specific Size… and Copy… controls are in the full-grid detail,
+     not the scan line. Change the number of per-row children and this number
+     changes with it -- test_page_conventions.py derives the expected count
+     from makeRow's unconditional appends rather than trusting this comment. */
+  grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
+}
+
+/* Five gaps reclaim the 20px that overflowed the measured window floor;
+   the identity and control tracks keep their usable widths. */
+@media (max-width: 840px) {
+  #preview-binds { column-gap: 6px; }
 }
 
 /* Round 6. The 620px measure is right for this section's PROSE and wrong
@@ -2408,8 +2517,8 @@ button.btn:disabled,
 
 /* This one no longer merely restates the override above. While B1
    collapsed the column unconditionally, this block said the same thing
-   twice; the name sits in a 150px track now, so below 720px this is what
-   would actually hand it the whole line back instead of ellipsizing it in
+   twice; the name sits in a bounded 210px-to-320px track now, so below
+   720px this is what would actually hand it the whole line back instead of ellipsizing it in
    a track a narrow card cannot afford. WOULD, not does -- the CSS floor
    is 840x625 at every scaling (see the note at #eve-binds), so 720px is
    still unreachable through the window and this is still kept for the
@@ -2422,6 +2531,81 @@ button.btn:disabled,
 /* Offline is information, not an error (previews.js): dim rather than
    hide, so a character who has logged out still shows its saved binding. */
 #preview-binds .row > .lab.dim { color: var(--text-faint); }
+
+/* One character detail spans the grid rather than becoming an extra table
+   cell. It keeps rare assignment and geometry changes close to the row
+   while the collapsed line stays useful for roster-scale verification. */
+.preview-character-detail {
+  grid-column: 1 / -1;
+  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px;
+  /* One sticky table header plus one sticky group header can cover this
+     disclosure after Configure scrolls it into view. Their shared measured
+     height is defined by the table, so this clearance follows it. */
+  scroll-margin-top: calc(var(--preview-bind-head-height) * 2);
+  padding: 5px 0 7px;
+  border-top: 1px solid var(--field-border);
+}
+.preview-detail-field {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.preview-detail-label {
+  font-size: var(--fs-muted); color: var(--text-dim);
+}
+.preview-character-detail .preview-group-select {
+  min-width: 160px; max-width: 240px;
+}
+.preview-character-detail .geometry-actions { min-height: 28px; }
+.preview-configure { justify-self: start; }
+
+/* A conditional conflict is a sibling after its affected row. Since rows
+   are display:contents, it must span every track rather than add a cell. */
+.preview-bind-conflict {
+  grid-column: 1 / -1;
+  color: var(--danger); font-size: var(--fs-muted);
+}
+
+/* Group manager disclosure block. Spans the full grid width. Uses
+   <details> rather than .bind-group: the bind-group rule at
+   #preview-binds .bind-group:not(:empty) applies position:sticky which
+   would pin the disclosure over the character rows.  The manager spans
+   the grid independently via grid-column:1/-1 below. */
+.preview-group-manager {
+  grid-column: 1 / -1;
+  padding: 4px 0 2px;
+}
+.preview-group-manager > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-muted);
+  user-select: none;
+}
+.preview-group-manager > summary:hover { color: var(--text); }
+.preview-group-manager > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* Chromium's UA rule hides non-summary children of a closed <details>
+   by setting display:none on the internal ::details-content pseudo, but
+   an author display:flex declaration on the body div wins the cascade and
+   keeps the body visible even when the panel is collapsed.  This explicit
+   :not([open]) rule restores the expected closed-panel behaviour without
+   removing the flex layout that applies while the panel is open. */
+.preview-group-manager:not([open]) > .group-manager-body { display: none; }
+.group-manager-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 6px;
+}
+.group-add-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.group-add-name { flex: 1 1 auto; min-width: 0; }
+.group-manage-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.group-manage-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-muted); }
 
 /* A latent bookmark collision (previews.js's bookmarkClash) marks the
    chord without the warning colour .clash uses -- nothing is being taken
@@ -2516,7 +2700,7 @@ button.btn:disabled,
 /* The card grew; its form rows and its prose did not. 586px, not 620:
    inside the card the 620 wrapper only ever gave them 586, and this is
    holding that measure rather than restoring a number from one level up. */
-#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster) {
+#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster):not(.es-commit-context) {
   max-width: 586px;
 }
 
@@ -2525,13 +2709,28 @@ button.btn:disabled,
    a long root from pushing Change beyond that width. */
 .es-context-card { width: 100%; }
 
-/* Quiet tools sit between context and work rather than becoming another
-   card in the copy flow. They wrap at the window floor instead of creating
-   horizontal overflow. */
+/* Quiet tools remain siblings between context and work rather than becoming
+   another card or route. Pulling the group toward the context and aligning it
+   with that card's content ties Backups and Formations to the selected
+   profile through proximity, a shared border and a visible group label --
+   not through a sentence the payload cannot back up. Backups reads across
+   every profile ever backed up on this machine: eve_settings_backup_dir()
+   (paths.py) is one fixed store, never scoped to the selected server or
+   profile, so the old aria-label ("Tools for the selected EVE profile") was
+   the false claim. The group is named the same way for sighted and
+   assistive-tech users -- "Profile tools" -- through a visible label wired
+   with aria-labelledby, and the border-top reads as the context card's own
+   footer shelf rather than an unrelated row floating beneath it. */
 .es-profile-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
+  margin-top: -4px; padding: 8px 16px 0;
+  border-top: 1px solid var(--panel-border);
 }
 .es-profile-tools[hidden] { display: none; }
+.es-profile-tools-label {
+  flex: none; color: var(--text-label); font-size: var(--fs-muted);
+  letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
+}
 #es-formations-open[hidden] { display: none; }
 
 /* Backups are a focused Profiles child with one route-level scrollbar. The
@@ -2560,7 +2759,7 @@ button.btn:disabled,
    existing controls sit behind a native disclosure rather than leading the
    archive. */
 #es-retention {
-  padding-block: 8px; border-block: 1px solid var(--border);
+  padding-block: 8px; border-block: 1px solid var(--panel-border);
 }
 #es-retention[hidden] { display: none; }
 #es-retention > summary {
@@ -2590,7 +2789,7 @@ button.btn:disabled,
   display: grid;
   grid-template-columns: 132px minmax(220px, 1fr) 80px 150px;
   column-gap: 10px;
-  align-items: center;
+  align-items: start;
 }
 .es-backup-head {
   padding: 0 8px 6px; color: var(--text-dim);
@@ -2599,7 +2798,7 @@ button.btn:disabled,
 #es-backup-head[hidden], .es-backup-grid[hidden], .es-backup-head[hidden] {
   display: none;
 }
-.es-backup-row { padding: 7px 8px; border-top: 1px solid var(--border); }
+.es-backup-row { padding: 7px 8px; border-top: 1px solid var(--panel-border); }
 .es-backup-row:first-child { border-top: 0; }
 .bk-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .bk-menu { position: relative; }
@@ -2619,6 +2818,12 @@ button.btn:disabled,
   position: absolute; z-index: 20; top: calc(100% + 4px); right: 0;
   min-width: 112px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+}
+/* The route owns the scrollbar. Its final visible archive row can sit at the
+   scrollport boundary even when controls follow the archive, so open that
+   row's menu upward into the list rather than downward across the edge. */
+.es-backup-row:last-child .bk-menu > button {
+  top: auto; bottom: calc(100% + 4px);
 }
 #es-backups-more { margin-top: 8px; }
 #es-backups-more[hidden] { display: none; }
@@ -2761,8 +2966,17 @@ button.btn:disabled,
   font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-faint);
 }
+/* Event boxes share the 24px modifier rail below the table; their words and
+   continuation controls share the next 24px step. The two rails make the
+   checkbox placement deliberate without adding a fifth grid column.
+
+   The Event header follows DESIGN.md's same-inset rule at the 48px text
+   rail, not the 24px box rail: the word labels event NAMES, not their
+   enable boxes. */
+.alert-events .alert-row > .check { margin-left: 24px; }
+.alert-head > span:first-child { padding-left: 48px; }
 /* Every header string is narrower than the control column beneath it
-   ("Colour" ~45px against 5 swatches at 110px), so naming the columns
+   ("Colour" ~45px against 5 swatches at 120px), so naming the columns
    cannot grow a track and cannot reach the 840 floor's overflow. */
 .alert-events .alert-row > select.field { width: 100%; min-width: 0; }
 .alert-events .alert-row { display: contents; }
@@ -2781,27 +2995,8 @@ button.btn:disabled,
    the 840 floor. Zero width removes that contribution; min-width puts the
    rendered box back. */
 .alert-events .alert-row > .field-msg {
-  grid-column: 1 / -1; margin: 0 0 4px; width: 0; min-width: 100%;
-}
-/* The second line of an event's row: how many flashes it gets and how
-   fast they go. A LINE and not two more columns -- the four tracks above
-   are already at the card's width at the 840 floor (see the track
-   comment: the sound column is the only one that can give), grid tracks
-   do not wrap, and an overflow here is a horizontally scrolling page.
-
-   `width: 0; min-width: 100%` for the same reason .field-msg above needs
-   it: a grid item spanning intrinsic tracks contributes its max-content
-   width to them, so without this the two labels and two selects would
-   push the NAME column wide and shove Test off the right edge. */
-.alert-events .alert-row > .alert-flash {
-  grid-column: 1 / -1; width: 0; min-width: 100%;
-  display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 24px;
-}
-/* Indented to 24px above, matching .alert-mods: both are subordinate to
-   the thing directly above them, and the indent is what says so without
-   spending a sentence on it. */
-.alert-events .alert-row > .alert-flash > select.field {
-  width: auto; min-width: 0; flex: 0 0 auto;
+  grid-column: 1 / -1; margin: 0 0 4px; padding-left: 48px;
+  width: 0; min-width: 100%;
 }
 /* Not .lab: these sit BESIDE their control rather than above it, which is
    the one place in the card that is true. .lab is full-width and stacks
@@ -2811,19 +3006,86 @@ button.btn:disabled,
 .alert-flash > .flash-lab {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
-/* The name takes its own line before the controls start colliding. */
 @media (max-width: 720px) {
   .alert-events { grid-template-columns: max-content minmax(90px, 1fr) max-content; }
   .alert-events .alert-row > .check { grid-column: 1 / -1; }
-  /* The flash line wraps rather than pushing its own tracks: it is two
-     label/control pairs, and at this width they stack in pairs instead of
-     forcing the row wider. */
-  .alert-events .alert-row > .alert-flash { flex-wrap: wrap; }
   /* Four header cells against three tracks below 720px, and the name is on
      its own line here anyway -- so the headers would label the wrong
      columns rather than merely wrap. There is nothing left for them to
      name, which is why this hides rather than re-spans them. */
   .alert-head { display: none; }
+}
+
+/* Task 1. Flashes and Speed used to be a second grid line under every
+   event row, spanning 1 / -1 the same way .field-msg above still does.
+   They moved into one shared disclosure below the table instead: both
+   are secondary to the row's primary decision (is this event on, what
+   colour, what sound, does it work), and a second line per row was
+   already the reason the sound column was "the only one allowed to
+   give" at the 840 floor (see .alert-events' own comment above).
+   `#es-retention` already established the mechanism this reuses --
+   secondary controls behind a native disclosure, collapsed by default,
+   on a surface whose primary controls lead.
+
+   Outside the grid entirely now, so none of .field-msg's grid-item
+   tricks apply: a plain flex row is what .alert-flash always wanted to
+   be, and the grid only forced the width:0/min-width:100% workaround
+   because Flashes and Speed used to share tracks with the checkbox, the
+   swatches and Test. */
+#alert-advanced {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border);
+}
+#alert-advanced > summary {
+  display: inline-flex; align-items: center; padding: 4px 6px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--text-dim); font-size: var(--fs-body);
+}
+#alert-advanced > summary::before {
+  content: "›"; margin-right: 6px; transform: rotate(0deg);
+  color: var(--text-faint); font-size: 16px; line-height: 1;
+}
+#alert-advanced[open] > summary::before { transform: rotate(90deg); }
+#alert-advanced > summary:hover { color: var(--text); background: var(--hover); }
+#alert-advanced > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
+#alert-advanced[open] > summary { margin-bottom: 10px; }
+/* Task 6. Three independent flex rows lined up each row's OWN name
+   against its OWN Flashes/Speed pair, so a longer name pushed its pair
+   further right -- "Warp scramble" (114.75px, measured at the 840x625
+   floor) sat noticeably right of "Combat" (56.58px) and "Decloak"
+   (62.30px), the same raggedness .alert-events solved for its own name
+   column above. One grid over all three rows fixes it here too: the rows
+   go display:contents so their children -- the name and the Flashes/Speed
+   pair -- become the grid's own items, sharing one set of tracks.
+
+   The name column is a measured PX width, not max-content. max-content
+   would resolve today's three known names correctly -- .alert-events uses
+   it for exactly that reason above -- but this disclosure was asked to
+   own a number instead of the DOM's current content, so a fourth event
+   with a longer name cannot silently resize it. 120px clears the longest
+   of the three (Warp scramble, 114.75px) with headroom, measured at the
+   840x625 floor -- the narrowest this card ever renders at (DESIGN.md) --
+   and the disclosure's own content (120px name + ~247px Flashes/Speed +
+   gap) stays well inside the card's 586px measure at that floor, so no
+   narrower-viewport rule is needed the way .alert-events' unreachable
+   720px one is. */
+.alert-advanced-body {
+  display: grid; grid-template-columns: 120px max-content;
+  align-items: center; row-gap: 10px; column-gap: 10px;
+}
+.alert-advanced-row { display: contents; }
+/* One row per event, each opening with its own name -- .bind-group-name,
+   not a new class, since this is the same "name a subordinate group" job
+   .bind-group already does on Previews. Flashes and Speed keep the flex
+   row they always were; only the 48px indent and the grid-spanning width
+   hack are gone, because both existed only to fit this content into a
+   row that no longer contains it. */
+.alert-advanced-row > .alert-flash {
+  display: flex; align-items: center; gap: 8px;
+}
+.alert-advanced-row > .alert-flash > select.field {
+  width: auto; min-width: 0; flex: 0 0 auto;
 }
 
 /* Round 5, A4. The PvE filter and Keep-pulsing render below the event
@@ -2922,11 +3184,41 @@ button.btn:disabled,
 .es-commit-context {
   position: sticky; top: 0; z-index: 1;
   margin: 0 0 12px; padding: 10px 0;
-  border-bottom: 1px solid var(--border); background: var(--panel);
+  border-bottom: 1px solid var(--panel-border); background: var(--panel);
+  max-width: 586px;
 }
 .es-commit-context > .hint { margin: 6px 0 0; }
 .es-commit-context > .es-copy-followup { margin: 8px 0 0; }
 #es-commit { flex-wrap: wrap; row-gap: 8px; margin-bottom: 0; }
+/* The count and source are one fact -- what will happen, and to what --
+   grouped so the wide tier below can hand them the row's remaining space
+   instead of leaving it as a bare gap between the button and a pill
+   stranded at the far right edge. */
+.es-commit-info {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0;
+}
+
+/* Capped at the card's 586px prose measure like every other row in it, the
+   commit bar read as a narrow aside pinned to the card's upper-left corner
+   while the roster it introduces already spans the whole card beneath it --
+   summary, action and hazard crowded into a corner of a much wider region
+   they describe. Past the 840 floor the bar takes the SAME width the
+   roster does, so the two read as one region instead of two mismatched
+   measures stacked on each other; at or below the floor nothing here
+   changes. DESIGN.md: a tier that must fire AT the floor is written as
+   max-width: 840px, so the complementary "above it" tier is
+   min-width: 841px. Excluded from the shared re-cap above rather than
+   fought over with a higher-specificity override -- its own rule, not a
+   specificity contest, decides its width. The bar's own prose keeps the
+   586 measure a sentence wants: widening the BAR must not widen what the
+   reader reads left to right. */
+@media (min-width: 841px) {
+  .es-commit-context { max-width: none; }
+  .es-commit-context > .hint, .es-commit-context > .es-copy-followup {
+    max-width: 586px;
+  }
+  .es-commit-info { flex: 1; }
+}
 
 /* The quantity, stated before the irreversible action (PRODUCT.md). Body
    size, not muted: it is the number the user is meant to check, and the
@@ -2999,7 +3291,7 @@ button.btn:disabled,
 #route-accountidentity { overflow-y: auto; padding: 12px; }
 .account-identity-shell {
   display: flex; flex-direction: column; gap: 12px;
-  width: 100%; max-width: 620px;
+  width: 100%; max-width: 620px; margin-inline: auto;
 }
 .account-identity-shell h1 {
   margin: 0; color: var(--text); font-size: 20px; font-weight: 650;
@@ -3025,20 +3317,38 @@ button.btn:disabled,
 }
 .ai-head { flex: none; }
 .ai-status { min-height: 20px; margin: 0; color: var(--text-dim); }
-.ai-manage-toggle { align-self: flex-start; margin-top: 10px; }
+.ai-manage-toggle { align-self: flex-start; }
 .es-identity {
   display: flex; flex-direction: column; gap: 10px;
-  padding-top: 14px; border-top: 1px solid var(--border);
+  padding-top: 14px; border-top: 1px solid var(--panel-border);
+}
+/* The guided five-step flow above is the primary path; this toggle and its
+   disclosure are the fallback for fixing a wrong link or renaming an
+   account outside that flow. A border and a named, visibly labelled group
+   keep it a clearly secondary cluster sitting right after the flow it
+   stands in for, rather than trailing the roster step with nothing
+   marking the boundary. */
+.es-manual-identity {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--panel-border);
+}
+.es-manual-identity-label {
+  margin: 0; color: var(--text-label); font-size: var(--fs-muted);
+  letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
 }
 .es-account-characters { width: 100%; }
 .es-linked-character {
   display: flex; align-items: center; justify-content: space-between;
-  min-height: 30px; border-bottom: 1px solid var(--border);
+  min-height: 30px; border-bottom: 1px solid var(--panel-border);
 }
 .es-linked-character:last-child { border-bottom: 0; }
 #es-identity-account, #es-character-add, #ai-roster-character { flex: 1; }
 #es-manage-account-name, #es-account-name { flex: 1; }
 .es-identify-actions { margin-top: 4px; }
+.ai-prerequisite {
+  flex: 0 0 100%; margin: 0 0 4px; color: var(--warn);
+  font-size: var(--fs-body); font-weight: 650;
+}
 
 .es-target-choice { align-items: flex-start; }
 .es-target-text { display: flex; min-width: 0; flex-direction: column; }
@@ -3080,6 +3390,13 @@ button.btn:disabled,
    Fixed columns either side of a flexing description put both buttons on
    one edge and let the eye scan the dates.
 
+   align-items: start, not center: .bk-what stacks two lines (name, then
+   its raw id), so centring every column across the row's full height put
+   Date, Origin and Actions between those two lines rather than beside the
+   name row the eye actually reads first -- loosening exactly the
+   Target-to-Origin association a row exists to state. Aligned to the
+   row's start, Origin sits level with the name line instead.
+
    The date sets the monospace face here rather than borrowing .mono: that
    class only exists as input.field.mono / span.field.mono / textarea, so a
    bare .mono on a plain span is inert -- silently, which is this page's
@@ -3098,9 +3415,16 @@ button.btn:disabled,
   color: var(--text-faint); font-size: var(--fs-muted);
 }
 /* Wide enough for "Automatic"; a column rather than a suffix so the two
-   origins line up and read as one answer to the same question. */
+   origins line up and read as one answer to the same question.
+
+   --text-dim, not --text-faint: painted the same faint tone as .bk-meta
+   (the target's OWN raw id), Origin read as more of the target's own
+   secondary text rather than as its own axis of information -- the
+   backup's creation type, never which profile it came from. Matching
+   Date's tone instead keeps the two "fact" columns visually distinct from
+   the identity they sit beside. */
 #es-backups .bk-origin {
-  color: var(--text-faint); font-size: var(--fs-muted);
+  color: var(--text-dim); font-size: var(--fs-muted);
 }
 
 #es-auto-keep { flex: 0 0 84px; }
@@ -3124,7 +3448,7 @@ button.btn:disabled,
    (dev.js leaves it empty -- get_bookmarks is unstubbed):
 
      Bookmarks  column 189.6px ("Convert EvE-Scout Bookmarks")  bind at 200.6
-     Previews   column  86.2px ("Cycle forward")                bind at  97.2
+     Previews   column  86.2px ("All forward")                  bind at  97.2
 
    103.4 CSS px apart, from a 586px row in both. The walkthrough measured
    79 CSS on the live app; the difference is not a discrepancy but the
@@ -3136,7 +3460,7 @@ button.btn:disabled,
    WHAT THE ALTERNATIVES COST, all measured, none hypothetical:
 
    - A shared explicit column has to be at least the widest BIND_LABEL, so
-     Previews gets the void back: 104px on "Cycle forward", 130px on a
+     Previews gets the void back: 104px on "All forward", 130px on a
      short character name. It is also a derived figure retyped into CSS,
      which CLAUDE.md forbids and no test could assert without rendering.
    - Stretching the name (`minmax(0, 1fr)`) and right-aligning the controls
@@ -3156,8 +3480,8 @@ button.btn:disabled,
    whoever is logged in.
 
    THAT WAS ONCE TRUE OF BOTH SECTIONS, and now describes this one alone.
-   #preview-binds took its name back into a FIXED 150px track, which keeps
-   the content-independence this argument is about while spending a column
+   #preview-binds took its name back into a BOUNDED 210px-to-320px track,
+   which keeps the content-independence this argument is about while spending a column
    on it -- affordable there because character names are uniform and short,
    and not here, where "Convert EvE-Scout Bookmarks" is 189.6px. The
    cross-list half of B1's rule is retired; the no-max-content half is not,
@@ -3464,9 +3788,15 @@ button.btn:disabled,
 
    Changing the padding here instead would move eighteen bookmark bind
    rows, Skills' two link buttons and Profiles' `Change...`, none of which
-   anyone reported. */
+   anyone reported.
+
+   The resting label uses --text-dim rather than --text-faint. These are
+   enabled actions, including compact Clear / Edit… controls and Skills'
+   group actions; making them legible at rest does not promote them out of
+   the documented subordinate treatment. Disabled controls still become
+   quieter through the shared opacity rule above. */
 .linkbtn {
-  background: none; border: 0; color: var(--text-faint);
+  background: none; border: 0; color: var(--text-dim);
   font: inherit; font-size: var(--fs-muted); cursor: pointer;
   padding: 4px 6px; border-radius: var(--radius-sm); flex: none;
 }
@@ -3550,14 +3880,37 @@ button.btn:disabled,
 .settings .row > select.field { flex: 0 0 150px; }
 .settings .row > input#f-category { flex: 0 0 90px; }
 
-/* No wrapper convention exists for input[type=range] the way .check/.radio
-   exist for checkboxes/radios -- `color-scheme: dark` above already gets a
-   dark-themed native track and thumb from WebView2's Chromium, so the only
-   thing left off-brand is the thumb's default blue. accent-color is enough
-   to fix that without a bespoke track/thumb build. */
-input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
+/* Range controls use Chromium's WebKit pseudo-elements because a native
+   thumb brings an unrelated blue into the dark control vocabulary. The
+   geometry is shared by Preview opacity and alert volume; their input /
+   change listeners still own live readout versus persistence separately. */
+input[type="range"] {
+  flex: 1; min-width: 0; height: 20px;
+  appearance: none; -webkit-appearance: none;
+  background: transparent; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--track); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+}
+input[type="range"]::-webkit-slider-thumb {
+  width: 16px; height: 16px; margin-top: -5px;
+  appearance: none; -webkit-appearance: none;
+  background: var(--control); border: 2px solid var(--brand-edge);
+  border-radius: 50%;
+}
+input[type="range"]:hover:not(:disabled)::-webkit-slider-thumb {
+  background: var(--control-hover);
+}
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 .range-value {
-  flex: none; min-width: 2.5em; text-align: right;
+  flex: none; min-width: 4em; padding: 3px 6px; text-align: right;
+  background: var(--sunken); border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
   color: var(--text-dim); font-size: var(--fs-mono); font-family: var(--mono);
 }
 
@@ -3604,6 +3957,53 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
    indent with nothing above it. */
 .settings .check + .hint,
 .settings .row:has(> .check) + .row > .hint { margin-left: 24px; }
+
+/* PROXIMITY, which this card had spent uniformly. Every gap in a settings
+   card was 10px: between a checkbox and its own hint, and between that
+   hint and the next unrelated setting. Proximity is the only grouping
+   signal a flat list has, and at one value it signals nothing -- measured
+   on Previews, 22 blocks in a single undifferentiated 10px column, which
+   is why that section read as a wall of prose rather than as nine
+   settings. It is also why it FELT longer than Bookmarks while being only
+   156px taller.
+
+   A continuation row belongs to the control above it, so the pair closes
+   to 4px and the 10px step is left to mean "next setting". Three tiers
+   now, cheapest first: 4px inside a control, 10px between controls, the
+   .bind-group hairline between groups.
+
+   Keyed on the NEXT row holding an empty .lab, because that is what a
+   continuation row IS on this page -- the shape the collapse rule at
+   `.settings .row:has(> .lab:empty)...` is written against, and the same
+   shape `.settings .row:has(> .check) + .row > .hint` indents. A hint that
+   shares its control's row (Snap, Lock) needs none of this: it is already
+   adjacent.
+
+   AND THAT ROW HAS TO ACTUALLY RENDER, which the first draft did not say.
+   Most continuation rows are blank in the resting state and are removed by
+   the collapse rule -- its own note calls that "blank until a write fails,
+   which for most installs is never" -- and `display: none` takes the row
+   AND its margin out of layout with nothing to restore the 10px. So the
+   tier reserved for "inside a control" was landing between two unrelated
+   settings on exactly the rows a healthy install shows: measured, `Show
+   the character name on each preview` sat 4px above `Opacity`, and
+   Bookmarks and Alerts had the same inversion at their first control. The
+   second `:has()` is the collapse predicate negated, so this rule and that
+   one cannot both claim the same row.
+
+   `.card >`, so this reaches the card's own column and nothing nested in
+   it. Written as `.settings .row` first, it out-specified
+   `.pv-master > .row { margin-bottom: 0 }` and put 4px back under two rows
+   of a block that spaces itself with flex `gap` -- 14px gaps inside the
+   one block on this card whose height is deliberately fixed against the
+   state of the switch in it. Measured, then scoped.
+
+   This REMOVES height rather than adding it, so the grouping and the
+   scrolling complaint are answered by one declaration rather than trading
+   against each other. */
+.settings .card > .row:has(+ .row > .lab:empty):has(+ .row > .hint:not(:empty):not([hidden])) {
+  margin-bottom: 4px;
+}
 
 /* "Connected" as a status PILL, not an oversized button.
 
@@ -4049,14 +4449,19 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
   padding: 0 8px 0 10px;
   margin-bottom: 2px;
 }
-/* A rail TITLE, not a column header, and used twice: "Settings" over the
-   section list (index.html:274) and "Plans" over the plan list. Both head
-   a list of 13px names, so at --fs-label each was the smallest text in the
-   column it headed -- the same inversion G3 names on the cards. It tracks
-   .card > h2 for that reason, and because --text-label's note in :root
-   already names these two together as the app's two headings. Keep the two
-   font-size declarations in step; .rail-head-key below is the real column
-   header and deliberately does not follow. */
+/* A rail TITLE, not a column header, used across the route's own list
+   headers: "Settings" over the section list (index.html:274), "Groups"
+   and "Plans" over the rail's two lists here, and "Characters" over the
+   roster in the main pane -- reused rather than re-implemented, so a
+   fourth persistent list heading costs no new .14em rule (see
+   test_the_uppercase_tracked_labels_split_headings_from_sub_labels, which
+   still expects exactly four). Each heads a list of 13px names, so at
+   --fs-label each was the smallest text in the column it headed -- the
+   same inversion G3 names on the cards. It tracks .card > h2 for that
+   reason, and because --text-label's note in :root already names these
+   as the app's uppercase tracked section labels. Keep the font-size
+   declaration in step; .rail-head-key below is the real column header
+   and deliberately does not follow. */
 .rail-head {
   font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); font-weight: 600;
@@ -4119,6 +4524,9 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .rail-plan:hover, .rail-item:hover, .fm-item:hover {
   background: var(--hover); color: var(--text);
 }
+/* Selection owns the fill. Keyboard focus stays the outline-only treatment
+   in the shared :focus-visible rule, so a focused neighbour cannot look
+   like a second current location. */
 .rail-plan.active, .rail-item.active, .fm-item.active {
   background: var(--row-active); border-left-color: var(--brand); color: var(--text);
 }
@@ -4140,6 +4548,48 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
 #skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
+/* Task 6. The disclosure behind every training ETA and remaining-time
+   figure: current attributes at Omega speed, implants and any requirement
+   not explicitly listed in the plan excluded from the number.
+   `align-self: center` for the same reason #skills-copy-plan carries it --
+   baselined against the h1 hangs a small control below the text. No new
+   colour: --text-faint is the plan count's own token, one line up, and
+   `cursor: help` matches list.js's existing dur-unknown/dur-pending
+   glyphs (round 1). A real <button>, so the shared :focus-visible rule
+   below reaches it -- a <span> with `title` cannot be focused at all. */
+.skills-estimate-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  align-self: center; width: 18px; height: 18px; padding: 0;
+  border: 0; border-radius: 4px; background: none;
+  color: var(--text-faint); font: inherit; font-size: var(--fs-muted);
+  cursor: help;
+}
+.skills-estimate-info:hover { color: var(--text-dim); }
+/* The [hidden] trap DESIGN.md names in six places: the rule above sets
+   `display`, so an author rule beats the UA stylesheet's own
+   `[hidden] { display: none }` regardless of specificity. */
+.skills-estimate-info[hidden] { display: none; }
+/* Fix round 1, WCAG 1.4.13 (Content on Hover or Focus): the primitive's
+   :focus-visible rule made this tooltip persistent for as long as the
+   button holds focus, with no way to dismiss it short of tabbing away --
+   which moves focus, the one thing 1.4.13 says dismissal must not do.
+   skills.js's keydown listener adds this class on Escape while the
+   button KEEPS focus, and removes it on blur so the next focus still
+   shows the tooltip. Three selectors of specificity (two classes plus
+   :focus-visible) beat the primitive's `[data-tip]:focus-visible::after`
+   (attribute plus pseudo-class) on purpose, so this always wins over the
+   shared rule regardless of source order. */
+.skills-estimate-info.tip-dismissed:focus-visible::after {
+  opacity: 0; visibility: hidden;
+}
+/* Clipboard access finishes in the page, not Python, so this local status
+   confirms the action at its source. It remains mounted while empty because
+   a role=status region shown only with new text can be missed by a reader. */
+.skills-copy-status {
+  flex: none; min-height: 17px; margin: -4px 0;
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
+.skills-copy-status.err { color: var(--err); }
 
 /* Collapses when empty, so the roster sits directly under the heading on
    the common path. Author rules beat the UA stylesheet's
@@ -4166,6 +4616,20 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 .issue-line {
   color: var(--text-faint); font-size: var(--fs-muted);
   font-family: var(--mono); margin-left: 10px;
+}
+
+/* The route's third independent scroll region (Groups and Plans, in the
+   rail, are the other two, each already headed by its own .rail-head).
+   Only the boundary and spacing are declared here -- the uppercase
+   tracking, size and colour all come from .rail-head itself, reused
+   rather than duplicated, so this adds no second copy of that treatment
+   (see .rail-head's own comment). `flex: none` keeps it out of
+   .skills-main's own flex sizing; --panel-border is the same working
+   hairline token .es-profile-tools's boundary uses elsewhere in this
+   sheet -- not the unrelated, undefined --border some Profiles rules
+   still carry. */
+.skills-roster-head {
+  flex: none; padding-top: 8px; border-top: 1px solid var(--panel-border);
 }
 
 .skills-filterbar { flex: none; display: flex; align-items: center; gap: 8px; }
@@ -4471,6 +4935,11 @@ input[type="range"] { flex: 1; min-width: 0; accent-color: var(--brand); }
 button.btn.danger { border-color: var(--danger); color: var(--danger); }
 button.btn.danger:hover:not(:disabled) {
   background: var(--danger-solid); color: var(--on-accent);
+}
+/* A disabled destructive action is unavailable, not an active warning.
+   Leave opacity and cursor to the shared disabled rule above. */
+button.btn.danger:disabled {
+  border-color: var(--control-border); color: var(--text-faint);
 }
 /* `.linkbtn.danger` STOOD HERE and is deleted, not moved. It survived L5
    for one site -- skills.js's `Forget character` -- and R3 converted that

@@ -518,12 +518,161 @@ def test_the_upload_button_is_in_the_card_that_names_the_upload():
     """Uploader 2. Two cards, UPLOAD and PUBLISH: one concept under two
     names on one screen, with the Upload button in the one not called
     Upload. The route is also named Uploader, and DESIGN.md forbids a
-    screen repeating its own tab name as its first card heading."""
+    screen repeating its own tab name as its first card heading.
+
+    This asserted `len(headings) == 1` until the panel grew a `Combat
+    logs` card, and the change is deliberate rather than a relaxation.
+    Uploader 2's finding is that one CONCEPT must not appear under two
+    names; combat logs are a second concept, going to a different service,
+    reachable with no Google account at all -- the independence PRODUCT.md
+    requires the two halves of this app to keep. What the finding actually
+    forbids is still asserted here: the upload card is one card, it does
+    not echo the tab name, and the Upload button is inside it.
+    """
     route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
     headings = re.findall(r"<h2>(.*?)</h2>", route)
-    assert len(headings) == 1, f"the panel should be one card, got {headings}"
+    assert headings == ["This upload", "Combat logs"], (
+        f"the panel is the upload card then the combat-log card; got {headings}"
+    )
     assert headings[0].strip().lower() != "upload", "must not echo the tab name"
     assert route.index("<h2>") < route.index('id="btn-upload"')
+    # Upload belongs to the FIRST heading, so it sits above the second one
+    # rather than after it.
+    assert route.index('id="btn-upload"') < route.index("<h2>Combat logs</h2>")
+
+
+def test_the_combat_log_card_is_last_so_upload_keeps_its_position():
+    """Source order only -- nothing here renders the page or measures it.
+
+    The reason the order matters: the panel is a fixed-width column with
+    overflow-y: auto, so a second card is what can make it scroll at the
+    840x625 floor. Uploader 9's complaint was that the most-pressed control
+    in the app sat last in a stack that overflowed the pane, so the new
+    card goes after the upload card and the control that may fall below the
+    fold is the least-pressed one on the screen. Whether it actually does
+    is a smoke item; the ordering IS the argument, and an edit moving the
+    card up would look harmless."""
+    route = HTML[HTML.index('id="route-main"') : HTML.index('id="ctxmenu"')]
+    assert route.index('id="btn-upload"') < route.index('id="btn-post-logs"')
+    assert route.index('id="destination"') < route.index("<h2>Combat logs</h2>")
+
+
+def test_posting_the_last_hour_is_reachable_without_an_upload():
+    """Combat logs were the TAIL of an upload -- the only way to send them
+    was to publish a video. The button, its handler and the bridge method
+    are three files that have to agree, and WM.send reports a wrong name
+    only to a console nobody is reading."""
+    assert 'id="btn-post-logs"' in HTML
+    assert "WM.send('post_recent_logs')" in PANEL_JS
+    assert "def post_recent_logs(self)" in API_PY
+
+
+def test_the_post_button_is_not_gated_on_the_webhook():
+    """The page cannot be relied on to hold a current answer to "is a
+    webhook configured": nothing pushes a settings payload, and the only
+    refresh is list.js's own get_settings call, made at load and then only
+    when the list comes back EMPTY. A user who configures a webhook with
+    recordings on screen never triggers it, so a control disabled on that
+    fact would stay dead until the next launch -- which is what
+    WM.setEnabled's rule forbids.
+
+    What is asserted is narrower than that argument: the ONLY thing that
+    may disable this button is the pushed running flag."""
+    enabled = re.findall(r"WM\.setEnabled\('btn-post-logs',([^)]*)\)", PANEL_JS)
+    assert enabled == [" !p.running"], enabled
+    # The settings handler renders the note and must not reach the button.
+    handler = PANEL_JS[PANEL_JS.index("wm:settings") :]
+    handler = handler[: handler.index("// ---- status strip")]
+    assert "btn-post-logs" not in handler
+
+
+def test_the_post_button_cannot_be_left_dead_by_a_lost_push():
+    """_push swallows every evaluate_js failure, and a push into a HIDDEN
+    window is swallowed outright -- this is a tray app whose window is
+    routinely closed mid-work. So the disarm has three parts, and this
+    pins their structure rather than their effect: a finally at the
+    outermost frame of the worker, a re-statement on every call including
+    the refusals, and a re-statement on every list rebuild.
+
+    The last one is not redundant. A button the page has drawn as disabled
+    takes neither a click nor a keypress, so it cannot ask for its own
+    repair; a rebuild -- a watcher announcement, a delete, a folder change
+    -- is what arrives without the user's help."""
+    method = API_PY[API_PY.index("def post_recent_logs") :]
+    method = method[: method.index("def _recent_logs_worker")]
+    # Three refusals, the dispatch, and the worker that would not start.
+    assert method.count('_push("onLogPostRunning"') == 5
+    worker = API_PY[API_PY.index("def _recent_logs_worker") :]
+    # To the end of that method, whatever follows it: the combat-log
+    # section's order has moved before and the slice must not depend on it.
+    worker = worker[: re.search(r"\n    def ", worker[1:]).end()]
+    assert "finally:" in worker
+    assert worker.index("finally:") < worker.index('_push("onLogPostRunning"')
+    rebuild = API_PY[API_PY.index("def list_rows") :]
+    rebuild = rebuild[: rebuild.index("def panel_text")]
+    assert '_push("onLogPostRunning", {"running": self._logs_busy()})' in rebuild
+
+
+def test_the_row_menu_separates_the_file_from_the_video():
+    """The menu was two items, both acting on the YouTube link. Play and
+    Rename act on the recording on disk, which is a different object, and
+    the file actions come first because the row's subject is the
+    recording."""
+    menu = HTML[HTML.index('id="ctxmenu"') :]
+    menu = menu[: menu.index("</div>", menu.index('id="ctx-open"'))]
+    assert re.findall(r'id="(ctx-[a-z]+)"', menu) == [
+        "ctx-play",
+        "ctx-rename",
+        "ctx-copy",
+        "ctx-open",
+    ]
+    assert 'class="ctxsep"' in menu
+    # It sets no display, so it needs no [hidden] override -- but it does
+    # need to be drawn, or it is an empty div nobody can see.
+    assert re.search(r"\.ctxsep\s*\{[^}]*background:", CSS)
+
+
+def test_play_and_rename_reach_python_by_their_real_names():
+    """Three files agree per action, and nothing in the suite renders the
+    page: a wrong name here is a menu item that does nothing."""
+    assert "WM.send('play_recording', ctxId)" in LIST_JS
+    assert "def play_recording(self, row_id" in API_PY
+    assert re.search(r"WM\.send\('rename_recording', id, answer\)", LIST_JS)
+    signature = re.search(r"def rename_recording\(self,([^)]*)\)", API_PY)
+    assert signature
+    params = [p.strip().split(":")[0] for p in signature.group(1).split(",")]
+    assert [p for p in params if p] == ["row_id", "stem"]
+
+
+def test_rename_asks_through_the_pages_own_dialog():
+    """window.prompt renders as WebView2 browser chrome captioned with the
+    page origin, and Python's _confirm would deadlock the bridge thread it
+    is called on (DESIGN.md, "Which confirmation"). The page owns this
+    dialog, so it is WM.prompt."""
+    assert "WM.prompt('Rename recording'" in LIST_JS
+    # Comments stripped first: the note at the call site NAMES the banned
+    # call in order to say why it is banned, and a bare substring check
+    # reads that as the violation it is warning about.
+    assert "window.prompt" not in re.sub(r"(?m)^\s*//.*$", "", LIST_JS)
+    # Prefilled with the STEM: Python reappends the extension, so a user
+    # cannot turn .mkv into .mp4 by typing.
+    assert "lastIndexOf('.')" in LIST_JS
+
+
+def test_a_rename_repaints_one_row_rather_than_rebuilding_the_list():
+    """A rebuild mints fresh ids (ui/rows.py) and this file drops every
+    selection and focus id it no longer recognises, so the user's ticks and
+    keyboard position go with them. (The sort key survives -- it lives in
+    the page.) The machinery to repaint one row already exists, for a
+    landing ffprobe result.
+
+    Lexical, like everything here: what is asserted is that the handler
+    repaints and does not rebuild, not that the selection survived."""
+    assert "WM.handle('onRowRenamed'" in LIST_JS
+    handler = LIST_JS[LIST_JS.index("WM.handle('onRowRenamed'") :]
+    handler = handler[: handler.index("});")]
+    assert "repaint(payload.id)" in handler
+    assert "list_rows" not in handler
 
 
 def test_deleting_files_lives_with_the_files():
@@ -562,23 +711,92 @@ def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
         "header-shift this test exists to prevent"
     )
 
-    # Round 6, P2-2. The arrow used to be `visibility: hidden` until a
-    # column carried .sorted -- and the list opens in delivery order with
-    # nothing sorted, so on first open all four headers had zero
-    # affordance and read as static labels. It is now present-but-quiet at
-    # rest and rises through hover to sorted, so the mechanism is
-    # discoverable without having been discovered.
-    rest = re.search(r"opacity:\s*(\.\d+|0?\.\d+|1)", base.group(1))
-    assert rest, (
-        "the arrow must be visible at rest, not hidden until sorted: " + base.group(1)
+    # Showing the inactive triangle made every header look sorted at once.
+    # Opacity zero removes that noise without taking the reserved slot out
+    # of flow; hover and sorted states still reveal the same glyph in place.
+    assert re.search(r"opacity:\s*0\s*;", base.group(1)), (
+        "inactive sort arrows must be transparent without losing their slot"
     )
-    assert float(rest.group(1)) > 0, "an arrow at opacity 0 is still hidden"
+    assert re.search(r"\.list-head > span:hover::after\s*\{[^}]*opacity:\s*\.7", CSS), (
+        "hover must reveal the reserved sort arrow"
+    )
     assert re.search(r"\.list-head > span\.sorted::after\s*\{[^}]*opacity:\s*1", CSS), (
-        "the sorted column's arrow must be the strongest of the three states"
+        "the sorted column's arrow must be the strongest state"
     )
+    assert re.search(
+        r'\.list-head > span\.sorted\.desc::after\s*\{[^}]*content:\s*"\\25BC"',
+        CSS,
+    ), "descending sort must retain its down-arrow glyph"
     # The two centred headers need it mirrored or reserving it decentres
     # them by half its own box.
     assert re.search(r"\.c-check::before,\s*\.list-head > span\.c-link::before", CSS)
+    # Numeric columns right-align their labels with their cells, so the
+    # reserved arrow belongs before the label rather than stealing its edge.
+    numeric = re.search(
+        r"\.list-head > span\.c-date::after,\s*"
+        r"\.list-head > span\.c-size::after,\s*"
+        r"\.list-head > span\.c-len::after\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert numeric and re.search(r"order:\s*-1", numeric.group(1))
+
+
+def test_sort_headers_are_keyboard_buttons_with_current_sort_direction():
+    """Sortable spans need button semantics, not partial ARIA table roles.
+
+    The grid is presentational rather than an ARIA table, so aria-sort on an
+    orphaned columnheader is invalid. The active direction instead belongs in
+    each button's accessible name while click, Enter, and Space share sortBy.
+    """
+    header = HTML[
+        HTML.index('id="list-head"') : HTML.index(
+            "</div>", HTML.index('id="list-head"')
+        )
+    ]
+    controls = re.findall(r'<span\b[^>]*data-sort="[^"]+"[^>]*>', header)
+    assert len(controls) == len(COLUMNS)
+    for control in controls:
+        assert 'role="button"' in control
+        assert 'tabindex="0"' in control
+        assert "aria-sort=" not in control
+        assert "aria-label=" in control
+
+    helper = re.search(r"function sortBy\(key\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
+    assert helper, "sorting needs one helper shared by click and keyboard"
+    assert "sortDesc = (key === sortKey) ? !sortDesc : false;" in helper.group(1)
+    assert "sortKey = key;" in helper.group(1)
+    assert "render();" in helper.group(1)
+    # Mouse, Enter, and Space all reach the one client-side sort helper.
+    assert LIST_JS.count("sortBy(head.dataset.sort)") == 3
+
+    keydown = re.search(
+        r"WM\.el\('list-head'\)\.addEventListener\('keydown', function \(ev\) \{(.*?)\n  \}\);",
+        LIST_JS,
+        re.DOTALL,
+    )
+    assert keydown, "sort headers need a keyboard activation handler"
+    assert "ev.key === 'Enter'" in keydown.group(1)
+    assert "ev.key === ' '" in keydown.group(1)
+    # Holding Space repeats keydown. It must suppress scrolling here but
+    # defer activation until the single keyup.
+    assert keydown.group(1).count("sortBy(head.dataset.sort)") == 1
+    assert "ev.preventDefault();" in keydown.group(1)
+
+    keyup = re.search(
+        r"WM\.el\('list-head'\)\.addEventListener\('keyup', function \(ev\) \{(.*?)\n  \}\);",
+        LIST_JS,
+        re.DOTALL,
+    )
+    assert keyup, "Space activation needs a keyup handler"
+    assert "ev.key !== ' '" in keyup.group(1)
+    assert "ev.key !== 'Spacebar'" in keyup.group(1)
+    assert "sortBy(head.dataset.sort)" in keyup.group(1)
+
+    render = re.search(r"function render\(\) \{(.*?)\n  \}", LIST_JS, re.DOTALL)
+    assert render, "render() owns the dynamic header state"
+    assert "head.setAttribute('aria-label'" in render.group(1)
+    assert "ascending" in render.group(1) and "descending" in render.group(1)
+    assert "aria-sort" not in render.group(1)
 
 
 def test_the_empty_pane_is_centred_rather_than_half_centred():

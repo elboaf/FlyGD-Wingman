@@ -220,15 +220,18 @@ somewhere stale and nothing on that screen is worth reviewing.
 ## Look and feel
 
 - [ ] **The screenshot shooter produces a complete set.** Run
-      `scripts/shoot_screens.py` with Wingman idle. Expected: `14/14 screens`
-      (or a `4/14` plus an explicit "EVE gate off, skipped:" line and ten
-      EVE-gated screens skipped), every PNG showing populated content,
+      `scripts/shoot_screens.py` with Wingman idle. Expected: every planned
+      screen for the current EVE-gate state is captured (or every non-EVE screen
+      plus an explicit "EVE gate off, skipped:" line naming every EVE-gated
+      screen), every PNG showing populated content,
       `manifest.json` naming the checkout you meant to shoot, and the
-      previously-running Wingman restored. The four Previews captures cover
-      its top, middle, character table, and Copy picker rather than presenting
-      the top of a long nested scroller as the complete screen. A blank
-      screen in the set is a real defect, not a capture artifact -- one bad
-      handler name silently disables every registration below it.
+      previously-running Wingman restored. The Previews captures cover its
+      top, middle, bottom, open Configure detail, Copy picker, groups, and
+      840x625 floor rather than presenting the top of a long nested scroller
+      as the complete screen. The floor shot starts at the collapsed roster
+      heading; a detail left open by an earlier stage is a capture defect. A
+      blank screen in the set is a real defect, not a capture artifact -- one
+      bad handler name silently disables every registration below it.
 
 ### Window chrome
 - [ ] **LOAD-BEARING: the custom title bar drags the window.** The OS title
@@ -411,8 +414,13 @@ somewhere stale and nothing on that screen is worth reviewing.
       the right. At the 840x625 floor the footer wraps and `Delete
       selected` takes a second line, right-aligned — check it is reachable
       and does not overlap the row above.
-- [ ] **Click-to-sort works on every column and shows direction,** on the
-      active column only. Sorting is pure client state; a sort that
+- [ ] **Click, Enter and Space sort every column and show direction** on the
+      active control only. Tab to each header and use Enter, then Space: each
+      must follow the same ascending/descending cycle as click and Space must
+      not scroll the page. In the Chromium accessibility pane, every header is
+      a button (not an orphaned ARIA table header); the active button's
+      accessible name announces ascending or descending and an inactive button
+      announces only what it sorts. Sorting is pure client state; a sort that
       round-trips to Python or clears the selection is a defect.
 - [ ] **The leftmost header is a bare check, not a checkbox.** Clicking it
       SORTS by checked state — it must not select or clear anything.
@@ -1162,6 +1170,91 @@ behavior that only shows up at size.
 - [ ] **Open in browser via the context menu opens the video's YouTube
       page** — not the local video file. Confirm it is greyed out on a row
       with no link yet.
+
+### Uploader — Play, Rename, and Post the last hour
+
+Nothing in the suite renders this page, and two of these three write to
+the user's own files, so this section is the verification rather than a
+report of it.
+
+- [ ] **The row menu reads Play, Rename…, separator, Copy link, Open in
+      browser.** The first two act on the recording on disk, the last two
+      on the video it became; the rule between them is what says so.
+- [ ] **Play opens the recording in the default player.** Not the YouTube
+      page — that is what double-click and Open in browser do, and both
+      must still behave exactly as they did.
+- [ ] **Play is live on a row with no link.** It acts on the file, so it
+      has nothing to do with whether the recording was uploaded.
+- [ ] **Play on a recording deleted behind the app's back** (delete it in
+      Explorer without refreshing) reports it on the status strip and
+      names the file. No dialog.
+- [ ] **Play on a recording OBS is still writing** opens and plays. Then
+      confirm the known consequence: while the player holds the file, that
+      recording's announcement is deferred — `watcher.file_is_closed`
+      reads the player's handle as "still being written" — so a
+      not-yet-announced recording appears in the list a poll or two later
+      than it otherwise would. Expected, not a bug.
+- [ ] **Rename… prefills the STEM only, with no extension**, and the
+      renamed file keeps its original extension. Type `fight.mp4` and
+      confirm you get `fight.mp4.mkv` rather than a file claiming to be an
+      MP4.
+- [ ] **Rename to a CASE-ONLY variant.** `fight.mkv` → `Fight.mkv`. This
+      is the rename a user is most likely to want, and it was the one this
+      list originally called unverifiable. It is no longer: CI runs the
+      whole suite on `windows-latest` as well as ubuntu, so
+      `test_a_case_only_rename_is_not_a_collision` exercises `Path.rename`
+      against a real NTFS volume and passes. What is left for a human is
+      confirming it end to end in the app — the prompt, the repaint, the
+      row text — not discovering whether the filesystem allows it. If it
+      fails HERE while CI is green, the difference is Wingman's own code
+      path rather than NTFS.
+- [ ] **Rename to a name already in the folder is refused, and the file it
+      would have replaced is untouched.** Check its size and timestamp
+      afterwards. A silent overwrite here destroys a fight.
+- [ ] **Rename keeps the selection, the focus ring and the sort order.**
+      Tick three rows, sort by Size, right-click a fourth and rename it.
+      Expected: the three stay ticked, the ring stays where it was, the
+      sort does not reset, and only the renamed row's text changes.
+- [ ] **Rename keeps the ↗.** Upload a recording, rename it, and confirm
+      the Link column still carries its arrow and still opens the right
+      video. Then restart the app and confirm it survived — that is the
+      persisted store, and nothing can rebuild it.
+- [ ] **LOAD-BEARING: a renamed recording is not announced again.** Rename
+      one, then leave the app running for two or three watcher polls
+      (~10s). Expected: no toast, and the row does not arrive ticked as a
+      newly finished recording. This is the failure that would otherwise
+      surface days later and read as a bug about OBS.
+- [ ] **Rename is refused while an upload is running**, including a
+      STITCHED upload of that very recording — the case where Windows
+      would otherwise allow it, because the open handle is on the merged
+      temporary rather than on the source.
+- [ ] **Rename refusals re-open the prompt with the typed text still in
+      it.** Try `CON`, a name ending in a dot, and one containing `:`.
+      Each gets its own sentence, and none costs the whole name.
+- [ ] **Post the last hour posts to Discord with no video involved.** No
+      selection, no upload, no Google account touched. The archive lands
+      in the channel and the strip names it.
+- [ ] **The button goes inert while the post runs and comes back
+      afterwards** — including when the post fails.
+- [ ] **With no webhook configured**, the note in the Combat logs card is
+      showing AND the button is still live; clicking it reports the reason
+      on the strip. Then configure a webhook in Settings › Uploading,
+      return to the Uploader **without restarting**, and confirm the
+      button posts. (The note itself will still be showing — see the known
+      issue below; the button must not be dead.)
+- [ ] **Post the last hour while an upload is running is refused**, and
+      the sentence is about the upload rather than about combat logs.
+      Then the reverse: start a post, click Upload while it runs, and
+      confirm that refusal says combat logs are being posted rather than
+      "An upload is already in progress".
+- [ ] **An hour with no logs in it** reports "No combat logs found." on
+      its own — with no sentence about an upload in front of it, because
+      no upload happened.
+- [ ] **The panel at the window floor.** Resize to the minimum (840×625)
+      and confirm the Upload button is fully visible without scrolling,
+      with the Combat logs card below it. Repeat at 200% display scaling,
+      where the panel is 248px wide. The second card may need a scroll;
+      Upload may not.
 - [ ] **Double-clicking a row with a completed upload opens its YouTube
       link**, same destination as the context menu, and leaves the row's
       tick state unchanged. Double-clicking a row with no link does
@@ -1229,12 +1322,15 @@ behavior that only shows up at size.
       did not is exactly what matters then.
 
 ## Delete
-- [ ] **`Delete selected` is visibly the destructive one.** Look at the
-      four footer buttons together. Expected: `Delete selected` carries the
-      red outline and label (`.btn.danger`), and the other three do not.
-      It used to be pixel-identical to `Select all` beside it — four
-      buttons of equal weight, one of which destroys recordings. Profiles'
-      `Delete` is the reference; the two must match.
+- [ ] **`Delete selected` is visibly destructive only while available.**
+      Look at the four footer buttons together with a recording selected.
+      Expected: `Delete selected` carries the red outline and label
+      (`.btn.danger`), and the other three do not. Clear the selection:
+      expected, its disabled border and label become neutral like the other
+      unavailable controls, with the same dimming and no hover response.
+      It used to be pixel-identical to `Select all` beside it when enabled,
+      then stayed strongly red when disabled. Profiles' enabled `Delete` is
+      the destructive reference; the two must match.
 - [ ] **It still confirms exactly once.** The treatment is appearance only.
       Expected: one confirmation, naming every file, from Python's own
       dialog — not two, and not the page's `WM.confirm`.
@@ -1282,7 +1378,10 @@ response leaves a worker waiting forever, which presents as a hung upload.
       several specific messages, not one generic guard.
 - [ ] **Escape and the scrim answer a confirm as "no", never as nothing.**
       Both cancel cleanly and the app is immediately usable — no upload, no
-      stuck busy state, and Upload works on the next press.
+      stuck busy state, and Upload works on the next press. Clicking inside
+      the dialog does not dismiss it; only a primary-button press and release
+      both on the scrim do. Drag-select body text past the dialog edge to prove
+      that gesture does not cancel or discard a prompt value.
 - [ ] **A dialog raised from a worker thread reaches the page.** Kill the
       network mid-upload and let the retries exhaust. The error modal
       appears with plain-language text, not a traceback, and the window is
@@ -1403,6 +1502,12 @@ only ever checked by hand.
       trust the rail and fix this line: it said seven for exactly as long
       as it took to add General one commit later, which is the drift this
       checklist exists to catch elsewhere.
+- [ ] **Rail selection and keyboard focus are different states.** Click
+      Previews, then press Tab until another rail entry receives focus.
+      Expected: Previews keeps the filled current-location treatment while
+      the focused entry has an outline only. The focused neighbour must not
+      look like a second selected section. Tab to **Manage groups** too and
+      confirm its summary receives the same visible focus outline.
 - [ ] **No card heading repeats the rail entry you just clicked.** Walk the
       rail and read the first heading in each pane. Folders and Discord both
       repeated themselves ("Folders" / "Folders", "Discord" / "Discord
@@ -1439,12 +1544,16 @@ only ever checked by hand.
       the hand.
       Round 3's L5 moved four control classes onto one declaration; all
       three sites above are `.btn`, so this is a regression check on the
-      one class that already had a treatment.
-      `.linkbtn` and `.bindbtn` gained one here and have **no disabled site
-      yet** — the first will be finding B2's `Clear` on a keybind reading
-      `Not set`, which lane R4 applies. When that lands, hover it: before
-      L5 those two classes had no disabled rule at all, so a dead one still
-      lit up.
+      one class that already had a treatment. In Previews, opt a character
+      out and hover its disabled keybind and Clear / Edit actions too.
+      Before L5 `.linkbtn` and `.bindbtn` had no disabled rule, so dead
+      controls still lit up.
+- [ ] **Enabled subordinate actions read as live before hover.** Compare an
+      enabled Preview Clear / Edit action and Skills Rename / Delete action
+      with a disabled one. Expected: enabled labels are quiet but clearly
+      legible; disabled labels remain distinctly dimmer. Hover still lifts
+      only the enabled action. They remain link-style subordinate actions,
+      not neutral or accent buttons.
 - [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
       section.** Go to Settings > Bookmarks, click a keybind button so it
       reads "Press a key…", then WITHOUT pressing a key click **Folders** in
@@ -1494,16 +1603,63 @@ only ever checked by hand.
       printed "(running)" thirteen times; round 5's C9 keeps what R4 was
       protecting — silence has to be defined, not inferred — and defines it
       once in the hint instead.
+- [ ] **The card has three spacing tiers, and the dividers rank below the
+      heading.** Settings > Previews. Expected: a hint sits noticeably
+      closer to the control it explains (4px) than one setting sits to the
+      next (10px), with the `.bind-group` hairline wider again between
+      groups. Every gap on this card was 10px, which is why nine settings
+      and twelve paragraphs read as one wall. Also check `APPEARANCE`,
+      `PLACEMENT`, `SIZE AND SHAPE` and `WHEN YOU SWITCH AWAY` are not
+      BRIGHTER than `EVE CLIENT PREVIEWS` above them: they were
+      `--text-dim` under a heading at `--text-label`, so every divider
+      out-ranked the card title and the card read as five peer bands.
+      Rank is size only now. Check the master switch block has not gained
+      spacing: it spaces itself with flex `gap` so its height cannot move
+      with the state of the switch inside it, and the first draft of the
+      4px rule out-specified that and put 14px gaps in it.
+      Check the tier lands on a RENDERED hint only: most status slots are
+      blank on a healthy install and collapse to nothing, and the first
+      draft of this rule keyed on markup rather than on what renders, so
+      `Show the character name on each preview` sat 4px above `Opacity` --
+      the "inside a control" tier between two unrelated settings. Bookmarks
+      and Alerts had the same inversion at their first control, so check
+      all three sections rather than Previews alone.
+- [ ] **`How previews behave` is a disclosure, and it is the only prose
+      that moved.** Settings > Previews, under the master switch. Expected:
+      a closed summary, opening to the click/right-drag/resize gestures.
+      The line between kinds is deliberate — a sentence stating a COST or
+      a non-obvious behaviour stays resting text (`Applies the next time a
+      client is switched away from`, `one raised while you are away is
+      still waiting`), and only prose that TEACHES the product is behind a
+      click, because only that kind stops being news. Nothing was deleted
+      except `Positions are remembered per character`, which
+      `Reopen previews where you last put them` already says beside the
+      switch that governs it.
+- [ ] **Saved geometry stays inside Configure.** Settings > Previews,
+      open **Configure** for a character that has never been previewed but
+      has another character to copy from. Expected: `Size…` is replaced by
+      an em dash with a hover explanation, and `Copy…` remains alongside it
+      in the detail. No collapsed-row Geometry cell remains.
+- [ ] **Two controls stop claiming a width they have no use for.**
+      Settings > Previews. Expected: `Default preview size` is a short
+      field (~12 characters), not a 586px box holding `480x300` — which
+      read as an empty field and was the second thing on this card that
+      looked broken without being broken. The opacity readout sits just
+      after its slider rather than parked at the far card edge ~556px from
+      its label.
 - [ ] **Opacity is a percentage, and it still reaches the floor.**
-      Settings > Previews. Expected: the readout reads `100%`, not `255`,
-      and dragging the slider fully left reads `8%` rather than `20`.
-      Round 5's C2: the control was showing a raw Win32 alpha byte, so its
-      floor read "20" and every reader takes that for 20% when it is 7.8%.
-      The stored value is still the 0-255 byte — at 40% the settings file
-      must hold 102. If the readout is EMPTY, the module threw before its
-      listeners registered; that is exactly the inert-screen failure this
-      file's preamble describes, and it happened once while this lane was
-      being written.
+      Settings > Previews. Expected: the dark track and bordered thumb fit
+      the other controls, the adjacent value reads `100%`, not `255`, and
+      dragging fully left reads `8%` rather than `20`. Tab to the slider:
+      the thumb receives the shared visible focus ring. While dragging, the
+      value follows live; the preview and settings file update only when the
+      change commits on release. Round 5's C2: the control was showing a raw
+      Win32 alpha byte, so its floor read "20" and every reader takes that
+      for 20% when it is 7.8%. The stored value is still the 0-255 byte; at
+      40% the settings file must hold 102. If the readout is EMPTY, the
+      module threw before its listeners registered; that is exactly the
+      inert-screen failure this file's preamble describes, and it happened
+      once while this lane was being written.
 - [ ] **The Never-minimize disclosure exists only while its toggle is on.**
       Settings > Previews with `Minimize a client's window while it is not
       the one you switched to` UNTICKED — the shipped default. Expected:
@@ -1553,15 +1709,15 @@ only ever checked by hand.
       failure WCAG 2.5.3 names.
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
-      `Character`, `Preview`, `Keybind`, `Geometry` — sentence case, a step
+      `Character`, `Preview`, `Keybind`, `Configure` — sentence case, a step
       smaller and dimmer than the names below it — with one blank heading
       over the cell `Clear` and `Edit…` share. `Lock` and `Never minimize`
       name nothing here any more: both left the row for their own
       disclosures under the toggles they except, so the three CHECKBOX
       columns this heading row used to carry are down to one, `Preview`,
-      still a bare box with no word beside it. `Clear`, `Edit…` and
-      `Size…` and `Copy…` still carry their own words where available, and
-      should: they are verbs on controls, not the name of a column. `Clear` and
+      still a bare box with no word beside it. `Size…` and `Copy…` appear
+      only after opening Configure, where they remain verbs on controls,
+      not collapsed-row columns. `Clear` and
       `Edit…` have no heading for the same reason, and `Clear` is now
       ABSENT — not present and disabled — on a row with no chord to
       clear, sharing its cell with `Edit…`, right-aligned so `Edit…` sits
@@ -1604,8 +1760,8 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…`, `Size…` and `Copy…` where present — goes dim and
-      stops responding to clicks. The row's saved keybind stays legible on the inert button;
+      `Clear`, `Edit…` and `Configure` — goes dim and stops responding to
+      clicks. The row's saved keybind stays legible on the inert button;
       it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
       **the character's box in the Lock block must read inert**, since
@@ -1633,7 +1789,7 @@ only ever checked by hand.
       reaches Python, a file written by this build and read by an older
       one silently shows every preview the wrong way round.
 - [ ] **An unticked `Preview` character stops competing for chords on
-      OTHER rows.** Give a character the same chord as `Cycle forward`.
+      OTHER rows.** Give a character the same chord as `All forward`.
       Expected first: the cycle row goes red and says the cycle keybind is
       the one that loses. Now untick `Preview` on that character. Expected:
       that warning clears, because Python has dropped the character and
@@ -1643,20 +1799,17 @@ only ever checked by hand.
       happens.
 - [ ] **`Size…` is absent for a character that has never been dragged.**
       Settings > Previews with at least one character offline that has
-      never had its preview moved or resized. Expected: that row shows no
-      `Size…`. If another character has saved geometry, `Copy…` may occupy
-      the Geometry cell instead; if neither action can succeed, the cell
-      carries a dash and its tooltip says how to make a size settable.
-      The cell itself is never omitted: `#preview-binds` is a shared grid
-      and every row must still contribute one Geometry cell. Now drag that
-      character's preview once and reopen the section: `Size…` is there.
+      never had its preview moved or resized. Open that row's **Configure**
+      detail. Expected: it shows no `Size…`; if another character has saved
+      geometry, `Copy…` is available beside the explanatory dash. Now drag
+      that character's preview once and reopen Configure: `Size…` is there.
       Running clients always have it. The point is that
       `set_preview_size` refuses a character with no layouts entry, and a
       layouts entry is written on a drag or resize rather than merely on
       discovery.
 - [ ] **Copy geometry offers only usable sources.** Give at least three
-      characters saved layouts, leave one online and one offline, and open
-      `Copy…` on a different target. Expected: the app-owned picker groups
+      characters saved layouts, leave one online and one offline, open the
+      target's **Configure** detail, then open `Copy…`. Expected: the app-owned picker groups
       sources under visible `Online` and `Offline` labels, excludes the
       target, and offers no character without a full saved rectangle. The
       selector owns initial focus, Tab stays inside the picker, Escape cancels,
@@ -1682,18 +1835,12 @@ only ever checked by hand.
       leaving Previews disarms capture as before.
 - [ ] **The row still fits at the window's floor.** Settings > Previews at
       the smallest the window will go (840x625). Expected: every row ends
-      inside the card with a gap after `Copy…`, `Size…`, or the trailing
-      `Edit…` on a row with neither, and nothing is clipped. Grid tracks do not
-      wrap, so an overflow here is a cut-off control at every width, not a
-      reflow — a seven-track version of this row once measured 608.41px
-      against the same 586px card interior, which is why the opt-out
-      label was the single word `Off` rather than a phrase on the first
-      draft. **That constraint stayed retired, and shrank further:** Lock
-      and Never minimize have since left the row for their own
-      disclosures, taking their per-row labels and cells with them.
-      Measured after that move: 519.25px of the same 586px. This change
-      keeps the same column count and adds a second action inside Geometry;
-      re-measure both actions here rather than trusting the old figure.
+      inside the card after the trailing `Configure` or `Edit…` control,
+      nothing is clipped, and the Settings pane has no horizontal scrollbar.
+      Grid tracks do not wrap, so an overflow here is a cut-off control at
+      every width, not a reflow. Open Configure on
+      several rows and confirm its full-grid detail returns the same way:
+      Size and Copy must never widen or add a collapsed roster column.
 - [ ] **The two global defaults are reachable and take effect.** Settings >
       Previews, below `Keep previews the same shape as their client`.
       - `Default preview size` shows the current pair and commits on
@@ -1708,7 +1855,16 @@ only ever checked by hand.
         These two keys were read once at host construction until this
         change, so a restart-to-apply bug here would look exactly like
         the field working.
-      - `Apply to open previews` (beside the field) resizes every open
+      - `Apply to open previews` (beside the field) **is on screen before
+        you touch anything** — check this first, it is the whole of the
+        bug. Its row holds an empty label, the button, and a status slot
+        that only fills in once the button has been used, which is exactly
+        the shape `.settings .row:has(> .lab:empty)…` collapses to
+        `display: none`. It shipped invisible until clicked, i.e. never.
+        A lexical guard now pins the collapse selector against controls,
+        but the guard cannot see a render: if the button is missing here,
+        the selector has been widened again.
+        It resizes every open
         preview to the pair the field holds, **including previews with a
         custom size** — that is the point: it is the "make them all this
         size" action, and honouring per-character exceptions would make
@@ -1717,10 +1873,19 @@ only ever checked by hand.
         Refused with a sentence while previews are stopped. Check the
         sizes survive a restart: the apply records layouts like a drag,
         unlike Reset.
-      - `Selection ring colour` recolours the ring on the preview you
+      - `Selection ring colour` is **five named swatches, not a colour
+        input**: no white 50x26 UA box, and clicking one must not open the
+        Win32 ChooseColor dialog. Hover reads `Teal (#00c8dc)` and so on;
+        the checked one wears a halo in the page's own colours. There is
+        deliberately no red — alerts own that hue, and a steady red ring
+        beside a red combat pulse is the one confusion here that costs
+        something. A `settings.json` hand-edited to an off-palette hex
+        shows a SIXTH swatch labelled with its hex rather than being
+        silently rewritten (the `?dev=1` harness ships `#ff5a00`, so the
+        harness shows six by design).
+        It recolours the ring on the preview you
         last clicked, live, on every open preview at once — no restart,
-        no re-click. Reload Settings: the picker still holds the chosen
-        colour.
+        no re-click. Reload Settings: the chosen swatch is still checked.
       - The button grammar, with `Lock previews in place` off:
         a plain left click switches; a left drag moves; a right drag
         resizes that preview (still works under the lock, like the
@@ -1976,8 +2141,8 @@ Enable previews in Settings before starting.
       window that was never mapped, and the feature looked simply dead.)
       Also check hide-on-lost-focus takes the pill with the preview, and
       that quitting Wingman with labels on leaves no orphan pill behind.
-- [ ] Clicking a preview brings that client to the foreground. If nothing
-      happens, the log has `Activation of 0x… did not take` at debug.
+- [ ] Clicking a preview brings that client to the foreground. If Windows
+      refuses the switch, the log has `Activation of 0x… did not take` at INFO.
 - [ ] **The ring marks the client you last used, and stays there.** With
       two clients running, switch to one: its preview gains the cyan ring
       and the other loses it. Now click a browser, Discord, or Wingman's
@@ -2072,6 +2237,44 @@ Enable previews in Settings before starting.
       render in Inter. The font is a `datas` entry, and PyInstaller exits 0
       when one resolves to nothing.
 
+### Direct activation acceptance
+
+These cases require live EVE clients. Run them with **Minimize inactive
+clients** OFF first so minimization cannot hide an activation defect. The
+expected result is one direct foreground request followed by observation, not
+repeated foreground requests from timer turns.
+
+- [ ] **Locked and unlocked clicks complete promptly with minimization off.**
+      From EVE A, click EVE B's locked preview (dispatches on press), then its
+      unlocked preview (dispatches on release). Expected: each accepted click
+      produces one switch, B takes foreground promptly, and B's outline appears
+      with no duplicate switch, pump stall, or late focus change.
+- [ ] **Rapid supersession keeps the newest pending intent.** Start A -> B and
+      immediately request C before B settles. Expected: C is the final
+      foreground and outlined client; B never reappears later, and neither B nor
+      C causes A to minimize while minimization is off. Repeat with a cycle
+      command during the A -> B transition. Expected: the cycle anchors on B,
+      so forward selects the client after B rather than restarting from A.
+- [ ] **Input follows the observed foreground immediately.** After locked and
+      unlocked clicks, a direct-character hotkey, and a cycle hotkey, type in
+      chat and make a harmless mouse click without waiting. Expected: every
+      event lands in the newly foreground EVE client. Repeat while holding the
+      real push-to-talk key; the accepted switch still completes and the held
+      key is not released, duplicated, or redirected.
+- [ ] **A minimized target uses the bounded restore path.** Minimize B, then
+      select it by click and hotkey. Expected: B restores and becomes foreground,
+      its outline follows promptly, Wingman remains responsive, and no other
+      client is marked or minimized while restoration is pending.
+- [ ] **A retained browser or Windows Search cancels stale intent.** Focus a
+      browser text field and then Windows Search; attempt a switch in a case
+      where Windows keeps that application foreground and type immediately.
+      Expected: input remains in the retained application, the EVE outline does
+      not move speculatively, and no deadline fallback steals focus later.
+- [ ] **Teardown clears pending foreground work.** Start a switch and quit
+      Wingman immediately, before the target settles. Expected: the process
+      exits fully, the current foreground remains usable, and no delayed
+      fallback, outline update, minimize, or focus steal occurs after teardown.
+
 ### Reopen previews where you last put them
 
 The checkbox on the previews card. It governs where a preview OPENS, at
@@ -2109,6 +2312,14 @@ character table — Lock previews in place by default, and Default preview
 size. None of this is covered by pytest — it needs a
 real desktop and, for the minimize checks, two clients you can watch switch
 foreground.
+
+**Known risk:** **Minimize inactive clients** activates and marks the requested
+client before it asynchronously requests `SW_SHOWMINNOACTIVE` for the exact
+outgoing EVE HWND. That command minimizes without activating the next top-level
+window, removing the observed minimize-first browser/desktop gap. Windows does
+not report completion for `ShowWindowAsync`; a very rapid return to the outgoing
+client can still race a late minimize request. Record source, target, foreground,
+and any late minimize in that case.
 
 - [ ] Labels off reclaims the character-name band and the mirrored video
       grows into it; labels on restores the band. Both take effect on
@@ -2153,80 +2364,50 @@ foreground.
       saved position — that is the case the lock's own storage list
       exists for, since `locked` cannot ride in `preview.layouts`
       without a saved rect.
-- [ ] **LOAD-BEARING: click-to-focus still works, on every preview.**
-      Activation ownership moved from the preview window into the host as
-      part of this slice; this is a pure regression check on the
-      subsystem's primary interaction, and nothing in the suite executes
-      Win32 to catch it failing.
-- [ ] Minimize-inactive: with the checkbox on, clicking a different preview
-      minimizes the client you were on, the new client ends up foreground
-      and stays there, and a character on the never-minimize list is skipped
-      entirely.
-- [ ] **LOAD-BEARING: minimize-inactive holds across REPEATED switches.**
-      Cycle A -> B -> A -> B -> A, at least five switches, and confirm the
-      outgoing client minimizes EVERY time. A single successful switch does
-      not satisfy this item. The switch is minimize-first (EVE-O Preview's
-      order): the outgoing client is minimized while it still holds the
-      foreground, THEN the target is activated. Switching BACK to a client
-      this feature just minimized goes through `activate()`'s
-      `ShowWindowAsync(SW_RESTORE)`, which is asynchronous; the
-      `GetForegroundWindow()` verdict is read a few instructions later.
-      The user-visible shape of a problem there is "works the first time,
-      then intermittently", which the single-switch item above passes
-      straight through.
-- [ ] **No minimize/restore animation during the switch, and the user's
-      setting survives it.** The outgoing client should vanish and the
-      target should appear with no window-zoom. Note what this is and is
-      not: the animation is composited by DWM and blocks nothing —
-      measured, `SC_MINIMIZE` takes the same time either way (12.6 ms ON
-      vs 14.2 ms OFF) — so this item is about what the zoom looks like,
-      not about the switch finishing sooner. **This machine's own desktop
-      has the animation off (`iMinAnimate=0`), so the code path
-      early-returns here and the item cannot be walked without turning it
-      on first.** Windows' default is on, which is who it is for. Turn it
-      on under System > Accessibility > Visual effects (or
-      SystemPropertiesPerformance: "Animate windows when minimizing and
-      maximizing"), walk the switch, then confirm the setting is still on
-      afterwards — the switch toggles the LIVE value only, with
-      `fWinIni=0`, and puts it back in a `finally`.
-- [ ] A refused activation brings the outgoing client BACK. Windows refuses
-      a foreground change from a process without recent input; with
-      minimize-first the outgoing client is already down when that refusal
-      is learned, so the host re-activates it (`switching.should_restore`).
-      The visible shape of a failure is the old TriffView complaint: an
-      empty desktop with nothing focused. Hard to force deliberately; watch
-      for it rather than staging it.
-- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize
-      a client with visible motion — undocked, drones out, or the camera
-      spinning. Do NOT use a docked ship on a static scene: it looks
-      identical whether the thumbnail is live or frozen on its last frame,
-      so that scene cannot tell you which one you saw. This is the check
-      that decides whether minimize-inactive is compatible with the
-      previews it sits beside.
-- [ ] Note the `Minimize of 0x... did not complete` lines in the log, but
-      do **not** treat one as a defect on its own. Only failures are
-      logged — a successful minimize writes nothing — so those lines have
-      no denominator and never showed the rate anyone read into them. The
-      44 that carry an elapsed time are real waits clipped at the budget
-      (min 102 ms, median 114 ms, max 231 ms), and four separate probes
-      have failed to reproduce one: quiet clients answer in 7–57 ms in
-      both orders, including with the sending thread owning a DWM
-      thumbnail of the target. The open candidate is the client's own
-      message pump during a busy moment (grid load, a jump, a session
-      change), which no ordering change here can fix. What IS worth
-      filing: the elapsed figure separates a real wait from an instant
-      refusal, so a line reading well under a millisecond means something
-      new. The reorder's payoff is that a late-landing minimize can no
-      longer drop focus, so watch for THAT instead — see the item above.
-- [ ] Reader's note, not a defect to file on its own: the never-minimize
-      COLUMN sits in the card headed "Global keybinds" — right for its
-      adjacency to the character rows, but that card's intro tells the
-      user everything in it is a global keybind, and a per-character
-      minimize exemption is not one. Worth noticing during the walk.
-      (The Minimize-inactive CHECKBOX used to sit there too and this note
-      used to say so; round 5's C4 moved it up to "EVE client previews",
-      beside the other window-behaviour settings, which is where the
-      Previews checklist item above expects to find it.)
+- [ ] **LOAD-BEARING: locked and unlocked clicks focus the requested client.**
+      Test one locked preview and one unlocked preview from each starting
+      foreground: another EVE client, Windows Search, a browser text field,
+      and Wingman. A click (on release when unlocked, on press when locked)
+      must either put the requested EVE client in the foreground or leave the
+      source application in the foreground if Windows refuses the switch; the
+      preview itself must never become foreground. Type immediately after each
+      attempt. The application that remains foreground must receive the input.
+- [ ] **A held push-to-talk key does not prevent switching.** Hold the actual
+      push-to-talk key used during play, click both a locked and an unlocked
+      preview, and repeat with a character hotkey. Each accepted switch must
+      reach the requested client while the key remains held.
+- [ ] **Minimize inactive clients activates before minimizing.** With the
+      checkbox on, switch from EVE A to EVE B. B must become foreground and its
+      selection ring must move before A receives an asynchronous minimize. A
+      never-minimize outgoing client is skipped entirely; a refused or pending
+      activation minimizes nothing.
+- [ ] **LOAD-BEARING browser-flash regression:** enable **Hide previews on lost
+      focus** and **Minimize inactive clients**. Leave a maximized browser in
+      front, switch to EVE A, then make the first EVE A -> EVE B switch. The
+      browser remains visible until A takes foreground; on A -> B, B appears
+      without a browser or desktop frame. Repeat through a preview click and a
+      character hotkey.
+- [ ] **LOAD-BEARING: no late minimize after a rapid return.** With **Minimize
+      inactive clients** on, rapidly switch EVE A -> EVE B -> EVE A, first while
+      idle and then while B is busy loading grid or changing session. Repeat by
+      preview click and character hotkey. **Fail** if A minimizes after the
+      return, or foreground jumps to the browser or desktop; either means a
+      delayed outgoing request still disrupted the client the user returned to.
+- [ ] **A minimized target restores without stalling later input.** Switch
+      repeatedly to a target that Minimize inactive clients put down. It must
+      either restore and become foreground within about 500ms (25 non-blocking
+      20ms retries) or stop retrying while Wingman remains responsive. Pending
+      restoration minimizes nothing. After a successful retry, the target ring
+      moves before Wingman asynchronously minimizes only the exact saved
+      outgoing HWND; an exited or recreated outgoing client is logged and
+      skipped. Start another click or hotkey immediately and confirm the newer
+      request wins.
+- [ ] **LOAD-BEARING: a minimized client's preview keeps updating.** Minimize a
+      client with visible motion — undocked, drones out, or the camera spinning.
+      Do NOT use a docked ship on a static scene: it looks identical whether the
+      thumbnail is live or frozen on its last frame, so that scene cannot tell
+      you which one you saw. A frozen preview blocks the merge: minimize-inactive
+      is not compatible with the previews it sits next to.
 
 ### Opacity is translucency, not dimming
 
@@ -2323,6 +2504,17 @@ pytest.
 
 ## EVE preview hotkeys
 
+- [ ] **The screenshot set does not replace interaction checks.** In Settings
+      > Previews, open Configure for an online and an offline character, then
+      close it. Focus stays on that row's Configure button on both actions;
+      opening a second detail closes the first. On an opted-out row, Clear and
+      Edit… may be disabled, but Configure stays live: open it and confirm the
+      saved Cycle group and geometry controls remain reachable for re-enable.
+      Change a Cycle group or Copy a saved placement, let the refresh repaint, and confirm focus returns to
+      the contained control rather than the page body. Restart Wingman and
+      confirm the saved group assignment and copied placement persist. These
+      focus and persistence paths are intentionally not staged by the
+      read-only screenshot shooter.
 - [ ] **LOAD-BEARING: `WM_HOTKEY` reaches the message-only host window.**
   Bind any chord and press it. If nothing happens while the log shows a
   successful registration, `HWND_MESSAGE` is not receiving the message and
@@ -2330,19 +2522,40 @@ pytest.
   see risk 4 in `docs/history/eve-preview-hotkeys-design.md`.
 - [ ] A per-character chord switches to that client from another application
   (try it from a browser, not just from Wingman).
+- [ ] **A direct-character burst ends at its final absolute target.** Alternate
+  several character chords rapidly, finish on a known character, then stop.
+  Expected: at most one final switch after the keys stop, it is to that last
+  character, and no intermediate clients appear afterward.
+- [ ] **LOAD-BEARING: keyboard input lands promptly after foreground
+  activation.** Switch with a character hotkey and, separately, by clicking its
+  preview, then immediately type in EVE. Expected: the foreground target
+  receives every keystroke without a focusless delay. Repeat with a previously
+  minimized target. This behavior requires a live Windows desktop and cannot be
+  verified by the automated suite.
+- [ ] **A refused switch leaves keyboard focus in the retained application.**
+  Open Windows Search and attempt a preview switch while Search remains in the
+  foreground; type immediately and confirm Search receives the keystrokes.
+  Repeat from a focused browser text field. Expected: when Windows retains
+  either application instead of activating EVE, typing continues there rather
+  than going nowhere.
 - [ ] **A state update mid-hotkey-capture does not orphan or hide the capture.**
   With the Previews tab open and a hotkey row showing "Press a key…", start
   or close an EVE client (which pushes new state from Python). Expected: the
   row stays armed and visibly capturing, typing fills in normally, and a
   pressed chord binds correctly. The original bug left the row armed but
   invisible, eating keystrokes and binding them silently.
-- [ ] Cycle forward and back walk every running client in name order and wrap.
+- [ ] All forward and back walk every running client in name order and wrap.
   **Try it with a browser focused, not just with an EVE client focused** —
   these are different branches of `_on_hotkey`: with an EVE client focused,
   cycling anchors on that client; with a browser (or anything else) focused,
   it falls back to the last-cycled target. The browser case is the one a
   multiboxer actually uses, so it must be checked, not just the EVE-focused
   case.
+- [ ] **A cycle burst lands at its net destination.** With four clients in
+  known name order and A foreground, press All forward three times rapidly
+  and stop. Expected: the final target is D, with no intermediate clients
+  appearing after the final switch. Repeat with mixed forward and back presses,
+  calculate the destination first, and confirm Wingman lands there.
 - [ ] **Holding a chord fires once, not at the key-repeat rate.** Hold it for
   three seconds; the client must not flicker through repeated activations.
 - [ ] **A chord another application already owns is visible on the Previews
@@ -2424,8 +2637,58 @@ pytest.
   Expected: both the offline character and the latent-collision row read
   noticeably quieter than normal rows, not more prominent. A visual regression
   here reverses the hierarchy.
-- [ ] Quitting Wingman with chords bound leaves them released: the owning
-  application gets them back without a reboot.
+- [ ] **Quitting leaves input queues and hotkeys released.** After several
+  click, direct-hotkey, cycle, refused, and minimized-target attempts, quit
+  Wingman from the tray. Type in the foreground EVE client and in another
+  application; input must stay with the focused window, with no stuck keys or
+  keystrokes arriving in a different client. The preview chords must be
+  available to another application without a reboot. Relaunch Wingman and
+  confirm the chords register and switch normally again.
+
+### Preview cycle groups
+
+**Windows and real EVE clients required; not verifiable by the automated suite.**
+
+- [ ] **Existing All forward/back chords behave exactly as before on an upgraded
+  settings file with no groups.** Open an install with existing cycle binds but
+  no groups configured. Expected: the rows remain labelled All forward and
+  All back and the chords cycle every running client as before.
+- [ ] **Create DPS and Logistics, assign online and offline characters, and confirm
+  each group chord visits only its running assigned members.** Bind a chord to
+  each group. Pressing DPS's chord must never land on a Logistics member,
+  and offline members of either group must be skipped.
+- [ ] **From a foreground member, a foreground nonmember, and a browser, verify the
+  anchor/history behavior (design decision 3).** With a group active: from a
+  group member in the foreground, cycling advances from that member; from a
+  group nonmember in the foreground, the anchor is missing and the action starts
+  at the group's first running member; from a browser, the group falls back to
+  its last-cycled target.
+- [ ] **Alternate All, DPS, Logistics, and direct-character hotkeys rapidly; the
+  final client matches sequential meaning without displaying intermediate
+  targets.** Calculate the expected endpoint from the action sequence first.
+  No wrong client appears after the burst ends.
+- [ ] **Opt a member out of previews.** Expected: its group assignment remains
+  selected in the UI, its direct-focus chord is released, and its group cycle
+  skips it. Re-enable Preview for that character and it rejoins the group cycle
+  without needing reassignment.
+- [ ] **Rename a group while previews run.** Expected: the chord remains
+  registered and membership is unchanged; no reconfiguration is needed and
+  the renamed group cycles correctly on the very next press.
+- [ ] **Delete a populated group.** Expected: the confirmation names the exact
+  number of assignments, the chord is released immediately, every former
+  member still cycles under All only — no reassignment, no crash — and every
+  former member's visible assignment selector reads **All only** after deletion.
+- [ ] **Log members in and out during repeated cycling.** Expected: no wrong
+  client, no stale window handle, no crash, and no stuck hotkey over an
+  extended session of login/logout churn.
+- [ ] **Arm a named-group keybind capture, then trigger a roster push by opening
+  or closing a client.** Expected: the capture row stays visible and armed;
+  the next chord binds correctly. The original bug left an armed row invisible
+  after any state push.
+- [ ] **At 840x625, inspect the full card with long group and character names.**
+  Expected: no sixth column, no horizontal clipping, no native light control,
+  and the group value control is reachable by keyboard. Check at 150% scaling
+  as well (the CSS viewport remains 840x625).
 
 ## Shared preview keybinds
 
@@ -2582,14 +2845,35 @@ headless.
       and survive a restart. An alert already pulsing when you change them
       finishes at its old rate — the values are read when an alert is
       armed, not per frame.
+- [ ] **Advanced pulse behavior opens and closes by keyboard, and fits at
+      the 840px floor.** Settings > Alerts. Expected: `#alert-advanced`
+      starts collapsed under the table, titled `Advanced pulse behavior`.
+      Tab to its summary and press Enter or Space — no mouse required — to
+      open it; press it again to close it. With it open at the 840x625
+      window floor, `document.documentElement.scrollWidth` must equal
+      `clientWidth`, and none of its three rows (Combat, Warp scramble,
+      Decloak) wraps its Flashes/Speed pair onto a second line.
+- [ ] **Opening it does not disturb the card's live regions.** With the
+      disclosure open or closed, `#alerts-health` and `#alerts-status`
+      (both `role="status"`) keep whatever text they already held —
+      alerts.js has no listener on `#alert-advanced`'s `toggle` event, so a
+      screen reader must not re-announce either line just because the
+      disclosure state changed.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
-      Alerts. Each event offers the same five named swatches: Red, Amber,
-      Green, Cyan, and Magenta. They render as dark-theme controls rather than
-      opening a native Windows colour picker. Give two enabled events the same
-      colour. Expected: one warning below the table names both events and says
-      their preview pulses are indistinguishable; the warning is not repeated
-      under both rows. Disable either event or choose a distinct colour and it
-      clears without clearing a row-local save error.
+      Alerts. Each event offers the same five swatches: Red, Amber, Green,
+      Cyan, and Magenta — one line, vertically centered with the checkbox/
+      name, Sound and Test beside it, not a two-line control. Each swatch
+      announces its colour name to a screen reader (`aria-label`) and shows
+      it in its tooltip; nothing prints the selected name visibly below the
+      dots any more. Event boxes align with the modifier boxes below; event
+      names and the Flashes/Speed line share the next inset, so no checkbox
+      hangs by itself at the card edge. They render as dark-theme controls
+      rather than opening a native Windows colour picker. Give two enabled
+      events the same colour. Expected: one warning below the table names
+      both events and says their preview pulses are indistinguishable; the
+      warning is not repeated under both rows. Disable either event or
+      choose a distinct colour and it clears without clearing a row-local
+      save error.
 
 ### The alert render path
 
@@ -2684,10 +2968,18 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] **Profiles opens with compact context and tools.** With a selected EVE
       profile, the full-width context row identifies the folder, server, and
-      profile without competing with the top tool row. That row contains
-      **Backups…** and **Edit formations…** when the codec is available. In
-      Accounts mode, the Copy card contains **Identify accounts…**; none of
-      these tools is an inline card below Copy.
+      profile. The **Backups…** and **Edit formations…** sibling tool group
+      sits directly beneath that context when the codec is available, without
+      becoming another card or route. In Accounts mode, the Copy card contains
+      **Identify accounts…**; none of these tools is an inline card below Copy.
+- [ ] **Profile tools are named for what they are, not for who they seem
+      scoped to.** Inspect the **Backups…** / **Edit formations…** tool
+      group with a screen reader or the accessibility pane. Expected: its
+      accessible name is `Profile tools` via `aria-labelledby`, not an
+      `aria-label` claiming the group belongs only to the selected
+      server/profile — `eve_settings_backup_dir()` is one fixed store, not
+      scoped to that selection, so switching profiles must not change what
+      the group's name implies it is showing.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -2774,6 +3066,17 @@ so these are the checks that matter and only a Windows machine can run them.
       the prose, the `Copy from` row and the filter row are all still held to
       the old 586px measure on purpose, so a filter row narrower than the
       roster beneath it is correct here, not a bug.
+- [ ] **The copy commit bar widens with the roster above the 840px floor,
+      and only there.** With a folder chosen, put the window at its floor
+      and note the commit bar (`Copy to selected`, its count, source, and
+      the EVE pill) — it is capped to the card's ~586px prose measure
+      alongside the rest of the setup controls. Drag the window past
+      841px CSS width. Expected: the bar now spans the roster's full width
+      below it, and the count and source sit grouped together rather than
+      leaving a bare gap before the pill. Return to the floor (or measure
+      at exactly 840px): the bar reverts to the capped layout — the
+      widening is gated behind `min-width: 841px` and must not appear at
+      or below it.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a
@@ -2801,14 +3104,25 @@ so these are the checks that matter and only a Windows machine can run them.
       label was added for.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
+- [ ] **Identify accounts composes correctly at wide widths and keeps
+      manual management subordinate.** Open `Identify accounts…` in a
+      window past the floor. Expected: the guided flow's ~620px-capped
+      column centres in the available width rather than sitting flush
+      against the left edge. Below the guided flow, `Manage account names
+      and character links…` is a single visibly and programmatically
+      labelled disclosure group. Confirm with a screen reader or the
+      accessibility pane that its name is `Manual management` and that the
+      disclosure's own ids, copy, and behavior are otherwise unchanged.
 - [ ] **Identify one account through a controlled client session.** Switch to
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
-      what Wingman will watch, says to close every EVE client, and offers one
-      primary action. A quiet `Step N of 5` line stays above the title and
-      advances through Start, Watch for changes, Confirm character, Name
-      account, and Review roster. Start identification, launch one character, enter the
-      game, make a small settings change, fully close that client, and press
+      what Wingman will watch, and offers one primary action. The warning to
+      close every EVE client sits immediately above **Begin identification**,
+      where it remains visible before activation. A quiet `Step N of 5` line
+      stays above the title and advances through Prepare, Watch for changes,
+      Confirm character, Name account, and Review roster. Begin identification,
+      launch one character, enter the game, make a small settings change, fully
+      close that client, and press
       `Check changes`. Wingman proposes the one changed account and character
       and persists nothing when `Link character` opens the required account-name
       step.
@@ -2878,6 +3192,70 @@ so these are the checks that matter and only a Windows machine can run them.
       start a copy: `Identify accounts…` is disabled until it finishes. Leave
       the identity sub-screen with `‹ Profiles` during an observation and return:
       the observation was cancelled.
+- [ ] **Cancelling a check in flight reads as idle, not a false no-changes
+      message.** Start identification, launch a character, close it, then
+      press `Check changes` and immediately press `‹ Profiles` (or `Cancel`)
+      before the check would normally finish. Expected: the sub-screen
+      returns to Prepare with no leftover "No account and character changes
+      were found" text and no candidate offered — the cancelled check must
+      not be mistaken for one that genuinely found nothing.
+- [ ] **A deleted character retracts an offered candidate mid-flow.** Get
+      Wingman to offer a candidate (`Check changes` reaches Confirm
+      character), then, before confirming, have ESI/Wingman confirm that
+      character deleted (e.g. the resolver's next pass on a known deleted
+      ID). Expected: the candidate is withdrawn automatically, the
+      sub-screen returns to Prepare, and the status line reads exactly
+      `That character was deleted. Start account identification again.`
+      rather than silently keeping a stale offer on screen.
+- [ ] **Account identity controls are unavailable on a non-Tranquility
+      folder.** Point the EVE folder at a Serenity, Singularity, or
+      unrecognized shard directory. Expected: in Accounts mode, `Identify
+      accounts…` and the account-tools row are hidden entirely (not merely
+      disabled), account rows fall back to `Account <id>`, and copy/backup
+      for that profile's characters and accounts remain fully available.
+- [ ] **A deleted character may appear before ESI answers, then disappears.**
+      Open Profiles with a known deleted local character file. Expected: the
+      character may render in the list initially (before ESI resolves), then
+      disappears once ESI confirms the deletion. The row stays hidden on
+      subsequent refreshes in that process. After restart it may briefly
+      reappear, then disappears once ESI reconfirms deletion.
+- [ ] **Selected source or target disappearing leaves copy controls coherent.**
+      Set up a copy with source and targets selected. During in-flight ESI
+      resolution for deleted characters, remove a selected target from the
+      roster (delete its `.dat` file). Expected: the Copy card remains usable,
+      the selection updates, and completion succeeds for surviving targets
+      without errors or corrupted state.
+- [ ] **The deleted account link is absent after refresh and restart.**
+      Identify and link a Tranquility character to an account, then confirm
+      that character is deleted via ESI. Refresh the Profiles route and
+      restart the app. Expected: the link is removed from Wingman's persisted
+      account-character metadata; the account and other characters survive
+      intact. Inspect `settings.json` to confirm the character ID is absent
+      from `account_characters` for that account.
+- [ ] **Active and unresolved characters remain usable.** With an active
+      character, a character pending ESI resolution (network down), and a
+      confirmed deleted character all in the same profile: Expected: active
+      and unresolved characters remain visible, selectable, and copyable; only
+      the confirmed-deleted row hides. The unresolved character persists
+      across route refresh and Wingman restart.
+- [ ] **The deleted character's local `.dat` and backup remain intact and
+      listed.** After deletion filtering hides a character from Profiles and
+      removes its account link, verify its `core_char_<id>.dat` file still
+      exists in the profile folder unchanged. Open Backups and confirm the
+      character's backup (if one exists) is still listed and restorable.
+- [ ] **Switching profiles during in-flight resolution settles the latest
+      profile.** Start resolution for profile A (Characters mode), switch to
+      profile B while ESI requests are pending. Expected: profile A's in-flight
+      pass finishes, then one coalesced trailing pass automatically resolves the
+      latest selected profile without another user action; no deletion filtering
+      or cleanup from stale passes mutate the current context.
+- [ ] **A misleadingly named `tranquil*` directory remains untrusted and
+      non-destructive.** Point the EVE folder at a directory named
+      `tranquility_backup` or `fake_tranquility_other`. Expected: Profiles
+      opens normally; character names use fallback resolution; no deletion
+      filtering or account-link cleanup occurs, regardless of the directory
+      name. In Accounts mode, identity controls remain unavailable. Copy and
+      backup remain fully available.
 - [ ] **Inspect every deterministic identity fixture in a browser.** Open
       `?dev=1&identity=<state>` for `idle`, `waiting`, `none`, `ambiguous`,
       `candidate-multiple`, `pending-name`, `existing-name`, `roster-one`,
@@ -2973,7 +3351,8 @@ so these are the checks that matter and only a Windows machine can run them.
       a keyboard-accessible More disclosure for its single Delete action; Delete
       retains danger treatment. Opening one disclosure closes any other without
       moving focus. Escape closes the current disclosure and returns focus to
-      its More control.
+      its More control. Scroll to the final row and open More: its menu opens
+      upward, wholly inside the route rather than being cut by the bottom edge.
 - [ ] **Retention is explicit and protects manual backups.** The collapsed
       Retention summary shows a chevron, rotates it when opened, and remains
       keyboard-operable through the native disclosure. With `auto_keep`
@@ -2986,6 +3365,15 @@ so these are the checks that matter and only a Windows machine can run them.
       Alt. Expected: the button reads `Back up Default profile` and `Back up Alt
       profile`; with no profile selected it reads `Back up profile` and is
       disabled.
+- [ ] **Backups' Origin column aligns with the target's name, not its id.**
+      Open Backups with a mixed history of automatic and manual entries.
+      Expected: each row's `.es-backup-grid` aligns to the row's start, so
+      Origin sits level with the target's name line rather than between
+      the name and its raw id beneath it. Origin's text reads in a
+      distinct, slightly dimmer colour than Date — not the same faint
+      colour the target's own secondary (raw id) line uses — so the two
+      read as separate columns; Origin still names only Automatic or
+      Manual, nothing else.
 - [ ] Check the packaged build: Profiles and Backups open, and the folder picker
       opens.
 
@@ -3202,6 +3590,33 @@ against a placeholder id; only these items are blocked on the registration.
       Check the second case at the window floor — that is the one the
       list's `min-height: 0` exists for. Collapse it again and the list
       returns to its height.
+- [ ] **The plan-file actions sit directly below the plan list, above
+      `What is a plan?`.** With plans present, read down the Plans block:
+      the list, then `Open plans folder` / `Reload plans`, then the `What
+      is a plan?` disclosure last. They act on the folder the list above
+      them reads from, so they no longer wait behind an explanation almost
+      nobody opens. Reordering costs no height: `<details>` and the
+      actions row are both `flex: none` siblings of the same shrinkable
+      list, so the four-plan-row floor measured against the block is
+      unaffected.
+- [ ] **The roster has its own persistent heading, like Groups and Plans.**
+      Above the filter bar and the character list, a `Characters` heading
+      (the route's own vocabulary — Add character, Filter characters, N
+      characters added) sits in the same `.rail-head` treatment the Groups
+      and Plans blocks already use, with only a hairline boundary added.
+      It is inert text — no tabindex, no click handler — confirming the
+      roster is the third of the rail's three independent scroll regions,
+      not the one region with no label above its own scrollbar.
+- [ ] **A collapsed row's missing-skill names stay legible at a glance.**
+      With a character missing three or more skills for the selected plan,
+      its collapsed roster row shows at most two names before `and N
+      more` — a smaller cap than the plan-issues disclosure's own list
+      (which spells out every requirement) and smaller again than the copy
+      confirm dialog's name cap, because a roster row is scanned in
+      passing across many rows rather than opened and read like a dialog.
+      Confirm the `N` in `and N more` matches the character's real missing
+      count minus the two names shown, not the number of names the
+      payload happened to include.
 - [ ] **An empty roster names the control.** With no characters
       authorised, the roster reads `No characters yet. Press “Add
       character” to sign one in with EVE SSO.` — the name on the button,
@@ -3275,11 +3690,14 @@ against a placeholder id; only these items are blocked on the registration.
 - [ ] **`Copy plan` puts the plan on the clipboard** (round 3, S7). With a
       plan selected, press `Copy plan` on the pane heading and paste into a
       text editor. Expected: one `Skill Name IV` line per requirement, in
-      roman numerals, in plan order — and the status strip says it was
-      copied. Then paste it into EVE's skill plan import and confirm the
-      game accepts it and drops the skills already trained (that is why the
-      whole plan is enough and no per-character diffing is done). With no
-      plan selected the button is disabled rather than absent.
+      roman numerals, in plan order, and a local `Plan copied to clipboard.`
+      status beneath the heading. Deny clipboard permission (or use a browser
+      context that denies it) and confirm that same local status says
+      `Could not copy the plan to the clipboard.` rather than failing silently
+      or changing plan state. Then paste it into EVE's skill plan import and
+      confirm the game accepts it and drops the skills already trained (that
+      is why the whole plan is enough and no per-character diffing is done).
+      With no plan selected the button is disabled rather than absent.
 - [ ] **The two-step Forget cannot be triggered by one mis-click.** First
       click arms the control (it changes to a confirm state); a second,
       separate click is required to actually forget the character;
@@ -3315,18 +3733,101 @@ against a placeholder id; only these items are blocked on the registration.
       resolving after the switch and rendering under the wrong plan is a
       silent bug — the row looks populated and correct, but every
       requirement on it belongs to the plan you left.
-- [ ] **LOAD-BEARING: the roster group order and the within-group sort are
-      both exactly right.** Launch with `?dev=1` (it seeds one character
-      per bucket) and confirm the groups appear top to bottom in this
-      order: `Ready`, `Training`, `Locked`, `Missing`, `Unknown`,
-      `Unscored`, then the catch-all bucket last. Within `Missing`, with
-      more than one character in it, confirm the character with the
-      **fewest** missing requirements sorts first. Nothing under `tests/`
-      exercises this grouping or ordering at all — it lives entirely in
-      `skills.js` — so this item is the only thing standing between a
-      regression here and a release. A silent reorder or a resorted
-      `Missing` group would not error or throw; it would just be wrong,
-      and nothing else in this checklist or the suite would catch it.
+- [ ] **LOAD-BEARING: the roster group order is exactly right.** Launch
+      with `?dev=1` (it seeds one character per bucket) and confirm the
+      groups appear top to bottom in this order: `Ready`, `Training`,
+      `Locked`, `Missing`, `Unknown`, `Unscored`, then the catch-all
+      bucket last. Nothing under `tests/` exercises this grouping at
+      all — it lives entirely in `skills.js` — so this item is the only
+      thing standing between a regression here and a release. A silent
+      reorder would not error or throw; it would just be wrong, and
+      nothing else in this checklist or the suite would catch it.
+- [ ] **`Missing` sorts by training time, not by requirement count.**
+      Same `?dev=1` roster. Confirm the `Missing` group reads top to
+      bottom: Nera Tal (`1h 30m`), Aveline Castellane (`2d 0h`), Zara
+      Castellane (`2d 0h`), Konstantina Alexandrovna Winterbourne
+      (`7d 0h`), Gustav Oswaldo (`15d 0h`), then Petra Ilyenko last with
+      no duration shown at all. Aveline before Zara is the deliberate
+      tie-break: the fixture gives the two characters the identical raw
+      `172800` seconds on purpose, so the sort can only separate them by
+      falling through to character name — and it must do that on the RAW
+      seconds, never on a text comparison of the rendered `2d 0h` label,
+      which would not even distinguish the tie. A character with no
+      usable estimate (Petra: confirmed but unusable attributes) sorts
+      last regardless of how few requirements it is missing, the same
+      way a `Training` row with no queue finish sorts last below.
+- [ ] **`Training` sorts by real queue finish, not by name.** Same
+      roster. Confirm the order is Zuelo Parvi (finishes 2026-08-25),
+      Bel Ansgar (finishes 2026-08-27, later, despite sorting
+      alphabetically before Zuelo), then Kaska Rin last. Kaska's own
+      queue is `queue_timing_unknown`, so it has no finish to compare —
+      and her row still shows her OWN plan-wide training estimate
+      (`1d 2h`) beside `timing unknown`, because that is a different
+      computation (training.estimate() over the whole plan) from EVE's
+      queue-finish fact, and the missing fact must not borrow the
+      other's number to fake a sort position.
+- [ ] **A mixed row's duration includes SP already queued.** Still
+      `?dev=1`, expand Konstantina Alexandrovna Winterbourne
+      (`queued_count: 2`, `missing_count: 3`). Confirm her status line
+      reads `3 unqueued · 7d 0h training remaining` — the duration is
+      the WHOLE plan's remaining SP, not just the three unqueued skills,
+      because `training.estimate()` is handed every requirement in the
+      plan and only zeroes a skill's own contribution once ITS SP
+      threshold is met, queued or not. If a future change scoped the
+      estimate to `missing_names` alone, this row's duration would read
+      shorter than the plan will actually take, silently.
+- [ ] **`Stale` still carries a full training estimate.** Expand Gustav
+      Oswaldo (`stale: true`, last refresh failed). Confirm the `Stale`
+      badge sits beside his name AND the status line still reads a real
+      duration — `6 unqueued · 15d 0h training remaining` — rather than
+      falling back to `training time unavailable`. The estimate is
+      scored against the LAST successful refresh, which is exactly what
+      stale data is, not against the failed one.
+- [ ] **The estimate assumptions live only in the tooltip, never as
+      permanent copy.** With a plan selected, confirm no sentence about
+      Omega speed, current attributes, implants or unlisted requirements
+      is printed anywhere on the page by default. Hover the ⓘ button
+      beside the plan heading: the tooltip `Estimates use current
+      attributes at Omega speed. Implants and requirements not listed in
+      this plan are excluded.` appears, and clears when the mouse moves
+      away. Tab to the same button instead: the identical tooltip
+      appears on keyboard focus alone, with no hover. Press Escape while
+      it is focused: the tooltip is dismissed but focus visibly stays on
+      the button — it must not move to the next control. Tab away and
+      back (or click elsewhere, then click or Tab back to the button):
+      the tooltip reopens. A suppression that survived a real blur would
+      mean the button permanently omitted its own explanation for the
+      rest of the session.
+- [ ] **No plan selected, and a character whose attributes were never
+      confirmed, both avoid a misleading zero.** Clear the plan
+      selection: every roster row becomes `Unscored` and carries no
+      status line at all — not `0 unqueued` and not `0m` — because an
+      empty `training_estimate_status` means no estimate was ever asked
+      for (Task 5's ruling), never a fifth failure worth a phrase.
+      Reselect a plan and expand Petra Ilyenko
+      (`attributes_unavailable` — the same outcome a pre-attributes
+      build produces for a character it has never confirmed attributes
+      for). Confirm her status reads `4 unqueued · training time
+      unavailable`, never `4 unqueued · 0m training remaining`: `0m` is
+      `training.estimate()`'s real answer for an already-trained target
+      and must never stand in for a number the estimator could not
+      compute at all.
+- [ ] **At the 840x625 floor, long names still read as themselves and
+      every collapsed status stays on one line.** Drag the window to its
+      floor with `?dev=1` loaded. Confirm Konstantina Alexandrovna
+      Winterbourne's name ellipsises at the 240px name-column cap rather
+      than overflowing or wrapping: `text-overflow: ellipsis` truncates
+      from the end, so enough of the PREFIX stays visible to tell her
+      apart from every other row at a glance — `.skills-name` carries no
+      `title`, so this is the only identity the collapsed row offers, not
+      a fallback for a full string recoverable on hover. Then confirm the
+      roster's worst case for the status column: Gustav Oswaldo, whose
+      `Stale` badge and `6 unqueued · 15d 0h training remaining` status
+      sit on the same line as his name. Neither wraps to a second line,
+      neither is cut off without an ellipsis, and the badge and status do
+      not overlap the name or each other — the chevron, badge and status
+      are all `flex: none`, so the name column is the only thing that
+      gives way, and this row is where it has to give way the most.
 - [ ] **The Groups block sits above Plans and its list stays capped.**
       With `?dev=1`'s seeded groups, confirm the rail lists `All` followed
       by every seeded group, top to bottom, each member count matching the
@@ -3490,15 +3991,30 @@ behaviour a lexical guard cannot reach.
       below it. The dimming reinforces the heading; it is not the encoding
       on its own, which is the WCAG 1.4.1 failure this arrangement is the
       third attempt at.
-- [ ] **The heading cannot leave its own block.** Same screen, a roster
-      long enough that the offline block exceeds the pane — about 16
-      characters at the 840x625 floor, fewer if the window is shorter.
-      Scroll to the bottom of the list. Expected: `OFFLINE` is still on
-      screen, pinned at the top of the pane, with the rows it heads under
-      it. Verified over CDP at 30 characters: the heading's top and the
-      pane's top both read 56. This is the whole reason it is sticky — the
-      legend it replaces was rejected in round 5 for scrolling off the
-      rows it explained.
+- [ ] **The table labels and Offline heading cannot leave their rows.** Same
+      screen, with a roster long enough that the offline block exceeds the
+      pane — about 16 characters at the 840x625 floor, fewer if the window is
+      shorter. Scroll to the bottom of the list. Expected: the four named
+      column labels and the blank actions header remain pinned at the top of
+      the pane; `OFFLINE` remains directly below them while one of its rows is
+      visible; and neither sticky layer covers the other. A row cut by the
+      current scroll position may emerge partially below `OFFLINE`; that is the
+      normal edge of the opaque sticky layer, not overlap inside it. This is the
+      whole reason both are sticky — a label that scrolls off the controls it
+      explains recreates the original context-loss defect.
+- [ ] **A conflict warning still names its owner once its row is behind the
+      sticky headers.** Same scroll-to-bottom scenario, using a character
+      whose direct bind collides with a cycle keybind (the dev fixture's
+      Tanuki Solette, whose chord matches `All forward`). Scroll until her
+      row sits fully or partly behind the column headers/`OFFLINE` heading
+      while the warning directly below it is still visible. Expected: the
+      warning's own sentence still opens with `Tanuki Solette: …` rather
+      than assuming the row above it is on screen, and her `Keybind` button
+      still points `aria-describedby` at that exact warning's id. Confirm
+      with a screen reader or the accessibility pane: focusing the button
+      announces its own label (the chord) followed by the description, and
+      the description text alone still names the owner even though the row
+      it explains may be hidden.
 - [ ] **The rule above the column headers is one line, not four dashes.**
       `.row` is `display: contents` in this grid, so a border on the
       header CELLS is cut by every 10px column gap. It is drawn by an
@@ -3509,7 +4025,7 @@ behaviour a lexical guard cannot reach.
       and the box is 15px; every other column's control is dead centre
       under its label, and this one was 15px left of it. Nothing else on
       the row moves.
-- [ ] **The list says how to set a bind.** Above `Cycle forward`:
+- [ ] **The list says how to set a bind.** Above `All forward`:
       "Click a keybind and press the keys you want. Edit… lets you type
       one instead." Both halves are load-bearing — nothing else says the
       chord itself is clickable, and `Edit…` sits under a blank column

@@ -28,6 +28,7 @@ import os
 import sys
 import threading
 import webbrowser
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -37,6 +38,8 @@ from . import jwt as jwt_mod
 from . import loopback as loopback_mod
 from . import sso as sso_mod
 from . import state as state_mod
+from . import training as training_mod
+from .training import ATTRIBUTE_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,14 @@ MSG_OWNER_CHANGE_DETECTED = (
 # has one place to find the exact wording.
 MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared."
 
+# NOT user-facing in the sense the messages above are: this one lands in
+# `attributes_error`, which is diagnostic state for the estimate, never a
+# row banner (the collapsed row says only "training time unavailable" --
+# DESIGN's rule that technical status text does not reach a row). It says
+# what is missing rather than what to do, because there is nothing the user
+# can do: attributes come back on the next refresh or they do not.
+MSG_ATTRIBUTES_UNREADABLE = "EVE returned no usable character attributes."
+
 # An access token is refreshed when it expires within this many seconds. The
 # window has to cover the round trip that is about to use it, or a token that
 # was valid when checked is rejected when sent.
@@ -104,6 +115,24 @@ def _queue_path(character_id: int) -> str:
     return f"/v2/characters/{character_id}/skillqueue/"
 
 
+def _attributes_path(character_id: int) -> str:
+    return f"/v1/characters/{character_id}/attributes/"
+
+
+@dataclass(frozen=True)
+class ParsedSkills:
+    """One skills response, split into its readiness half and its SP half.
+
+    The two halves have deliberately different failure rules, which is why
+    they are parsed together but reported separately -- see `_parse_skills`.
+    """
+
+    active_levels: dict
+    trained_levels: dict
+    skill_points: dict
+    skill_points_complete: bool
+
+
 def _clamp_level(value) -> int:
     """0..5. ESI is trusted but not blindly: a level outside the range would
     make an out-of-range requirement score Active."""
@@ -114,26 +143,70 @@ def _clamp_level(value) -> int:
     return max(0, min(5, level))
 
 
-def _parse_skills(data):
-    """(active_levels, trained_levels) from /characters/{id}/skills/.
+def _parse_skills(data) -> ParsedSkills:
+    """Levels and SP from /characters/{id}/skills/.
 
-    Malformed entries are dropped individually rather than failing the
-    document, matching state.py's tolerant normalisation: one bad entry
-    should cost one skill, not the refresh.
+    Two different tolerances out of one body, on purpose:
+
+    Malformed entries are dropped individually from the LEVELS rather than
+    failing the document, matching state.py's tolerant normalisation: one
+    bad entry should cost one skill, not the refresh. The evaluator already
+    reads an absent skill id as untrained, so a dropped row understates one
+    skill and nothing else.
+
+    SP is all-or-nothing, for the reason state.py's `_coerce_skill_points`
+    gives: a partial SP map has no way to say it is partial, so a caller
+    trusting it prints a confidently wrong training estimate instead of an
+    honestly absent one. A missing or malformed `skillpoints_in_skill` is
+    NOT read as zero -- zero SP and "ESI did not say" are different facts,
+    and only one of them is safe to sum.
     """
     active: dict[int, int] = {}
     trained: dict[int, int] = {}
+    points: dict[int, int] = {}
     rows = data.get("skills") if isinstance(data, dict) else None
+    # A body whose `skills` is not a list carries no SP at all; the loop
+    # below cannot notice that on its own, because it never runs.
+    complete = isinstance(rows, list)
     for row in rows or ():
         if not isinstance(row, dict):
+            complete = False
             continue
         try:
             skill_id = int(row["skill_id"])
         except (KeyError, TypeError, ValueError):
+            complete = False
             continue
         active[skill_id] = _clamp_level(row.get("active_skill_level"))
         trained[skill_id] = _clamp_level(row.get("trained_skill_level"))
-    return active, trained
+        sp = row.get("skillpoints_in_skill")
+        # `isinstance(sp, bool)` first: bool is an int subclass, so True
+        # would otherwise be stored as 1 SP.
+        if skill_id <= 0 or isinstance(sp, bool) or not isinstance(sp, int) or sp < 0:
+            complete = False
+            continue
+        points[skill_id] = sp
+    return ParsedSkills(active, trained, points if complete else {}, complete)
+
+
+def _parse_attributes(data):
+    """The five learning attributes, or None when the body is not complete.
+
+    No partial result: the estimator needs all five to compute a rate, so
+    four of them is not a smaller answer, it is no answer. Extra fields ESI
+    sends alongside them (remap dates, bonus remaps) are dropped rather than
+    stored -- state.py accepts a map that is exactly these five keys and
+    would reject the whole thing otherwise.
+    """
+    if not isinstance(data, dict):
+        return None
+    out: dict[str, int] = {}
+    for name in ATTRIBUTE_NAMES:
+        value = data.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            return None
+        out[name] = value
+    return out
 
 
 def _parse_date(value):
@@ -662,6 +735,12 @@ class SkillsController:
         selected = self._selected_plan_locked()
         group = self._selected_group_locked()
         ids = self._cache.type_ids()
+        # One metadata snapshot for the whole payload, filtered for
+        # freshness ONCE. Per-row snapshots would each re-read the clock,
+        # so a record expiring mid-build could estimate for the first
+        # characters and not the last -- forty rows disagreeing about the
+        # same public fact.
+        metadata = self._cache.training_metadata(self._now())
         return {
             "auth_configured": application.is_configured(),
             "auth_in_progress": self._auth_in_progress,
@@ -671,7 +750,8 @@ class SkillsController:
             "groups": self._groups_locked(),
             "plans": [self._plan_row_locked(plan, ids, group) for plan in self._plans],
             "characters": [
-                self._character_row(ch, selected, ids) for ch in self._state.characters
+                self._character_row(ch, selected, ids, metadata)
+                for ch in self._state.characters
             ],
             # Every issue planstore.list_plans reported: a rejected file
             # (with its per-line diagnostics) and a folder-level problem
@@ -730,7 +810,7 @@ class SkillsController:
             "ready_count": ready,
         }
 
-    def _character_row(self, ch, plan, ids) -> dict:
+    def _character_row(self, ch, plan, ids, metadata) -> dict:
         """One roster row, scored against the selected plan.
 
         `analysis` is None when no plan is selected or the previously
@@ -742,6 +822,7 @@ class SkillsController:
         is not padding.
         """
         analysis = None
+        estimate = None
         if plan is not None:
             analysis = evaluator.evaluate(
                 plan.requirements,
@@ -750,6 +831,14 @@ class SkillsController:
                 ch.trained_levels,
                 ch.queue,
                 ch.has_snapshot,
+            )
+            estimate = training_mod.estimate(
+                plan.requirements,
+                ids,
+                ch.skill_points,
+                skill_points_complete=ch.skill_points_complete,
+                attributes=self._usable_attributes(ch),
+                metadata=metadata,
             )
         return {
             "character_id": ch.character_id,
@@ -787,7 +876,55 @@ class SkillsController:
             if analysis
             else [],
             "unknown_count": analysis.unknown_count if analysis else 0,
+            # Raw seconds for the page to SORT on and a rendered label for
+            # it to PRINT: the split exists so no arithmetic and no time
+            # vocabulary crosses the bridge as a string that has to be
+            # parsed back. None/"" whenever there is no number, so the page
+            # never has to distinguish "zero" from "unknown".
+            #
+            # `estimated_finish_utc` above is deliberately untouched by
+            # this: that is EVE's own queue fact for the requirements
+            # already queued, and this is the work the plan still needs.
+            # Deriving one from the other would replace a fact with a
+            # guess.
+            "training_remaining_seconds": (
+                estimate.seconds if estimate is not None else None
+            ),
+            "training_remaining_label": (
+                training_mod.format_duration(estimate.seconds)
+                if estimate is not None and estimate.status == training_mod.AVAILABLE
+                else ""
+            ),
+            # "" is NOT a fifth status: it means no estimate was asked
+            # for, because no plan is selected. Every value the estimator
+            # itself produces is one of its four named statuses, and the
+            # non-available ones are technical -- the page renders them all
+            # as one phrase and never shows this word.
+            "training_estimate_status": (
+                estimate.status if estimate is not None else ""
+            ),
         }
+
+    @staticmethod
+    def _usable_attributes(ch) -> dict:
+        """The character's attributes, or {} when they must not be used.
+
+        Both halves are load-bearing. `attributes_fetched_utc` is the only
+        proof the stored map was confirmed rather than merely present, and
+        a non-empty `attributes_error` means the last supplemental call
+        failed -- in which case the map beside it is last-known data kept
+        for recovery, not a current fact to compute a duration from.
+
+        Returning {} rather than raising or reporting is what makes the
+        estimator answer `attributes_unavailable`: the reason itself never
+        leaves the controller, because attributes_error carries transport
+        wording (and, for a scope-shaped 403, re-authentication wording)
+        about a character whose core refresh succeeded and whose token is
+        fine.
+        """
+        if ch.attributes_fetched_utc is None or ch.attributes_error:
+            return {}
+        return ch.attributes
 
     # ----- pushing ------------------------------------------------------
 
@@ -991,6 +1128,7 @@ class SkillsController:
                 (ch.character_id, ch.character_name) for ch in self._state.characters
             ]
         self._resolve_missing_skill_ids()
+        self._refresh_training_metadata()
         total = len(targets)
         for index, (character_id, name) in enumerate(targets, start=1):
             if self._stopping.is_set():
@@ -1020,6 +1158,7 @@ class SkillsController:
             if ch is None:
                 return ""  # Forgotten between the snapshot and here.
             skills_etag, queue_etag = ch.skills_etag, ch.queue_etag
+            attributes_etag = ch.attributes_etag
 
         skills, error, definitive = self._authorised_get(
             character_id, _skills_path(character_id), skills_etag
@@ -1038,7 +1177,24 @@ class SkillsController:
             self._commit_failure(character_id, error, definitive)
             return error
 
-        return self._commit_success(character_id, skills, queue)
+        # Supplemental, and last for the same reason the queue call is
+        # skipped above: attributes are only ever committed alongside a
+        # core snapshot, so with no snapshot to commit there is nothing
+        # this request could be used for.
+        #
+        # Its failure is NOT returned and NOT handed to _commit_failure.
+        # That path marks the core data stale and, on a definitive error,
+        # deletes the refresh token -- spending a re-authentication and a
+        # whole character's freshness on a training estimate would be the
+        # tail wagging the dog. The error is recorded on the character's
+        # own attributes_error instead, which is what makes the estimate
+        # unavailable without touching readiness.
+        attributes, attributes_error, _definitive = self._authorised_get(
+            character_id, _attributes_path(character_id), attributes_etag
+        )
+        return self._commit_success(
+            character_id, skills, queue, attributes, attributes_error
+        )
 
     def _access_token(self, character_id: int, *, rejected=None):
         """(access_token, error, definitive) for one character.
@@ -1277,17 +1433,33 @@ class SkillsController:
             self._sso = sso_mod
         return self._sso
 
-    def _commit_success(self, character_id: int, skills, queue) -> str:
-        """Commit both halves, or neither. Returns "" or a degraded message.
+    def _commit_success(
+        self, character_id: int, skills, queue, attributes, attributes_error: str
+    ) -> str:
+        """Commit both core halves, or neither, plus what attributes allow.
 
-        Both responses have already resolved 200 or 304 by the time this is
-        called -- that check is the caller's, and it is what makes this
-        method a commit rather than a decision. Parsing happens OUTSIDE the
-        lock; only the merge is inside it, one short critical section per
-        character rather than one held across eighty HTTP requests.
+        Both CORE responses have already resolved 200 or 304 by the time
+        this is called -- that check is the caller's, and it is what makes
+        this method a commit rather than a decision. `attributes` is the
+        supplemental one and may be None (its request failed); it can never
+        stop the core commit, only decide whether the estimate inputs move.
+        Parsing happens OUTSIDE the lock; only the merge is inside it, one
+        short critical section per character rather than one held across
+        eighty HTTP requests.
+
+        The returned message covers core/degraded save outcomes only. An
+        attribute-only failure returns "" -- the refresh it belongs to
+        genuinely succeeded, and reporting it as a per-character progress
+        error would put a technical supplemental fault on the readiness
+        row.
         """
         parsed_skills = _parse_skills(skills.data) if skills.ok else None
         parsed_queue = _parse_queue(queue.data) if queue.ok else None
+        parsed_attributes = (
+            _parse_attributes(attributes.data)
+            if attributes is not None and attributes.ok
+            else None
+        )
 
         with self._lock:
             ch = self._state.find(character_id)
@@ -1298,16 +1470,51 @@ class SkillsController:
                 # makes that safe, and a forgotten character must STAY
                 # forgotten or forget silently does nothing.
                 return ""
+            now = self._now()
             if parsed_skills is not None:
-                ch.active_levels, ch.trained_levels = parsed_skills
-                # A 200 with no ETag header leaves the stored one alone
-                # rather than clearing it -- an empty etag just means the
-                # next request is unconditional, which is merely wasteful.
-                ch.skills_etag = skills.etag or ch.skills_etag
+                ch.active_levels = parsed_skills.active_levels
+                ch.trained_levels = parsed_skills.trained_levels
+                ch.skill_points = parsed_skills.skill_points
+                ch.skill_points_complete = parsed_skills.skill_points_complete
+                if parsed_skills.skill_points_complete:
+                    # A 200 with no ETag header leaves the stored one alone
+                    # rather than clearing it -- an empty etag just means the
+                    # next request is unconditional, which is merely wasteful.
+                    ch.skills_etag = skills.etag or ch.skills_etag
+                else:
+                    # An incomplete SP body must NOT leave an ETag behind:
+                    # the next refresh would send it, take a 304, and never
+                    # get another chance at a body carrying complete SP.
+                    # Same rule state.py applies to a legacy document on
+                    # load, applied here to a live response.
+                    ch.skills_etag = ""
             if parsed_queue is not None:
                 ch.queue = parsed_queue
                 ch.queue_etag = queue.etag or ch.queue_etag
-            ch.fetched_utc = self._now()
+            # A 304 says the STORED attributes are current, so it is a
+            # confirmation only when there are stored attributes to confirm.
+            confirmed = attributes is not None and (
+                parsed_attributes is not None
+                or (attributes.not_modified and bool(ch.attributes))
+            )
+            if confirmed:
+                if parsed_attributes is not None:
+                    ch.attributes = parsed_attributes
+                    ch.attributes_etag = attributes.etag or ch.attributes_etag
+                # Stamped from the same `now` as fetched_utc but kept in its
+                # own field: attributes have their own freshness, and
+                # borrowing the core snapshot's would date them by a
+                # confirmation they were never part of.
+                ch.attributes_fetched_utc = now
+                ch.attributes_error = ""
+            else:
+                # The last-known attributes stay for recovery and
+                # diagnostics; the error is what makes them unusable for an
+                # estimate, and attributes_fetched_utc deliberately does not
+                # move -- an old attribute snapshot must never be presented
+                # as confirmed alongside newly refreshed SP.
+                ch.attributes_error = attributes_error or MSG_ATTRIBUTES_UNREADABLE
+            ch.fetched_utc = now
             ch.error = ""
             ch.needs_reauth = False
             if self._save_locked():
@@ -1379,6 +1586,76 @@ class SkillsController:
                 # The cache rebuilds completely by re-resolving names, so a
                 # failed write costs requests on the next refresh and
                 # nothing else.
+                logger.warning("Could not save the skill id cache", exc_info=True)
+
+    def _refresh_training_metadata(self) -> None:
+        """Backfill rank and training attributes for plan skills that lack
+        them, or whose records have aged out.
+
+        Runs immediately after id resolution and before any character is
+        fetched, for the same reason resolution does: this is public,
+        character-independent data, and one missing record suppresses the
+        estimate for EVERY character the selected plan is scored against.
+        Doing it after the roster loop would leave the whole screen a
+        refresh behind.
+
+        It is a SEPARATE pass rather than an extension of
+        `_resolve_missing_skill_ids`, which stays about ids alone: a name
+        resolved in this very pass is due for metadata here, and a name
+        resolved months ago is due again when its record expires. Those are
+        different populations, and folding them together would tie a
+        30-day expiry to a lookup that never repeats.
+
+        Failures are logged and nothing more. Readiness comes from ids and
+        levels, so a type detail that will not load costs the estimate and
+        never the answer the screen exists for.
+        """
+        with self._lock:
+            # Same source and same `ok`-by-construction argument as
+            # _resolve_missing_skill_ids: only cleanly parsed plans are in
+            # self._plans. Explicit plan names only -- prerequisites are
+            # not expanded anywhere in this app, and inventing them here
+            # would spend requests on skills no plan actually asks for.
+            names = sorted(
+                {req.skill_name for plan in self._plans for req in plan.requirements}
+            )
+            # Read under the lock with the names it filters, so the
+            # freshness decision and the plan snapshot cannot straddle a
+            # reload.
+            now = self._now()
+            due = self._cache.metadata_due(names, now)
+        if not due:
+            return
+        try:
+            # OUTSIDE the lock. This fans out one public request per type
+            # over a thread pool; holding the state lock across it would
+            # block every page read for the length of the fetch, and
+            # `state_payload` is called on the bridge thread.
+            accepted, failures = skillids.fetch_training_metadata(
+                due, self._client, now
+            )
+        except Exception:
+            logger.exception("Skill training metadata refresh failed")
+            return
+        if failures:
+            # Bounded: names, not per-type diagnostics, and one line for
+            # the whole pass rather than one per failed type.
+            logger.info("Unresolved skill training metadata: %s", sorted(failures))
+        if not accepted:
+            return
+        with self._lock:
+            # ONE lock hold for the whole staged result and its save. A
+            # payload built between two merges would score one plan skill
+            # with an estimate and the next without, so the row would show
+            # a duration that is confidently too small -- worse than the
+            # "unavailable" it replaced.
+            self._cache.merge_metadata(accepted)
+            try:
+                skillids.save(self._cache, self._cache_path)
+            except OSError:
+                # Same trade _resolve_missing_skill_ids makes: the records
+                # are live in memory, and a failed write costs requests on
+                # the next refresh and nothing else.
                 logger.warning("Could not save the skill id cache", exc_info=True)
 
     # ----- forget -----------------------------------------------------
@@ -1607,6 +1884,17 @@ class SkillsController:
                     ch.fetched_utc = None
                     ch.skills_etag = ""
                     ch.queue_etag = ""
+                    # Total SP and the five learning attributes are just as
+                    # much someone else's data as active_levels/queue above
+                    # -- character-owned estimate inputs, not public
+                    # training metadata, so they are cleared here too.
+                    # SkillIdCache is untouched: it is not character-owned.
+                    ch.skill_points = {}
+                    ch.skill_points_complete = False
+                    ch.attributes = {}
+                    ch.attributes_fetched_utc = None
+                    ch.attributes_error = ""
+                    ch.attributes_etag = ""
                     ch.error = MSG_OWNER_CHANGED
                 else:
                     ch.error = ""

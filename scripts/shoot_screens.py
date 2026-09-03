@@ -72,13 +72,48 @@ SCREENS = (
         True,
     ),
     Screen(
+        "settings-previews-sticky-conflict",
+        "Settings - Previews (conflict at sticky edge)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
+        "settings-previews-detail",
+        "Settings - Previews (detail)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
         "settings-previews-copy",
         "Settings - Previews (copy picker)",
         "settings",
         "previews",
         True,
     ),
+    Screen(
+        "settings-previews-groups",
+        "Settings - Previews (groups)",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
+        "settings-previews-narrow",
+        "Settings - Previews (narrow 840x625)",
+        "settings",
+        "previews",
+        True,
+    ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
+    Screen(
+        "settings-alerts-advanced",
+        "Settings - Alerts (advanced pulse behavior)",
+        "settings",
+        "alerts",
+        True,
+    ),
     Screen("settings-general", "Settings - General", "settings", "general", False),
     Screen("profiles", "Profiles", "evesettings", None, True),
     Screen(
@@ -131,38 +166,351 @@ def dialog_payload() -> dict:
     }
 
 
+def load_dev_preview_fixture(checkout: str | None = None) -> dict:
+    """Parse DEV_PREVIEW_HOTKEYS_FIXTURE from wingman/web/dev.js.
+
+    The fixture is a strict JSON-compatible object literal (double-quoted
+    keys and strings, no JS-specific syntax inside the literal body), so
+    json.loads works directly on the extracted block.
+
+    checkout defaults to the directory containing this script's parent.
+    Raises ValueError with a clear message if the marker is absent or
+    the braces are unbalanced.
+    """
+    if checkout is None:
+        checkout = str(pathlib.Path(__file__).resolve().parent.parent)
+    dev_js_path = pathlib.Path(checkout) / "wingman" / "web" / "dev.js"
+    source = dev_js_path.read_text(encoding="utf-8")
+
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    if marker not in source:
+        raise ValueError(
+            f"{marker} not found in {dev_js_path} -- "
+            "the fixture declaration may have been renamed or removed"
+        )
+
+    raw = source[source.index(marker) :]
+    # Locate the opening brace of the object literal
+    try:
+        brace_start = raw.index("{")
+    except ValueError:
+        raise ValueError(f"{marker} found in {dev_js_path} but has no opening brace")
+
+    # Walk the source character by character to find the matching closing brace.
+    # Bounded by the length of the source -- never infinite.
+    depth = 0
+    end = brace_start
+    found = False
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                found = True
+                break
+    if not found:
+        raise ValueError(
+            f"{marker} object literal in {dev_js_path} has unbalanced braces"
+        )
+
+    body = raw[brace_start : end + 1]
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{marker} body in {dev_js_path} is not valid JSON: {exc}"
+        ) from exc
+
+
+def _fixture_preview_setup(body: str) -> str:
+    """Run a Preview capture against the one extracted, read-only fixture."""
+    payload_js = json.dumps(load_dev_preview_fixture())
+    return (
+        "(function () {\n"
+        "  var payload = " + payload_js + ";\n"
+        "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+        "    throw new Error('onPreviewHotkeys is missing');\n"
+        "  }\n"
+        "  window.onPreviewHotkeys(payload);\n" + body + "\n}())"
+    )
+
+
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
     if screen.key == "settings-previews":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = 0; }
-        }())"""
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = 0;"
+        )
     if screen.key == "settings-previews-middle":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) {
-            pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
-          }
-        }())"""
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;"
+        )
     if screen.key == "settings-previews-table":
-        return """(function () {
-          var pane = document.querySelector('.settings-pane');
-          if (pane) { pane.scrollTop = pane.scrollHeight; }
-        }())"""
-    if screen.key == "settings-previews-copy":
-        return """WM.choose(
-          'Copy preview geometry',
-          'Copy saved size and position to "Aleksandrina Shadowbanes Voidstriders".',
-          [
-            {label: 'Online', options: [
-              {value: 'Aiga Otsolen', label: 'Aiga Otsolen'}
-            ]},
-            {label: 'Offline', options: [
-              {value: 'Tanuki Solette', label: 'Tanuki Solette'}
-            ]}
-          ],
-          'Copy')"""
+        return _fixture_preview_setup(
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  pane.scrollTop = pane.scrollHeight;"
+        )
+    if screen.key == "settings-previews-sticky-conflict":
+        # Task 6. Tanuki Solette's row (the FIRST OFFLINE row) used to be
+        # the target here, staged behind BOTH the sticky column header and
+        # the sticky Offline heading. That left nothing further below her
+        # to scroll into: nudging her row behind both stickies clamped the
+        # pane at the same maximum scrollTop settings-previews-table
+        # already reaches by setting scrollTop = scrollHeight, so the two
+        # captures came out pixel-identical.
+        #
+        # Aiga Otsolen's direct bind (Ctrl+Alt+1) collides with an ACTIVE
+        # EVE bookmark keybind instead (bookmark_chords.active in the
+        # fixture), and she is the FIRST ONLINE character row -- directly
+        # under the sticky column header, with every other online row,
+        # the Offline heading and every offline row still beneath her. That
+        # gives this capture room to stage her row just behind the header
+        # without running out of scrollable content the way Tanuki's did.
+        # Only ONE sticky matters for her: the Offline heading opens the
+        # offline block, which starts after every online character, so it
+        # sits well below her row and never covers it.
+        #
+        # That headroom is not automatically enough, though: the roster
+        # card above #preview-binds (per-character size/lock/never-minimize
+        # controls for the fixture's twelve characters) is tall enough at
+        # the app's own default window (1040x680, window.py) that Aiga's
+        # row sits close to where the pane's OWN maximum scrollTop already
+        # is -- measured directly, aligning her row's cell to the pane's
+        # top asked for ~54px more scroll than the pane had before opening
+        # anything below her. Opening Aleksandrina Shadowbanes Voidstriders'
+        # Configure detail -- the same read-only disclosure
+        # settings-previews-detail already drives, well below Aiga in the
+        # offline block -- adds ~70px of legitimate, real content below her
+        # (no fabricated spacing, no bridge write: previews.js's Configure
+        # click handler only flips local state and re-renders), which is
+        # enough headroom to clear that ~54px gap and let this stage reach
+        # its true, non-clamped position instead of the pane's bottom.
+        #
+        # appendBindRow's owner-key contract (previews.js) is
+        # 'character:' + character for a character row; bindConflictId then
+        # keys the conflict div's id off encodeURIComponent(ownerKey). The
+        # conflict div is the row's very next sibling as long as that
+        # character's own Configure detail is not open (appendBindRow only
+        # inserts a detail between them when openDetailName matches), so
+        # closing every inherited detail first (as the groups/narrow stages
+        # already do) keeps that adjacency true here too.
+        #
+        # The row itself is `display: contents` (style.css), which leaves
+        # it with no rendered box of its own -- calling scrollIntoView on
+        # it is a silent no-op, not an error, so the earlier Tanuki version
+        # of this script relied on the pane's scrollTop already being where
+        # it needed to be by coincidence. Its first rendered child carries
+        # the box the row would have had, so that child is what gets
+        # scrolled and the pane's own scrollTop is what gets read back,
+        # rather than trusting the contents element's own (always-zero)
+        # geometry.
+        #
+        # The scroll position is measured live off the rendered sticky
+        # header rather than a hardcoded pixel guess, so it holds if its
+        # height ever changes: scroll the row's cell toward the pane's top,
+        # then nudge only far enough that the conflict text clears the
+        # header, leaving the row itself at or behind the sticky-header
+        # transition -- the scenario this capture exists to show. Never a
+        # blanket `pane.scrollTop = pane.scrollHeight`: that is
+        # settings-previews-table's own mechanism, and reusing it here
+        # would reproduce the exact pixel-identical capture this rewrite
+        # exists to fix. A final bottom-clamp check throws explicitly if
+        # the nudge above still lands on that same maximum scrollTop --
+        # this stage must FAIL rather than silently ship a duplicate of
+        # the table capture again under a different name.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        owner_key_js = json.dumps("character:Aiga Otsolen")
+        long_name = "Aleksandrina Shadowbanes Voidstriders"
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (button) {\n"
+            "    button.click();\n"
+            "  });\n"
+            "  var pane = document.querySelector('.settings-pane');\n"
+            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  var extra = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!extra) {\n"
+            "    throw new Error(\n"
+            "      'Aleksandrina Shadowbanes Voidstriders Configure control '\n"
+            "      + 'is missing');\n"
+            "  }\n"
+            "  extra.click();\n"
+            "  var reopened = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!reopened || reopened.getAttribute('aria-expanded') !== 'true') {\n"
+            "    throw new Error(\n"
+            "      'Aleksandrina Shadowbanes Voidstriders detail did not '\n"
+            "      + 'open, so this stage has no extra scroll extent below '\n"
+            "      + 'Aiga to work with');\n"
+            "  }\n"
+            "  var conflict = document.getElementById(\n"
+            "    'preview-bind-conflict-' + encodeURIComponent("
+            + owner_key_js
+            + "));\n"
+            "  if (!conflict) {\n"
+            "    throw new Error('Aiga Otsolen conflict warning is missing');\n"
+            "  }\n"
+            "  var row = conflict.previousElementSibling;\n"
+            "  if (!row || !row.classList.contains('row')) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning is not directly after its owning row');\n"
+            "  }\n"
+            "  var cell = row.firstElementChild;\n"
+            "  if (!cell) {\n"
+            "    throw new Error(\n"
+            "      'Owning row has no rendered cell to measure');\n"
+            "  }\n"
+            "  cell.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "  var headCell = document.querySelector(\n"
+            "    '#preview-binds .bind-head > span');\n"
+            "  if (!headCell) {\n"
+            "    throw new Error('Sticky preview header is missing');\n"
+            "  }\n"
+            "  var coverBottom = headCell.getBoundingClientRect().bottom;\n"
+            "  var conflictTop = conflict.getBoundingClientRect().top;\n"
+            "  if (conflictTop < coverBottom) {\n"
+            "    pane.scrollTop += (coverBottom - conflictTop);\n"
+            "  }\n"
+            "  var paneRect = pane.getBoundingClientRect();\n"
+            "  var after = conflict.getBoundingClientRect();\n"
+            "  if (after.bottom <= paneRect.top || after.top >= paneRect.bottom) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning is not within the scrollport');\n"
+            "  }\n"
+            "  var maxScroll = pane.scrollHeight - pane.clientHeight;\n"
+            "  if (pane.scrollTop >= maxScroll - 1) {\n"
+            "    throw new Error(\n"
+            "      'Staging this row reached the panes bottom clamp, the '\n"
+            "      + 'exact pixel-identical capture this stage exists to '\n"
+            "      + 'avoid -- settings-previews-table already shows that '\n"
+            "      + 'state');\n"
+            "  }\n"
+            "}())"
+        )
+    if screen.key in {"settings-previews-detail", "settings-previews-copy"}:
+        # Inject only the authoritative fixture, then drive the same Configure
+        # and Copy controls a user reaches. Every required step fails closed:
+        # a live-state or half-staged capture is misleading evidence.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        long_name = "Aleksandrina Shadowbanes Voidstriders"
+        copy_click = ""
+        if screen.key == "settings-previews-copy":
+            copy_click = (
+                "  var copy = document.querySelector(\n"
+                "    '[data-preview-detail-control=\"copy\"]');\n"
+                "  if (!copy) { throw new Error('Copy control is missing'); }\n"
+                "  copy.click();\n"
+                "  var overlay = WM.el('overlay');\n"
+                "  var dialog = WM.el('dialog');\n"
+                "  if (!overlay || overlay.hidden || !dialog\n"
+                "      || !dialog.classList.contains('choice')) {\n"
+                "    throw new Error('Copy chooser did not open');\n"
+                "  }\n"
+            )
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (button) {\n"
+            "    button.click();\n"
+            "  });\n"
+            "  var configure = document.querySelector(\n"
+            "    '[data-preview-configure=\"" + long_name + "\"]');\n"
+            "  if (!configure) { throw new Error('Configure control is missing'); }\n"
+            "  var detailId = configure.getAttribute('aria-controls');\n"
+            "  configure.click();\n"
+            "  var detail = document.getElementById(detailId);\n"
+            "  if (!detail) { throw new Error('Configure detail is missing'); }\n"
+            "  detail.scrollIntoView({block: 'center', behavior: 'instant'});\n"
+            + copy_click
+            + "}())"
+        )
+    if screen.key == "settings-previews-groups":
+        # Load the authoritative fixture through the read-side handler, then
+        # frame the real manager. Do not fall back to a live page or its bottom.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (configure) {\n"
+            "    configure.click();\n"
+            "  });\n"
+            "  if (document.querySelector(\n"
+            "      '[data-preview-configure][aria-expanded=\"true\"]')) {\n"
+            "    throw new Error('No preview detail was closed');\n"
+            "  }\n"
+            "  var mgr = document.querySelector('.preview-group-manager');\n"
+            "  if (!mgr) { throw new Error('Preview group manager is missing'); }\n"
+            "  mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
+    if screen.key == "settings-previews-narrow":
+        # CDP pins 840x625 before this fixture-backed setup. Close inherited
+        # details, then frame the generated roster heading; every missing
+        # prerequisite fails the shot instead of photographing live state.
+        fixture = load_dev_preview_fixture()
+        payload_js = json.dumps(fixture)
+        return (
+            "(function () {\n"
+            "  var payload = " + payload_js + ";\n"
+            "  if (typeof window.onPreviewHotkeys !== 'function') {\n"
+            "    throw new Error('onPreviewHotkeys is missing');\n"
+            "  }\n"
+            "  window.onPreviewHotkeys(payload);\n"
+            "  var expanded = document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "  Array.prototype.forEach.call(expanded, function (configure) {\n"
+            "    configure.click();\n"
+            "  });\n"
+            "  var heading = document.querySelector('#preview-roster-heading');\n"
+            "  if (!heading) { throw new Error('Preview roster heading is missing'); }\n"
+            "  heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
+    if screen.key == "settings-alerts-advanced":
+        # Task 5. Every id inside #alert-advanced is unchanged from the
+        # primary-table days (0fd49d8), and alerts.js has no listener on
+        # the disclosure's own toggle event, so opening it here is purely
+        # presentational -- no Api call, no click on any control inside it.
+        return (
+            "(function () {\n"
+            "  var details = document.getElementById('alert-advanced');\n"
+            "  if (!details) {\n"
+            "    throw new Error('Alerts advanced disclosure is missing');\n"
+            "  }\n"
+            "  details.open = true;\n"
+            "  details.scrollIntoView({block: 'center', behavior: 'instant'});\n"
+            "}())"
+        )
     return None
 
 
@@ -433,10 +781,33 @@ class CDP:
         result = self._call(
             "Runtime.evaluate", {"expression": expression, "returnByValue": True}
         )
+        if "exceptionDetails" in result:
+            raise TargetError(result["exceptionDetails"])
         return result.get("result", {}).get("value")
 
     def screenshot(self) -> bytes:
         return base64.b64decode(self._call("Page.captureScreenshot")["data"])
+
+    def set_device_metrics_override(self, *, width: int, height: int) -> None:
+        """Pin the page viewport to the given logical pixel size.
+
+        deviceScaleFactor=1 keeps CSS pixels equal to physical pixels (no
+        DPI scaling artefacts).  mobile=False avoids viewport-meta
+        side-effects that could widen the layout beyond the requested width.
+        """
+        self._call(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
+        )
+
+    def clear_device_metrics_override(self) -> None:
+        """Restore the real viewport after a pinned-viewport capture."""
+        self._call("Emulation.clearDeviceMetricsOverride")
 
     def close(self) -> None:
         self._ws.close()
@@ -532,11 +903,32 @@ def walk(
                 if screen.section:
                     cdp.evaluate(f"WM.section({screen.section!r})")
             time.sleep(settle_ms / 1000)
-            setup = screen_setup_script(screen)
-            if setup:
-                cdp.evaluate(setup)
-                time.sleep(0.25)
-            (out_dir / name).write_bytes(cdp.screenshot())
+            if screen.key == "settings-previews-narrow":
+                # CDP viewport override MUST be applied before the setup
+                # script runs (finding 1, round 2): the setup script injects
+                # the fixture via onPreviewHotkeys and scrolls to the roster
+                # heading -- both must execute at 840x625 so the layout
+                # is already constrained before the scroll position is chosen.
+                # window.resizeTo is a no-op in WebView2; CDP emulation is
+                # the only mechanism that works.
+                # The clear is in a finally so the real viewport is restored
+                # even when setup or capture fails, preventing distorted
+                # captures of all later screens.
+                cdp.set_device_metrics_override(width=840, height=625)
+                try:
+                    setup = screen_setup_script(screen)
+                    if setup:
+                        cdp.evaluate(setup)
+                        time.sleep(0.25)
+                    (out_dir / name).write_bytes(cdp.screenshot())
+                finally:
+                    cdp.clear_device_metrics_override()
+            else:
+                setup = screen_setup_script(screen)
+                if setup:
+                    cdp.evaluate(setup)
+                    time.sleep(0.25)
+                (out_dir / name).write_bytes(cdp.screenshot())
             if screen.key in {"dialog", "settings-previews-copy"}:
                 # Dismiss every staged overlay before the next screen. Cancel
                 # is side-effect free for both the Python-shaped confirm and

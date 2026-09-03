@@ -7,6 +7,7 @@ below it touches HWNDs and therefore may only run on the preview thread.
 import logging
 import os
 import time
+from enum import Enum, auto
 
 from ..alerts import state as alerts_state
 from . import alertframes, chrome, geometry, layered, win32
@@ -19,9 +20,6 @@ logger = logging.getLogger(__name__)
 # how many moves it processed, how long the handler took, and -- the part
 # that matters -- the largest gap BETWEEN events, which is what a stutter
 # actually is.
-# .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
-# trailing space, so an exact match silently disables this for anyone
-# who sets it the obvious way.
 # .strip(): in cmd.exe, `set VAR=1 && prog` assigns "1 " with a
 # trailing space, so an exact match silently disables this for anyone
 # who sets it the obvious way.
@@ -70,36 +68,27 @@ def resize_result(start, current, rect, min_size=MIN_SIZE, aspect=None, chrome=(
     return rect._replace(w=max(min_size[0], w), h=max(min_size[1], h))
 
 
-def activate(libs, hwnd) -> bool:
-    """Bring *hwnd* to the foreground. Returns whether it actually worked.
+class ActivationResult(Enum):
+    ACTIVATED = auto()
+    PENDING_RESTORE = auto()
+    PENDING_FOREGROUND = auto()
+    REFUSED = auto()
 
-    SetForegroundWindow alone does not work: Windows refuses it from a
-    process that does not own the foreground. The two-stage
-    AttachThreadInput dance is what makes it succeed.
 
-    The verdict is read from GetForegroundWindow, never from
-    SetForegroundWindow's return value -- that reports the request was
-    accepted, not that the window came forward.
-
-    Every attach MUST be balanced by a detach, including on the failure
-    path: a leaked attachment welds two threads' input queues together for
-    the life of the process, and the symptom is EVE's keyboard input
-    arriving in the wrong client.
-    """
+def activate_attached(libs, hwnd, source_hwnd) -> ActivationResult:
+    """Try activation with the source and target input queues attached."""
     if libs.user32.IsIconic(hwnd):
         libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
-
-    current = libs.user32.GetForegroundWindow()
-    if current == hwnd:
-        return True
-
+        return ActivationResult.PENDING_RESTORE
     our_tid = libs.kernel32.GetCurrentThreadId()
-    fg_tid = libs.user32.GetWindowThreadProcessId(current, None)
+    source_tid = libs.user32.GetWindowThreadProcessId(source_hwnd, None)
     target_tid = libs.user32.GetWindowThreadProcessId(hwnd, None)
 
     attached = []
     try:
-        for tid in (fg_tid, target_tid):
+        # Source and target HWNDs can share an input queue; attaching the same
+        # thread twice would require matching duplicate detach calls.
+        for tid in dict.fromkeys((source_tid, target_tid)):
             if (
                 tid
                 and tid != our_tid
@@ -107,34 +96,51 @@ def activate(libs, hwnd) -> bool:
             ):
                 attached.append(tid)
         libs.user32.SetForegroundWindow(hwnd)
-        # EVE-O Preview's ActivateWindow does this and we did not: with
-        # the queues still attached, SetFocus hands the target the
-        # KEYBOARD focus, not just the foreground. Detaching without it
-        # raced the focus transition -- the window came up foreground
-        # but focusless, and the first ~0.5-1s of clicks and keys went
-        # nowhere. It must sit between SetForegroundWindow and the
-        # detach below; called after detaching it has no rights to the
-        # foreground and does nothing.
-        libs.user32.SetFocus(hwnd)
+        foreground = libs.user32.GetForegroundWindow() or 0
+        if foreground == hwnd:
+            # Direct activation deliberately has no SetFocus: keep this repair
+            # in the fallback slot where the target queue is attached.
+            libs.user32.SetFocus(hwnd)
     finally:
-        for tid in attached:
+        # Every successful attachment must be detached exactly once in reverse
+        # order, including when a foreground API raises.
+        for tid in reversed(attached):
             libs.user32.AttachThreadInput(our_tid, tid, False)
 
-    ok = libs.user32.GetForegroundWindow() == hwnd
-    if not ok:
-        # INFO, not DEBUG: the root logger runs at INFO (__main__.py:64),
-        # so a debug line here is invisible in the only log a user will
-        # ever send us -- for the single most likely field complaint,
-        # "clicking a preview does nothing". It cannot spam either: this
-        # fires once per click, and only when the click failed.
-        logger.info(
-            "Activation of 0x%x did not take; foreground is 0x%x. "
-            "Windows refuses a foreground change from a process "
-            "that has not received recent user input.",
-            hwnd,
-            libs.user32.GetForegroundWindow() or 0,
-        )
-    return ok
+    if foreground == hwnd:
+        return ActivationResult.ACTIVATED
+
+    # INFO, not DEBUG: the root logger runs at INFO, so this remains visible in
+    # the log a user sends for the field complaint "clicking does nothing".
+    logger.info(
+        "Activation of 0x%x did not take; foreground is 0x%x. "
+        "Windows refuses a foreground change from a process "
+        "that has not received recent user input.",
+        hwnd,
+        foreground,
+    )
+    return ActivationResult.REFUSED
+
+
+def activate(libs, hwnd) -> ActivationResult:
+    """Request foreground directly, using attachment only after refusal."""
+    if libs.user32.IsIconic(hwnd):
+        # ShowWindowAsync only requests restoration. Let the host retry after
+        # IsIconic clears rather than racing foreground work with restoration.
+        libs.user32.ShowWindowAsync(hwnd, win32.SW_RESTORE)
+        return ActivationResult.PENDING_RESTORE
+
+    source = libs.user32.GetForegroundWindow() or 0
+    if source == hwnd:
+        return ActivationResult.ACTIVATED
+
+    libs.user32.SetForegroundWindow(hwnd)
+    foreground = libs.user32.GetForegroundWindow() or 0
+    if foreground == hwnd:
+        return ActivationResult.ACTIVATED
+    if foreground == 0:
+        return ActivationResult.PENDING_FOREGROUND
+    return activate_attached(libs, hwnd, source)
 
 
 _CLASS_REGISTERED = False
@@ -295,12 +301,12 @@ class PreviewWindow:
         # user locked must still be locked after a restart, and reporting
         # locked=False on the next drag would erase the flag.
         self.locked = locked
-        # Set once from the host at creation; Task 4 wires the live-update
-        # path that lets this change on an already-open window.
+        # Set once from the host at creation; the live restyle path lets this
+        # change on an already-open window.
         self.show_labels = show_labels
         # A DWM thumbnail property, not a bitmap one -- see the note on
-        # _chrome_key() below. Set once at creation; Task 4 wires the
-        # live-update path that lets this change on an already-open window.
+        # _chrome_key() below. Set once at creation; the live restyle path lets
+        # this change on an already-open window.
         self.opacity = opacity
         # Set once from the host at creation; PreviewHost._restyle pushes
         # live updates, like show_labels and locked.

@@ -7,6 +7,7 @@ the same split bookmarks.py/hotkeys.py already uses.
 """
 
 import importlib.util
+import json
 import pathlib
 import re
 
@@ -35,7 +36,7 @@ shoot = _load()
 
 def test_gate_on_shoots_every_screen():
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 14
+    assert len(to_shoot) == 19
     assert skipped == []
 
 
@@ -53,12 +54,24 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 10
+    assert len(skipped) == 15
 
 
 def _strip_js_comments(text: str) -> str:
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     return re.sub(r"^\s*//.*$", "", text, flags=re.MULTILINE)
+
+
+def _query_selector_arguments(expression: str) -> list[str]:
+    """Parse literal arguments passed directly to document.querySelector."""
+    return [
+        match.group(2)
+        for match in re.finditer(
+            r"document\.querySelector\(\s*(['\"])(.*?)\1\s*\)",
+            expression,
+            re.DOTALL,
+        )
+    ]
 
 
 def test_screen_list_matches_the_page():
@@ -112,14 +125,22 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         "settings-previews",
         "settings-previews-middle",
         "settings-previews-table",
+        "settings-previews-sticky-conflict",
+        "settings-previews-detail",
         "settings-previews-copy",
+        "settings-previews-groups",
+        "settings-previews-narrow",
     }
     assert "scrollTop = 0" in variants["settings-previews"]
     assert "scrollHeight - pane.clientHeight" in variants["settings-previews-middle"]
     assert "pane.scrollHeight" in variants["settings-previews-table"]
-    assert "WM.choose(" in variants["settings-previews-copy"]
-    assert "Online" in variants["settings-previews-copy"]
-    assert "Offline" in variants["settings-previews-copy"]
+    detail = variants["settings-previews-detail"]
+    copy = variants["settings-previews-copy"]
+    assert '[data-preview-configure="Aleksandrina Shadowbanes Voidstriders"]' in detail
+    assert "WM.choose(" not in copy
+    assert '[data-preview-configure="Aleksandrina Shadowbanes Voidstriders"]' in copy
+    assert '[data-preview-detail-control="copy"]' in copy
+    assert copy.index("configure.click()") < copy.index("copy.click()")
 
 
 def test_page_candidates_keeps_the_real_app_page():
@@ -282,10 +303,15 @@ def test_manifest_records_what_the_gate_skipped():
         "profiles-account-identity",
         "profiles-backups",
         "settings-alerts",
+        "settings-alerts-advanced",
         "settings-bookmarks",
         "settings-previews",
         "settings-previews-copy",
+        "settings-previews-detail",
+        "settings-previews-groups",
         "settings-previews-middle",
+        "settings-previews-narrow",
+        "settings-previews-sticky-conflict",
         "settings-previews-table",
         "skills",
     ]
@@ -439,3 +465,1256 @@ def test_ensure_engine_reports_false_when_the_fetcher_is_absent(tmp_path):
     """A checkout without packaging/ is not an error, just a set that will
     carry the artifact."""
     assert shoot.ensure_engine(str(tmp_path), "python") is False
+
+
+def test_preview_group_stages_are_present():
+    """Task 5: the shoot list must include a group-populated stage and an
+    840x625 narrow-viewport stage for the previews section.
+
+    The group-keybinds stage shows the Global keybinds card fully populated
+    with group rows.  The narrow stage captures 840x625 character rows with
+    long character/group names.  Both must be in SCREENS and gated (require
+    EVE) like the other previews screens.
+    """
+    keys = {s.key for s in shoot.SCREENS}
+    assert "settings-previews-groups" in keys, (
+        "settings-previews-groups stage missing from SCREENS"
+    )
+    assert "settings-previews-narrow" in keys, (
+        "settings-previews-narrow stage missing from SCREENS"
+    )
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    assert groups_screen.gated, "settings-previews-groups must be gated (EVE required)"
+    assert narrow_screen.gated, "settings-previews-narrow must be gated (EVE required)"
+    assert groups_screen.section == "previews"
+    assert narrow_screen.section == "previews"
+
+
+def test_preview_group_stage_setup_scripts():
+    """The group and floor stages scroll without resizing the page.
+
+    CDP owns the 840x625 override; the floor setup merely closes inherited
+    details and frames the roster heading in the Settings scrollport.
+    """
+    scripts = {
+        s.key: shoot.screen_setup_script(s)
+        for s in shoot.SCREENS
+        if s.key in {"settings-previews-groups", "settings-previews-narrow"}
+    }
+    assert "settings-previews-groups" in scripts
+    assert "settings-previews-narrow" in scripts
+    groups_script = scripts["settings-previews-groups"]
+    narrow_script = scripts["settings-previews-narrow"]
+    # The groups stage must scroll to reveal the Manage groups disclosure.
+    assert groups_script is not None, "settings-previews-groups needs a setup script"
+    assert "preview-group-manager" in groups_script
+    assert "scrollIntoView" in groups_script, (
+        "groups stage setup must scroll the real group manager into view"
+    )
+    # The narrow stage must scroll (not resize via window.resizeTo --
+    # that is a no-op in WebView2; the viewport is set through CDP instead).
+    assert narrow_script is not None, "settings-previews-narrow needs a setup script"
+    assert "resizeTo" not in narrow_script, (
+        "narrow stage must NOT use window.resizeTo (it is a no-op in WebView2); "
+        "use Emulation.setDeviceMetricsOverride via CDP instead"
+    )
+    assert "#preview-roster-heading" in narrow_script
+    assert "scrollIntoView" in narrow_script, (
+        "narrow stage must frame the roster heading in the scrollport"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CDP viewport-override tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeWS:
+    """Minimal websocket stand-in that speaks just enough CDP to satisfy CDP."""
+
+    def __init__(self):
+        self._sent = []
+        self._id = 0
+        self._queue = []
+
+    def send(self, text):
+        import json as _json
+
+        msg = _json.loads(text)
+        self._sent.append(msg)
+        # Prepare a matching reply so _call() sees its id immediately.
+        self._queue.append({"id": msg["id"], "result": {"data": ""}})
+
+    def recv(self):
+        import json as _json
+
+        return _json.dumps(self._queue.pop(0))
+
+
+def test_cdp_set_device_metrics_override_sends_correct_params():
+    """Emulation.setDeviceMetricsOverride must be sent with width=840,
+    height=625, deviceScaleFactor=1, mobile=False.
+
+    These are the only parameters that meet the brief: width/height match
+    the documented minimum viewport, scale factor 1 keeps CSS pixels equal
+    to physical pixels (no DPI scaling artefacts), and mobile=False avoids
+    viewport-meta side-effects that could widen the layout.
+    """
+    ws = _FakeWS()
+    cdp = shoot.CDP(ws)
+    cdp.set_device_metrics_override(width=840, height=625)
+    methods = [m["method"] for m in ws._sent]
+    assert "Emulation.setDeviceMetricsOverride" in methods, (
+        "CDP must send Emulation.setDeviceMetricsOverride for the narrow viewport"
+    )
+    call = next(
+        m for m in ws._sent if m["method"] == "Emulation.setDeviceMetricsOverride"
+    )
+    params = call["params"]
+    assert params["width"] == 840
+    assert params["height"] == 625
+    assert params["deviceScaleFactor"] == 1
+    assert params["mobile"] is False
+
+
+def test_cdp_clear_device_metrics_override_sends_correct_method():
+    """Emulation.clearDeviceMetricsOverride must be sent with no params
+    (or empty params) to restore the real viewport after the narrow shot.
+    """
+    ws = _FakeWS()
+    cdp = shoot.CDP(ws)
+    cdp.clear_device_metrics_override()
+    methods = [m["method"] for m in ws._sent]
+    assert "Emulation.clearDeviceMetricsOverride" in methods, (
+        "CDP must send Emulation.clearDeviceMetricsOverride after the narrow shot"
+    )
+
+
+class _ExceptionWS:
+    """Websocket stub that returns a Runtime.evaluate response with
+    exceptionDetails set, simulating a JavaScript exception."""
+
+    def __init__(self, exception_details):
+        self._exception_details = exception_details
+        self._id = 0
+        self._queue = []
+
+    def send(self, text):
+        import json as _json
+
+        msg = _json.loads(text)
+        # For Runtime.evaluate, return exceptionDetails; for others, normal empty result.
+        if msg.get("method") == "Runtime.evaluate":
+            self._queue.append(
+                {
+                    "id": msg["id"],
+                    "result": {
+                        "result": {"type": "undefined"},
+                        "exceptionDetails": self._exception_details,
+                    },
+                }
+            )
+        else:
+            self._queue.append({"id": msg["id"], "result": {}})
+
+    def recv(self):
+        import json as _json
+
+        return _json.dumps(self._queue.pop(0))
+
+
+def test_cdp_evaluate_raises_target_error_on_exception_details():
+    """CDP.evaluate must detect exceptionDetails in the Runtime.evaluate
+    response and raise TargetError, so a failed JavaScript setup script
+    is recorded as a failed shot rather than returning None silently.
+
+    Without this guard, a setup script failure (e.g. missing DOM element,
+    undefined handler) produces a valid-looking None return, and the
+    subsequent screenshot documents the wrong page state.
+    """
+    exc_details = {
+        "exceptionId": 1,
+        "text": "Uncaught",
+        "lineNumber": 0,
+        "columnNumber": 0,
+        "exception": {
+            "type": "error",
+            "description": "ReferenceError: x is not defined",
+        },
+    }
+    ws = _ExceptionWS(exc_details)
+    cdp = shoot.CDP(ws)
+    with pytest.raises(shoot.TargetError):
+        cdp.evaluate("x.notDefined()")
+
+
+def test_cdp_evaluate_returns_value_when_no_exception():
+    """CDP.evaluate must return the JS result value when no exceptionDetails
+    is present -- i.e., normal execution is unaffected by the guard."""
+    import json as _json
+
+    class _ValueWS:
+        def __init__(self):
+            self._id = 0
+            self._queue = []
+
+        def send(self, text):
+            msg = _json.loads(text)
+            self._queue.append(
+                {
+                    "id": msg["id"],
+                    "result": {"result": {"type": "string", "value": "hello"}},
+                }
+            )
+
+        def recv(self):
+            return _json.dumps(self._queue.pop(0))
+
+    cdp = shoot.CDP(_ValueWS())
+    assert cdp.evaluate("'hello'") == "hello"
+
+
+def test_walk_records_setup_failure_as_failed_shot(tmp_path, monkeypatch):
+    """When a setup script raises TargetError (e.g. JS exception in the
+    setup expression), walk() must record that shot as failed rather than
+    continuing as if the setup succeeded.
+
+    This tests the end-to-end path: CDP.evaluate(setup) raises TargetError
+    → walk() catches it and records error='...' for that shot key.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+
+    class _SetupFailCDP:
+        """CDP that raises TargetError on any evaluate() call containing 'setup'."""
+
+        def __init__(self):
+            self._ops = []
+
+        def evaluate(self, expression: str):
+            # Fail the setup script evaluations (fixture injection calls).
+            # The eve_shown check must still return True.
+            if "WM.eve_shown" in expression:
+                return True
+            if (
+                "window.onPreviewHotkeys" in expression
+                or "scrollIntoView" in expression
+            ):
+                raise shoot.TargetError("JS exception: setup failed")
+            return None
+
+        def screenshot(self) -> bytes:
+            import base64 as _b64
+
+            return _b64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+                "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+            )
+
+        def set_device_metrics_override(self, *, width: int, height: int) -> None:
+            pass
+
+        def clear_device_metrics_override(self) -> None:
+            pass
+
+    cdp = _SetupFailCDP()
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    # The group and narrow stages both use setup scripts; they must fail.
+    group_shot = next(
+        (s for s in shots if s["key"] == "settings-previews-groups"), None
+    )
+    narrow_shot = next(
+        (s for s in shots if s["key"] == "settings-previews-narrow"), None
+    )
+    assert group_shot is not None, "settings-previews-groups stage must be attempted"
+    assert narrow_shot is not None, "settings-previews-narrow stage must be attempted"
+    assert group_shot["error"] is not None, (
+        "settings-previews-groups must be recorded as failed when setup raises TargetError"
+    )
+    assert narrow_shot["error"] is not None, (
+        "settings-previews-narrow must be recorded as failed when setup raises TargetError"
+    )
+
+
+class _TrackedCDP:
+    """A traceable fake CDP that records protocol operations in order.
+
+    Used to verify that walk() applies device metrics before capturing
+    the narrow screenshot and clears them afterward in a finally-safe
+    manner, including when the screenshot itself raises an exception.
+    """
+
+    def __init__(self, *, fail_narrow_screenshot: bool = False):
+        self._ops: list[str] = []  # ordered record of operations
+        self._fail_narrow = fail_narrow_screenshot
+        self._override_active = False
+
+    def evaluate(self, expression: str):
+        if "WM.eve_shown" in expression:
+            return True
+        return None
+
+    def screenshot(self) -> bytes:
+        if self._fail_narrow and self._override_active:
+            # Simulate a CDP capture failure while the narrow override is set.
+            raise RuntimeError("screenshot failed during narrow override")
+        # Minimal valid PNG header so write_bytes() succeeds.
+        import base64 as _b64
+
+        return _b64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+            "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        )
+
+    def set_device_metrics_override(self, *, width: int, height: int) -> None:
+        self._ops.append(f"set:{width}x{height}")
+        self._override_active = True
+
+    def clear_device_metrics_override(self) -> None:
+        self._ops.append("clear")
+        self._override_active = False
+
+    def close(self) -> None:
+        pass
+
+
+def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
+    tmp_path, monkeypatch
+):
+    """walk() must call set_device_metrics_override before capturing the
+    narrow screen and clear_device_metrics_override after it -- in that
+    order -- so the screenshot is taken at 840x625 and the real viewport
+    is restored for every subsequent capture.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _TrackedCDP()
+    shots, skipped, eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    assert eve_shown is True
+    assert not skipped
+
+    # The narrow screen must have been shot successfully.
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None, "narrow screen not found in shots"
+    assert narrow["error"] is None, f"narrow screen failed: {narrow['error']}"
+
+    # Verify exact operation ordering: set -> screenshot -> clear.
+    # The ops list records set:WxH and clear; screenshots do not write to ops
+    # so we verify set comes before clear and that both are present.
+    assert "set:840x625" in cdp._ops, (
+        "walk() must call set_device_metrics_override(width=840, height=625) "
+        "before the narrow screenshot"
+    )
+    assert "clear" in cdp._ops, (
+        "walk() must call clear_device_metrics_override() after the narrow screenshot"
+    )
+    set_idx = cdp._ops.index("set:840x625")
+    clear_idx = cdp._ops.index("clear")
+    assert set_idx < clear_idx, (
+        "set_device_metrics_override must be called before clear_device_metrics_override"
+    )
+    # No stray set/clear for non-narrow screens.
+    assert cdp._ops.count("clear") == 1, "clear must only be called once (for narrow)"
+    assert cdp._ops.count("set:840x625") == 1, (
+        "set must only be called once (for narrow)"
+    )
+
+
+def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
+    tmp_path, monkeypatch
+):
+    """clear_device_metrics_override() must be called even if the narrow
+    screenshot raises an exception (finally-safe ordering).
+
+    A viewport stuck at 840x625 would distort every subsequent capture
+    in the same session, which is silently wrong and harder to diagnose
+    than a single recorded failure.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _TrackedCDP(fail_narrow_screenshot=True)
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    # The narrow screen should be recorded as failed, not silently absent.
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None, "narrow screen must appear in shots even on failure"
+    assert narrow["error"] is not None, (
+        "narrow screen must record the error, not succeed silently"
+    )
+
+    # Clearing must still have happened despite the screenshot failure.
+    assert "clear" in cdp._ops, (
+        "clear_device_metrics_override() must run in a finally block "
+        "even when the narrow screenshot raises an exception"
+    )
+    # The override must not still be active after walk() returns.
+    assert not cdp._override_active, (
+        "device metrics override must be inactive after walk() returns"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 1 fix: fixture extractor, semantic selectors, no-write guarantees
+# ---------------------------------------------------------------------------
+
+
+def test_dev_preview_fixture_extractor_exists_and_is_callable():
+    """shoot_screens.py must expose a load_dev_preview_fixture() function
+    that reads and parses DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js source.
+    """
+    assert hasattr(shoot, "load_dev_preview_fixture"), (
+        "shoot_screens.py must define load_dev_preview_fixture() -- "
+        "it is needed by both the group-stage setup scripts and the tests "
+        "that verify the screenshot payload matches the fixture"
+    )
+    assert callable(shoot.load_dev_preview_fixture)
+
+
+def test_dev_preview_fixture_extractor_returns_a_dict_with_hotkeys():
+    """load_dev_preview_fixture() must return a dict parsed from the named
+    literal in dev.js, containing at least the 'hotkeys' key with 'groups'.
+    """
+    fixture = shoot.load_dev_preview_fixture(str(ROOT))
+    assert isinstance(fixture, dict), "load_dev_preview_fixture must return a dict"
+    assert "hotkeys" in fixture, (
+        "fixture must have a 'hotkeys' key matching the get_preview_hotkey_state shape"
+    )
+    assert "groups" in fixture["hotkeys"], "fixture.hotkeys must have a 'groups' list"
+    assert len(fixture["hotkeys"]["groups"]) >= 1, (
+        "fixture must have at least one group"
+    )
+    assert len(fixture["roster"]) >= 10
+    assert any(len(name) >= 30 for name in fixture["roster"])
+    assert set(fixture["roster"]) - set(fixture["characters"])
+
+
+def test_groups_stage_injects_fixture_via_onPreviewHotkeys():
+    """The settings-previews-groups setup script must inject the fixture
+    by calling window.onPreviewHotkeys(payload), not by calling a write
+    API like create_preview_cycle_group or set_preview_character_group.
+
+    Calling write APIs in a screenshot script would mutate user data; the
+    correct approach is the read path onPreviewHotkeys.
+    """
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    script = shoot.screen_setup_script(groups_screen)
+    assert script is not None
+    assert "onPreviewHotkeys" in script, (
+        "groups stage setup must inject fixture via window.onPreviewHotkeys, "
+        "not by calling write APIs"
+    )
+
+
+def test_narrow_stage_injects_fixture_via_onPreviewHotkeys():
+    """The settings-previews-narrow setup script must also inject the fixture
+    via window.onPreviewHotkeys so the page has deterministic group state
+    regardless of what the real user's settings contain.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    assert "onPreviewHotkeys" in script, (
+        "narrow stage setup must inject fixture via window.onPreviewHotkeys"
+    )
+
+
+def test_groups_stage_scrolls_to_preview_group_manager():
+    """The groups stage must scroll to .preview-group-manager (the Manage
+    groups disclosure), NOT scroll to pane.scrollHeight (absolute bottom).
+
+    Scrolling to absolute bottom shows the last group row, but the manager
+    element is rendered between the group keybind rows and the character rows,
+    so it may not be at the bottom. The semantic selector guarantees the
+    disclosure is in frame.
+    """
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    script = shoot.screen_setup_script(groups_screen)
+    assert script is not None
+    assert "preview-group-manager" in script, (
+        "groups stage must scroll to .preview-group-manager to frame the "
+        "Manage groups disclosure -- scrolling to pane.scrollHeight shows "
+        "the bottom of the page, which may not include the manager"
+    )
+    # Must NOT just scroll to pane.scrollHeight (arbitrary bottom position)
+    # without also targeting the manager element
+    if "scrollHeight" in script and "preview-group-manager" not in script:
+        raise AssertionError(
+            "groups stage scrolls to scrollHeight without targeting "
+            ".preview-group-manager -- this is the bug being fixed"
+        )
+
+
+def test_narrow_stage_frames_roster_heading_at_scrollport_start():
+    """The viewport-floor stage starts at the collapsed roster heading."""
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    selectors = _query_selector_arguments(script)
+    assert selectors.count("#preview-roster-heading") == 1, selectors
+    assert "heading.scrollIntoView({block: 'start', behavior: 'instant'})" in script
+
+
+def test_detail_stage_scrolls_opened_character_detail_into_view():
+    """Opening after the bottom stage must deterministically reframe detail."""
+    detail_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-detail"
+    )
+    script = shoot.screen_setup_script(detail_screen)
+    assert script is not None
+    assert "configure.getAttribute('aria-controls')" in script
+    assert "document.getElementById(detailId)" in script
+    assert "detail.scrollIntoView({block: 'center', behavior: 'instant'})" in script
+    assert script.index("configure.click()") < script.index("detail.scrollIntoView")
+
+
+def test_fixture_backed_preview_staging_does_not_invoke_write_methods():
+    """Fixture-backed setup must remain page-only and read-only.
+
+    Detail and Copy now join groups and floor captures. Configure is local and
+    Copy only opens the page-owned chooser; none of those stages may call a
+    bridge writer against the user's settings.
+    """
+    write_methods = {
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    }
+    for key in (
+        "settings-previews-detail",
+        "settings-previews-copy",
+        "settings-previews-groups",
+        "settings-previews-narrow",
+    ):
+        screen = next(s for s in shoot.SCREENS if s.key == key)
+        script = shoot.screen_setup_script(screen)
+        assert script is not None
+        for method in write_methods:
+            assert method not in script, (
+                f"{key} setup script must not call {method!r} -- "
+                "screenshot scripts are read-only and must not mutate user settings"
+            )
+
+
+def test_fixture_extractor_raises_clearly_on_missing_marker():
+    """load_dev_preview_fixture must raise a clear ValueError (not a cryptic
+    index error) when DEV_PREVIEW_HOTKEYS_FIXTURE is absent from the source.
+    """
+    import inspect
+
+    src = inspect.getsource(shoot.load_dev_preview_fixture)
+    # The function must have bounded error handling, not a bare index() that
+    # raises a cryptic ValueError: substring not found.
+    assert "ValueError" in src or "raise" in src, (
+        "load_dev_preview_fixture must raise a clear error when the marker "
+        "is not found, rather than letting a bare index() raise a cryptic message"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 2: ordering proof and deterministic selector tests
+# ---------------------------------------------------------------------------
+
+
+class _OrderedCDP(_TrackedCDP):
+    """Extended TrackedCDP that also records evaluate calls and screenshot
+    invocations, enabling ordering proofs over the full CDP call sequence.
+
+    evaluate() records:
+      - "eval:setup"  when the expression contains "onPreviewHotkeys"
+        (the fixture-injection + scroll setup script for stages)
+      - "eval:screenshot_wait" for the settle-time evaluates (route/section)
+
+    screenshot() records "screenshot" unconditionally so the ordering test
+    can verify: set:840x625 -> eval:setup -> screenshot -> clear.
+    """
+
+    def evaluate(self, expression: str):
+        if "onPreviewHotkeys" in expression:
+            self._ops.append("eval:setup")
+        return super().evaluate(expression)
+
+    def screenshot(self) -> bytes:
+        self._ops.append("screenshot")
+        return super().screenshot()
+
+
+def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkeypatch):
+    """walk() MUST apply set_device_metrics_override before evaluating the
+    narrow stage's setup script (which injects the fixture and scrolls).
+
+    The required order is:
+      set:840x625 -> eval:setup (onPreviewHotkeys + scroll) -> screenshot -> clear
+
+    The current bug: walk() evaluates the setup script first, THEN sets
+    device metrics -- so the fixture injection and scroll happen at the
+    previous viewport size, not at 840x625.
+
+    This test records the exact CDP call sequence and asserts the ordering
+    constraint is satisfied.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _OrderedCDP()
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None and narrow["error"] is None, (
+        f"narrow screen must succeed: {narrow}"
+    )
+
+    # Locate the index of each required operation for the narrow stage.
+    # Because groups stage also has eval:setup before narrow, we want the
+    # LAST set:840x625 (the narrow override) and the eval:setup that follows it.
+    try:
+        set_idx = max(i for i, op in enumerate(cdp._ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError(
+            "set:840x625 not found in ops -- walk() never called set_device_metrics_override"
+        )
+
+    # The eval:setup for the narrow stage must come AFTER the set:840x625.
+    post_set_ops = cdp._ops[set_idx + 1 :]
+    assert "eval:setup" in post_set_ops, (
+        f"walk() runs the narrow setup script BEFORE applying set_device_metrics_override.\n"
+        f"Full ops: {cdp._ops}\n"
+        "Required order: set:840x625 -> eval:setup -> screenshot -> clear"
+    )
+
+    # screenshot must come after eval:setup (post-set)
+    post_set_setup_idx = next(
+        i for i, op in enumerate(post_set_ops) if op == "eval:setup"
+    )
+    post_setup_ops = post_set_ops[post_set_setup_idx + 1 :]
+    assert "screenshot" in post_setup_ops, (
+        "screenshot must occur after eval:setup (narrow setup script)"
+    )
+
+    # clear must come after screenshot
+    screenshot_idx = next(
+        i for i, op in enumerate(post_setup_ops) if op == "screenshot"
+    )
+    post_screenshot_ops = post_setup_ops[screenshot_idx + 1 :]
+    assert "clear" in post_screenshot_ops, (
+        "clear must come after screenshot in the narrow stage"
+    )
+
+
+def test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure(
+    tmp_path, monkeypatch
+):
+    """Even when the narrow screenshot fails the ordering must hold:
+    set:840x625 -> eval:setup -> (screenshot raises) -> clear.
+
+    A fail-then-clear order that skips the setup would mean the page
+    never received the fixture injection, making the cleared viewport the
+    only visible effect.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _OrderedCDP(fail_narrow_screenshot=True)
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None and narrow["error"] is not None, (
+        "narrow screen must be recorded as failed"
+    )
+
+    try:
+        set_idx = max(i for i, op in enumerate(cdp._ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError("set:840x625 not found in ops")
+
+    post_set_ops = cdp._ops[set_idx + 1 :]
+    assert "eval:setup" in post_set_ops, (
+        f"eval:setup must still occur after set:840x625 even on failure.\n"
+        f"Full ops: {cdp._ops}"
+    )
+    assert "clear" in post_set_ops, (
+        "clear must run even when the narrow screenshot fails (finally-safe)"
+    )
+
+
+def test_narrow_stage_closes_details_and_returns_the_roster_heading_to_top():
+    """The floor shot must not inherit the preceding detail's expanded state.
+
+    It deliberately frames the roster heading at the Settings scrollport top,
+    so the 840x625 capture shows the collapsed table geometry rather than a
+    stale disclosure or an arbitrary offset.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    assert '[data-preview-configure][aria-expanded="true"]' in script
+    assert "#preview-roster-heading" in script
+    assert script.index("aria-expanded") < script.index("#preview-roster-heading")
+
+
+def test_narrow_stage_targets_roster_heading_deterministically():
+    """The floor capture must use the actual roster-heading id, not a row.
+
+    A detail can be left open by a preceding shot; framing a character after
+    closing it makes the capture depend on roster order. The heading names the
+    stable collapsed-table starting point instead.
+    """
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    selectors = _query_selector_arguments(script)
+    assert selectors.count("#preview-roster-heading") == 1, selectors
+
+
+def test_fixture_backed_preview_setup_scripts_embed_exact_fixture_payload():
+    """Every fixture-backed preview setup script embeds the exact JSON serialization of
+    load_dev_preview_fixture() -- no extra fields, no missing fields.
+
+    The assertion is: json.loads(embedded_payload) == load_dev_preview_fixture().
+
+    If the embedded payload diverges from what load_dev_preview_fixture()
+    returns (e.g. the fixture changed after the script was generated), the
+    page receives stale data and the screenshots no longer match the tests.
+    """
+    import json as _json
+
+    fixture = shoot.load_dev_preview_fixture()
+
+    for key in (
+        "settings-previews-detail",
+        "settings-previews-copy",
+        "settings-previews-groups",
+        "settings-previews-narrow",
+    ):
+        screen = next(s for s in shoot.SCREENS if s.key == key)
+        script = shoot.screen_setup_script(screen)
+        assert script is not None
+
+        # Extract the embedded JSON by finding var payload = <JSON>;
+        match = re.search(r"var payload = (\{.*?\});", script, re.DOTALL)
+        assert match, (
+            f"{key} setup script must embed the fixture as "
+            "'var payload = <JSON>;' -- pattern not found in script"
+        )
+        embedded_json = match.group(1)
+        try:
+            embedded = _json.loads(embedded_json)
+        except _json.JSONDecodeError as exc:
+            raise AssertionError(
+                f"{key} setup script embeds invalid JSON: {exc}\n"
+                f"Embedded text: {embedded_json[:200]}"
+            ) from exc
+
+        assert embedded == fixture, (
+            f"{key} setup script embeds a different payload than load_dev_preview_fixture().\n"
+            f"Expected keys: {sorted(fixture.keys())}\n"
+            f"Got keys:      {sorted(embedded.keys())}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Round 3 fix: exact selector contracts, exact CDP ordering proof
+# ---------------------------------------------------------------------------
+
+
+def test_groups_stage_uses_preview_group_manager_selector():
+    """The settings-previews-groups setup script must scroll to
+    '.preview-group-manager'  — the exact class selector for the Manage
+    Groups disclosure element — not to a generic pane or a first-match.
+
+    A generic fallback (e.g. scrollTop = pane.scrollHeight) may overshoot
+    or miss entirely depending on how much content precedes the manager
+    at render time, defeating the purpose of the stage.
+
+    The script may fall back to pane.scrollHeight but the FIRST choice must
+    be document.querySelector('.preview-group-manager').
+    """
+    groups_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-groups"
+    )
+    script = shoot.screen_setup_script(groups_screen)
+    assert script is not None
+    # Must explicitly reference the exact semantic selector
+    assert ".preview-group-manager" in script, (
+        "settings-previews-groups setup script must use "
+        "document.querySelector('.preview-group-manager') as the primary scroll target -- "
+        "a generic scroll-to-bottom may miss or overshoot the manager element"
+    )
+    # Parse direct calls so a selector elsewhere in the expression cannot pass.
+    selectors = _query_selector_arguments(script)
+    assert selectors.count(".preview-group-manager") == 1, (
+        "settings-previews-groups must pass '.preview-group-manager' exactly once "
+        f"to document.querySelector; got {selectors!r}"
+    )
+
+
+def test_narrow_stage_uses_the_exact_roster_heading_selector():
+    """The floor script must use the real heading selector as its scroll target."""
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    selectors = _query_selector_arguments(script)
+    assert selectors.count("#preview-roster-heading") == 1, selectors
+
+
+def test_narrow_stage_does_not_target_a_character_control():
+    """The floor stage frames the roster heading, never a first character control."""
+    narrow_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-narrow"
+    )
+    script = shoot.screen_setup_script(narrow_screen)
+    assert script is not None
+    # A bare first-match character selector would capture an arbitrary row
+    # rather than the stable roster heading.
+    bare_first_match = re.search(
+        r"querySelector\s*\(\s*['\"]\s*\.preview-group-select\s*['\"]\s*\)",
+        script,
+    )
+    assert bare_first_match is None, (
+        "narrow stage setup script must not target a character control; "
+        "it must frame #preview-roster-heading."
+    )
+
+
+def test_fixture_stages_fail_closed_when_required_controls_are_missing():
+    """Fixture stages must never capture live state or an incomplete target."""
+    scripts = {
+        key: shoot.screen_setup_script(next(s for s in shoot.SCREENS if s.key == key))
+        for key in (
+            "settings-previews-detail",
+            "settings-previews-copy",
+            "settings-previews-groups",
+            "settings-previews-narrow",
+        )
+    }
+    for key, script in scripts.items():
+        assert script is not None
+        assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
+        assert "throw new Error" in script, key
+    for key in ("settings-previews-detail", "settings-previews-copy"):
+        assert "Configure control" in scripts[key]
+        assert "detail" in scripts[key]
+    assert "Copy control" in scripts["settings-previews-copy"]
+    assert "group manager" in scripts["settings-previews-groups"]
+    assert "roster heading" in scripts["settings-previews-narrow"]
+
+
+def test_copy_stage_fails_closed_unless_the_copy_chooser_opens():
+    """Clicking Copy is setup, not proof that the picker was staged."""
+    copy = shoot.screen_setup_script(
+        next(s for s in shoot.SCREENS if s.key == "settings-previews-copy")
+    )
+    assert copy is not None
+    assert copy.index("copy.click()") < copy.index("overlay.hidden")
+    assert "Copy chooser did not open" in copy
+    assert "dialog.classList.contains('choice')" in copy
+    assert "throw new Error" in copy
+
+
+class _FailOnceCDP(_OrderedCDP):
+    """Record setup evaluation and every screenshot attempt before failure."""
+
+    def screenshot(self) -> bytes:
+        self._ops.append("screenshot_attempt")
+        return _TrackedCDP.screenshot(self)
+
+
+def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
+    tmp_path, monkeypatch
+):
+    """When the narrow screenshot raises the CDP call sequence must prove:
+        set:840x625  →  eval:setup  →  screenshot_attempt  →  clear
+
+    Recording the attempt before raising is the only way to verify the
+    attempt happened (once it raises there is no return value to inspect).
+    The test uses _FailOnceCDP which appends 'screenshot_attempt' before
+    raising so we can inspect the ordered ops list.
+
+    This test is stronger than test_walk_clears_device_metrics_even_when_narrow_screenshot_fails
+    because it asserts the entire ordered sequence, not just that set and clear
+    both appeared somewhere.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _FailOnceCDP(fail_narrow_screenshot=True)
+    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
+    assert narrow is not None and narrow["error"] is not None, (
+        "narrow screen must be recorded as failed"
+    )
+
+    ops = cdp._ops
+    set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
+    assert ops[set_idx : set_idx + 4] == [
+        "set:840x625",
+        "eval:setup",
+        "screenshot_attempt",
+        "clear",
+    ], f"narrow failure sequence was incomplete or out of order: {ops!r}"
+    assert ops[set_idx + 3] == "clear"
+
+
+def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
+    tmp_path, monkeypatch
+):
+    """A version of the failure-path test that specifically catches an
+    implementation that skips the screenshot attempt and goes straight to clear.
+
+    If walk() catches the error before attempting the screenshot (e.g. by
+    checking a flag) and jumps to the finally block, clear would appear in
+    the ops but screenshot_attempt would not.  This test catches that case.
+    """
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    cdp = _FailOnceCDP(fail_narrow_screenshot=True)
+    shoot.walk(cdp, tmp_path, settle_ms=0)
+
+    ops = cdp._ops
+    assert "screenshot_attempt" in ops, (
+        "screenshot_attempt must appear in ops -- walk() must ATTEMPT the screenshot "
+        "before reaching the finally/except block that clears the override.\n"
+        f"ops: {ops!r}"
+    )
+    assert "clear" in ops, "clear must appear in ops"
+    # Find the narrow override (last set:840x625) and verify the attempt/clear ordering
+    # within that segment.  _FailOnceCDP records ALL screenshots so we anchor to
+    # the narrow override's set op.
+    try:
+        narrow_set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
+    except ValueError:
+        raise AssertionError(f"set:840x625 not found in ops: {ops!r}")
+    post_set = ops[narrow_set_idx + 1 :]
+    assert "screenshot_attempt" in post_set, (
+        f"screenshot_attempt must appear after the narrow set:840x625, got ops: {ops!r}\n"
+        "walk() must attempt the screenshot inside the device-metrics override block."
+    )
+    attempt_idx = next(i for i, op in enumerate(post_set) if op == "screenshot_attempt")
+    post_attempt_ops = post_set[attempt_idx + 1 :]
+    assert "clear" in post_attempt_ops, (
+        f"clear must appear AFTER the screenshot_attempt in the narrow block, "
+        f"post-set ops: {post_set!r}\n"
+        "Ensure the screenshot call is inside the try block, not after the finally."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final review: deterministic, read-only Preview capture setups
+# ---------------------------------------------------------------------------
+
+
+def _preview_capture_scripts():
+    """Every Preview stage in SCREENS, including later additions."""
+    return {
+        screen.key: shoot.screen_setup_script(screen)
+        for screen in shoot.SCREENS
+        if screen.key.startswith("settings-previews")
+    }
+
+
+def test_every_preview_capture_uses_the_authoritative_read_only_fixture():
+    """Adjacent Preview shots need one deterministic roster without writes."""
+    scripts = _preview_capture_scripts()
+    fixture = shoot.load_dev_preview_fixture()
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    )
+
+    for key, script in scripts.items():
+        assert script is not None, f"{key} needs deterministic setup"
+        assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
+        assert "window.onPreviewHotkeys(payload);" in script, key
+        assert "throw new Error" in script, key
+        match = re.search(r"var payload = (\{.*?\});", script, re.DOTALL)
+        assert match, f"{key} does not embed the authoritative fixture"
+        assert json.loads(match.group(1)) == fixture
+        for writer in writers:
+            assert writer not in script, f"{key} must not call {writer}"
+
+
+def test_groups_stage_closes_inherited_detail_before_framing_management():
+    """The group capture must not inherit the preceding Configure disclosure."""
+    script = _preview_capture_scripts()["settings-previews-groups"]
+    assert script is not None
+    expanded = '[data-preview-configure][aria-expanded="true"]'
+    assert expanded in script
+    assert "No preview detail was closed" in script
+    assert script.index(expanded) < script.index(".preview-group-manager")
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Alerts Advanced disclosure and Previews sticky-conflict captures
+# ---------------------------------------------------------------------------
+
+
+def test_alerts_advanced_stage_is_present_and_gated():
+    """Task 5: a dedicated capture opens #alert-advanced and frames it,
+    alongside -- not instead of -- the existing settings-alerts capture,
+    which still shows the primary rows/modifiers."""
+    keys = [s.key for s in shoot.SCREENS]
+    assert "settings-alerts" in keys, "the existing Alerts capture must stay"
+    assert "settings-alerts-advanced" in keys, (
+        "settings-alerts-advanced stage missing from SCREENS"
+    )
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    assert screen.route == "settings"
+    assert screen.section == "alerts"
+    assert screen.gated, "settings-alerts-advanced must be gated (EVE required)"
+
+
+def test_alerts_advanced_stage_opens_and_frames_the_disclosure():
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    script = shoot.screen_setup_script(screen)
+    assert script is not None, "settings-alerts-advanced needs a setup script"
+    assert "getElementById('alert-advanced')" in script
+    assert "details.open = true" in script
+    assert "scrollIntoView" in script
+    assert "throw new Error" in script
+
+
+def test_alerts_advanced_stage_does_not_touch_any_bridge_api():
+    """Opening a native <details> is presentation only -- alerts.js has no
+    listener on #alert-advanced (0fd49d8), so this capture must call no
+    Api method and must not simulate a click on any control inside it."""
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "pywebview.api" not in script
+    assert "WM.call(" not in script
+    assert ".click()" not in script
+
+
+def test_previews_sticky_conflict_stage_is_present_and_gated():
+    keys = [s.key for s in shoot.SCREENS]
+    assert "settings-previews-sticky-conflict" in keys, (
+        "settings-previews-sticky-conflict stage missing from SCREENS"
+    )
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    assert screen.route == "settings"
+    assert screen.section == "previews"
+    assert screen.gated, "settings-previews-sticky-conflict must be gated"
+
+
+def test_previews_sticky_conflict_stage_targets_aigas_owner_prefixed_conflict():
+    """Aiga Otsolen's direct bind (Ctrl+Alt+1) collides with an ACTIVE EVE
+    bookmark keybind in the authoritative fixture (dev.js's
+    bookmark_chords.active), and she is the FIRST ONLINE character row --
+    directly under the sticky column header, with every other online row,
+    the Offline heading and every offline row still beneath her.
+
+    Tanuki Solette (the FIRST OFFLINE row, close to the bottom of the
+    whole list) used to be the target; staging her behind BOTH the sticky
+    column header and the sticky Offline heading left nothing further to
+    scroll into, so the capture clamped to the same maximum scrollTop
+    settings-previews-table reaches and the two captures were
+    pixel-identical. Aiga has ample content below her, so this capture can
+    stage her row just behind the (single) sticky column header without
+    running out of room the way Tanuki's did.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "typeof window.onPreviewHotkeys !== 'function'" in script
+    assert "window.onPreviewHotkeys(payload);" in script
+    assert "encodeURIComponent(" in script
+    assert "character:Aiga Otsolen" in script
+    assert "character:Tanuki Solette" not in script
+    assert "cycle:next" not in script
+    assert "preview-bind-conflict-" in script
+    assert "conflict.previousElementSibling" in script
+    assert "throw new Error" in script
+
+
+def test_previews_sticky_conflict_stage_opens_the_lower_detail_before_positioning_aiga():
+    """Measured directly (headless Chromium against the real fixture): at
+    the app's own default window (1040x680, window.py), aligning Aiga's
+    row behind the sticky column header asks for ~54px more scroll than
+    the pane has -- the roster card above #preview-binds is tall enough,
+    with the fixture's twelve characters, that her row already sits close
+    to the pane's bottom clamp. Nudging her there without adding anything
+    reproduced the exact pixel-identical bug this stage exists to fix.
+
+    Opening Aleksandrina Shadowbanes Voidstriders' Configure detail --
+    the same read-only disclosure settings-previews-detail already drives
+    -- adds ~70px of real content below Aiga (no fabricated spacing, no
+    dev.js data), which is enough headroom to clear that gap. It must
+    happen BEFORE Aiga is located and positioned, or the scroll extent it
+    adds is not there yet when the nudge is computed; and it must be a
+    plain DOM click with no bridge write, exactly like
+    settings-previews-detail's own Configure click.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+
+    long_name = "Aleksandrina Shadowbanes Voidstriders"
+    detail_selector = f'[data-preview-configure="{long_name}"]'
+    detail_index = script.find(detail_selector)
+    aiga_index = script.find("character:Aiga Otsolen")
+    assert detail_index != -1, (
+        "the script must reference Aleksandrina's Configure control"
+    )
+    assert aiga_index != -1
+    assert detail_index < aiga_index, (
+        "Aleksandrina's detail must be opened BEFORE Aiga's conflict is "
+        "located and positioned, or its added scroll extent is not there "
+        "yet when the nudge is computed"
+    )
+    assert f'[data-preview-configure="{long_name}"]' in script
+    assert ".click();" in script
+    assert "aria-expanded" in script
+    assert "did not" in script.lower() and "open" in script.lower(), (
+        "opening the lower detail must fail closed if it does not open"
+    )
+
+    # No bridge writer may be called anywhere in this script -- opening a
+    # Configure detail is a local click (previews.js), the same as
+    # settings-previews-detail's own read-only stage.
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+        "set_bind_capture",
+        "WM.send",
+    )
+    for writer in writers:
+        assert writer not in script, (
+            f"{writer} must not appear -- this stage is read-only"
+        )
+
+
+def test_previews_sticky_conflict_stage_measures_the_real_sticky_column_header():
+    """The capture must not hardcode pixel offsets: it measures the
+    rendered column header live via getBoundingClientRect, so it holds if
+    its height ever changes. Only the column header is measured now --
+    Aiga is online, directly under it, and the Offline heading (which sits
+    well below every online row) never covers her -- unlike Tanuki's
+    version of this stage, which had to measure both.
+
+    The row itself is display:contents (style.css), so scrollIntoView on
+    it is a silent no-op; the script must scroll its rendered first child
+    instead, or the measurement below is taken from a scroll position
+    that never actually moved.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "#preview-binds .bind-head > span" in script
+    assert "#preview-binds .bind-group:not(:empty)" not in script, (
+        "the Offline heading never covers Aiga's row and must not be part "
+        "of this stage's measurement"
+    )
+    assert "row.firstElementChild" in script, (
+        "row.scrollIntoView() is a no-op on a display:contents element; "
+        "the script must scroll a rendered child instead"
+    )
+    assert "row.scrollIntoView" not in script
+    assert "getBoundingClientRect()" in script
+    assert "scrollTop" in script
+
+
+def test_previews_sticky_conflict_stage_differs_from_the_table_stage():
+    """The bug this rewrite exists to fix: the sticky-conflict capture and
+    settings-previews-table came out pixel-identical because both scroll
+    positions clamped to the same bottom state. settings-previews-table
+    reaches that state by assigning `pane.scrollTop = pane.scrollHeight`
+    directly; the sticky-conflict stage must never do the same thing by a
+    different name, and must fail closed rather than silently reproduce
+    that state if its own nudge still lands there.
+    """
+    sticky_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    table_screen = next(s for s in shoot.SCREENS if s.key == "settings-previews-table")
+    sticky_script = shoot.screen_setup_script(sticky_screen)
+    table_script = shoot.screen_setup_script(table_screen)
+    assert sticky_script is not None and table_script is not None
+    assert sticky_script != table_script
+    assert "pane.scrollTop = pane.scrollHeight" in table_script
+    assert "pane.scrollTop = pane.scrollHeight" not in sticky_script
+    # A guard that fails closed rather than silently landing on the same
+    # bottom-clamped scrollTop the table stage reaches.
+    assert "scrollHeight - pane.clientHeight" in sticky_script
+    assert "bottom clamp" in sticky_script.lower()
+
+
+def test_previews_sticky_conflict_stage_fails_closed_when_the_owner_row_is_missing():
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "conflict warning is missing" in script.lower()
+    assert "owning row" in script.lower()
+    assert "sticky" in script.lower()
+    assert "scrollport" in script.lower()
+
+
+def test_previews_sticky_conflict_stage_is_read_only():
+    """Same contract as every other fixture-backed previews stage: no
+    bridge writer may be called."""
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    )
+    for writer in writers:
+        assert writer not in script

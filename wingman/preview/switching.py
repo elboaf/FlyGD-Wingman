@@ -1,58 +1,28 @@
-"""The minimize-inactive-clients decisions, as pure logic.
+"""Pure policy for minimizing an inactive EVE client after a successful switch.
 
-The preview subsystem's Win32 calls cannot be exercised in CI (ubuntu and
-windows both run, but no Win32 call in the preview path has ever run
-against a real EVE client in any automated test). preview/bookmarks.py
-already draws this line for the AutoHotkey-supervising engine; this module
-draws the same line for switching: host.py keeps only the Win32 calls and
-the ordering, and every decision of *whether* to minimize -- and whether
-to undo one -- lives here where it can be tested on Linux.
+The preview subsystem's Win32 calls cannot be exercised against a real EVE
+client in CI. Keep the decision of whether an outgoing client qualifies here,
+where Linux tests can cover it; host.py owns only Win32 calls and their order.
 """
 
 
 def should_minimize(*, enabled, previous_key, next_key, never) -> bool:
-    """Whether to minimize the previously-active client, BEFORE the switch.
+    """Whether a successful switch should minimize its outgoing client.
 
-    False in every one of these cases, True otherwise:
-
-    - the feature is off (`enabled` is falsy)
-    - there is no previous client (`previous_key` is None or empty)
-    - the previous and next client are the same (nothing to switch away
-      from -- and with minimize-first this runs before the activation's
-      own early-return, so it is the only thing stopping a click on the
-      foreground client from minimizing it)
-    - the previous character is in `never` (the preview.never_minimize
-      roster)
-
-    There is no `activated` input any more: the minimize happens first,
-    as in EVE-O Preview's SwitchActiveClient, so the activation's verdict
-    is not known yet. should_restore is where that verdict lands.
+    The host evaluates this before activation so it preserves the exact outgoing
+    stable key/HWND, but performs the asynchronous request only after the target
+    is observed foreground.
     """
     if not enabled:
+        # User opted out entirely; a successful switch must not hide anything.
         return False
     if not previous_key:
+        # No foreground client was identified, so there is nothing safe to tuck away.
         return False
     if previous_key == next_key:
+        # Switching to the same key is just a self-focus refresh; minimizing would
+        # collapse the already-foreground client for no visible gain.
         return False
+    # Roster exemptions are remembered by key so a never-minimize character stays
+    # open across later switches even if the current foreground changed elsewhere.
     return previous_key not in (never or [])
-
-
-def should_restore(*, activated, attempted) -> bool:
-    """Whether a refused switch must bring the outgoing client back.
-
-    TriffView's safety property was "a failed switch minimizes nothing",
-    kept by activating first. Minimizing first keeps the property in a
-    different shape: the outgoing client is already down when the refusal
-    is learned, so the refusal restores it. Without this, a refused
-    activation leaves the user on an empty desktop with nothing focused --
-    their old client gone and the new one never arrived, strictly worse
-    than the switch simply not working.
-
-    `attempted`, not "minimized": the send's verdict is not trusted here.
-    A send that timed out is still delivered and processed later, so a
-    client the host believes is "still where it was" can go down 50ms
-    after a refused switch. Restoring on every attempt covers that, and
-    costs nothing when the send really did fail -- activate() on a window
-    that still holds the foreground is its own early return.
-    """
-    return attempted and not activated

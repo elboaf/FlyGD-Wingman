@@ -18,7 +18,8 @@ Why the result lands on DISK rather than being played from memory:
 documentation says the module "does not support playing from a memory
 image asynchronously" and raises RuntimeError for that combination. The
 only synchronous alternative would block the alert poll thread for up to
-the length of the sound (1.5s for `ring`, against a 1s poll), so the
+the length of the sound (1.5s for `obey` or `glassy-knock`, against a 1s
+poll), so the
 scaled bytes are written once to a cache file and played by name, which
 is exactly what shipped before volume existed.
 """

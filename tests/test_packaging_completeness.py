@@ -90,10 +90,16 @@ def test_the_notices_list_every_crate_the_codec_links():
 
 
 @pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
-def test_the_built_codec_round_trips_a_document():
+def test_the_built_codec_round_trips_large_floats_exactly():
     doc = {
         "had_crc": False,
-        "doc": {"bytes:ui": {"bytes:k": {"tuple": ["long:134251880277573607", 1.5]}}},
+        "doc": {
+            "bytes:ui": {
+                "bytes:plex_value": {
+                    "tuple": ["long:134251880277573607", 93668995514.40001]
+                }
+            }
+        },
     }
     encoded = subprocess.run(
         [str(CODEC), "encode"], input=json.dumps(doc).encode(), capture_output=True

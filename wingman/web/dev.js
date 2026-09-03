@@ -19,10 +19,29 @@
   var api = {};
   ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
+   // The Uploader's three quick actions. Doubled rather than added to
+   // test_dev_harness.py's known-gaps list because ?dev=1 is the only way
+   // any of them is seen outside Windows: play_recording and
+   // post_recent_logs both end in a Python-side shell or network call the
+   // harness cannot model, but the CONTROLS -- a menu item that acts and
+   // closes, a button that goes inert while a post runs -- are exactly
+   // what needs eyeballing. rename_recording answers below, because it
+   // has a return value the page renders.
+   'play_recording', 'post_recent_logs',
    'connect_google', 'dialog_response', 'minimize', 'close',
    'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
    'skills_reload_plans', 'skills_open_plans_folder'
   ].forEach(function (name) { api[name] = log(name); });
+
+  // Answers {ok, error}, which is the shape list.js branches on: a
+  // refusal re-opens the prompt with the typed text still in it. The
+  // double accepts everything, so the harness shows the accepting path;
+  // the refusing path is Python's, and every sentence in it is composed
+  // there (an upload running, a reserved device name, a collision).
+  api.rename_recording = function (rowId, stem) {
+    console.log('DEV api.rename_recording(', rowId, stem, ')');
+    return Promise.resolve({ ok: true, error: '' });
+  };
 
   // NOT generic stubs. The per-field endpoints return
   // {applied, persisted, error} and the page reads all three, so the
@@ -314,6 +333,20 @@
   // one so the roster's catch-all bucket is visible in the browser. The
   // Unscored row is the common case, not padding: every character is
   // Unscored between authorisation and its first refresh.
+  //
+  // Task 6 adds every sort/status edge byTrainingFinishThenName and
+  // byTrainingRemainingThenName exist to handle, on top of the original
+  // nine: a third Training row so the two dated ones are out of name
+  // order (Zuelo finishes before Bel despite sorting after it
+  // alphabetically); a Missing tie (Zara/Aveline Castellane, inserted in
+  // that order so array order alone cannot stand in for the name
+  // tie-break); a Missing row with an unavailable estimate
+  // (Petra Ilyenko); and a Missing row carrying both `queued_count` and
+  // `missing_count` above zero with a long character name and the
+  // longest skill name EVE has (.skills-main's own CSS comment measures
+  // it). Every character below now carries all three of Task 5's
+  // estimate fields, matching what a real payload always sends once a
+  // plan is selected.
   var skills = {
     auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
@@ -336,29 +369,47 @@
         needs_reauth: false, stale: false, readiness: 'Ready',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 14, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // Ready: every plan skill is already trained and active, so
+        // there is nothing left to train.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 2, character_name: 'Zuelo Parvi',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
-        estimated_finish_utc: '2026-08-26T12:00:00+00:00',
+        // Earlier than Bel Ansgar (character_id 10) below despite sorting
+        // AFTER it alphabetically -- byTrainingFinishThenName must put
+        // Zuelo first, which a name sort would get backwards.
+        estimated_finish_utc: '2026-08-25T09:00:00+00:00',
         queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 2,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        training_remaining_seconds: 45000,
+        training_remaining_label: '12h 30m', training_estimate_status: 'available' },
       { character_id: 3, character_name: 'Kaska Rin',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
         estimated_finish_utc: '', queue_timing_unknown: true,
         active_count: 13, trained_inactive_count: 0, queued_count: 1,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // A timing-unknown queue does not stop the SEPARATE plan-wide
+        // estimate from being available -- the two are different
+        // computations (EVE's queue fact vs training.estimate()).
+        training_remaining_seconds: 93600,
+        training_remaining_label: '1d 2h', training_estimate_status: 'available' },
       { character_id: 4, character_name: 'Delen Vok',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Locked',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 11, trained_inactive_count: 3, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 0, group: 'Logi Wing',
+        // Locked is an inactive-clone problem, not a training one: the
+        // trained_inactive skills are already paid for.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 5, character_name: 'Gustav Oswaldo',
         fetched_utc: '2026-08-23T20:00:00+00:00',
         fetched_label: 'Last fetched 17h ago',
@@ -371,7 +422,13 @@
         // (controller._ROSTER_NAME_CAP).
         missing_names: ['Heavy Assault Cruisers V',
                         'Tactical Shield Manipulation V',
-                        'Gunnery V'] },
+                        'Gunnery V'],
+        // Task 6: stale carries a REAL training estimate, same as a fresh
+        // row -- the last successful refresh is what it is scored
+        // against, and the multi-week case (the largest duration in the
+        // fixture, so it sorts last among available estimates).
+        training_remaining_seconds: 1296000,
+        training_remaining_label: '15d 0h', training_estimate_status: 'available' },
       { character_id: 6, character_name: 'Nera Tal',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
@@ -380,28 +437,111 @@
         active_count: 12, trained_inactive_count: 0, queued_count: 0,
         missing_count: 2, unknown_count: 0, group: 'Wolfpack',
         // Under the cap, so no remainder clause.
-        missing_names: ['Motion Prediction V', 'Sharpshooter IV'] },
+        missing_names: ['Motion Prediction V', 'Sharpshooter IV'],
+        // The short case -- smallest duration in the fixture, so it sorts
+        // first among available estimates.
+        training_remaining_seconds: 5400,
+        training_remaining_label: '1h 30m', training_estimate_status: 'available' },
       { character_id: 7, character_name: 'Orin Kesh',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Unknown',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 13, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 1, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 1, group: 'Logi Wing',
+        // A skill this build has never resolved an id for -- the
+        // metadata_unavailable case.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'metadata_unavailable' },
       { character_id: 8, character_name: 'Tavi Solen', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: 'The refresh token was rejected', needs_reauth: true,
         stale: false, readiness: 'Unscored', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' },
+        missing_count: 0, unknown_count: 0, group: '',
+        // No snapshot at all -- skill_points_complete is never true, so
+        // this is the refresh_required case, not the empty ("no plan")
+        // status: a plan IS selected here, and Unscored is the only
+        // readiness this status can pair with.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
       { character_id: 9, character_name: 'Mira Halcyon', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: '', needs_reauth: false, stale: false,
         readiness: 'Ascendant', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' }
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
+      { character_id: 10, character_name: 'Bel Ansgar',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Training',
+        // Later than Zuelo Parvi (character_id 2) above -- the two dated
+        // Training rows are deliberately out of name order.
+        estimated_finish_utc: '2026-08-27T21:00:00+00:00',
+        queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 3,
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: 100800,
+        training_remaining_label: '1d 4h', training_estimate_status: 'available' },
+      // The tie-break pair. Inserted Zara-then-Aveline -- alphabetically
+      // backwards -- so a fixture whose array order already matched the
+      // name order could not make byTrainingRemainingThenName's tie-break
+      // pass by accident.
+      { character_id: 11, character_name: 'Zara Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 9, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 3, unknown_count: 0, group: '',
+        missing_names: ['Advanced Spaceship Command III',
+                        'Target Painting IV'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 12, character_name: 'Aveline Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 2, unknown_count: 0, group: '',
+        missing_names: ['Signature Focusing V'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 13, character_name: 'Petra Ilyenko',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 7, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 4, unknown_count: 0, group: '',
+        missing_names: ['Cynosural Field Theory V', 'Titan Synergy V'],
+        // Confirmed but unusable attributes (attributes_fetched_utc set,
+        // attributes_error non-empty) -- the unavailable case, which must
+        // sort last regardless of missing_count.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'attributes_unavailable' },
+      { character_id: 14,
+        // Long enough to exercise .skills-main's 240px --name-col ellipsis.
+        character_name: 'Konstantina Alexandrovna Winterbourne',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 11, trained_inactive_count: 0,
+        // Both above zero: some of this plan is already queued while the
+        // rest is entirely untrained, which is what makes the overall
+        // readiness Missing even though training has started.
+        queued_count: 2, missing_count: 3, unknown_count: 0, group: '',
+        // The exact skill .skills-main's own CSS comment measures as the
+        // longest name EVE has (39 characters).
+        missing_names: ['Heavy Assault Missile Specialization V'],
+        training_remaining_seconds: 604800,
+        training_remaining_label: '7d 0h', training_estimate_status: 'available' }
     ],
     plan_issues: [
       { file_name: 'Broken.txt', message: 'The file was rejected.',
@@ -492,12 +632,12 @@
               volume: 70,
               events: {
                 combat: { enabled: true, cooldown_s: 1, flash_rate: 'fast',
-                  pulses: 3, color: '#ff4d4d', sound: 'alarm' },
+                  pulses: 3, color: '#ff4d4d', sound: 'system-fault' },
                 warp_scramble: { enabled: true, cooldown_s: 8,
                   flash_rate: 'normal', pulses: 3, color: '#ffd24d',
-                  sound: 'ring' },
+                  sound: 'obey' },
                 decloak: { enabled: true, cooldown_s: 8, flash_rate: 'slow',
-                  pulses: 5, color: '#4dd2ff', sound: 'notify' }
+                  pulses: 5, color: '#4dd2ff', sound: 'sly' }
               }
             }
           },
@@ -729,144 +869,262 @@
     return Promise.resolve(false);
   };
 
+  // DEV_PREVIEW_HOTKEYS_FIXTURE is the single authoritative source for the
+  // preview hotkey state in ?dev=1 mode.  Strict JSON-compatible text: all keys
+  // and strings double-quoted, no functions or comments inside the literal body,
+  // so shoot_screens.py can parse it directly with json.loads.
+  //
+  // Both get_preview_hotkey_state and _devPreviewHotkeys derive deep copies
+  // from this one declaration -- the fixture data can never drift between the
+  // initial page load and subsequent mutation pushes.
+  //
+  // Character assignments:
+  //   Zuelo Parvi and Corvin Veles -- online, share a supported direct bind.
+  //   Aiga Otsolen      -- online, NOT excluded, assigned to DPS.
+  //   Tanuki Solette    -- offline, assigned to Logistics and conflicts with
+  //                        All forward, so the local conflict copy renders.
+  //   Aleksandrina ...  -- offline, assigned to DPS and Copy-enabled.
+  //   Mara Veld         -- offline, assigned to DPS.
+  //   Sera Vahn         -- offline, assigned to Logistics, excluded (opted-out
+  //                        AND assigned -- the combination the page must handle).
+  //
+  // Groups:
+  //   DPS      (g-dps)    -- members Aiga + Aleksandrina + Mara,
+  //                          cycle Ctrl+Shift+1.
+  //   Logistics (g-logi)  -- members Tanuki + Sera, cycle Ctrl+Shift+1
+  //                          (deliberate collision with DPS so the collision
+  //                          branch renders).
+  //   Empty group (g-empty) -- zero members, no bind (zero-member UI path).
+  //
+  // excluded[]: Sera only, while still assigned to Logistics. Zuelo is All-only
+  // (non-excluded, unassigned), a different and independently-exercised state.
+  //
+  // Gesture strings use preview/gestures.py display() canonical form
+  // ("Ctrl+Alt+Right"), NOT AHK ("^!Right"). Verified by from_capture().
+  //
+  // lock_default: false -- must match the settings fixture checkbox; the bool is
+  // always sent by Api.get_preview_hotkey_state, so omitting and relying on
+  // JS coercion would let the table disagree with the control that governs it.
+  //
+  // bookmark_chords.active: ["Ctrl+Alt+1"] -- matches the get_bookmarks fixture
+  // (enabled: true, 'EVE - Aiga Otsolen' ticked), which makes that chord
+  // registered.  Must stay in step with the bookmarks fixture.
+  //
+  // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) is load-bearing: the
+  // only row that exercises ellipsis in the bounded name track and the title
+  // attribute fallback at the 840px viewport floor.
+  var DEV_PREVIEW_HOTKEYS_FIXTURE = {
+    "enabled": true,
+    "hotkeys": {
+      "characters": {
+        "Aiga Otsolen": "Ctrl+Alt+1",
+        "Zuelo Parvi": "Ctrl+Alt+2",
+        "Corvin Veles": "Ctrl+Alt+2",
+        "Tanuki Solette": "Ctrl+Alt+Right",
+        "Mara Veld": "Ctrl+Shift+2",
+        "Niko Avar": "Ctrl+Shift+3"
+      },
+      "cycle_next": "Ctrl+Alt+Right",
+      "cycle_prev": "",
+      "groups": [
+        {"id": "g-dps",   "name": "DPS",         "cycle": "Ctrl+Shift+1"},
+        {"id": "g-logi",  "name": "Logistics",    "cycle": "Ctrl+Shift+1"},
+        {"id": "g-empty", "name": "Empty group",  "cycle": ""}
+      ],
+      "group_by_character": {
+        "Aiga Otsolen": "g-dps",
+        "Tanuki Solette": "g-logi",
+        "Aleksandrina Shadowbanes Voidstriders": "g-dps",
+        "Mara Veld": "g-dps",
+        "Sera Vahn": "g-logi"
+      }
+    },
+    "characters": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles"],
+    "roster": [
+      "Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette",
+      "Aleksandrina Shadowbanes Voidstriders", "Mara Veld", "Niko Avar",
+      "Sera Vahn", "Dorin Kalt", "Iria Sol", "Vex Noren", "Yara Tolen"
+    ],
+    "registration": {
+      "Ctrl+Alt+1": true,
+      "Ctrl+Alt+2": true,
+      "Ctrl+Alt+Right": true,
+      "Ctrl+Shift+2": true,
+      "Ctrl+Shift+3": true
+    },
+    "locked": ["Aiga Otsolen"],
+    "lock_default": false,
+    "never_minimize": ["Tanuki Solette"],
+    "excluded": ["Sera Vahn"],
+    "sizes": {"Aiga Otsolen": [1280, 720]},
+    "client_sizes": {"Aiga Otsolen": [1920, 1080], "Zuelo Parvi": [1600, 900]},
+    "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette", "Mara Veld"],
+    "layout_sources": [
+      {"name": "Aiga Otsolen", "online": true},
+      {"name": "Tanuki Solette", "online": false}
+    ],
+    "bookmark_chords": {"active": ["Ctrl+Alt+1"], "latent": []}
+  };
+
   api.get_preview_hotkey_state = function () {
     console.log('DEV api.get_preview_hotkey_state()');
-    // Shapes taken from Api.get_preview_hotkey_state and the settings
-    // schema, not guessed: `hotkeys` is
-    // {characters: {name: chord}, cycle_next, cycle_prev} -- NOT
-    // cycle_forward/cycle_back -- `registration` is keyed by CHORD with a
-    // boolean value, and `bookmark_chords` is {active: [], latent: []}.
-    // The first draft of this fixture invented three of those and rendered
-    // every row as "Not set" while looking plausible, which is the exact
-    // failure this file's own comment warns about: a double that models a
-    // shape the bridge does not produce.
+    return Promise.resolve(JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE)));
+  };
+
+  // ---- Stateful dev stubs for the five preview cycle-group methods.
+  //
+  // _devPreviewHotkeys is a deep copy of DEV_PREVIEW_HOTKEYS_FIXTURE.hotkeys.
+  // Mutations update it in place; _devPushHotkeys rebuilds the full state from
+  // DEV_PREVIEW_HOTKEYS_FIXTURE (providing enabled, characters, roster, excluded,
+  // etc.) with the current _devPreviewHotkeys substituted as the hotkeys field,
+  // so onPreviewHotkeys always receives the correct full-state shape.
+  //
+  // All five stubs return the production result shape {applied, persisted,
+  // error, hotkeys} where hotkeys is the current _devPreviewHotkeys copy.
+  var _devPreviewHotkeys = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE.hotkeys));
+
+  function _devHotkeysCopy() {
+    return JSON.parse(JSON.stringify(_devPreviewHotkeys));
+  }
+
+  function _devGroupResult(applied, error) {
+    return {
+      applied: applied,
+      persisted: applied,
+      error: error || null,
+      hotkeys: _devHotkeysCopy()
+    };
+  }
+
+  function _devPushHotkeys() {
+    // Deferred via setTimeout to match production's async push behaviour:
+    // Api._push is fired from a worker thread so it never runs inline within
+    // a promise resolution.  A synchronous push here causes re-entrant renders
+    // and makes the timing non-deterministic relative to the caller.
     //
-    // `enabled: true`, not false. This fixture originally shipped with
-    // previews OFF -- deliberately, to exercise the under-looked-at
-    // offline-binding path -- but that meant every row went through
-    // `makeRow`'s `online === null` branch (previews.js: `state.enabled ?
-    // entry.online : null`), and `.dim` never got added to a single row.
-    // Previews being ON is the normal state for anyone using this
-    // feature, so an always-off fixture left the branch users actually
-    // see unrendered and unverified. `characters` (below) now lists who
-    // is running -- Windows genuinely cannot hold chords with the host
-    // stopped, so `enabled: true` requires this to be non-empty, unlike
-    // the old `enabled: false` + `characters: []` pair.
-    return Promise.resolve({
-      enabled: true,
-      // Preview gestures are stored as preview/gestures.py display()
-      // strings -- "Ctrl+Alt+Right" -- and NOT as AHK. Bookmarks use AHK
-      // and send a separate `displays` table; previews render the stored
-      // value directly, so the two subsystems genuinely differ here. The
-      // first draft of this fixture wrote AHK and rendered "^!Right" in
-      // the button, which looks like a formatting bug in the page rather
-      // than a wrong fixture. Verified by running from_capture() rather
-      // than typed.
-      hotkeys: {
-        characters: {
-          'Aiga Otsolen': 'Ctrl+Alt+1',
-          'Zuelo Parvi': 'Ctrl+Alt+2'
-        },
-        cycle_next: 'Ctrl+Alt+Right',
-        cycle_prev: ''
-      },
-      // Running (online) characters. Both are also owed a row by
-      // `hotkeys.characters` above, so this is what flips them from the
-      // offline/dim branch to the online one now that `enabled: true`.
-      characters: ['Aiga Otsolen', 'Zuelo Parvi'],
-      // `roster` is every character previews knows about, running or
-      // not -- `rows()` (previews.js) already de-dupes against
-      // `characters`, so listing the same two names again here is
-      // harmless and matches what the real bridge sends. Four distinct
-      // rows total, not three: a three-row fixture never has to prove
-      // `.settings-pane`'s vertical scroller (overflow-y: auto, style.css)
-      // actually does anything at the 625px floor, and never puts an
-      // offline (dim) row next to an online one so both render at once.
-      //
-      // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) stays, and is
-      // load-bearing again. It was added when the name was
-      // #preview-binds's own first column and the only track that could
-      // shrink; B1 then gave the name a full-width line of its own, where
-      // nothing could squeeze it; the name is back in a column now, a
-      // FIXED 150px one. At 291px of text against that track it is the
-      // only fixture row that exercises the ellipsis, the `title` that
-      // carries the untruncated name, and -- with this row also being
-      // offline -- the proof that the `offline` tag keeps its full width
-      // while the name yields, which is what the flex split of `.lab`
-      // exists to do. It also still proves the older half: a name wider
-      // than the control line neither wraps badly nor pushes the card into
-      // horizontal overflow at the 840px floor.
-      roster: [
-        'Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette',
-        'Aleksandrina Shadowbanes Voidstriders'
-      ],
-      // Windows holding all three configured chords -- the normal case
-      // once the host is actually running, unlike the old `{}` that
-      // matched `enabled: false`'s "nothing can be registered" state.
-      registration: {
-        'Ctrl+Alt+1': true,
-        'Ctrl+Alt+2': true,
-        'Ctrl+Alt+Right': true
-      },
-      // One lock and one never-minimize, on different characters on
-      // purpose: 'Aiga Otsolen' is running and 'Tanuki Solette' is not.
-      // Neither checkbox sits on a row any more -- both moved into the
-      // disclosures under their global toggles, where every character is
-      // listed the same way regardless of whether their client is up. The
-      // split is kept because the two rosters are built from the same
-      // `rows()` the table is, so a fixture whose ticks all landed on
-      // running characters would not show that an offline character
-      // reaches the blocks at all.
-      locked: ['Aiga Otsolen'],
-      // Rides THIS payload, not the settings one -- previews.js resolves
-      // isLocked from `state`, which is the hotkey payload wholesale. The
-      // settings fixture carries a copy for settings.js's own checkbox;
-      // both are false and must stay in step, or the harness shows the
-      // table disagreeing with the control that governs it.
-      //
-      // Present rather than omitted even though `!!undefined` is already
-      // false: Api.get_preview_hotkey_state always sends the bool, and a
-      // fixture that leans on a JS coercion the real payload never
-      // exercises is a fixture that agrees by luck.
-      lock_default: false,
-      never_minimize: ['Tanuki Solette'],
-      // One opted-out character, and deliberately one that is ONLINE and
-      // holds a keybind ('Zuelo Parvi'): that is the row where the state
-      // is visible -- a live client whose controls are all grey and whose
-      // saved chord is still showing on an inert button. An offline
-      // opted-out row would look almost the same as an ordinary offline
-      // one and would prove nothing.
-      excluded: ['Zuelo Parvi'],
-      // Task 8: one character with both a saved size and a live client
-      // size ('Aiga Otsolen' -- exercises sizeHint's computed-height
-      // branch), one with a client size but no saved one yet (defaults to
-      // 640 wide), and one offline with neither ('Tanuki Solette' --
-      // exercises the "not running" branch). Without both branches present
-      // the Size… control cannot be exercised at all under ?dev=1.
-      sizes: { 'Aiga Otsolen': [1280, 720] },
-      client_sizes: { 'Aiga Otsolen': [1920, 1080], 'Zuelo Parvi': [1600, 900] },
-      // Which characters set_preview_size can succeed for -- Api computes
-      // it as (running | in layouts), and the page renders Size... only
-      // for these. Deliberately NOT every name above: the two online
-      // characters plus 'Tanuki Solette', who is offline but has been
-      // dragged once, so the harness shows both states of the column. If
-      // this listed everyone the fixture would hide the whole point of the
-      // gate, which is that most of a real roster cannot be sized.
-      sizable: ['Aiga Otsolen', 'Zuelo Parvi', 'Tanuki Solette'],
-      // Sources deliberately cross the online boundary: the picker groups
-      // both in words, and offline geometry is the feature's primary value.
-      layout_sources: [
-        {name: 'Aiga Otsolen', online: true},
-        {name: 'Tanuki Solette', online: false}
-      ],
-      // ACTIVE, matching what Api._bookmark_chords would return for the
-      // get_bookmarks fixture above: it ships `enabled: true` with
-      // 'EVE - Aiga Otsolen' ticked, which is exactly the pair that makes a
-      // bookmark chord registered. This said `latent` under a comment
-      // reasoning that "bookmarks register nothing" -- true of no fixture
-      // in this file. Caught by review while C6 was adding the other half.
-      bookmark_chords: { active: ['Ctrl+Alt+1'], latent: [] }
+    // Rebuilds the full state from DEV_PREVIEW_HOTKEYS_FIXTURE (provides
+    // enabled, characters, roster, excluded, etc.) with the mutated
+    // _devPreviewHotkeys substituted as the hotkeys field, so
+    // onPreviewHotkeys replaces state with the correct full-state shape
+    // instead of a partial hotkeys-only object.
+    setTimeout(function () {
+      if (window.onPreviewHotkeys) {
+        var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+        full.hotkeys = _devHotkeysCopy();
+        window.onPreviewHotkeys(full);
+      }
+    }, 0);
+  }
+
+  api.create_preview_cycle_group = function (name) {
+    console.log('DEV api.create_preview_cycle_group(', name, ')');
+    if (!name || !name.trim()) {
+      return Promise.resolve(_devGroupResult(false, 'Group name must be a non-empty string'));
+    }
+    var clean = name.trim();
+    var folded = clean.toLowerCase();
+    var groups = _devPreviewHotkeys.groups;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].name.toLowerCase() === folded) {
+        return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
+      }
+    }
+    var id = 'g-dev-' + Date.now();
+    groups.push({id: id, name: clean, cycle: ''});
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.rename_preview_cycle_group = function (groupId, name) {
+    console.log('DEV api.rename_preview_cycle_group(', groupId, name, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    if (!name || !name.trim()) {
+      return Promise.resolve(_devGroupResult(false, 'Group name must be a non-empty string'));
+    }
+    var clean = name.trim();
+    var folded = clean.toLowerCase();
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    for (var j = 0; j < groups.length; j++) {
+      if (groups[j] !== target && groups[j].name.toLowerCase() === folded) {
+        return Promise.resolve(_devGroupResult(false, 'A group named \'' + clean + '\' already exists'));
+      }
+    }
+    target.name = clean;
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.delete_preview_cycle_group = function (groupId) {
+    console.log('DEV api.delete_preview_cycle_group(', groupId, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var idx = -1;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { idx = i; break; }
+    }
+    if (idx === -1) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    groups.splice(idx, 1);
+    var gbc = _devPreviewHotkeys.group_by_character;
+    Object.keys(gbc).forEach(function (charName) {
+      if (gbc[charName] === groupId) { delete gbc[charName]; }
     });
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_cycle_group_bind = function (groupId, gesture) {
+    console.log('DEV api.set_preview_cycle_group_bind(', groupId, gesture, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    target.cycle = gesture || '';
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_character_group = function (name, groupId) {
+    console.log('DEV api.set_preview_character_group(', name, groupId, ')');
+    if (!name) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid character name'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var gbc = _devPreviewHotkeys.group_by_character;
+    if (!groupId) {
+      // Empty string removes assignment (All-only).
+      delete gbc[name];
+    } else {
+      var valid = false;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].id === groupId) { valid = true; break; }
+      }
+      if (!valid) {
+        return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+      }
+      gbc[name] = groupId;
+    }
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
   };
 
   api.list_rows = function () {
@@ -908,6 +1166,17 @@
   // the harness cannot show that a LIVE upload survives a trip to Skills
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
+  // Pushes an onEveSettingsNames payload carrying the current
+  // devIdentificationGeneration so acceptIdentification() in evesettings.js
+  // accepts it. deleted_candidate_ids is always empty here — the console
+  // helpers only change structural state, not character existence.
+  function devPushEveNames() {
+    window.onEveSettingsNames({
+      identification_generation: devIdentificationGeneration,
+      deleted_candidate_ids: []
+    });
+  }
+
   window.DEV = {
     // `busy` defaults to true -- a percentage arriving usually means a live
     // transfer -- but it is a PARAMETER because the two payloads that carry
@@ -1010,16 +1279,16 @@
       eve.root = ''; eve.server = ''; eve.profile = '';
       eve.servers = []; eve.profiles = [];
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveUnreadable: function () {
       eve.unreadable = true;
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveSelectiveAvailable: function (available) {
       eve.selective_copy_available = !!available;
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     skillsEmpty: function () {
       skills.characters = [];
@@ -1109,6 +1378,10 @@
     eve_running: null,
     identification_active: selectedIdentityScenario.stage !== 'intro'
       && selectedIdentityScenario.stage !== 'manage',
+    // True unconditionally: the dev harness always points at a Tranquility
+    // fixture. Without this the canIdentify guard Task 6 added hides every
+    // identity control and all identification scenarios render as inert.
+    account_identity_available: true,
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
@@ -1204,6 +1477,12 @@
     return Promise.resolve(null);
   };
   var pendingDevCandidate = null;
+  // Monotonic counter matching Task 5's Python generation scheme: bumped
+  // on every start and cancel so a stale promise from a superseded pass
+  // is rejected by acceptIdentification() the same way it would be in
+  // production. Carried by start/check/cancel responses and by every
+  // onEveSettingsNames push.
+  var devIdentificationGeneration = 0;
 
   function devAccount(accountId) {
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
@@ -1299,16 +1578,25 @@
   api.eve_settings_identification_start = function () {
     pendingDevCandidate = null;
     eve.identification_active = true;
-    return Promise.resolve({ status: 'watching', error: null });
+    // Bump the generation so any in-flight check promise resolves stale.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'watching', error: null,
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_check = function () {
     var result = selectedIdentityScenario.check
       || { status: 'watching', error: null };
     pendingDevCandidate = result.status === 'candidate' ? result : null;
-    if (result.status !== 'candidate') return Promise.resolve(result);
+    if (result.status !== 'candidate') {
+      return Promise.resolve(Object.assign({}, result,
+        { identification_generation: devIdentificationGeneration }));
+    }
     var account = devAccount(result.account_id);
     return Promise.resolve({
       status: 'candidate', error: null,
+      identification_generation: devIdentificationGeneration,
       account: { id: account.id, primary: account.display_name,
                  secondary: account.display_meta, option: account.name },
       characters: result.character_ids.map(devCharacter).filter(Boolean)
@@ -1317,7 +1605,12 @@
   api.eve_settings_identification_cancel = function () {
     pendingDevCandidate = null;
     eve.identification_active = false;
-    return Promise.resolve(true);
+    // Bump so any racing check that resolves after this cancel is rejected.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'cancelled',
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_confirm = function (accountId, characterId, name) {
     var offered = pendingDevCandidate

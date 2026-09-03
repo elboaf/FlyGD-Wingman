@@ -65,6 +65,22 @@ def test_an_unknown_sound_becomes_silence_not_a_crash():
     assert out["events"]["combat"]["sound"] == "none"
 
 
+@pytest.mark.parametrize(
+    "legacy, replacement",
+    [("alarm", "system-fault"), ("ring", "obey"), ("notify", "sly")],
+)
+def test_a_pre_replacement_sound_id_maps_to_its_successor(legacy, replacement):
+    """The 4.5 sound set was replaced wholesale. An old id falling through
+    to the unknown-id branch above would silence every configured alert
+    on upgrade -- exactly the failure the branch's own test says is
+    indistinguishable from a broken alert. Each old id lands on the sound
+    that took its default slot, and the replacement must itself be a
+    shipping id or the remap is a longer road to the same silence."""
+    out = settings.validated_alerts({"events": {"decloak": {"sound": legacy}}})
+    assert out["events"]["decloak"]["sound"] == replacement
+    assert replacement in settings.VALID_SOUNDS
+
+
 def test_booleans_are_not_accepted_as_numbers():
     """bool is an int in Python; True would silently become a 1s cooldown.
 

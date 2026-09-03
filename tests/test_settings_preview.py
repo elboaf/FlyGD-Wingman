@@ -298,3 +298,117 @@ def test_hide_on_lost_focus_falls_back_when_it_is_not_a_bool():
         settings.validated_preview({"hide_on_lost_focus": "yes"})["hide_on_lost_focus"]
         is False
     )
+
+
+def test_preview_cycle_groups_default_empty_and_are_not_shared():
+    first = settings._preview_defaults()
+    second = settings._preview_defaults()
+    assert first["hotkeys"]["groups"] == []
+    assert first["hotkeys"]["group_by_character"] == {}
+    first["hotkeys"]["groups"].append({"id": "dps", "name": "DPS", "cycle": ""})
+    assert second["hotkeys"]["groups"] == []
+
+
+def test_legacy_preview_cycle_binds_survive_without_group_migration():
+    result = settings.validated_preview(
+        {
+            "hotkeys": {
+                "characters": {"Alice": "Ctrl+F1"},
+                "cycle_next": "Ctrl+Alt+Right",
+                "cycle_prev": "Ctrl+Alt+Left",
+            }
+        }
+    )["hotkeys"]
+    assert result["cycle_next"] == "Ctrl+Alt+Right"
+    assert result["cycle_prev"] == "Ctrl+Alt+Left"
+    assert result["groups"] == []
+    assert result["group_by_character"] == {}
+
+
+def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusive():
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "groups": [
+                    {"id": "dps", "name": " DPS ", "cycle": "Alt+Ctrl+F2"},
+                    {"id": "bad", "name": "", "cycle": "Ctrl+F3"},
+                    {"id": "dup-name", "name": "dps", "cycle": "Ctrl+F4"},
+                    {"id": "logi", "name": "Logistics", "cycle": "nonsense"},
+                ],
+                "group_by_character": {
+                    "Alice": "dps",
+                    "Bob": "logi",
+                    "Carol": "missing",
+                    "hwnd:123": "dps",
+                },
+            }
+        }
+    )["hotkeys"]
+    assert hotkeys["groups"] == [
+        {"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+F2"},
+        {"id": "logi", "name": "Logistics", "cycle": ""},
+    ]
+    assert hotkeys["group_by_character"] == {"Alice": "dps", "Bob": "logi"}
+
+
+def test_preview_cycle_groups_repeated_ids_keeps_first_valid():
+    """Explicit: repeated IDs accept only first valid occurrence."""
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "groups": [
+                    {"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"},
+                    {"id": "dps", "name": "DPS-renamed", "cycle": "Ctrl+F3"},
+                ],
+            }
+        }
+    )["hotkeys"]
+    # Second entry with same ID is silently rejected; first wins
+    assert len(hotkeys["groups"]) == 1
+    assert hotkeys["groups"][0]["id"] == "dps"
+    assert hotkeys["groups"][0]["name"] == "DPS"
+    assert hotkeys["groups"][0]["cycle"] == "Ctrl+F2"
+
+
+def test_preview_cycle_groups_non_list_groups_rejected():
+    """Explicit: non-list groups field is rejected without error; unrelated fields intact."""
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "characters": {"Alice": "Ctrl+F1"},
+                "cycle_next": "Ctrl+Alt+Right",
+                "cycle_prev": "Ctrl+Alt+Left",
+                "groups": "not-a-list",  # Malformed
+            }
+        }
+    )["hotkeys"]
+    # Non-list groups is silently rejected, groups stays empty
+    assert hotkeys["groups"] == []
+    # Unrelated fields are preserved
+    assert hotkeys["characters"] == {"Alice": "Ctrl+F1"}
+    assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
+    assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"
+
+
+def test_preview_cycle_groups_non_dict_group_by_character_rejected():
+    """Explicit: non-dict group_by_character field is rejected without error; unrelated fields intact."""
+    hotkeys = settings.validated_preview(
+        {
+            "hotkeys": {
+                "characters": {"Bob": "Ctrl+F1"},
+                "cycle_next": "Ctrl+Alt+Right",
+                "cycle_prev": "Ctrl+Alt+Left",
+                "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}],
+                "group_by_character": "not-a-dict",  # Malformed
+            }
+        }
+    )["hotkeys"]
+    # Non-dict group_by_character is silently rejected, stays empty
+    assert hotkeys["group_by_character"] == {}
+    # Groups are intact
+    assert len(hotkeys["groups"]) == 1
+    assert hotkeys["groups"][0]["id"] == "dps"
+    # Unrelated fields are preserved
+    assert hotkeys["characters"] == {"Bob": "Ctrl+F1"}
+    assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
+    assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"

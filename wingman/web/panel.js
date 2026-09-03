@@ -123,6 +123,39 @@
     WM.send('retry');
   });
 
+  // ---- the standalone combat-log post ---------------------------------
+  // Combat logs are otherwise the tail of an upload, so the only way to
+  // send them was to publish a video. This is the fight that was not
+  // recorded, or was recorded and is not worth uploading.
+  //
+  // Sends unconditionally, like Open folder and Delete selected, and for
+  // the reason list.js states twice: every refusal -- no webhook, a
+  // webhook that will not parse, no Gamelogs folder, no logs in the hour,
+  // a Discord rejection -- is a specific sentence composed in Python, and
+  // a page-side early return would swallow the one that says why nothing
+  // was posted.
+  //
+  // In particular this is NOT gated on the webhook the note above it
+  // describes. Nothing pushes a settings payload, and the only refresh is
+  // this page's own get_settings call, made at load and then only when the
+  // list comes back empty -- so a user who configures a webhook with
+  // recordings on screen never triggers one. A button disabled on that
+  // stale fact would stay dead until the next launch, which is precisely
+  // what WM.setEnabled's rule forbids.
+  WM.el('btn-post-logs').addEventListener('click', function () {
+    WM.send('post_recent_logs');
+  });
+
+  // The one state the page cannot work out for itself, so Python pushes
+  // it: a post is running, and a second one must not start on top of it.
+  // Python re-states it on every call AND on every list rebuild, because
+  // a push lost into a hidden window (which _push swallows) would leave
+  // this button drawn as disabled -- and a disabled button cannot be
+  // clicked to ask for its own repair.
+  WM.handle('onLogPostRunning', function (p) {
+    WM.setEnabled('btn-post-logs', !p.running);
+  });
+
   // D5. Cancel and Retry share the one slot beside Upload and are never
   // live together: Python arms exactly one of them, and each of its own
   // handlers below turns the other off implicitly by never being on at the
@@ -351,6 +384,7 @@
   var lastPageFocus = null;
 
   var overlay = WM.el('overlay');
+  var scrimPressStarted = false;
   var dlg = WM.el('dialog');
   var btnOk = WM.el('dlg-ok');
   var btnCancel = WM.el('dlg-cancel');
@@ -543,6 +577,19 @@
 
   btnOk.addEventListener('click', function () { answer(true); });
   btnCancel.addEventListener('click', function () { answer(false); });
+  overlay.addEventListener('mousedown', function (ev) {
+    scrimPressStarted = ev.target === overlay;
+  });
+  overlay.addEventListener('mouseup', function (ev) {
+    // Both ends must be a primary-button press on the scrim. A text-selection
+    // drag that overshoots the dialog must not discard a prompt value, and a
+    // context click must remain only a context click.
+    var cancel = ev.button === 0
+      && scrimPressStarted && ev.target === overlay;
+    scrimPressStarted = false;
+    if (ev.button !== 0) { return; }
+    if (cancel) { answer(false); }
+  });
   dlgInput.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && active && active.kind === 'prompt') {
       ev.preventDefault();

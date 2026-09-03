@@ -208,7 +208,7 @@
      nothing ever told you." Narrowing made a near-miss unreachable and
      left an EXACT match five clicks away, still silent. The round-6
      captures caught a live install with Combat and Decloak both on
-     #4dd2ff and both on Notify: a cyan pulse that could mean "you are
+     #4dd2ff and both on the same sound: a cyan pulse that could mean "you are
      being shot" or "you just decloaked", which are opposite responses.
 
      Colour is the channel, not sound. The ring is what you read in

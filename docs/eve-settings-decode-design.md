@@ -234,7 +234,7 @@ Notes that cost a debugging session each if missed:
 
 - **Positions and ranges are `f64` meters** (verified, finding 8). The editor should work in km and AU and
   convert only at the boundary. Valid scan ranges are powers of two from
-  0.25 to 32 AU; keep an out-of-range value from an existing file selectable
+  0.25 to 64 AU; keep an out-of-range value from an existing file selectable
   rather than silently rewriting it.
 - **Every leaf is a `(FILETIME, value)` tuple.** FILETIME is 100ns intervals
   since 1601-01-01: `(unix_secs + 11_644_473_600) * 10_000_000`. Re-stamp the

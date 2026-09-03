@@ -11,7 +11,7 @@ import re
 import threading
 from pathlib import Path
 
-from . import bookmarks, paths
+from . import atomicio, bookmarks, paths
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
 from .preview import gestures as preview_gestures
@@ -21,7 +21,26 @@ from .preview import roster as preview_roster
 # Sounds that ship. An id present in the UI dropdown but missing here
 # normalises to silence, which is indistinguishable from a broken alert --
 # so the two lists are checked against the assets folder in the sound task.
-VALID_SOUNDS = {"none", "alarm", "ring", "notify"}
+VALID_SOUNDS = {
+    "none",
+    "come-here",
+    "glassy-knock",
+    "isnt-it",
+    "lovely",
+    "obey",
+    "slick",
+    "sly",
+    "system-fault",
+    "your-turn",
+}
+
+# The ids that shipped from 4.5.0 until the sound set was replaced. An
+# unknown id normalises to "none" below, so without this table every
+# install that had ever saved an alert would come up SILENT after the
+# upgrade -- the one failure mode PRODUCT.md says an alert must never
+# have. Each old id maps to the sound that took its default slot, so the
+# upgrade changes what an alert sounds like, never whether it sounds.
+_LEGACY_SOUND_IDS = {"alarm": "system-fault", "ring": "obey", "notify": "sly"}
 
 # The speed presets, owned by alerts/state.py because that is where a
 # preset becomes a duration. Named here only so the validators below read
@@ -35,14 +54,15 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # cyan for a decloak.
 _ALERT_EVENT_DEFAULTS = {
     # Sounds are assigned by LENGTH against each event's cooldown, then by
-    # urgency. combat re-alerts every 1s, so it gets the only sound short
-    # enough to finish (0.77s); a longer one would be cut off by its own
-    # next alert, since PlaySound replaces whatever is still playing.
-    # scram and decloak have 8s to play with. Pitch falls with severity:
-    # alarm is 1342 Hz, ring 1046 Hz, notify 523 Hz.
-    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "alarm"},
-    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "ring"},
-    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "notify"},
+    # urgency. combat re-alerts every 1s, so it gets a sound short enough
+    # to finish (system-fault, 0.43s); a longer one would be cut off by
+    # its own next alert, since PlaySound replaces whatever is still
+    # playing. scram and decloak have 8s to play with, so they take the
+    # two longer, more distinctive cues: obey (1.5s) for "you cannot
+    # leave", sly (1.26s) for the one that announces a ship appearing.
+    "combat": {"cooldown_s": 1, "color": "#ff4d4d", "sound": "system-fault"},
+    "warp_scramble": {"cooldown_s": 8, "color": "#ffd24d", "sound": "obey"},
+    "decloak": {"cooldown_s": 8, "color": "#4dd2ff", "sound": "sly"},
 }
 
 
@@ -145,11 +165,17 @@ def _preview_defaults() -> dict:
         # validated_preview for the migration it gates.
         "defaults_version": _PREVIEW_DEFAULTS_VERSION,
         "layouts": {},
-        # Flat cycle chords, not a group table. When named cycle groups
-        # land these become the default group's, so the schema grows
-        # without migrating anyone -- the same shape the parent design
-        # used to defer profiles.
-        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+        # The two flat cycle chords are the All-cycle (forward and back).
+        # Groups and per-character membership are stored alongside them
+        # and default to empty, so existing installs need no migration --
+        # the schema grew in place.
+        "hotkeys": {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [],
+            "group_by_character": {},
+        },
         "seen": [],
         # Where a preview OPENS: on, at the rect the user last dragged
         # it to; off, at default_stack placement. Positions are
@@ -440,6 +466,47 @@ def validated_preview(raw) -> dict:
             if parsed is not None:
                 section["hotkeys"][key] = preview_gestures.display(parsed)
 
+        # Normalize cycle groups: track seen IDs and case-folded names,
+        # keep first valid occurrence.
+        groups = raw_hotkeys.get("groups")
+        valid_ids = set()
+        seen_names = set()
+        if isinstance(groups, list):
+            for raw_group in groups:
+                if not isinstance(raw_group, dict):
+                    continue
+                group_id = raw_group.get("id")
+                name = raw_group.get("name")
+                if not isinstance(group_id, str) or not group_id:
+                    continue
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                clean_name = name.strip()
+                folded = clean_name.casefold()
+                if group_id in valid_ids or folded in seen_names:
+                    continue
+                parsed = preview_gestures.parse(raw_group.get("cycle"))
+                section["hotkeys"]["groups"].append(
+                    {
+                        "id": group_id,
+                        "name": clean_name,
+                        "cycle": preview_gestures.display(parsed) if parsed else "",
+                    }
+                )
+                valid_ids.add(group_id)
+                seen_names.add(folded)
+
+        # Normalize membership: deserialize character names to reject hwnd:,
+        # then filter to only valid group IDs.
+        group_by_character = raw_hotkeys.get("group_by_character")
+        if isinstance(group_by_character, dict):
+            # Use roster.deserialize to handle character name validation.
+            valid_names = preview_roster.deserialize(list(group_by_character.keys()))
+            for name in valid_names:
+                group_id = group_by_character.get(name)
+                if isinstance(group_id, str) and group_id in valid_ids:
+                    section["hotkeys"]["group_by_character"][name] = group_id
+
     section["seen"] = preview_roster.deserialize(raw.get("seen"))
     # Without this line the whole section is rebuilt from defaults on every
     # _normalize -- which every update() runs -- so any writer touching any
@@ -503,6 +570,7 @@ def _validated_alert_event(raw, defaults: dict) -> dict:
         event["color"] = colour
     sound = raw.get("sound")
     if isinstance(sound, str):
+        sound = _LEGACY_SOUND_IDS.get(sound, sound)
         event["sound"] = sound if sound in VALID_SOUNDS else "none"
     rate = raw.get("flash_rate")
     if isinstance(rate, str) and rate in VALID_FLASH_RATES:
@@ -750,9 +818,8 @@ def save(data: dict, path: Path | None = None) -> None:
 
 def _save_locked(data: dict, path: Path | None = None) -> None:
     path = path or paths.settings_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomicio.write_atomic(path, json.dumps(payload, indent=2), encoding="utf-8")
 
 
 @contextlib.contextmanager

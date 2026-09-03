@@ -1,3 +1,4 @@
+import copy
 import json
 
 import pytest
@@ -47,7 +48,13 @@ def test_defaults_are_the_documented_values():
             # is keyed off this marker.
             "defaults_version": 2,
             "layouts": {},
-            "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""},
+            "hotkeys": {
+                "characters": {},
+                "cycle_next": "",
+                "cycle_prev": "",
+                "groups": [],
+                "group_by_character": {},
+            },
             "seen": [],
             "restore_preview_positions": True,
             "alerts": {
@@ -63,7 +70,7 @@ def test_defaults_are_the_documented_values():
                         "flash_rate": "normal",
                         "cooldown_s": 1,
                         "color": "#ff4d4d",
-                        "sound": "alarm",
+                        "sound": "system-fault",
                     },
                     "warp_scramble": {
                         "enabled": True,
@@ -71,7 +78,7 @@ def test_defaults_are_the_documented_values():
                         "flash_rate": "normal",
                         "cooldown_s": 8,
                         "color": "#ffd24d",
-                        "sound": "ring",
+                        "sound": "obey",
                     },
                     "decloak": {
                         "enabled": True,
@@ -79,7 +86,7 @@ def test_defaults_are_the_documented_values():
                         "flash_rate": "normal",
                         "cooldown_s": 8,
                         "color": "#4dd2ff",
-                        "sound": "notify",
+                        "sound": "sly",
                     },
                 },
             },
@@ -329,7 +336,13 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
 
 def test_preview_defaults_carry_an_empty_hotkey_table():
     section = settings._preview_defaults()
-    assert section["hotkeys"] == {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+    assert section["hotkeys"] == {
+        "characters": {},
+        "cycle_next": "",
+        "cycle_prev": "",
+        "groups": [],
+        "group_by_character": {},
+    }
     assert section["seen"] == []
 
 
@@ -379,7 +392,13 @@ def test_validated_preview_canonicalises_gestures():
 
 def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
     section = settings.validated_preview({"hotkeys": "nonsense"})
-    assert section["hotkeys"] == {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+    assert section["hotkeys"] == {
+        "characters": {},
+        "cycle_next": "",
+        "cycle_prev": "",
+        "groups": [],
+        "group_by_character": {},
+    }
 
 
 def test_validated_preview_cleans_the_roster():
@@ -545,3 +564,40 @@ def test_a_stored_duration_is_dropped_rather_than_honoured():
 def test_the_default_flash_settings_reproduce_the_duration_that_shipped():
     combat = settings.validated_alerts({})["events"]["combat"]
     assert alert_state.duration_for(combat["flash_rate"], combat["pulses"]) == 1200
+
+
+def test_save_publishes_the_complete_document_through_atomic_io(tmp_path, monkeypatch):
+    target = tmp_path / "settings.json"
+    seen = []
+    monkeypatch.setattr(
+        settings.atomicio,
+        "write_atomic",
+        lambda path, text, encoding="utf-8": seen.append((path, text, encoding)),
+    )
+    data = settings.load(target)
+
+    settings.save(data, target)
+
+    assert seen[0][0] == target
+    assert json.loads(seen[0][1])["privacy"] == data["privacy"]
+    assert seen[0][2] == "utf-8"
+
+
+def test_update_restores_memory_and_keeps_old_file_when_atomic_publish_fails(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "settings.json"
+    target.write_text('{"sentinel": "old"}', encoding="utf-8")
+    data = settings.load()
+    before = copy.deepcopy(data)
+    monkeypatch.setattr(
+        settings.atomicio,
+        "write_atomic",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked")),
+    )
+
+    with pytest.raises(OSError, match="locked"):
+        settings.update_section(data, "eve_settings", {"auto_keep": 7}, target)
+
+    assert data == before
+    assert target.read_text(encoding="utf-8") == '{"sentinel": "old"}'

@@ -41,8 +41,10 @@
         <!-- A bare check, deliberately NOT a box glyph: every heading here
              is a sort control, and a box in the header position reads as a
              select-all checkbox this column does not offer. -->
-        <span class="c-check"  data-sort="checked"  title="Sort by selected">&#10003;</span>
-        <span class="c-name"   data-sort="filename">Filename</span>
+        <span class="c-check" data-sort="checked" title="Sort by selected"
+              role="button" tabindex="0" aria-label="Sort by selected">&#10003;</span>
+        <span class="c-name" data-sort="filename"
+              role="button" tabindex="0" aria-label="Sort by filename">Filename</span>
         <!-- "Age", not "Modified" (round 3's finding 8 dropped this column;
              it is back by request, and the heading is deliberately not the
              one that left).
@@ -74,10 +76,14 @@
              newest-first); format_date's docstring is explicit that a text
              sort would put "Aug" before "Dec" and "2 days ago" before
              "3h ago". -->
-        <span class="c-date"   data-sort="date">Age</span>
-        <span class="c-size"   data-sort="size">Size</span>
-        <span class="c-len"    data-sort="duration">Length</span>
-        <span class="c-link"   data-sort="link" title="Sort by uploaded">Link</span>
+        <span class="c-date" data-sort="date"
+              role="button" tabindex="0" aria-label="Sort by age">Age</span>
+        <span class="c-size" data-sort="size"
+              role="button" tabindex="0" aria-label="Sort by size">Size</span>
+        <span class="c-len" data-sort="duration"
+              role="button" tabindex="0" aria-label="Sort by length">Length</span>
+        <span class="c-link" data-sort="link" title="Sort by uploaded"
+              role="button" tabindex="0" aria-label="Sort by uploaded">Link</span>
       </div>
 
       <div class="list-scroll" id="list-scroll" tabindex="0" role="listbox"
@@ -212,16 +218,10 @@
                #lab-stitch is the whole explanation, and DESIGN.md's "one
                disabled state" does not ask for a sentence beside it. -->
 
-          <!-- Uploader 8's sentence, which outlives the control it used to
-               footnote. With no checkbox this is a fact about the install
-               rather than a caveat on an option, so it is stated whenever
-               it is true. The text comes from the payload
-               (INERT_NOTES["no_webhook"]) and is NOT typed here: S3 put
-               the app's one voice for an unmet precondition in copy.py so
-               two screens cannot drift, and Api._post_combat_logs stays
-               silent in exactly this case precisely because the panel says
-               it instead. -->
-          <p class="hint" id="logs-note" hidden></p>
+          <!-- Uploader 8's sentence now lives in the Combat logs card
+               below, beside the control it is a precondition for. It sat
+               here while there was no such control and it was a standing
+               fact about the install with nothing to attach to. -->
 
           <!-- U4: hidden until something is selected. The line is NOT
                deleted -- it carries "3 selected · 1.2 GB · 2:04:35", and
@@ -271,12 +271,76 @@
           <p class="destination" id="destination">Channel confirmed after the first upload</p>
         </section>
 
+        <!-- A SECOND card, and the first thing to say is that it is not a
+             second name for the one above. Uploader 2's finding was one
+             CONCEPT under two names (UPLOAD and PUBLISH, with the Upload
+             button in the card not called Upload); combat logs are a
+             different concept, going to a different service, reachable
+             with no Google account at all -- which is the independence
+             PRODUCT.md requires the two halves to keep.
+
+             Until this landed, logs were the TAIL of an upload: the only
+             way to send them was to publish a video, so the fight that was
+             not recorded -- or was recorded and is not worth uploading --
+             had no route at all.
+
+             It sits LAST on purpose, and that placement is the whole
+             answer to the height question. The panel is a fixed 320px
+             column (248px at the 839px floor) with overflow-y: auto, so a
+             second card is what makes the pane scroll at the window floor.
+             Ordering it after the upload card means Upload and everything
+             above it keep the position Uploader 9 fought for, and the
+             control that may need a scroll is the least-pressed one on the
+             screen.
+
+             The heading names the subject and the button names the action,
+             sharing no word: "Post last hour's logs" under a heading
+             reading "Combat logs" would be the restated heading PRODUCT.md
+             forbids. No trailing ellipsis -- it opens nothing (DESIGN.md).
+             .btn and not .btn.acc: one accent per screen, and this
+             screen's is Upload. -->
+        <section class="card">
+          <h2>Combat logs</h2>
+
+          <!-- Uploader 8's sentence, which outlived the control it used to
+               footnote and now has a new one to stand beside. The text
+               comes from the payload (INERT_NOTES["no_webhook"]) and is
+               NOT typed here: S3 put the app's one voice for an unmet
+               precondition in copy.py so two screens cannot drift, and
+               Api._post_combat_logs stays silent in exactly this case
+               precisely because the panel says it instead.
+
+               It does NOT gate the button below it. Nothing pushes a
+               settings payload, and the page's only refresh is list.js's
+               own get_settings call, made at load and then only when the
+               list comes back empty -- so a user who configures a webhook
+               with recordings on screen never triggers one. A control
+               disabled on that stale fact would stay dead until the next
+               launch, which is what WM.setEnabled's own rule forbids. The
+               note informs; Python refuses, in its own words, on the
+               strip. -->
+          <p class="hint" id="logs-note" hidden></p>
+
+          <div class="actions">
+            <button class="btn" id="btn-post-logs">Post the last hour</button>
+          </div>
+        </section>
+
       </div>
     </div>
 
   </div>
 
+  <!-- Two file actions, then the two link actions this menu used to be
+       made entirely of. The separator earns its markup: the pairs act on
+       different objects -- the recording on disk, and the video it became
+       -- and until Play and Rename arrived the whole menu read as "things
+       you can do with the YouTube video". It sets no display, so it needs
+       no [hidden] override (DESIGN.md). -->
   <div class="ctxmenu" id="ctxmenu" hidden>
+    <button id="ctx-play">Play</button>
+    <button id="ctx-rename">Rename&hellip;</button>
+    <div class="ctxsep"></div>
     <button id="ctx-copy">Copy link</button>
     <button id="ctx-open">Open in browser</button>
   </div>
@@ -647,10 +711,36 @@
               Show live previews of running EVE clients
             </label>
           </div>
-          <div class="row"><span class="lab"></span>
-            <span class="hint">Click a preview to switch to that client.
-              Right-drag to move it, drag the bottom-right corner to resize.
-              Positions are remembered per character.</span></div>
+          <div class="row">
+            <!-- HOW TO FLY IT, not what this switch does, which is the
+                 whole reason it is the one block on this card that got
+                 folded away. Three lines of gestures at the top of a card
+                 whose complaint is its height, describing a feature that
+                 is not on yet -- read once, on the visit where previews
+                 are switched on, and then re-read on every visit
+                 afterwards because prose has no off switch.
+
+                 Nothing here was cut. The distinction being drawn is
+                 between a sentence that states the COST or the
+                 non-obvious behaviour of the control beside it (those all
+                 stay resting -- "Applies the next time a client is
+                 switched away from", "one raised while you are away is
+                 still waiting") and a sentence that teaches the product.
+                 Only the second kind is behind a click, because only the
+                 second kind stops being news.
+
+                 "Positions are remembered per character" left with it and
+                 did not come back: #restore-preview-positions-status says
+                 the same thing 200px below, next to the switch that
+                 governs it, which is where a reader asking the question
+                 is looking. -->
+            <details class="hint-more">
+              <summary>How previews behave</summary>
+              <span class="hint">Click a preview to switch to that client.
+                Right-drag to move it, drag the bottom-right corner to
+                resize.</span>
+            </details>
+          </div>
           <!-- ONE line for the whole block, not one per control. Alerts
                already does this (alerts.js's DEPENDS): twelve controls under
                a switch that turns them all off, and one sentence saying so
@@ -788,10 +878,28 @@
           <span class="hint" id="preview-apply-size-status"></span></div>
         <div class="row">
           <!-- The ring a selected preview wears. #rrggbb in and out; the
-               page never unpacks the string, Python owns the format. -->
-          <label class="lab" for="preview-selection-color">Selection ring
-            colour</label>
-          <input type="color" id="preview-selection-color">
+               page never unpacks the string, Python owns the format.
+
+               A fixed palette, NOT <input type="color">. That control was
+               the last unstyled system chrome reachable from this app --
+               a 50x26 white UA widget on a dark card, opening the native
+               Win32 ChooseColor dialog in a frameless window -- and
+               style.css has described it as removed since alerts.js
+               replaced it there -- see the `.swatches` block, "the last
+               unstyled system chrome reachable from this app". It was
+               still here, one rail item away
+               from its own replacement, which is the tell: a thing
+               documented as removed but only removed from the screen
+               someone was working on.
+
+               A radiogroup rather than a labelled control, so the .lab is
+               a span and the association is aria-labelledby: there is no
+               single input for a `for` to point at. -->
+          <span class="lab" id="preview-selection-color-label">Selection
+            ring colour</span>
+          <div class="swatches" id="preview-selection-color"
+               role="radiogroup"
+               aria-labelledby="preview-selection-color-label"></div>
           <span class="hint" id="preview-selection-color-status">The ring
             on the preview you last clicked.</span></div>
 
@@ -930,7 +1038,7 @@
             Edit&hellip; lets you type one instead.</span></div>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="preview-binds-empty">Start an EVE client to
+          <span class="hint" id="preview-binds-empty" tabindex="-1">Start an EVE client to
             add a character here.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-copy-empty" hidden>Move or resize
@@ -1026,6 +1134,10 @@
         <div class="alert-head" aria-hidden="true">
           <span>Event</span><span>Colour</span><span>Sound</span><span></span>
         </div>
+        <!-- A row is atomic: one enable box, one swatch group, one sound
+             and one Test button, nothing pushed to a second line any
+             more. Flashes and Speed used to be that second line -- see
+             #alert-advanced below, which is where they moved and why. -->
         <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>
@@ -1036,30 +1148,18 @@
           <select class="field" id="alert-event-combat-sound"
             aria-label="Combat alert sound">
             <option value="none">No sound</option>
-            <option value="alarm">Alarm</option>
-            <option value="ring">Ring</option>
-            <option value="notify">Notify</option>
+            <option value="system-fault">System fault</option>
+            <option value="obey">Obey</option>
+            <option value="sly">Sly</option>
+            <option value="come-here">Come here</option>
+            <option value="glassy-knock">Glassy knock</option>
+            <option value="isnt-it">Isn't it</option>
+            <option value="lovely">Lovely</option>
+            <option value="slick">Slick</option>
+            <option value="your-turn">Your turn</option>
           </select>
           <button class="btn" id="alert-event-combat-test"
             aria-label="Test the Combat alert">Test</button>
-          <!-- A SECOND LINE, not two more columns. The four tracks above
-               already overflowed the card at the 840 floor once (see
-               .alert-events in style.css, where the sound column is "the
-               only one allowed to give"), and grid tracks do not wrap: six
-               of them would be a horizontally scrolling page, which
-               DESIGN.md forbids outright. Spanning 1 / -1 is what
-               .field-msg already does one line below for the same
-               reason. -->
-          <span class="alert-flash">
-            <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
-            <select class="field" id="alert-event-combat-flashes"></select>
-            <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
-            <select class="field" id="alert-event-combat-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-combat-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1072,24 +1172,18 @@
           <select class="field" id="alert-event-warp_scramble-sound"
             aria-label="Warp scramble alert sound">
             <option value="none">No sound</option>
-            <option value="alarm">Alarm</option>
-            <option value="ring">Ring</option>
-            <option value="notify">Notify</option>
+            <option value="system-fault">System fault</option>
+            <option value="obey">Obey</option>
+            <option value="sly">Sly</option>
+            <option value="come-here">Come here</option>
+            <option value="glassy-knock">Glassy knock</option>
+            <option value="isnt-it">Isn't it</option>
+            <option value="lovely">Lovely</option>
+            <option value="slick">Slick</option>
+            <option value="your-turn">Your turn</option>
           </select>
           <button class="btn" id="alert-event-warp_scramble-test"
             aria-label="Test the Warp scramble alert">Test</button>
-          <span class="alert-flash">
-            <label class="flash-lab"
-              for="alert-event-warp_scramble-flashes">Flashes</label>
-            <select class="field" id="alert-event-warp_scramble-flashes"></select>
-            <label class="flash-lab"
-              for="alert-event-warp_scramble-speed">Speed</label>
-            <select class="field" id="alert-event-warp_scramble-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-warp_scramble-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1102,22 +1196,18 @@
           <select class="field" id="alert-event-decloak-sound"
             aria-label="Decloak alert sound">
             <option value="none">No sound</option>
-            <option value="alarm">Alarm</option>
-            <option value="ring">Ring</option>
-            <option value="notify">Notify</option>
+            <option value="system-fault">System fault</option>
+            <option value="obey">Obey</option>
+            <option value="sly">Sly</option>
+            <option value="come-here">Come here</option>
+            <option value="glassy-knock">Glassy knock</option>
+            <option value="isnt-it">Isn't it</option>
+            <option value="lovely">Lovely</option>
+            <option value="slick">Slick</option>
+            <option value="your-turn">Your turn</option>
           </select>
           <button class="btn" id="alert-event-decloak-test"
             aria-label="Test the Decloak alert">Test</button>
-          <span class="alert-flash">
-            <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
-            <select class="field" id="alert-event-decloak-flashes"></select>
-            <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
-            <select class="field" id="alert-event-decloak-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
         </div>
         </div>
@@ -1125,6 +1215,85 @@
              below the table rather than repeated under every participating
              row. Per-row live regions remain reserved for write outcomes. -->
         <p id="alerts-collision" class="field-msg warn" role="status"></p>
+        <!-- Task 1. Flashes and Speed used to be a second grid line under
+             every event row above -- two label/select pairs beneath four
+             tracks already tight at the 840 floor (.alert-events' own
+             comment: "the sound column is the only one allowed to
+             give"). Both are secondary to the row's primary decision --
+             is this event on, what colour, what sound, does it work --
+             so they move into one shared disclosure instead of repeating
+             a second line three times. Collapsed by default (no `open`
+             attribute), the same mechanism #es-retention already
+             established for secondary controls behind a native
+             disclosure.
+
+             Every id stays exactly what alerts.js already looks up
+             (eventRow() builds `alert-event-<id>-flashes` and `-speed`
+             regardless of where they sit in the DOM), and each row's own
+             status line (`alert-event-<id>-msg`) stays in the table
+             above, not in here -- a refused write, or a session-only one,
+             has to stay visible without the reader having to open this
+             first. -->
+        <details id="alert-advanced">
+          <summary>Advanced pulse behavior</summary>
+          <!-- Task 6. Three independent flex rows put Flashes/Speed at
+               whatever x the row's OWN name pushed them to ("Combat" and
+               "Decloak" sat close together, "Warp scramble" -- the longest
+               of the three -- pushed its pair ~58px further right). One
+               grid over all three rows, with the rows themselves
+               display:contents, is the same fix .alert-events and
+               #preview-binds already apply to the identical problem: see
+               .alert-advanced-body below. -->
+          <div class="alert-advanced-body">
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Combat</span>
+            <span class="alert-flash">
+              <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
+              <select class="field" id="alert-event-combat-flashes"
+                aria-label="Flashes: Combat"></select>
+              <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
+              <select class="field" id="alert-event-combat-speed"
+                aria-label="Speed: Combat">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Warp scramble</span>
+            <span class="alert-flash">
+              <label class="flash-lab"
+                for="alert-event-warp_scramble-flashes">Flashes</label>
+              <select class="field" id="alert-event-warp_scramble-flashes"
+                aria-label="Flashes: Warp scramble"></select>
+              <label class="flash-lab"
+                for="alert-event-warp_scramble-speed">Speed</label>
+              <select class="field" id="alert-event-warp_scramble-speed"
+                aria-label="Speed: Warp scramble">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Decloak</span>
+            <span class="alert-flash">
+              <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
+              <select class="field" id="alert-event-decloak-flashes"
+                aria-label="Flashes: Decloak"></select>
+              <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
+              <select class="field" id="alert-event-decloak-speed"
+                aria-label="Speed: Decloak">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          </div>
+        </details>
         <!-- Round 5, A4. These two were the third and fourth checkboxes on
              the card, directly under the master switch and rendered at its
              indent and weight -- so the card offered five peer switches, of
@@ -1188,8 +1357,8 @@
                feature was asked for: the client you are flying does not
                need to be told out loud what you can already see. -->
           <span class="hint">The client you are looking at flashes without
-            a sound &mdash; alerts only interrupt for a client you are
-            not.</span></div>
+            a sound &mdash; alerts only interrupt for a client you are not
+            looking at.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alert-volume-status" role="status"></span></div>
         </div>
@@ -1374,7 +1543,8 @@
         <p id="es-warning" class="hint" hidden></p>
       </section>
 
-      <div class="es-profile-tools">
+      <div class="es-profile-tools" role="group" aria-labelledby="es-profile-tools-label">
+        <span id="es-profile-tools-label" class="es-profile-tools-label">Profile tools</span>
         <button class="btn" id="es-backups-open" type="button">Backups…</button>
         <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
       </div>
@@ -1450,8 +1620,10 @@
         <div id="es-commit-context" class="es-commit-context">
           <div class="row" id="es-commit">
             <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
-            <span id="es-copy-count" class="es-count">Nothing selected</span>
-            <span id="es-copy-source" class="es-copy-source"></span>
+            <span class="es-commit-info">
+              <span id="es-copy-count" class="es-count">Nothing selected</span>
+              <span id="es-copy-source" class="es-copy-source"></span>
+            </span>
             <span id="es-eve-state-commit" class="pill">EVE closed</span>
           </div>
           <p id="es-copy-backup-note" class="hint"></p>
@@ -1524,19 +1696,19 @@
       <!-- This flow sends the user out to EVE between steps. Keep the
            current place visible on return, but leave announcements to the
            focusable step headings so a transition is not spoken twice. -->
-      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Start</p>
+      <p id="ai-progress" class="ai-progress">Step 1 of 5 · Prepare</p>
       <h1>Identify accounts</h1>
       <section id="ai-intro">
         <h2 id="ai-intro-heading" tabindex="-1">Match an account</h2>
         <p>EVE stores account settings under a number, not a name. Wingman can match that number to a character by watching which settings change together.</p>
-        <p class="hint">Close every EVE client. You will launch one character after identification starts.</p>
       </section>
       <section id="ai-watching-step" hidden>
         <h2 id="ai-watching-heading" tabindex="-1">Watch for changes</h2>
       </section>
       <p id="es-identity-status" class="ai-status" role="status"></p>
       <div class="row es-identify-actions">
-        <button id="es-identify-start" class="btn acc" type="button">Start identification</button>
+        <p id="ai-prerequisite" class="ai-prerequisite">Close every EVE client before you begin. You will launch one character after identification starts.</p>
+        <button id="es-identify-start" class="btn acc" type="button">Begin identification</button>
         <button id="es-identify-check" class="btn" type="button" hidden>Check changes</button>
         <button id="es-identify-cancel" class="linkbtn" type="button" hidden>Cancel</button>
       </div>
@@ -1578,29 +1750,32 @@
         </div>
       </section>
 
-      <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage account names and character links…</button>
-      <section id="es-identity-panel" class="es-identity" hidden>
-        <h2>Names and character links</h2>
-        <div class="row">
-          <label class="lab" for="es-identity-account">Account</label>
-          <select id="es-identity-account" class="field"></select>
-        </div>
-        <div class="row">
-          <label class="lab" for="es-manage-account-name">Account name</label>
-          <input id="es-manage-account-name" class="field" maxlength="80">
-          <button id="es-account-name-apply" class="btn" type="button">Apply</button>
-        </div>
-        <div class="row">
-          <span class="lab">Confirmed characters</span>
-          <div id="es-account-characters" class="es-account-characters"></div>
-        </div>
-        <div id="es-character-add-row" class="row">
-          <label class="lab" for="es-character-add">Add character</label>
-          <select id="es-character-add" class="field"></select>
-          <button id="es-character-add-btn" class="btn" type="button">Add</button>
-        </div>
-        <p id="es-manage-status" class="field-msg" role="status"></p>
-      </section>
+      <div class="es-manual-identity" role="group" aria-labelledby="es-manual-identity-label">
+        <p id="es-manual-identity-label" class="es-manual-identity-label">Manual management</p>
+        <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage account names and character links…</button>
+        <section id="es-identity-panel" class="es-identity" hidden>
+          <h2>Names and character links</h2>
+          <div class="row">
+            <label class="lab" for="es-identity-account">Account</label>
+            <select id="es-identity-account" class="field"></select>
+          </div>
+          <div class="row">
+            <label class="lab" for="es-manage-account-name">Account name</label>
+            <input id="es-manage-account-name" class="field" maxlength="80">
+            <button id="es-account-name-apply" class="btn" type="button">Apply</button>
+          </div>
+          <div class="row">
+            <span class="lab">Confirmed characters</span>
+            <div id="es-account-characters" class="es-account-characters"></div>
+          </div>
+          <div id="es-character-add-row" class="row">
+            <label class="lab" for="es-character-add">Add character</label>
+            <select id="es-character-add" class="field"></select>
+            <button id="es-character-add-btn" class="btn" type="button">Add</button>
+          </div>
+          <p id="es-manage-status" class="field-msg" role="status"></p>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -1721,6 +1896,18 @@
           <span class="rail-head-key">Ready</span>
         </div>
         <div class="rail-plans" id="skills-plans"></div>
+        <!-- Directly below the list they act on, and before the
+             disclosure and the block's own flexible slack -- not after
+             them, where they used to sit. Both are `flex: none` siblings
+             of the same shrinkable list (.rail-plans-block's own comment:
+             the slack is the block's own, at its foot), so reordering the
+             two costs nothing: the block's total height, and the
+             four-plan-row floor measured against it, do not move either
+             way. -->
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
+          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
+        </div>
         <!-- The plan file format was stated in ONE place: the hint shown
              when the folder holds no plans at all -- that is, only to
              users who have no reason to care yet. A user with one plan and
@@ -1733,10 +1920,6 @@
              line with the level you want in roman numerals, like
              <code>Shield Operation V</code>.</p>
         </details>
-        <div class="rail-plan-actions">
-          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
-          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
-        </div>
       </div>
     </aside>
 
@@ -1744,6 +1927,21 @@
       <header class="skills-head">
         <h1 id="skills-plan-name">No plan selected</h1>
         <span class="skills-plan-count" id="skills-plan-count"></span>
+        <!-- Task 6. Every training ETA and remaining-time figure on this
+             screen rests on the same assumptions the payload cannot
+             restate per row: current attributes at Omega training speed,
+             with implants and any requirement not explicitly listed in
+             the plan excluded from the number entirely -- not merely
+             skipped for that one skill, the WHOLE estimate is withheld
+             (training.estimate()'s all-or-nothing contract). A real
+             <button>, not a titled span -- list.js's existing `data-tip`
+             glyphs carry a `title` a mouse can read but a keyboard cannot
+             reach at all. Starts hidden: there is nothing to assume about
+             until a plan is selected. -->
+        <button type="button" class="skills-estimate-info"
+                id="skills-estimate-info" hidden
+                aria-label="Estimates use current attributes at Omega speed. Implants and requirements not listed in this plan are excluded."
+                data-tip="Estimates use current attributes at Omega speed. Implants and requirements not listed in this plan are excluded.">ⓘ</button>
         <!-- S7. The maintainer's answer to "what do you end up doing
              twice": retyping a character's missing skills into EVE. It
              sits on the PLAN heading rather than in a character's row
@@ -1761,6 +1959,11 @@
              vocabulary's disabled-when-the-object-is-absent rule. -->
         <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
+      <!-- The browser owns clipboard access, so its success or refusal
+           belongs beside the plan action rather than on the global strip.
+           Kept mounted for role=status: a live region first made visible
+           with its message is not consistently announced by screen readers. -->
+      <p class="skills-copy-status" id="skills-copy-status" role="status"></p>
 
       <!-- Collapses entirely when empty rather than reserving a blank
            strip: on the common path there is nothing to say, and an empty
@@ -1771,6 +1974,20 @@
         <summary id="skills-issues-summary"></summary>
         <div id="skills-issues-body"></div>
       </details>
+
+      <!-- The pane above this line is scoped to the SELECTED PLAN (the
+           heading, its copy control, notices, plan-file issues); this
+           line down is scoped to CHARACTERS -- the filter, the roster and
+           its empty state all read the roster, never the plan. Nothing
+           marked where one ends and the other begins, and the roster was
+           the one independent scroll region of the route's three (Groups,
+           Plans, this one) with no persistent heading of its own -- only
+           the filter bar sat above it, and Clear filter hides itself
+           until a filter is typed. Reuses .rail-head rather than adding a
+           second heading treatment; .skills-roster-head only adds the
+           boundary. Inert text, not a control: no tabindex, no handler,
+           nothing skills.js renders here. -->
+      <h2 class="rail-head skills-roster-head">Characters</h2>
 
       <div class="skills-filterbar">
         <input class="field" id="skills-filter" type="text" spellcheck="false"
@@ -1913,7 +2130,7 @@
     <div class="overlay" id="overlay" hidden>
       <div class="dialog" id="dialog" role="dialog" aria-modal="true"
            aria-labelledby="dlg-title">
-        <h3 id="dlg-title"></h3>
+        <h2 id="dlg-title"></h2>
         <div class="body" id="dlg-body"></div>
         <!-- Shown only for a page-raised prompt. The alternative was
              window.prompt, which WebView2 captions with the page origin. -->

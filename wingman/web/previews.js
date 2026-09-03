@@ -35,6 +35,29 @@
   // Set when a render is skipped because a capture is armed; flushed by
   // endCapture(). See requestRender() below for why this exists.
   var pendingRender = false;
+  // Set while a group lifecycle write (create/rename/delete/bind) is in
+  // flight. Lifecycle and assignment controls are disabled during this
+  // window so concurrent mutations cannot race; cleared in both resolve
+  // and rejection paths so a failed write never leaves the form stuck.
+  var groupBusy = false;
+  // Whether the "Manage groups" details disclosure was open the last time
+  // render() ran.  Persisted across rerenders so focus can land in the
+  // Add-name field after a successful group mutation (the disclosure must
+  // still be open at that point).  Defaults to false (collapsed) so a
+  // fresh install does not force the panel open.
+  var groupManagerOpen = false;
+  // One inline configuration disclosure at a time. This is presentation
+  // state only; authoritative payloads retain it only for surviving rows.
+  var openDetailName = null;
+  // A contained control is replaced by a render after its mutation. Keep its
+  // identity long enough to focus the recreated detail, never a detached node.
+  var detailFocusIntent = null;
+  // Every Configure interaction supersedes pending detail work. A late bridge
+  // response must not pull focus back after the user opens or closes a detail.
+  var detailInteraction = 0;
+  // A Copy result belongs to one chooser attempt. Another Copy, a Configure
+  // change, or leaving Previews invalidates the older result and its focus.
+  var copyAttempt = 0;
   // ui/copy.py's INERT_NOTES, off the settings payload. Empty until the
   // first payload lands, which is why render() falls back to the sentence
   // in the markup rather than blanking the element.
@@ -66,6 +89,12 @@
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
+    // group_by_character: a character with a persisted group assignment
+    // but no running/seen/bind entry needs a row so the select can clear
+    // the assignment (design §6: "offline membership is still editable").
+    Object.keys(state.hotkeys.group_by_character || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     return out;
@@ -103,6 +132,11 @@
     var cycles = 0;
     if (state.hotkeys.cycle_next === gesture) { cycles += 1; }
     if (state.hotkeys.cycle_prev === gesture) { cycles += 1; }
+    // Named group cycles also compete for registrations; a group chord
+    // matching cycle_next/cycle_prev (or another group) is a duplicate.
+    state.hotkeys.groups.forEach(function (g) {
+      if (g.cycle === gesture) { cycles += 1; }
+    });
     if (cycles > 1 || (cycles && sharers(gesture).length)) {
       return 'duplicate';
     }
@@ -124,19 +158,125 @@
     return known[gesture] === false ? 'refused' : null;
   }
 
-  function makeRow(label, gesture, online, onSet, character) {
+  function cycleOwners(gesture) {
+    // Each entry carries a STABLE OWNER KEY beside its rendered text --
+    // the same key appendBindRow builds for its own row (see
+    // bindConflictId) -- so makeBindConflict can tell a genuinely
+    // different owner apart from itself, or from any other owner, by
+    // identity rather than by comparing rendered text. A named group is
+    // free to be named exactly "All forward"/"All back", or to share a
+    // name with a character: create/rename_preview_cycle_group enforce
+    // uniqueness only among groups, never against those two fixed labels
+    // or a character name. Filtering by text alone would then drop a
+    // genuinely conflicting owner merely because its rendered text
+    // happened to match some other owner's label.
+    var owners = [];
+    if (state.hotkeys.cycle_next === gesture) {
+      owners.push({key: 'cycle:next', text: 'All forward'});
+    }
+    if (state.hotkeys.cycle_prev === gesture) {
+      owners.push({key: 'cycle:prev', text: 'All back'});
+    }
+    groups().forEach(function (group) {
+      if (group.cycle === gesture) {
+        owners.push({key: 'group:' + group.id, text: 'cycle group ' + group.name});
+      }
+    });
+    return owners;
+  }
+
+  // A stable id for the (at most one) conflict message a bind can own, so
+  // the button that owns the warning can point aria-describedby at the
+  // exact node this render appends -- the association that lets a reader
+  // who has scrolled the owning row under a sticky header still find out
+  // whose warning they are reading.
+  //
+  // Keyed by an explicit OWNER KEY the caller builds (see appendBindRow),
+  // never by `label` alone: a named group is free to be named exactly
+  // "All forward" or "All back" -- create/rename_preview_cycle_group only
+  // enforce uniqueness among groups, not against the two fixed cycle
+  // labels -- so a label-derived id would collide with the real
+  // All-forward or All-back row's id and leave aria-describedby pointing
+  // at an ambiguous target. appendBindRow's `character:NAME`, `cycle:next`,
+  // `cycle:prev` and `group:ID` keys use disjoint literal prefixes, so no
+  // character name, group id, or group name can ever alias another kind's.
+  function bindConflictId(ownerKey) {
+    return 'preview-bind-conflict-' + encodeURIComponent(ownerKey);
+  }
+
+  function makeBindConflict(label, gesture, character, off, ownerKey) {
+    // An opted-out character owns no preview registration. Its retained bind
+    // is deliberately visible on the row, but it cannot conflict locally.
+    if (off) { return null; }
+    var clash = clashes(gesture);
+    var bookmark = bookmarkClash(gesture);
+    // Read the registration payload here rather than infer Windows state from
+    // the bind map. `clashes` owns that distinction and remains the source of
+    // truth for refused versus unknown registrations.
+    var registration = state.registration || {};
+    var text = '';
+    // Every branch below opens with `label + ': '` -- the owning character,
+    // cycle command, or named group. This message is a full-span sibling
+    // placed directly after the row it explains (appendBindRow), and that
+    // row can scroll out from under the sticky column or Offline heading
+    // while its own warning is still on screen a moment longer; without
+    // the name the reader would have to remember, or scroll back to check,
+    // whose row they are reading about.
+    if (character && clash === 'duplicate') {
+      // Direct-character sharing is a supported registration plan. On its
+      // rows, name only the cycle owner that makes this chord incompatible.
+      // Filtered by the caller's own stable ownerKey, never by comparing
+      // rendered text against `label`: see cycleOwners for why a named
+      // group sharing this character's name must not be dropped as if it
+      // were a self-reference.
+      var owners = cycleOwners(gesture).filter(function (owner) {
+        return owner.key !== ownerKey;
+      }).map(function (owner) { return owner.text; });
+      text = label + ': ' + gesture + ' conflicts with '
+           + (owners.join(', ') || 'another cycle keybind') + '.';
+    } else if (clash === 'duplicate') {
+      // A cycle row has no supported shared-owner role: direct characters
+      // using its chord are the incompatible registrations to identify.
+      // Sharer characters are wrapped with their own 'character:NAME' key
+      // -- not compared as bare strings -- so a character sharing this
+      // row's own label (e.g. a character literally named "All forward")
+      // is excluded only when it truly is this row's own owner, never for
+      // a text coincidence.
+      var owners = cycleOwners(gesture).concat(sharers(gesture).map(function (name) {
+        return {key: 'character:' + name, text: name};
+      })).filter(function (owner) {
+        return owner.key !== ownerKey;
+      }).map(function (owner) { return owner.text; });
+      text = label + ': ' + gesture + ' conflicts with '
+           + (owners.join(', ') || 'another cycle keybind') + '.';
+    } else if (clash === 'refused' && registration[gesture] === false) {
+      text = label + ': ' + gesture + ' is already owned by another application.';
+    } else if (bookmark === 'active') {
+      text = label + ': ' + gesture + ' conflicts with an active EVE bookmark keybind.';
+    }
+    if (!text) { return null; }
+    return WM.make('div', 'preview-bind-conflict', text);
+  }
+
+  // Ordered array of named preview cycle groups from the current hotkeys
+  // state. Returns a stable empty array when the payload predates groups,
+  // so callers do not need null checks.
+  function groups() {
+    return state.hotkeys.groups || [];
+  }
+
+  function makeRow(label, gesture, online, onSet, character, conflict) {
     var row = WM.make('div', 'row');
     var lab = WM.make('span', 'lab');
     // The name in a span of its own, not as `.lab`'s own text. The cell is
     // a flex row (style.css) so that the name can ellipsize inside its
-    // fixed 150px track while the `offline` tag beside it keeps its full
-    // width -- the tag is the encoding of that state and cannot be
-    // truncated away. Appended to `lab`, NOT to `row`: an extra child on
+    // bounded 210px-to-320px track while any name that outgrows it
+    // ellipsizes. Appended to `lab`, NOT to `row`: an extra child on
     // the row would be an extra grid cell, and the cell-count guard reads
     // appends lexically, so it could not see one that appears on offline
     // rows only.
     lab.appendChild(WM.make('span', 'lab-name', label));
-    // The track is a fixed 150px, so a long name ellipsizes. The title is
+    // The track is bounded rather than content-sized, so a long name ellipsizes. The title is
     // the only place the whole of it can be read. Unconditional, including
     // for names that plainly fit: knowing whether this one truncated means
     // comparing scrollWidth to clientWidth, which is a forced reflow per
@@ -175,21 +315,17 @@
     // renderNeverMinimizeBlock (does not) for where that asymmetry is
     // expressed now that both live in their own disclosures, not this row.
     //
-    // The NAME is deliberately not dimmed either. `.dim` on a .lab already
-    // means "not logged in" -- the `.off-tag` word this function appends
-    // beside the name says so in those words -- and borrowing it for a
-    // second meaning would make that word false for every opted-out
-    // character who is in fact online. (This used to cite the group note
-    // above the list, which said the same thing in one place until the
-    // word moved onto the rows themselves.) The inert controls and the
-    // unticked Preview box carry the state instead.
+    // The NAME is deliberately not dimmed either. `.dim` on a .lab means
+    // "not logged in", now named once by the sticky Offline heading.
+    // Borrowing it for opt-out would make that state false for every opted-
+    // out character who is in fact online. The inert controls and unticked
+    // Preview box carry the distinct opt-out state instead.
     var off = !!(character && isExcluded(character));
 
-    // Track 1 of every row. A cycle row gets a filler rather than a box:
+    // Track 2 of every row. A cycle row gets a filler rather than a box:
     // cycle forward/back are app commands, not characters, and there is
-    // nothing to opt them out of. One appendChild rather than an if/else
-    // pair so this row contributes the same cell count either way -- see
-    // the note on the filler branch at the bottom of this function.
+    // nothing to opt them out of. The ternary keeps the collapsed shape
+    // unconditional without a separate character/cycle branch.
     row.appendChild(character ? makeExcludedCheck(character)
                               : document.createElement('span'));
 
@@ -259,10 +395,25 @@
         button.title = button.title ? button.title + ' ' + shared : shared;
       }
     }
+    // The programmatic link to this row's own conflict warning, keyed by
+    // the exact node appendBindRow is about to append -- not by DOM
+    // adjacency, which a sticky header can break by covering the row this
+    // button lives on while its warning is still on screen below it, or
+    // by covering the warning while this row is still visible above it.
+    // Wired only while a conflict exists for THIS render: `button` is
+    // freshly created every render, so there is no stale reference to
+    // avoid removing -- omitting the attribute here is what avoids it.
+    if (conflict) {
+      button.setAttribute('aria-describedby', conflict.id);
+    }
     button.addEventListener('click', function () {
       beginCapture(button, onSet);
     });
-    WM.setEnabled(button, !off);
+    // Gate on both !off (character opted out) and !groupBusy (a group write
+    // is in flight). Group-cycle rows have no character so off is always
+    // false there; without the groupBusy gate they would stay live while a
+    // rename/delete/add/setGroupBind is pending, allowing overlapping writes.
+    WM.setEnabled(button, !(off || groupBusy));
     row.appendChild(button);
 
     // One cell, not two tracks. Two adjacent link buttons in their own
@@ -289,7 +440,7 @@
     if (gesture) {
       var clear = WM.make('button', 'linkbtn', 'Clear');
       clear.addEventListener('click', function () { endCapture(); onSet(''); });
-      WM.setEnabled(clear, !off);
+      WM.setEnabled(clear, !(off || groupBusy));
       acts.appendChild(clear);
     }
 
@@ -317,91 +468,122 @@
         });
       });
     });
-    WM.setEnabled(typed, !off);
+    WM.setEnabled(typed, !(off || groupBusy));
     acts.appendChild(typed);
     row.appendChild(acts);
 
-    // One Geometry cell on every character row. Size... appears only where
-    // set_preview_size can succeed; Copy... appears only with another saved
-    // source; a dash fills the cell when neither action exists. The cell
-    // itself never disappears: `.row` is display:contents, so changing the
-    // number of children would break the shared row/track count.
-    //
-    // What confines each row is `#preview-binds .row > :first-child
-    // { grid-column-start: 1 }` in style.css. The full-width `.lab` used
-    // to force a fresh grid row for free; the name sits in track 1 now,
-    // so that rule is the only thing resetting the auto-placement cursor
-    // and a short row would otherwise pull EVERY row after it left.
+    // The fifth collapsed cell is Configure. Group assignment and geometry
+    // live in the full-grid detail it controls, so roster scanning remains
+    // identity, Preview state, and keybind first.
+    var configure = null;
     if (character) {
-      row.appendChild(makeGeometryActions(character, off));
+      configure = WM.make('button', 'btn preview-configure', 'Configure');
+      configure.setAttribute('aria-expanded',
+                             openDetailName === character ? 'true' : 'false');
+      configure.setAttribute('aria-controls', detailId(character));
+      configure.setAttribute('data-preview-configure', character);
+      configure.addEventListener('click', function () {
+        endCapture();
+        detailInteraction += 1;
+        copyAttempt += 1;
+        detailFocusIntent = null;
+        copyStatus('', false);
+        openDetailName = openDetailName === character ? null : character;
+        requestRender();
+        var detail = document.getElementById(detailId(character));
+        if (detail) { detail.scrollIntoView({block: 'nearest'}); }
+        focusConfigure(character);
+      });
+    }
+    row.appendChild(configure || document.createElement('span'));
+
+    // The collapsed row has one unconditional five-cell shape. Character-
+    // specific group and geometry controls live in the full-grid detail;
+    // cycle rows use the fillers already selected by the two ternaries above.
+    // Keeping the shape branch-free makes the shared-grid invariant explicit.
+    return row;
+  }
+
+  function detailId(name) {
+    // URI encoding produces a stable DOM id without turning a character name
+    // into selector syntax. All later identity lookups use getElementById.
+    return 'preview-character-detail-' + encodeURIComponent(name);
+  }
+
+  function makeCharacterDetail(characterName, off) {
+    var detail = WM.make('div', 'preview-character-detail');
+    detail.id = detailId(characterName);
+    detail.setAttribute('role', 'group');
+    detail.setAttribute('aria-label', 'Configure ' + characterName);
+
+    if (groups().length) {
+      var assignment = WM.make('div', 'preview-detail-field');
+      assignment.appendChild(WM.make('span', 'preview-detail-label', 'Cycle group'));
+      assignment.appendChild(makeGroupSelect(characterName));
+      detail.appendChild(assignment);
     }
 
-    // Cycle forward/back have no `character` -- they are chords, not
-    // characters, and Never-minimize means nothing for them. #preview-binds
-    // is a CSS grid with `.row { display: contents }` (style.css), so
-    // every row must contribute the same number of cells or a short row's
-    // children bleed into the next row's columns.
-    //
-    // Round 5, C3 and decision D6 introduced a Never-minimize cell here
-    // that existed only while the global "Minimize a client's window..."
-    // toggle was ON -- built for every character and then DISABLED
-    // whenever the global was off, which is the default, so the ordinary
-    // state of this screen was ~13 permanently dead controls, one per
-    // character, each carrying a tooltip explaining why it could not be
-    // used. That made the cell count vary across renders (one template
-    // for each toggle state, kept in sync by hand as `#preview-binds` /
-    // `#preview-binds.no-nm`), which is what this task retired: the cell
-    // and the toggling both left `makeRow`, and D6's reasoning -- a
-    // control must not render at all in a state where it can do nothing
-    // -- now governs whether renderNeverMinimizeBlock's whole disclosure
-    // is `hidden`, not a per-row cell.
-    //
-    // The `if` below is deliberately EMPTY -- comments only, no
-    // statements. It used to build the Never-minimize cell for a real
-    // character. That cell is gone from BOTH branches now, so nothing
-    // here stands in for it and nothing should: the one filler left in
-    // the `else` stands in for Size..., on the cycle forward/back rows
-    // that have no character, exactly as the comment there says. That is
-    // what keeps the two branches' cell counts equal.
-    // Nothing here needs collapsing to `if (!character)`: the `} else {`
-    // shape is what test_the_previews_grid_has_one_track_per_cell_makeRow_appends
-    // splits the function body on to find both halves, and the surviving
-    // prose below is the record of what this branch used to build, kept
-    // so the next person does not read an empty block as dead code and
-    // delete it along with the guard it satisfies.
-    if (character) {
-      // NOT passed `off`, unlike every other control on the row -- true
-      // of makeNeverMinimizeCheck's call site now, same reasoning as
-      // always. Opting a character out stops their PREVIEW; it does not
-      // stop minimize_inactive_clients, because _activate_client resolves
-      // `previous_key` from PreviewHost._clients -- which deliberately
-      // still holds opted-out characters -- and so still consults
-      // _is_never_minimize when switching away from that character's real
-      // EVE window. Greying this box would leave a setting in force with
-      // no control to change it, which is the same shape as the roster
-      // eviction LayoutStore._protected exists to prevent.
-      //
-      // Lock and Never minimize used to sit here too, both gated on `off`
-      // for Lock's part -- the asymmetry was the point: with no window
-      // there is nothing to lock, but minimize_inactive_clients still
-      // applies to an opted-out character's real EVE window. Both have
-      // since left the row for their own disclosures under their global
-      // toggles (renderLockBlock, renderNeverMinimizeBlock); Lock's still
-      // passes each character's opted-out state, Never minimize's does
-      // not, for the same reason this comment used to give.
-    } else {
-      // One filler, standing in for Size… on the cycle-forward/back rows,
-      // which have no character and so no Size control either. A constant
-      // absence here would be wrong the moment a future cell joins Size…
-      // in the character branch; matching it one for one is what keeps
-      // the two branches' counts equal without restating the number.
-      //
-      // Track 1 -- the opt-out box -- is NOT filled here: it is filled by
-      // the ternary at the top of this function, which runs for both kinds
-      // of row.
-      row.appendChild(document.createElement('span'));
+    var geometry = WM.make('div', 'preview-detail-field');
+    geometry.appendChild(WM.make('span', 'preview-detail-label', 'Saved geometry'));
+    geometry.appendChild(makeGeometryActions(characterName, off));
+    detail.appendChild(geometry);
+    return detail;
+  }
+
+  function rememberDetailFocus(characterName, control) {
+    detailFocusIntent = {
+      name: characterName, control: control, interaction: detailInteraction
+    };
+  }
+
+  function clearDetailFocus(characterName, control) {
+    if (detailFocusIntent && detailFocusIntent.name === characterName
+        && detailFocusIntent.control === control) {
+      detailFocusIntent = null;
     }
-    return row;
+  }
+
+  function focusRosterHeading() {
+    var heading = WM.el('preview-roster-heading');
+    if (heading) { heading.focus(); return; }
+    // The generated header is absent with no characters. Its attached empty
+    // state is the only programmatic fallback that remains in the roster.
+    var empty = WM.el('preview-binds-empty');
+    if (empty && !empty.hidden) { empty.focus(); }
+  }
+
+  function focusConfigure(characterName) {
+    var buttons = host.querySelectorAll('button.preview-configure');
+    for (var i = 0; i < buttons.length; i++) {
+      if (buttons[i].getAttribute('data-preview-configure') === characterName) {
+        buttons[i].focus();
+        return;
+      }
+    }
+    focusRosterHeading();
+  }
+
+  function focusCharacterDetailControl(characterName, control) {
+    var detail = document.getElementById(detailId(characterName));
+    if (detail) {
+      var target = detail.querySelector(
+        '[data-preview-detail-control="' + control + '"]');
+      if (target && !target.disabled && !target.hidden) {
+        target.focus();
+        return;
+      }
+    }
+    focusConfigure(characterName);
+  }
+
+  function restoreDetailFocus() {
+    if (!detailFocusIntent || groupBusy) { return; }
+    var intent = detailFocusIntent;
+    detailFocusIntent = null;
+    if (intent.interaction !== detailInteraction || openDetailName !== intent.name) {
+      return;
+    }
+    focusCharacterDetailControl(intent.name, intent.control);
   }
 
   // Follows the same shape as the Edit… path: disarm, prompt, send the raw
@@ -414,6 +596,7 @@
   function makeSizeButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Size…');
     WM.setEnabled(btn, !off);
+    btn.setAttribute('data-preview-detail-control', 'size');
     btn.addEventListener('click', function () {
       // Same trap bookmarks.js documents: an armed capture's document
       // keydown handler preventDefault()s every key, so a prompt opened
@@ -455,20 +638,19 @@
     });
   }
 
-  function focusCopyTarget(name) {
-    var buttons = document.querySelectorAll('button[data-copy-target]');
-    var i;
-    for (i = 0; i < buttons.length; i += 1) {
-      if (buttons[i].getAttribute('data-copy-target') === name) {
-        buttons[i].focus();
-        return;
+  // Install the intent only in refresh's authoritative-payload path, and
+  // only while the detail and Copy attempt that began it are still current.
+  // A cancellation, section leave, newer Copy, or Configure click cannot then
+  // let a late refresh steal focus from the user's newer destination.
+  function restoreCopyFocusAfterRefresh(name, interaction, attempt) {
+    if (interaction !== detailInteraction || openDetailName !== name
+        || attempt !== copyAttempt) { return; }
+    refresh(function () {
+      if (interaction === detailInteraction && openDetailName === name
+          && attempt === copyAttempt) {
+        rememberDetailFocus(name, 'copy');
       }
-    }
-    var section = WM.el('section-previews');
-    var fallback = section && section.querySelector(
-      'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
-      + 'select:not([hidden]):not(:disabled)');
-    if (fallback) { fallback.focus(); }
+    });
   }
 
   function copyStatus(text, error) {
@@ -479,12 +661,21 @@
     status.hidden = !status.textContent;
   }
 
+  function copyStatusForCurrent(name, interaction, attempt, text, error) {
+    if (interaction !== detailInteraction || openDetailName !== name
+        || attempt !== copyAttempt) { return; }
+    copyStatus(text, error);
+  }
+
   function makeCopyButton(name, off) {
     var btn = WM.make('button', 'linkbtn', 'Copy…');
     btn.setAttribute('data-copy-target', name);
+    btn.setAttribute('data-preview-detail-control', 'copy');
     WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
       endCapture();
+      var interaction = detailInteraction;
+      var attempt = ++copyAttempt;
       copyStatus('', false);
       var sources = copySources(name);
       var groups = [
@@ -503,17 +694,24 @@
       WM.choose('Copy preview geometry',
                 'Copy saved size and position to "' + name + '".',
                 groups, 'Copy').then(function (source) {
-        if (source === null) { return; }
+        if (source === null) {
+          clearDetailFocus(name, 'copy');
+          return;
+        }
         WM.send('copy_preview_layout', name, source).then(function (result) {
           if (!result || !result.applied) {
-            copyStatus(result && result.error
-                       ? result.error
-                       : 'That preview placement could not be copied.', true);
-            refresh().then(function () { focusCopyTarget(name); });
+            copyStatusForCurrent(
+              name, interaction, attempt,
+              result && result.error
+                ? result.error
+                : 'That preview placement could not be copied.', true);
+            restoreCopyFocusAfterRefresh(name, interaction, attempt);
             return;
           }
-          copyStatus('Copied ' + source + '’s geometry to ' + name + '.', false);
-          refresh().then(function () { focusCopyTarget(name); });
+          copyStatusForCurrent(
+            name, interaction, attempt,
+            'Copied ' + source + '’s geometry to ' + name + '.', false);
+          restoreCopyFocusAfterRefresh(name, interaction, attempt);
         });
       });
     });
@@ -522,11 +720,17 @@
 
   function makeGeometryActions(name, off) {
     var actions = WM.make('span', 'geometry-actions');
-    if (isSizable(name)) { actions.appendChild(makeSizeButton(name, off)); }
+    // The filler goes in whenever Size… does not. Copy… and Size… share a
+    // detail field, so the dash keeps Copy from becoming an unexplained lone
+    // action while preserving the guidance that a size needs a preview first.
+    if (isSizable(name)) {
+      actions.appendChild(makeSizeButton(name, off));
+    } else {
+      actions.appendChild(makeSizeFiller());
+    }
     if (copySources(name).length) {
       actions.appendChild(makeCopyButton(name, off));
     }
-    if (!actions.children.length) { actions.appendChild(makeSizeFiller()); }
     return actions;
   }
 
@@ -895,14 +1099,12 @@
   }
 
   function makeSizeFiller() {
-    // Holds the Size column open for a character that cannot be sized,
-    // and says why on hover rather than being a blank cell the reader has
-    // no account of. Before the gate, clicking Size... here produced the
-    // refusal sentence that NAMED the way out; withdrawing the control
-    // without the sentence would take that away too.
+    // Keeps the Saved geometry detail action legible when Size… is unavailable,
+    // and says why on hover rather than leaving an unexplained blank control.
+    // Withdrawing Size… must not withdraw the guidance it formerly returned.
     //
     // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
-    // grid and elementFromPoint at its centre returned null, so the title
+    // detail flex action layout and elementFromPoint at its centre returned null, so the title
     // below had no hover target and the explanation was unreachable. It
     // also says "nothing here, and that is expected" to someone who never
     // hovers -- an unexplained gap in one column of one row otherwise
@@ -924,9 +1126,8 @@
   // own and into a fixed track, which is what `Character` names. So this
   // header now names a fixed five tracks, not a conditional six or seven.
   // `Clear` and `Edit...` share one cell now (`.rowacts`, built in
-  // makeRow) rather than a track each, and `Size...` keeps its own word --
-  // they are verbs on a control, not the name of a column, so none of
-  // them were ever in that count.
+  // makeRow). `Size...` lives in the expanded Saved geometry detail; all
+  // three are verbs on controls, not names of collapsed-row columns.
   //
   // The width that bought is not per-row. Each column is ONE shared
   // max-content track, so the longest text in a column sizes it for the
@@ -971,9 +1172,16 @@
   // hazard arrived with the inline name rather than with the grid.
   function makeHeadRow() {
     var row = WM.make('div', 'row bind-head');
-    var cells = ['Character', 'Preview', 'Keybind', '', 'Geometry'];
-    cells.forEach(function (text) {
-      row.appendChild(WM.make('span', '', text));
+    var cells = ['Character', 'Preview', 'Keybind', '', 'Configure'];
+    cells.forEach(function (text, index) {
+      var cell = WM.make('span', '', text);
+      if (index === 0) {
+        // The generated Character cell is the roster's stable focus fallback
+        // and the narrow screenshot anchor, not the static card heading.
+        cell.id = 'preview-roster-heading';
+        cell.setAttribute('tabindex', '-1');
+      }
+      row.appendChild(cell);
     });
     return row;
   }
@@ -1092,7 +1300,36 @@
     });
   }
 
+  function appendBindRow(label, gesture, online, onSet, character, ownerKind) {
+    // Computed once, before makeRow, so this row's bind button can point
+    // aria-describedby at the exact conflict node this render appends AND
+    // so makeBindConflict filters cycleOwners()/sharers() against this
+    // row's own identity -- never against `label`, which a named group or
+    // character is free to share with a fixed cycle label or with each
+    // other: see bindConflictId and cycleOwners for why a label-derived
+    // comparison cannot tell a fixed cycle row, a named group, or a
+    // character apart from one another.
+    var ownerKey = character ? 'character:' + character : ownerKind;
+    var conflict = makeBindConflict(label, gesture, character, isExcluded(character), ownerKey);
+    if (conflict) {
+      conflict.id = bindConflictId(ownerKey);
+    }
+    host.appendChild(makeRow(label, gesture, online, onSet, character, conflict));
+    if (character && openDetailName === character) {
+      host.appendChild(makeCharacterDetail(character, isExcluded(character)));
+    }
+    if (conflict) { host.appendChild(conflict); }
+  }
+
   function render() {
+    var list = rows();
+    var openDetailMissing = openDetailName && !list.some(function (entry) {
+      return entry.name === openDetailName;
+    });
+    if (openDetailMissing) {
+      openDetailName = null;
+      detailFocusIntent = null;
+    }
     host.textContent = '';
 
     var off = WM.el('preview-binds-off');
@@ -1115,14 +1352,29 @@
     // `true`, not state.enabled: the cycle chords are not characters and
     // have no online state to report. Dimming them while previews were
     // off was half of what made the whole list grey at once.
-    host.appendChild(makeRow('Cycle forward', state.hotkeys.cycle_next,
-                             true,
-                             function (g) { setBind('cycle_next', g); }));
-    host.appendChild(makeRow('Cycle back', state.hotkeys.cycle_prev,
-                             true,
-                             function (g) { setBind('cycle_prev', g); }));
+    appendBindRow('All forward', state.hotkeys.cycle_next,
+                  true, function (g) { setBind('cycle_next', g); },
+                  undefined, 'cycle:next');
+    appendBindRow('All back', state.hotkeys.cycle_prev,
+                  true, function (g) { setBind('cycle_prev', g); },
+                  undefined, 'cycle:prev');
 
-    var list = rows();
+    // Named group keybind rows. Each group gets its own row rendered by
+    // the shared makeRow so it inherits the five-track shape and the same
+    // Clear/Edit… controls. Rendered after All rows and before the
+    // character divider -- the task brief's wireframe B ordering.
+    groups().forEach(function (group) {
+      appendBindRow(group.name, group.cycle, true,
+                    function (g) { setGroupBind(group.id, g); },
+                    undefined, 'group:' + group.id);
+    });
+
+    // Manage groups disclosure: Add/Rename…/Delete. Rendered after group
+    // rows and before the character separator so it lives in the "keys"
+    // section of the table. Rendered even when groups().length is 0 so
+    // the Add field is always available.
+    host.appendChild(makeGroupManager());
+
     // An UNNAMED rule, then the column headers. The rule used to be a
     // `.bind-group` reading `Characters`, which sat one line above a
     // column header reading `Character` -- the same word twice, naming the
@@ -1159,7 +1411,7 @@
     }
 
     function paint(entry) {
-      host.appendChild(makeRow(
+      appendBindRow(
         entry.name, (state.hotkeys.characters || {})[entry.name],
         // null, not false, while previews are off. makeRow dims only on
         // a strict false, and dimming means "this character is logged
@@ -1170,7 +1422,7 @@
         // out; the banner above says "off" instead.
         state.enabled ? entry.online : null,
         function (g) { setCharacterBind(entry.name, g); },
-        entry.name));
+        entry.name);
     }
 
     running.forEach(paint);
@@ -1195,6 +1447,8 @@
     }
     renderLockBlock();
     renderNeverMinimizeBlock();
+    if (openDetailMissing) { focusRosterHeading(); }
+    else { restoreDetailFocus(); }
   }
 
   function send(next) {
@@ -1252,16 +1506,419 @@
     send(next);
   }
 
-  function refresh() {
+  // Narrow group keybind writer. Calls set_preview_cycle_group_bind instead
+  // of the full set_preview_binds (send(next)) so only the one group's chord
+  // changes and all other groups/characters/cycle_next/prev are untouched.
+  // The generation guard uses `pushes` as in send(): a push that overtook
+  // the bridge call carries the authoritative table.
+  function setGroupBind(groupId, gesture) {
+    // Synchronous guard: a second click while a write is already in flight
+    // must be rejected immediately, before endCapture() or any send.
+    // requestRender() defers during capture, so without this guard old
+    // controls remain live and a repeated click under capture would race.
+    if (groupBusy) { return; }
+    endCapture();
+    // Participates in the shared groupBusy serialisation lock so that
+    // assignment selects, lifecycle controls, and other group writes stay
+    // disabled for the duration of this in-flight bridge call.
+    groupBusy = true;
+    requestRender();
+    var generation = pushes;
+    WM.send('set_preview_cycle_group_bind', groupId, gesture).then(function (res) {
+      groupBusy = false;
+      if (!res || !res.applied) {
+        // On refusal: apply the authoritative table from res.hotkeys when
+        // available and no newer push has landed.  This avoids showing a
+        // stale/deleted group for the extra round-trip that refresh() would
+        // require.  Fall back to refresh() only when res or res.hotkeys is
+        // absent (bridge error or server omission).
+        if (res && res.hotkeys && generation === pushes) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          requestRender();
+        } else {
+          refresh();
+        }
+        WM.send('alert_bookmarks',
+                res && res.error
+                  ? res.error
+                  : 'That binding was not saved. The keybind could not be ' +
+                    'read, or the settings file could not be written.');
+        return;
+      }
+      if (generation !== pushes) {
+        // A newer push already applied authoritative state; skip the stale
+        // response but still repaint so the busy lock is visually cleared.
+        requestRender();
+        return;
+      }
+      if (res.hotkeys) {
+        state.hotkeys = res.hotkeys;
+        state.hotkeys.groups = state.hotkeys.groups || [];
+        state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+      }
+      requestRender();
+    });
+  }
+
+  // Build the group assignment <select> for one character detail. The
+  // detail spans the grid, so returning this control never adds a row cell.
+  //
+  // Not gated on the `off` (opted-out) state: unlike the keybind button
+  // and Size..., which can do nothing for an opted-out character, group
+  // membership is saved and waits for the preview to come back.
+  function makeGroupSelect(characterName) {
+    var sel = WM.make('select', 'field preview-group-select');
+    sel.setAttribute('aria-label', 'Cycle group for ' + characterName);
+    sel.setAttribute('data-preview-detail-control', 'group');
+
+    // Always-first option: no group assigned (All only).
+    var allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All only';
+    sel.appendChild(allOpt);
+
+    // One option per named group, in creation order.
+    groups().forEach(function (g) {
+      var opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.name;
+      sel.appendChild(opt);
+    });
+
+    // Reflect current assignment.
+    var gbc = state.hotkeys.group_by_character || {};
+    sel.value = gbc[characterName] || '';
+    // Disabled during any group write (assignment, lifecycle, or bind) so
+    // concurrent changes from multiple selects can't stack.
+    WM.setEnabled(sel, !groupBusy);
+
+    sel.addEventListener('change', function () {
+      // Synchronous guard: a concurrent write must be rejected before any
+      // state change.  Without this, rapid changes under an armed capture
+      // (where requestRender() defers) can stack.
+      if (groupBusy) { return; }
+      var selectedId = sel.value;
+      rememberDetailFocus(characterName, 'group');
+      // Disable lifecycle and assignment controls for the duration.
+      groupBusy = true;
+      requestRender();
+      // Capture the push generation before the bridge call. If a newer
+      // onPreviewHotkeys push arrives while the call is in flight it
+      // replaces state.hotkeys wholesale; applying the stale response
+      // on top of that would overwrite the authoritative table. Same
+      // guard as setGroupBind.
+      var before = pushes;
+      WM.send('set_preview_character_group', characterName, selectedId)
+        .then(function (res) {
+          groupBusy = false;
+          if (!res || !res.applied) {
+            // Revert: re-read from state.
+            sel.value = (state.hotkeys.group_by_character || {})[characterName] || '';
+            WM.send('alert_bookmarks',
+                    res && res.error
+                      ? res.error
+                      : 'That group change was not saved.');
+            // Apply the authoritative table when available and no newer push
+            // has landed since the call was issued.  This keeps the groups
+            // list coherent without a full refresh() round-trip.
+            if (res && res.hotkeys && pushes === before) {
+              state.hotkeys = res.hotkeys;
+              state.hotkeys.groups = state.hotkeys.groups || [];
+              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+            }
+            requestRender();
+            focusGroupSelect(characterName);
+            return;
+          }
+          if (pushes !== before) {
+            // A newer push already applied authoritative state; skip the
+            // stale hotkeys update but still repaint so disabled controls
+            // are re-enabled (groupBusy is already false above).
+            requestRender();
+            focusGroupSelect(characterName);
+            return;
+          }
+          if (res.hotkeys) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          focusGroupSelect(characterName);
+        });
+    });
+    return sel;
+  }
+
+  // Restore only the still-current detail intent. `restoreDetailFocus` owns
+  // the interaction token check, preventing a late assignment reply from
+  // focusing a closed detail or any control after the section has changed.
+  function focusGroupSelect(characterName) {
+    if (!detailFocusIntent || detailFocusIntent.name !== characterName) { return; }
+    restoreDetailFocus();
+  }
+
+  // Rename a named group. Called from the management disclosure. Ends the
+  // capture first (an armed capture's keydown handler would eat the dialog).
+  function renameGroup(group) {
+    // Synchronous guard: reject if a write is already in flight before
+    // ending capture or opening the prompt.
+    if (groupBusy) { return; }
+    endCapture();
+    WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
+              group.name).then(function (text) {
+      if (text === null || text.trim() === '') { return; }
+      groupBusy = true;
+      requestRender();
+      var before = pushes;
+      WM.send('rename_preview_cycle_group', group.id, text.trim())
+        .then(function (res) {
+          groupBusy = false;
+          if (!res || !res.applied) {
+            WM.send('alert_bookmarks',
+                    res && res.error
+                      ? res.error
+                      : 'That group change was not saved.');
+            // Apply the authoritative table when available and no newer push
+            // has landed.  A refused rename carries the unchanged name.
+            if (res && res.hotkeys && pushes === before) {
+              state.hotkeys = res.hotkeys;
+              state.hotkeys.groups = state.hotkeys.groups || [];
+              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+            }
+            requestRender();
+            focusGroupManager();
+            return;
+          }
+          if (pushes !== before) {
+            // A newer push has already applied authoritative state; skip
+            // the stale response but still repaint with current data.
+          } else if (res.hotkeys) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          focusGroupManager();
+        });
+    });
+  }
+
+  // Restore keyboard focus to the first surviving group management control
+  // (a Delete button for a remaining group), then the Add-name field, then
+  // any enabled control in the Previews section.
+  //
+  // Called AFTER requestRender() rebuilds the DOM so it queries attached
+  // nodes only. The pattern matches focusCopyTarget: named target first,
+  // section-level fallback second, no focus on detached nodes.
+  function focusGroupManager() {
+    var section = WM.el('section-previews');
+    if (!section) { return; }
+    // Prefer the Add-name field: it is always present and is never the
+    // logically-deleted group's own control, so it stays valid even when
+    // a stale push causes the deleted group to re-appear transiently.
+    // A Delete button for a surviving group is a valid but less-stable
+    // target because the DOM order after a stale push can be ambiguous.
+    var addField = section.querySelector(
+      '.group-add-name:not([hidden]):not(:disabled)');
+    if (addField) { addField.focus(); return; }
+    // If the Add field is somehow absent, try a surviving group's button.
+    var delBtn = section.querySelector(
+      '.group-delete-btn:not([hidden]):not(:disabled)');
+    if (delBtn) { delBtn.focus(); return; }
+    // Last resort: any enabled interactive control in the section.
+    var fallback = section.querySelector(
+      'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)');
+    if (fallback) { fallback.focus(); }
+  }
+
+  // Delete a named group. Called from the management disclosure. Ends the
+  // capture first, then shows a WM.confirm with the group name and member
+  // count so the user knows what they are removing.
+  function deleteGroup(group) {
+    // Synchronous guard: reject if a write is already in flight before
+    // ending capture or computing the member count.
+    if (groupBusy) { return; }
+    endCapture();
+    var gbc = state.hotkeys.group_by_character || {};
+    var members = Object.keys(gbc).filter(function (n) {
+      return gbc[n] === group.id;
+    });
+    var memberText = members.length === 1
+      ? '1 character' : members.length + ' characters';
+    var msg = 'Delete group "' + group.name + '"? ' + memberText +
+              ' will return to All only cycling.';
+    WM.confirm('Delete group', msg).then(function (confirmed) {
+      if (!confirmed) { return; }
+      groupBusy = true;
+      requestRender();
+      var before = pushes;
+      WM.send('delete_preview_cycle_group', group.id).then(function (res) {
+        groupBusy = false;
+        if (!res || !res.applied) {
+          WM.send('alert_bookmarks',
+                  res && res.error
+                    ? res.error
+                    : 'That group change was not saved.');
+          // Apply the authoritative table when available and no newer push
+          // has landed.  A refused delete confirms the group is still present.
+          if (res && res.hotkeys && pushes === before) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          // Refusal: the group is still present; repaint re-enables its
+          // controls but focus falls to <body> without an explicit restore.
+          focusGroupManager();
+          return;
+        }
+        if (pushes !== before) {
+          // A newer push has already applied authoritative state.
+          // Skip the stale hotkeys but still repaint and restore focus --
+          // the group is gone either way and focus must not fall to <body>.
+        } else if (res.hotkeys) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+        }
+        requestRender();
+        focusGroupManager();
+      });
+    });
+  }
+
+  // Build the "Manage groups" disclosure: a collapsed <details> with a
+  // <summary> showing "Manage groups (N)", then a text field and Add button,
+  // then one Rename…/Delete row per existing group.  Rendered inside
+  // #preview-binds spanning the full grid width via .preview-group-manager.
+  // Uses <details> rather than a plain div so:
+  //   1. The panel is collapsible -- it does not stay permanently expanded.
+  //   2. It does NOT inherit the bind-group sticky-header CSS that would
+  //      pin it at the top and overlay character rows.
+  // Called from render() after the group keybind rows and before the
+  // character separator.  Open state is preserved across rerenders via
+  // groupManagerOpen so focus restoration works.
+  function makeGroupManager() {
+    var el = document.createElement('details');
+    el.className = 'preview-group-manager';
+    // Restore open state from the module-level flag so a rerender does not
+    // collapse the panel while the user is typing or clicking.
+    if (groupManagerOpen) { el.open = true; }
+    el.addEventListener('toggle', function () {
+      groupManagerOpen = el.open;
+    });
+
+    var sumEl = document.createElement('summary');
+    var count = groups().length;
+    sumEl.textContent = count
+      ? 'Manage groups (' + count + ')'
+      : 'Manage groups';
+    el.appendChild(sumEl);
+
+    var body = WM.make('div', 'group-manager-body');
+    var addRow = WM.make('div', 'group-add-row');
+    var nameField = WM.make('input', 'field group-add-name');
+    nameField.type = 'text';
+    nameField.placeholder = 'New group name';
+    nameField.setAttribute('aria-label', 'New group name');
+    var addBtn = WM.make('button', 'btn group-add-btn', 'Add');
+    WM.setEnabled(addBtn, !groupBusy);
+    WM.setEnabled(nameField, !groupBusy);
+
+    function doAdd() {
+      if (groupBusy) { return; }
+      var name = nameField.value.trim();
+      if (!name) { return; }
+      groupBusy = true;
+      requestRender();
+      var before = pushes;
+      WM.send('create_preview_cycle_group', name).then(function (res) {
+        groupBusy = false;
+        if (!res || !res.applied) {
+          WM.send('alert_bookmarks',
+                  res && res.error
+                    ? res.error
+                    : 'That group change was not saved.');
+          // Apply the authoritative table when available and no newer push
+          // has landed.  A refused create may carry a table that already
+          // reflects the reason for refusal (e.g. duplicate name).
+          if (res && res.hotkeys && pushes === before) {
+            state.hotkeys = res.hotkeys;
+            state.hotkeys.groups = state.hotkeys.groups || [];
+            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+          }
+          requestRender();
+          // The old nameField is detached by requestRender(); query the new
+          // one so focus reaches the rebuilt Add field, not a detached node.
+          focusGroupManager();
+          return;
+        }
+        if (pushes !== before) {
+          // A newer push has already applied authoritative state; skip
+          // the stale response but still repaint.
+        } else if (res.hotkeys) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
+        }
+        // Clear the submitted name so the field does not show a stale value
+        // after repaint (a non-empty field invites a duplicate-add attempt).
+        nameField.value = '';
+        requestRender();
+        // The old nameField is detached by requestRender(); query the new one.
+        focusGroupManager();
+      });
+    }
+
+    // Commit on Enter (not blur -- Settings commit rule: free text commits on
+    // Enter or an explicit button, never on blur).
+    nameField.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); doAdd(); }
+    });
+    addBtn.addEventListener('click', doAdd);
+
+    addRow.appendChild(nameField);
+    addRow.appendChild(addBtn);
+    body.appendChild(addRow);
+
+    // Per-group Rename…/Delete rows.
+    groups().forEach(function (group) {
+      var gRow = WM.make('div', 'group-manage-row');
+      var gName = WM.make('span', 'group-manage-name', group.name);
+      var renBtn = WM.make('button', 'btn group-rename-btn', 'Rename…');
+      var delBtn = WM.make('button', 'btn danger group-delete-btn', 'Delete');
+      WM.setEnabled(renBtn, !groupBusy);
+      WM.setEnabled(delBtn, !groupBusy);
+      renBtn.addEventListener('click', function () { renameGroup(group); });
+      delBtn.addEventListener('click', function () { deleteGroup(group); });
+      gRow.appendChild(gName);
+      gRow.appendChild(renBtn);
+      gRow.appendChild(delBtn);
+      body.appendChild(gRow);
+    });
+
+    el.appendChild(body);
+    return el;
+  }
+
+  function refresh(beforeRender) {
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
       state = payload;
       pushes += 1;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                         cycle_prev: ''};
+      state.hotkeys.groups = state.hotkeys.groups || [];
+      state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
+      if (beforeRender) { beforeRender(); }
       requestRender();
     });
   }
@@ -1316,6 +1973,8 @@
     pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
                                       cycle_prev: ''};
+    state.hotkeys.groups = state.hotkeys.groups || [];
+    state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     state.excluded = state.excluded || [];
@@ -1396,11 +2055,15 @@
   // fire on a plain tab switch and was the wrong event to listen for here.
   // wm:section, not wm:route -- see the matching comment in bookmarks.js.
   document.addEventListener('wm:section', function (event) {
+    copyAttempt += 1;
     copyStatus('', false);
     if (event.detail === 'previews') {
       refresh();
       return;
     }
+    // A response after navigation must not move focus into a hidden section.
+    detailInteraction += 1;
+    detailFocusIntent = null;
     // Leaving must disarm an in-progress capture. bookmarks.js installs
     // its own document-level keydown listener too; stopPropagation() only
     // stops OTHER listeners further along the same dispatch, not a sibling

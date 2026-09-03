@@ -89,9 +89,17 @@ class LayoutStore:
         nothing on the page to turn it back on -- and that one cannot even
         be reversed by logging in, because the whole point is that the
         client no longer produces a preview.
+
+        A third kind: a character mapped in hotkeys.group_by_character has
+        a persisted group assignment.  Without a row the assignment select
+        never renders, leaving the character silently locked into (or out
+        of) a named group with no UI to clear it.
         """
-        return set(section.get("hotkeys", {}).get("characters", {})) | set(
-            section.get("excluded", []) or []
+        hotkeys = section.get("hotkeys") or {}
+        return (
+            set(hotkeys.get("characters") or {})
+            | set(section.get("excluded") or [])
+            | set(hotkeys.get("group_by_character") or {})
         )
 
     def replace(self, stable_key: str, entry) -> bool:

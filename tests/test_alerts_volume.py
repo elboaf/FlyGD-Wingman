@@ -89,17 +89,17 @@ def test_a_sample_width_it_cannot_scale_is_left_alone():
 
 def test_full_volume_plays_the_file_that_ships(tmp_path):
     sound.reset_cache()
-    source = tmp_path / "alarm.wav"
+    source = tmp_path / "system-fault.wav"
     source.write_bytes(_wav([20000]))
-    assert sound.playable_path("alarm", source, 100) == source
+    assert sound.playable_path("system-fault", source, 100) == source
 
 
 def test_a_quieter_volume_plays_a_scaled_copy(tmp_path):
     sound.reset_cache()
-    source = tmp_path / "alarm.wav"
+    source = tmp_path / "system-fault.wav"
     source.write_bytes(_wav([20000]))
 
-    out = sound.playable_path("alarm", source, 50)
+    out = sound.playable_path("system-fault", source, 50)
 
     assert out != source
     assert _samples(out.read_bytes())[0] < 20000
@@ -109,16 +109,16 @@ def test_the_scaled_copy_is_written_once_per_volume(tmp_path):
     """An alert must not re-encode 66k frames every time it fires, and a
     volume change must not leave the old level playing."""
     sound.reset_cache()
-    source = tmp_path / "alarm.wav"
+    source = tmp_path / "system-fault.wav"
     source.write_bytes(_wav([20000]))
 
-    first = sound.playable_path("alarm", source, 50)
+    first = sound.playable_path("system-fault", source, 50)
     stamp = first.stat().st_mtime_ns
     quiet_peak = _samples(first.read_bytes())[0]
-    assert sound.playable_path("alarm", source, 50) == first
+    assert sound.playable_path("system-fault", source, 50) == first
     assert first.stat().st_mtime_ns == stamp
 
-    louder = sound.playable_path("alarm", source, 90)
+    louder = sound.playable_path("system-fault", source, 90)
     # The SAME file, rewritten: one entry per sound means one file per
     # sound, so the old level cannot be left behind for something to play.
     assert louder == first
@@ -132,12 +132,12 @@ def test_a_deleted_cache_file_is_rewritten(tmp_path):
     from. A cache entry pointing at a file that is gone would hand
     PlaySound a missing path, and PlaySound's failure is a silent one."""
     sound.reset_cache()
-    source = tmp_path / "alarm.wav"
+    source = tmp_path / "system-fault.wav"
     source.write_bytes(_wav([20000]))
-    first = sound.playable_path("alarm", source, 50)
+    first = sound.playable_path("system-fault", source, 50)
     first.unlink()
 
-    again = sound.playable_path("alarm", source, 50)
+    again = sound.playable_path("system-fault", source, 50)
 
     assert again.is_file()
 
@@ -149,7 +149,7 @@ def test_a_cache_that_cannot_be_written_falls_back_to_the_original(
     feature is that a missed alert is the failure mode. Volume 0 cannot
     reach here -- play_sound returns before it."""
     sound.reset_cache()
-    source = tmp_path / "alarm.wav"
+    source = tmp_path / "system-fault.wav"
     source.write_bytes(_wav([20000]))
 
     def boom(*a, **kw):
@@ -157,7 +157,7 @@ def test_a_cache_that_cannot_be_written_falls_back_to_the_original(
 
     monkeypatch.setattr(sound.Path, "write_bytes", boom)
 
-    assert sound.playable_path("alarm", source, 50) == source
+    assert sound.playable_path("system-fault", source, 50) == source
 
 
 # ---- play_sound ------------------------------------------------------------
@@ -171,7 +171,7 @@ def test_a_volume_of_zero_never_reaches_the_audio_api(monkeypatch):
     monkeypatch.setattr(
         service, "sound_path", lambda _id: pytest.fail("resolved a muted sound")
     )
-    service.play_sound("alarm", 0)
+    service.play_sound("system-fault", 0)
 
 
 def test_the_volume_reaches_the_scaler(monkeypatch):
@@ -186,9 +186,9 @@ def test_the_volume_reaches_the_scaler(monkeypatch):
     monkeypatch.setattr(service.sound, "playable_path", fake_playable_path)
     monkeypatch.setattr(service, "_play_file", lambda p: seen.setdefault("played", p))
 
-    service.play_sound("alarm", 40)
+    service.play_sound("system-fault", 40)
 
-    assert seen["args"] == ("alarm", 40)
+    assert seen["args"] == ("system-fault", 40)
     assert seen["played"] == "scaled.wav"
 
 

@@ -28,6 +28,8 @@
   var filterText = '';
   var asked = false;      // has the page asked Python for state yet
   var autoExpanded = false; // has the one-shot small-roster expansion run
+  var copyStatusPlan = ''; // plan named by the current clipboard attempt
+  var copyAttemptSeq = 0; // invalidates superseded asynchronous completions
 
   /* S1. The expanded row is the ONLY surface in the whole application for
    * forgetting a character or re-authenticating it (see THE LOCKOUT GUARD
@@ -240,6 +242,10 @@
 
   function selectPlan(name) {
     if (!STATE || name === STATE.selected_plan_name) return;
+    // Feedback belongs to the old selection, and either asynchronous stage
+    // of its copy attempt may still complete after this click.
+    copyAttemptSeq += 1;
+    resetCopyStatus('');
     // Every cached detail was computed against the OLD plan and is now
     // answering a question nobody asked. Dropping pendingDetail as well is
     // what makes the in-flight replies land in requestDetail's mismatch
@@ -334,8 +340,10 @@
   });
 
   WM.el('skills-reload-plans').addEventListener('click', function () {
-    // A reload can change which plan names exist, so the cached details
-    // are no more trustworthy than after a plan switch.
+    // A reload can replace a plan without renaming it, so invalidate pending
+    // clipboard work as well as detail data before asking Python to reload.
+    copyAttemptSeq += 1;
+    resetCopyStatus('');
     details = {};
     pendingDetail = {};
     WM.send('skills_reload_plans');
@@ -410,6 +418,12 @@
     });
     WM.el('skills-plan-count').textContent = name
       ? count + (count === 1 ? ' requirement' : ' requirements') : '';
+    // Task 6. There is nothing to assume about until a plan is selected --
+    // the estimator itself is never even asked (Task 5's ruling: an empty
+    // `training_estimate_status` means no estimate was requested, not a
+    // fifth failure mode), so the button that explains its assumptions has
+    // nothing to explain either.
+    WM.el('skills-estimate-info').hidden = !name;
     // The object of this action is the plan, so with no plan selected
     // there is nothing to copy and the control says so by being disabled
     // rather than by failing when pressed.
@@ -419,20 +433,88 @@
       ? 'Copies every skill in “' + name + '” for EVE\u2019s skill plan '
         + 'import. The game drops the ones already trained.'
       : '';
+    // A feedback message describes one plan. An authoritative push can also
+    // change the selection (for example after plans are reloaded), so it must
+    // invalidate the old attempt just like an explicit plan click does.
+    if (copyStatusPlan && copyStatusPlan !== name) {
+      copyAttemptSeq += 1;
+      resetCopyStatus('');
+    }
+  }
+
+  function setCopyStatus(message, failed) {
+    var status = WM.el('skills-copy-status');
+    status.textContent = message;
+    status.classList.toggle('err', !!failed);
+  }
+
+  function resetCopyStatus(plan) {
+    copyStatusPlan = plan;
+    setCopyStatus('', false);
+  }
+
+  function copyAttemptIsCurrent(token, plan) {
+    return token === copyAttemptSeq && plan === copyStatusPlan;
   }
 
   WM.el('skills-copy-plan').addEventListener('click', function () {
     var name = (STATE && STATE.selected_plan_name) || '';
     if (!name) return;
+    // Claim ownership before either asynchronous stage can fail. The token
+    // also distinguishes two attempts for the same plan and a switch away
+    // and back, where comparing only the plan name would accept stale work.
+    copyAttemptSeq += 1;
+    var token = copyAttemptSeq;
+    resetCopyStatus(name);
     // Python returns the text and the page owns the clipboard write, the
     // same split list.js:396-401 uses for `Copy link`: with Tk gone there
     // is no toolkit clipboard and navigator.clipboard is right here.
-    // Python has already put the outcome on the status strip either way --
     // "" is a plan the last reload invalidated, not an empty plan, because
     // plans.parse rejects a file with no requirements.
     WM.send('skills_plan_text', name).then(function (text) {
-      if (text) navigator.clipboard.writeText(text);
+      if (!copyAttemptIsCurrent(token, name)) return;
+      // Python owns the missing-plan warning: it knows this listed plan
+      // vanished during a reload, while the page only owns clipboard results.
+      if (!text) { return; }
+      try {
+        navigator.clipboard.writeText(text).then(function () {
+          if (!copyAttemptIsCurrent(token, name)) return;
+          setCopyStatus('Plan copied to clipboard.', false);
+        }, function () {
+          if (!copyAttemptIsCurrent(token, name)) return;
+          setCopyStatus('Could not copy the plan to the clipboard.', true);
+        });
+      } catch (err) {
+        // A clipboard denied before it returns a promise has the same
+        // user-facing result as a rejected write.
+        if (!copyAttemptIsCurrent(token, name)) return;
+        setCopyStatus('Could not copy the plan to the clipboard.', true);
+      }
     });
+  });
+
+  /* Fix round 1, WCAG 1.4.13. The primitive's `:focus-visible` addition
+   * made this tooltip appear on keyboard focus and STAY until focus left
+   * -- with no way to dismiss it that does not also move focus, which is
+   * exactly what 1.4.13 forbids. Escape suppresses the pseudo-tooltip
+   * WITHOUT blurring the button (no `.blur()` call here -- focus stays
+   * exactly where the reader left it), and only a real blur (Tab away,
+   * click elsewhere) clears the suppression, so returning to the button
+   * later shows the tooltip again rather than disabling it for the rest
+   * of the session. `.tip-dismissed` carries no visual treatment of its
+   * own; style.css's `.skills-estimate-info.tip-dismissed:focus-visible
+   * ::after` rule is the only thing that reads it, and its three-selector
+   * specificity is what lets it beat the primitive's own
+   * `[data-tip]:focus-visible::after` rule.
+   */
+  var estimateInfo = WM.el('skills-estimate-info');
+  estimateInfo.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      estimateInfo.classList.add('tip-dismissed');
+    }
+  });
+  estimateInfo.addEventListener('blur', function () {
+    estimateInfo.classList.remove('tip-dismissed');
   });
 
   function renderNotices() {
@@ -560,10 +642,21 @@
     order.forEach(function (name) {
       var rows = buckets[name];
       if (!rows.length) return;          // empty groups are omitted
-      rows.sort(name === 'Missing' ? byMissingThenName : byName);
+      rows.sort(comparatorFor(name));
       groups.push({ name: name, rows: rows });
     });
     return groups;
+  }
+
+  // Task 6. One comparator per group, chosen by the group's OWN name --
+  // never a blanket default with per-group exceptions bolted on, because
+  // that shape is how a Ready or Locked row would silently start sorting
+  // by a training-time field it has no opinion about the moment a future
+  // group's name collided with a stray `if`.
+  function comparatorFor(name) {
+    if (name === 'Training') return byTrainingFinishThenName;
+    if (name === 'Missing') return byTrainingRemainingThenName;
+    return byName;
   }
 
   function byName(a, b) {
@@ -571,12 +664,40 @@
       .localeCompare((b.character_name || '').toLowerCase());
   }
 
-  // Fewest missing first. This is the whole surviving remnant of
-  // TriffView's "Train next" tab: the tab never shipped, but the ordering
-  // it existed to provide did, as the sort inside this one group.
-  function byMissingThenName(a, b) {
-    if (a.missing_count !== b.missing_count) {
-      return a.missing_count - b.missing_count;
+  /* Task 6. Soonest first, same as the group's own status line reads --
+   * `estimated_finish_utc` is EVE's own queue fact (the analysis' queued
+   * requirements), not the plan's whole remaining-duration estimate, so a
+   * character already training finishes when its QUEUE says, never when
+   * training.estimate() guesses. A timing-unknown row has no finish to
+   * compare at all -- EVE reported a paused queue -- and claiming one from
+   * the rest would be exactly the guess the group's own status line
+   * refuses to make, so it sorts last rather than first or by name alone.
+   */
+  function byTrainingFinishThenName(a, b) {
+    var aTime = Date.parse(a.estimated_finish_utc || '');
+    var bTime = Date.parse(b.estimated_finish_utc || '');
+    var aKnown = !isNaN(aTime);
+    var bKnown = !isNaN(bTime);
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (aKnown && aTime !== bTime) return aTime - bTime;
+    return byName(a, b);
+  }
+
+  /* Task 6. Replaces byMissingThenName (fewest requirements first), which
+   * answered "how much is left" rather than "how long does it take" --
+   * two skills at level V cost far more training time than five at level
+   * I, and the count sort put the five-skill row first regardless. Sorts
+   * on the RAW seconds Task 5 published, never the formatted label: a
+   * text sort would put "1d 2h" before "9h", which is backwards. A
+   * character with no usable estimate (an unresolved skill, stale
+   * attributes, an incomplete SP snapshot) sorts last, the same way an
+   * unknown Training finish does. */
+  function byTrainingRemainingThenName(a, b) {
+    var aKnown = typeof a.training_remaining_seconds === 'number';
+    var bKnown = typeof b.training_remaining_seconds === 'number';
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (aKnown && a.training_remaining_seconds !== b.training_remaining_seconds) {
+      return a.training_remaining_seconds - b.training_remaining_seconds;
     }
     return byName(a, b);
   }
@@ -592,13 +713,16 @@
    * What is left is only what the header CANNOT carry, because it varies
    * per character inside one group:
    *
-   *   Missing    how many requirements -- and it carries its noun, which
-   *              is the other half of S1. `Missing 2` under a header
-   *              reading `Missing requirements` was the collision; `2
-   *              requirements` under it is not. The number also explains
-   *              the group's own sort (byMissingThenName, fewest first).
-   *   Training   the ETA, which is the answer someone came here for. The
-   *              word `Training` in front of it was the header's.
+   *   Missing    how many requirements are still unqueued -- the other
+   *              half of S1 -- and, when Task 5's estimator could answer,
+   *              how long the whole plan still takes to train. `unqueued`
+   *              rather than `missing`: every one of these is about to be
+   *              queued, not merely absent, and the number also explains
+   *              the group's own sort (byTrainingRemainingThenName).
+   *   Training   how many are already queued, and the ETA that answer
+   *              someone came here for -- EVE's own queue fact, not a
+   *              guess. The word `Training` in front of it was the
+   *              header's.
    *   Other      the raw readiness string. NOT a restatement: the
    *              catch-all header says `Unrecognised` for every row in
    *              it, so the string that put a character there is stated
@@ -612,15 +736,34 @@
    * "timing unknown" is a real state, not a fallback: a queued
    * requirement with no finish date means EVE reported a paused queue,
    * and claiming an ETA from the rest would be a guess.
+   *
+   * Task 6's estimate carries the same discipline one status word
+   * further: `training_estimate_status` is one of Task 5's four real
+   * failure/success words ONLY when a plan is selected and the row's
+   * readiness could therefore be `Missing` at all -- the empty string
+   * means no estimate was ever asked for (Task 5's ruling), which
+   * controller._character_row can only pair with `Unscored`, never with
+   * `Missing`. The `? :` below is not defensive filler: it is what stops
+   * that empty string from ever being folded into "training time
+   * unavailable", a claim about a REAL failure, if that invariant ever
+   * moved.
    */
   function statusLine(ch) {
     if (ch.readiness === 'Training') {
+      var queued = ch.queued_count + ' queued';
       var eta = formatEta(ch.estimated_finish_utc);
-      return (ch.queue_timing_unknown || !eta) ? 'timing unknown' : eta;
+      return (ch.queue_timing_unknown || !eta)
+        ? queued + ' \u00b7 timing unknown'
+        : queued + ' \u00b7 ready in ' + eta;
     }
     if (ch.readiness === 'Missing') {
-      return ch.missing_count
-        + (ch.missing_count === 1 ? ' requirement' : ' requirements');
+      var unqueued = ch.missing_count + ' unqueued';
+      if (ch.training_estimate_status === 'available') {
+        return unqueued + ' \u00b7 ' + ch.training_remaining_label
+          + ' training remaining';
+      }
+      return ch.training_estimate_status ?
+        unqueued + ' \u00b7 training time unavailable' : unqueued;
     }
     if (GROUPS.indexOf(ch.readiness) !== -1) return '';
     return ch.readiness || '';
@@ -741,6 +884,21 @@
     renderRoster();
   });
 
+  /* Two, not controller._ROSTER_NAME_CAP's three. That backend cap
+   * bounds the PAYLOAD -- evaluator.missing_names's own docstring calls
+   * it "a payload bound, not a display decision" -- and the display
+   * decision belongs here, independently of it: if the payload cap ever
+   * moves, this does not have to move with it, and vice versa.
+   *
+   * Smaller than ui/copy.py's _COPY_NAME_CAP (6) on purpose, not just
+   * coincidentally: that modal is a dialog the reader stopped at on
+   * purpose and reads once, `shown`/`rest` derived the same way this row
+   * does (copy.py:555-563). A roster row is read in passing, across many
+   * rows in one scan, not opened and stopped at -- so it can afford fewer
+   * names than a confirmation the user is already reading closely.
+   */
+  var ROSTER_ROW_NAME_CAP = 2;
+
   function rowNode(ch) {
     var row = WM.make('div', 'skills-row');
     if (expanded[ch.character_id]) row.classList.add('open');
@@ -773,8 +931,20 @@
     // status at all that is a gap after the last thing on the line.
     var status = statusLine(ch);
     if (status) {
-      top.appendChild(
-        WM.make('span', 'skills-status status-' + ch.readiness, status));
+      var statusNode = WM.make('span', 'skills-status status-' + ch.readiness,
+                               status);
+      // Task 6. The info button beside the plan heading is the
+      // keyboard-reachable affordance for the assumptions behind this
+      // number; this carries the SAME text so a mouse resting on the
+      // number gets the same explanation without tabbing up to the
+      // header. Read off the button rather than retyped, so the two
+      // copies of this sentence cannot drift apart -- and only on
+      // Missing, whose status is the one that names a duration at all.
+      if (ch.readiness === 'Missing') {
+        var tip = WM.el('skills-estimate-info').getAttribute('data-tip');
+        if (tip) statusNode.setAttribute('data-tip', tip);
+      }
+      top.appendChild(statusNode);
     }
     top.addEventListener('click', function () { toggle(ch.character_id); });
     row.appendChild(top);
@@ -783,17 +953,24 @@
     // hide WHICH nine behind a row expand. The names ride the roster
     // payload -- see controller._ROSTER_NAME_CAP; they are taken off the
     // same tuple missing_count counts, so they cannot disagree with the
-    // number to their left.
+    // number to their left. The row shows fewer of them still, capped
+    // again below at ROSTER_ROW_NAME_CAP.
     //
     // Appended to the ROW, not to `top`: it is a second line under the
     // name, and putting it in the button's flex row would make it compete
     // with the status for the same track. The row stays one click target
     // either way -- this span is inside the <button>'s sibling, so it does
     // not nest interactive content.
-    var names = ch.missing_names || [];
-    if (names.length) {
-      var rest = ch.missing_count - names.length;
-      var text = names.join(', ');
+    var shown = (ch.missing_names || []).slice(0, ROSTER_ROW_NAME_CAP);
+    if (shown.length) {
+      // Derived from `shown.length`, NOT from `ch.missing_names.length`:
+      // the payload can carry up to controller._ROSTER_NAME_CAP names,
+      // capped again here to ROSTER_ROW_NAME_CAP for what this row prints.
+      // Deriving the remainder from the payload's own length would make a
+      // payload-cap change silently change what "and N more" states
+      // without either cap actually moving on its own.
+      var rest = ch.missing_count - shown.length;
+      var text = shown.join(', ');
       // The remainder is stated, never implied by a truncation: `and 6
       // more` is a fact, a trailing ellipsis is a mystery. Same rule
       // ui/copy.py's _COPY_NAME_CAP follows for the copy confirm.

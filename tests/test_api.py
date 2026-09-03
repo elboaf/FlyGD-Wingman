@@ -402,7 +402,14 @@ def test_measured_durations_are_persisted_and_reused(recordings, tmp_path):
 
     rows_api(recordings, tmp_path, clock2, probe=explode, window=window2).list_rows()
 
-    assert [name for name, _ in pushes(window2)] == ["onRows"]
+    # The subject is the PROBE: a cache hit must produce no worker, no
+    # drain loop, and above all no onDuration behind the rows. This read
+    # `== ["onRows"]` until list_rows also began re-stating the combat-log
+    # button's flag on every rebuild -- its only repair for a disarm lost
+    # into a hidden window -- which has nothing to do with probing.
+    names = [name for name, _ in pushes(window2)]
+    assert "onRows" in names
+    assert "onDuration" not in names
     assert clock2.timers == []
 
     # The rows must CARRY the cached durations, not merely skip the probe.

@@ -8,6 +8,8 @@ import ctypes
 import itertools
 import logging
 import sys
+from ctypes import wintypes
+from dataclasses import replace
 
 import pytest
 
@@ -620,7 +622,7 @@ def test_plan_merges_duplicate_chords():
     A multiboxer runs a different subset of their characters each session
     and wants one physical key to mean "go to whichever of these is up".
     One registration carries every name bound to it -- Windows only has
-    one to give -- and _on_hotkey picks among the names actually running.
+    one to give -- and _on_hotkeys picks among the names actually running.
     """
     plan = host.plan_registrations(
         {
@@ -662,6 +664,163 @@ def test_cycle_actions_carry_direction():
     assert actions == [("cycle", -1), ("cycle", 1)]
 
 
+# --- Group planner tests (Step 1) ---
+
+
+def test_plan_carries_stable_id_for_named_group_cycles():
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "dps-id", "name": "DPS", "cycle": "Ctrl+F3"},
+                {"id": "logi-id", "name": "Logistics", "cycle": "Ctrl+F4"},
+            ],
+        }
+    )
+    assert [entry[2] for entry in plan] == [
+        ("cycle", 1),
+        ("cycle", -1),
+        ("cycle_group", "dps-id"),
+        ("cycle_group", "logi-id"),
+    ]
+
+
+def test_plan_character_chord_beats_group_chord():
+    """A character binding already claimed a chord -- the group cycle loses."""
+    plan = host.plan_registrations(
+        {
+            "characters": {"Alice": "Ctrl+F3"},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    assert ("focus", ("Alice",)) in actions
+    assert ("cycle_group", "dps") not in actions
+
+
+def test_plan_all_cycle_chord_beats_group_chord():
+    """The All cycle chord has earlier entry order -- the group cycle loses."""
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F3",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    assert ("cycle", 1) in actions
+    assert ("cycle_group", "dps") not in actions
+
+
+def test_plan_group_cycle_with_non_canonical_gesture_is_canonicalized():
+    """A non-canonical gesture spelling (e.g. different modifier order)
+    must be parsed and stored in canonical form, not rejected."""
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            # 'ctrl+f3' is not display-canonical, but it is parseable.
+            "groups": [{"id": "dps", "name": "DPS", "cycle": "ctrl+f3"}],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    texts = [entry[1] for entry in plan]
+    # The group entry must appear with its canonical text.
+    assert ("cycle_group", "dps") in actions
+    # The stored text is whatever gestures.display() returns -- not the raw input.
+    dps_idx = actions.index(("cycle_group", "dps"))
+    # Verify exact canonical form: lowercase input must be canonicalized to Ctrl+F3
+    assert texts[dps_idx] == "Ctrl+F3"
+
+
+def test_plan_group_with_invalid_gesture_is_dropped():
+    """A group with a chord that does not parse must be silently dropped."""
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "bad", "name": "Bad", "cycle": "NotAChord!!"},
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    assert ("cycle_group", "bad") not in actions
+    assert ("cycle_group", "dps") in actions
+
+
+def test_plan_group_with_none_or_empty_cycle_is_dropped():
+    """Groups with a None or empty string cycle field produce no plan entry."""
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "Ctrl+F1",
+            "cycle_prev": "Ctrl+F2",
+            "groups": [
+                {"id": "none-group", "name": "None", "cycle": None},
+                {"id": "empty-group", "name": "Empty", "cycle": ""},
+                {"id": "valid", "name": "Valid", "cycle": "Ctrl+F3"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    assert ("cycle_group", "none-group") not in actions
+    assert ("cycle_group", "empty-group") not in actions
+    assert ("cycle_group", "valid") in actions
+
+
+def test_plan_group_with_missing_or_non_string_id_is_skipped():
+    """Groups whose 'id' is absent, None, non-string, or empty string must
+    produce no plan entry, preventing ("cycle_group", None) from cycling
+    all unassigned characters.
+
+    plan_registrations is called with unvalidated tables from unit tests and
+    potential future callers; it must not register a None-id action even when
+    the group's cycle gesture is valid.
+    """
+    plan = host.plan_registrations(
+        {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [
+                {"name": "no-id", "cycle": "Ctrl+F1"},  # missing 'id' key
+                {"id": None, "name": "none-id", "cycle": "Ctrl+F2"},
+                {"id": "", "name": "empty-id", "cycle": "Ctrl+F3"},
+                {"id": 42, "name": "int-id", "cycle": "Ctrl+F4"},
+                {"id": "valid", "name": "Valid", "cycle": "Ctrl+F5"},
+            ],
+        }
+    )
+    actions = [entry[2] for entry in plan]
+    # None-id (from missing key), None, empty, and non-string must all be absent
+    assert ("cycle_group", None) not in actions, (
+        "plan_registrations must not register (cycle_group, None) -- "
+        "this would cycle through all unassigned characters"
+    )
+    assert not any(
+        action == ("cycle_group", a)
+        for action, a in ((a, a[1]) for a in actions if a[0] == "cycle_group")
+        if not isinstance(a, str) or not a
+    ), "non-string or empty cycle_group ids must not be registered"
+    assert ("cycle_group", "valid") in actions, "valid group must still be registered"
+    assert len([a for a in actions if a[0] == "cycle_group"]) == 1, (
+        "only the valid group should produce a cycle_group entry"
+    )
+
+
 class _FakeUser32:
     def __init__(self, refuse=(), foreground=0):
         self.registered = {}
@@ -671,13 +830,6 @@ class _FakeUser32:
         # Read by _apply_selection when the hook has not yet recorded a
         # foreground hwnd for this sweep (see _swept_host below).
         self._foreground = foreground
-
-    def SystemParametersInfoW(self, action, size, info, winini):
-        # "Could not read the animation setting": _animation_off then
-        # leaves it alone, so the hosts built on this fake switch without
-        # the toggle showing up anywhere. _SwitchUser32 models the real
-        # thing for the tests that are about the toggle.
-        return False
 
     def RegisterHotKey(self, hwnd, ident, mods, vk):
         self.calls.append(("register", ident))
@@ -695,9 +847,8 @@ class _FakeUser32:
     def GetForegroundWindow(self):
         return self._foreground
 
-    def PeekMessageW(self, ptr, hwnd, lo, hi, remove):
-        # No queued messages: each hotkey test drives exactly one press.
-        return 0
+    def IsIconic(self, _hwnd):
+        return False
 
     def GetClientRect(self, hwnd, rect_ptr):
         # Falsy: these tests are about selection and hotkeys, not sizing,
@@ -895,6 +1046,31 @@ def test_teardown_clears_pending_alerts_and_selection():
     assert h._foreground == 0
 
 
+def test_teardown_clears_active_hotkeys_and_group_history():
+    """_teardown must zero out _active_hotkeys and _last_group_cycled so
+    that a restarted session does not inherit stale membership or history.
+    Regression test for host.py lines 2197-2198."""
+
+    class _TeardownUser32(_FakeUser32):
+        def __getattr__(self, name):
+            return lambda *a, **k: 0
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    libs = _FakeLibs(_TeardownUser32())
+    # Pre-populate state that teardown must clear.
+    h._active_hotkeys = {
+        "group_by_character": {"Alice": "dps", "Bob": "logi"},
+        "groups": [{"id": "dps"}, {"id": "logi"}],
+    }
+    h._last_group_cycled = {"dps": "Alice", "logi": "Bob"}
+
+    h._teardown(libs)
+
+    assert h._active_hotkeys == {}, "_teardown must clear _active_hotkeys"
+    assert h._last_group_cycled == {}, "_teardown must clear _last_group_cycled"
+
+
 def test_raise_alert_drops_oldest_beyond_the_cap():
     """The queue is drained every ~80ms in normal operation (WM_APP_ALERT
     fires _apply_alerts on the pump), so anything beyond a handful means
@@ -910,10 +1086,689 @@ def test_raise_alert_drops_oldest_beyond_the_cap():
     assert kept == [str(i) for i in range(5, host.PENDING_ALERTS_MAX + 5)]
 
 
+def test_coalesce_hotkey_ids_uses_exact_filter_and_preserves_other_messages():
+    queued = [
+        (0x99, host.win32.WM_TIMER, 70),
+        (0x99, host.win32.WM_HOTKEY, 20),
+        (0x77, host.win32.WM_HOTKEY, 30),
+        (0x99, host.win32.WM_HOTKEY, 40),
+    ]
+    filters = []
+
+    def peek(message, hwnd, minimum, maximum, remove):
+        filters.append((hwnd, minimum, maximum, remove))
+        assert (hwnd, minimum, maximum, remove) == (
+            0x99,
+            host.win32.WM_HOTKEY,
+            host.win32.WM_HOTKEY,
+            host.win32.PM_REMOVE,
+        )
+        for index, entry in enumerate(queued):
+            queued_hwnd, queued_message, queued_wparam = entry
+            if queued_hwnd == hwnd and minimum <= queued_message <= maximum:
+                queued.pop(index)
+                ctypes.cast(
+                    message, ctypes.POINTER(wintypes.MSG)
+                ).contents.wParam = queued_wparam
+                return 1
+        return 0
+
+    assert host.coalesce_hotkey_ids(peek, 0x99, 10) == [10, 20, 40]
+    assert queued == [
+        (0x99, host.win32.WM_TIMER, 70),
+        (0x77, host.win32.WM_HOTKEY, 30),
+    ]
+    assert len(filters) == 3
+
+
+def test_host_proc_coalesces_hotkeys_before_dispatch(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    user32 = _FakeUser32()
+    user32.PeekMessageW = lambda *_args: 0
+    libs = _FakeLibs(user32)
+    coalesce_calls = []
+    batches = []
+    monkeypatch.setattr(host.win32, "bind", lambda: libs)
+
+    def fake_coalesce(peek, hwnd, ident):
+        coalesce_calls.append((peek, hwnd, ident))
+        return [int(ident), 22, 33]
+
+    monkeypatch.setattr(host, "coalesce_hotkey_ids", fake_coalesce)
+    monkeypatch.setattr(
+        h, "_on_hotkeys", lambda got_libs, ids: batches.append((got_libs, ids))
+    )
+
+    assert h._host_proc(0x99, host.win32.WM_HOTKEY, 11, 0) == 0
+    assert coalesce_calls == [(user32.PeekMessageW, 0x99, 11)]
+    assert batches == [(libs, [11, 22, 33])]
+
+
+def _batch_hotkey_host():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+        "Carol": _FakeClient("Carol", hwnd=0x3333),
+        "Delta": _FakeClient("Delta", hwnd=0x4444),
+    }
+    user32 = _FakeUser32()
+    user32.GetForegroundWindow = lambda: 0x1111
+    return h, _FakeLibs(user32)
+
+
+def test_three_focus_hotkeys_activate_only_the_last_target(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {
+        1: ("focus", ("Alice",)),
+        2: ("focus", ("Bravo",)),
+        3: ("focus", ("Carol",)),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 3])
+
+    assert activated == [0x3333]
+
+
+def test_repeated_shared_focus_chord_uses_the_virtual_target(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("focus", ("Alice", "Bravo"))}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 1])
+
+    assert activated == [0x1111]
+
+
+def test_shared_focus_ignores_stale_last_cycle_outside_eve(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Alice"
+    h._registered = {1: ("focus", ("Alice", "Bravo"))}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x1111]
+
+
+def test_cycle_uses_last_cycle_as_fallback_outside_eve(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Alice"
+    h._registered = {1: ("cycle", 1)}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
+def test_a_later_focus_in_a_mixed_batch_does_not_replace_the_cycle_fallback(
+    monkeypatch,
+):
+    """The folded direct focus is this dispatch's target, not cycle history.
+
+    A following cycle outside EVE must continue from the batch's last virtual
+    cycle target, exactly as sequential dispatch would after its cycle action.
+    """
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Alice"
+    h._registered = {
+        1: ("cycle", 1),
+        2: ("focus", ("Alice", "Bravo")),
+    }
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x1111, 0x3333]
+    assert h._last_cycled == "Carol"
+
+
+def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 1, 1])
+
+    assert activated == [0x4444]
+    assert h._last_cycled == "Delta"
+
+
+def test_focus_then_cycle_applies_cycle_to_the_virtual_focus_target(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("focus", ("Carol",)), 2: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x4444]
+    assert h._last_cycled == "Delta"
+
+
+def test_failed_focus_does_not_erase_foreground_cursor_for_later_cycle(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._last_cycled = "Carol"
+    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
+def test_failed_focus_then_cycle_uses_cycle_history_when_outside_eve(monkeypatch):
+    h, _libs = _batch_hotkey_host()
+    h._last_cycled = "Carol"
+    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle", 1)}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x4444]
+    assert h._last_cycled == "Delta"
+
+
+def test_failed_focus_does_not_erase_prior_cycle_cursor(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1), 2: ("focus", ("Ghost",))}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 1])
+
+    assert activated == [0x3333]
+    assert h._last_cycled == "Carol"
+
+
+def test_final_failed_focus_suppresses_prior_cycle_dispatch(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1), 2: ("focus", ("Ghost",))}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == []
+    assert h._last_cycled == "Bravo"
+
+
+def test_later_focus_supersedes_cycle_before_final_relative_action(monkeypatch):
+    h, libs = _batch_hotkey_host()
+    h._registered = {
+        1: ("cycle", 1),
+        2: ("focus", ("Carol",)),
+        3: ("cycle", -1),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 3])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
+def test_opposite_cycle_actions_that_return_to_foreground_do_not_activate(
+    monkeypatch,
+):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1), 2: ("cycle", -1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == []
+    assert h._last_cycled == "Alice"
+
+
+# --- Group fold/history tests (Step 6) ---
+
+
+def test_group_cycle_next_advances_within_group(monkeypatch):
+    """Foreground is Alice (dps). DPS cycle should advance Alice→Bravo."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {1: ("cycle_group", "dps")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x2222]  # Bravo
+    assert h._last_group_cycled == {"dps": "Bravo"}
+
+
+def test_group_cycle_nonmember_foreground_starts_at_first_member(monkeypatch):
+    """Foreground is Alice (dps), pressing logi cycle starts at first logi."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {1: ("cycle_group", "logi")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x3333]  # Carol (first logi)
+    assert h._last_group_cycled == {"logi": "Carol"}
+
+
+def test_group_cycle_outside_eve_resumes_per_group_history(monkeypatch):
+    """Outside EVE, each group resumes from its own per-group history."""
+    h, _libs = _batch_hotkey_host()
+    h._last_group_cycled = {"logi": "Carol"}
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {1: ("cycle_group", "logi")}
+    libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))  # outside EVE
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x4444]  # Delta (next after Carol)
+    assert h._last_group_cycled == {"logi": "Delta"}
+
+
+def test_mixed_group_cycles_keep_independent_histories(monkeypatch):
+    """All, DPS, and Logistics histories update independently in one batch."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    h._registered = {
+        1: ("cycle_group", "dps"),
+        2: ("cycle_group", "logi"),
+        3: ("cycle", 1),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2, 3])
+
+    assert h._last_group_cycled == {"dps": "Bravo", "logi": "Carol"}
+    assert h._last_cycled == "Delta"
+    # Only the final resolved target (Delta) is activated; intermediates are not.
+    assert activated == [0x4444]  # Delta
+
+
+def test_empty_group_logs_no_op_and_skips_dispatch(monkeypatch, caplog):
+    """A group with no members produces no activation."""
+    import logging
+
+    h, libs = _batch_hotkey_host()
+    h._active_hotkeys = {"group_by_character": {}}  # nobody in "dps"
+    h._registered = {1: ("cycle_group", "dps")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
+        h._on_hotkeys(libs, [1])
+
+    assert activated == []
+    assert h._last_group_cycled == {}
+    assert any(
+        "dps" in r.message for r in caplog.records if r.levelno == logging.DEBUG
+    ), "Expected a DEBUG no-op message naming the group 'dps'"
+
+
+def test_group_cycle_then_direct_focus_leaves_group_history_intact(monkeypatch):
+    """A direct focus keybind after a group cycle changes dispatch but must
+    not rewrite the group's cycle history."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            "Carol": "logi",
+            "Delta": "logi",
+        }
+    }
+    # Batch: DPS cycle (Alice→Bravo), then focus Carol directly.
+    h._registered = {
+        1: ("cycle_group", "dps"),
+        2: ("focus", ("Carol",)),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    # Final target is Carol (direct focus), not Bravo.
+    assert activated == [0x3333]  # Carol
+    # The group history must record the DPS cycle result; the focus did not
+    # overwrite it.
+    assert h._last_group_cycled == {"dps": "Bravo"}
+
+
+def test_group_cycle_cancels_to_foreground_without_activation(monkeypatch):
+    """A single group cycle that resolves back to the foreground window
+    must not activate (no-op cancellation)."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {"Alice": "dps"}  # only one dps member
+    }
+    h._registered = {1: ("cycle_group", "dps")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    # cycle.step wraps around to Alice — the same as foreground, so no activation.
+    assert activated == []
+    assert h._last_group_cycled == {"dps": "Alice"}
+
+
+def test_mixed_group_cycle_resolves_to_foreground_without_activation(monkeypatch):
+    """A mixed batch whose final fold target equals the foreground window
+    must not activate (cancellation guard)."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+        }
+    }
+    # DPS cycle from Alice → Bravo, then focus Alice brings resolved_cursor
+    # back to Alice.  But cycle_seen is True and the final target == foreground.
+    h._registered = {
+        1: ("cycle_group", "dps"),
+        2: ("focus", ("Alice",)),
+    }
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1, 2])
+
+    # Resolved to Alice (foreground) with cycle_seen=True → cancellation, no dispatch.
+    assert activated == []
+    # DPS cycle history still recorded despite cancellation.
+    assert h._last_group_cycled == {"dps": "Bravo"}
+
+
+def test_group_cycle_capture_yields_registered_text(monkeypatch):
+    """Capture receives the registered chord, not a cycle action."""
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._registered = {1: ("cycle_group", "dps")}
+    h._registered_text = {1: "Ctrl+F3"}
+    h.set_capture(True)
+
+    h._on_hotkeys(_FakeLibs(_FakeUser32()), [1])
+
+    assert captured == ["Ctrl+F3"]
+
+
+def test_capture_uses_newest_registered_hotkey_in_the_batch(monkeypatch):
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._registered = {1: ("focus", ("Alice",)), 2: ("focus", ("Bravo",))}
+    h._registered_text = {1: "Ctrl+F1", 2: "Ctrl+F2"}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h.set_capture(True)
+
+    h._on_hotkeys(_FakeLibs(_FakeUser32()), [1, 2, 0xDEAD])
+
+    assert captured == ["Ctrl+F2"]
+    assert activated == []
+
+
+def test_capture_does_not_fall_back_to_an_older_registered_text(monkeypatch):
+    """An incomplete registration map must not capture or activate a missed chord."""
+    captured = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, on_bind_captured=captured.append
+    )
+    h._registered = {1: ("focus", ("Alice",)), 2: ("focus", ("Bravo",))}
+    h._registered_text = {1: "Ctrl+F1"}
+    h._clients = {"Bravo": _FakeClient("Bravo", hwnd=0x2222)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, client: activated.append(client.hwnd)
+    )
+    h.set_capture(True)
+
+    h._on_hotkeys(_FakeLibs(_FakeUser32()), [1, 2])
+
+    assert captured == []
+    assert activated == []
+    assert h._capture_until > 0
+
+
+def test_coalesced_hotkeys_emit_one_debug_summary(monkeypatch, caplog):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1)}
+    monkeypatch.setattr(
+        h, "_activate_client", lambda *_args: host.window_mod.ActivationResult.ACTIVATED
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        h._on_hotkeys(libs, [1, 0xDEAD, 1, 1])
+
+    summaries = [
+        record.message
+        for record in caplog.records
+        if "coalesced preview hotkeys" in record.message.lower()
+    ]
+    assert summaries == ["Coalesced preview hotkeys: 3, final ('cycle', 1) -> Delta"]
+
+
+def test_offline_focus_batch_does_not_add_a_target_none_diagnostic(caplog):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._registered = {1: ("focus", ("Ghost",))}
+
+    with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
+        h._on_hotkeys(_FakeLibs(_FakeUser32(foreground=0)), [1])
+
+    messages = [record.message for record in caplog.records]
+    assert messages.count("Preview hotkey targets ('Ghost',) are not running") == 1
+    assert "Preview hotkey target None is not running" not in messages
+
+
+def test_empty_cycle_batch_does_not_add_a_target_none_diagnostic(monkeypatch, caplog):
+    h, libs = _batch_hotkey_host()
+    h._registered = {1: ("cycle", 1)}
+    monkeypatch.setattr(h, "_cycle_keys", list)
+
+    with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
+        h._on_hotkeys(libs, [1])
+
+    messages = [record.message for record in caplog.records]
+    assert (
+        messages.count(
+            "Cycle keybind had nothing to visit: every running character "
+            "is opted out of previews"
+        )
+        == 1
+    )
+    assert "Preview hotkey target None is not running" not in messages
+
+
+# --- Active-snapshot and group-key tests (Step 4) ---
+
+
+def test_group_cycle_keys_use_applied_membership_and_skip_excluded():
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None, excluded=lambda: ["Excluded"]
+    )
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=1),
+        "Bob": _FakeClient("Bob", hwnd=2),
+        "Excluded": _FakeClient("Excluded", hwnd=3),
+    }
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bob": "logi",
+            "Excluded": "dps",
+        }
+    }
+    assert h._group_cycle_keys("dps") == ["Alice"]
+
+
+def test_group_cycle_keys_reads_active_not_desired():
+    """Dispatch reads the snapshot committed in _apply_hotkeys, not the
+    pending table that may have been replaced since."""
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=1),
+        "Bob": _FakeClient("Bob", hwnd=2),
+    }
+    # _active_hotkeys has old membership; _desired_hotkeys has new membership.
+    h._active_hotkeys = {"group_by_character": {"Alice": "dps", "Bob": "logi"}}
+    h._desired_hotkeys = {"group_by_character": {"Alice": "logi", "Bob": "dps"}}
+    # Should reflect _active_hotkeys, not _desired_hotkeys.
+    assert h._group_cycle_keys("dps") == ["Alice"]
+
+
+def test_apply_hotkeys_prunes_last_group_cycled_to_active_groups():
+    """Applying a table that removes a group must evict its stale history.
+    Before pruning, _last_group_cycled retained ghost entries for removed
+    groups -- this test was the failing proof before the fix.
+    """
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    libs = _FakeLibs(_FakeUser32())
+    # Seed history with two groups.
+    h._last_group_cycled = {"dps": "Alice", "logi": "Carol"}
+    # Apply a table that no longer contains "logi".
+    h._apply_hotkeys(
+        libs,
+        {
+            "characters": {},
+            "cycle_next": "",
+            "cycle_prev": "",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            ],
+        },
+    )
+    # "logi" is gone; "dps" history must be preserved.
+    assert h._last_group_cycled == {"dps": "Alice"}
+
+
+def test_apply_hotkeys_installs_active_membership_table():
+    """_apply_hotkeys must write _active_hotkeys from the applied table so
+    dispatch can read group membership without touching _desired_hotkeys.
+    This integration path was untested -- the prior Step-4 tests set
+    _active_hotkeys directly instead of driving through _apply_hotkeys.
+    """
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._hwnd = 0x99
+    libs = _FakeLibs(_FakeUser32())
+    table = {
+        "characters": {},
+        "cycle_next": "Ctrl+F1",
+        "cycle_prev": "Ctrl+F2",
+        "groups": [
+            {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+        ],
+        "group_by_character": {"Alice": "dps", "Bob": "dps"},
+    }
+    h._apply_hotkeys(libs, table)
+    assert h._active_hotkeys.get("group_by_character") == {"Alice": "dps", "Bob": "dps"}
+
+
 def test_hotkey_focuses_the_named_character(monkeypatch):
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -941,7 +1796,11 @@ def test_shared_hotkey_skips_the_client_already_in_front(monkeypatch):
     """
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -971,7 +1830,11 @@ def test_shared_hotkey_ignores_names_that_are_not_running(monkeypatch):
     of that group happens to be logged in."""
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -1003,7 +1866,11 @@ def test_shared_hotkey_refocuses_the_only_running_match(monkeypatch):
     """
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -1022,17 +1889,17 @@ def test_shared_hotkey_refocuses_the_only_running_match(monkeypatch):
 
     h._on_hotkey(libs, next(iter(user32.registered)))
 
-    # The target is ALREADY the foreground: the switch short-circuits to
-    # True without paying the minimize/activate dance (EVE-O Preview's
-    # "check if any actions are needed" head), so nothing is activated.
-    assert activated == []
-    assert h._foreground == 0x1111
+    assert activated == [0x1111]
 
 
 def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -1056,7 +1923,11 @@ def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
 def test_a_focus_chord_for_an_absent_character_does_nothing(monkeypatch):
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -1084,7 +1955,11 @@ def test_an_armed_capture_reports_the_chord_instead_of_switching(monkeypatch):
     """
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            activated.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     captured = []
     h = host.PreviewHost(
@@ -1118,7 +1993,11 @@ def test_capture_expires_so_a_stuck_flag_cannot_kill_the_hotkeys(monkeypatch):
     on screen to say why. Expiry is checked where it is read, so no timer
     has to fire for the hotkeys to come back.
     """
-    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
     captured = []
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None, on_bind_captured=captured.append
@@ -1143,7 +2022,11 @@ def test_capture_is_disarmed_by_the_chord_it_captured(monkeypatch):
     """One press, one capture. The page sends set_capture(False) too, but
     the round trip is not instant and a second press arriving inside it
     must not be eaten as well."""
-    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
     captured = []
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None, on_bind_captured=captured.append
@@ -1183,11 +2066,15 @@ def test_a_raising_capture_callback_does_not_kill_the_pump():
 
 
 def test_hotkey_dispatch_is_logged_including_silent_early_returns(monkeypatch, caplog):
-    """_on_hotkey had no logging at all: an unknown id and a not-running
+    """Hotkey dispatch had no logging at all: an unknown id and a not-running
     target both returned silently, and a field report of 'my hotkey does
     nothing' had no dispatch line to distinguish 'never fired' from 'fired
     but the target was not running' from 'fired and worked'."""
-    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
     h._clients = {"Alice": _FakeClient("Alice", hwnd=0x1234)}
@@ -2320,7 +3207,11 @@ def _captured_on_activate(monkeypatch, client_hwnd=0x1000):
     """
     calls = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: calls.append(hwnd) or True
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: (
+            calls.append(hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     monkeypatch.setattr(host.discovery, "flush_image_cache_periodically", lambda: None)
@@ -2386,16 +3277,688 @@ def test_the_hosts_activation_callback_switches_to_the_client_it_is_given(monkey
     assert calls == [0x2222]
 
 
-def test_the_hosts_activation_callback_reports_whether_it_took(monkeypatch):
-    """window_mod.activate's verdict comes from GetForegroundWindow, and a
-    switch can be refused. Anything the host does after a switch has to be
-    able to tell -- dropping the bool here would make a refused switch
-    indistinguishable from one that worked."""
+def test_the_hosts_activation_callback_preserves_the_activation_result(monkeypatch):
+    """window_mod.activate's observed result distinguishes a refusal from an
+    iconic client whose restore is still pending; all enum values are truthy.
+    """
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: False)
-    assert h._activate_client(None, _FakeClient("Alice", hwnd=0x1000)) is False
-    monkeypatch.setattr(host.window_mod, "activate", lambda libs, hwnd: True)
-    assert h._activate_client(None, _FakeClient("Alice", hwnd=0x1000)) is True
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: host.window_mod.ActivationResult.REFUSED,
+    )
+    assert (
+        h._activate_client(None, _FakeClient("Alice", hwnd=0x1000))
+        is host.window_mod.ActivationResult.REFUSED
+    )
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda libs, hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
+    assert (
+        h._activate_client(None, _FakeClient("Alice", hwnd=0x1000))
+        is host.window_mod.ActivationResult.ACTIVATED
+    )
+
+
+def test_pending_foreground_starts_a_timer_without_blocking_or_minimizing(monkeypatch):
+    """A zero foreground after the direct request is an in-progress switch,
+    not permission to enter the synchronous attached fallback on this turn.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+
+    result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_FOREGROUND
+    assert h._pending_switch.stable_key == "Bravo"
+    assert libs.user32.minimized == []
+    assert libs.user32.timers[-1][1:] == (
+        host.ACTIVATE_RETRY_TIMER_ID,
+        host.ACTIVATE_RETRY_MS,
+    )
+    assert [entry for entry in order if entry[0] == "ring"] == []
+
+
+def test_pending_foreground_observes_success_without_reissuing_activation(monkeypatch):
+    """Timer turns observe the one direct request; they must not generate a
+    stream of SetForegroundWindow calls while Windows completes it.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    calls_after_request = list(order)
+    libs.user32._foreground = 0x2222
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: pytest.fail("observation reissued activation"),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [
+        entry for entry in order[len(calls_after_request) :] if entry[0] == "ring"
+    ] == [("ring", "Bravo", True)]
+
+
+@pytest.mark.parametrize("observed", [0, 0x1111], ids=["zero", "unchanged-source"])
+def test_pending_foreground_before_deadline_stays_observe_only(monkeypatch, observed):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.1))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = observed
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: pytest.fail("observation reissued activation"),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is not None
+    assert (
+        h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_FOREGROUND
+    )
+    assert h._pending_switch.attempts == 1
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+
+
+def test_pending_foreground_cancels_when_newer_foreground_wins(monkeypatch):
+    h, libs, _order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0x9999
+    attached = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda *_args, **_kwargs: attached.append(True),
+        raising=False,
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert attached == []
+
+
+def test_pending_foreground_deadline_uses_one_attached_fallback(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.249, 10.250))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+    attached = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda _libs, hwnd, source_hwnd: (
+            attached.append((hwnd, source_hwnd))
+            or host.window_mod.ActivationResult.ACTIVATED
+        ),
+    )
+
+    h._retry_pending_activation(libs)
+    assert attached == []
+    h._retry_pending_activation(libs)
+
+    assert host.ACTIVATE_DIRECT_TIMEOUT_S == 0.25
+    assert attached == [(0x2222, 0x1111)]
+    assert h._pending_switch is None
+    assert ("ring", "Bravo", True) in order
+
+
+def test_pending_foreground_iconic_target_enters_restore_without_activation(
+    monkeypatch,
+):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32.iconic = True
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: pytest.fail("observer activated an iconic target"),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch.attempts == 0
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+
+
+def test_foreground_phase_after_restore_resets_attempts_and_deadline(monkeypatch):
+    h, libs, _order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(host.time, "monotonic", lambda: 20.0)
+    h._activate_client(libs, h._clients["Bravo"])
+    h._pending_switch = replace(h._pending_switch, attempts=7)
+    libs.user32.iconic = False
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert (
+        h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_FOREGROUND
+    )
+    assert h._pending_switch.attempts == 0
+    assert h._pending_switch.deadline == 20.25
+
+
+def test_deadline_pending_restore_enters_restore_phase(monkeypatch):
+    h, libs, _order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.25))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda *_args: host.window_mod.ActivationResult.PENDING_RESTORE,
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch.phase is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch.attempts == 0
+    assert h._pending_switch.deadline == 0.0
+
+
+def test_deadline_cancels_when_saved_eve_source_changed_hwnd(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.25))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+    libs.user32._foreground = 0
+    attached = []
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate_attached",
+        lambda *_args: attached.append(True),
+    )
+
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert attached == []
+    assert [entry for entry in order if entry[0] in {"ring", "show_async"}] == []
+
+
+@pytest.mark.parametrize(
+    "outcome", [host.window_mod.ActivationResult.REFUSED, RuntimeError]
+)
+def test_deadline_failure_clears_pending_without_minimizing(monkeypatch, outcome):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+    now = iter((10.0, 10.25))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(now))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+
+    def fallback(*_args):
+        if outcome is RuntimeError:
+            raise RuntimeError("fallback failed")
+        return outcome
+
+    monkeypatch.setattr(host.window_mod, "activate_attached", fallback)
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert [entry for entry in order if entry[0] in {"ring", "show_async"}] == []
+
+
+def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatch):
+    """An iconic target may restore after activate() returns. The host must
+    return to its message pump instead of blocking or hiding the active client.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+
+    result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is host.window_mod.ActivationResult.PENDING_RESTORE
+    assert h._pending_switch.stable_key == "Bravo"
+    assert h._pending_switch.hwnd == 0x2222
+    assert h._pending_switch.previous_key == "Alice"
+    assert h._pending_switch.previous_hwnd == 0x1111
+    assert h._pending_switch.minimize is True
+    assert h._pending_switch.attempts == 0
+    assert libs.user32.minimized == []
+    assert libs.user32.timers[-1][1:] == (
+        host.ACTIVATE_RETRY_TIMER_ID,
+        host.ACTIVATE_RETRY_MS,
+    )
+    assert [entry for entry in order if entry[0] == "ring"] == []
+
+
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_pending_activation_without_a_live_host_window_is_discarded(
+    monkeypatch, caplog, activation
+):
+    """A pending result needs a timer-backed message pump to make progress."""
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=activation,
+        iconic=activation is host.window_mod.ActivationResult.PENDING_RESTORE,
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is activation
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.timers == []
+    assert any(
+        "discarded; preview host window is unavailable" in r.message
+        for r in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_pending_activation_with_a_rejected_timer_is_discarded(
+    monkeypatch, caplog, activation
+):
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=activation,
+        iconic=activation is host.window_mod.ActivationResult.PENDING_RESTORE,
+    )
+    h._hwnd = 0x99
+    monkeypatch.setattr(libs.user32, "SetTimer", lambda *_args: 0)
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        result = h._activate_client(libs, h._clients["Bravo"])
+
+    assert result is activation
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert any(
+        "discarded; retry timer could not be armed" in r.message for r in caplog.records
+    )
+
+
+def test_a_newer_pending_target_replaces_the_old_one_and_resets_its_timer(monkeypatch):
+    """A later request owns the one periodic retry timer.
+
+    Resetting it gives the new target its full restore interval; tracking it
+    makes the replacement kill the old timer before it arms the new one.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+
+    h._activate_client(libs, h._clients["Bravo"])
+    h._activate_client(libs, h._clients["Carol"])
+
+    assert h._pending_switch.stable_key == "Carol"
+    assert h._pending_switch.hwnd == 0x3333
+    assert h._pending_activation_timer is True
+    assert len(libs.user32.timers) == 2
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
+def test_pending_restore_expires_after_exactly_25_retries_and_logs_dropped_minimize(
+    monkeypatch, caplog
+):
+    """A restore that never becomes foreground must stop retrying.
+
+    The 20ms timer gets 25 non-blocking retry turns (about 500ms), then drops
+    its saved outgoing minimize rather than silently retaining stale intent.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        for _ in range(24):
+            h._retry_pending_activation(libs)
+        assert h._pending_switch.attempts == 24
+        h._retry_pending_activation(libs)
+
+    assert host.ACTIVATE_RETRY_MS == 20
+    assert host.ACTIVATE_RETRY_MAX == 25
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert len([entry for entry in order if entry == ("activate", 0x2222)]) == 26
+    assert len(libs.user32.timers) == 1
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+    assert any(
+        "did not complete after 25 restore retries; saved minimize of 0x1111 was dropped"
+        in record.message
+        for record in caplog.records
+    )
+
+
+def test_pending_activation_expiry_uses_the_generic_label(monkeypatch, caplog):
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=False,
+    )
+    h._hwnd = 0x99
+    h._arm_pending_activation(
+        libs,
+        host._PendingSwitch("Alice", 0x1111, None, 0, False),
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        for _ in range(host.ACTIVATE_RETRY_MAX):
+            h._retry_pending_activation(libs)
+
+    assert any(
+        "Activation of Alice did not complete after 25 restore retries"
+        in record.message
+        for record in caplog.records
+    )
+
+
+def test_pending_restore_success_moves_the_selection_once(monkeypatch):
+    """A delayed restore must commit its saved minimize and selection once.
+
+    Without the completion path, a restored target gets a ring but leaves the
+    outgoing client visible; without clearing first, later timer ticks repeat
+    both effects.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+    results = iter(
+        (
+            host.window_mod.ActivationResult.PENDING_RESTORE,
+            host.window_mod.ActivationResult.ACTIVATED,
+        )
+    )
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: order.append(("activate", hwnd)) or next(results),
+    )
+
+    h._activate_client(libs, h._clients["Bravo"])
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [entry for entry in order if entry[0] == "ring"] == [
+        ("ring", "Alice", False),
+        ("ring", "Bravo", True),
+    ]
+    assert libs.user32.minimized == [0x1111]
+
+
+def test_pending_retry_exception_logs_once_and_cancels_future_retries(
+    monkeypatch, caplog
+):
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    calls = []
+
+    def raise_activation(_libs, hwnd):
+        calls.append(hwnd)
+        raise RuntimeError("retry failed")
+
+    monkeypatch.setattr(host.window_mod, "activate", raise_activation)
+
+    with caplog.at_level(logging.ERROR, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
+        h._retry_pending_activation(libs)
+
+    errors = [
+        record
+        for record in caplog.records
+        if "Pending activation of Bravo (0x2222) raised" in record.message
+    ]
+    assert len(errors) == 1
+    assert calls == [0x2222]
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
+def test_pending_restore_refusal_discards_the_saved_minimize(monkeypatch, caplog):
+    """A refused retry must not minimize the old client after its target fails.
+
+    Completing the saved decision on refusal would hide the only usable EVE
+    window even though Windows never brought the requested one forward.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, _hwnd: host.window_mod.ActivationResult.REFUSED,
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.minimized == []
+    assert any("was refused" in record.message for record in caplog.records)
+
+
+def test_a_direct_success_supersedes_a_pending_restore(monkeypatch):
+    """A newer success must cancel an older target's retry timer.
+
+    Otherwise its later WM_TIMER can revive stale user intent and minimize the
+    outgoing client after the user already switched somewhere else.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._activate_client(libs, h._clients["Bravo"])
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, _hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
+
+    result = h._activate_client(libs, h._clients["Carol"])
+
+    assert result is host.window_mod.ActivationResult.ACTIVATED
+    assert h._pending_switch is None
+    assert h._pending_activation_timer is False
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
+def test_pending_restore_success_skips_a_recreated_outgoing_window(monkeypatch, caplog):
+    """A retry may outlive the outgoing client's HWND.
+
+    Minimizing the replacement would hide a newly discovered client that did
+    not participate in the switch which recorded the saved decision.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, _hwnd: host.window_mod.ActivationResult.ACTIVATED,
+    )
+
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
+
+    assert libs.user32.minimized == []
+    assert any("saved minimize skipped" in record.message for record in caplog.records)
+
+
+def test_pending_restore_client_replacement_cancels_the_request(monkeypatch):
+    """The target can exit and reappear before its retry fires.
+
+    Retrying the saved HWND would send foreground work to an unrelated window
+    after Windows has recycled the handle or EVE has recreated its client.
+    """
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Bravo"] = _FakeClient("Bravo", hwnd=0x4444)
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_teardown_kills_the_pending_activation_timer_and_clears_the_request(
+    monkeypatch, activation
+):
+    """Stopping the host must not leave a timer targeting its dead HWND.
+
+    A surviving timer is a use-after-teardown callback when the next preview
+    host starts, with a saved minimize decision from the prior session.
+    """
+    h, libs, _ = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=activation,
+        iconic=activation is host.window_mod.ActivationResult.PENDING_RESTORE,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+
+    h._teardown(libs)
+
+    assert h._pending_switch is None
+    assert (0x99, host.ACTIVATE_RETRY_TIMER_ID) in libs.user32.killed_timers
 
 
 def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
@@ -2405,7 +3968,9 @@ def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
     monkeypatch.setattr(
         host.PreviewHost,
         "_activate_client",
-        lambda self, libs, client: seen.append(client.hwnd) or True,
+        lambda self, libs, client: (
+            seen.append(client.hwnd) or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
@@ -2440,38 +4005,46 @@ class _RingWindow:
     def set_focused(self, focused):
         self.focused = focused
 
+    def close(self):
+        pass
+
 
 class _SwitchUser32(_FakeUser32):
-    """Records the foreground reads, the minimize sends and the animation
-    toggles into a shared order log, so a test can assert the SEQUENCE and
-    not just the calls -- the ordering is the whole feature here."""
+    """Records foreground, async-minimize, and retry-timer effects."""
 
-    def __init__(self, order, foreground=0, post_result=1, animation=1):
+    def __init__(self, order, foreground=0, iconic=False):
         super().__init__(foreground=foreground)
         self._order = order
-        self._post_result = post_result
-        self.animation = animation
+        self.iconic = iconic
+        self.minimized = []
+        self.timers = []
+        self.killed_timers = []
+
+    def IsIconic(self, _hwnd):
+        return self.iconic
+
+    def SetTimer(self, hwnd, ident, interval, _callback):
+        self.timers.append((hwnd, ident.value, interval))
+        return ident
+
+    def KillTimer(self, hwnd, ident):
+        self.killed_timers.append((hwnd, ident.value))
+        return 1
+
+    def DestroyWindow(self, _hwnd):
+        return 1
+
+    def PostQuitMessage(self, _code):
+        return None
 
     def GetForegroundWindow(self):
         self._order.append(("foreground", self._foreground))
         return self._foreground
 
-    def PostMessageW(self, hwnd, msg, wparam, lparam):
-        self._order.append(("post", hwnd, msg, wparam, lparam))
-        return self._post_result
-
-    def SystemParametersInfoW(self, action, size, info, winini):
-        # SPI_GETANIMATION fills the struct; SPI_SETANIMATION reads it. The
-        # winini flag is asserted here rather than logged: writing the
-        # user's animation preference to the registry would be a bug on
-        # every switch, not a sequencing detail.
-        assert winini == 0
-        assert size == ctypes.sizeof(host.win32.ANIMATIONINFO)
-        if action == host.win32.SPI_GETANIMATION:
-            info.contents.iMinAnimate = self.animation
-        else:
-            self.animation = info.contents.iMinAnimate
-            self._order.append(("animation", self.animation))
+    def ShowWindowAsync(self, hwnd, command):
+        self._order.append(("show_async", hwnd, command))
+        if command == host.win32.SW_SHOWMINNOACTIVE:
+            self.minimized.append(hwnd)
         return True
 
 
@@ -2479,24 +4052,22 @@ def _switching_host(
     monkeypatch,
     *,
     foreground,
-    activated=True,
-    post_result=1,
+    activation=host.window_mod.ActivationResult.ACTIVATED,
     minimize=True,
     never=(),
-    animation=1,
+    iconic=False,
 ):
-    """A host with two clients, Alice on 0x1111 and Bravo on 0x2222, whose
-    activation, minimize send and animation toggles are all recorded in
-    one log."""
+    """A host with two clients and observable switch effects."""
     order = []
     monkeypatch.setattr(
         host.window_mod,
         "activate",
-        lambda libs, hwnd: order.append(("activate", hwnd)) or activated,
+        lambda libs, hwnd: order.append(("activate", hwnd)) or activation,
     )
-    monkeypatch.setattr(host.time, "sleep", lambda s: order.append(("sleep", s)))
     user32 = _SwitchUser32(
-        order, foreground=foreground, post_result=post_result, animation=animation
+        order,
+        foreground=foreground,
+        iconic=iconic,
     )
     h = host.PreviewHost(
         on_layout_changed=lambda *a: None,
@@ -2514,336 +4085,268 @@ def _switching_host(
     return h, _FakeLibs(user32), order
 
 
-MINIMIZE_ALICE = (
-    "post",
-    0x1111,
-    host.win32.WM_SYSCOMMAND,
-    host.win32.SC_MINIMIZE,
-    0,
-)
+def test_new_target_during_foreground_zero_keeps_original_outgoing_decision(
+    monkeypatch,
+):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._windows["Carol"] = _RingWindow("Carol", order)
+    results = iter(
+        (
+            host.window_mod.ActivationResult.PENDING_FOREGROUND,
+            host.window_mod.ActivationResult.ACTIVATED,
+        )
+    )
+    monkeypatch.setattr(host.window_mod, "activate", lambda *_args: next(results))
+    h._activate_client(libs, h._clients["Bravo"])
+    libs.user32._foreground = 0
+    h._activate_client(libs, h._clients["Carol"])
+    assert libs.user32.minimized == [0x1111]
 
 
-def test_the_switch_reads_the_foreground_minimizes_then_activates(monkeypatch):
-    """The order is the feature, and it is EVE-O Preview's order
-    (ThumbnailManager.SwitchActiveClient: MinimizeWindow, then
-    ActivateWindow), not TriffView's activate-settle-minimize-reactivate.
+def test_cycle_during_pending_foreground_anchors_on_pending_target(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *_args: None)
+    h._clients = {
+        "Alice": _FakeClient("Alice", hwnd=0x1111),
+        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+        "Carol": _FakeClient("Carol", hwnd=0x3333),
+    }
+    h._pending_switch = host._PendingSwitch(
+        "Bravo",
+        0x2222,
+        "Alice",
+        0x1111,
+        False,
+        phase=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    user32 = _FakeUser32(foreground=0)
+    activated = []
+    monkeypatch.setattr(
+        h,
+        "_activate_client",
+        lambda _libs, client: activated.append(client.stable_key),
+    )
+    h._registered = {1: ("cycle", 1)}
+    h._on_hotkeys(_FakeLibs(user32), [1])
+    assert activated == ["Carol"]
 
-    Minimizing the outgoing client while it still holds the foreground is
-    not measurably faster in itself -- both orders run well inside the
-    budget on quiet clients. What the order buys is the slow case: a
-    timed-out send is still delivered later, and minimizing BEFORE the
-    activation means that late minimize lands on a window that is no
-    longer the foreground, so it cannot take focus off the client the
-    user just asked for. With nothing minimized after the activate there
-    is no foreground theft to undo either, so the settle and the second
-    activation are gone with it -- the switch no longer sleeps on the
-    preview thread at all. See _activate_client's docstring for the
-    measurements, and for what the field log does and does not say.
 
-    The animation is turned off around the whole sequence and restored
-    after it. That is a purely VISIBLE saving -- measured, it costs the
-    send nothing (12.6ms ON vs 14.2ms OFF) -- and none for a desktop that
-    already has it off. See _animation_off's docstring.
-    """
+def test_superseded_timer_resolves_only_current_target(monkeypatch):
+    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
+    h._hwnd = 0x99
+    h._clients["Carol"] = _FakeClient("Carol", hwnd=0x3333)
+    h._windows["Carol"] = _RingWindow("Carol", order)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda *_args: host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._activate_client(libs, h._clients["Bravo"])
+    h._activate_client(libs, h._clients["Carol"])
+    libs.user32._foreground = 0x3333
+    h._retry_pending_activation(libs)
+    assert h._selected_key == "Carol"
+    assert not h._windows["Bravo"].selected
+
+
+def test_pending_foreground_target_replacement_cancels_the_request(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    )
+    h._hwnd = 0x99
+
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Bravo"] = _FakeClient("Bravo", hwnd=0x4444)
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [entry for entry in order if entry[0] == "activate"] == [
+        ("activate", 0x2222)
+    ]
+    assert libs.user32.killed_timers == [(0x99, host.ACTIVATE_RETRY_TIMER_ID)]
+
+
+def test_successful_switch_marks_target_before_nonactivating_async_minimize(
+    monkeypatch,
+):
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
 
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
+    assert (
+        h._activate_client(libs, h._clients["Bravo"])
+        is host.window_mod.ActivationResult.ACTIVATED
+    )
 
     assert order == [
         ("foreground", 0x1111),
-        ("animation", 0),
-        MINIMIZE_ALICE,
         ("activate", 0x2222),
         ("ring", "Bravo", True),
-        ("animation", 1),
+        ("show_async", 0x1111, host.win32.SW_SHOWMINNOACTIVE),
     ]
-    assert libs.user32.animation == 1
 
 
-def test_the_switch_never_sleeps(monkeypatch):
-    """SWITCH_SETTLE_MS is gone, and it must stay gone: the sleep ran on
-    the thread that pumps hotkeys, alerts, the sweep and every preview's
-    mouse messages, and it only ever existed to separate the minimize
-    from an activation it now follows."""
+@pytest.mark.parametrize(
+    "activation",
+    [
+        host.window_mod.ActivationResult.REFUSED,
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+    ],
+    ids=["refused", "pending"],
+)
+def test_unsuccessful_switch_never_requests_an_async_minimize(monkeypatch, activation):
+    h, libs, order = _switching_host(
+        monkeypatch, foreground=0x1111, activation=activation, iconic=True
+    )
+    if activation is host.window_mod.ActivationResult.PENDING_RESTORE:
+        h._hwnd = 0x99
+
+    assert h._activate_client(libs, h._clients["Bravo"]) is activation
+
+    assert [entry for entry in order if entry[0] == "show_async"] == []
+
+
+def test_refused_switch_keeps_foreground_and_selection_ring_unchanged(monkeypatch):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.REFUSED,
+    )
+    h._foreground = 0x1111
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+
+    assert (
+        h._activate_client(libs, h._clients["Bravo"])
+        is host.window_mod.ActivationResult.REFUSED
+    )
+
+    assert h._foreground == 0x1111
+    assert h._selected_key == "Alice"
+    assert h._windows["Alice"].selected is True
+    assert h._windows["Bravo"].selected is False
+    assert [entry for entry in order if entry[0] == "ring"] == []
+
+
+def test_an_activation_exception_is_logged_without_minimizing_or_rollback(
+    monkeypatch, caplog
+):
     h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
 
-    h._activate_client(libs, h._clients["Bravo"])
-
-    assert [e for e in order if e[0] == "sleep"] == []
-    assert not hasattr(host, "SWITCH_SETTLE_MS")
-
-
-def test_an_animation_already_off_is_left_alone(monkeypatch):
-    """Nothing to turn off, so nothing is written -- and nothing is
-    'restored' to a value the user never had."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, animation=0)
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    assert [e for e in order if e[0] == "animation"] == []
-    assert libs.user32.animation == 0
-
-
-def test_the_animation_comes_back_even_when_activation_raises(monkeypatch):
-    """A leaked animation-off is a change to the user's whole desktop that
-    outlives the switch. The restore is a finally, not a tail."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
-
-    def boom(libs, hwnd):
-        raise RuntimeError("activation exploded")
+    def boom(_libs, hwnd):
+        order.append(("activate", hwnd))
+        raise RuntimeError("activation failed")
 
     monkeypatch.setattr(host.window_mod, "activate", boom)
 
-    with pytest.raises(RuntimeError):
-        h._activate_client(libs, h._clients["Bravo"])
-
-    assert libs.user32.animation == 1
-
-
-def test_the_ring_moves_inline_the_instant_the_switch_takes(monkeypatch):
-    """The ring is applied inline, the instant activate() reports the
-    foreground moved -- not on the sweep the foreground hook will ask for.
-    TriffView marks the highlight in the same place (TriffViewSubsystem.cs,
-    TryActivateClient)."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
-    h._selected_key = "Alice"
-    h._windows["Alice"].selected = True
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    kinds = [entry[0] for entry in order]
-    assert kinds.index("activate") + 1 == kinds.index("ring")
-    assert ("ring", "Bravo", True) in order
-    assert ("ring", "Alice", False) in order
-
-
-def test_the_inline_ring_needs_no_second_foreground_read(monkeypatch):
-    """activate() already read GetForegroundWindow to reach its verdict, and
-    the host records the destination it just switched to -- so moving the
-    ring here must not cost another syscall, and must not consult a
-    _foreground the hook has not caught up on yet."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111)
-    h._foreground = 0x1111  # stale: the hook has not run yet
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    assert h._foreground == 0x2222
-    assert h._selected_key == "Bravo"
-    assert h._focused_key == "Bravo"
-    # One read, at the top, to identify the OUTGOING client.
-    assert [e for e in order if e[0] == "foreground"] == [("foreground", 0x1111)]
-
-
-def test_a_refused_switch_leaves_the_ring_where_it_was(monkeypatch):
-    """Windows refuses a foreground change from a process without recent
-    input, and window.py logs exactly that as the likeliest field
-    complaint. The client never came forward, so highlighting its preview
-    would point at a window the user is not looking at."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, activated=False)
-    h._selected_key = "Alice"
-    h._windows["Alice"].selected = True
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is False
-
-    assert [e for e in order if e[0] == "ring"] == []
-    assert h._selected_key == "Alice"
-
-
-def test_a_refused_switch_brings_the_minimized_client_back(monkeypatch):
-    """The safety property, in the shape minimize-first forces on it.
-    TriffView's version was 'a refused switch minimizes nothing'; here the
-    outgoing client is already minimized when the refusal is learned, so
-    the refusal restores it -- otherwise the user's old client is gone and
-    the new one never arrived: an empty desktop with nothing focused."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, activated=False)
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is False
-
-    assert order == [
-        ("foreground", 0x1111),
-        ("animation", 0),
-        MINIMIZE_ALICE,
-        ("activate", 0x2222),
-        ("activate", 0x1111),
-        ("animation", 1),
-    ]
-
-
-def test_an_activation_that_raises_still_restores_the_minimized_client(
-    monkeypatch, caplog
-):
-    """Between the minimize and the verdict there is one call that can
-    raise (a ctypes ArgumentError on a bad hwnd, say). On the click path
-    the caller is the ctypes WndProc, which prints an uncaught exception
-    and swallows it -- so the rollback cannot live only on the
-    refused-verdict branch, or this case is the empty desktop with no
-    log line. The exception still propagates: the switch failed."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
-    calls = []
-
-    def activate(libs, hwnd):
-        calls.append(hwnd)
-        if hwnd == 0x2222:
-            raise RuntimeError("bad hwnd")
-        return True
-
-    monkeypatch.setattr(host.window_mod, "activate", activate)
-
     with (
-        caplog.at_level("ERROR", logger="wingman.preview.host"),
-        pytest.raises(RuntimeError),
+        caplog.at_level(logging.ERROR, logger="wingman.preview.host"),
+        pytest.raises(RuntimeError, match="activation failed"),
     ):
         h._activate_client(libs, h._clients["Bravo"])
 
-    assert calls == [0x2222, 0x1111]
-    assert any("raised; restoring 0x1111" in r.message for r in caplog.records)
-    assert libs.user32.animation == 1
-
-
-def test_a_refused_switch_after_a_failed_minimize_still_restores(monkeypatch):
-    """A zero send is not proof the client stayed up: a send that timed
-    out is still delivered and processed later, so it can minimize the
-    client 50ms after the refusal. Restoring anyway costs nothing when
-    the send really did fail -- activate() on the window that still
-    holds the foreground is its own early return."""
-    h, libs, order = _switching_host(
-        monkeypatch, foreground=0x1111, activated=False, post_result=0
+    assert [entry for entry in order if entry[0] == "show_async"] == []
+    assert any(
+        "Activation of 0x2222 raised; outgoing client left unchanged" in record.message
+        for record in caplog.records
     )
 
-    assert h._activate_client(libs, h._clients["Bravo"]) is False
 
-    assert [e for e in order if e[0] == "activate"] == [
+def test_pending_success_marks_target_then_async_minimizes_validated_previous(
+    monkeypatch,
+):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._selected_key = "Alice"
+    h._windows["Alice"].selected = True
+    results = iter(
+        (
+            host.window_mod.ActivationResult.PENDING_RESTORE,
+            host.window_mod.ActivationResult.ACTIVATED,
+        )
+    )
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: order.append(("activate", hwnd)) or next(results),
+    )
+
+    h._activate_client(libs, h._clients["Bravo"])
+    h._retry_pending_activation(libs)
+
+    assert h._pending_switch is None
+    assert [
+        entry for entry in order if entry[0] in {"activate", "ring", "show_async"}
+    ] == [
         ("activate", 0x2222),
-        ("activate", 0x1111),
+        ("activate", 0x2222),
+        ("ring", "Alice", False),
+        ("ring", "Bravo", True),
+        ("show_async", 0x1111, host.win32.SW_SHOWMINNOACTIVE),
     ]
 
 
-def test_a_refused_switch_logs_whether_the_rollback_took(monkeypatch, caplog):
-    """The refusal that stopped the switch -- no recent input in this
-    process -- applies to the rollback too. Without a line of its own the
-    log shows two 'did not take' lines for two hwnds and nothing saying
-    the second was a rollback; a refused rollback IS the empty-desktop
-    case the smoke checklist says to watch for."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, activated=False)
-
-    with caplog.at_level("INFO", logger="wingman.preview.host"):
-        h._activate_client(libs, h._clients["Bravo"])
-
-    lines = [r.message for r in caplog.records if "refused" in r.message]
-    assert lines == ["Switch to 0x2222 refused; could not restore 0x1111"]
-
-
-def test_a_failed_animation_restore_is_not_silent(monkeypatch, caplog):
-    """The one outcome _animation_off exists to prevent is the user's
-    desktop left without its animation. When the restore call is refused
-    there is nothing to retry, but it must reach the log."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111)
-    real = libs.user32.SystemParametersInfoW
-
-    def refuse_restore(action, size, info, winini):
-        if action == host.win32.SPI_SETANIMATION and info.contents.iMinAnimate:
-            return False
-        return real(action, size, info, winini)
-
-    monkeypatch.setattr(libs.user32, "SystemParametersInfoW", refuse_restore)
-
-    with caplog.at_level("WARNING", logger="wingman.preview.host"):
-        assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    assert any(
-        "Could not restore the window animation" in r.message for r in caplog.records
+def test_pending_success_skips_async_minimize_for_a_recreated_previous(
+    monkeypatch, caplog
+):
+    h, libs, order = _switching_host(
+        monkeypatch,
+        foreground=0x1111,
+        activation=host.window_mod.ActivationResult.PENDING_RESTORE,
+        iconic=True,
+    )
+    h._hwnd = 0x99
+    h._activate_client(libs, h._clients["Bravo"])
+    h._clients["Alice"] = _FakeClient("Alice", hwnd=0x4444)
+    monkeypatch.setattr(
+        host.window_mod,
+        "activate",
+        lambda _libs, hwnd: (
+            order.append(("activate", hwnd))
+            or host.window_mod.ActivationResult.ACTIVATED
+        ),
     )
 
+    with caplog.at_level(logging.INFO, logger="wingman.preview.host"):
+        h._retry_pending_activation(libs)
 
-def test_a_failed_minimize_still_activates(monkeypatch):
-    """The minimize is a side effect of the switch, not a precondition:
-    a minimize that never posts must not cost the user the switch itself."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, post_result=0)
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    kinds = [entry[0] for entry in order]
-    assert kinds == ["foreground", "animation", "post", "activate", "ring", "animation"]
+    assert [entry for entry in order if entry[0] == "show_async"] == []
+    assert any("saved minimize skipped" in record.message for record in caplog.records)
 
 
-def test_a_failed_post_is_logged_and_costs_the_switch_nothing(monkeypatch, caplog):
-    """A False return from PostMessageW is a failure before delivery --
-    an invalid hwnd, or a client that exited between the foreground read
-    and here. Unlike the old timed-out send there is no elapsed time to
-    report, but the line still exists: it is what "minimize sometimes
-    does nothing" looks like in a user's log, and a live install logged
-    166 of those in one session."""
-    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, post_result=0)
-
-    with caplog.at_level("INFO", logger="wingman.preview.host"):
-        assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    line = "".join(r.message for r in caplog.records if "Minimize of" in r.message)
-    assert line, "the failed minimize logged nothing"
-    assert "was not posted" in line
-
-
-NO_MINIMIZE = [
-    ("animation", 0),
-    ("activate", 0x2222),
-    ("ring", "Bravo", True),
-    ("animation", 1),
-]
-
-
-def test_a_never_minimize_character_is_left_alone(monkeypatch):
-    """The roster names the client being switched AWAY from -- the one
-    that would be minimized."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, never=("Alice",))
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    assert order == [("foreground", 0x1111), *NO_MINIMIZE]
-
-
-def test_the_switch_minimizes_nothing_while_the_setting_is_off(monkeypatch):
-    h, libs, order = _switching_host(monkeypatch, foreground=0x1111, minimize=False)
-
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    assert order == [("foreground", 0x1111), *NO_MINIMIZE]
-
-
-def test_clicking_the_client_that_already_has_the_foreground_minimizes_nothing(
-    monkeypatch,
+@pytest.mark.parametrize(
+    ("foreground", "minimize", "target"),
+    [
+        (0x1111, False, "Bravo"),
+        (0xDEAD, True, "Bravo"),
+        (0x2222, True, "Bravo"),
+    ],
+    ids=["disabled", "no-previous", "same-target"],
+)
+def test_switches_without_an_eligible_previous_never_request_async_minimize(
+    monkeypatch, foreground, minimize, target
 ):
-    """Previous and next are the same client. The switch short-circuits
-    to True before anything moves -- no minimize of the very client just
-    clicked (the original bug), and under the 2026-08-31 queueing fix
-    not even an activation round-trip: EVE-O Preview's "check if any
-    actions are needed" head."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0x2222)
+    h, libs, order = _switching_host(
+        monkeypatch, foreground=foreground, minimize=minimize
+    )
 
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
+    h._activate_client(libs, h._clients[target])
 
-    assert order == [("foreground", 0x2222)]
+    assert [entry for entry in order if entry[0] == "show_async"] == []
 
 
-def test_a_foreground_that_is_not_a_client_minimizes_nothing(monkeypatch):
-    """A browser, Discord, or Wingman itself. Nothing in the roster owns
-    that hwnd, so there is no previous client to minimize -- and sending
-    SC_MINIMIZE to whatever happened to be foreground would minimize the
-    user's other application on every switch."""
-    h, libs, order = _switching_host(monkeypatch, foreground=0xDEAD)
+def test_preview_switch_path_has_no_synchronous_minimize_or_animation_toggle():
+    import inspect
 
-    assert h._activate_client(libs, h._clients["Bravo"]) is True
-
-    assert order == [("foreground", 0xDEAD), *NO_MINIMIZE]
-
-
-def test_switching_without_libs_touches_no_animation(monkeypatch):
-    """Tests drive _activate_client with libs=None to exercise the
-    decisions without the Win32 surface; the animation toggle is Win32."""
-    h, _, order = _switching_host(monkeypatch, foreground=0x1111)
-
-    assert h._activate_client(None, h._clients["Bravo"]) is True
-
-    assert [e for e in order if e[0] == "animation"] == []
+    src = inspect.getsource(host)
+    for gone in ("SendMessageTimeoutW", "_animation_off", "SystemParametersInfoW"):
+        assert gone not in src
 
 
 # --- copy_layout()/resize_preview()/reset_layouts(): on-demand geometry -----
@@ -3308,89 +4811,67 @@ def test_a_newly_created_preview_is_born_with_the_current_lock_aspect(monkeypatc
     assert seen["lock_aspect"] is False
 
 
-# --- hotkey coalescing: a burst ends in the switch the user asked for ------
-#
-# A switch is tens of milliseconds on the same pump that reads WM_HOTKEY,
-# so rapid pressing posts faster than switches drain, and every posted
-# press is a REAL switch waiting to run -- the sequence kept replaying
-# long after the keys went quiet, each switch undoing the last. Draining
-# to the newest press is the fix.
+# ---- Final-review fix: Finding #1 - empty group is a no-op, not target reset ----
 
 
-def test_the_drain_keeps_only_the_newest_queued_press(monkeypatch):
-    """PeekMessageW hands back every WM_HOTKEY queued behind the one being
-    handled; the LAST of them is the only one still true when the switch
-    runs."""
-    from ctypes import wintypes as wt
-
-    queued = [7, 11, 13]  # two older presses queued behind this one (13)
-
-    def peek(ptr, hwnd, lo, hi, remove):
-        if not queued:
-            return 0
-        msg = wt.MSG.from_address(ctypes.addressof(ptr._obj))
-        msg.wParam = queued.pop(0)
-        return 1
-
-    libs = type("L", (), {})()
-    libs.user32 = type("U", (), {"PeekMessageW": staticmethod(peek)})()
-    h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    assert h._drain_stale_hotkeys(libs, 5) == 13
-    assert queued == []  # drained, not left for the next press
-
-
-def test_the_drain_is_a_no_op_without_libs():
-    """The tests drive _on_hotkey with libs=None on the hotkey-free paths;
-    draining must not be the thing that starts requiring a pump."""
-    h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    assert h._drain_stale_hotkeys(None, 5) == 5
-
-
-def test_a_burst_of_presses_switches_once(monkeypatch):
-    """Six rapid presses alternating Alice/Bravo, with five of them still
-    queued when the first is handled: exactly ONE activation -- to Bravo,
-    the newest press -- instead of six switches replaying the sequence."""
-    from ctypes import wintypes as wt
-
-    # Idents are not knowable before registration, so the queue is
-    # filled after _apply_hotkeys: alternating presses ending on Bravo.
-    queued = []
-
-    def peek(ptr, hwnd, lo, hi, remove):
-        if not queued:
-            return 0
-        msg = wt.MSG.from_address(ctypes.addressof(ptr._obj))
-        msg.wParam = queued.pop(0)
-        return 1
-
+def test_empty_group_after_dps_cycle_preserves_dps_target(monkeypatch):
+    """An empty named group following a successful DPS cycle must not cancel
+    the DPS result.  The empty action is a no-op; the final dispatch target
+    remains Bravo (the DPS step result)."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {
+        "group_by_character": {
+            "Alice": "dps",
+            "Bravo": "dps",
+            # 'empty' group has no members
+        }
+    }
+    h._registered = {
+        1: ("cycle_group", "dps"),
+        2: ("cycle_group", "empty"),
+    }
     activated = []
     monkeypatch.setattr(
-        host.window_mod, "activate", lambda libs, hwnd: activated.append(hwnd) or True
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
     )
-    h = host.PreviewHost(on_layout_changed=lambda *a: None)
-    h._hwnd = 0x99
-    h._clients = {
-        "Alice": _FakeClient("Alice", hwnd=0x1111),
-        "Bravo": _FakeClient("Bravo", hwnd=0x2222),
+    h._on_hotkeys(libs, [1, 2])
+
+    # DPS step: Alice→Bravo.  Empty is a no-op.  Final target = Bravo.
+    assert activated == [0x2222], (
+        "empty group after DPS cycle must not cancel the DPS target"
+    )
+
+
+def test_empty_group_after_direct_focus_preserves_focused_target(monkeypatch):
+    """An empty named group following a direct-focus action must not cancel
+    the focus result.  The final dispatch target remains Carol."""
+    h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
+    h._active_hotkeys = {"group_by_character": {}}  # 'empty' has no members
+    h._registered = {
+        1: ("focus", ("Carol",)),
+        2: ("cycle_group", "empty"),
     }
-    user32 = _FakeUser32()
-    user32.GetForegroundWindow = lambda: 0
-    user32.PeekMessageW = peek
-    libs = _FakeLibs(user32)
-    h._apply_hotkeys(
-        libs,
-        {
-            "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
-            "cycle_next": "",
-            "cycle_prev": "",
-        },
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h._on_hotkeys(libs, [1, 2])
+
+    assert activated == [0x3333], (
+        "empty group after direct focus must not cancel the focus result"
     )
 
-    ident_by_vk = {vk: ident for ident, (mods, vk) in user32.registered.items()}
-    alice = ident_by_vk[0x70]  # Ctrl+F1
-    bravo = ident_by_vk[0x71]  # Ctrl+F2
-    queued.extend([bravo, alice, bravo, alice, bravo])
 
-    h._on_hotkey(libs, alice)  # the press being handled
+def test_standalone_empty_group_activates_nothing(monkeypatch):
+    """A single empty group action with no prior target still produces no
+    activation - the no-op contract for an isolated empty-group press."""
+    h, libs = _batch_hotkey_host()
+    h._active_hotkeys = {"group_by_character": {}}  # 'empty' has no members
+    h._registered = {1: ("cycle_group", "empty")}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+    h._on_hotkeys(libs, [1])
 
-    assert activated == [0x2222]  # one switch, to the newest press
+    assert activated == [], "a standalone empty group action must not activate anything"

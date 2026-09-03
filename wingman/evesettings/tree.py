@@ -175,6 +175,19 @@ def _shard(name: str) -> tuple[str, str]:
     return name, name
 
 
+def is_tranquility_server(path) -> bool:
+    """Identify Tranquility server folder by trusted naming scheme.
+
+    Returns True only for exact matches and strict suffixes, not substring
+    matches, to authorize destructive operations like cleanup.
+
+    Tranquility folder names: "tranquility" or ending with "_tq_tranquility".
+    Case-insensitive to match Windows path semantics.
+    """
+    name = os.path.normcase(Path(path).name).casefold()
+    return name == "tranquility" or name.endswith("_tq_tranquility")
+
+
 def _is_profile_dir(path) -> bool:
     return Path(path).name.startswith(_PROFILE_PREFIX)
 

@@ -500,8 +500,11 @@ break the surface it belongs to, such as the Previews table's shared grid.
 Options are built with DOM text properties, grouped in words rather than by
 colour, and its `<select>` participates in the same focus trap, Escape-is-
 Cancel behavior, queue, and focus restoration as the other page-owned
-requests. A keybind-capture screen disarms capture before opening any of the
-three: its document listener consumes Tab as well as printable keys.
+requests. The scrim is also Cancel, but only when both press and release land
+on it: a text-selection drag that starts inside the dialog must not discard a
+prompt value when it overshoots the edge. A keybind-capture screen disarms
+capture before opening any of the three: its document listener consumes Tab as
+well as printable keys.
 
 The third row's bound is not caution. `_push` swallows every `evaluate_js`
 failure, so a confirmation whose push never reached the page would park its

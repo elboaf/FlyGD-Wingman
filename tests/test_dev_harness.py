@@ -460,6 +460,33 @@ def test_profiles_delayed_mutation_logs_every_received_argument():
     )
 
 
+def _dev_preview_fixture() -> dict:
+    """Parse DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js as a Python dict.
+
+    The fixture is a strict JSON-compatible object literal (double-quoted
+    keys/strings, no JS-specific syntax inside the body), so json.loads
+    works directly on the extracted block.
+    """
+    import json as _json
+
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    assert marker in DEV_JS, f"{marker} not found in dev.js"
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    brace_start = raw.index("{")
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = raw[brace_start : end + 1]
+    return _json.loads(body)
+
+
 def test_the_preview_fixture_uses_real_gesture_strings():
     """Previews store `preview/gestures.py` display strings
     ("Ctrl+Alt+Right"), NOT the AHK that Bookmarks stores ("^!Right"). The
@@ -472,13 +499,25 @@ def test_the_preview_fixture_uses_real_gesture_strings():
     wrong double. Round-tripped through the real parser rather than
     compared to a literal, so a change to the format fails here instead of
     being invisibly re-fabricated.
+
+    The fixture is now a named JSON literal (DEV_PREVIEW_HOTKEYS_FIXTURE);
+    gestures are extracted by parsing the JSON rather than regex-scanning
+    the getter body.
     """
     from wingman.preview import gestures as preview_gestures
 
-    block = _fixture_body("api.get_preview_hotkey_state")
-    gestures = {g for g in re.findall(r"'([^']+)'", block) if "+" in g}
-    assert gestures, "the preview fixture declares no gesture strings"
-    for gesture in sorted(gestures):
+    fixture = _dev_preview_fixture()
+    hotkeys = fixture.get("hotkeys", {})
+    # Collect all gesture strings: character binds + cycle_next/prev + group cycles
+    all_gestures: set[str] = set()
+    all_gestures.update(v for v in hotkeys.get("characters", {}).values() if v)
+    if hotkeys.get("cycle_next"):
+        all_gestures.add(hotkeys["cycle_next"])
+    if hotkeys.get("cycle_prev"):
+        all_gestures.add(hotkeys["cycle_prev"])
+    all_gestures.update(g["cycle"] for g in hotkeys.get("groups", []) if g.get("cycle"))
+    assert all_gestures, "the preview fixture declares no gesture strings"
+    for gesture in sorted(all_gestures):
         parsed = preview_gestures.parse(gesture)
         assert parsed is not None, (
             f"dev.js's preview fixture holds {gesture!r}, which "
@@ -491,11 +530,81 @@ def test_the_preview_fixture_uses_real_gesture_strings():
 
 
 def test_the_preview_fixture_carries_online_and_offline_layout_sources():
-    block = _fixture_body("api.get_preview_hotkey_state")
-    assert "layout_sources" in block
-    assert re.search(r"name:\s*'[^']+',\s*online:\s*true", block)
-    assert re.search(r"name:\s*'[^']+',\s*online:\s*false", block)
+    """The fixture must carry both an online and an offline layout source.
+
+    The fixture is now a named JSON literal; check via JSON parse.
+    """
+    fixture = _dev_preview_fixture()
+    sources = fixture.get("layout_sources", [])
+    assert sources, "fixture must have layout_sources"
+    assert any(s.get("online") for s in sources), (
+        "fixture must have at least one online layout source"
+    )
+    assert any(not s.get("online") for s in sources), (
+        "fixture must have at least one offline layout source"
+    )
     assert "copy_preview_layout" in _stubbed()
+
+
+def test_preview_fixture_covers_the_roster_states_screenshots_need():
+    """Keep the authoritative fixture representative rather than tiny.
+
+    The capture tool injects this exact JSON into the real page. A short,
+    uniform roster hides scrolling, the offline divider, unavailable geometry,
+    direct-bind sharing, and a collision until a user's own state happens to
+    expose one of them.
+    """
+    fixture = _dev_preview_fixture()
+    roster = fixture["roster"]
+    online = set(fixture["characters"])
+    offline = set(roster) - online
+    hotkeys = fixture["hotkeys"]
+    direct = hotkeys["characters"]
+
+    assert len(roster) >= 10
+    assert online and offline
+    assert any(len(name) >= 30 for name in roster)
+    assert hotkeys["group_by_character"]
+    assert set(roster) & set(fixture["sizable"])
+    assert set(roster) - set(fixture["sizable"])
+    long_name = "Aleksandrina Shadowbanes Voidstriders"
+    assert long_name in roster
+    assert long_name not in fixture["excluded"], (
+        "the staged Copy target must have an enabled Copy control"
+    )
+    assert any(source["name"] != long_name for source in fixture["layout_sources"])
+
+    by_gesture = {}
+    for name, gesture in direct.items():
+        by_gesture.setdefault(gesture, []).append(name)
+    assert any(len(names) >= 2 for names in by_gesture.values()), (
+        "fixture needs a supported shared direct-character bind"
+    )
+    assert any(
+        gesture in {hotkeys["cycle_next"], hotkeys["cycle_prev"]}
+        for gesture in direct.values()
+    ), "fixture needs a direct-character/cycle-keybind conflict"
+
+
+def test_preview_fixture_covers_a_named_group_cycle_conflict():
+    """The same screenshot fixture must also exercise a named-group
+    keybind collision, not just the direct-character/cycle conflict above.
+
+    The warning-ownership fix (Task 2) applies uniformly to character,
+    cycle, and named-group rows; only a real collision in each keeps the
+    screenshot actually showing one.
+    """
+    fixture = _dev_preview_fixture()
+    groups = fixture["hotkeys"]["groups"]
+    by_cycle = {}
+    for group in groups:
+        cycle = group.get("cycle")
+        if cycle:
+            by_cycle.setdefault(cycle, []).append(group["name"])
+    assert any(len(names) >= 2 for names in by_cycle.values()), (
+        "fixture needs two named groups sharing one cycle keybind, so a "
+        "named-group conflict warning actually renders in the screenshot"
+    )
 
 
 def test_the_bookmark_fixture_uses_real_ahk_strings():
@@ -583,4 +692,1118 @@ def test_the_bookmark_groups_are_not_a_hand_kept_copy():
         )
     assert groups == [dict(g) for g in bookmarks.bind_groups()], (
         "dev.js's bookmarkGroups has drifted from bookmarks.bind_groups()"
+    )
+
+
+def test_the_preview_groups_fixture_covers_real_states():
+    """The preview fixture must carry cycle groups, not just the old hotkeys.
+
+    The five group-mutation methods are no longer known gaps -- dev.js now
+    doubles them.  This test pins the fixture data those stubs read from.
+
+    The fixture is now a named JSON literal (DEV_PREVIEW_HOTKEYS_FIXTURE);
+    assertions use the JSON parse helper.
+    """
+    from wingman.preview import gestures as preview_gestures
+
+    fixture = _dev_preview_fixture()
+    hotkeys = fixture.get("hotkeys", {})
+    assert hotkeys.get("groups"), "preview fixture lacks groups array"
+    assert hotkeys.get("group_by_character"), (
+        "preview fixture lacks group_by_character map"
+    )
+    # At least one group must carry a real parseable cycle gesture.
+    gestures_in_groups = [g["cycle"] for g in hotkeys["groups"] if g.get("cycle")]
+    assert gestures_in_groups, "no group has a cycle gesture in the fixture"
+    for gesture in gestures_in_groups:
+        parsed = preview_gestures.parse(gesture)
+        assert parsed is not None, (
+            f"preview fixture group holds {gesture!r}, which gestures.py cannot parse"
+        )
+        assert preview_gestures.display(parsed) == gesture, (
+            f"preview fixture group holds {gesture!r}, not canonical spelling"
+        )
+    # Named groups must include at least a DPS group and an empty group.
+    names = [g["name"] for g in hotkeys["groups"]]
+    assert any("DPS" in n for n in names), (
+        "preview fixture lacks a group with 'DPS' in its name"
+    )
+    assert any("Empty" in n or "empty" in n for n in names), (
+        "preview fixture lacks an empty group"
+    )
+    # The UI label 'All only' is derived by the page, not persisted.
+    assert "All only" not in str(fixture), (
+        "'All only' is a UI label and must not appear in the fixture"
+    )
+
+
+def test_the_preview_group_dev_methods_are_no_longer_known_gaps():
+    """The five group-mutation methods were in the known-gaps list while
+    dev.js lacked stubs for them.  Task 5 adds the stubs, so they must
+    no longer appear in the known-gaps list AND they must be stubbed.
+    """
+    stubbed = _stubbed()
+    for method in (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+    ):
+        assert method in stubbed, (
+            f"dev.js does not stub {method!r} -- it is still a known gap"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Round 1 fix: fixture consolidation, data correctness, async push, contracts
+# ---------------------------------------------------------------------------
+
+
+def test_preview_fixture_is_consolidated_into_named_literal():
+    """dev.js must declare a single named object literal DEV_PREVIEW_HOTKEYS_FIXTURE
+    that is strict JSON-compatible (no JS-specific syntax like single quotes,
+    trailing commas, or unquoted keys inside the literal body).
+
+    Both the dev getter and the mutable _devPreviewHotkeys must derive from it.
+    """
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in DEV_JS, (
+        "dev.js must declare a top-level var DEV_PREVIEW_HOTKEYS_FIXTURE "
+        "so shoot_screens.py can parse it as the screenshot payload"
+    )
+    # The named literal must be the source for the getter and mutable state.
+    getter_block = DEV_JS[DEV_JS.index("api.get_preview_hotkey_state") :]
+    getter_block = getter_block[: getter_block.index("\n  };")]
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in getter_block, (
+        "get_preview_hotkey_state must deep-copy from DEV_PREVIEW_HOTKEYS_FIXTURE, "
+        "not maintain a separate inline literal"
+    )
+
+
+def test_preview_fixture_excluded_character_is_also_assigned_to_a_group():
+    """The fixture must contain at least one character who is BOTH in
+    excluded[] AND in group_by_character, proving the page handles the
+    opted-out-but-still-assigned state correctly.
+
+    The current fixture only excludes Zuelo (who has no group assignment)
+    and omits this combination entirely.
+    """
+    import json as _json
+
+    # Extract the canonical fixture from the named literal
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    assert marker in DEV_JS, "DEV_PREVIEW_HOTKEYS_FIXTURE must be declared"
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    # Find the JSON body: from the opening { to the matching }
+    brace_start = raw.index("{")
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = raw[brace_start : end + 1]
+    fixture = _json.loads(body)
+
+    excluded = fixture.get("excluded", [])
+    group_by_character = fixture.get("hotkeys", {}).get("group_by_character", {})
+
+    excluded_and_assigned = [c for c in excluded if c in group_by_character]
+    assert excluded_and_assigned, (
+        "fixture must have at least one character who is both excluded[] "
+        "and in group_by_character — currently no such character exists, "
+        "so the opted-out-but-assigned state is never exercised"
+    )
+
+
+def test_preview_fixture_nonexcluded_character_without_group_assignment():
+    """The fixture must contain at least one character who is NOT excluded
+    AND NOT in group_by_character (the All-only path for an opted-in character).
+
+    The current fixture has Zuelo as excluded + unassigned, but needs a
+    distinct non-excluded unassigned character to exercise the All-only
+    path separately from the excluded path.
+    """
+    import json as _json
+
+    marker = "DEV_PREVIEW_HOTKEYS_FIXTURE"
+    assert marker in DEV_JS
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    brace_start = raw.index("{")
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(raw[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = raw[brace_start : end + 1]
+    fixture = _json.loads(body)
+
+    roster = fixture.get("roster", [])
+    excluded = set(fixture.get("excluded", []))
+    group_by_character = fixture.get("hotkeys", {}).get("group_by_character", {})
+
+    nonexcluded_unassigned = [
+        c for c in roster if c not in excluded and c not in group_by_character
+    ]
+    assert nonexcluded_unassigned, (
+        "fixture must have at least one roster member who is neither excluded "
+        "nor in group_by_character -- the All-only path for an opted-in character "
+        "is not exercised otherwise"
+    )
+
+
+def test_preview_dev_push_is_asynchronous():
+    """_devPushHotkeys must use setTimeout(..., 0) to defer the push.
+
+    A synchronous push during a mutation response means the handler runs
+    inside the promise resolution, which can cause re-entrant renders and
+    makes the push timing non-deterministic with respect to callers.
+    Production Api._push is fired from a worker thread (effectively async);
+    the dev harness must match that behaviour.
+    """
+    # Find the _devPushHotkeys function body
+    marker = "function _devPushHotkeys"
+    assert marker in DEV_JS, "_devPushHotkeys must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    # Find the matching closing brace of this function
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    assert "setTimeout" in body, (
+        "_devPushHotkeys must use setTimeout(..., 0) to match the async "
+        "behaviour of production Api._push -- currently it calls "
+        "onPreviewHotkeys synchronously"
+    )
+
+
+def test_preview_group_result_shape_has_all_four_required_fields():
+    """_devGroupResult must return an object with exactly the four fields
+    the page contracts on: applied (bool), persisted (bool), error (str|null),
+    hotkeys (object).
+
+    A partial result silently breaks the page's mutation handlers, which
+    check res.applied and res.hotkeys but also pass res.error to alert_bookmarks.
+    """
+    marker = "function _devGroupResult"
+    assert marker in DEV_JS, "_devGroupResult must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    for field in ("applied", "persisted", "error", "hotkeys"):
+        assert field in body, (
+            f"_devGroupResult must include the '{field}' field "
+            "to match the production Api._preview_group_result shape"
+        )
+
+
+def test_preview_group_delete_cleans_up_group_by_character():
+    """delete_preview_cycle_group must remove all group_by_character entries
+    that reference the deleted group.
+
+    Leaving stale entries means characters appear assigned to a non-existent
+    group, which the page cannot recover from gracefully.
+    """
+    marker = "api.delete_preview_cycle_group"
+    assert marker in DEV_JS, "delete_preview_cycle_group must be stubbed"
+    start = DEV_JS.index(marker)
+    # Find the function body (the assigned function)
+    fn_start = DEV_JS.index("function", start)
+    brace_start = DEV_JS.index("{", fn_start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    assert "group_by_character" in body, (
+        "delete_preview_cycle_group must clean up group_by_character entries "
+        "for the deleted group -- stale references break the character-row selects"
+    )
+    # Must remove entries (delete or reassign)
+    assert "delete" in body or "splice" in body, (
+        "delete_preview_cycle_group must remove stale group_by_character entries"
+    )
+
+
+def test_preview_dev_push_sends_full_state_not_just_hotkeys():
+    """_devPushHotkeys must push the full state payload (with enabled, roster,
+    excluded, etc.) not just the hotkeys sub-object.
+
+    onPreviewHotkeys replaces state wholesale, so a push with only the
+    hotkeys sub-keys as top-level fields loses enabled, roster, excluded,
+    and other required state, breaking the full re-render after a mutation.
+    """
+    marker = "function _devPushHotkeys"
+    assert marker in DEV_JS, "_devPushHotkeys must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    brace_start = DEV_JS.index("{", start)
+    depth = 0
+    end = brace_start
+    for i, ch in enumerate(DEV_JS[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    body = DEV_JS[start : end + 1]
+    # Must reference the full fixture (not just _devPreviewHotkeys directly)
+    # to build the full state payload before pushing it to onPreviewHotkeys.
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in body, (
+        "_devPushHotkeys must build the full state from DEV_PREVIEW_HOTKEYS_FIXTURE "
+        "so onPreviewHotkeys receives enabled, roster, excluded, etc. -- "
+        "currently it pushes only the hotkeys sub-object"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 2 fix: exact contracts — result types, delay value, payload delivery,
+# per-method mutation & push, selector determinism
+# ---------------------------------------------------------------------------
+
+
+def _matching_brace(source: str, opening: int) -> int:
+    """Return the matching brace while ignoring braces in JS strings/comments."""
+    assert source[opening] == "{"
+    depth = 0
+    quote = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    i = opening
+    while i < len(source):
+        char = source[i]
+        following = source[i + 1] if i + 1 < len(source) else ""
+        if line_comment:
+            line_comment = char != "\n"
+        elif block_comment:
+            if char == "*" and following == "/":
+                block_comment = False
+                i += 1
+        elif quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char == "/" and following == "/":
+            line_comment = True
+            i += 1
+        elif char == "/" and following == "*":
+            block_comment = True
+            i += 1
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise AssertionError(f"unbalanced JS body beginning at offset {opening}")
+
+
+def _extract_fn_body(marker: str) -> str:
+    """Brace-match one specific function and return only its body."""
+    assert marker in DEV_JS, f"{marker!r} must be defined in dev.js"
+    start = DEV_JS.index(marker)
+    opening = DEV_JS.index("{", start)
+    closing = _matching_brace(DEV_JS, opening)
+    return DEV_JS[opening + 1 : closing]
+
+
+def _extract_callback_body(source: str, marker: str) -> str:
+    """Brace-match the callback introduced by marker within one function."""
+    start = source.index(marker)
+    opening = source.index("{", start)
+    closing = _matching_brace(source, opening)
+    return source[opening + 1 : closing]
+
+
+def _normalise_js(source: str) -> str:
+    """Remove comments and insignificant whitespace for exact lexical contracts."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"(?m)^\s*//.*$", "", source)
+    return re.sub(r"\s+", "", source)
+
+
+def test_preview_group_result_success_values_are_correct_types():
+    """_devGroupResult(true, null) must return applied:true, persisted:true,
+    error:null (not undefined, not "null", not false).
+
+    The page checks `res.applied` as a truthy boolean and passes `res.error`
+    to an alert path; wrong types cause silent UI failures.
+    """
+    body = _extract_fn_body("function _devGroupResult")
+    # Success path: applied and persisted must both be the parameter (true for
+    # success) and error must coalesce null not undefined.
+    assert "applied: applied" in body or "applied:applied" in body, (
+        "_devGroupResult must set applied from its parameter, not hardcode it"
+    )
+    assert "persisted: applied" in body or "persisted:applied" in body, (
+        "_devGroupResult must mirror applied into persisted"
+    )
+    # error must handle null explicitly (not `error: error` which would be
+    # undefined when omitted, not null)
+    assert (
+        "error: error || null" in body
+        or "error:error||null" in body
+        or ("|| null" in body)
+    ), "_devGroupResult must coalesce error to null: `error: error || null`"
+    # hotkeys must be a deep copy (not a direct reference)
+    assert "_devHotkeysCopy" in body or "JSON.parse" in body, (
+        "_devGroupResult must deep-copy hotkeys via _devHotkeysCopy() or JSON.parse"
+    )
+
+
+def test_preview_dev_push_settimeout_delay_is_exactly_zero():
+    """_devPushHotkeys must use setTimeout(function..., 0) — not 1, not 50,
+    not a named variable.
+
+    A non-zero delay means the push fires visibly later than a production
+    push (which is effectively zero latency from the page's perspective),
+    breaking timing parity with real mutation handlers.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    # Find the setTimeout call and extract its delay argument.
+    # Pattern: setTimeout(function () { ... }, <delay>)
+    match = re.search(r"setTimeout\s*\([^,]+,\s*(\d+)\s*\)", body, re.DOTALL)
+    assert match, "_devPushHotkeys must call setTimeout with an explicit numeric delay"
+    delay = int(match.group(1))
+    assert delay == 0, (
+        f"_devPushHotkeys uses setTimeout delay {delay}, must be exactly 0 "
+        "to match production timing"
+    )
+
+
+def test_preview_dev_push_calls_onPreviewHotkeys_inside_callback():
+    """onPreviewHotkeys must be called inside the setTimeout callback,
+    not outside it.
+
+    If it is called outside the callback the push is still synchronous and
+    the reason for the setTimeout is defeated.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    # Find the setTimeout block and check that onPreviewHotkeys is inside it.
+    # We look for the pattern: setTimeout(function () { ... onPreviewHotkeys ... }, 0)
+    settimeout_match = re.search(
+        r"setTimeout\s*\(function\s*\(\)\s*\{(.*?)\}\s*,\s*0\s*\)",
+        body,
+        re.DOTALL,
+    )
+    assert settimeout_match, (
+        "_devPushHotkeys must have a setTimeout(function () {...}, 0) block"
+    )
+    callback_body = settimeout_match.group(1)
+    assert "onPreviewHotkeys" in callback_body, (
+        "onPreviewHotkeys must be called inside the setTimeout callback in "
+        "_devPushHotkeys, not in the outer function body"
+    )
+
+
+def test_preview_dev_push_substitutes_current_hotkeys_into_full_fixture():
+    """_devPushHotkeys must substitute _devPreviewHotkeys (current mutable
+    state) into a deep copy of the full fixture before pushing.
+
+    Pattern: full = deep_copy(DEV_PREVIEW_HOTKEYS_FIXTURE);
+             full.hotkeys = _devHotkeysCopy();
+             onPreviewHotkeys(full);
+    This ensures the push carries enabled, roster, excluded, etc. from
+    the canonical fixture, with the mutation applied to the hotkeys field.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    # Must deep-copy the full fixture
+    assert "DEV_PREVIEW_HOTKEYS_FIXTURE" in body, (
+        "_devPushHotkeys must deep-copy from DEV_PREVIEW_HOTKEYS_FIXTURE"
+    )
+    # Must assign .hotkeys on the copy (not pass _devPreviewHotkeys directly)
+    assert ".hotkeys" in body, (
+        "_devPushHotkeys must assign .hotkeys on the full-fixture copy to "
+        "substitute the current mutable state"
+    )
+
+
+def test_preview_create_method_mutates_groups_and_calls_push_and_result():
+    """create_preview_cycle_group must: push a new group onto _devPreviewHotkeys.groups,
+    call _devPushHotkeys(), and return _devGroupResult(true, null) on success.
+    """
+    body = _extract_fn_body("api.create_preview_cycle_group")
+    # Must mutate groups (push or append)
+    assert ".push(" in body, (
+        "create_preview_cycle_group must push a new group onto groups array"
+    )
+    # Must call the shared push helper
+    assert "_devPushHotkeys" in body, (
+        "create_preview_cycle_group must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    # Must return via the shared result helper
+    assert "_devGroupResult" in body, (
+        "create_preview_cycle_group must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_preview_rename_method_mutates_target_and_calls_push_and_result():
+    """rename_preview_cycle_group must: find the group by id and update its
+    name field, call _devPushHotkeys(), and return _devGroupResult on success.
+    """
+    body = _extract_fn_body("api.rename_preview_cycle_group")
+    # Must assign a .name property on the found target
+    assert ".name" in body, (
+        "rename_preview_cycle_group must assign .name on the found group"
+    )
+    assert "_devPushHotkeys" in body, (
+        "rename_preview_cycle_group must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    assert "_devGroupResult" in body, (
+        "rename_preview_cycle_group must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_preview_bind_method_mutates_cycle_and_calls_push_and_result():
+    """set_preview_cycle_group_bind must: find the group by id and update its
+    cycle field, call _devPushHotkeys(), and return _devGroupResult on success.
+    """
+    body = _extract_fn_body("api.set_preview_cycle_group_bind")
+    # Must assign .cycle on the found target
+    assert ".cycle" in body, (
+        "set_preview_cycle_group_bind must assign .cycle on the found group"
+    )
+    assert "_devPushHotkeys" in body, (
+        "set_preview_cycle_group_bind must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    assert "_devGroupResult" in body, (
+        "set_preview_cycle_group_bind must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_preview_assignment_method_mutates_gbc_and_calls_push_and_result():
+    """set_preview_character_group must: update group_by_character (or delete
+    entry for All-only), call _devPushHotkeys(), and return _devGroupResult.
+    """
+    body = _extract_fn_body("api.set_preview_character_group")
+    # Must mutate group_by_character
+    assert "group_by_character" in body, (
+        "set_preview_character_group must mutate group_by_character"
+    )
+    assert "_devPushHotkeys" in body, (
+        "set_preview_character_group must call _devPushHotkeys() "
+        "to broadcast the mutation"
+    )
+    assert "_devGroupResult" in body, (
+        "set_preview_character_group must return _devGroupResult(...) "
+        "for a consistent result shape"
+    )
+
+
+def test_load_dev_preview_fixture_payload_equals_dev_fixture_parsed_by_test_helper():
+    """load_dev_preview_fixture() (from shoot_screens.py) must return the
+    exact same dict that the test helper _dev_preview_fixture() returns.
+
+    Both parse the same DEV_PREVIEW_HOTKEYS_FIXTURE literal; any divergence
+    means one of them is reading a different source or applying different
+    parsing, which would cause the screenshot scripts to embed different
+    data than what the tests verify.
+    """
+    import importlib.util
+    import pathlib as _pathlib
+
+    path = _pathlib.Path(__file__).resolve().parents[1] / "scripts" / "shoot_screens.py"
+    spec = importlib.util.spec_from_file_location("shoot_screens", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    fixture_from_test_helper = _dev_preview_fixture()
+    fixture_from_shoot = mod.load_dev_preview_fixture()
+    assert fixture_from_shoot == fixture_from_test_helper, (
+        "load_dev_preview_fixture() must return the same dict as the test "
+        "helper -- both parse DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js; "
+        "a divergence means screenshot payload ≠ test-verified fixture"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 3 fix: strict contracts — exact keys, exact patterns, exact mutations
+# ---------------------------------------------------------------------------
+
+
+def test_preview_group_result_returns_exactly_four_keys():
+    """_devGroupResult must return an object with EXACTLY four keys:
+    applied, persisted, error, hotkeys — no more, no less.
+
+    Any extra key (e.g. a debug field) or missing key silently breaks the
+    page's mutation handler, which destructures all four.
+
+    Strategy: parse the return-object literal from the function body and
+    count the keys.  A change to five or three fails immediately.
+    """
+    body = _extract_fn_body("function _devGroupResult")
+    # Strip line comments
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Find the return { ... } block — the outermost object literal in the body
+    ret_match = re.search(r"return\s*\{([^}]+)\}", body, re.DOTALL)
+    assert ret_match, "_devGroupResult must return an object literal"
+    obj_text = ret_match.group(1)
+    # Extract key names: "key: ..." at comma-separated boundaries
+    keys = [m.group(1).strip() for m in re.finditer(r"(\w+)\s*:", obj_text)]
+    assert set(keys) == {"applied", "persisted", "error", "hotkeys"}, (
+        f"_devGroupResult must return EXACTLY {{applied, persisted, error, hotkeys}}, "
+        f"got {set(keys)!r} -- an extra or missing key breaks the page's mutation handler"
+    )
+    assert len(keys) == 4, (
+        f"_devGroupResult has {len(keys)} keys, expected exactly 4: {keys!r}"
+    )
+
+
+def test_preview_group_result_hotkeys_from_copy_helper():
+    """_devGroupResult must derive hotkeys from _devHotkeysCopy(), not from
+    a direct reference to _devPreviewHotkeys or a bare JSON.parse.
+
+    A direct reference allows the caller to mutate the returned object's
+    hotkeys and affect future pushes; JSON.parse without the shared helper
+    would work but bypasses the single copy-helper convention.
+    """
+    body = _extract_fn_body("function _devGroupResult")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    ret_match = re.search(r"return\s*\{([^}]+)\}", body, re.DOTALL)
+    assert ret_match
+    obj_text = ret_match.group(1)
+    # hotkeys value must be _devHotkeysCopy()
+    hotkeys_val = re.search(r"hotkeys\s*:\s*(.+?)(?:,|$)", obj_text, re.DOTALL)
+    assert hotkeys_val, "hotkeys key not found in _devGroupResult object"
+    val = hotkeys_val.group(1).strip().rstrip(",").strip()
+    assert "_devHotkeysCopy" in val, (
+        f"_devGroupResult hotkeys must be '_devHotkeysCopy()', got {val!r} -- "
+        "a direct reference or bare JSON.parse bypasses the copy-helper convention"
+    )
+
+
+def test_preview_group_result_success_applied_true_persisted_true_error_null():
+    """On the success path _devGroupResult(true, null) must embed the exact
+    literals true, true, null — not false, not undefined, not a truthy string.
+
+    applied: applied  → parameter mirrors through  → must be true for success
+    persisted: applied → mirrors applied            → must be true for success
+    error: error || null → coerces to null when no error passed
+    """
+    body = _extract_fn_body("function _devGroupResult")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # persisted must mirror applied (not be hardcoded true or false)
+    assert re.search(r"persisted\s*:\s*applied", body), (
+        "_devGroupResult persisted must be 'applied' (mirrors parameter), not hardcoded"
+    )
+    # error must coerce to null via || null
+    assert re.search(r"error\s*:\s*error\s*\|\|\s*null", body), (
+        "_devGroupResult error must be 'error || null' to coerce undefined→null"
+    )
+
+
+def test_preview_dev_push_builds_full_copy_from_named_fixture():
+    """_devPushHotkeys must create its full-state copy via:
+        var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+
+    Any other pattern (e.g. spread, Object.assign, or copying _devPreviewHotkeys
+    directly) either skips the non-hotkeys fields or fails to deep-copy nested
+    objects.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Must find the exact JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE)) pattern
+    assert re.search(
+        r"JSON\.parse\s*\(\s*JSON\.stringify\s*\(\s*DEV_PREVIEW_HOTKEYS_FIXTURE\s*\)\s*\)",
+        body,
+    ), (
+        "_devPushHotkeys must deep-copy the fixture via "
+        "JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE)) -- "
+        "other patterns skip top-level non-hotkeys fields"
+    )
+
+
+def test_preview_dev_push_assigns_hotkeys_field_on_full_copy():
+    """After the deep copy, _devPushHotkeys must assign the current mutable
+    state via:  full.hotkeys = _devHotkeysCopy();
+
+    The variable name 'full' and field name 'hotkeys' are the contract.
+    Assigning to a different variable name means onPreviewHotkeys receives
+    the stale fixture hotkeys, not the mutated ones.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Must assign _devHotkeysCopy() into the .hotkeys field of the full copy
+    assert re.search(r"full\.hotkeys\s*=\s*_devHotkeysCopy\(\)", body), (
+        "_devPushHotkeys must assign 'full.hotkeys = _devHotkeysCopy()' "
+        "on the full-fixture copy before pushing"
+    )
+
+
+def test_preview_dev_push_calls_window_onpreviewhotkeys_with_full():
+    """Inside the setTimeout callback _devPushHotkeys must call
+    window.onPreviewHotkeys(full)  — with the 'full' variable, not 'hotkeys'
+    or '_devPreviewHotkeys' or any other argument.
+
+    Passing the wrong variable sends an incomplete payload to the page and
+    breaks the full-state-replace contract.
+    """
+    body = _extract_fn_body("function _devPushHotkeys")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Locate the setTimeout callback body
+    cb_match = re.search(
+        r"setTimeout\s*\(function\s*\(\)\s*\{(.*?)\}\s*,\s*0\s*\)",
+        body,
+        re.DOTALL,
+    )
+    assert cb_match, "_devPushHotkeys must use setTimeout(function(){...}, 0)"
+    cb = cb_match.group(1)
+    # Must call onPreviewHotkeys with 'full' as the sole argument
+    assert re.search(r"onPreviewHotkeys\s*\(\s*full\s*\)", cb), (
+        "_devPushHotkeys must call window.onPreviewHotkeys(full) inside "
+        "the setTimeout callback -- passing any other variable breaks the "
+        "full-state-replace contract"
+    )
+
+
+def test_preview_create_appends_full_group_object_with_id_name_cycle():
+    """create_preview_cycle_group must append a complete group object containing
+    all three required fields: id, name, cycle.
+
+    Missing any field leaves the group manager with a malformed entry:
+    - missing 'id' makes delete/rename/bind fail (they match by id)
+    - missing 'name' breaks display immediately
+    - missing 'cycle' causes nil-binding errors on the bind endpoint
+    """
+    body = _extract_fn_body("api.create_preview_cycle_group")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Find the groups.push({...}) call and verify all three fields are present
+    push_match = re.search(r"\.push\s*\(\{([^}]*)\}\s*\)", body)
+    assert push_match, (
+        "create_preview_cycle_group must call groups.push({...}) "
+        "to append the new group"
+    )
+    obj_text = push_match.group(1)
+    for field in ("id", "name", "cycle"):
+        assert re.search(rf"\b{field}\b\s*:", obj_text), (
+            f"create_preview_cycle_group push object must include '{field}' field -- "
+            "missing it leaves a malformed group entry"
+        )
+
+
+def test_preview_rename_assigns_name_field_on_located_group():
+    """rename_preview_cycle_group must assign target.name (or group.name) after
+    locating the group by id — not mutate a copy or append a new field.
+
+    A rename that reassigns to a new variable or uses object spread would
+    leave the original groups entry unchanged.
+    """
+    body = _extract_fn_body("api.rename_preview_cycle_group")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Must find an assignment of the form <var>.name = ...
+    assert re.search(r"\w+\.name\s*=\s*\w", body), (
+        "rename_preview_cycle_group must assign '.name' on the located group object "
+        "(e.g. 'target.name = clean') -- a copy or spread won't mutate in-place"
+    )
+
+
+def test_preview_bind_assigns_cycle_field_on_located_group():
+    """set_preview_cycle_group_bind must assign target.cycle (or group.cycle)
+    after locating the group by id — not append a new property or rebuild.
+    """
+    body = _extract_fn_body("api.set_preview_cycle_group_bind")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Must find an assignment of the form <var>.cycle = ...
+    assert re.search(r"\w+\.cycle\s*=\s*", body), (
+        "set_preview_cycle_group_bind must assign '.cycle' on the located group object "
+        "-- a copy or spread won't mutate in-place"
+    )
+
+
+def test_preview_assignment_both_sets_and_deletes_group_by_character():
+    """set_preview_character_group must handle BOTH paths:
+    - assign path:  gbc[name] = groupId  (character joins a group)
+    - remove path:  delete gbc[name]      (character returns to All-only)
+
+    A method that only supports one path silently ignores the other,
+    leaving the character perpetually assigned or perpetually in All-only.
+    """
+    body = _extract_fn_body("api.set_preview_character_group")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Assignment path: gbc[name] = groupId (or equivalent bracket notation)
+    assert re.search(r"gbc\s*\[\s*name\s*\]\s*=", body) or re.search(
+        r"group_by_character\s*\[\s*name\s*\]\s*=", body
+    ), (
+        "set_preview_character_group must have an assignment path: "
+        "gbc[name] = groupId — missing it means a character can never join a group"
+    )
+    # Delete path: delete gbc[name]
+    assert re.search(r"delete\s+gbc\s*\[\s*name\s*\]", body) or re.search(
+        r"delete\s+group_by_character\s*\[\s*name\s*\]", body
+    ), (
+        "set_preview_character_group must have a delete path: delete gbc[name] — "
+        "missing it means a character can never return to All-only"
+    )
+
+
+def test_preview_delete_iterates_gbc_and_deletes_each_member():
+    """delete_preview_cycle_group must iterate group_by_character (via forEach,
+    for..in, or Object.keys loop) and delete every entry whose value matches
+    the deleted group's id.
+
+    Simply splicing the group from groups[] without cleaning up gbc leaves
+    stale character assignments pointing to a ghost group id.
+
+    This test is crafted to catch the exact membership-cleanup contract:
+    it checks for both the iteration and the targeted delete, so removing
+    just the forEach/cleanup loop causes a failure.
+    """
+    body = _extract_fn_body("api.delete_preview_cycle_group")
+    body = re.sub(r"(?m)^\s*//.*$", "", body)
+    # Must splice (remove group from array)
+    assert "groups.splice" in body or ".splice(" in body, (
+        "delete_preview_cycle_group must splice the group from the groups array"
+    )
+    # Must iterate gbc — forEach, for..in, or Object.keys are all acceptable
+    assert re.search(r"forEach|for\s*\(|Object\.keys", body), (
+        "delete_preview_cycle_group must iterate group_by_character "
+        "(via forEach, for..in, or Object.keys) to remove stale memberships"
+    )
+    # Must delete (not just reassign) the stale gbc entries
+    assert re.search(r"delete\s+gbc\s*\[", body) or re.search(
+        r"delete\s+group_by_character\s*\[", body
+    ), (
+        "delete_preview_cycle_group must delete stale gbc entries -- "
+        "reassignment or filtering without delete leaves ghost ids"
+    )
+    # Verify the per-entry check targets the deleted groupId (not a generic delete)
+    assert "groupId" in body or "group_id" in body, (
+        "delete_preview_cycle_group gbc cleanup must check the entry value "
+        "against the deleted groupId -- blanket delete removes all assignments"
+    )
+
+
+def test_preview_delete_membership_cleanup_is_load_bearing():
+    """Demonstrate that the membership-cleanup check in
+    test_preview_delete_iterates_gbc_and_deletes_each_member is not satisfied
+    by a body that only splices the group.
+
+    This test is a mutation proof: we construct a minimal function body that
+    performs only the splice (no forEach/delete) and verify it FAILS the
+    membership-cleanup assertions.  The test itself should always PASS.
+    """
+    # Construct a stripped body that only splices groups — no cleanup loop
+    minimal_body = (
+        "api.delete_preview_cycle_group = function (groupId) {\n"
+        "  var groups = _devPreviewHotkeys.groups;\n"
+        "  var idx = -1;\n"
+        "  for (var i = 0; i < groups.length; i++) {\n"
+        "    if (groups[i].id === groupId) { idx = i; break; }\n"
+        "  }\n"
+        "  if (idx === -1) { return; }\n"
+        "  groups.splice(idx, 1);\n"  # splice only — no gbc cleanup
+        "  _devPushHotkeys();\n"
+        "  return _devGroupResult(true, null);\n"
+        "}"
+    )
+    # The forEach / for..in / Object.keys requirement must NOT be satisfied
+    has_iteration = bool(re.search(r"forEach|for\s*\(|Object\.keys", minimal_body))
+    # The delete gbc requirement must NOT be satisfied
+    has_delete = bool(
+        re.search(r"delete\s+gbc\s*\[", minimal_body)
+        or re.search(r"delete\s+group_by_character\s*\[", minimal_body)
+    )
+    # BOTH must be absent in the minimal body to prove the tests are non-trivial
+    assert not has_iteration or not has_delete, (
+        "Minimal splice-only body unexpectedly satisfies the cleanup checks -- "
+        "the test assertions may be too loose to catch a missing cleanup loop"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 4: brace-matched, normalised contracts that tie every operation to
+# the lifecycle method's own parameters and local state.
+# ---------------------------------------------------------------------------
+
+
+def test_preview_group_result_is_the_exact_production_shape():
+    body = _normalise_js(_extract_fn_body("function _devGroupResult"))
+    assert body == (
+        "return{applied:applied,persisted:applied,error:error||null,"
+        "hotkeys:_devHotkeysCopy()};"
+    )
+
+
+def test_preview_group_success_lifecycle_uses_exact_result_arguments():
+    markers = (
+        "api.create_preview_cycle_group",
+        "api.rename_preview_cycle_group",
+        "api.delete_preview_cycle_group",
+        "api.set_preview_cycle_group_bind",
+        "api.set_preview_character_group",
+    )
+    result = "returnPromise.resolve(_devGroupResult(true,null));"
+    for marker in markers:
+        body = _normalise_js(_extract_fn_body(marker))
+        assert body.count(result) == 1, (
+            f"{marker} must return exactly one _devGroupResult(true, null) "
+            "from its success path"
+        )
+        assert body.index("_devPushHotkeys();") < body.index(result), (
+            f"{marker} must schedule its hotkeys push before returning success"
+        )
+
+
+def test_preview_dev_push_callback_has_exact_order_and_single_delivery():
+    body = _extract_fn_body("function _devPushHotkeys")
+    callback = _normalise_js(_extract_callback_body(body, "setTimeout(function"))
+    copy = "varfull=JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));"
+    assign = "full.hotkeys=_devHotkeysCopy();"
+    deliver = "window.onPreviewHotkeys(full);"
+
+    assert callback.count(copy) == 1
+    assert callback.count(assign) == 1
+    assert callback.count(deliver) == 1
+    assert _normalise_js(body).count(deliver) == 1
+    assert callback.index(copy) < callback.index(assign) < callback.index(deliver)
+
+
+def test_preview_create_appends_exact_group_from_its_locals_before_push():
+    body = _normalise_js(_extract_fn_body("api.create_preview_cycle_group"))
+    make_id = "varid='g-dev-'+Date.now();"
+    append = "groups.push({id:id,name:clean,cycle:''});"
+    push = "_devPushHotkeys();"
+    assert body.count(make_id) == 1
+    assert body.count("groups.push(") == 1
+    assert body.count(append) == 1
+    assert body.index(make_id) < body.index(append) < body.index(push)
+
+
+def _assert_target_group_mutation(marker: str, assignment: str) -> None:
+    body = _normalise_js(_extract_fn_body(marker))
+    locate = "if(groups[i].id===groupId){target=groups[i];break;}"
+    assert body.count(locate) == 1, (
+        f"{marker} must locate target from the group whose id equals groupId"
+    )
+    assert body.count(assignment) == 1, (
+        f"{marker} must mutate that located target with {assignment}"
+    )
+    field = "name" if ".name=" in assignment else "cycle"
+    assert re.findall(rf"(?:\w+|\w+\[[^]]+\])\.{field}=", body) == [f"target.{field}="]
+    assert (
+        body.index(locate) < body.index(assignment) < body.index("_devPushHotkeys();")
+    )
+
+
+def test_preview_rename_updates_only_the_group_located_by_group_id():
+    _assert_target_group_mutation(
+        "api.rename_preview_cycle_group", "target.name=clean;"
+    )
+
+
+def test_preview_bind_updates_only_the_group_located_by_group_id():
+    _assert_target_group_mutation(
+        "api.set_preview_cycle_group_bind", "target.cycle=gesture||'';"
+    )
+
+
+def test_preview_assignment_branches_use_requested_name_and_group_id():
+    body = _normalise_js(_extract_fn_body("api.set_preview_character_group"))
+    branches = _normalise_js(
+        """
+        if (!groupId) {
+          delete gbc[name];
+        } else {
+          var valid = false;
+          for (var i = 0; i < groups.length; i++) {
+            if (groups[i].id === groupId) { valid = true; break; }
+          }
+          if (!valid) {
+            return Promise.resolve(_devGroupResult(false, 'No group with id \\'' + groupId + '\\''));
+          }
+          gbc[name] = groupId;
+        }
+        """
+    )
+    assert body.count(branches) == 1
+    assert body.count("deletegbc[") == 1
+    assert body.count("deletegbc[name];") == 1
+    assert re.findall(r"gbc\[[^]]+\]=", body) == ["gbc[name]="]
+    assert body.count("gbc[name]=groupId;") == 1
+    assert body.index(branches) < body.index("_devPushHotkeys();")
+
+
+def test_preview_delete_removes_matched_group_and_only_its_memberships():
+    body = _extract_fn_body("api.delete_preview_cycle_group")
+    normal = _normalise_js(body)
+    locate = "if(groups[i].id===groupId){idx=i;break;}"
+    remove = "groups.splice(idx,1);"
+    callback = _normalise_js(
+        _extract_callback_body(body, "Object.keys(gbc).forEach(function (charName)")
+    )
+
+    assert normal.count(locate) == 1
+    assert normal.count("groups.splice(") == 1
+    assert normal.count(remove) == 1
+    assert callback == "if(gbc[charName]===groupId){deletegbc[charName];}"
+    assert normal.count("deletegbc[") == 1
+    assert normal.count("deletegbc[charName];") == 1
+    assert (
+        normal.index(locate) < normal.index(remove) < normal.index("Object.keys(gbc)")
+    )
+    assert normal.index("Object.keys(gbc)") < normal.index("_devPushHotkeys();")
+
+
+# ---- dev harness: identification generation contract (Round 1 HIGH) ------
+
+
+def test_dev_fake_state_exposes_account_identity_available():
+    """The page now gates canIdentify and es-account-tools on
+    state.account_identity_available (Task 6).  The dev harness always
+    points at a Tranquility fixture, so this flag must be true or every
+    identity scenario renders with all controls hidden.
+    """
+    assert "account_identity_available: true" in DEV_JS, (
+        "dev.js does not set account_identity_available: true in the eve fake "
+        "state; identity controls will be hidden in every dev fixture"
+    )
+
+
+def test_dev_identification_generation_counter_exists():
+    """Task 5 added identification_generation to every identification
+    response.  The dev harness must carry a monotonic counter so that
+    acceptIdentification() in evesettings.js does not reject every stub
+    response as having no numeric generation field.
+    """
+    assert "var devIdentificationGeneration = 0;" in DEV_JS, (
+        "dev.js has no devIdentificationGeneration counter; every "
+        "identification stub response will be rejected by acceptIdentification()"
+    )
+
+
+def test_dev_identification_start_returns_identification_generation():
+    """Start bumps the counter and returns it; a stale check from before
+    the start is then rejected on the next acceptIdentification call.
+    """
+    start_body = DEV_JS.split("api.eve_settings_identification_start", 1)[1].split(
+        "\n  };\n", 1
+    )[0]
+    assert "devIdentificationGeneration += 1" in start_body, (
+        "eve_settings_identification_start does not bump devIdentificationGeneration"
+    )
+    assert "identification_generation: devIdentificationGeneration" in start_body, (
+        "eve_settings_identification_start does not include identification_generation "
+        "in its resolve payload"
+    )
+
+
+def test_dev_identification_cancel_returns_identification_generation():
+    """Cancel bumps the counter (matching Python semantics) and returns it
+    so that acceptIdentification() on the resolved promise advances the
+    retained generation and any racing check resolving later is rejected.
+    """
+    cancel_body = DEV_JS.split("api.eve_settings_identification_cancel", 1)[1].split(
+        "\n  };\n", 1
+    )[0]
+    assert "devIdentificationGeneration += 1" in cancel_body, (
+        "eve_settings_identification_cancel does not bump devIdentificationGeneration"
+    )
+    assert "identification_generation: devIdentificationGeneration" in cancel_body, (
+        "eve_settings_identification_cancel does not include "
+        "identification_generation in its resolve payload"
+    )
+
+
+def test_dev_push_eve_names_carries_generation_and_deleted_ids():
+    """The devPushEveNames helper (used by DEV console helpers that mutate
+    eve state) must pass identification_generation and deleted_candidate_ids
+    so that onEveSettingsNames' acceptIdentification gate passes and the
+    push is not silently dropped.
+    """
+    assert "function devPushEveNames()" in DEV_JS, (
+        "dev.js has no devPushEveNames helper"
+    )
+    helper_body = DEV_JS.split("function devPushEveNames()", 1)[1].split("}", 1)[0]
+    assert "identification_generation: devIdentificationGeneration" in helper_body, (
+        "devPushEveNames does not include identification_generation"
+    )
+    assert "deleted_candidate_ids: []" in helper_body, (
+        "devPushEveNames does not include deleted_candidate_ids"
+    )
+
+
+def test_dev_console_eve_helpers_use_dev_push_eve_names():
+    """eveNoFolder, eveUnreadable, and eveSelectiveAvailable all mutate
+    eve and then push onEveSettingsNames.  After Task 6 that push must
+    carry identification_generation, so they must go through
+    devPushEveNames rather than calling window.onEveSettingsNames() bare.
+    """
+    for helper in ("eveNoFolder", "eveUnreadable", "eveSelectiveAvailable"):
+        block = DEV_JS.split(helper + ":", 1)[1].split("\n    },", 1)[0]
+        assert "devPushEveNames()" in block, (
+            f"DEV.{helper} still calls window.onEveSettingsNames() bare "
+            "instead of devPushEveNames()"
+        )
+        assert "window.onEveSettingsNames()" not in block, (
+            f"DEV.{helper} calls window.onEveSettingsNames() without a payload"
+        )
+
+
+# ---- evesettings.js: hidden-route deleted-candidate guard (Round 1 MEDIUM) -
+
+
+def test_deleted_candidate_paint_is_guarded_by_identity_route_open():
+    """When a deletion push arrives while the account-identity sub-screen
+    is closed, the page must clear local state silently rather than calling
+    paintIdentification, which tries to focus an off-screen heading.  The
+    paint/focus call must only happen when identityRouteOpen is true.
+    """
+    src = EVE_SETTINGS_JS
+    handler = src.split("WM.handle('onEveSettingsNames'", 1)[1].split("\n  });", 1)[0]
+    invalid_branch = handler.split("invalidatesCandidate", 1)[1].split("\n    }", 1)[0]
+    assert "identityRouteOpen" in invalid_branch, (
+        "the invalidatesCandidate branch in onEveSettingsNames does not check "
+        "identityRouteOpen before calling paintIdentification; a deletion push "
+        "while on another screen will try to focus an off-screen heading"
+    )
+    assert "if (identityRouteOpen)" in invalid_branch, (
+        "identityRouteOpen check must be an explicit if-guard in the "
+        "invalidatesCandidate branch"
     )

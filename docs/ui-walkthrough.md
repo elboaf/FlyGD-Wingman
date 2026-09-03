@@ -627,7 +627,7 @@ detects is now legible from either side. The rail order also changed:
 - **Uploader**: no webhook, so `Also post combat logs to Discord` is
   **disabled and greyed**, with a sentence explaining why.
 - **Settings › Previews**: previews are off, so every keybind below is
-  inert — and `Cycle forward`, `Cycle back`, `Clear`, `Type…` and the
+  inert — and `All forward`, `All back`, `Clear`, `Type…` and the
   `Position` checkbox are all **fully live**, with a sentence explaining
   why ("Previews are off, so every keybind below is unregistered until you
   turn them back on").
@@ -662,7 +662,7 @@ recurs wherever a hint follows a checkbox.
 ### 4. Inside one card, the prose and the control rows have different left edges — `sure`, `screen-local`
 
 In `GLOBAL KEYBINDS` the explanatory paragraphs start at roughly x=848
-while `Cycle forward` and `Cycle back` start at roughly x=597 — the prose
+while `All forward` and `All back` start at roughly x=597 — the prose
 hangs about 250px right of the rows beneath it, with nothing in the gap.
 
 ### 5. Durable explanation and current state share one undifferentiated block — `worth trying`, `screen-local`

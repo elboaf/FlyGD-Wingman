@@ -114,6 +114,26 @@ def remember(
     cache[str(video_path)] = CacheEntry(size=size, mtime=mtime, duration=duration)
 
 
+def rename(cache: dict[str, CacheEntry], old_path, new_path) -> None:
+    """Follow a renamed recording, carrying its measurement with it.
+
+    A key move, not a re-remember: a rename leaves size and mtime alone, so
+    the stored identity is still the right one and re-deriving it would
+    need a stat that can only disagree.
+
+    Cheaper than the alternative rather than critical -- losing this costs
+    one ffprobe, where the same omission in ``links`` costs a URL nothing
+    can rebuild. It is carried because it is free, and because a stored
+    ``None`` (a definitive "ffprobe read this and could not measure it")
+    is worth more than it looks: dropping it buys a fresh subprocess on
+    every refresh, forever, for a file already known to be unreadable.
+    """
+    entry = cache.pop(str(old_path), None)
+    if entry is None:
+        return
+    cache[str(new_path)] = entry
+
+
 def resolve(cache: dict[str, CacheEntry], infos: list) -> list:
     """Fill in cached durations; return the entries still needing a probe.
 

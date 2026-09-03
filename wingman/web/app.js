@@ -48,7 +48,7 @@
   // one visible owner.
   WM.HANDLERS = ['onRows', 'onDuration', 'onProgress', 'onStatus',
                  'onRetryAvailable', 'onCancelAvailable',
-                 'onUploadDone',
+                 'onUploadDone', 'onLogPostRunning', 'onRowRenamed',
                  'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',

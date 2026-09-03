@@ -223,12 +223,29 @@ def _media_spans(max_width: int) -> list[tuple[int, int]]:
     return spans
 
 
+def test_preview_grid_tightens_only_its_column_gap_at_the_840_floor():
+    """The six Preview tracks overflowed the pane by 18-20px at the floor.
+
+    Five gaps are the only safe place to reclaim that width: the 210px
+    identity floor and the controls remain unchanged, while 10px to 6px
+    returns exactly 20px. The base layout stays at its roomier spacing.
+    """
+    base = re.search(r"#preview-binds\s*\{([^}]*)\}", CSS)
+    assert base and re.search(r"\bcolumn-gap\s*:\s*10px\s*;", base.group(1))
+
+    floor = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(840))
+    rule = re.search(r"#preview-binds\s*\{([^}]*)\}", floor)
+    assert rule and re.fullmatch(r"\s*column-gap\s*:\s*6px\s*;\s*", rule.group(1)), (
+        "the 840px tier must change only #preview-binds' column gap to 6px"
+    )
+
+
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
     """Two bind lists take the shared 118px label column away from their
     rows on purpose, for two different reasons: `#eve-binds` because its
     labels are long action names and it gives them a whole line instead,
-    `#preview-binds` because it gives the character name a fixed 150px
-    track of its own -- an inline column, not a line. Both do it with an
+    `#preview-binds` because it gives the character name a bounded
+    length-based track of its own -- an inline column, not a line. Both do it with an
     ID selector: `#eve-binds .row > .lab` and `#preview-binds .row > .lab`.
 
     ID specificity also beats the `max-width: 720px` block that collapses
@@ -252,6 +269,53 @@ def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
             f"{host} out-specifies the shared label column but never "
             f"restores its collapse below 720px"
         )
+
+
+def test_the_empty_continuation_collapse_never_swallows_a_control():
+    """The blank-continuation-row rule hid a button for an entire release.
+
+    `.settings .row:has(> .lab:empty)...:has(> .hint:empty)` exists to stop
+    a status slot that is blank on most installs from spending a line. The
+    row holding `Apply to open previews` has exactly that shape -- an empty
+    `.lab`, and a `.hint` that settings.js only fills in AFTER the button
+    has been clicked -- so the rule hid the control until you had performed
+    the action the control was the only route to.
+
+    Both halves were individually correct, which is why nothing caught it:
+    the CSS is right about blank rows, the markup is right about a silent
+    status slot, and nothing in this suite renders the page, so the two
+    only met on a real machine. This is the failure class DESIGN.md opens
+    with, arriving through CSS rather than through a handler name.
+
+    The predicate is pinned rather than the one row, because the row is not
+    special -- any future pairing of a control with a status slot that
+    starts empty walks into the same rule.
+    """
+    collapse = [
+        part.strip()
+        for sel in re.findall(r"([^{}]*\.lab:empty[^{}]*)\{[^{}]*display:\s*none", CSS)
+        for part in sel.split(",")
+        # The ROW collapse only. `.settings .row > .lab:empty` hides the
+        # empty label itself and is a different rule with a different job:
+        # it takes a label out of the layout, never a control.
+        if ".row:has(> .lab:empty)" in part
+    ]
+    assert collapse, "the empty-continuation collapse rule is gone entirely"
+
+    for sel in collapse:
+        for control in ("button", "input", "select"):
+            assert f":not(:has(> {control}))" in sel, (
+                f"the collapse selector {sel.strip()!r} does not exclude "
+                f"<{control}>, so a row pairing a control with a status "
+                f"slot that starts empty is hidden until it is used"
+            )
+
+    # The subject the rule was written against, so this test keeps a
+    # reason to exist rather than guarding a shape nothing has any more.
+    assert 'id="btn-preview-apply-size"' in HTML, (
+        "Apply to open previews is gone; if that was deliberate, this "
+        "test needs a new subject, not deleting"
+    )
 
 
 def test_each_keybind_list_declares_a_deliberate_first_track():
@@ -1049,6 +1113,52 @@ def test_every_action_control_shares_one_disabled_state():
             )
 
 
+def test_shared_focus_and_selected_rail_states_stay_distinct():
+    """Selection owns the rail fill; keyboard focus is an outline only.
+
+    The group manager bypasses the shared button selector because its
+    interactive summary is not a button. It once referenced undefined
+    `--focus`, so keyboard focus had no authored indicator at all.
+    """
+    manager = re.search(
+        r"\.preview-group-manager > summary:focus-visible\s*\{([^}]*)\}", CSS
+    )
+    assert manager, "the group-manager summary has no focus-visible rule"
+    assert "var(--focus-ring)" in manager.group(1)
+    assert "var(--focus)" not in manager.group(1)
+
+    active = re.search(r"[^{}]*\.rail-item\.active[^{}]*\{([^}]*)\}", CSS)
+    assert active and "background: var(--row-active)" in active.group(1), (
+        "the selected rail item must keep the declared current-location fill"
+    )
+    assert "border-left-color: var(--brand)" in active.group(1), (
+        "the selected rail item must keep its existing brand edge"
+    )
+
+    focus = re.search(r"([^{}]*\.rail-item:focus-visible[^{}]*)\{([^}]*)\}", CSS)
+    assert focus and "outline:" in focus.group(2), (
+        "the Settings rail is missing the shared keyboard focus outline"
+    )
+    assert "background:" not in focus.group(2), (
+        "rail focus paints a competing fill instead of an outline-only state"
+    )
+
+
+def test_enabled_subordinate_actions_have_readable_resting_contrast():
+    """Quiet actions still have to read as live before hover.
+
+    `--text-faint` is appropriate for explanatory text, but on a compact
+    row it made Clear/Edit and Skills' group actions resemble disabled
+    controls. `--text-dim` keeps the documented link-button taxonomy while
+    giving every enabled subordinate action, including compact Preview row
+    actions, a readable resting state.
+    """
+    linkbtn = re.search(r"\.linkbtn\s*\{([^}]*)\}", CSS)
+    assert linkbtn, "the shared .linkbtn treatment is missing"
+    assert "color: var(--text-dim)" in linkbtn.group(1)
+    assert "color: var(--text-faint)" not in linkbtn.group(1)
+
+
 def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     """`.btn.danger` is the ONE destructive treatment (round 3, B3/S4/P2).
 
@@ -1098,6 +1208,26 @@ def test_the_destructive_treatment_is_a_button_and_restates_its_hover():
     )
     assert ".linkbtn.danger {" not in CSS, (
         "the .linkbtn.danger pair is back; R3 deleted it with its last user"
+    )
+
+
+def test_disabled_danger_buttons_return_to_neutral_control_tokens():
+    """A disabled destructive action is unavailable, not an active warning.
+
+    Its scoped override follows the red treatment so neutral border and
+    text win, while the shared disabled declaration continues to own
+    opacity and cursor for every action control.
+    """
+    danger = re.search(r"button\.btn\.danger\s*\{([^}]*)\}", CSS)
+    disabled = re.search(r"button\.btn\.danger:disabled\s*\{([^}]*)\}", CSS)
+    assert danger and disabled, "disabled danger buttons need a scoped neutral state"
+    assert disabled.start() > danger.end(), "the neutral disabled state must follow red"
+    assert re.search(
+        r"\bborder-color\s*:\s*var\(--control-border\)\s*;", disabled.group(1)
+    )
+    assert re.search(r"\bcolor\s*:\s*var\(--text-faint\)\s*;", disabled.group(1))
+    assert "opacity" not in disabled.group(1) and "cursor" not in disabled.group(1), (
+        "danger-disabled must retain the shared opacity and cursor behavior"
     )
 
 
@@ -1220,6 +1350,36 @@ def test_dialog_keyboard_behavior_follows_focus_and_contains_it():
     assert "active.kind === 'prompt'" in panel
 
 
+def test_dialog_heading_and_scrim_are_safe_exit_paths():
+    html = _strip_html_comments(HTML)
+    assert '<h2 id="dlg-title"></h2>' in html
+    assert '<h3 id="dlg-title">' not in html
+    assert re.search(r"\.dialog h2 \{", CSS)
+    assert not re.search(r"\.dialog h3(?::|\s|\{)", CSS), (
+        "the corrected dialog heading must retain its visual treatment"
+    )
+
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    assert "var scrimPressStarted = false;" in panel
+    down = re.search(
+        r"overlay\.addEventListener\('mousedown'.*?\n  \}\);", panel, re.DOTALL
+    )
+    up = re.search(
+        r"overlay\.addEventListener\('mouseup'.*?\n  \}\);", panel, re.DOTALL
+    )
+    assert down and up, "the app-owned dialog scrim has no complete exit gesture"
+    assert "scrimPressStarted = ev.target === overlay" in down.group(0)
+    assert "scrimPressStarted && ev.target === overlay" in up.group(0), (
+        "a drag that starts or ends inside the dialog must not dismiss it"
+    )
+    assert "ev.button !== 0" in up.group(0), (
+        "only a primary-button scrim click may dismiss the dialog"
+    )
+    assert "answer(false)" in up.group(0), (
+        "the scrim must cancel an answerable dialog, never affirm it"
+    )
+
+
 def test_dialog_restores_the_invoker_after_the_queue_empties():
     panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
     assert "var returnFocus = null;" in panel
@@ -1266,10 +1426,10 @@ def test_choice_dialog_uses_a_labelled_select_and_cancels_safely():
     assert "active.kind === 'choice'" in escape
 
 
-def test_the_previews_table_names_geometry_as_geometry():
+def test_the_previews_table_names_the_configure_disclosure():
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
-    assert "'Geometry'" in head
+    assert "'Configure'" in head
     assert "'Size'" not in head
 
 
@@ -1326,6 +1486,286 @@ def test_every_offered_alert_colour_has_a_name():
     assert "input.setAttribute('aria-label', name)" in alerts, (
         "the swatch must announce its NAME, not its hex"
     )
+
+
+def test_alert_swatches_do_not_render_a_redundant_colour_name_readout():
+    """Round 7. The five dots plus the accessible name on each radio (see
+    test_every_offered_alert_colour_has_a_name) already say what a sighted
+    user is picking; a sixth, visible "selected colour" word underneath the
+    row wrapped onto its own line and made the row two lines tall, breaking
+    the centerline every other control in the row (checkbox/name, Sound,
+    Test) shared. The fix removes the readout entirely -- not merely hides
+    it -- while keeping every accessible name in place.
+    """
+    alerts = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    assert "swatch-name" not in alerts, (
+        "the dead .swatch-name readout element must be removed, not hidden"
+    )
+    assert "WM.make" not in alerts, (
+        "alerts.js used WM.make only to build the removed readout span"
+    )
+
+    style = re.search(r"\.alert-events \.swatch-name[^{]*\{(.*?)\}", CSS, re.DOTALL)
+    assert style is None, "the dead .swatch-name CSS rule must be removed too"
+
+    # The accessible name itself must survive: every radio still announces
+    # its colour by name, and the collision note still has a word to use.
+    assert "input.setAttribute('aria-label', name)" in alerts, (
+        "removing the visible readout must not remove the accessible name"
+    )
+    assert "function colourName(hex)" in alerts, (
+        "colourName must survive: the collision note and the swatch tooltip "
+        "both still need to name a colour"
+    )
+
+
+def test_alert_palette_is_one_line_with_the_rest_of_its_row():
+    """Without the second-line readout, the swatches container has nothing
+    left to wrap onto a line of its own -- the flex-wrap that existed only
+    to host that line must go too, or a future addition could silently
+    reintroduce a second line under the same now-dead hook."""
+    assert not re.search(r"\.alert-events \.swatches\s*\{[^}]*flex-wrap", CSS), (
+        "the swatches row no longer has a second line to wrap; flex-wrap is dead"
+    )
+
+
+def test_the_alert_volume_note_finishes_its_thought():
+    assert re.search(
+        r"alerts only interrupt for a client you are not\s+looking at\.", HTML
+    )
+
+
+def test_alert_event_controls_share_deliberate_box_and_text_rails():
+    """Flashes and Speed used to be the fourth rail checked here -- a
+    second grid line beginning at the same 48px text rail as the event
+    name. Task 1 moved both out of the row entirely, into the shared
+    #alert-advanced disclosure, so that rail no longer describes anything
+    inside `.alert-events .alert-row`.
+    `test_flash_and_speed_share_one_collapsed_advanced_disclosure` is the
+    guard for where they went instead; this one keeps checking the three
+    rails that are still inside the row.
+    """
+    event_box = re.search(
+        r"\.alert-events \.alert-row > \.check \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert event_box and "margin-left: 24px" in event_box.group(1), (
+        "event boxes must align with the modifier checkbox rail"
+    )
+
+    event_head = re.search(r"\.alert-head > span:first-child \{(.*?)\}", CSS, re.DOTALL)
+    assert event_head and "padding-left: 48px" in event_head.group(1), (
+        "the Event header must align with event label text, not hang over its box"
+    )
+
+    message = re.search(
+        r"\.alert-events \.alert-row > \.field-msg \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert message and "padding-left: 48px" in message.group(1), (
+        "an event write outcome must align with the event text it describes"
+    )
+
+
+def test_flash_and_speed_share_one_collapsed_advanced_disclosure():
+    """Task 1. Flashes and Speed used to be a second grid line under every
+    event row -- two label/select pairs beneath four tracks already tight
+    at the 840 floor (`.alert-events`' own comment: "the sound column is
+    the only one allowed to give"). Both are secondary to the row's
+    primary decision -- is this event on, what colour, what sound, does it
+    work -- so they move into one shared native `<details>` disclosure,
+    collapsed by default, below the table, rather than repeating a second
+    line three times.
+
+    A row in the primary table is atomic after this: one enable box, one
+    swatch group, one sound select, one Test button, and its own status
+    line (still visible outside the disclosure, since a write outcome must
+    stay readable without opening anything first).
+    """
+    events_block = re.search(
+        r'<div class="alert-events">(.*?\n\s*</div>\s*\n)\s*<!-- A colour collision',
+        HTML,
+        re.DOTALL,
+    )
+    assert events_block, "the alert-events table markup has moved or been renamed"
+    table = events_block.group(1)
+
+    assert "alert-flash" not in table, (
+        "Flashes/Speed still render inside the primary event table; they "
+        "must move into the shared advanced disclosure so a row stays one "
+        "enable box, one swatch group, one sound and one Test button"
+    )
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-msg"' in table, (
+            f"the {event} row's status line must stay in the primary table, "
+            "outside the collapsed disclosure, so a write outcome stays "
+            "visible without opening anything"
+        )
+        assert f'id="alert-event-{event}-flashes"' not in table, (
+            f"{event}'s Flashes select must move out of the primary table"
+        )
+        assert f'id="alert-event-{event}-speed"' not in table, (
+            f"{event}'s Speed select must move out of the primary table"
+        )
+
+    disclosures = re.findall(r'<details id="alert-advanced"[^>]*>', HTML)
+    assert len(disclosures) == 1, (
+        f"expected exactly one #alert-advanced disclosure, found {len(disclosures)}"
+    )
+    assert "open" not in disclosures[0], (
+        "the advanced disclosure must be collapsed by default"
+    )
+
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    body = advanced.group(1)
+
+    summary = re.search(r"<summary>([^<]*)</summary>", body)
+    assert summary and summary.group(1).strip() == "Advanced pulse behavior", (
+        "the disclosure must be titled exactly 'Advanced pulse behavior'"
+    )
+
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-flashes"' in body, (
+            f"{event}'s Flashes select is missing from the advanced disclosure"
+        )
+        assert f'id="alert-event-{event}-speed"' in body, (
+            f"{event}'s Speed select is missing from the advanced disclosure"
+        )
+        # Each row must visibly and accessibly name its event -- a named
+        # group heading before the pair, not just position in a list a
+        # screen reader flattens. Structural (a name element immediately
+        # precedes the pair), not the display text itself, which stays
+        # the checkbox label's job to own -- see alerts.js's eventLabel().
+        row = re.search(
+            rf'<span class="bind-group-name">[^<]+</span>\s*'
+            rf'<span class="alert-flash">.*?'
+            rf'id="alert-event-{event}-flashes"',
+            body,
+            re.DOTALL,
+        )
+        assert row, (
+            f"{event}'s advanced row must visibly name its event immediately "
+            "before its Flashes/Speed controls"
+        )
+
+    # The old grid-row alignment is gone with the row it used to sit in;
+    # the disclosure lays Flashes/Speed out as a plain flex line instead.
+    assert not re.search(r"\.alert-events \.alert-row > \.alert-flash \{", CSS), (
+        "a grid-row rule for .alert-flash survives inside .alert-events, but "
+        "it no longer renders there"
+    )
+    advanced_flash = re.search(
+        r"\.alert-advanced-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert advanced_flash and "display: flex" in advanced_flash.group(1), (
+        "Flashes/Speed must still lay out as one flex line inside the disclosure"
+    )
+
+
+def test_advanced_select_aria_labels_start_with_their_visible_labels():
+    """Each Advanced select needs its visible label plus its owning event.
+
+    `aria-label` replaces the associated `<label>` in the accessible-name
+    computation, so it starts with the same word a sighted voice-control
+    user sees, then adds the event needed to distinguish three otherwise
+    identical controls. This satisfies WCAG 2.5.3 Label in Name and keeps
+    the spoken order consistent across Flashes and Speed.
+    """
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    body = advanced.group(1)
+    owners = {
+        "combat": "Combat",
+        "decloak": "Decloak",
+        "warp_scramble": "Warp scramble",
+    }
+
+    for event in _ALERT_EVENT_IDS:
+        for control in ("flashes", "speed"):
+            visible = control.title()
+            select = re.search(
+                rf'<select class="field" id="alert-event-{event}-{control}"\s+'
+                rf'aria-label="([^"]*)"',
+                body,
+            )
+            assert select, f"{event}'s {visible} select or its aria-label is missing"
+            assert select.group(1) == f"{visible}: {owners[event]}", (
+                f"{event}'s {visible} select must start its accessible name "
+                "with the visible label, then disambiguate it by event"
+            )
+
+
+def test_alert_advanced_rows_share_deliberate_fixed_columns():
+    """Round 7 (Task 6). The three Advanced rows used to be independent
+    flex rows: `.bind-group-name` sat beside `.alert-flash` with only a
+    gap between them, so a longer name pushed its own Flashes/Speed pair
+    further right than its neighbours' -- "Warp scramble" (114.75px,
+    measured at the 840x625 floor) versus "Combat" (56.58px) and "Decloak"
+    (62.30px). One grid over all three rows, with the rows themselves
+    display:contents, is the same fix `.alert-events` and `#preview-binds`
+    already apply to the identical problem.
+
+    The name column is a measured PX width, not `max-content`: unlike
+    `.alert-events`' own first track (which is deliberately max-content --
+    see that rule's own comment), this one is asked to own a number rather
+    than resolve today's three known strings, so a fourth, longer event
+    name cannot silently resize the whole disclosure.
+    """
+    advanced_body = re.search(r"\.alert-advanced-body \{(.*?)\}", CSS, re.DOTALL)
+    assert advanced_body, (
+        "the Advanced disclosure's rows must share one grid container "
+        "(.alert-advanced-body), the same technique .alert-events and "
+        "#preview-binds use for identical misalignment"
+    )
+    body_rule = advanced_body.group(1)
+    assert "display: grid" in body_rule, (
+        "the Advanced rows' shared container must be a grid"
+    )
+    columns = re.search(r"grid-template-columns:\s*([^;]+);", body_rule)
+    assert columns, "the shared grid must declare its column tracks"
+    first_track = columns.group(1).strip().split()[0]
+    assert first_track != "max-content", (
+        "the Advanced name column must be a measured px width, not "
+        "max-content -- a longer future event name must not silently "
+        "resize the whole disclosure"
+    )
+    assert re.search(r"^\d+px$", first_track), (
+        f"the Advanced name column ({first_track!r}) must be a fixed, measured px width"
+    )
+
+    row_display = re.search(r"\.alert-advanced-row \{(.*?)\}", CSS, re.DOTALL)
+    assert row_display and "display: contents" in row_display.group(1), (
+        "each Advanced row must be display:contents so its name and its "
+        "Flashes/Speed pair become the shared grid's own items"
+    )
+
+    # .alert-flash itself must still lay out as one flex line -- the
+    # existing test_flash_and_speed_share_one_collapsed_advanced_disclosure
+    # already pins this selector; this test only adds the column it now
+    # sits in, so the two must agree rather than one silently undoing
+    # the other.
+    advanced_flash = re.search(
+        r"\.alert-advanced-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert advanced_flash and "display: flex" in advanced_flash.group(1)
+
+    # The wrapper must exist in the markup around all three rows, inside
+    # the one shared #alert-advanced disclosure -- not a fourth copy of it.
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    assert advanced.group(1).count('class="alert-advanced-body"') == 1, (
+        "expected exactly one shared .alert-advanced-body grid wrapper "
+        "inside the one #alert-advanced disclosure"
+    )
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-flashes"' in advanced.group(1), (
+            f"{event}'s Flashes select must still be inside #alert-advanced"
+        )
 
 
 def test_two_enabled_alerts_on_one_colour_are_flagged():
@@ -1459,6 +1899,80 @@ def test_every_default_alert_colour_is_offered_by_the_swatches():
     )
 
 
+def test_no_native_colour_input_survives_anywhere():
+    """style.css has called this control removed since round 5; it wasn't.
+
+    <input type="color"> opens the native Win32 ChooseColor dialog -- the
+    last unstyled system chrome reachable from a frameless dark app that
+    restyled its own scrollbar precisely because native chrome was a tell.
+    Alerts replaced it with a fixed palette and wrote that up in the sheet
+    ("the last unstyled system chrome reachable from this app"), and the
+    Previews selection ring went on shipping one for two more releases, one
+    rail item away from its own replacement.
+
+    The general failure is worth the test more than the one control is: a
+    thing documented as removed, but only removed from the screen someone
+    happened to be working on.
+    """
+    assert 'type="color"' not in _strip_html_comments(HTML), (
+        "a native colour input is back; the swatch palette in alerts.js / "
+        "settings.js is what replaced it, and style.css's .swatches block "
+        "has the reason"
+    )
+    for path in sorted(WEB.glob("*.js")):
+        src = _strip_js_comments(path.read_text(encoding="utf-8"))
+        assert not re.search(r"""\.type\s*=\s*['"]color['"]""", src), (
+            f"{path.name} builds a native colour input in JS, which the "
+            f"markup guard above cannot see"
+        )
+
+
+def test_the_selection_ring_default_is_offered_by_its_swatches():
+    """Same rule as the alert palette above, for the other palette.
+
+    paint() appends any stored colour it does not recognise, so that a
+    hand-edited settings.json is not silently rewritten. A shipped default
+    outside the palette would turn that escape hatch into the normal case:
+    every fresh install would draw an unlabelled sixth swatch.
+
+    Also pins the pairing of hexes to names, because the name is the
+    accessible one -- an unnamed colour falls back to its hex by design,
+    and a palette one entry longer than its name list would do that
+    silently for the last swatch.
+    """
+    from wingman.settings import _preview_defaults
+
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    block = js.split("set_preview_selection_color", 1)[0]
+    listed = re.search(r"var COLOURS = \[(.*?)\]", block, re.DOTALL)
+    assert listed, "settings.js no longer declares a ring COLOURS palette"
+    palette = re.findall(r"'(#[0-9a-fA-F]{6})'", listed.group(1))
+
+    named = re.search(r"var COLOUR_NAMES = \[(.*?)\]", block, re.DOTALL)
+    assert named, "settings.js no longer declares COLOUR_NAMES"
+    assert len(re.findall(r"'([^']+)'", named.group(1))) == len(palette), (
+        "the ring palette and its names are different lengths, so a swatch "
+        "announces its hex instead of its name"
+    )
+
+    # Round 6's P2-5 for the other palette: the swatches carried their HEX
+    # as the accessible name, which does not read aloud as anything and
+    # tells a sighted user nothing about what they are picking. The name is
+    # what identifies the choice; the hex identifies the pixel and belongs
+    # in the tooltip. Without this the length check above passes while the
+    # names go unused.
+    assert "input.setAttribute('aria-label', name)" in block, (
+        "a ring swatch must announce its NAME, not its hex -- the hex is "
+        "the fallback for an out-of-palette colour only"
+    )
+
+    default = _preview_defaults()["selection_color"]
+    assert default in palette, (
+        f"settings.py's default ring colour {default} is not in the swatch "
+        f"palette {palette}, so a fresh install shows an extra swatch"
+    )
+
+
 def test_the_dense_bind_column_can_hold_a_whole_control_line():
     """Round 5, C8. A named bind group renders as a multi-column block
     (`.bind-dense`), and its column width is set by the CONTROL line, not
@@ -1537,7 +2051,7 @@ def _preview_binds_cell_tracks() -> int:
     Both callers below used to inline `(\\d+)px\\s+repeat\\((\\d+),`, which
     pinned the SPELLING of a deliberate first track rather than the
     property that makes it deliberate. Round 6 widened the name column to
-    `minmax(150px, 260px)` -- still two lengths, still never sized by
+    `minmax(210px, 320px)` -- still two lengths, still never sized by
     whoever is logged in, which is all round 3's B1 ever asked for -- and
     both guards failed on the shape while the rule they exist for held.
 
@@ -1589,17 +2103,20 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     The label USED to be excluded, because `#preview-binds .row > .lab` was
     `grid-column: 1 / -1` and spanned the row instead of sitting in a
     track. It sits in track 1 now, so it is a cell like any other and the
-    `-1` that discounted it is gone. The `else` branch is still excluded,
-    because its fillers stand in for the character branch's controls one
-    for one -- counting both would double every cell.
+    `-1` that discounted it is gone. Every collapsed cell is now appended
+    unconditionally: character-specific controls live in the full-grid
+    detail, and the two cycle rows use the same ternary fillers as every
+    other row.
     """
     body = _makerow_body()
-    halves = body.split("} else {", 1)
-    assert len(halves) == 2, "makeRow no longer has the cycle-row filler branch"
+    assert "} else {" not in body, (
+        "makeRow has a dead character/cycle branch instead of one unconditional "
+        "collapsed-row shape"
+    )
     # The label is COUNTED now: it sits in track 1 rather than spanning the
-    # row, so it is a cell like any other. That is the whole change, and it
-    # is why the -1 that used to discount it is gone.
-    cells = body.count("row.appendChild(") - halves[1].count("row.appendChild(")
+    # row, so it is a cell like any other. Every row.appendChild() here is
+    # one of the collapsed grid cells.
+    cells = body.count("row.appendChild(")
 
     tracks = _preview_binds_cell_tracks()
 
@@ -1608,6 +2125,17 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
         f"declares {tracks} tracks -- every row after the first is "
         f"pulled into the previous row's leftover columns"
     )
+
+
+def test_the_roster_heading_owns_the_focus_fallback():
+    """The focus fallback and narrow screenshot target the actual roster header."""
+    html = _strip_html_comments(HTML)
+    assert 'id="preview-roster-heading"' not in html
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
+    assert "preview-roster-heading" in head
+    assert "tabindex', '-1'" in head
 
 
 def test_the_previews_header_row_names_one_column_per_track():
@@ -1677,6 +2205,35 @@ def test_the_previews_header_row_names_one_column_per_track():
     )
 
 
+def test_the_previews_header_stays_above_rows_while_settings_scrolls():
+    """The one Settings pane scrolls, so the column labels must stay with it."""
+    rule = re.search(r"\.bind-head > span \{(.*?)\}", CSS, re.DOTALL)
+    assert rule, "the Preview column headers have no CSS rule"
+    for prop in (
+        "position: sticky",
+        "top: 0",
+        "z-index:",
+        "background: var(--panel)",
+    ):
+        assert prop in rule.group(1), (
+            f"Preview header cells need `{prop}` so their labels remain visible "
+            "and opaque while the Settings pane scrolls"
+        )
+
+
+def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
+    host = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
+    assert host and "--preview-bind-head-height:" in host.group(1), (
+        "#preview-binds must own the measured sticky-header height"
+    )
+    offline = re.search(
+        r"#preview-binds \.bind-group:not\(:empty\) \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert offline and re.search(
+        r"top:\s*var\(--preview-bind-head-height\)", offline.group(1)
+    ), "the Offline heading must stick below, not on top of, the column header"
+
+
 def test_the_previews_headings_are_in_the_order_makeRow_builds():
     """Counting columns is not the same as naming the right one.
 
@@ -1698,7 +2255,7 @@ def test_the_previews_headings_are_in_the_order_makeRow_builds():
         ("Character", "'lab'"),
         ("Preview", "makeExcludedCheck"),
         ("Keybind", "'bindbtn'"),
-        ("Geometry", "makeGeometryActions"),
+        ("Configure", "'Configure'"),
     )
 
     for heading, token in owners:
@@ -1865,7 +2422,7 @@ def test_the_offline_state_is_a_heading_over_its_block_not_a_colour():
         "#preview-binds's group heading has no rule of its own, so it is "
         "not sticky and can scroll off the block it explains"
     )
-    for prop in ("position: sticky", "top: 0", "background:"):
+    for prop in ("position: sticky", "top:", "background:"):
         assert prop in rule.group(1), (
             f"the offline heading must declare `{prop}`: without sticky and "
             f"a top it leaves its own block, and without a background the "
@@ -1912,12 +2469,17 @@ def test_every_previews_row_starts_a_fresh_grid_line():
     )
 
 
-def test_the_geometry_cell_gates_size_and_copy_on_backend_payloads():
-    """One cell owns both geometry actions without duplicating backend rules."""
+def test_the_character_detail_gates_size_and_copy_on_backend_payloads():
+    """The disclosure owns geometry actions without duplicating backend rules."""
     body = _makerow_body()
-    assert "makeGeometryActions(character, off)" in body
+    assert "makeGeometryActions" not in body
 
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeGeometryActions(characterName, off)" in detail
+
     geometry_actions = src.split("function makeGeometryActions(", 1)
     assert len(geometry_actions) == 2
     geometry_actions = geometry_actions[1].split("\n  }", 1)[0]
@@ -1947,7 +2509,7 @@ def test_copy_picker_groups_sources_and_disarms_capture_before_opening():
     assert "source.online === false" in picker
     assert "copy_preview_layout" in picker
     assert "data-copy-target" in picker
-    assert "focusCopyTarget(name)" in picker
+    assert "restoreCopyFocusAfterRefresh(name, interaction, attempt)" in picker
     assert "state.characters" not in picker
     assert "It applies next time" not in picker
     assert "source.name !== name" in src
@@ -1965,7 +2527,7 @@ def test_copy_picker_has_collapsing_empty_and_status_lines():
     assert "preview-copy-status" in src
     assert "status.classList.toggle('err', !!error)" in src
     assert "status.hidden = !status.textContent" in src
-    assert "function focusCopyTarget(" in src
+    assert "function restoreCopyFocusAfterRefresh(name, interaction, attempt)" in src
 
     section = src.split("document.addEventListener('wm:section'", 1)
     assert len(section) == 2
@@ -1976,9 +2538,9 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
     """D6's rule -- do not draw a control in a state where it can only
     refuse -- applied to the control that broke it worst. `Clear` used to
     be rendered on every row and disabled wherever there was no chord to
-    clear, which on a fresh install is every row. It is a .linkbtn, so
-    :disabled is opacity .45 over --text-faint: 1.94:1 against the card, a
-    control nobody can read holding a grid track on thirteen rows.
+    clear, which on a fresh install is every row. It is a .linkbtn, so the
+    shared disabled opacity makes it intentionally quieter than the enabled
+    subordinate treatment, while still holding a grid track on thirteen rows.
 
     Only the render-at-all gate moved. `Clear` still goes through
     WM.setEnabled against the row's own opted-out state once it exists --
@@ -2042,15 +2604,15 @@ def test_an_opted_out_character_row_disables_its_own_controls():
         assert re.search(rf"WM\.setEnabled\({control},[^)]*\boff\b", body), (
             f"makeRow does not gate `{control}` on the row's opted-out state"
         )
-    # The above is gated INLINE; this receives the state as an argument
-    # instead, and was unguarded until a review pointed out that dropping
-    # the second argument at the call site leaves the control live and
-    # undimmed with the whole suite green -- which is the exact failure
-    # this test's docstring claims to prevent.
-    for builder in ("makeGeometryActions",):
-        assert re.search(rf"{builder}\(character,[^)]*\boff\b", body), (
-            f"makeRow does not pass the row's opted-out state to {builder}"
-        )
+    # Geometry now lives in the inline detail, but it must retain the
+    # opted-out state that keeps Size and Copy inert for a disabled preview.
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert re.search(r"makeGeometryActions\(characterName,[^)]*\boff\b", detail), (
+        "makeCharacterDetail does not pass the opted-out state to geometry actions"
+    )
     # Lock left the row for its own disclosure, and took this invariant with
     # it: with no window there is nothing to lock, so the block must pass
     # each character's opted-out state the way the row used to. Asserted on
@@ -2172,6 +2734,52 @@ def test_the_opt_out_box_itself_is_never_gated_on_being_enabled():
     body = halves[1].split("return label;", 1)[0]
     assert "WM.setEnabled" not in body, "the opt-out box gates itself"
     assert "set_preview_excluded" in body
+
+
+def test_range_controls_use_token_driven_track_thumb_and_value_styles():
+    """Chromium's native blue slider must not escape the dark control system."""
+    base = re.search(r'input\[type="range"\]\s*\{([^}]*)\}', CSS)
+    assert base, "range inputs have no shared base rule"
+    assert "appearance: none" in base.group(1)
+    assert "background: transparent" in base.group(1)
+
+    track = re.search(
+        r'input\[type="range"\]::-webkit-slider-runnable-track\s*\{([^}]*)\}',
+        CSS,
+    )
+    assert track, "range inputs have no authored WebKit track"
+    assert "background: var(--track)" in track.group(1)
+    assert "border:" in track.group(1) and "var(--control-border)" in track.group(1)
+
+    thumb = re.search(r'input\[type="range"\]::-webkit-slider-thumb\s*\{([^}]*)\}', CSS)
+    assert thumb, "range inputs have no authored WebKit thumb"
+    assert "background: var(--control)" in thumb.group(1)
+    assert "border:" in thumb.group(1) and "var(--brand-edge)" in thumb.group(1)
+
+    focus = re.search(
+        r'input\[type="range"\]:focus-visible::-webkit-slider-thumb\s*\{([^}]*)\}',
+        CSS,
+    )
+    assert focus and "var(--focus-ring)" in focus.group(1), (
+        "the authored range thumb has no shared keyboard focus indicator"
+    )
+
+    value = re.search(r"\.range-value\s*\{([^}]*)\}", CSS)
+    assert value, "range controls have no adjacent value treatment"
+    assert "background: var(--sunken)" in value.group(1)
+    assert "border:" in value.group(1) and "var(--control-border)" in value.group(1)
+
+
+def test_preview_opacity_reads_on_input_and_commits_on_change():
+    """Dragging is local feedback; only release crosses the settings bridge."""
+    js = _strip_js_comments((WEB / "settings.js").read_text(encoding="utf-8"))
+    body = js[js.index("var box = WM.el('preview-opacity')") :]
+    input_handler = re.search(r"box\.addEventListener\('input', ([A-Za-z]+)\)", body)
+    assert input_handler and input_handler.group(1) == "show"
+    change = body.index("box.addEventListener('change'")
+    send = body.index("WM.send('set_preview_opacity'")
+    assert change < send
+    assert "set_preview_opacity" not in body[:change]
 
 
 def test_the_opacity_slider_can_still_reach_the_stored_floor():
@@ -2644,4 +3252,796 @@ def test_the_volume_slider_commits_on_change_not_on_input():
     assert "set_alert_volume" not in body[: body.index("'change'")], (
         "the volume commits before `change`, which is a settings write per "
         "pixel dragged"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Group keybind rows, assignment placement, and management UI
+# ---------------------------------------------------------------------------
+
+
+def test_group_select_does_not_add_row_appendchild():
+    """makeGroupSelect must never call row.appendChild -- that would add a
+    sixth grid cell and break the five-track layout.  The cell-count guard
+    (test_the_previews_grid_has_one_track_per_cell_makeRow_appends) reads
+    makeRow's `row.appendChild(` calls, so a row.appendChild inside
+    makeGroupSelect that is called from makeRow would silently inflate the
+    count even though the selector body is in a different function."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeGroupSelect" in src, (
+        "makeGroupSelect is not defined in previews.js"
+    )
+    body = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "row.appendChild" not in body, (
+        "makeGroupSelect calls row.appendChild; that is a sixth grid cell "
+        "and breaks the five-track layout"
+    )
+
+
+def test_group_select_is_owned_by_the_character_detail():
+    """Assignment is an infrequent per-character setting, not a roster cell."""
+    body = _makerow_body()
+    assert "makeGroupSelect" not in body
+
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "groups().length" in detail
+    assert "makeGroupSelect(characterName)" in detail
+
+
+def test_group_select_is_styled_inside_the_detail_without_a_new_track():
+    """The detail preserves the five collapsed-row tracks."""
+    assert ".preview-character-detail .preview-group-select" in CSS
+    assert _preview_binds_cell_tracks() == 5
+
+
+def test_character_roster_rows_keep_configuration_out_of_the_scan_line():
+    """Collapsed rows expose only identity, Preview, keybind actions, Configure."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = src.split("function makeRow(", 1)[1].split("return row;", 1)[0]
+    assert "makeGroupSelect" not in body
+    assert "makeGeometryActions" not in body
+    assert "'Configure'" in body
+    assert "aria-expanded" in body
+    assert "aria-controls" in body
+
+
+def test_character_detail_and_conflict_siblings_span_the_preview_grid():
+    """Secondary detail and conditional copy cannot consume a data track."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function makeCharacterDetail(" in src
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeGroupSelect" in detail
+    assert "makeGeometryActions" in detail
+
+    for selector in (".preview-character-detail", ".preview-bind-conflict"):
+        rule = re.search(rf"{re.escape(selector)}\s*\{{(.*?)\}}", CSS, re.DOTALL)
+        assert rule and "grid-column: 1 / -1" in rule.group(1), (
+            f"{selector} must span the Preview grid rather than add a row cell"
+        )
+
+
+def test_character_conflict_copy_excludes_supported_direct_sharers():
+    """A shared direct bind is supported, so a character's warning names
+    only the incompatible cycle owner rather than other sharing characters.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    character_duplicate = block.split("if (character && clash === 'duplicate')", 1)[
+        1
+    ].split("} else", 1)[0]
+    assert "cycleOwners(gesture)" in character_duplicate
+    assert "sharers(gesture)" not in character_duplicate, (
+        "character conflict copy calls sharers(), so it blames supported "
+        "direct-character sharing for a cycle collision"
+    )
+
+
+def test_character_detail_precedes_its_conflict_copy():
+    """A character's detail belongs directly below its row; any warning
+    follows the detail so it cannot split the row from the controls it explains.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    row = append.index("host.appendChild(makeRow")
+    detail = append.index("host.appendChild(makeCharacterDetail")
+    conflict = append.index("host.appendChild(conflict)")
+    assert row < detail < conflict
+
+
+def test_bind_conflict_names_its_owner_so_it_survives_a_sticky_scroll():
+    """A conflict is a full-span sibling directly after the row it explains
+    (appendBindRow), and that row can scroll out from under the sticky
+    column or Offline heading while the warning below it is still on
+    screen. Every text-producing branch must therefore open with the
+    owning character, cycle command, or named group by name, rather than
+    counting on the reader having just seen the row above.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert block.count("label + ': ' + gesture") == 4, (
+        "makeBindConflict must open every conflict sentence with its own "
+        "label -- the owning character, cycle command, or named group -- "
+        "so the message names its owner even once the row it explains has "
+        "scrolled under a sticky header"
+    )
+
+
+def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
+    """The warning and the control it explains must be associated by a
+    stable id, not by DOM adjacency, so the association survives a
+    rerender and a scroll alike. The id is assigned in appendBindRow from
+    the SAME ownerKey makeBindConflict filters genuine owners by --
+    computed once, so the id a reader's aria-describedby follows and the
+    identity makeBindConflict excludes itself by can never drift apart.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "function bindConflictId(ownerKey)" in js
+    id_fn = js.split("function bindConflictId", 1)[1].split("\n  function ", 1)[0]
+    assert "encodeURIComponent(ownerKey)" in id_fn
+
+    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    assert "var ownerKey = character ? 'character:' + character : ownerKind;" in append
+    assert "conflict.id = bindConflictId(ownerKey)" in append
+
+
+def test_cycle_owners_carry_a_stable_key_beside_their_rendered_text():
+    """cycleOwners must expose the same owner key each row's own conflict
+    id is built from (bindConflictId/appendBindRow) alongside the rendered
+    text, so makeBindConflict can tell a genuinely different owner apart
+    from itself by identity -- never by comparing rendered label text,
+    which a named group is free to share with a fixed cycle label or with
+    a character.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    body = js.split("function cycleOwners(gesture)", 1)[1].split("\n  function ", 1)[0]
+    assert "key: 'cycle:next'" in body
+    assert "key: 'cycle:prev'" in body
+    assert "key: 'group:' + group.id" in body
+    assert "text: 'All forward'" in body
+    assert "text: 'All back'" in body
+    assert "text: 'cycle group ' + group.name" in body
+
+
+def test_makebindconflict_filters_conflicting_owners_by_key_not_by_label():
+    """A named group may legally be named exactly "All forward"/"All
+    back", or share a name with a character -- create/rename_preview_cycle_
+    group enforce uniqueness only among groups, never against a character
+    or the two fixed cycle labels. Filtering cycleOwners()/sharers() by
+    comparing rendered TEXT against this row's own `label` therefore drops
+    a genuine conflicting owner whenever its rendered text happens to
+    match this row's label: rendering the fixed All-forward cycle row lost
+    a genuinely conflicting group actually named "All forward", and
+    rendering any cycle/group row lost a genuinely sharing character
+    actually named after that row's own label. makeBindConflict must
+    instead filter by comparing each owner's stable `.key` against the
+    caller's own `ownerKey`.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
+    assert "owner.key !== ownerKey" in block, (
+        "makeBindConflict must filter cycleOwners()/sharers() entries by "
+        "comparing owner.key against this row's own ownerKey"
+    )
+    assert "owner !== label" not in block, (
+        "filtering by `owner !== label` drops a genuine conflicting owner "
+        "whenever its rendered text matches this row's own label -- a "
+        "named group or character is free to share that label"
+    )
+    assert "'cycle group ' + label" not in block, (
+        "filtering by a label-derived 'cycle group ' + label string drops "
+        "a genuinely different group whenever it happens to share this "
+        "row's own label -- e.g. a group literally named 'All forward'"
+    )
+    # Sharer characters must be wrapped with their own stable owner key
+    # ('character:NAME'), not compared as bare name strings, so a
+    # character sharing a cycle/group row's own label is excluded (or
+    # kept) by identity and never dropped for a text coincidence.
+    assert "key: 'character:' + name" in block, (
+        "sharer characters must be wrapped with their own stable owner "
+        "key before being filtered, not compared as bare name strings"
+    )
+
+
+def test_bind_conflict_id_keys_off_owner_kind_not_display_label():
+    """A named group may legally be named exactly "All forward" or "All
+    back" -- create_preview_cycle_group and rename_preview_cycle_group only
+    enforce uniqueness among groups, never against the two fixed cycle
+    labels. A label-derived conflict id would then collide with the real
+    All-forward or All-back row's id, leaving aria-describedby pointing at
+    an ambiguous target. bindConflictId must therefore key off an explicit
+    owner kind supplied by each call site -- never off `label` at all --
+    and the fixed cycle rows and named-group rows must each pass a token
+    that cannot collide with the other kind's, whatever a group is named
+    or however its id is generated.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    assert "function bindConflictId(" in js, "bindConflictId is not defined"
+    id_fn = js.split("function bindConflictId(", 1)[1].split("\n  function ", 1)[0]
+    params = id_fn.split(") {", 1)[0]
+    assert "label" not in params, (
+        "bindConflictId must not accept the display label at all -- a "
+        "label-keyed id cannot distinguish a fixed cycle row from a named "
+        "group sharing its exact label"
+    )
+
+    # Each non-character row passes an explicit, fixed owner-kind token --
+    # not anything derived from `label` or `group.name` -- so a group
+    # named "All forward"/"All back" cannot alias the real cycle row.
+    assert "'cycle:next'" in js, (
+        "the All-forward row must pass a fixed owner-kind token distinct "
+        "from any group's own key"
+    )
+    assert "'cycle:prev'" in js, (
+        "the All-back row must pass a fixed owner-kind token distinct "
+        "from any group's own key"
+    )
+    assert "'group:' + group.id" in js, (
+        "a named-group row must key off its own stable group.id, not its "
+        "user-chosen (and therefore collidable) group.name"
+    )
+
+
+def test_bind_row_button_references_its_conflict_via_aria_describedby():
+    """The bind button -- not a wrapper, and not the row -- carries the
+    programmatic association, wired only while a conflict is actually
+    rendered so a fresh button never points at a warning this render did
+    not append.
+    """
+    body = _makerow_body()
+    params = body.split(") {", 1)[0]
+    assert params == "label, gesture, online, onSet, character, conflict", (
+        "makeRow must accept the conflict element so its bind button can "
+        "reference the exact node id rendered for this row"
+    )
+    assert "if (conflict) {" in body
+    assert "button.setAttribute('aria-describedby', conflict.id)" in body
+
+    append = (
+        _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+        .split("function appendBindRow", 1)[1]
+        .split("function render()", 1)[0]
+    )
+    conflict_computed = append.index("var conflict = makeBindConflict(")
+    row_built = append.index("host.appendChild(makeRow")
+    assert conflict_computed < row_built, (
+        "the conflict element must exist before makeRow builds the button "
+        "that references its id"
+    )
+    assert "makeRow(label, gesture, online, onSet, character, conflict)" in append
+
+
+def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
+    """Size has no authoritative redraw, and Copy's intent is installed only
+    inside its refresh response. Cancellation and a failed copy therefore cannot
+    leave intent for a later unrelated push to consume.
+    """
+    js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    size = js.split("function makeSizeButton", 1)[1].split("\n  function ", 1)[0]
+    assert "rememberDetailFocus" not in size, (
+        "Size patches local state without rerendering; it must not retain a "
+        "detail focus intent across cancellation or parse/save failure"
+    )
+
+    copy = js.split("function makeCopyButton", 1)[1].split("\n  function ", 1)[0]
+    cancelled = copy.split("if (source === null)", 1)[1].split("}", 1)[0]
+    assert "clearDetailFocus(name, 'copy')" in cancelled
+    assert (
+        copy.count("restoreCopyFocusAfterRefresh(name, interaction, attempt)") == 2
+    ), (
+        "both the refused and successful copy paths must refresh with the initiating "
+        "detail interaction and Copy attempt"
+    )
+
+    restore = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert "refresh(function ()" in restore
+    assert "rememberDetailFocus(name, 'copy')" in restore
+    assert "interaction !== detailInteraction" in restore
+    assert "openDetailName !== name" in restore
+    assert "attempt !== copyAttempt" in restore
+
+
+def test_preview_roster_heading_is_a_programmatic_focus_fallback():
+    """Removing an open character focuses the generated roster header, not the card."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    head = src.split("function makeHeadRow", 1)[1].split("return row;", 1)[0]
+    assert "cell.id = 'preview-roster-heading'" in head
+    assert "cell.setAttribute('tabindex', '-1')" in head
+
+
+# ---- Final-review fixes: disclosure, roster, busy guard, minor ----
+
+
+def test_makeGroupManager_is_a_details_element():
+    """Finding #2: makeGroupManager must build a <details>, not a plain
+    div.  A plain div is always expanded and inherits the sticky
+    bind-group heading CSS that can overlay rows."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert (
+        "document.createElement('details')" in block or "WM.make('details'" in block
+    ), (
+        "makeGroupManager does not create a <details> element; it must use a "
+        "real HTML disclosure so the panel can be collapsed"
+    )
+
+
+def test_makeGroupManager_has_summary_with_derived_count():
+    """Finding #2: the <summary> must show a derived group count, not a
+    static label.  Count derivation must read groups().length or an
+    equivalent expression."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert (
+        "document.createElement('summary')" in block or "WM.make('summary'" in block
+    ), "makeGroupManager does not create a <summary> element"
+    # The summary text must be derived from the group count, not static.
+    # Any of: groups().length, groups.length, state.hotkeys.groups.length
+    assert re.search(r"groups\(\)\.length|groups\.length|\.groups\.length", block), (
+        "makeGroupManager summary does not derive a count from the group list"
+    )
+
+
+def test_makeGroupManager_open_state_is_preserved_across_rerenders():
+    """Finding #2: the open state must be saved across rerenders so
+    Add/Rename/Delete focus restoration targets an attached visible
+    field.  A module-level flag (or equivalent) must track whether the
+    details is open."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # A variable holding the open state must exist at module scope (outside
+    # any function) and be read when building the manager.
+    # Common name patterns: _groupManagerOpen, groupManagerOpen, managerOpen
+    assert re.search(
+        r"^\s*var\s+(groupManagerOpen|_groupManagerOpen|managerOpen|groupsOpen)\b",
+        src,
+        re.MULTILINE,
+    ), (
+        "No module-level open-state variable found for the group manager "
+        "disclosure; open state cannot survive a rerender"
+    )
+    # The makeGroupManager block must reference that variable.
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(
+        r"groupManagerOpen|_groupManagerOpen|managerOpen|groupsOpen", block
+    ), (
+        "makeGroupManager does not read the open-state variable; the details "
+        "panel will collapse on every rerender"
+    )
+
+
+def test_makeGroupManager_does_not_use_bind_group_class():
+    """Finding #2: the manager must NOT use the bind-group class, which
+    carries sticky-positioning CSS that can overlay rows."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[0]
+    # The top-level element must not be a 'bind-group', but child rows may
+    # still use whatever class they need.  We test only the creation call
+    # for the outermost element.
+    first_make = re.search(
+        r"(?:WM\.make|document\.createElement)\s*\(['\"](?:details|div)['\"]"
+        r"(?:,\s*['\"]([^'\"]*)['\"])?",
+        block,
+    )
+    assert first_make, "makeGroupManager creation call not found"
+    outer_class = first_make.group(1) or ""
+    assert "bind-group" not in outer_class.split(), (
+        "makeGroupManager outer element uses bind-group class, which inherits "
+        "sticky positioning and can overlay rows"
+    )
+
+
+def test_group_manager_css_does_not_apply_sticky_positioning():
+    """Finding #2: the dedicated manager class must not carry position:sticky,
+    since the manager is a full-grid-span disclosure, not a section header."""
+    assert "preview-group-manager" in CSS or "group-manager" in CSS, (
+        "no .preview-group-manager rule found in style.css"
+    )
+    # Find the preview-group-manager block.
+    m = re.search(r"\.preview-group-manager\s*\{([^}]*)\}", CSS)
+    if m:
+        assert "sticky" not in m.group(1), (
+            ".preview-group-manager has position:sticky which would overlay rows"
+        )
+
+
+def test_rows_includes_group_by_character_keys():
+    """Finding #3: rows() must include every key in
+    hotkeys.group_by_character so persisted offline assignments always
+    have a select that can clear them."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function rows()", 1)[1].split("function sharers", 1)[0]
+    assert "group_by_character" in block, (
+        "rows() does not consult hotkeys.group_by_character; a character with "
+        "a persisted assignment but no running/seen/bind entry has no row and "
+        "no way to clear the assignment"
+    )
+
+
+def test_every_group_mutation_handler_has_synchronous_busy_guard():
+    """Finding #4: setGroupBind, makeGroupSelect's change handler, doAdd,
+    renameGroup, and deleteGroup must all check `if (groupBusy) { return; }`
+    synchronously before sending anything, so a second click during capture
+    cannot submit twice."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+
+    # setGroupBind
+    gb_block = src.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", gb_block), (
+        "setGroupBind lacks a synchronous groupBusy early-return guard"
+    )
+
+    # makeGroupSelect's change handler
+    sel_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", sel_block), (
+        "makeGroupSelect change handler lacks a synchronous groupBusy guard"
+    )
+
+    # doAdd inside makeGroupManager
+    mgr_block = src.split("function makeGroupManager", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", mgr_block), (
+        "makeGroupManager (doAdd) lacks a synchronous groupBusy guard"
+    )
+
+    # renameGroup
+    ren_block = src.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", ren_block), (
+        "renameGroup lacks a synchronous groupBusy early-return guard"
+    )
+
+    # deleteGroup
+    del_block = src.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", del_block), (
+        "deleteGroup lacks a synchronous groupBusy early-return guard"
+    )
+
+
+def test_group_focus_restoration_delegates_to_the_current_detail_intent():
+    """A group response must never independently focus a closed detail."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    block = src.split("function focusGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "detailFocusIntent.name !== characterName" in block
+    assert "restoreDetailFocus()" in block
+    assert "querySelector" not in block
+
+
+def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():
+    """Minor finding: on a refused group write where res.hotkeys exists and
+    no newer push won, the handler must apply res.hotkeys to state.hotkeys
+    directly rather than relying solely on a full refresh() round-trip.
+    A sole refresh() leaves a stale/deleted group visible for an extra
+    round-trip."""
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    gb_block = src.split("function setGroupBind", 1)[1].split("\n  function ", 1)[0]
+    # Isolate the refusal arm: after '!res.applied' up to the first 'return;'
+    if "!res.applied" in gb_block:
+        after_guard = gb_block.split("!res.applied", 1)[1]
+        refusal_arm = after_guard.split("return;", 1)[0]
+        only_refresh = (
+            "res.hotkeys" not in refusal_arm
+            and "state.hotkeys" not in refusal_arm
+            and "refresh()" in refusal_arm
+        )
+        assert not only_refresh, (
+            "setGroupBind refusal arm calls only refresh(); when res.hotkeys "
+            "exists and no newer push won, it must apply res.hotkeys directly "
+            "to avoid showing a stale group during the refresh round-trip"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Final-fix wave 2 tests
+# ---------------------------------------------------------------------------
+
+
+def test_closed_details_hides_group_manager_body():
+    """Fix wave 2 - closed-details display: the .group-manager-body rule sets
+    display:flex, but that overrides Chromium's UA rule that hides non-summary
+    children of a closed <details>.  A rule scoped to
+    .preview-group-manager:not([open]) must set display:none on the body so
+    the panel actually collapses.
+
+    The rule must exist because without it the body remains visible even when
+    the <details> element is closed, making the 'collapse' feature inoperable
+    in WebView2.
+    """
+    # Check that there is a rule that forces display:none on .group-manager-body
+    # (or a direct child) when the manager lacks [open].
+    not_open_body_hidden = bool(
+        re.search(
+            r"\.preview-group-manager:not\(\[open\]\)\s*[>~+\s]"
+            r"*[.#\w-]*group-manager-body[^}]*display\s*:\s*none",
+            CSS,
+            re.DOTALL,
+        )
+        or re.search(
+            r"\.preview-group-manager:not\(\[open\]\)\s*\{[^}]*display\s*:\s*none",
+            CSS,
+            re.DOTALL,
+        )
+    )
+    assert not_open_body_hidden, (
+        ".preview-group-manager:not([open]) does not set display:none on "
+        ".group-manager-body.  Without this rule, Chromium's UA stylesheet "
+        "cannot hide the body when the <details> is closed because the author "
+        "display:flex declaration on .group-manager-body wins."
+    )
+
+
+def _extract_refusal_arm(block):
+    """Return the text between '!res.applied' and the first 'return;' that
+    follows it -- the refusal arm of a then-callback."""
+    if "!res.applied" not in block:
+        return ""
+    after = block.split("!res.applied", 1)[1]
+    arm, _, _ = after.partition("return;")
+    return arm
+
+
+def test_assignment_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - makeGroupSelect's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (generation/before guard).  Without this, a refused assignment leaves the
+    page showing stale group membership until the next refresh() round-trip.
+
+    The branch must still clear groupBusy (unconditionally, before any return),
+    call requestRender(), and restore focus via focusGroupSelect().
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # Isolate makeGroupSelect's then-callback
+    ms_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(ms_block)
+
+    # Must apply res.hotkeys under a generation/before guard
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "makeGroupSelect refusal arm does not assign res.hotkeys to state.hotkeys; "
+        "the authoritative table must be applied on generation match to avoid a "
+        "stale-group round-trip"
+    )
+    assert has_generation_guard, (
+        "makeGroupSelect refusal arm applies res.hotkeys without a generation "
+        "guard (pushes !== before check); a newer push's table would be "
+        "overwritten by the stale response"
+    )
+
+    # Cleanup must be unconditional: groupBusy=false, requestRender, focus
+    assert "groupBusy = false" in ms_block, (
+        "makeGroupSelect callback does not reset groupBusy; busy lock leaks"
+    )
+    assert "requestRender()" in ms_block, (
+        "makeGroupSelect refusal arm does not call requestRender()"
+    )
+    assert "focusGroupSelect" in ms_block, (
+        "makeGroupSelect refusal arm does not restore focus via focusGroupSelect"
+    )
+
+
+def test_add_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - doAdd's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused add leaves the page showing a
+    potentially stale groups list until the next refresh().
+
+    groupBusy=false and requestRender() must remain unconditional.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    # doAdd is a closure inside makeGroupManager; isolate from doAdd to the
+    # next closure-level function definition.
+    da_block = src.split("function doAdd()", 1)[1].split("\n    function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(da_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "doAdd refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "refused add should still show the authoritative groups list"
+    )
+    assert has_generation_guard, (
+        "doAdd refusal arm applies res.hotkeys without checking pushes !== before; "
+        "a newer push's authoritative table would be overwritten"
+    )
+
+    assert "groupBusy = false" in da_block, "doAdd callback does not reset groupBusy"
+    assert "requestRender()" in da_block, (
+        "doAdd refusal arm does not call requestRender()"
+    )
+
+
+def test_rename_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - renameGroup's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused rename leaves the stale name
+    visible until the next refresh().
+
+    groupBusy=false, requestRender(), and focusGroupManager() must be
+    unconditional (fire on every refusal, not only when hotkeys is absent).
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    rg_block = src.split("function renameGroup", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(rg_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "renameGroup refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "a refused rename should show the authoritative (unchanged) name"
+    )
+    assert has_generation_guard, (
+        "renameGroup refusal arm applies res.hotkeys without a generation guard; "
+        "a newer push's table would be overwritten"
+    )
+
+    assert "groupBusy = false" in rg_block, (
+        "renameGroup callback does not reset groupBusy"
+    )
+    assert "requestRender()" in rg_block, (
+        "renameGroup refusal arm does not call requestRender()"
+    )
+    assert "focusGroupManager" in rg_block, (
+        "renameGroup refusal arm does not restore focus via focusGroupManager"
+    )
+
+
+def test_delete_refusal_applies_authoritative_hotkeys():
+    """Fix wave 2 - deleteGroup's refusal branch must apply res.hotkeys to
+    state.hotkeys when res.hotkeys is present and no newer push has landed
+    (before guard).  Without this, a refused delete shows a stale groups list
+    until the next refresh().
+
+    groupBusy=false, requestRender(), and focusGroupManager() must be
+    unconditional.
+    """
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    dg_block = src.split("function deleteGroup", 1)[1].split("\n  function ", 1)[0]
+    refusal_arm = _extract_refusal_arm(dg_block)
+
+    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
+    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
+    assert has_hotkeys_assign, (
+        "deleteGroup refusal arm does not apply res.hotkeys to state.hotkeys; "
+        "a refused delete should show the authoritative groups list"
+    )
+    assert has_generation_guard, (
+        "deleteGroup refusal arm applies res.hotkeys without a generation guard; "
+        "a newer push's table would be overwritten"
+    )
+
+    assert "groupBusy = false" in dg_block, (
+        "deleteGroup callback does not reset groupBusy"
+    )
+    assert "requestRender()" in dg_block, (
+        "deleteGroup refusal arm does not call requestRender()"
+    )
+    assert "focusGroupManager" in dg_block, (
+        "deleteGroup refusal arm does not restore focus via focusGroupManager"
+    )
+
+
+# ---- profile identity: generation-gated staleness (Task 6) -------------
+
+
+def test_identification_generation_is_retained_from_zero():
+    """Task 5 made every identification start/check/cancel response, and
+    the onEveSettingsNames push, carry identification_generation. Task 6
+    must retain the last one observed so a response or push older than it
+    can be told apart from the latest and discarded.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "var identificationGeneration = 0;" in src, (
+        "evesettings.js does not retain an identificationGeneration counter "
+        "initialized to zero"
+    )
+    assert "function acceptIdentification(" in src, (
+        "evesettings.js has no acceptIdentification helper to reject stale "
+        "identification responses/pushes"
+    )
+
+
+def test_generation_is_observed_before_deleted_candidate_inspection():
+    """onEveSettingsNames must update the retained generation before
+    inspecting deleted_candidate_ids, so event-before-promise and
+    promise-before-event both apply the newer of the two in the same
+    order: the generation that authorizes the inspection is observed
+    first, not derived from the outcome of the inspection.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    handler = src.split("WM.handle('onEveSettingsNames'", 1)[1]
+    handler = handler.split("\n  });", 1)[0]
+    accept_at = handler.find("acceptIdentification(")
+    deleted_at = handler.find("deleted_candidate_ids")
+    assert accept_at != -1 and deleted_at != -1, (
+        "onEveSettingsNames does not both observe the generation and "
+        "inspect deleted_candidate_ids"
+    )
+    assert accept_at < deleted_at, (
+        "onEveSettingsNames inspects deleted_candidate_ids before observing "
+        "the generation that authorizes the inspection"
+    )
+
+
+def test_every_render_candidate_call_is_preceded_by_a_generation_check():
+    """Every path that paints an identification candidate must first
+    confirm the response is not older than one already applied -- a stale
+    'candidate' response racing a newer cancel or restart must not repaint
+    an offer the user already dismissed.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    calls = [m.start() for m in re.finditer(r"renderCandidate\(result\)", src)]
+    assert calls, "no renderCandidate(result) call sites found"
+    for pos in calls:
+        preceding = src[:pos]
+        block_start = preceding.rfind("function (result)")
+        block = src[block_start:pos] if block_start != -1 else preceding
+        assert "acceptIdentification(result)" in block, (
+            "a renderCandidate(result) call site has no preceding "
+            "acceptIdentification(result) guard in its enclosing callback"
+        )
+
+
+def test_a_cancelled_identification_check_response_is_idle_with_no_message():
+    """Binding ruling from the Task 5 review: a generation-cancelled
+    eve_settings_identification_check response must not fall into the
+    generic branch, which used to paint 'watching' with the false
+    no-changes message. It must be recognized explicitly and treated as
+    idle with no message.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    check_block = src.split("WM.el('es-identify-check').addEventListener", 1)[1].split(
+        "\n\n    WM.el('es-identify-cancel')", 1
+    )[0]
+    assert "'cancelled'" in check_block, (
+        "the check click handler has no explicit 'cancelled' branch"
+    )
+    cancelled_arm = check_block.split("'cancelled'", 1)[1].split("}", 1)[0]
+    assert "paintIdentification('idle')" in cancelled_arm, (
+        "a cancelled check response must return to idle with no message, "
+        "not the generic watching/no-changes branch"
+    )
+
+
+def test_a_deleted_candidate_clears_local_state_with_the_approved_message():
+    """onEveSettingsNames must clear the offered candidate and repaint
+    idle with the approved copy when the pushed deleted_candidate_ids
+    intersect the character currently offered.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "That character was deleted. Start account identification again." in src, (
+        "the approved deleted-candidate reset message is missing"
+    )
+
+
+def test_account_identity_controls_are_gated_by_the_payload_flag():
+    """Design: account identification and manual account-link controls
+    are unavailable outside a trusted Tranquility context. The page must
+    take that from account_identity_available, never from server/path
+    text reimplemented in JavaScript.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "state.account_identity_available" in src, (
+        "no identity control is gated on state.account_identity_available"
+    )
+    can_identify = re.search(r"var canIdentify = ([^;]*);", src, re.DOTALL)
+    assert can_identify and "account_identity_available" in can_identify.group(1), (
+        "canIdentify does not require account_identity_available"
+    )
+
+
+def test_on_eve_settings_names_handler_remains_the_sole_registration():
+    """Task 6 changes onEveSettingsNames's body (it now takes a payload),
+    not its name or its owner."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "'onEveSettingsNames'" in app
+    ev = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert ev.count("WM.handle('onEveSettingsNames'") == 1, (
+        "onEveSettingsNames must be registered exactly once, in evesettings.js"
     )
