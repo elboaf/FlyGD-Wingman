@@ -1,0 +1,6 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Aiga Otsolen
+  Session Started: 2025.11.14 01:09:20
+------------------------------------------------------------
+[ 2025.11.14 01:15:33 ] (combat) <color=0xff00ffff><b>299</b> <color=0x77ffffff><font size=10>to</font> <b><color=0xffffffff>Mara Veld[OXWLD](Sleepless Patroller)</b><font size=10><color=0x77ffffff> - Caldari Navy Scourge Heavy Missile - Hits
