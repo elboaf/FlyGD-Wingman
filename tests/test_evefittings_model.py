@@ -354,6 +354,7 @@ def test_package_exports_the_task_seven_domain_surface():
         "save_fittings",
         "validate_remote_snapshot",
         "validate_supersession",
+        "validate_supersession_graph",
     }
 
     assert expected <= set(evefittings.__all__)

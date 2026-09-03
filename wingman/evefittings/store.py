@@ -36,7 +36,7 @@ from .model import (
     WriteIntent,
     canonicalize,
     retain_aliases,
-    validate_supersession,
+    validate_supersession_graph,
 )
 
 STATE_VERSION = 1
@@ -138,8 +138,9 @@ def _content_from_dict(raw: object) -> CanonicalContent:
     # Stored canonical rows are identity, not source data to recanonicalize.
     # Refuse an order/aggregation drift instead of silently changing that identity.
     keys = tuple(item.key() for item in content.items)
-    if keys != tuple(sorted(set(keys))):
-        raise ValueError("Canonical item rows must be unique and sorted.")
+    identities = tuple((item.location, item.type_id) for item in content.items)
+    if keys != tuple(sorted(keys)) or len(identities) != len(set(identities)):
+        raise ValueError("Canonical item rows must be aggregated and sorted.")
     return content
 
 
@@ -192,6 +193,62 @@ def _template_content(
     )
 
 
+def _validate_content_value(content: object) -> CanonicalContent:
+    if not isinstance(content, CanonicalContent):
+        raise ValueError("Canonical content has the wrong type.")
+    _positive_int(content.ship_type_id, "Canonical ship type ID")
+    if not isinstance(content.items, tuple) or not content.items:
+        raise ValueError("Canonical content must contain item rows.")
+    keys = []
+    identities = set()
+    for item in content.items:
+        if not isinstance(item, CanonicalItem):
+            raise ValueError("Canonical item has the wrong type.")
+        if item.location not in CANONICAL_LOCATIONS:
+            raise ValueError("Canonical item has an invalid location.")
+        _positive_int(item.type_id, "Canonical item type ID")
+        _positive_int(item.quantity, "Canonical item quantity")
+        identity = item.location, item.type_id
+        if identity in identities:
+            raise ValueError("Canonical item rows must be aggregated.")
+        identities.add(identity)
+        keys.append(item.key())
+    if keys != sorted(keys):
+        raise ValueError("Canonical item rows must be sorted.")
+    return content
+
+
+def _validate_template_value(
+    content: CanonicalContent,
+    template: object,
+    label: str,
+    cache: dict[tuple[int, tuple[RemoteItem, ...]], CanonicalContent],
+    *,
+    deployable: bool = False,
+) -> tuple[RemoteItem, ...]:
+    if not isinstance(template, tuple) or not template:
+        raise ValueError(f"{label} must contain exact item rows.")
+    if len(template) > contracts.MAX_CREATE_ITEMS:
+        raise ValueError(f"{label} exceeds {contracts.MAX_CREATE_ITEMS} item rows.")
+    for item in template:
+        if not isinstance(item, RemoteItem):
+            raise ValueError(f"{label} item has the wrong type.")
+        if item.flag not in contracts.ACCEPTED_FLAGS:
+            raise ValueError(f"{label} item has an invalid flag.")
+        _positive_int(item.type_id, f"{label} item type ID")
+        _positive_int(item.quantity, f"{label} item quantity")
+    if deployable and any(item.flag == "Invalid" for item in template):
+        raise ValueError(f"{label} may not contain Invalid rows.")
+    key = content.ship_type_id, template
+    canonical = cache.get(key)
+    if canonical is None:
+        canonical = _template_content(content.ship_type_id, template)
+        cache[key] = canonical
+    if canonical != content:
+        raise ValueError(f"{label} does not reproduce canonical content.")
+    return template
+
+
 def _validate_template_matches(
     content: CanonicalContent,
     template: tuple[RemoteItem, ...],
@@ -199,10 +256,21 @@ def _validate_template_matches(
     *,
     deployable: bool = False,
 ) -> None:
-    if deployable and any(item.flag == "Invalid" for item in template):
-        raise ValueError(f"{label} may not contain Invalid rows.")
-    if _template_content(content.ship_type_id, template) != content:
-        raise ValueError(f"{label} does not reproduce canonical content.")
+    _validate_template_value(content, template, label, {}, deployable=deployable)
+
+
+def _validate_alias_value(
+    alias: object,
+    content: CanonicalContent,
+    cache: dict[tuple[int, tuple[RemoteItem, ...]], CanonicalContent],
+) -> None:
+    if not isinstance(alias, SourceAlias):
+        raise ValueError("Alias has the wrong type.")
+    _text(alias.name, "Alias name", contracts.MAX_NAME_CHARS, required=True)
+    _text(alias.description, "Alias description", contracts.MAX_DESCRIPTION_CHARS)
+    _validate_template_value(
+        content, alias.source_template, "Alias source template", cache
+    )
 
 
 def _alias_to_dict(alias: SourceAlias) -> dict:
@@ -456,14 +524,17 @@ def _intent_from_dict(raw: object) -> WriteIntent:
     status = raw.get("status")
     if not isinstance(status, str) or status not in INTENT_STATUSES:
         raise ValueError("Write intent has an invalid status.")
+    entry_id_raw = raw.get("library_entry_id")
+    if entry_id_raw == "" and status in {"in_flight", "unknown"}:
+        entry_id = ""
+    else:
+        entry_id = _identifier(entry_id_raw, "Intent library entry ID")
     created = _parse_utc(raw.get("created_utc"), "Intent creation time")
     assert created is not None
     return WriteIntent(
         operation_id=_identifier(raw.get("operation_id"), "Operation ID"),
         character_id=_positive_int(raw.get("character_id"), "Intent character ID"),
-        library_entry_id=_identifier(
-            raw.get("library_entry_id"), "Intent library entry ID"
-        ),
+        library_entry_id=entry_id,
         content=_content_from_dict(raw.get("content")),
         status=status,
         created_utc=created,
@@ -476,6 +547,10 @@ def _intent_from_dict(raw: object) -> WriteIntent:
         ),
         error=_text(raw.get("error"), "Intent error", MAX_ERROR_CHARS),
     )
+
+
+def _intent_identity(intent: WriteIntent) -> tuple[str, int, CanonicalContent]:
+    return intent.operation_id, intent.character_id, intent.content
 
 
 def _bounded_completed_history(
@@ -491,8 +566,22 @@ def _bounded_completed_history(
     )
 
 
+def _normalized_intents_for_save(state: FittingsState) -> tuple[WriteIntent, ...]:
+    entries = {entry.id: entry for entry in state.entries}
+    return tuple(
+        replace(intent, library_entry_id="")
+        if intent.unresolved
+        and (
+            (entry := entries.get(intent.library_entry_id)) is None
+            or entry.content != intent.content
+        )
+        else intent
+        for intent in state.intents
+    )
+
+
 def _to_dict(state: FittingsState) -> dict:
-    intents = _bounded_completed_history(state.intents)
+    intents = _bounded_completed_history(_normalized_intents_for_save(state))
     return {
         "version": STATE_VERSION,
         "entries": [_entry_to_dict(entry) for entry in state.entries],
@@ -657,7 +746,7 @@ def _from_dict(raw: object) -> tuple[FittingsState, tuple[str, ...]]:
     intents = _parse_rows(raw.get("intents"), _intent_from_dict, "intent", warnings)
     intents = _deduplicate_by(
         intents,
-        lambda item: (item.operation_id, item.character_id, item.library_entry_id),
+        _intent_identity,
         "intent identity",
         warnings,
     )
@@ -667,7 +756,54 @@ def _from_dict(raw: object) -> tuple[FittingsState, tuple[str, ...]]:
         else item
         for item in intents
     ]
-    intents = list(_bounded_completed_history(tuple(intents)))
+    retained_intents = []
+    unresolved_missing = 0
+    unresolved_mismatched = 0
+    terminal_missing = 0
+    terminal_mismatched = 0
+    for item in intents:
+        if item.unresolved and not item.library_entry_id:
+            retained_intents.append(item)
+            continue
+        entry = by_entry_id.get(item.library_entry_id)
+        relationship = (
+            "missing"
+            if entry is None
+            else "mismatched"
+            if entry.content != item.content
+            else ""
+        )
+        if not relationship:
+            retained_intents.append(item)
+        elif item.unresolved:
+            retained_intents.append(replace(item, library_entry_id=""))
+            if relationship == "missing":
+                unresolved_missing += 1
+            else:
+                unresolved_mismatched += 1
+        elif relationship == "missing":
+            terminal_missing += 1
+        else:
+            terminal_mismatched += 1
+    for qualifier, count in (
+        ("unresolved missing", unresolved_missing),
+        ("unresolved mismatched", unresolved_mismatched),
+        ("terminal missing", terminal_missing),
+        ("terminal mismatched", terminal_mismatched),
+    ):
+        if not count:
+            continue
+        if qualifier.startswith("unresolved"):
+            warnings.append(
+                f"Fitting state preserved {count} {qualifier} intent references. "
+                "Duplicate-copy safety remains blocked by character and canonical "
+                "content until reconciliation."
+            )
+        else:
+            warnings.append(
+                f"Fitting state dropped {count} {qualifier} intent references."
+            )
+    intents = list(_bounded_completed_history(tuple(retained_intents)))
     return (
         FittingsState(
             entries=tuple(entries),
@@ -678,6 +814,81 @@ def _from_dict(raw: object) -> tuple[FittingsState, tuple[str, ...]]:
         ),
         tuple(warnings),
     )
+
+
+def _validate_datetime_value(
+    value: object, label: str, *, required: bool = True
+) -> None:
+    if value is None and not required:
+        return
+    if not isinstance(value, datetime):
+        raise ValueError(f"{label} must be a datetime.")
+
+
+def _validate_presence_value(
+    presence: object,
+    entries: dict[str, LibraryEntry],
+    cache: dict[tuple[int, tuple[RemoteItem, ...]], CanonicalContent],
+) -> None:
+    if not isinstance(presence, Presence):
+        raise ValueError("Presence has the wrong type.")
+    entry = entries.get(presence.library_entry_id)
+    if entry is None:
+        raise ValueError("Presence references a missing library entry.")
+    _positive_int(presence.character_id, "Presence character ID")
+    _positive_int(presence.remote_fitting_id, "Presence remote fitting ID")
+    _text(
+        presence.source_name,
+        "Presence source name",
+        contracts.MAX_NAME_CHARS,
+        required=True,
+    )
+    _text(
+        presence.source_description,
+        "Presence source description",
+        contracts.MAX_DESCRIPTION_CHARS,
+    )
+    _validate_template_value(
+        entry.content, presence.source_template, "Presence source template", cache
+    )
+    _validate_datetime_value(presence.first_seen_utc, "Presence first-seen time")
+    _text(
+        presence.discovered_batch_id,
+        "Presence discovery batch ID",
+        MAX_BATCH_ID_CHARS,
+        required=True,
+    )
+    _validate_datetime_value(presence.last_confirmed_utc, "Presence confirmation time")
+
+
+def _validate_snapshot_value(snapshot: object) -> None:
+    if not isinstance(snapshot, CharacterSnapshot):
+        raise ValueError("Character snapshot has the wrong type.")
+    _positive_int(snapshot.character_id, "Snapshot character ID")
+    _validate_datetime_value(
+        snapshot.fetched_utc, "Snapshot fetch time", required=False
+    )
+    _text(snapshot.etag, "Snapshot ETag", MAX_ETAG_CHARS)
+    _text(snapshot.error, "Snapshot error", MAX_ERROR_CHARS)
+
+
+def _validate_intent_value(intent: object) -> None:
+    if not isinstance(intent, WriteIntent):
+        raise ValueError("Write intent has the wrong type.")
+    if intent.status not in INTENT_STATUSES:
+        raise ValueError("Write intent has an invalid status.")
+    _identifier(intent.operation_id, "Operation ID")
+    _positive_int(intent.character_id, "Intent character ID")
+    if intent.library_entry_id or not intent.unresolved:
+        _identifier(intent.library_entry_id, "Intent library entry ID")
+    _validate_content_value(intent.content)
+    _validate_datetime_value(intent.created_utc, "Intent creation time")
+    _validate_datetime_value(intent.sent_utc, "Intent sent time", required=False)
+    _validate_datetime_value(
+        intent.completed_utc, "Intent completion time", required=False
+    )
+    _optional_positive_int(intent.remote_fitting_id, "Intent remote fitting ID")
+    _text(intent.error, "Intent error", MAX_ERROR_CHARS)
 
 
 def _validate_state(state: FittingsState) -> None:
@@ -693,22 +904,26 @@ def _validate_state(state: FittingsState) -> None:
         )
 
     entry_ids = set()
+    template_cache: dict[tuple[int, tuple[RemoteItem, ...]], CanonicalContent] = {}
     for entry in state.entries:
+        if not isinstance(entry, LibraryEntry):
+            raise ValueError("Library entry has the wrong type.")
         _identifier(entry.id, "Library entry ID")
         if entry.id in entry_ids:
             raise ValueError("Library entry IDs must be unique.")
         entry_ids.add(entry.id)
-        _content_from_dict(_content_to_dict(entry.content))
+        _validate_content_value(entry.content)
         _positive_int(entry.fingerprint_version, "Fingerprint version")
         _text(entry.digest, "Fingerprint digest", 256, required=True)
-        _validate_template_matches(
-            entry.content, entry.source_template, "Source template"
+        _validate_template_value(
+            entry.content, entry.source_template, "Source template", template_cache
         )
         if entry.deployment_template is not None:
-            _validate_template_matches(
+            _validate_template_value(
                 entry.content,
                 entry.deployment_template,
                 "Deployment template",
+                template_cache,
                 deployable=True,
             )
         _text(
@@ -729,9 +944,9 @@ def _validate_state(state: FittingsState) -> None:
         if not entry.aliases:
             raise ValueError("A library entry must retain at least one alias.")
         for alias in entry.aliases:
-            _alias_from_dict(_alias_to_dict(alias), entry.content)
-        _parse_utc(_iso(entry.created_utc), "Entry creation time")
-        _parse_utc(_iso(entry.updated_utc), "Entry update time")
+            _validate_alias_value(alias, entry.content, template_cache)
+        _validate_datetime_value(entry.created_utc, "Entry creation time")
+        _validate_datetime_value(entry.updated_utc, "Entry update time")
 
     collection_ids = set()
     for collection in state.collections:
@@ -750,37 +965,37 @@ def _validate_state(state: FittingsState) -> None:
             raise ValueError("Collection membership IDs must be unique per entry.")
         if not set(entry.collection_ids) <= collection_ids:
             raise ValueError("Library entry references a missing collection.")
-        validate_supersession(state.entries, entry.id, entry.superseded_by)
+    validate_supersession_graph(state.entries)
 
     presence_keys = set()
     entries = {entry.id: entry for entry in state.entries}
     for item in state.presences:
-        if item.library_entry_id not in entries:
-            raise ValueError("Presence references a missing library entry.")
+        _validate_presence_value(item, entries, template_cache)
         key = item.character_id, item.remote_fitting_id
         if key in presence_keys:
             raise ValueError("Presence identities must be unique.")
         presence_keys.add(key)
-        _presence_from_dict(_presence_to_dict(item), entries)
 
     snapshot_ids = set()
     for item in state.snapshots:
+        _validate_snapshot_value(item)
         if item.character_id in snapshot_ids:
             raise ValueError("Snapshot character IDs must be unique.")
         snapshot_ids.add(item.character_id)
-        _snapshot_from_dict(_snapshot_to_dict(item))
 
     intent_keys = set()
     for item in state.intents:
-        key = item.operation_id, item.character_id, item.library_entry_id
+        key = _intent_identity(item)
         if key in intent_keys:
             raise ValueError("Write intent identities must be unique.")
         intent_keys.add(key)
-        parsed = _intent_from_dict(_intent_to_dict(item))
+        _validate_intent_value(item)
         entry = entries.get(item.library_entry_id)
+        if item.unresolved and (entry is None or item.content != entry.content):
+            continue
         if entry is None:
             raise ValueError("Write intent references a missing library entry.")
-        if parsed.content != entry.content:
+        if item.content != entry.content:
             raise ValueError("Write intent content does not match its library entry.")
 
 
@@ -813,11 +1028,24 @@ def _preserve_corrupt(path: Path) -> str:
     return target.name
 
 
+def _read_backup_with_retry(
+    backup: Path,
+) -> tuple[FittingsState, tuple[str, ...]]:
+    try:
+        return _read_document(backup)
+    except OSError:
+        # A scanner or backup tool can briefly hold a good file without
+        # sharing read access on Windows. One short retry matches Skills'
+        # recovery behavior without turning a persistent error into a stall.
+        time.sleep(0.05)
+        return _read_document(backup)
+
+
 def _recover_missing_primary(
     path: Path, backup: Path
 ) -> tuple[FittingsState, tuple[str, ...]]:
     try:
-        recovered, row_warnings = _read_document(backup)
+        recovered, row_warnings = _read_backup_with_retry(backup)
     except (OSError, ValueError, RecursionError) as exc:
         return FittingsState(), (
             f"{path.name} was missing and {backup.name} could not be read ({exc}); starting with an empty fitting library.",
@@ -839,7 +1067,7 @@ def _recover_corrupt_primary(path: Path) -> tuple[FittingsState, tuple[str, ...]
     preserved = _preserve_corrupt(path)
     backup = path.with_name(path.name + ".bak")
     try:
-        recovered, row_warnings = _read_document(backup)
+        recovered, row_warnings = _read_backup_with_retry(backup)
     except (OSError, ValueError, RecursionError) as exc:
         return FittingsState(), (
             f"{path.name} could not be read and was preserved as {preserved or 'a copy'}; its backup could not be recovered ({exc}). Starting with an empty fitting library.",

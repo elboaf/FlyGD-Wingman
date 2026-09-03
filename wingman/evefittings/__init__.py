@@ -22,6 +22,7 @@ from .model import (
     retain_aliases,
     validate_remote_snapshot,
     validate_supersession,
+    validate_supersession_graph,
 )
 from .store import load_fittings, save_fittings
 
@@ -49,4 +50,5 @@ __all__ = (
     "save_fittings",
     "validate_remote_snapshot",
     "validate_supersession",
+    "validate_supersession_graph",
 )

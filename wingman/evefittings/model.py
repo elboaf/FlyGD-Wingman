@@ -133,6 +133,8 @@ class CharacterSnapshot:
 class WriteIntent:
     operation_id: str
     character_id: int
+    # Empty only after tolerant recovery detaches a missing or mismatched
+    # entry. The canonical content remains the safety key that blocks a copy.
     library_entry_id: str
     content: CanonicalContent
     status: str
@@ -364,30 +366,67 @@ def new_library_entry(
     )
 
 
+def _index_entries(entries: Iterable[LibraryEntry]) -> dict[str, LibraryEntry]:
+    by_id: dict[str, LibraryEntry] = {}
+    for entry in entries:
+        if entry.id in by_id:
+            raise ValueError("Library entry IDs must be unique.")
+        by_id[entry.id] = entry
+    return by_id
+
+
+def _validate_supersession_edges(
+    by_id: dict[str, LibraryEntry], edges: dict[str, str]
+) -> None:
+    for entry_id, target_id in edges.items():
+        if target_id == entry_id:
+            raise ValueError("A fitting cannot supersede itself.")
+        target = by_id.get(target_id)
+        if target is None:
+            raise ValueError(f"Superseding entry {target_id!r} does not exist.")
+        if by_id[entry_id].content.ship_type_id != target.content.ship_type_id:
+            raise ValueError("Supersession requires the same ship type.")
+
+    complete: set[str] = set()
+    for start in edges:
+        if start in complete:
+            continue
+        path: list[str] = []
+        positions: dict[str, int] = {}
+        current = start
+        while current in edges and current not in complete:
+            if current in positions:
+                raise ValueError("Supersession would create a cycle.")
+            positions[current] = len(path)
+            path.append(current)
+            current = edges[current]
+        complete.update(path)
+
+
+def validate_supersession_graph(entries: Iterable[LibraryEntry]) -> None:
+    """Validate every persisted supersession edge with one stable-ID index."""
+    by_id = _index_entries(entries)
+    edges = {
+        entry.id: entry.superseded_by
+        for entry in by_id.values()
+        if entry.superseded_by is not None
+    }
+    _validate_supersession_edges(by_id, edges)
+
+
 def validate_supersession(
     entries: Iterable[LibraryEntry], entry_id: str, superseded_by: str | None
 ) -> None:
     """Validate a proposed edge against stable IDs, hulls, and the whole graph."""
-    by_id = {entry.id: entry for entry in entries}
-    source = by_id.get(entry_id)
-    if source is None:
+    by_id = _index_entries(entries)
+    if entry_id not in by_id:
         raise ValueError(f"Library entry {entry_id!r} does not exist.")
     if superseded_by is None:
         return
-    if superseded_by == entry_id:
-        raise ValueError("A fitting cannot supersede itself.")
-    target = by_id.get(superseded_by)
-    if target is None:
-        raise ValueError(f"Superseding entry {superseded_by!r} does not exist.")
-    if source.content.ship_type_id != target.content.ship_type_id:
-        raise ValueError("Supersession requires the same ship type.")
-
-    edges = {entry.id: entry.superseded_by for entry in by_id.values()}
+    edges = {
+        entry.id: entry.superseded_by
+        for entry in by_id.values()
+        if entry.superseded_by is not None
+    }
     edges[entry_id] = superseded_by
-    seen: set[str] = set()
-    current: str | None = entry_id
-    while current is not None:
-        if current in seen:
-            raise ValueError("Supersession would create a cycle.")
-        seen.add(current)
-        current = edges.get(current)
+    _validate_supersession_edges(by_id, edges)

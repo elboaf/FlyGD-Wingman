@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from wingman.evefittings import contracts
+from wingman.evefittings import contracts, model, store
 from wingman.evefittings.model import (
     CharacterSnapshot,
     Collection,
@@ -73,6 +73,14 @@ def intent(
         remote_fitting_id=99 if status == "success" else None,
         error="rejected" if status == "failed" else "",
     )
+
+
+def assert_round_trip_closed(tmp_path, state):
+    path = tmp_path / "recovered-round-trip.json"
+    save_fittings(path, state)
+    reloaded, warnings = load_fittings(path)
+    assert reloaded == state
+    assert warnings == ()
 
 
 def full_state(*, intent_status="unknown"):
@@ -209,6 +217,50 @@ def test_completed_history_prunes_oldest_first_but_unresolved_never_prunes(tmp_p
     assert unresolved_ids == [f"unknown-{index}" for index in range(205)]
 
 
+def test_save_builds_the_supersession_index_once(tmp_path, monkeypatch):
+    path = tmp_path / "eve_fittings.json"
+    entries = tuple(library_entry(entry_id=f"fit-{index}") for index in range(300))
+    entries = tuple(
+        replace(
+            entry,
+            superseded_by=entries[index + 1].id if index + 1 < len(entries) else None,
+        )
+        for index, entry in enumerate(entries)
+    )
+    original_index = model._index_entries
+    index_calls = 0
+
+    def counted_index(rows):
+        nonlocal index_calls
+        index_calls += 1
+        return original_index(rows)
+
+    monkeypatch.setattr(model, "_index_entries", counted_index)
+
+    save_fittings(path, FittingsState(entries=entries))
+
+    assert index_calls == 1
+
+
+def test_save_validates_parsed_aliases_without_round_trip_serialization(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "eve_fittings.json"
+    original_alias_to_dict = store._alias_to_dict
+    alias_serializations = 0
+
+    def counted_alias_to_dict(alias):
+        nonlocal alias_serializations
+        alias_serializations += 1
+        return original_alias_to_dict(alias)
+
+    monkeypatch.setattr(store, "_alias_to_dict", counted_alias_to_dict)
+
+    save_fittings(path, full_state())
+
+    assert alias_serializations == 1
+
+
 def test_save_refuses_library_and_collection_growth_without_replacing_primary(tmp_path):
     path = tmp_path / "eve_fittings.json"
     original = full_state()
@@ -285,14 +337,141 @@ def test_recovery_writeback_failure_still_returns_loaded_backup(tmp_path, monkey
     assert any("could not be saved" in warning for warning in warnings)
 
 
-def test_save_rejects_intent_content_that_does_not_match_its_entry(tmp_path):
+def test_save_rejects_terminal_intent_content_that_does_not_match_its_entry(
+    tmp_path,
+):
     path = tmp_path / "eve_fittings.json"
     entry = library_entry()
     different = library_entry(entry_id="different", fitting=remote(ship_type_id=101))
-    mismatched = replace(intent(entry=entry), content=different.content)
+    mismatched = replace(intent("failed", entry=entry), content=different.content)
 
     with pytest.raises(ValueError, match="intent content"):
         save_fittings(path, FittingsState(entries=(entry,), intents=(mismatched,)))
+
+
+@pytest.mark.parametrize("status", ["in_flight", "unknown"])
+@pytest.mark.parametrize("damage", ["missing", "mismatched"])
+def test_tolerant_recovery_preserves_and_resaves_unresolved_orphan_intents(
+    tmp_path, status, damage
+):
+    path = tmp_path / "eve_fittings.json"
+    save_fittings(path, full_state(intent_status=status))
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if damage == "missing":
+        document["entries"][0] = {"id": "broken"}
+    else:
+        document["intents"][0]["content"]["ship_type_id"] = 101
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, warnings = load_fittings(path)
+
+    assert len(loaded.intents) == 1
+    assert loaded.intents[0].status == "unknown"
+    assert loaded.intents[0].content.ship_type_id == (
+        101 if damage == "mismatched" else 100
+    )
+    assert any("unresolved" in warning and damage in warning for warning in warnings)
+    assert_round_trip_closed(tmp_path, loaded)
+
+
+@pytest.mark.parametrize("status", ["success", "failed"])
+@pytest.mark.parametrize("damage", ["missing", "mismatched"])
+def test_tolerant_recovery_drops_terminal_orphan_history_with_warning(
+    tmp_path, status, damage
+):
+    path = tmp_path / "eve_fittings.json"
+    save_fittings(path, full_state(intent_status=status))
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if damage == "missing":
+        document["entries"][0] = {"id": "broken"}
+    else:
+        document["intents"][0]["content"]["ship_type_id"] = 101
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, warnings = load_fittings(path)
+
+    assert loaded.intents == ()
+    assert any("terminal" in warning and damage in warning for warning in warnings)
+    assert_round_trip_closed(tmp_path, loaded)
+
+
+def test_orphan_normalization_keeps_distinct_character_content_safety_keys(tmp_path):
+    path = tmp_path / "eve_fittings.json"
+    first = library_entry(entry_id="first")
+    second = library_entry(entry_id="second", fitting=remote(ship_type_id=101))
+    intents = (
+        intent("unknown", operation_id="same-operation", entry=first),
+        intent("unknown", operation_id="same-operation", entry=second),
+    )
+    save_fittings(path, FittingsState(entries=(first, second), intents=intents))
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["entries"] = [{"broken": True}, {"broken": True}]
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, warnings = load_fittings(path)
+
+    assert len(loaded.intents) == 2
+    assert {item.content for item in loaded.intents} == {first.content, second.content}
+    assert warnings
+    assert_round_trip_closed(tmp_path, loaded)
+
+
+def test_save_allows_unresolved_intent_to_outlive_its_library_entry(tmp_path):
+    path = tmp_path / "eve_fittings.json"
+    unresolved = intent("unknown")
+
+    save_fittings(path, FittingsState(intents=(unresolved,)))
+    loaded, warnings = load_fittings(path)
+
+    assert loaded.intents == (replace(unresolved, library_entry_id=""),)
+    assert warnings == ()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "invalid_entry",
+        "invalid_collection",
+        "invalid_presence",
+        "invalid_snapshot",
+        "invalid_intent",
+        "duplicate_entry",
+        "duplicate_collection",
+        "duplicate_presence",
+        "duplicate_snapshot",
+        "duplicate_intent",
+        "invalid_alias",
+        "unaggregated_intent_content",
+    ],
+)
+def test_every_tolerant_row_recovery_is_round_trip_closed(tmp_path, damage):
+    path = tmp_path / "eve_fittings.json"
+    save_fittings(path, full_state())
+    document = json.loads(path.read_text(encoding="utf-8"))
+    target = damage.removeprefix("invalid_").removeprefix("duplicate_")
+    collection_name = {
+        "entry": "entries",
+        "collection": "collections",
+        "presence": "presences",
+        "snapshot": "snapshots",
+        "intent": "intents",
+    }.get(target)
+    if damage == "invalid_alias":
+        document["entries"][0]["aliases"].append({"name": "broken"})
+    elif damage == "unaggregated_intent_content":
+        duplicate = document["intents"][0]["content"]["items"][0].copy()
+        duplicate["quantity"] = 2
+        document["intents"][0]["content"]["items"].append(duplicate)
+    elif damage.startswith("invalid_"):
+        document[collection_name].append({"broken": True})
+    else:
+        document[collection_name].append(document[collection_name][0].copy())
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, warnings = load_fittings(path)
+
+    assert warnings
+    assert_round_trip_closed(tmp_path, loaded)
 
 
 def test_syntactically_valid_local_corruption_drops_only_bad_rows_with_warning(
@@ -311,6 +490,7 @@ def test_syntactically_valid_local_corruption_drops_only_bad_rows_with_warning(
     assert loaded.presences == full_state().presences
     assert any("entry" in warning and "dropped" in warning for warning in warnings)
     assert any("presence" in warning and "dropped" in warning for warning in warnings)
+    assert_round_trip_closed(tmp_path, loaded)
 
 
 def test_local_alias_overflow_is_trimmed_deterministically_with_warning(tmp_path):
@@ -330,6 +510,7 @@ def test_local_alias_overflow_is_trimmed_deterministically_with_warning(tmp_path
     assert loaded.entries[0].aliases[0].name == "Alias 000"
     assert loaded.entries[0].aliases[-1].name == "Alias 099"
     assert any("aliases" in warning and "retained" in warning for warning in warnings)
+    assert_round_trip_closed(tmp_path, loaded)
 
 
 def test_dangling_collections_and_invalid_supersession_are_recovered_locally(tmp_path):
@@ -349,6 +530,7 @@ def test_dangling_collections_and_invalid_supersession_are_recovered_locally(tmp
     assert all(entry.superseded_by is None for entry in loaded.entries)
     assert any("collection" in warning for warning in warnings)
     assert any("supersession" in warning for warning in warnings)
+    assert_round_trip_closed(tmp_path, loaded)
 
 
 def test_corrupt_primary_is_preserved_and_recovered_from_backup(tmp_path):
@@ -364,6 +546,67 @@ def test_corrupt_primary_is_preserved_and_recovered_from_backup(tmp_path):
     assert any("recovered" in warning.lower() for warning in warnings)
     assert list(tmp_path.glob("eve_fittings.json.corrupt-*"))
     assert json.loads(path.read_text(encoding="utf-8"))["entries"]
+
+
+@pytest.mark.parametrize("primary_state", ["missing", "corrupt"])
+def test_backup_read_retries_once_after_transient_oserror(
+    tmp_path, monkeypatch, primary_state
+):
+    path = tmp_path / "eve_fittings.json"
+    backup = path.with_name(path.name + ".bak")
+    backup.write_text("{}", encoding="utf-8")
+    if primary_state == "corrupt":
+        path.write_text("not json", encoding="utf-8")
+    expected = full_state()
+    original_read = store._read_document
+    backup_attempts = []
+    sleeps = []
+
+    def flaky_read(candidate):
+        if candidate == backup:
+            backup_attempts.append(candidate)
+            if len(backup_attempts) == 1:
+                raise PermissionError("temporarily shared")
+            return expected, ()
+        return original_read(candidate)
+
+    monkeypatch.setattr(store, "_read_document", flaky_read)
+    monkeypatch.setattr(store.time, "sleep", sleeps.append)
+
+    loaded, warnings = load_fittings(path)
+
+    assert loaded == expected
+    assert len(backup_attempts) == 2
+    assert sleeps == [0.05]
+    assert any("recovered" in warning.lower() for warning in warnings)
+
+
+@pytest.mark.parametrize("primary_state", ["missing", "corrupt"])
+def test_backup_read_stops_after_one_retry(tmp_path, monkeypatch, primary_state):
+    path = tmp_path / "eve_fittings.json"
+    backup = path.with_name(path.name + ".bak")
+    backup.write_text("{}", encoding="utf-8")
+    if primary_state == "corrupt":
+        path.write_text("not json", encoding="utf-8")
+    original_read = store._read_document
+    backup_attempts = []
+    sleeps = []
+
+    def blocked_read(candidate):
+        if candidate == backup:
+            backup_attempts.append(candidate)
+            raise PermissionError("still shared")
+        return original_read(candidate)
+
+    monkeypatch.setattr(store, "_read_document", blocked_read)
+    monkeypatch.setattr(store.time, "sleep", sleeps.append)
+
+    loaded, warnings = load_fittings(path)
+
+    assert loaded == FittingsState()
+    assert len(backup_attempts) == 2
+    assert sleeps == [0.05]
+    assert warnings
 
 
 def test_missing_primary_is_recovered_from_backup(tmp_path):
