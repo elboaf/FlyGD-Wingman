@@ -79,7 +79,24 @@ def startup(monkeypatch, tmp_path):
     # thread, nothing to tear down. The first-run push is deferred onto a
     # daemon timer that outlives the test harmlessly.
     monkeypatch.setattr(main_mod, "resolve_recording_dir", lambda cfg: None)
-    monkeypatch.setattr(main_mod, "build_tray", lambda on_open, on_quit: FakeIcon())
+
+    def fake_build_tray(on_open, on_quit):
+        captured["on_open"] = on_open
+        captured["on_quit"] = on_quit
+        return FakeIcon()
+
+    monkeypatch.setattr(main_mod, "build_tray", fake_build_tray)
+
+    class FakeMainWindow:
+        def __init__(self):
+            self.destroyed = 0
+
+        def show(self):
+            order.append("show_window")
+
+        def destroy(self):
+            self.destroyed += 1
+            order.append("destroy_window")
 
     def fake_create(api, hidden=False):
         # The real create() hands the api its window; the ordering test
@@ -87,8 +104,9 @@ def startup(monkeypatch, tmp_path):
         api._window = fakes.FakeWindow()
         captured["api"] = api
         captured["hidden"] = hidden
+        captured["window"] = FakeMainWindow()
         order.append("create_window")
-        return SimpleNamespace(show=lambda: None, destroy=lambda: None)
+        return captured["window"]
 
     monkeypatch.setattr(main_mod.window_mod, "create", fake_create)
 
@@ -102,13 +120,42 @@ def startup(monkeypatch, tmp_path):
             thread = threading.Thread(target=func)
             thread.start()
             thread.join(timeout=5)
+            assert not thread.is_alive(), "page-ready callback did not finish"
+        during_run = captured.get("during_run")
+        if during_run is not None:
+            during_run()
 
     monkeypatch.setattr(main_mod.window_mod, "run", fake_run)
 
     def spy_refresh_auth(self):
         order.append("refresh_auth")
 
+    def spy_update_check(self, automatic):
+        order.append("update_check")
+        captured.setdefault("automatic_checks", []).append(automatic)
+        return {}
+
+    def spy_shutdown_updates(self):
+        order.append("shutdown_updates")
+
+    def spy_shutdown_previews(self):
+        order.append("shutdown_previews")
+
+    def spy_shutdown_skills(self):
+        order.append("shutdown_skills")
+
     monkeypatch.setattr(main_mod.api_mod.Api, "refresh_auth", spy_refresh_auth)
+    monkeypatch.setattr(main_mod.api_mod.Api, "_start_update_check", spy_update_check)
+    monkeypatch.setattr(
+        main_mod.api_mod.Api,
+        "shutdown_updates",
+        spy_shutdown_updates,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        main_mod.api_mod.Api, "shutdown_previews", spy_shutdown_previews
+    )
+    monkeypatch.setattr(main_mod.api_mod.Api, "shutdown_skills", spy_shutdown_skills)
 
     return SimpleNamespace(order=order, captured=captured)
 
@@ -125,33 +172,89 @@ def test_nothing_touches_the_page_before_the_gui_loop_starts(startup):
     assert main_mod.main() == 0
     order = startup.order
     assert "refresh_auth" in order, "the auth check must still run at startup"
-    assert order.index("run") < order.index("refresh_auth"), (
-        f"refresh_auth ran before the GUI loop: {order}"
+    assert "update_check" in order, "the update check must run at startup"
+    assert order.index("run") < order.index("refresh_auth")
+    assert order.index("run") < order.index("update_check"), (
+        f"startup work ran before the GUI loop: {order}"
     )
 
 
-def test_the_auth_check_is_handed_to_the_gui_loop_to_run(startup):
+def test_page_ready_work_is_handed_to_the_gui_loop_to_run(startup):
     """It must be deferred by giving run() the work, not by a fixed sleep:
     a delay long enough to be safe is a delay the user watches."""
     assert main_mod.main() == 0
     func = startup.captured["func"]
     api = startup.captured["api"]
     assert func is not None, "run() was given no startup function"
-    assert func == api.refresh_auth
+    assert func == api._page_ready
+    assert startup.captured["automatic_checks"] == [True]
+
+
+# --- shared orderly shutdown -----------------------------------------------
+
+
+def test_tray_quit_claims_then_runs_window_destruction_once(startup, monkeypatch):
+    claims = []
+
+    def claim(self):
+        claims.append(True)
+        return True
+
+    monkeypatch.setattr(main_mod.api_mod.Api, "_claim_quit", claim)
+
+    def during_run():
+        startup.captured["on_quit"]()
+        startup.captured["on_quit"]()
+
+    startup.captured["during_run"] = during_run
+
+    assert main_mod.main() == 0
+    assert claims == [True, True]
+    assert startup.captured["window"].destroyed == 1
+
+
+def test_update_shutdown_callback_is_idempotent_and_destroys_sigbar_first(startup):
+    events = startup.order
+
+    class FakeSigBar:
+        def destroy(self):
+            events.append("destroy_sigbar")
+
+    def during_run():
+        api = startup.captured["api"]
+        api._sigbar_window = FakeSigBar()
+        assert callable(api._request_shutdown)
+        api._request_shutdown()
+        api._request_shutdown()
+
+    startup.captured["during_run"] = during_run
+
+    assert main_mod.main() == 0
+    assert startup.captured["window"].destroyed == 1
+    assert events.index("destroy_sigbar") < events.index("destroy_window")
+
+
+def test_updater_cleanup_precedes_preview_and_skills_shutdown(startup):
+    assert main_mod.main() == 0
+
+    order = startup.order
+    assert order.index("shutdown_updates") < order.index("shutdown_previews")
+    assert order.index("shutdown_updates") < order.index("shutdown_skills")
 
 
 # --- the login launch (M3) --------------------------------------------------
 
 
-def test_a_normal_launch_shows_its_window(startup, monkeypatch):
+def test_a_normal_launch_shows_its_window_and_checks_once(startup, monkeypatch):
     """Everything except the login entry raises a window. A Start menu
     shortcut that silently did nothing visible would read as a crash."""
     monkeypatch.setattr(sys, "argv", ["wingman"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is False
+    assert startup.captured["automatic_checks"] == [True]
 
 
-def test_the_hidden_flag_reaches_the_window(startup, monkeypatch):
+def test_the_hidden_flag_reaches_the_window_and_still_checks_once(startup, monkeypatch):
     """M3: autostart.command() registers `--hidden`, and this is the wiring
     that makes it mean anything. Read from argv rather than a setting --
     the flag describes how THIS process was started, which no stored value
@@ -160,6 +263,7 @@ def test_the_hidden_flag_reaches_the_window(startup, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["wingman", "--hidden"])
     assert main_mod.main() == 0
     assert startup.captured["hidden"] is True
+    assert startup.captured["automatic_checks"] == [True]
 
 
 def test_an_unrecognised_argument_does_not_kill_a_windowed_launch(startup, monkeypatch):

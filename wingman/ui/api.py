@@ -501,15 +501,17 @@ class _WorkGate:
         with self._lock:
             self._upload = False
 
-    def claim_handoff(self, phase: str) -> bool:
+    def claim_handoff(self, phase: str) -> _ClaimResult:
         with self._lock:
-            if self._upload or self._quitting:
-                return False
+            if self._upload:
+                return _ClaimResult(False, "upload")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
             # The updater's own runtime lock excludes a second installer.
             # Reusing this transition lets that owner advance the phase
             # without releasing the claim between revalidation and launch.
             self._handoff = phase
-            return True
+            return _ClaimResult(True)
 
     def release_handoff(self) -> None:
         with self._lock:
@@ -675,6 +677,10 @@ class Api:
         self._update_service = update_service
         self._update_spawn = update_spawn
         self._is_frozen = is_frozen
+        # Assigned by main() once its idempotent window teardown exists.
+        # Tests and partial construction leave it unset; a successful native
+        # launch still closes its process handle and owns the work gate.
+        self._request_shutdown = None
         self._probe_queue: queue.Queue = queue.Queue()
         # Every list_rows() bumps this. A probe result carrying a stale
         # generation refers to rows that have since been replaced, and is
@@ -1626,10 +1632,6 @@ class Api:
         # takes its claim. Never destroy the window under that handoff.
         self._update_installation_preparing(show_window=True)
         return False
-
-    def _confirm_quit_if_busy(self) -> bool:
-        """Compatibility wrapper until the tray calls `_claim_quit` directly."""
-        return self._claim_quit()
 
     def start_upload(self, title, description, stitch, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
@@ -2633,6 +2635,291 @@ class Api:
     def check_for_updates(self) -> dict:
         return self._start_update_check(automatic=False)
 
+    def _page_ready(self) -> None:
+        """Start optional network work only after WebView2 owns the page."""
+        self.refresh_auth()
+        self._start_update_check(automatic=True)
+
+    def download_update(self) -> dict:
+        with self._update_lock:
+            if (
+                self._update.state
+                not in {
+                    "available",
+                    "check_failed",
+                    "download_failed",
+                }
+                or self._update.release is None
+            ):
+                return self._update_snapshot_locked()
+            release = self._update.release
+            self._update.state = "downloading"
+            self._update.staged = None
+            self._update.downloaded_bytes = 0
+            self._update.total_bytes = release.size
+            self._update.error = ""
+            snapshot = self._update_snapshot_locked()
+        try:
+            worker = self._update_spawn(
+                target=self._update_download_worker,
+                args=(release,),
+                daemon=True,
+                name="wingman-update-download",
+            )
+        except Exception:  # noqa: BLE001 - construction failure becomes retryable status
+            return self._rollback_update_start("download")
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure becomes retryable status
+            return self._rollback_update_start("download")
+        return snapshot
+
+    def _update_download_worker(self, release: updates_mod.ReleaseInfo) -> None:
+        path = None
+
+        def progress(done: int, total: int) -> None:
+            with self._update_lock:
+                if self._update.state != "downloading":
+                    return
+                self._update.downloaded_bytes = done
+                self._update.total_bytes = total
+            self._push_update_status()
+
+        try:
+            path = self._update_service.download_release(
+                release,
+                self._update_staging_root(),
+                on_progress=progress,
+            )
+            with self._update_lock:
+                closed = self._update.state == "closed"
+            if closed:
+                self._remove_unhanded_update(path)
+                return
+            self._update_service.verify_after_attachment(release, path)
+        except Exception as exc:
+            if path is not None:
+                self._remove_unhanded_update(path)
+            logger.debug("Wingman update download failed", exc_info=True)
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                self._update.worker = None
+                self._update.state = "download_failed"
+                self._update.staged = None
+                self._update.error = self._update_download_error(exc)
+            self._push_update_status()
+            return
+
+        with self._update_lock:
+            if self._update.state == "closed":
+                closed = True
+            else:
+                closed = False
+                self._update.worker = None
+                self._update.state = "ready"
+                self._update.staged = Path(path)
+                self._update.downloaded_bytes = release.size
+                self._update.total_bytes = release.size
+                self._update.error = ""
+        if closed:
+            self._remove_unhanded_update(path)
+            return
+        self._push_update_status()
+
+    def install_update(self) -> dict:
+        if not self._is_frozen():
+            return self._update_snapshot()
+        # Reserve the runtime phase before consulting the work gate. That
+        # reservation is the owner token Task 4 deliberately did not add to
+        # _WorkGate, and avoids nesting the two locks.
+        with self._update_lock:
+            if (
+                self._update.state != "ready"
+                or self._update.release is None
+                or self._update.staged is None
+            ):
+                return self._update_snapshot_locked()
+            release = self._update.release
+            path = self._update.staged
+            self._update.state = "handing_off"
+            self._update.error = ""
+            snapshot = self._update_snapshot_locked()
+
+        claim = self._work_gate.claim_handoff("handing_off")
+        if not claim:
+            with self._update_lock:
+                if self._update.state == "handing_off":
+                    self._update.state = "ready"
+                    if claim.reason == "upload":
+                        self._update.error = (
+                            "Finish the active upload before installing the update."
+                        )
+                    snapshot = self._update_snapshot_locked()
+            self._push_update_status()
+            return snapshot
+
+        try:
+            worker = self._update_spawn(
+                target=self._update_install_worker,
+                args=(release, path),
+                daemon=True,
+                name="wingman-update-install",
+            )
+        except Exception:  # noqa: BLE001 - construction failure rolls back handoff
+            return self._rollback_update_start("install")
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure rolls back handoff
+            return self._rollback_update_start("install")
+        return snapshot
+
+    def _update_install_worker(
+        self, release: updates_mod.ReleaseInfo, path: Path
+    ) -> None:
+        with self._update_lock:
+            if self._update.state != "handing_off":
+                return
+            self._update.state = "revalidating"
+        if not self._work_gate.claim_handoff("revalidating"):
+            self._finish_install_failure(
+                updates_mod.UpdateFailure(
+                    "launch", "claim", "update handoff ownership was lost"
+                ),
+                path,
+            )
+            return
+        self._push_update_status()
+
+        marker = None
+
+        def before_launch() -> None:
+            nonlocal marker
+            marker = self._update_service.write_handoff_marker(path, release)
+
+        try:
+            process = self._update_service.launch_verified(
+                release,
+                path,
+                before_launch=before_launch,
+            )
+            if not process:
+                raise updates_mod.UpdateFailure(
+                    "launch", "shell", "installer launch returned no process"
+                )
+        except Exception as exc:  # noqa: BLE001 - handoff failure must recover the app
+            if marker is not None:
+                try:
+                    self._update_service.remove_handoff_marker(marker)
+                except Exception:
+                    logger.warning(
+                        "Could not remove failed updater handoff marker",
+                        exc_info=True,
+                    )
+            self._finish_install_failure(exc, path)
+            return
+
+        with self._update_lock:
+            if self._update.state == "closed":
+                closed = True
+            else:
+                closed = False
+                self._update.state = "launching"
+                self._update.worker = None
+        if closed:
+            self._close_update_process(process)
+            return
+        if not self._work_gate.claim_handoff("launching"):
+            # This cannot happen while this runtime owns `revalidating`, but
+            # retain the launched process handle even if lifecycle state is
+            # corrupted: Setup already exists and must not be leaked.
+            logger.error("Update handoff ownership was lost after Setup launch")
+        self._push_update_status()
+        self._close_update_process(process)
+        self._work_gate.begin_update_shutdown()
+        request_shutdown = self._request_shutdown
+        if request_shutdown is not None:
+            request_shutdown()
+
+    def _close_update_process(self, process: int) -> None:
+        try:
+            self._update_service.close_process_handle(process)
+        except Exception:
+            logger.warning("Could not close installer process handle", exc_info=True)
+
+    def _finish_install_failure(self, exc: Exception, path: Path) -> None:
+        requires_download = not (
+            isinstance(exc, updates_mod.UpdateFailure) and exc.stage == "launch"
+        )
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+        self._work_gate.release_handoff()
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            self._update.worker = None
+            self._update.state = "download_failed" if requires_download else "ready"
+            if requires_download:
+                self._update.staged = None
+            self._update.error = self._update_install_error(exc)
+        if requires_download:
+            self._remove_unhanded_update(path)
+        self._push_update_status()
+
+    def _rollback_update_start(self, stage: str) -> dict:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+        if stage == "install":
+            self._work_gate.release_handoff()
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = None
+            self._update.state = "ready" if stage == "install" else "download_failed"
+            self._update.error = self._update_start_error(stage)
+            snapshot = self._update_snapshot_locked()
+        self._push_update_status()
+        return snapshot
+
+    def shutdown_updates(self) -> None:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            preserve = self._update.state == "launching"
+            staged = self._update.staged
+            self._update.state = "closed"
+            self._update.staged = None
+            self._update.worker = None
+            self._update.error = ""
+        if staged is not None and not preserve:
+            self._remove_unhanded_update(staged)
+        self._update_service.cleanup_staging(self._update_staging_root())
+
+    @staticmethod
+    def _update_staging_root() -> Path:
+        return paths.tmp_dir() / "updates"
+
+    @staticmethod
+    def _remove_unhanded_update(path: Path) -> None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            # A native scanner or Setup may still have the file. Stale cleanup
+            # retries later; forcing deletion is never safe on this path.
+            logger.warning("Could not remove updater staging file", exc_info=True)
+
     def _start_update_check(self, automatic: bool) -> dict:
         allowed = {
             "idle",
@@ -2664,6 +2951,8 @@ class Api:
         except Exception:  # noqa: BLE001 - construction failure becomes retryable update status
             return self._rollback_update_check(previous, automatic)
         with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
             self._update.worker = worker
         self._push_update_status()
         try:
@@ -2674,6 +2963,8 @@ class Api:
 
     def _rollback_update_check(self, previous: _UpdateRuntime, automatic: bool) -> dict:
         with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
             self._update = replace(previous)
             if not automatic:
                 self._update.error = self._update_start_error("check")
@@ -2687,6 +2978,8 @@ class Api:
         except Exception as exc:
             logger.debug("Wingman update check failed", exc_info=True)
             with self._update_lock:
+                if self._update.state == "closed":
+                    return
                 automatic = self._update.automatic_failure
                 self._update.worker = None
                 self._update.automatic_failure = False
@@ -2702,6 +2995,8 @@ class Api:
                     self._update.error = self._update_check_error(exc)
         else:
             with self._update_lock:
+                if self._update.state == "closed":
+                    return
                 self._update.worker = None
                 self._update.automatic_failure = False
                 self._update.error = ""
@@ -2730,6 +3025,46 @@ class Api:
                     "be verified."
                 )
         return "Could not check for updates. Try again."
+
+    @staticmethod
+    def _update_download_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "download" and exc.code == "network":
+                return (
+                    "Could not download the update. Check your internet connection "
+                    "and try again."
+                )
+            if exc.code == "checksum":
+                return (
+                    "The download did not match the release checksum. "
+                    "It was not installed."
+                )
+            if exc.stage == "download" and exc.code == "filesystem":
+                return (
+                    "Could not save the update. Check available disk space "
+                    "and try again."
+                )
+            if exc.stage == "verify" and exc.code == "attachment":
+                return (
+                    "Windows could not mark the installer as an internet download. "
+                    "It was not installed."
+                )
+        return "Could not download the update. Try again."
+
+    @staticmethod
+    def _update_install_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "launch":
+                return "Could not open the installer. Try again."
+            if exc.stage == "verify" and exc.code == "attachment":
+                return (
+                    "Windows could not mark the installer as an internet download. "
+                    "Download it again."
+                )
+        return (
+            "The downloaded installer changed or is no longer available. "
+            "Download it again."
+        )
 
     @staticmethod
     def _update_start_error(stage: str) -> str:
@@ -2773,7 +3108,11 @@ class Api:
         }
 
     def _push_update_status(self) -> None:
-        self._push("onUpdateStatus", self._update_snapshot())
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            snapshot = self._update_snapshot_locked()
+        self._push("onUpdateStatus", snapshot)
 
     def pick_folder(self, which: str) -> str:
         """Native folder picker, seeded with what is configured now."""

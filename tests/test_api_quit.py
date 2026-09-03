@@ -4,9 +4,8 @@ The upload runs on a daemon thread (`Api.start_upload`), so tray Quit ends
 the process and the upload dies mid-chunk with nothing on screen. These
 cover the guard that turns that silent discard into a decision.
 
-Driven at the Api seam rather than through `__main__.on_quit`, which is a
-closure inside main() that no test can reach. That is the point of putting
-the decision on Api: on_quit is left as glue thin enough to read.
+Driven at the Api seam so the upload/handoff decision is independent of
+window destruction. `__main__` is covered separately as lifecycle glue.
 """
 
 import threading
@@ -54,7 +53,7 @@ def test_quitting_while_idle_asks_nothing_and_does_not_raise_the_window(tmp_path
     window = FakeWindow()
     api = make_api(tmp_path, window)
 
-    assert api._confirm_quit_if_busy() is True
+    assert api._claim_quit() is True
     assert window.shown == 0
     assert window.evaluated == [], "an idle quit must push no dialog"
     assert not api._work_gate.claim_upload(), "Quit did not atomically close the gate"
@@ -71,7 +70,7 @@ def test_a_busy_quit_raises_the_window_before_asking(tmp_path):
     window = FakeWindow()
     api = busy_api(tmp_path, window, id_factory=lambda: "q-1")
 
-    worker = threading.Thread(target=api._confirm_quit_if_busy)
+    worker = threading.Thread(target=api._claim_quit)
     worker.start()
     for _ in range(500):
         if window.evaluated:
@@ -87,9 +86,7 @@ def test_confirming_a_busy_quit_returns_true(tmp_path):
     api = busy_api(tmp_path, id_factory=lambda: "q-2")
     result = {}
 
-    worker = threading.Thread(
-        target=lambda: result.update(ok=api._confirm_quit_if_busy())
-    )
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
     worker.start()
     for _ in range(500):
         api.dialog_response("q-2", True)
@@ -106,9 +103,7 @@ def test_declining_a_busy_quit_returns_false(tmp_path):
     api = busy_api(tmp_path, id_factory=lambda: "q-3")
     result = {}
 
-    worker = threading.Thread(
-        target=lambda: result.update(ok=api._confirm_quit_if_busy())
-    )
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
     worker.start()
     for _ in range(500):
         api.dialog_response("q-3", False)
@@ -128,7 +123,7 @@ def test_an_unanswered_quit_is_read_as_do_not_quit(tmp_path, monkeypatch):
     monkeypatch.setattr(api_mod, "QUIT_CONFIRM_TIMEOUT_S", 0.05)
     api = busy_api(tmp_path)
 
-    assert api._confirm_quit_if_busy() is False
+    assert api._claim_quit() is False
 
 
 def test_quit_refusal_keeps_handoff_reason_if_state_changes_before_alert(tmp_path):

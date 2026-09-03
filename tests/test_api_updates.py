@@ -1,4 +1,4 @@
-"""Atomic work claims, plus update-check state and bridge contract."""
+"""Atomic work claims and updater lifecycle orchestration."""
 
 import threading
 from pathlib import Path
@@ -115,7 +115,7 @@ def test_upload_and_handoff_race_has_exactly_one_winner(tmp_path):
 
     def handoff_call():
         bridge_calls.wait(timeout=2)
-        results["handoff"] = api._work_gate.claim_handoff("handing_off")
+        results["handoff"] = bool(api._work_gate.claim_handoff("handing_off"))
 
     upload_bridge = threading.Thread(target=upload_call)
     handoff_bridge = threading.Thread(target=handoff_call)
@@ -161,7 +161,7 @@ def test_retry_and_handoff_race_has_exactly_one_winner(tmp_path):
 
     def handoff_call():
         bridge_calls.wait(timeout=2)
-        results["handoff"] = api._work_gate.claim_handoff("handing_off")
+        results["handoff"] = bool(api._work_gate.claim_handoff("handing_off"))
 
     retry_bridge = threading.Thread(target=retry_call)
     handoff_bridge = threading.Thread(target=handoff_call)
@@ -417,13 +417,49 @@ def _release_info(version: str) -> updates_mod.ReleaseInfo:
 
 
 class FakeUpdates:
-    def __init__(self, *, release=None, failure=None, block=False):
+    def __init__(
+        self,
+        *,
+        release=None,
+        failure=None,
+        block=False,
+        staged=None,
+        download_failure=None,
+        verify_failure=None,
+        launch_failure=None,
+        marker_failure=None,
+        close_failure=None,
+        block_download=False,
+        block_launch=False,
+        process_handle=42,
+    ):
         self._release = release
         self._failure = failure
+        self._staged = Path(staged) if staged is not None else None
+        self._download_failure = download_failure
+        self._verify_failure = verify_failure
+        self._launch_failure = launch_failure
+        self._marker_failure = marker_failure
+        self._close_failure = close_failure
+        self._process_handle = process_handle
         self.check_calls = 0
+        self.download_calls = 0
+        self.verify_calls = 0
+        self.launch_calls = 0
+        self.cleanup_calls = []
+        self.events = []
+        self.progress_callback = None
+        self.download_entered = threading.Event()
+        self.launch_entered = threading.Event()
         self._gate = threading.Event()
+        self._download_gate = threading.Event()
+        self._launch_gate = threading.Event()
         if not block:
             self._gate.set()
+        if not block_download:
+            self._download_gate.set()
+        if not block_launch:
+            self._launch_gate.set()
 
     def latest_release(self, current_version=updates_mod.__version__):
         del current_version
@@ -440,6 +476,73 @@ class FakeUpdates:
     def release(self):
         self._gate.set()
 
+    def download_release(self, release, staging_root, *, on_progress):
+        del release
+        self.download_calls += 1
+        self.progress_callback = on_progress
+        self.events.append("download")
+        self.download_entered.set()
+        assert self._download_gate.wait(5), "update download never released"
+        if self._download_failure is not None:
+            raise self._download_failure
+        path = self._staged or Path(staging_root) / "update-fake.ready.exe"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_bytes(b"verified")
+        self._staged = path
+        return path
+
+    def progress(self, done, total):
+        assert self.progress_callback is not None
+        self.progress_callback(done, total)
+
+    def release_download(self):
+        self._download_gate.set()
+
+    def verify_after_attachment(self, release, path):
+        del release, path
+        self.verify_calls += 1
+        self.events.append("verify")
+        if self._verify_failure is not None:
+            raise self._verify_failure
+
+    def launch_verified(self, release, path, *, before_launch):
+        del release, path
+        self.launch_calls += 1
+        self.events.append("launch_verified")
+        self.launch_entered.set()
+        assert self._launch_gate.wait(5), "update launch never released"
+        before_launch()
+        self.events.append("shell")
+        if self._launch_failure is not None:
+            raise self._launch_failure
+        return self._process_handle
+
+    def release_launch(self):
+        self._launch_gate.set()
+
+    def write_handoff_marker(self, path, release):
+        del release
+        self.events.append("marker")
+        if self._marker_failure is not None:
+            raise self._marker_failure
+        marker = path.with_name(path.name + ".handoff.json")
+        marker.write_text("handed-off", encoding="utf-8")
+        return marker
+
+    def remove_handoff_marker(self, marker):
+        self.events.append("remove-marker")
+        marker.unlink(missing_ok=True)
+
+    def close_process_handle(self, handle):
+        assert handle == self._process_handle
+        self.events.append("close-handle")
+        if self._close_failure is not None:
+            raise self._close_failure
+
+    def cleanup_staging(self, staging_root):
+        self.cleanup_calls.append(Path(staging_root))
+
 
 class _BrokenUpdateWindow:
     def evaluate_js(self, _script):
@@ -447,17 +550,18 @@ class _BrokenUpdateWindow:
 
 
 class _UpdateStartFailureThread:
-    def __init__(self, *, target, args, daemon):
+    def __init__(self, *, target, args, daemon, name=None):
         self.target = target
         self.args = args
         self.daemon = daemon
+        self.name = name
 
     def start(self):
         raise RuntimeError("cannot start update worker")
 
 
-def _broken_update_spawn(*, target, args=(), daemon=False):
-    del target, args, daemon
+def _broken_update_spawn(*, target, args=(), daemon=False, name=None):
+    del target, args, daemon, name
     raise RuntimeError("cannot construct update worker")
 
 
@@ -468,6 +572,7 @@ def _update_api(
     update_spawn=threading.Thread,
     is_frozen=lambda: False,
     window=None,
+    rows=None,
 ):
     cfg = settings_mod._normalize(
         {
@@ -489,7 +594,7 @@ def _update_api(
     )
     api = api_mod.Api(
         state,
-        rows=fakes.FakeRows(),
+        rows=rows if rows is not None else fakes.FakeRows(),
         update_service=service,
         update_spawn=update_spawn,
         is_frozen=is_frozen,
@@ -498,12 +603,45 @@ def _update_api(
     return api, api._window
 
 
-def _join_update(api):
-    with api._update_lock:
-        worker = api._update.worker
+def _join_update(api, worker=None):
+    if worker is None:
+        with api._update_lock:
+            worker = api._update.worker
     if worker is not None:
         worker.join(timeout=5)
         assert not worker.is_alive()
+
+
+def _available_api(tmp_path, service, *, frozen=True, update_spawn=threading.Thread):
+    rows = fakes.FakeRows({"r1": fakes.info(tmp_path / "r1.mkv")})
+    api, window = _update_api(
+        tmp_path,
+        service,
+        update_spawn=update_spawn,
+        is_frozen=lambda: frozen,
+        rows=rows,
+    )
+    with api._update_lock:
+        api._update.state = "available"
+        api._update.release = service._release or _release_info("4.9.0")
+    api._alert = fakes.Alerts()
+    return api, window
+
+
+def _ready_api(tmp_path, service, *, frozen=True, update_spawn=threading.Thread):
+    path = service._staged or tmp_path / "update-fake.ready.exe"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"verified")
+    service._staged = path
+    api, window = _available_api(
+        tmp_path, service, frozen=frozen, update_spawn=update_spawn
+    )
+    with api._update_lock:
+        api._update.state = "ready"
+        api._update.staged = path
+        api._update.downloaded_bytes = path.stat().st_size
+        api._update.total_bytes = path.stat().st_size
+    return api, window
 
 
 def test_automatic_check_is_single_flight_and_caches_available_release(tmp_path):
@@ -725,3 +863,496 @@ def test_update_runtime_attributes_are_private(tmp_path):
     assert not hasattr(api, "is_frozen")
     assert not hasattr(api, "update_lock")
     assert not hasattr(api, "update")
+
+
+# ---- download and install orchestration -----------------------------------
+
+
+def test_download_reports_progress_then_ready(tmp_path):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        staged=tmp_path / "update.ready.exe",
+        block_download=True,
+    )
+    api, _window = _available_api(tmp_path, service)
+    sent = fakes.record_pushes(api)
+
+    status = api.download_update()
+    assert status["state"] == "downloading"
+    assert service.download_entered.wait(1)
+    with api._update_lock:
+        worker = api._update.worker
+    assert worker.name == "wingman-update-download"
+
+    service.progress(10, 20)
+    assert api.update_status()["downloaded_bytes"] == 10
+    service.release_download()
+    _join_update(api, worker)
+
+    states = [payload["state"] for payload in fakes.payloads(sent, "onUpdateStatus")]
+    assert "downloading" in states
+    assert states[-1] == "ready"
+    assert api.update_status()["can_install"] is True
+    assert service.verify_calls == 1
+    assert service.events == ["download", "verify"]
+    assert service.cleanup_calls == [], "partial cleanup belongs to download_release"
+
+
+def test_only_one_download_can_run_at_a_time(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"), block_download=True)
+    api, _window = _available_api(tmp_path, service)
+
+    api.download_update()
+    assert service.download_entered.wait(1)
+    second = api.download_update()
+
+    assert second["state"] == "downloading"
+    assert service.download_calls == 1
+    service.release_download()
+    _join_update(api)
+
+
+@pytest.mark.parametrize(
+    ("failure", "from_verify", "expected"),
+    [
+        (
+            updates_mod.UpdateFailure("download", "network", "connection reset"),
+            False,
+            "Could not download the update. Check your internet connection and try again.",
+        ),
+        (
+            updates_mod.UpdateFailure("download", "checksum", "wrong digest"),
+            False,
+            "The download did not match the release checksum. It was not installed.",
+        ),
+        (
+            updates_mod.UpdateFailure("download", "filesystem", "disk full"),
+            False,
+            "Could not save the update. Check available disk space and try again.",
+        ),
+        (
+            updates_mod.UpdateFailure("verify", "attachment", "policy failed"),
+            True,
+            (
+                "Windows could not mark the installer as an internet download. "
+                "It was not installed."
+            ),
+        ),
+    ],
+)
+def test_download_failures_keep_exact_stage_specific_copy(
+    tmp_path, failure, from_verify, expected
+):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        download_failure=None if from_verify else failure,
+        verify_failure=failure if from_verify else None,
+    )
+    api, _window = _available_api(tmp_path, service)
+
+    api.download_update()
+    _join_update(api)
+
+    status = api.update_status()
+    assert status["state"] == "download_failed"
+    assert status["can_download"] is True
+    assert status["error"] == expected
+    assert status["can_install"] is False
+
+
+@pytest.mark.parametrize(
+    "update_spawn", [_broken_update_spawn, _UpdateStartFailureThread]
+)
+def test_download_worker_construction_and_start_failures_are_retryable(
+    tmp_path, update_spawn
+):
+    service = FakeUpdates(release=_release_info("4.9.0"))
+    api, _window = _available_api(tmp_path, service, update_spawn=update_spawn)
+
+    status = api.download_update()
+
+    assert status["state"] == "download_failed"
+    assert status["can_download"] is True
+    assert status["error"] == "Could not start downloading the update. Try again."
+    with api._update_lock:
+        assert api._update.worker is None
+    assert service.download_calls == 0
+
+
+def test_source_checkout_can_check_and_download_but_cannot_install(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"))
+    api, _window = _available_api(tmp_path, service, frozen=False)
+
+    assert api.update_status()["can_download"] is True
+    api.download_update()
+    _join_update(api)
+
+    assert api.update_status()["state"] == "ready"
+    assert api.update_status()["can_install"] is False
+    assert api.install_update()["state"] == "ready"
+    assert service.launch_calls == 0
+    assert api._work_gate.handoff_phase() == ""
+
+
+def test_install_claim_excludes_upload_before_revalidation(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"), block_launch=True)
+    api, _window = _ready_api(tmp_path, service)
+
+    api.install_update()
+    assert service.launch_entered.wait(1)
+    assert api._work_gate.handoff_phase() == "revalidating"
+    api.start_upload("Fight", "", False, ["r1"])
+
+    assert api._alert.raised[-1] == (
+        "info",
+        "Update",
+        "Update installation is being prepared.",
+    )
+    assert api._upload_thread is None
+    service.release_launch()
+    _join_update(api)
+
+
+def test_update_runtime_prevents_a_second_installer(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"), block_launch=True)
+    api, _window = _ready_api(tmp_path, service)
+
+    api.install_update()
+    assert service.launch_entered.wait(1)
+    second = api.install_update()
+
+    assert second["state"] == "revalidating"
+    assert service.launch_calls == 1
+    service.release_launch()
+    _join_update(api)
+
+
+def test_install_claim_excludes_retry_before_revalidation(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"), block_launch=True)
+    api, _window = _ready_api(tmp_path, service)
+    _enable_retry(api)
+    sent = fakes.record_pushes(api)
+
+    api.install_update()
+    assert service.launch_entered.wait(1)
+    api.retry()
+
+    assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": False}
+    assert api._alert.raised[-1][2] == "Update installation is being prepared."
+    assert api._upload_thread is None
+    service.release_launch()
+    _join_update(api)
+
+
+def test_retry_and_install_race_has_exactly_one_owner(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"), block_launch=True)
+    api, _window = _ready_api(tmp_path, service)
+    _enable_retry(api)
+    release_retry = threading.Event()
+    api._retry_worker = lambda _state: release_retry.wait(5)
+    bridge_calls = threading.Barrier(3)
+
+    def retry_call():
+        bridge_calls.wait(timeout=2)
+        api.retry()
+
+    def install_call():
+        bridge_calls.wait(timeout=2)
+        api.install_update()
+
+    retry_bridge = threading.Thread(target=retry_call)
+    install_bridge = threading.Thread(target=install_call)
+    retry_bridge.start()
+    install_bridge.start()
+    bridge_calls.wait(timeout=2)
+    retry_bridge.join(timeout=2)
+    install_bridge.join(timeout=2)
+    assert not retry_bridge.is_alive()
+    assert not install_bridge.is_alive()
+
+    handoff = bool(api._work_gate.handoff_phase())
+    uploading = api._busy()
+    try:
+        assert uploading is not handoff
+    finally:
+        release_retry.set()
+        service.release_launch()
+        _join_upload(api)
+        _join_update(api)
+
+
+def test_active_upload_refuses_install_without_reserving_handoff(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"))
+    api, _window = _ready_api(tmp_path, service)
+    assert api._work_gate.claim_upload()
+
+    try:
+        status = api.install_update()
+    finally:
+        api._work_gate.release_upload()
+
+    assert status["state"] == "ready"
+    assert status["error"] == "Finish the active upload before installing the update."
+    assert service.launch_calls == 0
+    assert api._work_gate.handoff_phase() == ""
+
+
+@pytest.mark.parametrize("mutation", ["delete", "replace", "truncate"])
+def test_final_file_mutation_returns_install_to_download_failed(tmp_path, mutation):
+    class MutationCheckingUpdates(FakeUpdates):
+        def launch_verified(self, release, path, *, before_launch):
+            del release, before_launch
+            self.launch_calls += 1
+            if not path.exists() or path.read_bytes() != b"verified":
+                raise updates_mod.UpdateFailure(
+                    "verify", "checksum", "installer changed"
+                )
+            raise AssertionError("mutated installer unexpectedly verified")
+
+    service = MutationCheckingUpdates(release=_release_info("4.9.0"))
+    api, _window = _ready_api(tmp_path, service)
+    path = service._staged
+    if mutation == "delete":
+        path.unlink()
+    elif mutation == "replace":
+        replacement = tmp_path / "replacement.exe"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(path)
+    else:
+        path.write_bytes(b"")
+
+    api.install_update()
+    _join_update(api)
+
+    status = api.update_status()
+    assert status["state"] == "download_failed"
+    assert status["error"] == (
+        "The downloaded installer changed or is no longer available. Download it again."
+    )
+    assert api._work_gate.handoff_phase() == ""
+
+
+def test_marker_failure_prevents_shell_launch_and_requires_a_new_download(tmp_path):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        marker_failure=updates_mod.UpdateFailure(
+            "cleanup", "filesystem", "marker write failed"
+        ),
+    )
+    api, _window = _ready_api(tmp_path, service)
+
+    api.install_update()
+    _join_update(api)
+
+    assert service.events == ["launch_verified", "marker"]
+    assert api.update_status()["state"] == "download_failed"
+    assert api._work_gate.handoff_phase() == ""
+
+
+@pytest.mark.parametrize("detail", ["shell failed", "null process handle"])
+def test_shell_failure_removes_marker_and_recovers_ready_state(tmp_path, detail):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        launch_failure=updates_mod.UpdateFailure("launch", "shell", detail),
+    )
+    api, _window = _ready_api(tmp_path, service)
+    original_path = service._staged
+
+    api.install_update()
+    _join_update(api)
+
+    assert service.events == [
+        "launch_verified",
+        "marker",
+        "shell",
+        "remove-marker",
+    ]
+    assert original_path.exists(), "a launch failure must not rename the installer"
+    assert not original_path.with_name(original_path.name + ".handoff.json").exists()
+    status = api.update_status()
+    assert status["state"] == "ready"
+    assert status["error"] == "Could not open the installer. Try again."
+    assert api._work_gate.handoff_phase() == ""
+
+
+def test_null_process_result_is_treated_as_shell_failure(tmp_path):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        process_handle=None,
+    )
+    api, _window = _ready_api(tmp_path, service)
+
+    api.install_update()
+    _join_update(api)
+
+    assert service.events == [
+        "launch_verified",
+        "marker",
+        "shell",
+        "remove-marker",
+    ]
+    assert api.update_status()["state"] == "ready"
+    assert api.update_status()["error"] == "Could not open the installer. Try again."
+    assert api._work_gate.handoff_phase() == ""
+
+
+def test_successful_launch_classifies_closes_handle_then_requests_shutdown(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"), process_handle=73)
+    api, _window = _ready_api(tmp_path, service)
+    observations = []
+    original_close = service.close_process_handle
+
+    def close_process_handle(handle):
+        marker = service._staged.with_name(service._staged.name + ".handoff.json")
+        observations.append(
+            (
+                "close",
+                marker.exists(),
+                api.update_status()["state"],
+                api._work_gate.handoff_phase(),
+            )
+        )
+        original_close(handle)
+
+    def request_shutdown():
+        observations.append(
+            ("shutdown", api.update_status()["state"], api._work_gate.handoff_phase())
+        )
+
+    service.close_process_handle = close_process_handle
+    api._request_shutdown = request_shutdown
+
+    status = api.install_update()
+    assert status["state"] == "handing_off"
+    with api._update_lock:
+        worker = api._update.worker
+    assert worker.name == "wingman-update-install"
+    _join_update(api, worker)
+
+    assert service.events == [
+        "launch_verified",
+        "marker",
+        "shell",
+        "close-handle",
+    ]
+    assert observations == [
+        ("close", True, "launching", "launching"),
+        ("shutdown", "launching", "launching"),
+    ]
+    assert not api._work_gate.claim_upload()
+
+
+def test_process_handle_close_failure_does_not_abandon_a_launched_installer(tmp_path):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        close_failure=updates_mod.UpdateFailure(
+            "launch", "close-handle", "CloseHandle failed"
+        ),
+    )
+    api, _window = _ready_api(tmp_path, service)
+    shutdown = []
+    api._request_shutdown = lambda: shutdown.append(True)
+
+    api.install_update()
+    _join_update(api)
+
+    assert "close-handle" in service.events
+    assert shutdown == [True]
+    assert api.update_status()["state"] == "launching"
+
+
+@pytest.mark.parametrize(
+    "update_spawn", [_broken_update_spawn, _UpdateStartFailureThread]
+)
+def test_install_worker_construction_and_start_failures_release_handoff(
+    tmp_path, update_spawn
+):
+    service = FakeUpdates(release=_release_info("4.9.0"))
+    api, _window = _ready_api(tmp_path, service, update_spawn=update_spawn)
+
+    status = api.install_update()
+
+    assert status["state"] == "ready"
+    assert status["error"] == "Could not start installing the update. Try again."
+    assert api._work_gate.handoff_phase() == ""
+    assert service.launch_calls == 0
+
+
+def test_updater_shutdown_is_idempotent_and_removes_an_unhanded_ready_file(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"))
+    api, _window = _ready_api(tmp_path, service)
+    path = service._staged
+
+    api.shutdown_updates()
+    api.shutdown_updates()
+
+    assert api.update_status()["state"] == "closed"
+    assert not path.exists()
+    assert len(service.cleanup_calls) == 1
+
+
+def test_updater_shutdown_preserves_a_durably_handed_off_installer(tmp_path):
+    service = FakeUpdates(release=_release_info("4.9.0"))
+    api, _window = _ready_api(tmp_path, service)
+    marker = service.write_handoff_marker(service._staged, service._release)
+    with api._update_lock:
+        api._update.state = "launching"
+    assert marker.exists()
+
+    api.shutdown_updates()
+
+    assert service._staged.exists()
+    assert marker.exists()
+    assert api.update_status()["state"] == "closed"
+
+
+def test_install_worker_cannot_mutate_handoff_or_push_after_shutdown_begins(
+    tmp_path,
+):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        launch_failure=updates_mod.UpdateFailure(
+            "verify", "checksum", "installer changed"
+        ),
+        block_launch=True,
+    )
+    api, _window = _ready_api(tmp_path, service)
+    sent = fakes.record_pushes(api)
+
+    api.install_update()
+    assert service.launch_entered.wait(1)
+    with api._update_lock:
+        worker = api._update.worker
+    handoff_at_shutdown = api._work_gate.handoff_phase()
+    api.shutdown_updates()
+    pushed_at_shutdown = len(sent)
+    service.release_launch()
+    _join_update(api, worker)
+
+    assert api.update_status()["state"] == "closed"
+    assert api._work_gate.handoff_phase() == handoff_at_shutdown
+    assert len(sent) == pushed_at_shutdown
+
+
+def test_download_worker_cannot_verify_mutate_or_push_after_shutdown_begins(tmp_path):
+    service = FakeUpdates(
+        release=_release_info("4.9.0"),
+        staged=tmp_path / "late.ready.exe",
+        block_download=True,
+    )
+    api, _window = _available_api(tmp_path, service)
+    sent = fakes.record_pushes(api)
+
+    api.download_update()
+    assert service.download_entered.wait(1)
+    with api._update_lock:
+        worker = api._update.worker
+    api.shutdown_updates()
+    pushed_at_shutdown = len(sent)
+    service.release_download()
+    _join_update(api, worker)
+
+    assert api.update_status()["state"] == "closed"
+    assert service.verify_calls == 0
+    assert len(sent) == pushed_at_shutdown
+    assert not service._staged.exists()
