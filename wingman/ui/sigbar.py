@@ -62,13 +62,21 @@ def _default_placement(scale) -> tuple[int, int]:
     )
 
 
-def create(api, hidden: bool = True):
-    """Build the bar window and hand *api* its back-reference.
+def create(api):
+    """Build the bar window, hidden, and hand *api* its back-reference.
 
     Mirrors ui.window.create's invariant: the `api._sigbar_window` MUST be
     assigned via the underscore name AFTER create_window, for the same
     RecursionError reason documented there (pywebview's js_api proxy walk
     over public attributes).
+
+    Always created hidden and shown by reveal_bar: the taskbar button is
+    created at a window's first show, so the tool-window style below has
+    to land while it is still hidden or the button (and its aero
+    preview) can persist past the style change. The synchronous style
+    patch is safe because a secondary pywebview window's form is built
+    on the UI thread through a synchronous Invoke -- the handle exists
+    by the time create_window returns.
 
     `on_top=True` is pywebview's own pinned flag: the WinForms backend sets
     TopMost on the form at creation, on the UI thread, which is the whole
@@ -98,57 +106,124 @@ def create(api, hidden: bool = True):
         easy_drag=False,
         on_top=True,
         # The bar is dragged by its body and must never steal focus from
-        # the client being flown. focus=False also buys the style-patch
-        # moment below: pywebview itself patches ex-styles after creation
-        # in its `not focus` branch, so a post-creation SetWindowLongW is
-        # an established shape in this backend, not a hack of ours.
+        # the client being flown.
         focus=False,
         # The native surface paints before the first HTML frame; a mismatch
         # is a white flash, same as the main window's BACKGROUND note.
         background_color=window_mod.BACKGROUND,
         min_size=MIN_SIZE,
-        hidden=hidden,
+        # ALWAYS hidden at creation, including the first enable: the
+        # taskbar button is created when a window first becomes visible,
+        # so a bar that shows before the tool-window style below is
+        # applied can carry a taskbar button and an aero preview that
+        # then persist. Hidden first, styled, then shown by reveal_bar,
+        # the button is never created at all.
+        hidden=True,
     )
     api._sigbar_window = bar
-
-    # WS_EX_TOOLWINDOW, applied after creation. pywebview's WinForms
-    # backend sets no ex-styles of its own, so the bar shipped with a
-    # taskbar button and an aero preview: a second "window" beside
-    # Wingman for what is chrome on the strip's behalf, and an aero X
-    # whose close destroyed the form while the GUI kept reporting it
-    # enabled. The tool-window style removes the taskbar button, the
-    # aero preview and the X together -- what floating chrome is
-    # supposed to be. NOACTIVATE rides along so hovering can never
-    # activate the bar either. The handle only exists once the form is
-    # materialised on the UI thread, hence the timer -- the same cadence
-    # restore() uses for its reveal.
     if sys.platform == "win32":
-        threading.Timer(0.3, lambda: _apply_tool_style(bar)).start()
+        _apply_tool_style(bar)
     return bar
+
+
+# Native show/hide and the style patch all key off the HWND. ctypes calls
+# are used instead of pywebview's show()/hide() on purpose: pywebview's
+# show() ACTIVATES the form (focus steal from the client being flown) and
+# both go through `shown`-event waits designed for windows that load
+# content, which a chrome bar has no use for. ShowWindow and
+# SetWindowLongW are safe from any thread and pump nothing -- unlike the
+# property sets that hung the drag (see the block comment at the bottom).
+
+
+def _hwnd(bar):
+    """The bar's HWND as an int, or None when it cannot be read.
+
+    Blind except on purpose: `native` and `Handle` are WinForms objects
+    whose failure modes here (no native yet, handle not created, torn
+    down mid-call) are all "there is no window", and every caller's
+    next step for None is the same as for a dead window.
+    """
+    try:
+        return bar.native.Handle.ToInt32()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _apply_tool_style(bar) -> None:
     """Add WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE to the bar's window.
 
-    Runs on a timer thread, but SetWindowLongW is safe from any thread
-    (it does not pump, unlike the property sets that hung the drag --
-    see the block comment at the bottom of this file). Logged, not
-    raised: a bar without the style is the old cosmetic bug, not a
-    reason to lose the bar.
+    Called right after create_window returns: a secondary window's form
+    is built on the UI thread through a SYNCHRONOUS Invoke, so the
+    handle already exists and no timer is needed -- the timer this
+    replaced could also lose a race with the window's first show, which
+    is how the bar shipped a taskbar button in the first release of
+    this feature. Idempotent, and applied to a window that is still
+    hidden, so the shell never creates the button.
     """
     from ctypes import windll
 
-    try:
-        handle = bar.native.Handle.ToInt32()
-        GWL_EXSTYLE = -20
-        WS_EX_TOOLWINDOW = 0x80
-        WS_EX_NOACTIVATE = 0x08000000
-        style = windll.user32.GetWindowLongW(handle, GWL_EXSTYLE)
-        windll.user32.SetWindowLongW(
-            handle, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
-        )
-    except Exception:
-        logger.exception("sig bar tool-window style could not be applied")
+    handle = _hwnd(bar)
+    if handle is None:
+        logger.warning("sig bar handle unavailable; tool-window style skipped")
+        return
+    GWL_EXSTYLE = -20
+    WS_EX_TOOLWINDOW = 0x80
+    WS_EX_NOACTIVATE = 0x08000000
+    style = windll.user32.GetWindowLongW(handle, GWL_EXSTYLE)
+    windll.user32.SetWindowLongW(
+        handle, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+    )
+
+
+def is_alive(bar) -> bool:
+    """Whether the bar's window still exists as an OS window.
+
+    The close-an-aero-preview destruction path is gone with the aero
+    preview itself, but IsWindow is a one-call answer that also covers
+    any other teardown, and unlike pywebview's `closed` event it needs
+    no attribute walk over a possibly-stubbed object.
+    """
+    from ctypes import windll
+
+    if bar is None:
+        return False
+    handle = _hwnd(bar)
+    return bool(handle and windll.user32.IsWindow(handle))
+
+
+def is_visible(bar) -> bool:
+    """Whether the bar is on screen. Used by Api.fit_sig_bar, whose
+    resize would otherwise SHOW a hidden bar (pywebview's resize passes
+    SWP_SHOWWINDOW) -- which is how a toggled-off bar kept coming back
+    on the next status poll."""
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    return bool(handle and windll.user32.IsWindowVisible(handle))
+
+
+def reveal_bar(bar) -> None:
+    """Show the bar without activating it."""
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    if handle:
+        # SW_SHOWNOACTIVATE: shown, but the foreground stays where it
+        # is. Re-asserting the tool style costs one syscall and covers
+        # a window whose creation somehow skipped it.
+        _apply_tool_style(bar)
+        windll.user32.ShowWindow(handle, 8)
+
+
+def hide_bar(bar) -> None:
+    """Hide the bar. Native, because pywebview's hide marshals an
+    Invoke at a form that may be mid-teardown; SW_HIDE has no such
+    dependency."""
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    if handle:
+        windll.user32.ShowWindow(handle, 0)
 
 
 def restore(api) -> None:
@@ -166,16 +241,17 @@ def restore(api) -> None:
     if not section.get("enabled"):
         return
     try:
-        bar = create(api, hidden=True)
+        bar = create(api)
     except Exception:
         logger.exception("sig bar window could not be created")
         return
 
     def reveal() -> None:
         try:
-            bar.show()
+            reveal_bar(bar)
             # Same instant-content rule as Api.toggle_sig_bar: the poll is
-            # up to 3s away and an empty bar reads as broken.
+            # up to 3s away and an empty bar reads as broken. The render
+            # this triggers also re-fits the (now visible) bar.
             api._push_eve_status()
         except Exception:
             logger.exception("sig bar window could not be shown")
