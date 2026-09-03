@@ -8,6 +8,7 @@ computed at import time would defeat it.
 """
 
 from wingman import paths
+from wingman.eveauth import application as eveauth_application
 from wingman.eveskills import application
 
 
@@ -35,14 +36,13 @@ def test_the_placeholder_client_id_is_not_configured(monkeypatch):
     and CCP's error page is not a recognisable diagnosis for 'this build
     was never registered'.
 
-    Patched on `wingman.eveskills.application` itself, not on
-    `wingman.eveauth.application` -- this module re-DECLARES
-    `is_configured()` rather than importing it, precisely so that its own
-    `CLIENT_ID` global (the one this monkeypatch sets) is what the
-    function's body actually reads; see wingman/eveskills/application.py's
-    module docstring."""
+    Patched on `wingman.eveauth.application` -- the one runtime owner of
+    `CLIENT_ID`. `wingman.eveskills.application.is_configured` is the
+    literal same function object (a pure re-export, not a second
+    implementation), so patching the owner here is what every consumer,
+    including this compatibility module, actually sees."""
     monkeypatch.setattr(
-        application, "CLIENT_ID", "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID"
+        eveauth_application, "CLIENT_ID", "REPLACE_WITH_REGISTERED_EVE_CLIENT_ID"
     )
     assert application.is_configured() is False
 
@@ -50,7 +50,7 @@ def test_the_placeholder_client_id_is_not_configured(monkeypatch):
 def test_the_empty_client_id_is_not_configured(monkeypatch):
     """A fork that blanks the constant rather than replacing it gets the
     same disabled button, not an authorize URL with `client_id=`."""
-    monkeypatch.setattr(application, "CLIENT_ID", "")
+    monkeypatch.setattr(eveauth_application, "CLIENT_ID", "")
     assert application.is_configured() is False
 
 
@@ -111,8 +111,12 @@ def test_the_identity_constants_are_the_shared_eveauth_objects():
     this module changed no VALUE of its own for anything except `SCOPES`
     (Skills' own ordered tuple, deliberately not re-exported by identity
     -- see the module docstring). An identity check (`is`, not `==`) on
-    everything else is what would catch a future fork of this data that a
-    value-equality assertion could not."""
+    everything else, INCLUDING `is_configured` itself, is what would
+    catch a future fork of this logic that a value-equality assertion
+    could not -- `is_configured` in particular must be the literal same
+    function object, not a second implementation reading a second
+    `CLIENT_ID`, or patching one module's client id could silently leave
+    the other's `is_configured()` unaffected."""
     from wingman.eveauth import application as eveauth_application
 
     for name in (
@@ -130,5 +134,6 @@ def test_the_identity_constants_are_the_shared_eveauth_objects():
         "ESI_BASE",
         "ESI_HOST",
         "ESI_COMPATIBILITY_DATE",
+        "is_configured",
     ):
         assert getattr(application, name) is getattr(eveauth_application, name)

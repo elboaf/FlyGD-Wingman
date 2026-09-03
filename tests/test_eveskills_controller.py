@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from wingman.eveauth import application as eveauth_application
 from wingman.eveskills import application
 from wingman.eveskills import esi as esi_mod
 from wingman.eveskills import jwt as jwt_mod
@@ -1222,8 +1223,13 @@ def build_auth(
     # Pinned rather than inherited from application.py: these tests
     # exercise authenticate()'s own behaviour, and must not start
     # failing the day the registered client id is rotated or a fork
-    # blanks it back to the placeholder.
-    monkeypatch.setattr(application, "CLIENT_ID", "test-client-id")
+    # blanks it back to the placeholder. Patched on the owning module
+    # (`wingman.eveauth.application`) -- `controller.py` now imports
+    # `application` from there directly, not through the
+    # `wingman.eveskills.application` compatibility re-export, so that
+    # module's `CLIENT_ID` is not what `authenticate()`'s
+    # `is_configured()` check reads any more.
+    monkeypatch.setattr(eveauth_application, "CLIENT_ID", "test-client-id")
     events = events if events is not None else []
     listener = FakeListener(
         events,

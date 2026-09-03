@@ -170,10 +170,20 @@ def test_re_exported_names_are_the_shared_eveauth_objects():
 def test_no_client_secret_appears_anywhere():
     """This is a PUBLIC client: it ships to end users, so any secret baked
     into the binary would be readable by everyone holding it and would
-    protect nothing at all. PKCE is what stands in for one."""
-    source = inspect.getsource(sso)
-    assert "client_secret" not in source
-    assert "Authorization" not in source
+    protect nothing at all. PKCE is what stands in for one.
+
+    Inspects the OWNING implementation, `wingman.eveauth.sso` -- this
+    compatibility module is now a handful of import statements and would
+    pass vacuously regardless of what the real implementation does. The
+    compatibility module is checked too, cheaply, so a stray literal
+    added directly to the compat shim in some future edit would not slip
+    through either."""
+    from wingman.eveauth import sso as eveauth_sso
+
+    for module in (eveauth_sso, sso):
+        module_source = inspect.getsource(module)
+        assert "client_secret" not in module_source
+        assert "Authorization" not in module_source
 
 
 VERIFIER = RFC7636_VERIFIER

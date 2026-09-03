@@ -31,8 +31,17 @@ import webbrowser
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import application, evaluator, plans, planstore, skillids, tokens
+# The real owner, not `wingman.eveskills.application`'s compatibility
+# re-export: `sso_mod`/`jwt_mod` already read `eveauth.application`
+# internally (they are re-exports of `eveauth.sso`/`eveauth.jwt`), so
+# reading the identity constants from anywhere else here would let a
+# patched or reconfigured CLIENT_ID diverge between what this module
+# passes to `jwt_mod.validate`/`is_configured()` and what `sso_mod`
+# actually put on the wire -- see wingman/eveauth/application.py and
+# wingman/eveskills/application.py's module docstrings.
+from ..eveauth import application
 from . import esi as esi_mod
+from . import evaluator, plans, planstore, skillids, tokens
 from . import jwt as jwt_mod
 from . import loopback as loopback_mod
 from . import sso as sso_mod
@@ -1098,7 +1107,7 @@ class SkillsController:
                 identity = validate(
                     token_set.access_token,
                     client_id=application.CLIENT_ID,
-                    required_scopes=application.SCOPES,
+                    required_scopes=application.SKILLS_SCOPES,
                     key_source=self._keys(),
                 )
                 if identity.character_id != character_id:
@@ -1547,7 +1556,7 @@ class SkillsController:
             # scope" fallback, and Skills must never ask for anything
             # beyond its own two read-only scopes -- see
             # eveauth/application.py's CAPABILITY_SCOPES.
-            self._launch_browser(sso.authorize_url(pkce, application.SCOPES))
+            self._launch_browser(sso.authorize_url(pkce, application.SKILLS_SCOPES))
             callback = listener.wait(pkce.state)
 
         if callback.error:
@@ -1563,7 +1572,7 @@ class SkillsController:
         identity = validate(
             token_set.access_token,
             client_id=application.CLIENT_ID,
-            required_scopes=application.SCOPES,
+            required_scopes=application.SKILLS_SCOPES,
             key_source=self._keys(),
         )
         return self._upsert_identity(identity, token_set, known_ids)
