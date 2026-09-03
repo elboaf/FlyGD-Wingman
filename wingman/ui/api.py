@@ -200,8 +200,8 @@ def _empty_skills_state(warnings=None) -> dict:
 def _empty_fittings_state(warnings=None) -> dict:
     """The Fittings route's only state today.
 
-    There is no `_fittings` controller slot yet (Task 8 adds it) and no
-    real payload shape has been decided (Task 9 decides it) -- this is the
+    The private `_fittings` controller slot may now be wired, but Task 9 owns
+    its public query APIs and payload shape. Until then this remains the
     minimal-shell stub the SDD ledger's Task 6 ruling calls for, so the
     route's one bridge call always resolves to a real method instead of a
     dead button with `bridge: no such method` in the console behind it.
@@ -412,6 +412,7 @@ class Api:
         preview_host=None,
         skills=None,
         authority=None,
+        fittings=None,
         authority_warnings=(),
         alerts=None,
     ):
@@ -468,6 +469,10 @@ class Api:
         # without probing for a capability first.
         self._skills = skills
         self._authority = authority
+        # Wired after shared authority composition in production. Task 9 turns
+        # the existing safe route stub into thin delegation; until then merely
+        # retaining this private dependency must not change public bridge APIs.
+        self._fittings = fittings
         # Migration/load failures must survive until the route asks for state;
         # pushing a dialog during construction happens before WebView handlers
         # exist and silently drops the only actionable recovery message.

@@ -671,8 +671,28 @@ def build_skills_controller(api, authority, *, startup_warnings=()):
         return None
 
 
+def build_fittings_controller(api, authority):
+    """Build the local fitting owner without performing any ESI request."""
+    try:
+        from .evefittings.controller import FittingsController
+
+        if authority is None:
+            return None
+        return FittingsController(
+            state_path=paths.eve_fittings_file(),
+            names_path=paths.eve_fittings_names_file(),
+            authority=authority,
+            alert=api._alert,
+        )
+    except Exception:
+        # Fittings are additive. Corrupt or unavailable local state must not
+        # prevent recording uploads or Skills from launching.
+        logger.exception("EVE fittings subsystem unavailable")
+        return None
+
+
 def wire_eve_controllers(api):
-    """Migrate, compose, then register Skills as an authority participant."""
+    """Migrate, compose, then register both EVE feature participants."""
     try:
         migration = migrate_eve_authority()
     except Exception as exc:
@@ -706,14 +726,25 @@ def wire_eve_controllers(api):
             *startup_warnings,
             "The EVE skills subsystem is unavailable.",
         ]
-        return authority, None
-    api._skills = skills
-    authority.register_participant(skills)
+    else:
+        api._skills = skills
+        authority.register_participant(skills)
+
+    fittings = build_fittings_controller(api, authority)
+    if fittings is not None:
+        api._fittings = fittings
+        authority.register_participant(fittings)
     return authority, skills
 
 
 def shutdown_eve_controllers(api) -> None:
     """Stop feature workers before the authority they consume."""
+    fittings = api._fittings
+    if fittings is not None:
+        try:
+            fittings.shutdown()
+        except Exception:
+            logger.exception("EVE fittings subsystem did not stop cleanly")
     api.shutdown_skills()
     api.shutdown_authority()
 

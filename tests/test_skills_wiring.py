@@ -114,17 +114,19 @@ def test_production_wiring_migrates_credentials_and_surfaces_recovery_warning(
     )
 
 
-def test_wiring_orders_migration_authority_skills_and_registration(monkeypatch):
+def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch):
     """No feature may load credentials before the ordered split completes."""
     order = []
     migration = MigrationResult(AuthorityState(), SimpleNamespace(), True)
     authority = SimpleNamespace(
-        register_participant=lambda skills: order.append(("register", skills))
+        register_participant=lambda participant: order.append(("register", participant))
     )
     skills = object()
+    fittings = object()
     api = SimpleNamespace(
         _authority=None,
         _skills=None,
+        _fittings=None,
         _authority_warnings=[],
     )
 
@@ -147,13 +149,23 @@ def test_wiring_orders_migration_authority_skills_and_registration(monkeypatch):
             order.append(("skills", actual_api, actual_authority, kwargs)) or skills
         ),
     )
+    monkeypatch.setattr(
+        main_mod,
+        "build_fittings_controller",
+        lambda actual_api, actual_authority: (
+            order.append(("fittings", actual_api, actual_authority)) or fittings
+        ),
+    )
 
     assert main_mod.wire_eve_controllers(api) == (authority, skills)
     assert order[0] == "migration"
     assert order[1][0] == "authority"
     assert order[2][0] == "skills"
     assert order[3] == ("register", skills)
+    assert order[4][0] == "fittings"
+    assert order[5] == ("register", fittings)
     assert api._authority is authority and api._skills is skills
+    assert api._fittings is fittings
 
 
 def test_failed_migration_builds_no_empty_authority_and_surfaces_error(monkeypatch):
@@ -196,11 +208,13 @@ def test_main_calls_shared_eve_wiring_and_teardown_unconditionally():
 
 def test_feature_workers_stop_before_shared_authority():
     order = []
+    fittings = SimpleNamespace(shutdown=lambda: order.append("fittings"))
     api = SimpleNamespace(
+        _fittings=fittings,
         shutdown_skills=lambda: order.append("skills"),
         shutdown_authority=lambda: order.append("authority"),
     )
 
     main_mod.shutdown_eve_controllers(api)
 
-    assert order == ["skills", "authority"]
+    assert order == ["fittings", "skills", "authority"]

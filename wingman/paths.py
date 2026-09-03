@@ -133,6 +133,11 @@ def eve_skills_cache_file() -> Path:
     return state_dir() / "eve_skills_cache.json"
 
 
+def eve_fittings_names_file() -> Path:
+    """Fitting type-id display names; safe to delete and rebuild from ESI."""
+    return state_dir() / "eve_fittings_names.json"
+
+
 def skill_plans_dir() -> Path:
     """User-owned folder of plan .txt files, plus a seeded starter.
 

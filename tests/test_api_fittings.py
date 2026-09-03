@@ -3,13 +3,21 @@
 The SDD ledger's ruling for this task: add a minimal `fittings_state` that
 always answers "unavailable" so the route's one bridge call resolves to a
 real method rather than throwing at the console with a dead route behind
-it. There is deliberately no `_fittings` controller slot yet -- Task 8 adds
-it, Task 9 replaces this stub with real delegation -- so this only has to
+it. Task 8 adds the private `_fittings` controller slot without changing this
+public method; Task 9 replaces the stub with real delegation. This only has to
 prove the method exists, is callable with no arguments, and answers a safe,
-stable shape.
+stable shape without consulting the controller.
 """
 
 from tests.test_api import make_api
+
+
+def test_fittings_controller_is_kept_in_a_private_dependency_slot(tmp_path):
+    marker = object()
+    api = make_api(tmp_path, fittings=marker)
+
+    assert api._fittings is marker
+    assert "fittings" not in vars(api)
 
 
 def test_fittings_state_answers_unavailable(tmp_path):
@@ -19,6 +27,16 @@ def test_fittings_state_answers_unavailable(tmp_path):
 
     assert payload["available"] is False
     assert payload["warnings"] == ["The EVE fitting library is not available yet."]
+
+
+def test_route_open_does_not_touch_the_wired_controller(tmp_path):
+    class NetworkTrap:
+        def __getattribute__(self, name):
+            raise AssertionError(f"route open touched controller attribute {name}")
+
+    api = make_api(tmp_path, fittings=NetworkTrap())
+
+    assert api.fittings_state()["available"] is False
 
 
 def test_fittings_state_takes_no_arguments(tmp_path):

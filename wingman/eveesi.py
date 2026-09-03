@@ -6,8 +6,9 @@ discord.py:196-197,224 establishes, which is what lets the whole retry and
 backoff ladder be tested headless with no real sleeps.
 
 This module is the shared authority for talking to ESI: Skills' read-only
-GET/ids-lookup traffic and Fittings' mutation POSTs both go through the
-one `EsiClient` defined here. `wingman/eveskills/esi.py` re-exports these
+GET/ids-lookup traffic and Fittings' read, type-name lookup, and mutation
+traffic all go through the one `EsiClient` defined here.
+`wingman/eveskills/esi.py` re-exports these
 symbols rather than duplicating them, which is what keeps the retry
 ladder, redaction, and no-redirect opener defined and tested in exactly
 one place as a second capability starts using them.
@@ -358,21 +359,23 @@ def _header_seconds(headers, name: str):
     return value if value > 0 else None
 
 
-def _is_ids_route(path: str) -> bool:
-    """Whether *path* is the universe/ids batch lookup.
+def _is_idempotent_post_route(path: str) -> bool:
+    """Whether *path* is one of ESI's two batch name lookups.
 
-    The only POST this package retries. A retried non-idempotent request is
-    the classic way to duplicate a write, so the allowance is a route check
-    rather than a method check -- this package makes no writes today and the
-    guard keeps that true if one is ever added. A leading version segment is
-    tolerated so a bump from /v3/ to /v4/ does not silently lose the retry,
-    which would surface as an intermittently failing first refresh that
-    nobody connects back to this line.
+    ``universe/ids`` maps names to IDs for Skills; ``universe/names`` maps
+    IDs to display names for Fittings. Both are idempotent. They are the only
+    POSTs this retrying API may repeat: route allowlisting prevents a later
+    fitting create from inheriting retries merely because it is also a POST.
+    An optional version segment is ignored so compatibility route bumps do
+    not silently drop the retry policy.
     """
     segments = [s for s in path.split("/") if s]
     if segments and _VERSION_SEGMENT.match(segments[0]):
         segments = segments[1:]
-    return tuple(segments) == ("universe", "ids")
+    return tuple(segments) in {
+        ("universe", "ids"),
+        ("universe", "names"),
+    }
 
 
 class EsiClient:
@@ -528,7 +531,7 @@ class EsiClient:
         if etag:
             headers["If-None-Match"] = etag
 
-        retryable_method = method == "GET" or _is_ids_route(path)
+        retryable_method = method == "GET" or _is_idempotent_post_route(path)
         # Tracks the MOST RECENT attempt's outcome, overwritten every
         # iteration -- never accumulated -- so that at exhaustion it
         # reflects only what the final attempt actually produced.

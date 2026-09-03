@@ -1,5 +1,6 @@
 """EVE Online Personal Fittings domain and durable local library."""
 
+from .controller import FittingsController
 from .model import (
     FINGERPRINT_VERSION,
     CanonicalContent,
@@ -24,6 +25,7 @@ from .model import (
     validate_supersession,
     validate_supersession_graph,
 )
+from .names import TypeNameCache
 from .store import load_fittings, save_fittings
 
 __all__ = (
@@ -32,12 +34,14 @@ __all__ = (
     "CanonicalItem",
     "CharacterSnapshot",
     "Collection",
+    "FittingsController",
     "FittingsState",
     "LibraryEntry",
     "Presence",
     "RemoteFitting",
     "RemoteItem",
     "SourceAlias",
+    "TypeNameCache",
     "WriteIntent",
     "canonical_equal",
     "canonicalize",

@@ -549,8 +549,8 @@ def test_an_oversized_success_body_raises():
 
 
 def test_a_post_to_the_ids_route_is_retried():
-    """The batch name lookup is idempotent and is the only POST this package
-    makes. A first refresh over a large plan set depends on it."""
+    """The Skills name-to-ID batch lookup is idempotent. A first refresh over
+    a large plan set depends on retrying it."""
     transport = FakeTransport([_http_error(503), _Response(200, b"{}")])
     client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     assert client.post("/v3/universe/ids/", ["Navigation"]).ok is True
@@ -567,10 +567,21 @@ def test_a_version_bump_keeps_the_ids_route_retryable():
     assert len(transport.requests) == 2
 
 
+def test_the_idempotent_type_name_post_is_explicitly_retryable():
+    """Fittings resolves numeric type IDs through universe/names. It is an
+    idempotent batch lookup like universe/ids, not permission to retry POSTs
+    generally."""
+    transport = FakeTransport([_http_error(503), _Response(200, b"[]")])
+    client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
+
+    assert client.post("/universe/names", [34, 587]).ok is True
+    assert len(transport.requests) == 2
+
+
 def test_a_post_to_any_other_route_is_not_retried():
     """A retried non-idempotent POST is the classic way to duplicate a
-    write. This package makes no writes today, and the guard is a route
-    check rather than a method check so that stays true if one is added."""
+    write. The guard is an explicit route allowlist rather than a method check,
+    so adding an unrelated POST cannot silently make it retryable."""
     transport = FakeTransport([_http_error(503)])
     client = esi.EsiClient(user_agent="A", transport=transport, sleep=FakeSleep())
     response = client.post("/v1/ui/openwindow/", {})
