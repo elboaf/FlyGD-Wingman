@@ -96,6 +96,16 @@ Capability state comes from validated token claims, not from interpreting one ES
 
 A fitting-upgrade save failure leaves the previous Skills-capable authority intact and does not mark Fittings enabled. If SSO rotates a refresh token and the new token cannot be persisted, the new token remains live in memory with a persistent-risk warning; Wingman must not roll back to a token known to have rotated away. Global-forget cleanup begins only after removal from shared authority has been persisted successfully.
 
+### Per-character lifecycle coordination
+
+Shared authority owns a per-character re-entrant lifecycle gate and generation number. Fitting refresh, final copy preflight, intent persistence, the one-attempt POST, outcome persistence, and global forget coordinate through that gate. A copy batch acquires it separately for each pair and rechecks character existence, capability, snapshot freshness, conflicts, and unresolved intents before sending, so forgetting a character between pairs prevents every later write.
+
+A fitting refresh holds the gate from its final authority check through remote GET and atomic snapshot commit. It cannot race a fitting POST, forget, or another fitting refresh. Pending and unknown write intents are an overlay on authoritative presence, not fields replaced wholesale by refresh; only a post-cache-horizon authoritative response may reconcile them.
+
+Global forget waits for an active fitting request to leave the gate. A surviving `in_flight` intent is first converted to Unknown. Any unresolved `in_flight` or Unknown intent then refuses forget with an instruction to reconcile the character; Wingman must not discard the evidence or remove the credential needed to resolve it. Once no unresolved intent exists, forget persists authority removal while holding the gate, increments the lifecycle generation, and only then prunes Skills and fitting presence.
+
+The browser authorization wait does not hold the lifecycle gate. A capability upgrade captures the expected character ID and lifecycle generation before opening EVE SSO, then reacquires the gate and rechecks both before committing. Forget invalidates that generation, so a late callback cannot resurrect or upgrade a forgotten character. Existing Skills GET commits retain their current membership recheck; shared token refresh and rotation also use the lifecycle gate re-entrantly so they cannot race authority removal.
+
 ### Component boundaries
 
 - `eveauth`: shared identity, authorization, tokens, capabilities, and global forget.
@@ -128,13 +138,15 @@ Bounds are refusal boundaries, never silent eviction boundaries. A remote snapsh
 
 The current `eve_skills.json` combines character credentials and Skills data. Migration must be resumable and prioritize never losing or resurrecting a credential:
 
-1. Read and normalize the existing document through its current bounded recovery path.
-2. Atomically write the new shared character-authority document first.
-3. Rewrite Skills state without credentials and record that authority migration completed.
-4. If interrupted between writes, restart from the valid shared authority and finish stripping legacy credential fields.
-5. Once shared authority exists—or a migration-complete marker exists—never recreate credentials from legacy Skills fields.
-6. If the shared authority document is corrupt, preserve it and surface recovery failure; do not fall back to stale legacy credentials.
-7. Reconcile feature-specific character rows against the shared roster on every startup.
+1. Read the legacy document through a migration-specific loader that returns both normalized state and a structured disposition: genuinely absent, authoritatively loaded, recovered from backup, or failed.
+2. Treat access errors, unrecoverable corruption, an unreadable primary and backup, and any current-loader warning that means the returned empty roster is only a fallback as **failed**, not as an empty authoritative state.
+3. Only a genuinely absent, authoritatively loaded, or successfully recovered source may proceed. On failure, preserve the legacy files, write neither shared authority nor a completion marker, disable EVE identity features with an actionable recovery error, and retry migration on a later launch.
+4. Atomically write the new shared character-authority document first.
+5. Rewrite Skills state without credentials and record that authority migration completed.
+6. If interrupted between writes, restart from the valid shared authority and finish stripping legacy credential fields.
+7. Once shared authority exists—or a migration-complete marker exists—never recreate credentials from legacy Skills fields.
+8. If the shared authority document is corrupt, preserve it and surface recovery failure; do not fall back to stale legacy credentials.
+9. Reconcile feature-specific character rows against the shared roster on every startup.
 
 Global forget removes the shared credential before pruning Skills snapshots and fitting presence. A crash can therefore leave harmless orphan metadata but never a usable orphan credential. Startup reconciliation completes the pruning.
 
@@ -211,6 +223,7 @@ For each fittings-enabled character, retain the last authoritative snapshot:
 - local library ID;
 - source name and description;
 - exact source template;
+- per-presence `first_seen_utc` and bounded `discovered_batch_id`;
 - last-confirmed time;
 - ETag;
 - refresh error and stale status; and
@@ -219,6 +232,8 @@ For each fittings-enabled character, retain the last authoritative snapshot:
 Remote fitting IDs identify presence on one character, not library identity. A delete-and-recreate may produce a new ID for the same canonical content.
 
 Only a complete, schema-valid successful GET may add or remove authoritative presence. Snapshot validation is all-or-nothing; Wingman never drops one malformed remote fitting and then treats the truncated remainder as authoritative. A valid `304 Not Modified` confirms retained snapshot data and advances freshness without replacing it, except that it cannot resolve a pending or unknown create until a request made after the prior five-minute cache horizon returns authoritative content. A failed, malformed, unauthorized, oversized, or interrupted fetch retains the previous snapshot and marks it stale.
+
+A newly observed character/content pair receives the refresh's batch ID and first-seen time even when its content merges into an older library entry. Presence that survives later refreshes retains those values. Authoritative removal or global forget removes the presence and its discovery metadata; a later reappearance is a new discovery. This makes recent/source filtering independent of entry creation and curation timestamps.
 
 A character transfer or global forget removes that character's snapshot and presence links while retaining independent library content.
 
@@ -245,7 +260,7 @@ Refresh may target one character or every enabled character. Character refreshes
 6. removes prior presence no longer returned; and
 7. commits the whole character snapshot atomically.
 
-New entries appear automatically in `Unfiled`. The UI provides filters for recent imports and source character so a user can curate a large in-game copy operation efficiently.
+New entries appear automatically in `Unfiled`. Every refresh has a bounded unique batch ID, and each newly observed character/content presence stores that ID and `first_seen_utc`. The UI's recent-import and source-character filters query those presence facts, so an equivalent fitting merged into an older entry still appears in the batch that discovered it.
 
 ### Alliance ingestion
 
@@ -392,6 +407,7 @@ Copy results carry an operation ID so logs and UI outcomes can be correlated wit
 ### Shared authority and migration
 
 - Lossless migration of every current valid Skills-state shape.
+- A genuinely absent legacy document may create empty authority, while access failure, unreadable primary and backup, or unrecoverable corruption writes no authority or completion marker.
 - Interrupted migration after shared-authority write.
 - Corrupt shared authority never resurrects legacy tokens.
 - Existing Skills-only grants continue refreshing.
@@ -399,6 +415,11 @@ Copy results carry an operation ID so logs and UI outcomes can be correlated wit
 - Definitively revoked grants affect all capabilities.
 - Row-specific upgrades reject a different returned character.
 - Refresh-token rotation is serialized across consumers.
+- A late capability callback cannot resurrect a forgotten or generation-changed character.
+- Fitting refresh, create, and forget serialize through the per-character lifecycle gate.
+- Copy rechecks authority and capability for every pair, including when forget occurs between pairs.
+- Unresolved intents refuse forget and survive restart until reconciliation.
+- A concurrent refresh preserves pending/unknown overlays and cannot resolve them before the cache horizon.
 - Global forget removes authority first and startup reconciliation prunes orphans.
 
 ### Fitting domain and persistence
@@ -417,7 +438,8 @@ Copy results carry an operation ID so logs and UI outcomes can be correlated wit
 
 ### Refresh and copying
 
-- Complete GET imports, merges, and removes presence atomically.
+- Complete GET imports, merges, records per-presence discovery batch/time, and removes presence atomically.
+- Equivalent content newly seen on another character remains discoverable by that refresh batch despite merging into an older entry.
 - `304` confirms retained data.
 - Failure or malformed data retains stale prior presence.
 - Type-name failure does not block import.
