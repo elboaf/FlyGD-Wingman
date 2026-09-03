@@ -553,7 +553,7 @@ class PreviewHost:
         """Ask for an immediate sweep. Safe from any thread."""
         self._post(win32.WM_APP_SWEEP_NOW)
 
-    def apply_roster(self, snapshot) -> None:
+    def apply_roster(self, snapshot: RosterSnapshot) -> None:
         """Hand the newest shared roster to the pump. Safe from any thread.
 
         Nothing is reconciled here. The caller is the shared discovery's own
@@ -575,8 +575,9 @@ class PreviewHost:
             self._pending_roster = snapshot
         # Outside the lock, and after the swap: _post is a no-op until the
         # preview thread has created _hwnd (start() returns before that), so
-        # a snapshot published in that gap is still the one the first drain
-        # finds -- the same pre-window-creation gap raise_alert documents.
+        # a snapshot published in that gap carries no signal of its own --
+        # _run drains this slot once its window exists, which is what makes
+        # the retained value reach the pump anyway.
         self._post(win32.WM_APP_ROSTER)
 
     def raise_alert(self, character: str, event: str, spec: dict) -> None:
@@ -832,6 +833,16 @@ class PreviewHost:
             return
 
         self._sweep(libs)
+        # After the legacy startup sweep, never before it. apply_roster is
+        # safe from any thread and start() returns before this window
+        # exists, so a snapshot published in that gap was retained with no
+        # PostMessageW to carry it -- nothing else would ever drain it, and
+        # previews would sit on whatever the direct sweep found until the
+        # next shared scan. Draining it here rather than ahead of _sweep is
+        # what stops the older, self-discovered roster from being applied
+        # last and overwriting it. Drains the slot, so the ordinary
+        # WM_APP_ROSTER path cannot then apply the same snapshot twice.
+        self._apply_pending_roster(libs)
         self._install_hook(libs)
         with self._lock:
             initial = dict(self._desired_hotkeys)
@@ -1000,6 +1011,9 @@ class PreviewHost:
         is a statement about a roster that is already gone: acting on it
         would close a preview whose client is still running and reopen it on
         the next scan, losing the rect the user dragged it to.
+
+        Called from WM_APP_ROSTER and once from _run, for the snapshot that
+        arrived before there was a window to post to.
         """
         with self._lock:
             snapshot, self._pending_roster = self._pending_roster, None
@@ -1012,8 +1026,13 @@ class PreviewHost:
                 self._last_roster_generation,
             )
             return
-        self._last_roster_generation = snapshot.generation
         self._reconcile_roster(libs, snapshot)
+        # Recorded only once reconciliation has actually returned. A raise in
+        # there leaves windows half reconciled, and marking the generation
+        # spent first would make the republished snapshot that could repair
+        # them look stale and be refused for as long as the producer keeps
+        # counting -- a permanently wrong screen from one transient failure.
+        self._last_roster_generation = snapshot.generation
 
     def _reconcile_roster(self, libs, snapshot) -> None:
         """Bring windows, registry, callbacks and selection in line with

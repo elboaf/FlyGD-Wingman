@@ -4904,6 +4904,18 @@ class _RosterUser32(_FakeUser32):
         return 1
 
 
+class _StartupUser32(_RosterUser32):
+    """Enough of user32 for the real _run() body off Windows.
+
+    GetMessageW falls through to the catch-all and returns 0, which ends the
+    pump loop immediately -- this test is about what _run does BEFORE it
+    starts pumping.
+    """
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: 0
+
+
 class _RosterWindow:
     def __init__(self, client, rect):
         self.client = client
@@ -4919,6 +4931,11 @@ class _RosterWindow:
 
     def set_selected(self, _selected):
         pass
+
+    def alert_is_armed(self):
+        # Read by _update_alert_timer, which _run's startup alert drain
+        # reaches whether or not anything was ever raised.
+        return False
 
 
 def _roster(generation, *clients):
@@ -5003,6 +5020,91 @@ def test_apply_roster_before_the_pump_exists_touches_no_win32(monkeypatch):
     h.apply_roster(_roster(1, ("Alice", 0x1111)))
 
     assert h._pending_roster.generation == 1
+
+
+def test_a_roster_from_before_the_window_existed_is_applied_at_startup(monkeypatch):
+    """The other half of the gap above: retaining that snapshot is only
+    useful if something eventually drains it.
+
+    Nothing posted a signal for it -- there was no window to post to -- so
+    without an explicit drain in _run the previews would show whatever the
+    startup sweep's own direct discovery found, until the next shared scan
+    happened to publish again. Drained AFTER the compatibility sweep, or the
+    older self-discovered roster would be the one applied last.
+
+    Drives the real _run() body, with only the two calls that need a genuine
+    Win32 window station stubbed out.
+    """
+    created = []
+    h = _pump_host(monkeypatch, created)
+    h._hwnd = None  # as it is before the preview thread starts
+
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_StartupUser32()))
+    monkeypatch.setattr(h, "_create_host_window", lambda libs: 0x99)
+    monkeypatch.setattr(h, "_install_hook", lambda libs: None)
+    monkeypatch.setattr(
+        host.discovery, "list_clients", lambda: [_FakeClient("Legacy", hwnd=0x9999)]
+    )
+
+    h.apply_roster(_roster(7, ("Alice", 0x1111)))
+    assert created == [], "nothing may be reconciled before the pump exists"
+
+    h._run()
+
+    assert h._ready.is_set()
+    assert created.count("Alice") == 1
+    # The startup sweep ran first and found a different roster; the shared
+    # snapshot is what survives, so ordering is proven rather than assumed.
+    assert sorted(h._clients) == ["Alice"]
+    assert sorted(h._windows) == ["Alice"]
+    assert h._last_roster_generation == 7
+
+    # Exactly once: the slot was drained, so an ordinary signal afterwards --
+    # or a post that raced window creation -- reconciles nothing again.
+    assert h._pending_roster is None
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+    assert created.count("Alice") == 1
+
+
+def test_a_failed_reconciliation_does_not_consume_the_generation(monkeypatch):
+    """A raise inside reconciliation leaves windows half applied, and it
+    reaches the wndproc where sys.unraisablehook swallows it. Marking the
+    generation spent before that point would then refuse the republished
+    snapshot that could repair them -- and every generation after it is
+    higher, so the screen would be wrong until something restarted.
+    """
+    created = []
+    h = _pump_host(monkeypatch, created)
+    seen = []
+    reconcile = h._reconcile_roster
+
+    def flaky(libs, snapshot):
+        seen.append(snapshot.generation)
+        if len(seen) == 1:
+            raise RuntimeError("thumbnail registration failed")
+        reconcile(libs, snapshot)
+
+    monkeypatch.setattr(h, "_reconcile_roster", flaky)
+
+    h.apply_roster(_roster(2, ("Alice", 0x1111)))
+    with pytest.raises(RuntimeError):
+        h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert h._last_roster_generation == 0
+    assert created == []
+
+    h.apply_roster(_roster(2, ("Alice", 0x1111)))  # the producer republishes
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+
+    assert seen == [2, 2]
+    assert created == ["Alice"]
+    assert h._last_roster_generation == 2
+
+    # And the stale gate is still armed once a generation really did land.
+    h.apply_roster(_roster(1, ("Bravo", 0x2222)))
+    h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
+    assert created == ["Alice"]
+    assert sorted(h._windows) == ["Alice"]
 
 
 def test_the_roster_message_reconciles_on_the_pump(monkeypatch):
@@ -5122,9 +5224,8 @@ def test_teardown_forgets_a_pending_roster(monkeypatch):
     snapshot queued between stop() and the next enable must not reconcile an
     hour-old roster onto a freshly started pump."""
 
-    class _TeardownUser32(_RosterUser32):
-        def __getattr__(self, _name):
-            return lambda *a, **k: 0
+    class _TeardownUser32(_StartupUser32):
+        pass
 
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h._hwnd = 0x99
