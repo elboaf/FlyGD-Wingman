@@ -170,6 +170,78 @@ def test_the_pager_can_actually_hide():
     )
 
 
+def test_copy_selection_is_pruned_to_the_current_rendered_page():
+    """Deleted, filtered-out, and other-page IDs must neither inflate the
+    accent label nor cross into preflight."""
+    assert "function pruneSelection" in FITTINGS_JS
+    assert re.search(r"pruneSelection\(payload\.rows \|\| \[\]\);", FITTINGS_JS)
+    assert "function visibleSelectedIds" in FITTINGS_JS
+    assert re.search(r"fittings_preflight_copy',\s*visibleSelectedIds\(\)", FITTINGS_JS)
+
+
+def test_filter_collection_and_page_changes_clear_selection_before_refetch():
+    """Selection from the page being left cannot remain actionable during
+    a debounce or bridge round trip for the next page."""
+    assert "function clearSelection()" in FITTINGS_JS
+    for transition in (
+        "filters.collection_id = id;\n    filters.page = 1;\n    clearSelection();\n    requestState();",
+        "filters.page -= 1;\n    clearSelection();\n    requestState();",
+        "filters.page += 1;\n    clearSelection();\n    requestState();",
+    ):
+        assert transition in FITTINGS_JS
+    assert FITTINGS_JS.count("clearSelection();") >= 6
+
+
+def test_copy_has_preflight_progress_and_results_overlays():
+    for element_id in (
+        "fittings-copy-overlay",
+        "fittings-copy-dialog",
+        "fittings-copy-body",
+        "fittings-copy-review",
+        "fittings-copy-start",
+        "fittings-copy-cancel",
+    ):
+        assert f'id="{element_id}"' in HTML
+    assert "WM.send('fittings_preflight_copy'" in FITTINGS_JS
+    assert "WM.send('fittings_start_copy'" in FITTINGS_JS
+    assert "WM.send('fittings_cancel_copy'" in FITTINGS_JS
+    assert "WM.confirm('Copy fittings'" in FITTINGS_JS
+    assert "write_count" in FITTINGS_JS
+
+
+def test_copy_conflicts_offer_alternate_name_or_explicit_skip():
+    assert "fit-copy-alternate" in FITTINGS_JS
+    assert "Skip this pair" in FITTINGS_JS
+    assert "alternateNames" in FITTINGS_JS
+    assert "'Replace'" not in re.sub(
+        r"/\*.*?\*/|//[^\n]*", "", FITTINGS_JS, flags=re.DOTALL
+    )
+
+
+def test_copy_results_name_every_terminal_category_and_never_offer_retry():
+    for label in (
+        "Success",
+        "Already present",
+        "Conflict / skipped",
+        "Failed",
+        "Unknown",
+        "Unattempted due to throttle",
+        "Cancelled",
+    ):
+        assert label in FITTINGS_JS
+    copy_section = FITTINGS_JS[FITTINGS_JS.index("function renderCopyResults") :]
+    assert "Retry" not in copy_section
+
+
+def test_copy_selected_remains_the_only_accent_action():
+    route = re.search(
+        r'<div class="route" id="route-fittings"[\s\S]*?</div>\s*\n\s*<div class="route" id="route-firstrun"',
+        HTML,
+    )
+    assert route
+    assert len(re.findall(r'class="[^"]*\bacc\b', route.group(0))) == 1
+
+
 def test_render_pager_defaults_page_when_the_payload_has_none():
     """Defence in depth alongside the CSS fix above: an unavailable
     payload (`{available: false, warnings: [...]}`) has no `page` key, and

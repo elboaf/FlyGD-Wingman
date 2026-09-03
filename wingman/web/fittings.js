@@ -7,20 +7,16 @@
  * rail on the left, a paged, filterable fitting list with one expandable
  * detail row on the right.
  *
- * WHAT THIS FILE DOES NOT DO, by the SDD ledger's binding ruling for this
- * task: no preflight, no copy execution, no cancel-copy. Copy selected is
- * rendered as this route's one reserved accent action and stays
- * permanently disabled -- Task 10 is where FittingsController grows a
- * copy engine for it to call.
+ * Task 10 wires the reserved Copy selected accent to an explicit additive
+ * preflight. The page chooses targets and conflict names; Python owns every
+ * classification, the short-lived ticket, durable intent, and one-attempt
+ * write. There is no remote delete or replacement path.
  *
  * Search, collection scope, sort, and paging are backend queries
  * (fittings_state(filters)); this file never rebuilds or holds the whole
- * library. Row SELECTION is page-owned client state (`selected` below)
- * and stays that way until a future curation request needs it -- exactly
- * like onRows' preselected flag is the one exception to "selection never
- * crosses the bridge" (app.js's own header note), this route's selection
- * is the same kind of exception in the other direction: it is read
- * locally today and will cross the bridge only when Task 10 adds Copy.
+ * library. Row selection remains page-owned while it changes only the
+ * render, is pruned whenever the page/filter scope changes, and crosses
+ * the bridge only as current stable IDs when Python computes copy preflight.
  *
  * Every mutation (collections, metadata, membership, supersession,
  * delete, refresh) notifies through one semantic push, `onFittingsChanged`
@@ -37,8 +33,13 @@
   var expandedId = '';     // at most one expanded row, matching one detail fetch
   var detail = null;       // fittings_detail() payload for expandedId
   var detailSeq = 0;       // invalidates a superseded detail reply
-  var selected = {};       // entry_id -> true, page-owned until Task 10
-  var progress = null;     // last onFittingsProgress payload
+  var selected = {};       // entry_id -> true, pruned to the rendered page
+  var progress = null;     // last refresh onFittingsProgress payload
+  var copyOverlayOpen = false;
+  var copyPhase = 'targets';
+  var copyTargets = {};
+  var copyPreflight = null;
+  var alternateNames = {};
   var refreshInFlight = false; // optimistic, until the next full re-fetch confirms it
   var searchDebounce = null;
   var charactersOverlayOpen = false;
@@ -79,6 +80,7 @@
     renderNotices();
     renderShipFilterOptions();
     renderFilterBar();
+    pruneSelection(payload.rows || []);
     renderList();
     renderPager();
     renderRailButtons();
@@ -94,6 +96,10 @@
   });
 
   WM.handle('onFittingsProgress', function (payload) {
+    if (payload && payload.kind === 'copy') {
+      onCopyProgress(payload);
+      return;
+    }
     progress = payload;
     refreshInFlight = true;
     // A progress push races the first fittings_state() reply in theory
@@ -115,6 +121,9 @@
       // completely different screen.
       if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
       closeCharactersOverlay();
+      if (copyPhase === 'progress') WM.send('fittings_cancel_copy');
+      closeCopyOverlay(true);
+      clearSelection();
       return;
     }
     if (asked) return;
@@ -162,6 +171,7 @@
     if (id === filters.collection_id) return;
     filters.collection_id = id;
     filters.page = 1;
+    clearSelection();
     requestState();
   }
 
@@ -206,6 +216,7 @@
         WM.send('fittings_delete_collection', current.id).then(function () {
           filters.collection_id = 'all';
           filters.page = 1;
+          clearSelection();
           requestState();
         });
       });
@@ -274,6 +285,7 @@
   WM.el('fittings-search').addEventListener('input', function () {
     filters.search = WM.el('fittings-search').value;
     filters.page = 1;
+    clearSelection();
     if (searchDebounce) clearTimeout(searchDebounce);
     searchDebounce = setTimeout(function () {
       searchDebounce = null;
@@ -285,6 +297,7 @@
     var value = WM.el('fittings-ship-filter').value;
     filters.ship_type_id = value ? parseInt(value, 10) : null;
     filters.page = 1;
+    clearSelection();
     requestState();
   });
 
@@ -293,6 +306,7 @@
     filters.search = '';
     filters.ship_type_id = null;
     filters.page = 1;
+    clearSelection();
     requestState();
   });
 
@@ -323,14 +337,36 @@
     rows.forEach(function (row) { host.appendChild(rowNode(row)); });
   }
 
+  function pruneSelection(rows) {
+    var visible = {};
+    rows.forEach(function (row) { visible[row.id] = true; });
+    Object.keys(selected).forEach(function (id) {
+      if (!visible[id]) delete selected[id];
+    });
+    renderSelectionCount();
+  }
+
+  function clearSelection() {
+    selected = {};
+    renderSelectionCount();
+  }
+
+  function visibleSelectedIds() {
+    var selectedIds = selected;
+    return ((STATE && STATE.rows) || []).filter(function (row) {
+      return !!selectedIds[row.id];
+    }).map(function (row) { return row.id; });
+  }
+
   function renderSelectionCount() {
-    // Selection stays page-owned this task (see the file header); nothing
-    // beyond this label reads it yet. Copy selected stays disabled either
-    // way -- it is a reserved control until Task 10.
-    var count = Object.keys(selected).length;
+    var count = visibleSelectedIds().length;
     var button = WM.el('fittings-copy-selected');
     button.textContent = count ? 'Copy selected (' + count + ')' : 'Copy selected';
+    button.disabled = count === 0 || copyPhase === 'progress';
+    button.title = count ? '' : 'Select one or more fittings on this page.';
   }
+
+  WM.el('fittings-copy-selected').addEventListener('click', openCopyOverlay);
 
   function rowNode(row) {
     var node = WM.make('div', 'fit-row');
@@ -591,6 +627,8 @@
         .then(function (ok) {
           if (!ok) return;
           WM.send('fittings_delete_entry', current.id).then(function () {
+            delete selected[current.id];
+            renderSelectionCount();
             expandedId = '';
             detail = null;
           });
@@ -623,13 +661,297 @@
   WM.el('fittings-page-prev').addEventListener('click', function () {
     if (filters.page <= 1) return;
     filters.page -= 1;
+    clearSelection();
     requestState();
   });
 
   WM.el('fittings-page-next').addEventListener('click', function () {
     filters.page += 1;
+    clearSelection();
     requestState();
   });
+
+  // ---- additive-copy overlay ---------------------------------------------
+
+  function openCopyOverlay() {
+    if (!visibleSelectedIds().length) return;
+    copyOverlayOpen = true;
+    copyPhase = 'targets';
+    copyTargets = {};
+    copyPreflight = null;
+    alternateNames = {};
+    WM.el('fittings-copy-overlay').hidden = false;
+    WM.el('fittings-copy-title').textContent = 'Copy fittings';
+    WM.el('fittings-copy-status').textContent = '';
+    renderCopyTargets();
+    WM.el('fittings-copy-close').focus();
+  }
+
+  function closeCopyOverlay(force) {
+    if (!copyOverlayOpen || (copyPhase === 'progress' && !force)) return;
+    copyOverlayOpen = false;
+    copyPreflight = null;
+    WM.el('fittings-copy-overlay').hidden = true;
+  }
+
+  WM.el('fittings-copy-close').addEventListener('click', function () {
+    closeCopyOverlay(false);
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (!copyOverlayOpen || event.key !== 'Escape' || copyPhase === 'progress') return;
+    event.preventDefault();
+    closeCopyOverlay(false);
+    WM.el('fittings-copy-selected').focus();
+  });
+
+  function copyButtons(review, start, cancel) {
+    WM.el('fittings-copy-review').hidden = !review;
+    WM.el('fittings-copy-start').hidden = !start;
+    WM.el('fittings-copy-cancel').hidden = !cancel;
+    WM.el('fittings-copy-close').disabled = cancel;
+  }
+
+  function copyEligible(character) {
+    return character.status === 'enabled' && !!character.fetched_utc && !character.stale;
+  }
+
+  function renderCopyTargets() {
+    var host = WM.el('fittings-copy-body');
+    host.textContent = '';
+    host.appendChild(WM.make('p', 'fit-copy-summary',
+      visibleSelectedIds().length + ' selected. Choose target characters.'));
+    var targets = WM.make('div', 'fit-copy-targets');
+    ((STATE && STATE.characters) || []).forEach(function (character) {
+      var row = WM.make('div', 'fit-copy-target');
+      var box = document.createElement('input');
+      box.type = 'checkbox';
+      var label = WM.make('label', 'check');
+      label.appendChild(box);
+      label.appendChild(WM.make('span', 'box'));
+      label.appendChild(WM.make('span', '', character.character_name
+                                || String(character.character_id)));
+      box.disabled = !copyEligible(character);
+      box.checked = !!copyTargets[character.character_id];
+      box.addEventListener('change', function () {
+        if (box.checked) copyTargets[character.character_id] = true;
+        else delete copyTargets[character.character_id];
+        WM.el('fittings-copy-review').disabled = !selectedTargetIds().length;
+      });
+      row.appendChild(label);
+      if (!copyEligible(character)) {
+        row.appendChild(WM.make('span', 'fit-copy-target-state',
+          character.status !== 'enabled' ? 'Fittings not enabled'
+            : character.stale ? 'Refresh failed' : 'Refresh required'));
+      }
+      targets.appendChild(row);
+    });
+    if (!targets.children.length) {
+      targets.appendChild(WM.make('p', 'hint', 'No EVE characters available.'));
+    }
+    host.appendChild(targets);
+    copyButtons(true, false, false);
+    WM.el('fittings-copy-review').textContent = 'Review copy';
+    WM.el('fittings-copy-review').disabled = !selectedTargetIds().length;
+  }
+
+  function selectedTargetIds() {
+    return Object.keys(copyTargets).filter(function (id) {
+      return copyTargets[id];
+    }).map(function (id) { return parseInt(id, 10); });
+  }
+
+  WM.el('fittings-copy-review').addEventListener('click', requestCopyPreflight);
+
+  function requestCopyPreflight() {
+    var choices = {};
+    if (copyPreflight && copyPreflight.requires_resolution) {
+      (copyPreflight.pairs || []).forEach(function (pair) {
+        if (pair.status !== 'conflict' || pair.skipped) return;
+        var key = pair.entry_id + ':' + pair.character_id;
+        choices[key] = alternateNames[key] === null
+          ? null : (alternateNames[key] || '').trim();
+      });
+    }
+    WM.el('fittings-copy-review').disabled = true;
+    WM.el('fittings-copy-status').textContent = 'Checking current fittings\u2026';
+    WM.send('fittings_preflight_copy', visibleSelectedIds(), selectedTargetIds(), choices)
+      .then(function (payload) {
+        if (!copyOverlayOpen) return;
+        copyPreflight = payload;
+        WM.el('fittings-copy-status').textContent = payload && payload.error || '';
+        if (!payload || !payload.accepted) {
+          if (copyPhase === 'targets') renderCopyTargets();
+          return;
+        }
+        copyPhase = 'preflight';
+        renderCopyPreflight();
+      });
+  }
+
+  function preflightSummary(payload) {
+    var counts = payload.counts || {};
+    return payload.write_count + (payload.write_count === 1 ? ' remote write' : ' remote writes')
+      + ' \u00b7 ' + (counts.present || 0) + ' already present'
+      + ' \u00b7 ' + (counts.conflict || 0) + ' conflicts'
+      + ' \u00b7 ' + (counts.unavailable || 0) + ' unavailable';
+  }
+
+  function pairStatusText(pair) {
+    if (pair.status === 'ready') return 'Ready as \u201c' + pair.chosen_name + '\u201d';
+    if (pair.status === 'present') return 'Already present';
+    if (pair.status === 'unavailable') return pair.error || 'Unavailable';
+    return pair.skipped ? 'Conflict / skipped' : 'Name conflict';
+  }
+
+  function renderCopyPreflight() {
+    var host = WM.el('fittings-copy-body');
+    host.textContent = '';
+    host.appendChild(WM.make('p', 'fit-copy-summary', preflightSummary(copyPreflight)));
+    (copyPreflight.pairs || []).forEach(function (pair) {
+      var row = WM.make('div', 'fit-copy-pair');
+      row.appendChild(WM.make('span', 'fit-copy-pair-name', pair.fitting_name));
+      row.appendChild(WM.make('span', 'fit-copy-character', pair.character_name));
+      row.appendChild(WM.make('span', 'fit-copy-detail', pairStatusText(pair)));
+      if (pair.status === 'conflict' && !pair.skipped) {
+        row.appendChild(conflictResolutionNode(pair));
+      }
+      host.appendChild(row);
+    });
+    var resolving = !!copyPreflight.requires_resolution;
+    copyButtons(resolving, !resolving, false);
+    WM.el('fittings-copy-review').textContent = 'Review changes';
+    updateConflictReady();
+  }
+
+  function conflictResolutionNode(pair) {
+    var key = pair.entry_id + ':' + pair.character_id;
+    var resolution = WM.make('div', 'fit-copy-resolution');
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'field fit-copy-alternate';
+    input.maxLength = 50;
+    input.placeholder = 'Alternate name';
+    input.setAttribute('aria-label', 'Alternate name for ' + pair.fitting_name
+                       + ' on ' + pair.character_name);
+    input.value = typeof alternateNames[key] === 'string' ? alternateNames[key] : '';
+    var skip = document.createElement('input');
+    skip.type = 'checkbox';
+    var skipLabel = WM.make('label', 'check');
+    skipLabel.appendChild(skip);
+    skipLabel.appendChild(WM.make('span', 'box'));
+    skipLabel.appendChild(WM.make('span', '', 'Skip this pair'));
+    skip.checked = alternateNames[key] === null;
+    input.disabled = skip.checked;
+    input.addEventListener('input', function () {
+      alternateNames[key] = input.value;
+      updateConflictReady();
+    });
+    skip.addEventListener('change', function () {
+      input.disabled = skip.checked;
+      alternateNames[key] = skip.checked ? null : input.value;
+      updateConflictReady();
+    });
+    resolution.appendChild(input);
+    resolution.appendChild(skipLabel);
+    return resolution;
+  }
+
+  function updateConflictReady() {
+    if (!copyPreflight || !copyPreflight.requires_resolution) return;
+    var ready = (copyPreflight.pairs || []).every(function (pair) {
+      if (pair.status !== 'conflict' || pair.skipped) return true;
+      var value = alternateNames[pair.entry_id + ':' + pair.character_id];
+      return value === null || (typeof value === 'string' && !!value.trim());
+    });
+    WM.el('fittings-copy-review').disabled = !ready;
+  }
+
+  WM.el('fittings-copy-start').addEventListener('click', function () {
+    if (!copyPreflight || copyPreflight.requires_resolution) return;
+    var writes = copyPreflight.write_count || 0;
+    WM.confirm('Copy fittings',
+      'Create exactly ' + writes + (writes === 1 ? ' fitting' : ' fittings')
+      + ' in EVE? This only adds fittings; it never deletes or replaces one.')
+      .then(function (confirmed) {
+        if (!confirmed || !copyOverlayOpen) return;
+        copyPhase = 'progress';
+        WM.el('fittings-copy-title').textContent = 'Copying fittings';
+        WM.el('fittings-copy-body').textContent = '';
+        WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
+          '0 of ' + copyPreflight.pairs.length + ' pairs checked'));
+        WM.el('fittings-copy-status').textContent = 'Starting\u2026';
+        copyButtons(false, false, true);
+        renderSelectionCount();
+        WM.send('fittings_start_copy', copyPreflight.ticket_id).then(function (started) {
+          if (!started && copyOverlayOpen) {
+            copyPhase = 'preflight';
+            WM.el('fittings-copy-status').textContent = 'The copy could not start.';
+            renderCopyPreflight();
+          }
+        });
+      });
+  });
+
+  WM.el('fittings-copy-cancel').addEventListener('click', function () {
+    WM.el('fittings-copy-cancel').disabled = true;
+    WM.el('fittings-copy-status').textContent = 'Cancelling after the current request\u2026';
+    WM.send('fittings_cancel_copy');
+  });
+
+  function onCopyProgress(payload) {
+    if (!copyOverlayOpen) return;
+    if (payload.phase === 'progress') {
+      WM.el('fittings-copy-body').textContent = '';
+      WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
+        payload.completed + ' of ' + payload.total + ' pairs checked'));
+      WM.el('fittings-copy-status').textContent = copyResultLabel(payload.result.status);
+      return;
+    }
+    if (payload.phase === 'complete') {
+      copyPhase = 'results';
+      selected = {};
+      renderSelectionCount();
+      renderCopyResults(payload.result || { results: [], write_count: 0 });
+    }
+  }
+
+  function copyResultLabel(status) {
+    var labels = {
+      success: 'Success', present: 'Already present',
+      conflict_skipped: 'Conflict / skipped', failed: 'Failed',
+      unknown: 'Unknown', unattempted_throttle: 'Unattempted due to throttle',
+      cancelled: 'Cancelled', unavailable: 'Unavailable',
+      invalid_ticket: 'Preflight expired. Review the copy again.',
+      needs_resolution: 'Resolve every name conflict before copying.',
+      busy: 'Another fitting copy is already running.',
+      shutting_down: 'Wingman is shutting down.'
+    };
+    return labels[status] || status;
+  }
+
+  function renderCopyResults(result) {
+    var host = WM.el('fittings-copy-body');
+    host.textContent = '';
+    WM.el('fittings-copy-title').textContent = 'Copy results';
+    host.appendChild(WM.make('p', 'fit-copy-summary',
+      result.write_count + (result.write_count === 1 ? ' remote write attempted'
+                                                     : ' remote writes attempted')));
+    (result.results || []).forEach(function (pair) {
+      var row = WM.make('div', 'fit-copy-pair');
+      row.appendChild(WM.make('span', 'fit-copy-pair-name', pair.fitting_name));
+      row.appendChild(WM.make('span', 'fit-copy-character', pair.character_name));
+      var status = WM.make('span', 'fit-copy-result ' + pair.status,
+                           copyResultLabel(pair.status));
+      row.appendChild(status);
+      if (pair.error) row.appendChild(WM.make('span', 'fit-copy-detail', pair.error));
+      host.appendChild(row);
+    });
+    WM.el('fittings-copy-status').textContent = result.operation_id
+      ? 'Operation ' + result.operation_id : copyResultLabel(result.status);
+    copyButtons(false, false, false);
+    WM.el('fittings-copy-close').disabled = false;
+  }
 
   // ---- the Characters overlay --------------------------------------------
   //

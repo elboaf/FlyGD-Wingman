@@ -16,6 +16,8 @@ enough to call out once rather than per-constant:
   declines to keep growing rather than silently degrading.
 """
 
+from datetime import timedelta
+
 # EVE SSO scopes. Fittings requests these as their own capability, never
 # folded into Skills' scope set -- see eveauth's CAPABILITY_SCOPES (task
 # 2), which keeps a missing fitting grant from ever looking like a missing
@@ -49,6 +51,8 @@ READ_CACHE_SECONDS = 300
 # larger selection is refused with instructions to split it into
 # additional explicit batches; work is not queued invisibly."
 MAX_COPY_WRITES = 20
+PREFLIGHT_TICKET_SECONDS = 15 * 60
+MAX_PREFLIGHT_TICKETS = 20
 
 # --- Local refusal boundaries -------------------------------------------
 # Not ESI limits: these bound what Wingman itself will hold in memory and
@@ -61,6 +65,11 @@ MAX_COLLECTION_NAME_CHARS = 80
 MAX_ALIASES_PER_ENTRY = 100
 PAGE_SIZE = 100
 MAX_OPERATION_RECORDS = 200
+# Terminal copy results are diagnostic history, not safety state. Ninety
+# days keeps recent support context while preventing the count cap from
+# becoming the only retention policy on quiet installations. Unresolved
+# intents are exempt from both limits.
+COMPLETED_OPERATION_MAX_AGE = timedelta(days=90)
 MAX_STATE_BYTES = 64 * 1024 * 1024
 
 # --- Rack classes --------------------------------------------------------

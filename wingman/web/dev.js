@@ -353,7 +353,7 @@
         ],
         aliases: [{ name: 'Merlin - Fleet Doctrine', description: '' }],
         presences: [
-          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Merlin - Fleet Doctrine',
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Merlin - Old Doctrine',
             first_seen_utc: '2026-09-01T00:00:00+00:00',
             last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-3' }
         ] },
@@ -665,6 +665,139 @@
     });
     fitPushChanged('delete');
     return Promise.resolve(!!entry);
+  };
+
+  var fitCopyTickets = {};
+  var fitCopyTicketIndex = 0;
+  var fitCopyCancelled = false;
+
+  function devCopyPair(entry, character, names) {
+    var base = {
+      entry_id: entry.id, character_id: character.character_id,
+      fitting_name: entry.name, character_name: character.character_name,
+      chosen_name: entry.name, error: '', skipped: false
+    };
+    if (!entry.deployable || character.status !== 'enabled' || character.stale
+        || !character.fetched_utc) {
+      base.status = 'unavailable';
+      base.error = !entry.deployable ? 'This fitting has no safe deployment template.'
+                                     : 'Refresh or enable this character first.';
+      return base;
+    }
+    if (entry.presences.some(function (p) {
+      return p.character_id === character.character_id;
+    })) {
+      base.status = 'present';
+      return base;
+    }
+    var conflict = fittings.entries.some(function (other) {
+      return other.id !== entry.id && other.presences.some(function (p) {
+        return p.character_id === character.character_id
+          && p.source_name.toLowerCase() === entry.name.toLowerCase();
+      });
+    });
+    if (!conflict) {
+      base.status = 'ready';
+      return base;
+    }
+    var key = entry.id + ':' + character.character_id;
+    if (!(key in names)) {
+      base.status = 'conflict';
+      return base;
+    }
+    if (names[key] === null) {
+      base.status = 'conflict';
+      base.skipped = true;
+      return base;
+    }
+    base.status = 'ready';
+    base.chosen_name = names[key];
+    return base;
+  }
+
+  api.fittings_preflight_copy = function (entryIds, characterIds, names) {
+    console.log('DEV api.fittings_preflight_copy(', entryIds, characterIds, names, ')');
+    names = names || {};
+    var entries = fittings.entries.filter(function (entry) {
+      return entryIds.indexOf(entry.id) !== -1;
+    });
+    var characters = fittings.characters.filter(function (character) {
+      return characterIds.indexOf(character.character_id) !== -1;
+    });
+    var pairs = [];
+    entries.forEach(function (entry) {
+      characters.forEach(function (character) {
+        pairs.push(devCopyPair(entry, character, names));
+      });
+    });
+    var counts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    pairs.forEach(function (pair) { counts[pair.status] += 1; });
+    var ticketId = 'dev-copy-' + (++fitCopyTicketIndex);
+    var requires = pairs.some(function (pair) {
+      return pair.status === 'conflict' && !pair.skipped;
+    });
+    fitCopyTickets[ticketId] = { pairs: pairs, write_count: counts.ready };
+    return Promise.resolve({
+      accepted: counts.ready <= 20, ticket_id: counts.ready <= 20 ? ticketId : '',
+      created_utc: new Date().toISOString(), write_count: counts.ready,
+      counts: counts, requires_resolution: requires, pairs: pairs,
+      error: counts.ready > 20
+        ? 'Split this copy into batches of 20 fittings or fewer.' : ''
+    });
+  };
+
+  api.fittings_start_copy = function (ticketId) {
+    console.log('DEV api.fittings_start_copy(', ticketId, ')');
+    var ticket = fitCopyTickets[ticketId];
+    if (!ticket) return Promise.resolve(false);
+    delete fitCopyTickets[ticketId];
+    fitCopyCancelled = false;
+    var results = [];
+    var index = 0;
+    var operationId = 'dev-operation-' + fitCopyTicketIndex;
+    function advance() {
+      if (index >= ticket.pairs.length) {
+        if (window.onFittingsProgress) {
+          window.onFittingsProgress({
+            kind: 'copy', phase: 'complete', operation_id: operationId,
+            completed: results.length, total: ticket.pairs.length,
+            result: {
+              status: fitCopyCancelled ? 'cancelled' : 'complete',
+              operation_id: operationId, results: results,
+              write_count: results.filter(function (row) {
+                return row.status === 'success';
+              }).length
+            }
+          });
+        }
+        return;
+      }
+      var pair = ticket.pairs[index++];
+      var result = {};
+      Object.keys(pair).forEach(function (key) { result[key] = pair[key]; });
+      if (pair.status === 'ready') {
+        result.status = fitCopyCancelled ? 'cancelled' : 'success';
+        if (result.status === 'success') result.remote_fitting_id = 9100 + index;
+      } else if (pair.status === 'conflict' && pair.skipped) {
+        result.status = 'conflict_skipped';
+      }
+      results.push(result);
+      if (window.onFittingsProgress) {
+        window.onFittingsProgress({
+          kind: 'copy', phase: 'progress', operation_id: operationId,
+          completed: results.length, total: ticket.pairs.length, result: result
+        });
+      }
+      setTimeout(advance, 250);
+    }
+    setTimeout(advance, 250);
+    return Promise.resolve(true);
+  };
+
+  api.fittings_cancel_copy = function () {
+    console.log('DEV api.fittings_cancel_copy()');
+    fitCopyCancelled = true;
+    return Promise.resolve(true);
   };
 
   api.skills_character_detail = function (id, plan) {

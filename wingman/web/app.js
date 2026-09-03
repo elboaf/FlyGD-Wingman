@@ -5,10 +5,11 @@
  * calling window.<handler>(payload); the page reaches Python only through
  * WM.send(), which wraps pywebview.api.
  *
- * Selection, sort order, and row focus are CLIENT state and never cross
- * the bridge — the sole exception is the `preselected` flag arriving on
- * onRows, because the watcher preselects newly-finished recordings so the
- * common case needs no clicking.
+ * Selection, sort order, and row focus stay client state while they only
+ * change what the page draws. Selection crosses when Python must compute
+ * from it: Fittings sends the current page's pruned stable IDs to copy
+ * preflight. The Uploader's `preselected` flag still arrives on onRows so
+ * newly-finished recordings need no extra click.
  */
 (function () {
   'use strict';

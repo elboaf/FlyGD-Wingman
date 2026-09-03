@@ -554,16 +554,27 @@ def _intent_identity(intent: WriteIntent) -> tuple[str, int, CanonicalContent]:
 
 
 def _bounded_completed_history(
-    intents: tuple[WriteIntent, ...],
+    intents: tuple[WriteIntent, ...], now: datetime
 ) -> tuple[WriteIntent, ...]:
+    cutoff = now - contracts.COMPLETED_OPERATION_MAX_AGE
     completed = sorted(
-        (intent for intent in intents if not intent.unresolved),
+        (
+            intent
+            for intent in intents
+            if not intent.unresolved
+            and (intent.completed_utc or intent.created_utc) >= cutoff
+        ),
         key=lambda intent: (intent.created_utc, intent.operation_id),
     )[-contracts.MAX_OPERATION_RECORDS :]
     keep = {id(intent) for intent in completed}
     return tuple(
         intent for intent in intents if intent.unresolved or id(intent) in keep
     )
+
+
+def bounded_operation_history(state: FittingsState, now: datetime) -> FittingsState:
+    """Apply terminal-history bounds without ever removing safety state."""
+    return replace(state, intents=_bounded_completed_history(state.intents, now))
 
 
 def _normalized_intents_for_save(state: FittingsState) -> tuple[WriteIntent, ...]:
@@ -580,8 +591,8 @@ def _normalized_intents_for_save(state: FittingsState) -> tuple[WriteIntent, ...
     )
 
 
-def _to_dict(state: FittingsState) -> dict:
-    intents = _bounded_completed_history(_normalized_intents_for_save(state))
+def _to_dict(state: FittingsState, now: datetime) -> dict:
+    intents = _bounded_completed_history(_normalized_intents_for_save(state), now)
     return {
         "version": STATE_VERSION,
         "entries": [_entry_to_dict(entry) for entry in state.entries],
@@ -695,7 +706,7 @@ def _recover_relationships(
     return recovered
 
 
-def _from_dict(raw: object) -> tuple[FittingsState, tuple[str, ...]]:
+def _from_dict(raw: object, now: datetime) -> tuple[FittingsState, tuple[str, ...]]:
     if not isinstance(raw, dict):
         raise ValueError("Fitting state must be an object.")
     warnings: list[str] = []
@@ -803,7 +814,7 @@ def _from_dict(raw: object) -> tuple[FittingsState, tuple[str, ...]]:
             warnings.append(
                 f"Fitting state dropped {count} {qualifier} intent references."
             )
-    intents = list(_bounded_completed_history(tuple(retained_intents)))
+    intents = list(_bounded_completed_history(tuple(retained_intents), now))
     return (
         FittingsState(
             entries=tuple(entries),
@@ -1011,7 +1022,7 @@ def _read_bounded(path: Path) -> str:
 
 
 def _read_document(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
-    return _from_dict(json.loads(_read_bounded(path)))
+    return _from_dict(json.loads(_read_bounded(path)), datetime.now(UTC))
 
 
 def _preserve_corrupt(path: Path) -> str:
@@ -1114,10 +1125,16 @@ def load_fittings(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
         return _recover_corrupt_primary(path)
 
 
-def save_fittings(path: Path, state: FittingsState) -> None:
+def save_fittings(
+    path: Path,
+    state: FittingsState,
+    *,
+    now: Callable[[], datetime] | None = None,
+) -> None:
     """Validate and atomically publish fitting state with one sibling backup."""
     _validate_state(state)
-    document = json.dumps(_to_dict(state), indent=2)
+    timestamp = (now or (lambda: datetime.now(UTC)))()
+    document = json.dumps(_to_dict(state, timestamp), indent=2)
     if len(document.encode("utf-8")) > contracts.MAX_STATE_BYTES:
         raise ValueError("Fitting document exceeds the fitting state limit.")
 

@@ -1924,14 +1924,10 @@
        rebuilds the whole library on any event -- every list render comes
        from the bounded page Python already decided.
 
-       Copy selected is deliberately the ONE `.btn.acc` on this route and
-       is reserved, not wired: preflight and execution belong to Task 10,
-       where FittingsController grows the copy engine this button would
-       drive. It stays permanently disabled with a title saying so, so the
-       one accent control this route will use is decided now rather than
-       added as a second accent later (test_no_container_offers_two_
-       primary_actions in test_page_conventions.py already assumes at
-       most one). -->
+       Copy selected is deliberately the ONE `.btn.acc` on this route.
+       Task 10 wires it to explicit additive preflight and execution; the
+       app-owned copy overlay keeps neutral buttons so review, confirmation,
+       progress, and results do not introduce a second accent claim. -->
   <div class="route" id="route-fittings" aria-labelledby="nav-fittings">
     <aside class="skills-rail" id="fittings-rail">
       <div class="rail-block">
@@ -1956,8 +1952,7 @@
       <header class="skills-head">
         <h1 id="fittings-collection-name">All fittings</h1>
         <span class="skills-plan-count" id="fittings-collection-count"></span>
-        <button class="btn acc" id="fittings-copy-selected" disabled
-                title="Copying selected fittings to characters is not available yet.">Copy selected</button>
+        <button class="btn acc" id="fittings-copy-selected" disabled>Copy selected</button>
       </header>
 
       <div class="skills-notices" id="fittings-notices" hidden></div>
@@ -1995,6 +1990,24 @@
         <div class="body" id="fittings-characters-body"></div>
         <div class="buttons">
           <button class="btn" id="fittings-characters-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Additive copy is a multi-step, page-owned workflow rather than a
+         single confirm/prompt question. The final send still uses WM.confirm
+         so the exact write count is stated in the shared app-owned layer. -->
+    <div class="overlay" id="fittings-copy-overlay" hidden>
+      <div class="dialog" id="fittings-copy-dialog" role="dialog"
+           aria-modal="true" aria-labelledby="fittings-copy-title">
+        <h2 id="fittings-copy-title">Copy fittings</h2>
+        <div class="body" id="fittings-copy-body"></div>
+        <p class="field-msg" id="fittings-copy-status" role="status"></p>
+        <div class="buttons">
+          <button class="btn" id="fittings-copy-close">Close</button>
+          <button class="btn" id="fittings-copy-review">Review copy</button>
+          <button class="btn" id="fittings-copy-start" hidden>Start copy</button>
+          <button class="btn" id="fittings-copy-cancel" hidden>Cancel copy</button>
         </div>
       </div>
     </div>

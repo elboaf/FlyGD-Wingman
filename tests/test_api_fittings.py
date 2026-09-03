@@ -218,6 +218,98 @@ def test_fittings_forget_character_answers_false_with_no_authority(tmp_path):
     assert api.fittings_forget_character(42) is False
 
 
+# ---- additive copy: preflight / worker start / cancellation --------------
+
+
+def test_fittings_preflight_copy_delegates_selected_ids_targets_and_names(tmp_path):
+    fittings = Mock()
+    fittings.preflight_copy.return_value = {"accepted": True, "ticket_id": "ticket"}
+    api = make_api(tmp_path, fittings=fittings)
+    names = {"fit-1:42": "Alternate"}
+
+    result = api.fittings_preflight_copy(["fit-1"], [42], names)
+
+    assert result == {"accepted": True, "ticket_id": "ticket"}
+    fittings.preflight_copy.assert_called_once_with(["fit-1"], [42], names)
+
+
+def test_fittings_preflight_copy_has_a_safe_unavailable_fallback(tmp_path):
+    api = make_api(tmp_path)
+
+    result = api.fittings_preflight_copy(["fit-1"], [42], {})
+
+    assert result["accepted"] is False
+    assert result["ticket_id"] == ""
+    assert result["error"]
+
+
+def test_fittings_start_copy_runs_on_a_worker(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowFittings:
+        def start_copy(self, ticket_id):
+            assert ticket_id == "ticket-1"
+            started.set()
+            assert release.wait(2)
+
+    api = make_api(tmp_path, fittings=SlowFittings())
+
+    assert api.fittings_start_copy("ticket-1") is True
+    assert started.wait(1), "the bridge must return while copy runs"
+    release.set()
+
+
+def test_fittings_start_copy_pushes_an_early_controller_refusal(tmp_path):
+    from tests.test_api import pushes
+
+    fittings = Mock()
+    fittings.start_copy.return_value = {
+        "status": "invalid_ticket",
+        "operation_id": "",
+        "results": [],
+        "write_count": 0,
+    }
+    api = make_api(tmp_path, fittings=fittings)
+
+    assert api.fittings_start_copy("expired-ticket") is True
+    assert _wait_for(lambda: bool(api._window.evaluated))
+    assert pushes(api._window) == [
+        (
+            "onFittingsProgress",
+            {
+                "kind": "copy",
+                "phase": "complete",
+                "operation_id": "",
+                "completed": 0,
+                "total": 0,
+                "result": fittings.start_copy.return_value,
+            },
+        )
+    ]
+
+
+def test_fittings_start_copy_rejects_empty_or_unavailable_ticket(tmp_path):
+    fittings = Mock()
+    api = make_api(tmp_path, fittings=fittings)
+
+    assert api.fittings_start_copy("") is False
+    assert make_api(tmp_path).fittings_start_copy("ticket") is False
+    fittings.start_copy.assert_not_called()
+
+
+def test_fittings_cancel_copy_delegates(tmp_path):
+    fittings = Mock()
+    api = make_api(tmp_path, fittings=fittings)
+
+    assert api.fittings_cancel_copy() is True
+    fittings.cancel_copy.assert_called_once_with()
+
+
+def test_fittings_cancel_copy_is_safe_when_unavailable(tmp_path):
+    assert make_api(tmp_path).fittings_cancel_copy() is True
+
+
 # ---- local curation: thin delegates and unavailable fallbacks ------------
 
 

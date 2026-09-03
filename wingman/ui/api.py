@@ -5990,6 +5990,79 @@ class Api:
             )
         return result.applied
 
+    # ---- EVE fittings: additive copy ---
+
+    def fittings_preflight_copy(
+        self, entry_ids, character_ids, alternate_names=None
+    ) -> dict:
+        if self._fittings is None:
+            return {
+                "accepted": False,
+                "ticket_id": "",
+                "created_utc": "",
+                "write_count": 0,
+                "counts": {
+                    "ready": 0,
+                    "present": 0,
+                    "conflict": 0,
+                    "unavailable": 0,
+                },
+                "requires_resolution": False,
+                "pairs": [],
+                "error": "The EVE fitting library is not available.",
+            }
+        names = alternate_names if isinstance(alternate_names, dict) else {}
+        return self._fittings.preflight_copy(entry_ids, character_ids, names)
+
+    def fittings_start_copy(self, ticket_id) -> bool:
+        if self._fittings is None or not isinstance(ticket_id, str) or not ticket_id:
+            return False
+        threading.Thread(
+            target=self._fittings_copy_worker, args=(ticket_id,), daemon=True
+        ).start()
+        return True
+
+    def _fittings_copy_worker(self, ticket_id) -> None:
+        try:
+            result = self._fittings.start_copy(ticket_id)
+            # Normal operations publish their own progress and completion
+            # through the injected callback. A refusal before an operation ID
+            # exists has no callback path, so deliver it here rather than leave
+            # the overlay parked in its optimistic progress state.
+            if isinstance(result, dict) and not result.get("operation_id"):
+                self._push_fittings_progress(
+                    {
+                        "kind": "copy",
+                        "phase": "complete",
+                        "operation_id": "",
+                        "completed": 0,
+                        "total": 0,
+                        "result": result,
+                    }
+                )
+        except Exception:
+            logger.exception("Fitting copy failed")
+            self._push_fittings_progress(
+                {
+                    "kind": "copy",
+                    "phase": "complete",
+                    "operation_id": "",
+                    "completed": 0,
+                    "total": 0,
+                    "result": {
+                        "status": "failed",
+                        "operation_id": "",
+                        "results": [],
+                        "write_count": 0,
+                    },
+                }
+            )
+
+    def fittings_cancel_copy(self) -> bool:
+        if self._fittings is not None:
+            self._fittings.cancel_copy()
+        return True
+
     # ---- EVE fittings: local curation ---
     #
     # Every method below is a thin delegate to FittingsController, which

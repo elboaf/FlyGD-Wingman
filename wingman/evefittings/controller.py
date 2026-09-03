@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Iterable
-from dataclasses import replace
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..eveauth import application
@@ -29,10 +30,12 @@ from .model import (
     Presence,
     RemoteFitting,
     SourceAlias,
+    WriteIntent,
     canonical_equal,
     canonicalize,
     fingerprint,
     new_library_entry,
+    normalized_name_key,
     retain_aliases,
     validate_remote_snapshot,
     validate_supersession,
@@ -77,6 +80,34 @@ def _iso(value: datetime | None) -> str:
 _ALL_SCOPE = "all"
 _UNFILED_SCOPE = "unfiled"
 _SUPERSEDED_SCOPE = "superseded"
+_MISSING_CHOICE = object()
+_CAPACITY_MARKERS = (
+    "capacity",
+    "maximum number of fittings",
+    "fitting limit",
+    "too many fittings",
+)
+
+
+@dataclass(frozen=True)
+class _TicketPair:
+    entry_id: str
+    character_id: int
+    fitting_name: str
+    character_name: str
+    chosen_name: str
+    status: str
+    error: str = ""
+    skipped: bool = False
+
+
+@dataclass(frozen=True)
+class _PreflightTicket:
+    ticket_id: str
+    created_utc: datetime
+    pairs: tuple[_TicketPair, ...]
+    max_writes: int
+    requires_resolution: bool
 
 
 class FittingsController:
@@ -111,6 +142,12 @@ class FittingsController:
 
         self._lock = threading.RLock()
         self._refresh_gate = threading.Lock()
+        self._copy_gate = threading.Lock()
+        self._copy_cancelled = threading.Event()
+        self._tickets_lock = threading.Lock()
+        self._tickets: OrderedDict[str, _PreflightTicket] = OrderedDict()
+        self._ticket_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
+        self._operation_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._stopping = threading.Event()
         self._state, warnings = store.load_fittings(self._state_path)
         self._names, name_warnings = names.load(self._names_path)
@@ -586,6 +623,632 @@ class FittingsController:
             logger.debug(
                 "Fitting refresh progress could not be delivered", exc_info=True
             )
+
+    # ----- additive copy --------------------------------------------------
+
+    def preflight_copy(
+        self,
+        entry_ids: object,
+        character_ids: object,
+        alternate_names: object = None,
+    ) -> dict:
+        """Classify selected pairs and issue one bounded, short-lived ticket."""
+        entries_wanted = self._stable_text_ids(entry_ids)
+        characters_wanted = self._positive_ids(character_ids)
+        if not entries_wanted or not characters_wanted:
+            return self._preflight_error("Select fittings and target characters first.")
+
+        authority_characters = {
+            character.character_id: character
+            for character in self._authority.characters
+        }
+        character_status = {
+            character_id: self._authority.capability_status(
+                character_id, application.FITTINGS
+            )
+            for character_id in characters_wanted
+        }
+        now = self._now()
+        choices = alternate_names if isinstance(alternate_names, dict) else {}
+        with self._lock:
+            entries = {entry.id: entry for entry in self._state.entries}
+            missing_entries = [
+                entry_id for entry_id in entries_wanted if entry_id not in entries
+            ]
+            missing_characters = [
+                character_id
+                for character_id in characters_wanted
+                if character_id not in authority_characters
+            ]
+            if missing_entries or missing_characters:
+                return self._preflight_error(
+                    "The fitting or character selection changed. Select it again."
+                )
+
+            pairs: list[_TicketPair] = []
+            planned_names: dict[int, set[str]] = {}
+            invalid_choice = ""
+            for entry_id in entries_wanted:
+                entry = entries[entry_id]
+                for character_id in characters_wanted:
+                    character = authority_characters[character_id]
+                    pair, choice_error = self._classify_preflight_pair_locked(
+                        entry,
+                        character_id,
+                        getattr(character, "character_name", ""),
+                        character_status[character_id],
+                        choices,
+                        planned_names,
+                        now,
+                    )
+                    pairs.append(pair)
+                    if choice_error and not invalid_choice:
+                        invalid_choice = choice_error
+
+        if invalid_choice:
+            return self._preflight_error(invalid_choice, pairs)
+        counts = {
+            status: sum(1 for pair in pairs if pair.status == status)
+            for status in ("ready", "present", "conflict", "unavailable")
+        }
+        write_count = counts["ready"]
+        if write_count > contracts.MAX_COPY_WRITES:
+            return self._preflight_error(
+                "Split this copy into batches of 20 fittings or fewer.", pairs
+            )
+        requires_resolution = any(
+            pair.status == "conflict" and not pair.skipped for pair in pairs
+        )
+        ticket_id = str(self._ticket_id_factory())[: store.MAX_LOCAL_ID_CHARS]
+        if not ticket_id:
+            ticket_id = uuid.uuid4().hex
+        ticket = _PreflightTicket(
+            ticket_id=ticket_id,
+            created_utc=now,
+            pairs=tuple(pairs),
+            max_writes=write_count,
+            requires_resolution=requires_resolution,
+        )
+        self._remember_ticket(ticket, now)
+        return {
+            "accepted": True,
+            "ticket_id": ticket_id,
+            "created_utc": _iso(now),
+            "write_count": write_count,
+            "counts": counts,
+            "requires_resolution": requires_resolution,
+            "pairs": [self._ticket_pair_payload(pair) for pair in pairs],
+            "error": "",
+        }
+
+    @staticmethod
+    def _stable_text_ids(raw: object) -> tuple[str, ...]:
+        if not isinstance(raw, (list, tuple)):
+            return ()
+        return tuple(
+            dict.fromkeys(
+                value
+                for value in raw
+                if isinstance(value, str) and value and len(value) <= 200
+            )
+        )
+
+    @staticmethod
+    def _positive_ids(raw: object) -> tuple[int, ...]:
+        if not isinstance(raw, (list, tuple)):
+            return ()
+        result = []
+        for value in raw:
+            if isinstance(value, bool):
+                continue
+            try:
+                character_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if character_id > 0 and character_id not in result:
+                result.append(character_id)
+        return tuple(result)
+
+    @staticmethod
+    def _preflight_error(error: str, pairs=()) -> dict:
+        return {
+            "accepted": False,
+            "ticket_id": "",
+            "created_utc": "",
+            "write_count": 0,
+            "counts": {
+                status: sum(1 for pair in pairs if pair.status == status)
+                for status in ("ready", "present", "conflict", "unavailable")
+            },
+            "requires_resolution": False,
+            "pairs": [FittingsController._ticket_pair_payload(pair) for pair in pairs],
+            "error": error,
+        }
+
+    def _classify_preflight_pair_locked(
+        self,
+        entry: LibraryEntry,
+        character_id: int,
+        character_name: str,
+        capability_status: str,
+        choices: dict,
+        planned_names: dict[int, set[str]],
+        now: datetime,
+    ) -> tuple[_TicketPair, str]:
+        base = {
+            "entry_id": entry.id,
+            "character_id": character_id,
+            "fitting_name": entry.preferred_name,
+            "character_name": character_name or f"Character {character_id}",
+            "chosen_name": entry.preferred_name,
+        }
+        unavailable = self._pair_unavailable_reason_locked(
+            entry, character_id, capability_status, now
+        )
+        if unavailable:
+            return _TicketPair(**base, status="unavailable", error=unavailable), ""
+        if self._content_present_locked(character_id, entry.content):
+            return _TicketPair(**base, status="present"), ""
+        if self._unresolved_locked(character_id, entry.content):
+            return (
+                _TicketPair(
+                    **base,
+                    status="unavailable",
+                    error="A prior copy has an unknown outcome. Refresh to reconcile it.",
+                ),
+                "",
+            )
+
+        existing_names = self._existing_name_keys_locked(character_id)
+        existing_names.update(planned_names.setdefault(character_id, set()))
+        preferred_key = normalized_name_key(entry.preferred_name)
+        if preferred_key not in existing_names:
+            planned_names[character_id].add(preferred_key)
+            return _TicketPair(**base, status="ready"), ""
+
+        choice = self._alternate_choice(choices, entry.id, character_id)
+        if choice is _MISSING_CHOICE:
+            return _TicketPair(**base, status="conflict"), ""
+        if choice is None:
+            return _TicketPair(**base, status="conflict", skipped=True), ""
+        if not isinstance(choice, str):
+            return _TicketPair(**base, status="conflict"), (
+                f"Choose an alternate name or skip {entry.preferred_name}."
+            )
+        chosen = choice.strip()
+        if not chosen or len(chosen) > contracts.MAX_NAME_CHARS:
+            return _TicketPair(**base, status="conflict"), (
+                f"An alternate fitting name must be 1-{contracts.MAX_NAME_CHARS} characters."
+            )
+        chosen_key = normalized_name_key(chosen)
+        if chosen_key in existing_names:
+            return _TicketPair(**base, status="conflict"), (
+                f"{chosen!r} is already used on {base['character_name']}."
+            )
+        planned_names[character_id].add(chosen_key)
+        return (
+            _TicketPair(**{**base, "chosen_name": chosen}, status="ready"),
+            "",
+        )
+
+    @staticmethod
+    def _alternate_choice(choices: dict, entry_id: str, character_id: int):
+        flat_key = f"{entry_id}:{character_id}"
+        if flat_key in choices:
+            return choices[flat_key]
+        nested = choices.get(entry_id)
+        if isinstance(nested, dict):
+            if character_id in nested:
+                return nested[character_id]
+            if str(character_id) in nested:
+                return nested[str(character_id)]
+        return _MISSING_CHOICE
+
+    def _pair_unavailable_reason_locked(
+        self,
+        entry: LibraryEntry,
+        character_id: int,
+        capability_status: str,
+        now: datetime,
+    ) -> str:
+        if entry.deployment_template is None:
+            return "This fitting has no safe deployment template."
+        if capability_status != "enabled":
+            return "Enable Fittings for this character first."
+        snapshot = self._snapshot_locked(character_id)
+        if snapshot is None or snapshot.fetched_utc is None:
+            return "Refresh this character before copying fittings."
+        if snapshot.error:
+            return "Refresh this character successfully before copying fittings."
+        if now - snapshot.fetched_utc > timedelta(seconds=contracts.READ_CACHE_SECONDS):
+            return "This character's fitting snapshot is stale. Refresh it first."
+        if self._known_capacity_problem_locked(character_id):
+            return "A known capacity error blocks copies to this character."
+        return ""
+
+    def _known_capacity_problem_locked(self, character_id: int) -> bool:
+        return any(
+            intent.character_id == character_id
+            and intent.status == "failed"
+            and any(marker in intent.error.casefold() for marker in _CAPACITY_MARKERS)
+            for intent in self._state.intents
+        )
+
+    def _content_present_locked(self, character_id: int, content) -> bool:
+        entries = {entry.id: entry for entry in self._state.entries}
+        authoritative = any(
+            item.character_id == character_id
+            and (entry := entries.get(item.library_entry_id)) is not None
+            and entry.content == content
+            for item in self._state.presences
+        )
+        if authoritative:
+            return True
+        # A valid 201 is locally known presence until refresh reconciles it.
+        # Treating terminal success as ordinary disposable history here would
+        # immediately offer the same additive create again.
+        return any(
+            intent.character_id == character_id
+            and intent.content == content
+            and intent.status == "success"
+            for intent in self._state.intents
+        )
+
+    def _existing_name_keys_locked(self, character_id: int) -> set[str]:
+        return {
+            normalized_name_key(item.source_name)
+            for item in self._state.presences
+            if item.character_id == character_id
+        }
+
+    def _unresolved_locked(self, character_id: int, content) -> bool:
+        return any(
+            intent.character_id == character_id
+            and intent.content == content
+            and intent.unresolved
+            for intent in self._state.intents
+        )
+
+    def _remember_ticket(self, ticket: _PreflightTicket, now: datetime) -> None:
+        with self._tickets_lock:
+            self._expire_tickets_locked(now)
+            self._tickets[ticket.ticket_id] = ticket
+            self._tickets.move_to_end(ticket.ticket_id)
+            while len(self._tickets) > contracts.MAX_PREFLIGHT_TICKETS:
+                self._tickets.popitem(last=False)
+
+    def _take_ticket(self, ticket_id: object, now: datetime) -> _PreflightTicket | None:
+        if not isinstance(ticket_id, str) or not ticket_id:
+            return None
+        with self._tickets_lock:
+            self._expire_tickets_locked(now)
+            return self._tickets.pop(ticket_id, None)
+
+    def _expire_tickets_locked(self, now: datetime) -> None:
+        cutoff = now - timedelta(seconds=contracts.PREFLIGHT_TICKET_SECONDS)
+        expired = [
+            ticket_id
+            for ticket_id, ticket in self._tickets.items()
+            if ticket.created_utc < cutoff
+        ]
+        for ticket_id in expired:
+            self._tickets.pop(ticket_id, None)
+
+    @staticmethod
+    def _ticket_pair_payload(pair: _TicketPair) -> dict:
+        return {
+            "entry_id": pair.entry_id,
+            "character_id": pair.character_id,
+            "fitting_name": pair.fitting_name,
+            "character_name": pair.character_name,
+            "chosen_name": pair.chosen_name,
+            "status": pair.status,
+            "error": pair.error,
+            "skipped": pair.skipped,
+        }
+
+    def start_copy(self, ticket_id: object) -> dict:
+        """Consume one preflight ticket and execute only its confirmed writes."""
+        if self._stopping.is_set():
+            return self._copy_result("shutting_down", "", [])
+        if not self._copy_gate.acquire(blocking=False):
+            return self._copy_result("busy", "", [])
+        try:
+            now = self._now()
+            ticket = self._take_ticket(ticket_id, now)
+            if ticket is None:
+                return self._copy_result("invalid_ticket", "", [])
+            if ticket.requires_resolution:
+                return self._copy_result("needs_resolution", "", [])
+            self._copy_cancelled.clear()
+            operation_id = str(self._operation_id_factory())[: store.MAX_LOCAL_ID_CHARS]
+            if not operation_id:
+                operation_id = uuid.uuid4().hex
+            results = []
+            stop_status = ""
+            attempted_writes = 0
+            sent_names: dict[int, set[str]] = {}
+            total = len(ticket.pairs)
+            for pair in ticket.pairs:
+                if pair.status != "ready":
+                    status = "conflict_skipped" if pair.skipped else pair.status
+                    row = self._copy_row(pair, status, pair.error)
+                elif stop_status == "throttled":
+                    row = self._copy_row(pair, "unattempted_throttle", "")
+                elif stop_status == "cancelled":
+                    row = self._copy_row(pair, "cancelled", "")
+                elif stop_status == "persistence_failed":
+                    row = self._copy_row(
+                        pair,
+                        "failed",
+                        "Not attempted because the prior remote outcome could not be saved.",
+                    )
+                elif self._copy_cancelled.is_set():
+                    stop_status = "cancelled"
+                    row = self._copy_row(pair, "cancelled", "")
+                elif attempted_writes >= ticket.max_writes:
+                    row = self._copy_row(
+                        pair,
+                        "failed",
+                        "Not attempted because this pair was not in the confirmed write set.",
+                    )
+                else:
+                    row, pair_stop = self._execute_copy_pair(
+                        pair, operation_id, sent_names
+                    )
+                    if pair_stop:
+                        stop_status = pair_stop
+                if row["attempted"]:
+                    attempted_writes += 1
+                results.append(row)
+                self._notify_progress(
+                    {
+                        "kind": "copy",
+                        "phase": "progress",
+                        "operation_id": operation_id,
+                        "completed": len(results),
+                        "total": total,
+                        "result": row,
+                    }
+                )
+            status = stop_status or "complete"
+            result = self._copy_result(status, operation_id, results)
+            self._notify_progress(
+                {
+                    "kind": "copy",
+                    "phase": "complete",
+                    "operation_id": operation_id,
+                    "completed": len(results),
+                    "total": total,
+                    "result": result,
+                }
+            )
+            self._notify_changed({"reason": "copy", "operation_id": operation_id})
+            return result
+        finally:
+            self._copy_gate.release()
+
+    def _execute_copy_pair(
+        self,
+        pair: _TicketPair,
+        operation_id: str,
+        sent_names: dict[int, set[str]],
+    ) -> tuple[dict, str]:
+        try:
+            with self._authority.lifecycle(pair.character_id, application.FITTINGS):
+                token_result = self._authority.access_token(
+                    pair.character_id, application.FITTINGS
+                )
+                if token_result.token is None:
+                    return (
+                        self._copy_row(
+                            pair,
+                            "unavailable",
+                            _bounded_error(token_result.error or MSG_REAUTH),
+                        ),
+                        "",
+                    )
+                now = self._now()
+                with self._lock:
+                    entry = next(
+                        (
+                            item
+                            for item in self._state.entries
+                            if item.id == pair.entry_id
+                        ),
+                        None,
+                    )
+                    readiness = self._execution_readiness_locked(
+                        pair, entry, sent_names, now
+                    )
+                    if readiness:
+                        status, error = readiness
+                        return self._copy_row(pair, status, error), ""
+                    assert entry is not None and entry.deployment_template is not None
+                    write_intent = WriteIntent(
+                        operation_id=operation_id,
+                        character_id=pair.character_id,
+                        library_entry_id=entry.id,
+                        content=entry.content,
+                        status="in_flight",
+                        created_utc=now,
+                        sent_utc=now,
+                    )
+                    candidate = replace(
+                        self._state,
+                        intents=(*self._state.intents, write_intent),
+                    )
+                    candidate = store.bounded_operation_history(candidate, now)
+                    if not self._publish_locked(candidate):
+                        return (
+                            self._copy_row(
+                                pair,
+                                "failed",
+                                "The copy was not sent because its intent could not be saved.",
+                            ),
+                            "persistence_failed",
+                        )
+                    body = self._create_body(entry, pair.chosen_name)
+
+                path = contracts.POST_PATH.format(character_id=pair.character_id)
+                try:
+                    response = self._client.post_once(
+                        path, body, token=token_result.token
+                    )
+                except Exception as exc:  # noqa: BLE001 - a sent write is ambiguous
+                    outcome, remote_id, error, throttled = (
+                        "unknown",
+                        None,
+                        _bounded_error(exc),
+                        False,
+                    )
+                else:
+                    outcome, remote_id, error, throttled = self._classify_post(response)
+
+                sent_names.setdefault(pair.character_id, set()).add(
+                    normalized_name_key(pair.chosen_name)
+                )
+                completed = self._now()
+                with self._lock:
+                    updated = replace(
+                        write_intent,
+                        status=outcome,
+                        completed_utc=(
+                            completed if outcome in {"success", "failed"} else None
+                        ),
+                        remote_fitting_id=remote_id,
+                        error=_bounded_error(error) if error else "",
+                    )
+                    intents = tuple(
+                        updated if item is write_intent else item
+                        for item in self._state.intents
+                    )
+                    candidate = store.bounded_operation_history(
+                        replace(self._state, intents=intents), completed
+                    )
+                    if not self._publish_locked(candidate):
+                        return (
+                            self._copy_row(
+                                pair,
+                                "unknown",
+                                "The remote outcome could not be saved. Refresh to reconcile it.",
+                                attempted=True,
+                            ),
+                            "persistence_failed",
+                        )
+                row = self._copy_row(pair, outcome, error, remote_id, attempted=True)
+                return row, "throttled" if throttled else ""
+        except (KeyError, PermissionError):
+            return self._copy_row(pair, "unavailable", MSG_REAUTH), ""
+        except Exception as exc:
+            logger.warning("Fitting copy failed before send", exc_info=True)
+            return self._copy_row(pair, "unavailable", _bounded_error(exc)), ""
+
+    def _execution_readiness_locked(
+        self,
+        pair: _TicketPair,
+        entry: LibraryEntry | None,
+        sent_names: dict[int, set[str]],
+        now: datetime,
+    ) -> tuple[str, str] | None:
+        if entry is None:
+            return "unavailable", "This fitting is no longer in the library."
+        reason = self._pair_unavailable_reason_locked(
+            entry, pair.character_id, "enabled", now
+        )
+        if reason:
+            return "unavailable", reason
+        if self._content_present_locked(pair.character_id, entry.content):
+            return "present", ""
+        if self._unresolved_locked(pair.character_id, entry.content):
+            return (
+                "unavailable",
+                "A prior copy has an unknown outcome. Refresh to reconcile it.",
+            )
+        names = self._existing_name_keys_locked(pair.character_id)
+        names.update(sent_names.get(pair.character_id, set()))
+        if normalized_name_key(pair.chosen_name) in names:
+            return "conflict_skipped", "That fitting name is now in use."
+        return None
+
+    @staticmethod
+    def _create_body(entry: LibraryEntry, chosen_name: str) -> dict:
+        assert entry.deployment_template is not None
+        return {
+            "name": chosen_name,
+            "description": entry.preferred_description,
+            "ship_type_id": entry.content.ship_type_id,
+            "items": [
+                {
+                    "flag": item.flag,
+                    "quantity": item.quantity,
+                    "type_id": item.type_id,
+                }
+                for item in entry.deployment_template
+            ],
+        }
+
+    @staticmethod
+    def _classify_post(response) -> tuple[str, int | None, str, bool]:
+        if not response.response_received:
+            return "unknown", None, response.error or "No response from ESI.", False
+        status = response.status
+        if status == 201:
+            fitting_id = (
+                response.data.get("fitting_id")
+                if isinstance(response.data, dict)
+                else None
+            )
+            if (
+                isinstance(fitting_id, int)
+                and not isinstance(fitting_id, bool)
+                and fitting_id > 0
+            ):
+                return "success", fitting_id, "", False
+            return (
+                "unknown",
+                None,
+                "ESI returned 201 without a valid fitting ID.",
+                False,
+            )
+        error = response.error or f"ESI rejected the fitting create ({status})."
+        if status == 408 or (isinstance(status, int) and status >= 500):
+            return "unknown", None, error, False
+        if status in {420, 429}:
+            return "failed", None, error, True
+        if isinstance(status, int) and 400 <= status < 500:
+            return "failed", None, error, False
+        return "unknown", None, error, False
+
+    @staticmethod
+    def _copy_row(
+        pair: _TicketPair,
+        status: str,
+        error: str,
+        remote_fitting_id: int | None = None,
+        *,
+        attempted: bool = False,
+    ) -> dict:
+        return {
+            **FittingsController._ticket_pair_payload(pair),
+            "status": status,
+            "error": error,
+            "remote_fitting_id": remote_fitting_id,
+            "attempted": attempted,
+        }
+
+    @staticmethod
+    def _copy_result(status: str, operation_id: str, results: list[dict]) -> dict:
+        return {
+            "status": status,
+            "operation_id": operation_id,
+            "results": results,
+            "write_count": sum(1 for row in results if row["attempted"]),
+        }
+
+    def cancel_copy(self) -> bool:
+        self._copy_cancelled.set()
+        return True
 
     # ----- workspace queries ----------------------------------------------
     #
@@ -1203,3 +1866,4 @@ class FittingsController:
 
     def shutdown(self) -> None:
         self._stopping.set()
+        self._copy_cancelled.set()
