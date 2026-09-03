@@ -75,6 +75,43 @@ def _collect(stream):
     return received
 
 
+class _AttemptSignallingLock:
+    """Test-only wrapper around a lock that reports a watched thread's
+    arrival *before* it blocks.
+
+    A contention test cannot infer "the other thread is blocked" from a
+    sleep plus a not-yet-finished flag: that only says it has not finished,
+    which is also true if it never started.  Wrapping the lock makes the
+    attempt itself observable, so the test can wait on ``attempted`` and
+    know the watched thread is parked on a lock the other thread holds.
+    """
+
+    def __init__(self, real):
+        self._real = real
+        self._watch_ident = None
+        self.attempted = threading.Event()
+
+    def watch(self, ident):
+        """Signal ``attempted`` when this thread reaches ``acquire``."""
+        self._watch_ident = ident
+
+    def acquire(self, *args, **kwargs):
+        if threading.get_ident() == self._watch_ident:
+            self.attempted.set()
+        return self._real.acquire(*args, **kwargs)
+
+    def release(self):
+        self._real.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc_info):
+        self.release()
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Source lifecycle and ordering
 # ---------------------------------------------------------------------------
@@ -1293,6 +1330,8 @@ class TestThreadSafety:
 
         in_poll = threading.Event()
         release = threading.Event()
+        op_gate = _AttemptSignallingLock(stream._op_lock)
+        stream._op_lock = op_gate
         real_poll = stream._poll
 
         def gated_poll():
@@ -1304,6 +1343,9 @@ class TestThreadSafety:
         b_done = threading.Event()
 
         def retire_caller():
+            # Make B's arrival at the operation lock observable before it
+            # blocks, so the assertions below need no sleep.
+            op_gate.watch(threading.get_ident())
             stream.scan_once(NOW)
             b_done.set()
 
@@ -1316,8 +1358,9 @@ class TestThreadSafety:
         os.utime(path, (old, old))
         tb = threading.Thread(target=retire_caller)
         tb.start()
-        time.sleep(0.1)
-        # B cannot have finished: it is blocked on the operation lock A holds.
+        # B has reached the operation lock A still holds, so it is parked
+        # there: the only path to b_done runs through that acquire.
+        assert op_gate.attempted.wait(timeout=5)
         assert not b_done.is_set()
         release.set()
         ta.join(timeout=5)
