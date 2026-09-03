@@ -3130,6 +3130,48 @@ so these are the checks that matter and only a Windows machine can run them.
       accounts…` and the account-tools row are hidden entirely (not merely
       disabled), account rows fall back to `Account <id>`, and copy/backup
       for that profile's characters and accounts remain fully available.
+- [ ] **A deleted character may appear before ESI answers, then disappears.**
+      Open Profiles with a known deleted local character file. Expected: the
+      character may render in the list initially (before ESI resolves), then
+      disappears once ESI confirms the deletion. The row is not shown on
+      subsequent refreshes or after restart.
+- [ ] **Selected source or target disappearing leaves copy controls coherent.**
+      Set up a copy with source and targets selected. During in-flight ESI
+      resolution for deleted characters, remove a selected target from the
+      roster (delete its `.dat` file). Expected: the Copy card remains usable,
+      the selection updates, and completion succeeds for surviving targets
+      without errors or corrupted state.
+- [ ] **The deleted account link is absent after refresh and restart.**
+      Identify and link a Tranquility character to an account, then confirm
+      that character is deleted via ESI. Refresh the Profiles route and
+      restart the app. Expected: the link is removed from Wingman's persisted
+      account-character metadata; the account and other characters survive
+      intact. Inspect `settings.json` to confirm the character ID is absent
+      from `account_characters` for that account.
+- [ ] **Active and unresolved characters remain usable.** With an active
+      character, a character pending ESI resolution (network down), and a
+      confirmed deleted character all in the same profile: Expected: active
+      and unresolved characters remain visible, selectable, and copyable; only
+      the confirmed-deleted row hides. The unresolved character persists
+      across route refresh and Wingman restart.
+- [ ] **The deleted character's local `.dat` and backup remain intact and
+      listed.** After deletion filtering hides a character from Profiles and
+      removes its account link, verify its `core_char_<id>.dat` file still
+      exists in the profile folder unchanged. Open Backups and confirm the
+      character's backup (if one exists) is still listed and restorable.
+- [ ] **Switching profiles during in-flight resolution settles the latest
+      profile.** Start resolution for profile A (Characters mode), switch to
+      profile B while ESI requests are pending. Expected: profile B resolves
+      without waiting for profile A's requests to complete; switching again
+      resolves the latest selected profile; no deletion filtering or cleanup
+      from stale passes mutate the current context.
+- [ ] **A misleadingly named `tranquil*` directory remains untrusted and
+      non-destructive.** Point the EVE folder at a directory named
+      `tranquility_backup` or `fake_tranquility_other`. Expected: Profiles
+      opens normally; character names use fallback resolution; no deletion
+      filtering or account-link cleanup occurs, regardless of the directory
+      name. In Accounts mode, identity controls remain unavailable. Copy and
+      backup remain fully available.
 - [ ] **Inspect every deterministic identity fixture in a browser.** Open
       `?dev=1&identity=<state>` for `idle`, `waiting`, `none`, `ambiguous`,
       `candidate-multiple`, `pending-name`, `existing-name`, `roster-one`,
