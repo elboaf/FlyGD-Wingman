@@ -829,6 +829,34 @@ def test_download_wraps_a_staging_file_creation_failure(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_download_wraps_an_fdopen_failure_without_leaking_the_descriptor(
+    tmp_path, monkeypatch
+):
+    release = release_info(payload=b"installer")
+    captured = {}
+
+    def raising_fdopen(handle, mode):
+        captured["handle"] = handle
+        raise OSError("too many open files")
+
+    monkeypatch.setattr(updates.os, "fdopen", raising_fdopen)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"installer")
+        )
+
+    assert exc_info.value.stage == "download"
+    assert exc_info.value.code == "filesystem"
+    assert list(tmp_path.iterdir()) == []
+
+    # download_release must already have closed the raw fd (rather than
+    # leaking it) -- closing it again must fail with "bad file descriptor"
+    # instead of succeeding a second time.
+    with pytest.raises(OSError):
+        os.close(captured["handle"])
+
+
 def test_download_wraps_a_write_failure_and_removes_the_partial(tmp_path, monkeypatch):
     release = release_info(payload=b"installer")
     real_fdopen = updates.os.fdopen

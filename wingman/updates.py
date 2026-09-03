@@ -371,10 +371,21 @@ def download_release(
         ) from exc
     tmp_path = Path(tmp_name)
     try:
+        try:
+            stream_cm = os.fdopen(handle, "wb")
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+            raise UpdateFailure(
+                "download",
+                "filesystem",
+                f"could not open the staging file: {exc}",
+            ) from exc
+
         digest = hashlib.sha256()
         total = 0
         request = urllib.request.Request(release.url)
-        with os.fdopen(handle, "wb") as stream:
+        with stream_cm as stream:
             try:
                 response_cm = opener.open(request, timeout=30.0)
             except OSError as exc:
