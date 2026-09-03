@@ -2,6 +2,7 @@
 so the whole module tests on Linux."""
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,100 @@ def test_default_profile_sorts_first(tmp_path):
     build(tmp_path, profile="settings_Default")
     found = tree.discover(tmp_path)
     assert found.profiles[0].name == "Default"
+
+
+def test_profile_root_normalizes_to_canonical_triple(tmp_path):
+    profile = tmp_path / "EVE" / "server_tranquility" / "settings_Default"
+    profile.mkdir(parents=True)
+    found = tree.discover(profile)
+    assert (found.root, found.server, found.profile) == (
+        profile.parent.parent,
+        profile.parent,
+        profile,
+    )
+
+
+def case_distinct_names_supported(where: Path) -> bool:
+    """Whether *where*'s filesystem can hold two names differing only by case.
+
+    Probed, not assumed from `os.name`: the pairing is not platform-wide in
+    either direction. Windows' own NTFS can be mounted case-sensitive
+    per-directory, and a macOS or WSL checkout on a case-INSENSITIVE volume
+    would fail a test that took `os.name != "nt"` as permission to create
+    such a pair. The tiebreaker being tested exists precisely for the
+    filesystems that CAN hold the pair, so the capability is what decides.
+    """
+    probe = where / ".case-probe"
+    probe.mkdir()
+    try:
+        (probe / "a").mkdir()
+        try:
+            (probe / "A").mkdir()
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        shutil.rmtree(probe)
+
+
+def test_profiles_have_a_stable_path_tiebreaker(tmp_path):
+    """os.scandir's order is filesystem-dependent, so two profiles differing
+    only by case must not swap places between two renders of the same folder.
+
+    Whether such a pair can exist at all is a property of the FILESYSTEM,
+    not of the platform: a default NTFS volume folds case and cannot hold
+    one, but NTFS supports per-directory case sensitivity (`fsutil file
+    setCaseSensitiveInfo`, the flag WSL sets on its own directories), and a
+    macOS or WSL checkout can equally sit on a case-INSENSITIVE volume. That
+    is why the guard below probes the actual tmp_path instead of branching
+    on os.name, and why the tiebreaker is a real ordering rule rather than a
+    Linux-only curiosity.
+    """
+    if not case_distinct_names_supported(tmp_path):
+        pytest.skip(f"{tmp_path} cannot hold two names differing only by case")
+    server = tmp_path / "server_tranquility"
+    (server / "settings_alt").mkdir(parents=True)
+    (server / "settings_Alt").mkdir()
+    found = tree.discover(tmp_path, server)
+    assert [p.path.name for p in found.profiles] == ["settings_Alt", "settings_alt"]
+
+
+def test_the_case_folding_tiebreaker_still_settles_the_order_it_folds(
+    tmp_path, monkeypatch
+):
+    """`os.path.normcase` LOWERCASES on Windows, so on a case-sensitive NTFS
+    directory the very pair the tiebreaker exists for ties under it and the
+    sort falls back to scandir's filesystem-dependent order -- the drift the
+    tiebreaker was added to stop. The raw path settles it last.
+
+    normcase and the scan order are both faked here rather than probed,
+    because the combination being tested (Windows' case-folding normcase
+    over a case-sensitive directory) is precisely the one this suite's host
+    cannot supply on either platform. `_scan` is the seam, not `os.scandir`:
+    `_has_profiles` uses the real scandir as a context manager, so a double
+    returning a plain list there would fail on the shape rather than on the
+    ordering rule under test.
+    """
+    if not case_distinct_names_supported(tmp_path):
+        pytest.skip(f"{tmp_path} cannot hold two names differing only by case")
+    server = tmp_path / "server_tranquility"
+    (server / "settings_alt").mkdir(parents=True)
+    (server / "settings_Alt").mkdir()
+    real_scan = tree._scan
+
+    def descending_scan(path):
+        # The reverse of what the sort must produce, so a rule that fell
+        # back to scan order would be visible in the assertion rather than
+        # accidentally agreeing with it.
+        entries, unreadable = real_scan(path)
+        return sorted(entries, key=lambda entry: entry.name, reverse=True), unreadable
+
+    monkeypatch.setattr(tree.os.path, "normcase", str.lower)
+    monkeypatch.setattr(tree, "_scan", descending_scan)
+
+    found = tree.discover(tmp_path, server)
+
+    assert [p.path.name for p in found.profiles] == ["settings_Alt", "settings_alt"]
 
 
 def test_normalize_selection_heals_a_root_pointed_at_a_profile(tmp_path):

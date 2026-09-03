@@ -1471,12 +1471,72 @@
              argument here is unchanged either way: qualify the word, do
              not drop it. -->
         <h2>EVE settings folder<span id="es-eve-state" class="pill">EVE closed</span></h2>
-        <!-- Two faces of one card. Folder, server and profile are set on the
-             first visit and rarely again, while the copy card below is why
-             the screen exists; five controls above it pushed the target list
+        <!-- Profile-first (round 7): the profile decides what a copy reads
+             and what a copy targets, which is the reason the screen exists,
+             so it is the one control this card shows on every visit rather
+             than the one folder/server setup collapses away after the
+             first. The New/Replace disclosure sits beside it for the same
+             reason -- creating or replacing a whole profile is a decision
+             about THIS profile, not a fourth folder-setup control -- and it
+             opens inline rather than as a dialog so the source, the mode
+             and the destination stay in the one place a mistake here would
+             be caught: beside the Profile picker itself. -->
+        <div class="row" id="es-profile-primary">
+          <label class="lab" for="es-profile">Profile</label>
+          <select id="es-profile" class="field"></select>
+          <button id="es-profile-copy-open" class="btn" type="button">Copy profile…</button>
+        </div>
+        <!-- Explicit disclosure state (profileCopy), not a details/summary:
+             the source is FROZEN at open from state.profile, so a root,
+             server or profile change Python accepts must close it rather
+             than leave it open over a source that no longer exists. A
+             native <details> has no hook for that; evesettings.js owns it
+             instead, the same way it owns the folder card's own open/closed
+             face. -->
+        <div id="es-profile-copy-panel" class="es-profile-copy" hidden>
+          <div class="row" id="es-profile-copy-source-row">
+            <span class="lab">Copying</span>
+            <span id="es-profile-copy-source" class="es-path"></span>
+          </div>
+          <div class="row">
+            <label class="radio">
+              <input type="radio" id="es-profile-copy-new" name="es-profile-copy-mode" value="new" checked><span class="ring"></span>
+              New profile
+            </label>
+            <label class="radio">
+              <input type="radio" id="es-profile-copy-replace" name="es-profile-copy-mode" value="replace"><span class="ring"></span>
+              Replace existing
+            </label>
+          </div>
+          <!-- aria-describedby: the status line under these two fields is
+               where every refusal about a NAME or a DESTINATION lands
+               (Python's), and where the panel says why its submit is
+               disabled. role="status" announces the change once; without
+               this association a screen-reader user who tabs BACK to the
+               field afterwards hears the field alone and never the reason
+               their last attempt was refused. -->
+          <div class="row" id="es-profile-copy-new-fields">
+            <label class="lab" for="es-profile-copy-name">Name</label>
+            <input id="es-profile-copy-name" class="field" type="text" maxlength="80" aria-describedby="es-profile-copy-status">
+          </div>
+          <div class="row" id="es-profile-copy-replace-fields" hidden>
+            <label class="lab" for="es-profile-copy-destination">Replace</label>
+            <select id="es-profile-copy-destination" class="field" aria-describedby="es-profile-copy-status"></select>
+          </div>
+          <p id="es-profile-copy-status" class="field-msg" role="status"></p>
+          <div class="row">
+            <button id="es-profile-copy-submit" class="btn" type="button">Copy profile</button>
+            <button id="es-profile-copy-cancel" class="btn" type="button">Cancel</button>
+          </div>
+        </div>
+        <!-- Two faces of one card. Folder and server are set on the first
+             visit and rarely again, while the copy card below is why the
+             screen exists; five controls above it pushed the target list
              under the fold at the window floor. evesettings.js chooses which
              face renders and forces the controls open when there is nothing
-             to summarise.
+             to summarise. Profile itself is no longer part of either face --
+             see the primary row above -- because it is not setup, it is the
+             thing that changes on every visit.
 
              The floor is 840x625 CSS at every scaling (DESIGN.md). This
              comment used to say "the 560px floor", a viewport S4 established
@@ -1496,7 +1556,7 @@
                (The box is gone too now -- see .es-path, round 3's P4 -- so
                the row no longer offers a second thing that looks clickable
                for this button to lose against.) -->
-          <button id="es-folder-edit" class="btn">Change…</button>
+          <button id="es-folder-edit" class="btn">Change folder or server…</button>
         </div>
         <div id="es-folder-detail">
           <div class="row">
@@ -1536,8 +1596,6 @@
           <div class="row">
             <label class="lab" for="es-server">Server</label>
             <select id="es-server" class="field"></select>
-            <label class="lab" for="es-profile">Profile</label>
-            <select id="es-profile" class="field"></select>
           </div>
         </div>
         <p id="es-warning" class="hint" hidden></p>

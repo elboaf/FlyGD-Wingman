@@ -2966,20 +2966,25 @@ so these are the checks that matter and only a Windows machine can run them.
       newest 20 entries on each entry.
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
-- [ ] **The folder card is one line on every visit after the first.** With a
-      folder already chosen, open the route. Expected: the EVE settings
-      folder card is a single row — `Folder`, the path, the server and
-      profile, and a `Change…` button. The server and the profile each
-      carry their noun, `Tranquility server · Default profile` (round 5's
-      R5); bare, `Default` did not read as a profile name at all. Check the
-      path still fits beside them at the floor with the default EVE root.
-      And the Copy EVE settings card's
-      target list is on screen without scrolling. Press `Change…`: the
-      folder, Server and Profile controls appear. Leave the route and come
-      back: it is one line again. This is deliberate and not a bug — the
-      collapse is what puts the task on screen, so it is not remembered.
+- [ ] **The folder card is one line on every visit after the first, and
+      Profile is not part of it.** With a folder already chosen, open the
+      route. Expected: `Profile` is its own always-visible row above the
+      folder card, with `Copy profile…` beside it — present on every visit,
+      never collapsed, because it is the control that changes, not setup.
+      The EVE settings folder card below it is a single row — `Folder`, the
+      path, the server (`Tranquility server`, round 5's R5 pattern) and a
+      `Change folder or server…` button. Profile is not repeated here (round
+      7's profile-first change): the folder card names only what rarely
+      changes. Check the path still fits beside the server at the floor
+      with the default EVE root. And the Copy EVE settings card's target
+      list is on screen without scrolling. Press `Change folder or
+      server…`: the folder and Server controls appear (Profile does not,
+      it is never part of this face). Leave the route and come back: the
+      folder card is one line again and Profile still shows above it. This
+      is deliberate and not a bug — the collapse is what puts the task on
+      screen, so it is not remembered.
 - [ ] **Neither folder path can be clicked into.** Open the route with a
-      folder chosen, then press `Change…`. Expected: the path in both faces
+      folder chosen, then press `Change folder or server…`. Expected: the path in both faces
       of the card is monospace text on the card's own left edge, with no
       fill, no border and no focus ring — click it and nothing happens and
       nothing is focused. Compare it against Settings › Folders, where the
@@ -3050,8 +3055,10 @@ so these are the checks that matter and only a Windows machine can run them.
       copy below; it may not only appear when the card is expanded.
 - [ ] **The settings-folder path is monospace and truncates.** Both faces of
       the card. Expected: the same monospace face as the webhook and the
-      recordings folder, on the same label column as Server and Profile, and
-      a long root ends in an ellipsis rather than pushing `Change…` or
+      recordings folder, on the same label column as Server (Profile is its
+      own always-visible row above the card, not part of either face), and
+      a long root ends in an ellipsis rather than pushing `Change folder or
+      server…` or
       `Choose folder…` toward the right edge. Check at 150% scaling, where
       the card is narrower than its own 620px.
 - [ ] **The Characters / Accounts switch says what it is.** Expected:
@@ -3297,6 +3304,137 @@ so these are the checks that matter and only a Windows machine can run them.
       thing before the write. Close every client and confirm the sentence
       disappears — it is probed fresh each time the dialog is raised, not
       read from the pill.
+
+### Copy a whole profile (New/Replace)
+
+The `Copy profile…` disclosure beside the primary Profile control
+(`Api.eve_settings_copy_profile`, evesettings.js's `profileCopy` state)
+creates a new `settings_*` folder from the selected profile, or replaces
+another profile's files with a copy of it. Its deterministic branches are
+covered by `tests/test_api_evesettings.py`, and the eleven
+`?dev=1&profile=<key>` checkpoints in `wingman/web/dev.js`
+(`tests/test_dev_harness.py`'s `PROFILE_COPY_SCENARIOS`) are a
+REPRESENTATIVE set of rendered states, not an exhaustive one. Two outcomes
+in particular have no checkpoint of their own: the UNKNOWN probe ("Wingman
+could not verify that EVE is closed"), where only the RUNNING refusal and
+the FAILED rollback are staged in `dev.js`, and a SUCCESSFUL rollback after
+a caught publication failure. Both are covered in
+`tests/test_api_evesettings.py`, and their rendered wording is proved only
+by the manual checks below. This section is what only a Windows machine
+with real `settings_*` folders can still prove.
+
+- [ ] **Inspect every deterministic checkpoint in a browser first.** Open
+      `?dev=1&profile=<key>` for `multiple`, `new-disclosure`,
+      `replace-disclosure`, `invalid-name`, `collision`, `busy`, `created`,
+      `replaced`, `eve-running`, `rollback-failed`, and `unsaved-selection`.
+      Expected: each opens Profiles already showing its own state — the
+      disclosure open in the right mode, the right inline error beside
+      `Copy profile`, or the right settled outcome — without hand-driving
+      the panel. Check `multiple` shows more than one profile with
+      `Default` selected, so the Replace destination dropdown is not stuck
+      on `No other profiles`.
+- [ ] **No folder, one profile, multiple profiles, multiple servers.**
+      With no EVE folder set, `Copy profile…` is unavailable (there is no
+      selected profile to freeze as the source). With exactly one profile,
+      `New profile` is the only usable mode — `Replace existing` offers
+      no destination. Add a second profile, and separately a second server
+      with its own profiles: the Replace destination list is always the
+      OTHER profiles on the currently selected server, never a profile
+      that belongs to a different one.
+- [ ] **Root, server, and profile picks show canonical context before the
+      disclosure opens.** Point the folder picker at a `settings_*`
+      directory or a legacy deep root and let it heal upward. Change server
+      and profile. Expected: `Copy profile…` opens against the canonical
+      profile actually selected, and `Copying` inside the panel names that
+      profile — never a stale or pre-canonicalization path.
+- [ ] **Route re-entry and keyboard-only use of the disclosure.** Open
+      `Copy profile…`, then leave Profiles for another route (Backups,
+      Settings, Skills) and come back. Expected: the disclosure is closed —
+      it is not remembered across a visit, the same rule the folder card's
+      own collapse follows. Reopen it and drive the whole flow — mode
+      radios, Name, Replace, Copy profile, Cancel — using only Tab, Space,
+      and Enter; nothing requires a pointer, the order through the panel is
+      the order it reads in, and every control in it is reachable. Tabbing
+      on past Cancel continues into the rest of the route, as it should —
+      this is an inline disclosure, not a modal, so focus is not trapped.
+- [ ] **Create success, and the created profile is visible everywhere it
+      should be.** With EVE closed, open `New profile`, type a name, and
+      press `Copy profile`. Expected: the button reads a neutral busy state
+      while the copy runs, the disclosure closes on completion, and the new
+      profile is now selected in the primary Profile control. Launch EVE's
+      own launcher/client and confirm the created `settings_*` profile is
+      visible there as a distinct profile, not merged into an existing one.
+- [ ] **Replace: confirm, decline, the backup, and the retained source.**
+      With EVE closed, open `Replace existing`, choose another profile as
+      the destination, and press `Copy profile`. Expected: a destructive
+      confirmation names both the source and the destination profile and
+      states that the destination is backed up first. Decline it once —
+      nothing in the destination changes and no backup is taken. Accept it
+      once — Backups gains a fresh automatic backup of the destination
+      taken before the replace, the destination's files now match the
+      source, and the SOURCE remains the selected profile throughout;
+      replacing a profile never moves the selection onto the one just
+      replaced.
+- [ ] **Running and unknown EVE both refuse the copy.** With an EVE client
+      open, attempt both `New profile` and `Replace existing`. Expected:
+      the copy is refused with "EVE is running. Close EVE and retry."
+      beside `Copy profile`, and nothing on disk changes. Separately, with
+      EVE closed but its process state impossible for Wingman to confirm
+      (for example, a permissions-restricted process list), expect the
+      "Wingman could not verify that EVE is closed" refusal instead of a
+      guess in either direction. For Replace specifically, start EVE
+      AFTER accepting the confirmation dialog but before the copy runs:
+      the second, later probe must still catch it and refuse.
+- [ ] **Created-but-selection-unsaved warning.** Make the settings file
+      that stores the EVE folder selection briefly unwritable (read-only,
+      or the containing directory locked), then create a new profile.
+      Expected: the profile exists on disk and the Profile dropdown offers
+      it, but the warning explains Wingman could not remember the
+      selection and to select it manually — never a plain "failed" that
+      would invite retrying a creation that already happened.
+- [ ] **A caught publication failure recovers from its own backup, and a
+      failed rollback still names the way back.** For Replace, interrupt
+      the copy partway (for example, revoke write access to one file
+      inside the destination profile mid-copy) so publication raises after
+      writing some but not all files. Expected: Wingman restores the
+      destination from the automatic backup it took moments before, reports
+      the destination is unchanged, and leaves no partial write behind.
+      Separately, make that same restore itself fail (for example, revoke
+      read access to the backup archive). Expected: the message names the
+      destination as possibly holding a mix of both profiles and names the
+      specific backup archive to restore from Backups by hand — the
+      archive is now the only way back, and this is an instruction, not an
+      error code.
+- [ ] **The hard-kill boundary relies on Backups, not on rollback.** Kill
+      Wingman's process (not EVE's) mid-replace, after the destructive
+      confirmation but before the worker finishes. Expected: on relaunch,
+      the destination profile may be left partially written with no
+      automatic rollback attempted — recovery is restoring the automatic
+      backup taken just before the replace from **Backups**, which is
+      exactly why that backup is unconditional and taken before a single
+      file changes.
+- [ ] **A real Windows junction inside the EVE settings folder is refused
+      as a copy source or destination**, the same as it already is for a
+      selective copy target (see the junction check above): create one
+      beside the real profiles, INSIDE the selected server rather than at
+      the canonical root — `mklink /J <root>\<server>\settings_Escape
+      C:\SomewhereElse` — so that it is offered as a profile at all; a
+      junction at the root is not a profile and the copy would never look
+      at it. Then exercise it both ways. As DESTINATION: `Replace existing`
+      against it, and `New profile` typing a name that would collide with
+      it. As SOURCE: select `Escape` in the primary Profile control and
+      run both `New profile` and `Replace existing` from it. Nothing
+      publishes through the junction in either direction; the escape is
+      refused before anything is staged, and `C:\SomewhereElse` is
+      untouched afterwards.
+- [ ] **840×625 at 100% and 200% scaling.** At the CSS viewport floor, open
+      `Copy profile…` in both modes. Expected: the panel, its radios, the
+      Name/Replace fields, and both buttons fit without horizontal
+      scrolling, and the inline error message wraps rather than truncating.
+      Repeat at 200% Windows scaling — the disclosure is still fully
+      reachable and legible, and the primary Profile row does not crowd
+      `Copy profile…` off the row's right edge.
+
 ### Backups
 
 - [ ] Open **Backups** from Profiles and verify an empty history, an unreadable

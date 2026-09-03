@@ -11,7 +11,12 @@ from typing import NamedTuple
 
 # EVE's own three-level layout:
 #   <root>/<server>/settings_<profile>/core_char_<id>.dat
-_PROFILE_PREFIX = "settings_"
+#
+# Public: profilecopy.py derives a new profile's directory name from this
+# same prefix, and a private name here would mean that module's authority
+# over profile creation quietly depended on a second, independent copy of
+# the literal -- the exact drift backup.py's _NAME_RE comment warns about.
+PROFILE_PREFIX = "settings_"
 _KIND_PREFIXES = {"core_char_": "character", "core_user_": "account"}
 
 # A real EVE root holds one directory per shared-cache install -- a
@@ -189,7 +194,7 @@ def is_tranquility_server(path) -> bool:
 
 
 def _is_profile_dir(path) -> bool:
-    return Path(path).name.startswith(_PROFILE_PREFIX)
+    return Path(path).name.startswith(PROFILE_PREFIX)
 
 
 class Probe(NamedTuple):
@@ -309,8 +314,25 @@ def _profiles_in(server) -> tuple[list, bool]:
             modified = path.stat().st_mtime
         except OSError:
             modified = 0.0
-        found.append(Profile(path, path.name[len(_PROFILE_PREFIX) :], count, modified))
-    found.sort(key=lambda p: (p.name.lower() != "default", p.name.lower()))
+        found.append(Profile(path, path.name[len(PROFILE_PREFIX) :], count, modified))
+    # os.scandir's order is filesystem-dependent, so two profiles whose
+    # names differ only by case must not swap places between two renders of
+    # the same folder. Whether such a pair can exist is a property of the
+    # FILESYSTEM, not of the platform: a default NTFS volume folds case and
+    # cannot hold one, but NTFS supports per-directory case sensitivity
+    # (`fsutil file setCaseSensitiveInfo`, the flag WSL sets on its own
+    # directories). normcase alone is not the tiebreaker it looks like --
+    # on Windows it lowercases, so the very pair this rule exists for ties
+    # under it and falls back to scandir's order. The raw path settles it
+    # last, on every platform.
+    found.sort(
+        key=lambda p: (
+            p.name.lower() != "default",
+            p.name.casefold(),
+            os.path.normcase(str(p.path)),
+            str(p.path),
+        )
+    )
     return found, unreadable
 
 

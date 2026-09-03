@@ -44,6 +44,32 @@
   // deletion the page has already applied -- and must be discarded rather
   // than repainted.
   var identificationGeneration = 0;
+  // The inline New/Replace disclosure beside the primary Profile control.
+  // `source` is frozen at open from state.profile, not re-read at submit,
+  // so it names the profile the user pointed at when they opened it --
+  // immune to a root/server/profile change accepted underneath it, which
+  // is also why every such accepted change resets this rather than
+  // leaving it open over a source token that no longer resolves.
+  var profileCopy = {
+    open: false,
+    source: '',
+    mode: 'new',
+    name: '',
+    destination: '',
+    error: '',
+    // Set on the render that first notices the chosen Replace destination
+    // is gone, and read back on every render after -- never re-derived
+    // from the destination select's own live value, because THIS function
+    // is what just overwrote that value with the placeholder's ''. A
+    // second, unrelated repaint (a poll, setBusy(), the mode radios) that
+    // read the DOM instead would see its own prior output, conclude
+    // nothing had vanished, and let the browser's default -- the first
+    // remaining profile -- silently reappear as though re-picked. Cleared
+    // only by the destination select's own 'change' handler, which can
+    // only fire for one of the enabled real options -- never this
+    // disabled placeholder.
+    destinationInvalid: false
+  };
 
   function kind() {
     var checked = document.querySelector('input[name="es-kind"]:checked');
@@ -91,6 +117,8 @@
     // placeholder is a worse answer than the blank it replaced.
     fill('es-server', payload.servers, payload.server, 'No folder chosen');
     fill('es-profile', payload.profiles, payload.profile, 'No folder chosen');
+    renderProfileCopy();
+    paintProfileCopyTool();
     renderSource();
     renderIdentity();
     renderCopyGroups();
@@ -113,6 +141,26 @@
     return match ? match.name : '';
   }
 
+  // The full accepted-selection context, as staleness actually decides it.
+  // A root pick can silently change the server and/or profile too --
+  // discover()'s own fallback when the prior selection no longer resolves
+  // on the new tree -- so comparing root alone missed a same-root pick
+  // that moved the profile out from under an open disclosure or a ticked
+  // roster while leaving root untouched.
+  function contextOf(payload) {
+    return {
+      root: (payload && payload.root) || '',
+      server: (payload && payload.server) || '',
+      profile: (payload && payload.profile) || ''
+    };
+  }
+
+  function contextChanged(before, after) {
+    var next = contextOf(after);
+    return before.root !== next.root || before.server !== next.server
+      || before.profile !== next.profile;
+  }
+
   // R5: each name carries its noun. Collapsed, this row read `Folder
   // <path> Tranquility - Default`: one labelled value beside two unlabelled
   // ones, though the server and the profile decide what a copy will hit
@@ -132,10 +180,183 @@
     WM.el('es-folder-detail').hidden = !open;
     if (open) return;
     WM.el('es-folder-root').textContent = state.root;
+    // Profile no longer names itself here -- it is the primary row's own
+    // control now (see #es-profile-primary), visible on every visit rather
+    // than folded into the setup face this row summarises.
     WM.el('es-folder-set').textContent =
-      [setLabel(nameOf(state.servers, state.server), 'server'),
-       setLabel(nameOf(state.profiles, state.profile), 'profile')]
-        .filter(Boolean).join(' \u00b7 ');
+      setLabel(nameOf(state.servers, state.server), 'server');
+  }
+
+  // The available replace targets: every OTHER profile on the selected
+  // server. Never the frozen source itself -- replacing a profile with
+  // itself is not a choice this screen offers, so it is not an option a
+  // discovery race or a stale render could leave selected either.
+  function replaceOptions() {
+    return ((state && state.profiles) || []).filter(function (profile) {
+      return profile.path !== profileCopy.source;
+    });
+  }
+
+  function resetProfileCopy() {
+    profileCopy = {
+      open: false, source: '', mode: 'new', name: '', destination: '', error: '',
+      destinationInvalid: false
+    };
+    renderProfileCopy();
+  }
+
+  function openProfileCopy() {
+    if (!state || !state.profile) return;
+    profileCopy = {
+      open: true, source: state.profile, mode: 'new',
+      name: '', destination: '', error: '', destinationInvalid: false
+    };
+    renderProfileCopy();
+    WM.el('es-profile-copy-name').value = '';
+    WM.el('es-profile-copy-name').focus();
+  }
+
+  // Owns the whole of what the disclosure looks like, the same way
+  // paintCommit owns the copy row: called from render() on every state
+  // repaint and from setBusy(), so a mutation elsewhere on the route
+  // cannot leave this one behind in the wrong enabled state. It does NOT
+  // reset the name field's value or the destination select's chosen value
+  // on an ordinary repaint -- only openProfileCopy() and resetProfileCopy()
+  // do that -- so text the user is mid-typing survives a refresh() that
+  // lands while they are typing it.
+  function renderProfileCopy() {
+    var panel = WM.el('es-profile-copy-panel');
+    panel.hidden = !profileCopy.open;
+    if (!profileCopy.open) return;
+    WM.el('es-profile-copy-source').textContent =
+      nameOf(state && state.profiles, profileCopy.source);
+    WM.el('es-profile-copy-new').checked = profileCopy.mode === 'new';
+    WM.el('es-profile-copy-replace').checked = profileCopy.mode === 'replace';
+    WM.el('es-profile-copy-new-fields').hidden = profileCopy.mode !== 'new';
+    WM.el('es-profile-copy-replace-fields').hidden = profileCopy.mode !== 'replace';
+
+    var destinationSelect = WM.el('es-profile-copy-destination');
+    var previous = destinationSelect.value;
+    var options = replaceOptions();
+    // A destination the user had chosen and that this refresh no longer
+    // offers. Re-rendering the list without it would leave the browser's
+    // own default -- the FIRST remaining profile -- sitting in the control
+    // as though the user had picked it, for the one operation on this
+    // screen that overwrites a whole profile. So the choice is taken away
+    // rather than moved, and the panel asks for it again.
+    //
+    // Latched onto profileCopy rather than recomputed from `previous` on
+    // every call: a few lines down this same function replaces the
+    // select's value with the placeholder's '', and the very next repaint
+    // -- setBusy(), a mode-radio change, refresh()'s poll, any of the
+    // several other triggers that call renderProfileCopy() -- would then
+    // read that '' back, see nothing to have vanished, and let the
+    // browser's default silently reappear as though re-picked. Only the
+    // destination select's own 'change' handler clears the flag, and it
+    // can only fire for one of the enabled real options below -- never
+    // this disabled placeholder.
+    if (previous && !options.filter(function (profile) {
+      return profile.path === previous;
+    }).length) {
+      profileCopy.destinationInvalid = true;
+    }
+    var vanished = profileCopy.destinationInvalid;
+    destinationSelect.innerHTML = '';
+    if (!options.length) {
+      var placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      placeholder.textContent = 'No other profiles';
+      destinationSelect.appendChild(placeholder);
+    } else {
+      if (vanished) {
+        var repick = document.createElement('option');
+        repick.value = '';
+        // Disabled, so it is a state the control can show but not be
+        // returned to: once a real destination is chosen there is no
+        // "unchosen" to go back to.
+        repick.disabled = true;
+        repick.selected = true;
+        repick.textContent = 'Choose a profile';
+        destinationSelect.appendChild(repick);
+      }
+      options.forEach(function (profile) {
+        var option = document.createElement('option');
+        option.value = profile.path;
+        option.textContent = profile.name;
+        option.selected = profile.path === previous;
+        destinationSelect.appendChild(option);
+      });
+    }
+    destinationSelect.disabled = !options.length || busy;
+    WM.el('es-profile-copy-name').disabled = busy;
+    WM.el('es-profile-copy-cancel').disabled = busy;
+    Array.prototype.forEach.call(
+      document.querySelectorAll('input[name="es-profile-copy-mode"]'),
+      function (radio) { radio.disabled = busy; });
+    // Enablement stops at "is there a source, is nothing else running, and
+    // is there a destination to act on at all": what makes a NAME or a
+    // chosen DESTINATION valid is Python's job, the same rule the rest of
+    // this file follows throughout -- see the header comment. A refusal
+    // comes back through profileCopy.error.
+    //
+    // The two cases below are not that judgement. They are states of this
+    // page's OWN option list, which Python cannot answer usefully: an
+    // empty destination comes back as "That destination is not on the
+    // selected server", which describes a race rather than the truth --
+    // that this server has no other profile, or that the one the user
+    // picked is gone. The page is the only side that can say so, and it
+    // says it before the request rather than after.
+    var blocked = '';
+    if (profileCopy.mode === 'replace') {
+      if (!options.length) {
+        blocked = 'There is no other profile on this server to replace. '
+          + 'Create a new profile instead.';
+      } else if (vanished) {
+        blocked = 'The profile you chose is no longer there. Choose another.';
+      }
+    }
+    WM.setEnabled('es-profile-copy-submit',
+      !busy && !!profileCopy.source && !blocked);
+    // One status line, two kinds of sentence, and the state message wins:
+    // it explains why the button in front of the user is disabled right
+    // now, while every path that sets profileCopy.error is a request that
+    // cannot be repeated unchanged anyway (the mode radios and
+    // sendProfileCopy both clear it). Not painted as an error -- nothing
+    // failed; the panel is naming what it still needs.
+    if (blocked) {
+      var status = WM.el('es-profile-copy-status');
+      status.textContent = blocked;
+      status.classList.remove('err');
+    } else {
+      paintFieldError('es-profile-copy-status', profileCopy.error);
+    }
+  }
+
+  function paintProfileCopyTool() {
+    var identifying = !!(state && state.identification_active);
+    WM.setEnabled('es-profile-copy-open',
+      !!(state && state.profile) && !busy && !identifying);
+  }
+
+  function sendProfileCopy() {
+    if (busy || !profileCopy.source) return;
+    profileCopy.name = WM.el('es-profile-copy-name').value;
+    profileCopy.destination = WM.el('es-profile-copy-destination').value;
+    profileCopy.error = '';
+    pendingMutation = 'eve_settings_copy_profile';
+    setBusy(true);
+    WM.send('eve_settings_copy_profile', profileCopy.source, profileCopy.mode,
+      profileCopy.mode === 'new' ? profileCopy.name : profileCopy.destination)
+      .then(function (result) {
+        if (result && result.accepted) return;
+        pendingMutation = '';
+        profileCopy.error = result && result.error
+          || 'Profile copy could not be started.';
+        setBusy(false);
+        renderProfileCopy();
+      });
   }
 
   // Three states, not two. null means the probe has not answered yet, and
@@ -832,6 +1053,11 @@
     // The editor entry is inert while a copy or restore is in flight, and
     // paintCommit does not own that availability decision.
     paintFormationsTool();
+    // Same rule as paintCommit/paintFormationsTool above: the disclosure and
+    // its opener own the whole of their own enabled state, so a mutation
+    // elsewhere on the route cannot leave either behind mid-repaint.
+    renderProfileCopy();
+    paintProfileCopyTool();
     var identifying = !!(state && state.identification_active);
     WM.el('es-backup-profile').disabled = value || identifying
       || !(state && state.profile);
@@ -893,6 +1119,36 @@
       paintFolder();
     });
 
+    WM.el('es-profile-copy-open').addEventListener('click', openProfileCopy);
+    WM.el('es-profile-copy-cancel').addEventListener('click', resetProfileCopy);
+    WM.el('es-profile-copy-submit').addEventListener('click', sendProfileCopy);
+    WM.el('es-profile-copy-name').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') sendProfileCopy();
+    });
+    Array.prototype.forEach.call(
+      document.querySelectorAll('input[name="es-profile-copy-mode"]'),
+      function (radio) {
+        radio.addEventListener('change', function () {
+          profileCopy.mode = radio.value;
+          profileCopy.error = '';
+          renderProfileCopy();
+        });
+      });
+    // The destination is the only control on this panel whose value the
+    // submit's own enabled state depends on: renderProfileCopy() disables
+    // submit while the select sits on the "Choose a profile" placeholder a
+    // vanished destination leaves behind, so picking a real one has to
+    // repaint or the button stays dead until some other repaint happens by.
+    // A dedicated handler, not renderProfileCopy directly: this is the
+    // ONLY event that may prove the invalidated destination has been
+    // replaced with a real choice (the placeholder option is disabled and
+    // cannot itself fire 'change'), so it is also the only place
+    // profileCopy.destinationInvalid is cleared back to false.
+    WM.el('es-profile-copy-destination').addEventListener('change', function () {
+      profileCopy.destinationInvalid = false;
+      renderProfileCopy();
+    });
+
     // Profiles 4. Both controls answer the same question -- where is the
     // EVE settings folder. A changed root drops the old selection (its
     // source does not exist in the new tree); a refusal, cancel, or no-op
@@ -907,12 +1163,13 @@
     // given the user. refresh() is what shows the outcome, in every case.
     function chooseRoot(method) {
       return function () {
-        var previousRoot = state && state.root;
+        var previous = contextOf(state);
         WM.send(method).then(function () {
           refresh().then(function (payload) {
-            if (payload && payload.root !== previousRoot) {
+            if (payload && contextChanged(previous, payload)) {
               clearCopyFollowup();
               selected = {};
+              resetProfileCopy();
               // refresh() has already painted the old local selection over
               // the newly loaded tree. Repaint it so the roster, count and
               // disabled Copy action agree with the cleared state.
@@ -931,12 +1188,27 @@
 
     ['es-server', 'es-profile'].forEach(function (id) {
       WM.el(id).addEventListener('change', function () {
-        // A source picked in the old settings set does not exist in the new
-        // one, so the selection is dropped rather than carried.
-        clearCopyFollowup();
-        selected = {};
+        // A SERVER change must not carry the old server's profile: that
+        // path is not under the requested server, and eve_settings_select
+        // refuses a profile it cannot match against the server it was
+        // asked for -- so the change came back refused and the page kept
+        // the old context under a select already showing the new one.
+        // '' is not "no profile": it is the endpoint's one deliberate
+        // fallback, "the requested server's first profile", which is
+        // exactly what changing server means.
+        var profile = id === 'es-server' ? '' : WM.el('es-profile').value;
         WM.send('eve_settings_select', WM.el('es-server').value,
-                WM.el('es-profile').value).then(function () {
+                profile).then(function (accepted) {
+          if (accepted) {
+            // A source picked in the old settings set does not exist in
+            // the new one, so the selection is dropped rather than
+            // carried -- but only once Python has actually accepted the
+            // change. A refused or no-op select must retain both the
+            // roster selection and the disclosure exactly as they were.
+            clearCopyFollowup();
+            selected = {};
+            resetProfileCopy();
+          }
           refresh();
           WM.send('eve_settings_resolve_names');
         });
@@ -1321,7 +1593,14 @@
     var completedMutation = pendingMutation;
     pendingMutation = '';
     if (WM.formationsDone) WM.formationsDone(payload);
-    if (completedMutation === 'eve_settings_copy') {
+    if (completedMutation === 'eve_settings_copy_profile') {
+      // published, not ok: a created profile that could not be saved as
+      // the selection is still ok:true from Python (the file exists and
+      // the dropdown offers it), and the disclosure must still close --
+      // the alert already carries "Select it from Profile" for the rest.
+      if (payload.published) resetProfileCopy();
+      else profileCopy.error = payload.error || profileCopy.error;
+    } else if (completedMutation === 'eve_settings_copy') {
       copyFollowup = !!payload.ok;
       if (payload.ok) selected = {};
     } else if (payload.ok) {

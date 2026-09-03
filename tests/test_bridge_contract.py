@@ -132,6 +132,27 @@ def test_selective_copy_reuses_the_existing_bridge_contract():
     )
 
 
+def test_profile_copy_bridge_shape():
+    """The page sends intent -- an expected source token, a mode, and one
+    destination -- never filesystem authority."""
+    from wingman.ui.api import Api
+
+    params = inspect.signature(Api.eve_settings_copy_profile).parameters
+    assert list(params) == ["self", "expected_source", "mode", "destination"]
+
+
+def test_profile_copy_reuses_the_single_profiles_completion_push():
+    """Whole-profile copy extends the onEveSettingsDone payload rather than
+    adding a second completion channel: two competing handlers would let a
+    page close its disclosure on one event and refresh on the other."""
+    assert [name for name in pushed_names() if name.startswith("onEveSettings")] == [
+        "onEveSettingsDone",
+        "onEveSettingsNames",
+        "onEveSettingsRunning",
+    ]
+    assert set(registered_names().get("onEveSettingsDone", [])) == {"evesettings.js"}
+
+
 def test_the_watch_url_is_written_exactly_once():
     """One place decides what a YouTube watch URL looks like, and it is
     uploader.watch_url.

@@ -1315,8 +1315,12 @@
   var backupsScenario = identitySearch.get('backups') || '';
   var copyScenario = identitySearch.get('copy') || '';
   var formationsAccountScenario = identitySearch.get('formations-account') || '';
+  // Task 7: the whole-profile copy checkpoints. A named scenario drives
+  // the eve_settings_copy_profile double below through the real panel
+  // rather than through a harness-only shortcut.
+  var profileCopyScenario = identitySearch.get('profile') || '';
   var profilesScenarioRequested = !!(backupsScenario || copyScenario
-    || formationsAccountScenario);
+    || formationsAccountScenario || profileCopyScenario);
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -1385,7 +1389,13 @@
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
-    profiles: [{ path: 'default', name: 'Default', file_count: 72 }],
+    // Two profiles, not one: every profile-copy checkpoint needs a real
+    // Replace target, and 'multiple profiles with Default selected' is
+    // itself one of the named scenarios below.
+    profiles: [
+      { path: 'default', name: 'Default', file_count: 72 },
+      { path: 'fleet', name: 'Fleet', file_count: 58 }
+    ],
     // Name-ordered, because the payload is: R1/D4 moved the roster's sort
     // out of evesettings.tree (which has only file ids) and into
     // Api.eve_settings_state (which has the resolved labels), so a
@@ -1469,12 +1479,120 @@
   };
   api.eve_settings_select = function (server, profile) {
     console.log('DEV api.eve_settings_select(', server, ',', profile, ')');
-    eve.server = server; eve.profile = profile;
+    // '' is not "no profile": Api.eve_settings_select hands discover()
+    // `profile or None`, and an empty token is its one deliberate
+    // fallback -- "the requested server's first profile". evesettings.js
+    // relies on it, sending '' on a SERVER change rather than the old
+    // server's profile path (which the endpoint would refuse). Assigning
+    // the token straight through emptied the Profile select here and
+    // disabled every control gated on state.profile, which no real server
+    // change does. The fixture carries one server and one flat `profiles`
+    // list -- that list IS what this server offers -- so its first entry
+    // is the faithful answer without inventing a per-server association
+    // the payload does not carry.
+    var resolved = profile || (eve.profiles.length ? eve.profiles[0].path : '');
+    eve.server = server; eve.profile = resolved;
     return Promise.resolve(true);
   };
   api.eve_settings_resolve_names = function () {
     console.log('DEV api.eve_settings_resolve_names()');
     return Promise.resolve(null);
+  };
+  // Task 7's specialized double. Validated the same way the bridge
+  // validates it -- against a freshly discovered tree's current
+  // selection -- so a stale token reads as the same refusal a real race
+  // would produce. Every outcome after that point is one of the eleven
+  // named checkpoints in PROFILE_COPY_SCENARIOS
+  // (tests/test_dev_harness.py), selected by ?dev=1&profile=<key> and
+  // driven through the real panel by paintProfileCopyScenario() below.
+  //
+  // Round 1 fix: PROFILE_COPY_SCENARIO_REQUESTS below pins the exact
+  // mode/destination each scripted checkpoint's driver sends, and the
+  // double refuses a request that does not match -- a sender-wiring
+  // regression (sendProfileCopy shipping the wrong mode, or reading the
+  // wrong field) is caught here rather than silently rendering some
+  // OTHER checkpoint's canned outcome. This is a bridge-argument check
+  // only: it never evaluates whether a name is well-formed or a
+  // destination genuinely collides on disk -- that stays Python's job,
+  // and a double that second-guessed it would drift from the bridge it
+  // exists to imitate.
+  var PROFILE_COPY_SCENARIO_REQUESTS = {
+    'invalid-name': { mode: 'new', destination: '' },
+    'collision': { mode: 'new', destination: 'dEfAuLt' },
+    'busy': { mode: 'new', destination: 'New Ops' },
+    'created': { mode: 'new', destination: 'New Ops' },
+    'unsaved-selection': { mode: 'new', destination: 'New Ops' },
+    'eve-running': { mode: 'new', destination: 'New Ops' },
+    'replaced': { mode: 'replace', destination: 'fleet' },
+    'rollback-failed': { mode: 'replace', destination: 'fleet' }
+  };
+  api.eve_settings_copy_profile = function (expectedSource, mode, destination) {
+    console.log('DEV api.eve_settings_copy_profile(', expectedSource, mode,
+                destination, ')');
+    if (expectedSource !== eve.profile) {
+      return Promise.resolve({ accepted: false, error: 'The selected profile changed.' });
+    }
+    var expectedRequest = PROFILE_COPY_SCENARIO_REQUESTS[profileCopyScenario];
+    if (expectedRequest
+        && (mode !== expectedRequest.mode || destination !== expectedRequest.destination)) {
+      return Promise.resolve({
+        accepted: false,
+        error: 'Dev harness: the \'' + profileCopyScenario + '\' checkpoint expected '
+          + 'mode=' + expectedRequest.mode + ' destination='
+          + JSON.stringify(expectedRequest.destination) + ', got mode=' + mode
+          + ' destination=' + JSON.stringify(destination) + '.'
+      });
+    }
+    if (profileCopyScenario === 'invalid-name') {
+      return Promise.resolve({
+        accepted: false, error: 'Profile name cannot be empty.'
+      });
+    }
+    if (profileCopyScenario === 'collision') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'A profile named \'' + destination + '\' already exists.'
+      });
+    }
+    window.setTimeout(function () {
+      // The accepted-busy checkpoint: the request was taken, but nothing
+      // ever completes, so the disabled panel stays inspectable exactly
+      // as the character-copy busy fixture already leaves it.
+      if (profileCopyScenario === 'busy') return;
+      var payload = {
+        ok: true, operation: 'profile_copy', mode: mode,
+        published: true, selection_persisted: true, error: null
+      };
+      if (profileCopyScenario === 'created') {
+        // Mirrors Api._eve_select_created_profile: a successful creation
+        // both adds the new profile and moves the selection onto it.
+        var createdProfile = { path: 'newops', name: destination, file_count: 0 };
+        eve.profiles = eve.profiles.concat([createdProfile]);
+        eve.profile = createdProfile.path;
+      } else if (profileCopyScenario === 'unsaved-selection') {
+        eve.profiles = eve.profiles.concat(
+          [{ path: 'newops', name: destination, file_count: 0 }]);
+        payload.selection_persisted = false;
+        payload.error = 'Created ' + destination + ', but Wingman '
+          + 'could not remember the selection. Select it from Profile.';
+      } else if (profileCopyScenario === 'eve-running') {
+        payload.ok = false;
+        payload.published = false;
+        payload.selection_persisted = false;
+        payload.error = 'EVE is running. Close EVE and retry.';
+      } else if (profileCopyScenario === 'rollback-failed') {
+        var target = eve.profiles.filter(function (profile) {
+          return profile.path === destination;
+        })[0];
+        payload.ok = false;
+        payload.published = false;
+        payload.error = (target ? target.name : destination) + ' may now hold '
+          + 'a mix of both profiles and Wingman could not put it back. '
+          + 'Restore core_profile_20260824-140300.zip from Backups.';
+      }
+      window.onEveSettingsDone(payload);
+    }, 250);
+    return Promise.resolve({ accepted: true, error: null });
   };
   var pendingDevCandidate = null;
   // Monotonic counter matching Task 5's Python generation scheme: bumped
@@ -1827,7 +1945,39 @@
           picker.dispatchEvent(new Event('change'));
         }, 250);
       }
+      return;
     }
+    if (profileCopyScenario) {
+      paintProfileCopyScenario();
+    }
+  }
+
+  // The eleven whole-profile-copy checkpoints, driven through the real
+  // panel controls (open, mode radios, name/destination fields, submit)
+  // rather than a harness-only shortcut. 'multiple' is the fixture's own
+  // base state -- see the profiles list above -- so it opens nothing.
+  function paintProfileCopyScenario() {
+    if (profileCopyScenario === 'multiple') return;
+    WM.el('es-profile-copy-open').click();
+    if (profileCopyScenario === 'new-disclosure') return;
+    if (profileCopyScenario === 'replace-disclosure') {
+      WM.el('es-profile-copy-replace').click();
+      return;
+    }
+    if (profileCopyScenario === 'replaced' || profileCopyScenario === 'rollback-failed') {
+      WM.el('es-profile-copy-replace').click();
+      WM.el('es-profile-copy-destination').value = 'fleet';
+    } else if (profileCopyScenario === 'collision') {
+      WM.el('es-profile-copy-name').value = 'dEfAuLt';
+    } else if (profileCopyScenario === 'invalid-name') {
+      // No field to set: the checkpoint is a blank, untouched name field,
+      // submitted as-is -- the same request an idle click would send.
+    } else if (profileCopyScenario === 'busy' || profileCopyScenario === 'created'
+        || profileCopyScenario === 'eve-running'
+        || profileCopyScenario === 'unsaved-selection') {
+      WM.el('es-profile-copy-name').value = 'New Ops';
+    }
+    WM.el('es-profile-copy-submit').click();
   }
 
   function showIdentityScenario() {

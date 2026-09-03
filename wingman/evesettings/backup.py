@@ -335,8 +335,19 @@ def _validated_members(archive: zipfile.ZipFile) -> list:
     return members
 
 
-def restore(backup_dir, archive_path, root, *, now=None) -> Path:
-    """Restore one archive. Returns the directory that was written to."""
+def restore(backup_dir, archive_path, root, *, now=None, backup_current=True) -> Path:
+    """Restore one archive. Returns the directory that was written to.
+
+    *backup_current* gates the pre-restore auto-backup below, and exists
+    for exactly one caller shape: a replacement publisher's OWN rollback,
+    invoked after it has already taken a durable backup of the profile
+    before touching it and failed partway through mutating it. That
+    caller must pass False -- reusing the backup it already has, not
+    taking a fresh one of the half-mutated profile its rollback exists to
+    erase, and not risking a second failure inside the very recovery path
+    meant to survive the first one. Every other caller keeps the default:
+    an ordinary user-initiated restore backs up whatever is live first.
+    """
     archive_path = tree.require_under(backup_dir, archive_path, suffix=".zip")
     manifest = read_manifest(archive_path)
     source = Path(manifest["source"])
@@ -385,10 +396,13 @@ def restore(backup_dir, archive_path, root, *, now=None) -> Path:
             # The pre-restore auto-backup, taken only once every member is
             # safely staged. A failure here must still abort -- nothing
             # live has been touched yet, so aborting just means unstaging.
-            if kind == "profile":
-                create_profile_backup(backup_dir, target_dir, origin="auto", now=now)
-            elif source.exists():
-                create_file_backup(backup_dir, source, origin="auto", now=now)
+            if backup_current:
+                if kind == "profile":
+                    create_profile_backup(
+                        backup_dir, target_dir, origin="auto", now=now
+                    )
+                elif source.exists():
+                    create_file_backup(backup_dir, source, origin="auto", now=now)
     except BaseException:
         for staging, _destination in staged:
             with contextlib.suppress(OSError):

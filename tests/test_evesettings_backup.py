@@ -362,6 +362,35 @@ def test_restore_rejects_a_file_archive_carrying_a_passenger_member(tmp_path):
     assert bystander.read_bytes() == b"unrelated"
 
 
+def test_restore_backs_up_current_profile_by_default(tmp_path, monkeypatch):
+    profile = profile_with(tmp_path, files=("core_char_1.dat",))
+    store = tmp_path / "backups"
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
+    calls = []
+    monkeypatch.setattr(
+        backup, "create_profile_backup", lambda *a, **k: calls.append((a, k))
+    )
+    backup.restore(store, made, tmp_path / "root")
+    assert len(calls) == 1
+
+
+def test_rollback_restore_does_not_back_up_partial_profile(tmp_path, monkeypatch):
+    """A rollback restore reuses the ALREADY-DURABLE backup a caller took
+    before it started mutating the profile. Taking a fresh auto-backup here
+    instead would back up the very half-applied state the rollback exists to
+    erase -- and, worse, could itself fail partway through, the same failure
+    the rollback is meant to recover from."""
+    profile = profile_with(tmp_path, files=("core_char_1.dat",))
+    store = tmp_path / "backups"
+    made = backup.create_profile_backup(store, profile, origin="manual", now=at())
+    monkeypatch.setattr(
+        backup,
+        "create_profile_backup",
+        lambda *a, **k: pytest.fail("must reuse durable backup"),
+    )
+    backup.restore(store, made, tmp_path / "root", backup_current=False)
+
+
 def test_restore_rejects_a_target_outside_the_current_root(tmp_path):
     profile = profile_with(tmp_path)
     store = tmp_path / "backups"
