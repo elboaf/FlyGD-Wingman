@@ -14,13 +14,20 @@ real `urllib.request.urlopen`.
 
 from __future__ import annotations
 
+import contextlib
+import datetime
+import hashlib
 import json
+import os
 import re
+import stat
+import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
-from . import __version__
+from . import __version__, atomicio
 
 RELEASES_API = "https://api.github.com/repos/elboaf/FlyGD-Wingman/releases/latest"
 MAX_INSTALLER_BYTES = 256 * 1024 * 1024
@@ -254,3 +261,250 @@ def latest_release(
         raise UpdateFailure("check", "metadata", str(exc)) from exc
 
     return release_from_payload(payload, current_version)
+
+
+# ---- Task 2: safe streaming and staging lifecycle -------------------------
+#
+# Everything below stays scoped to the download/staging boundary: the initial
+# URL was already pinned to this exact repository/tag/asset above, but a real
+# GitHub release-download URL redirects through a CDN, so every hop -- not
+# only the final response -- must independently satisfy the same narrow
+# origin policy. This is deliberately a *different, wider* set of hosts than
+# Task 1's `_ASSET_URL_HOST`: the metadata boundary trusts only GitHub's own
+# API response for this repository, while this boundary must also trust the
+# CDN host that response's asset URL legitimately redirects to.
+
+DOWNLOAD_HOSTS = frozenset(
+    {
+        "github.com",
+        "release-assets.githubusercontent.com",
+    }
+)
+DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+UPDATE_STALE_AFTER = datetime.timedelta(days=7)
+_PARTIAL_SUFFIX = ".partial"
+_READY_SUFFIX = ".ready.exe"
+_MARKER_SUFFIX = ".handoff.json"
+
+
+def validate_download_origin(url: str) -> None:
+    """Reject anything but an exact-host HTTPS origin for a download hop.
+
+    Applied to both the initial download URL and every redirect hop
+    `SafeRedirectHandler` follows. Never widens to a suffix match: an
+    `endswith("githubusercontent.com")` check would also match an
+    attacker-registered "evil-githubusercontent.com", so only exact
+    membership in `DOWNLOAD_HOSTS` is accepted.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1  # deliberately not in (None, 443): falls through to reject
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or (parsed.hostname or "").lower() not in DOWNLOAD_HOSTS
+    ):
+        raise UpdateFailure("download", "origin", f"unsafe download origin: {url!r}")
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Validate every redirect hop, not only the initial URL.
+
+    `urllib`'s default redirect handling follows a chain of 30x responses
+    blindly. GitHub's release-download URLs redirect through its CDN, so
+    checking only the final response would let a compromised or
+    misconfigured intermediate hop point anywhere; each new hop is checked
+    against the same `validate_download_origin` policy as the initial URL
+    before it is followed.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_download_origin(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download_release(
+    release: ReleaseInfo,
+    staging_root: Path,
+    *,
+    opener=None,
+    on_progress=None,
+) -> Path:
+    """Stream *release*'s asset to a uniquely named, verified `.ready.exe`.
+
+    The stream is bounded by both the advertised release size and
+    `MAX_INSTALLER_BYTES`: a chunk that would push the running total past
+    either bound is never written, so a compromised or misbehaving origin
+    cannot make Wingman buffer or persist an unbounded amount of data before
+    the final digest check would have caught it anyway. Success requires
+    the exact advertised byte count *and* a matching SHA-256; either
+    mismatch -- like any other failure -- removes the partial file rather
+    than leaving debris behind. The destination filename is drawn from
+    `tempfile.mkstemp`'s own randomness, so it stays unpredictable and never
+    collides between concurrent or repeated downloads.
+    """
+    validate_download_origin(release.url)
+    staging_root = Path(staging_root)
+    staging_root.mkdir(parents=True, exist_ok=True)
+
+    if opener is None:
+        opener = urllib.request.build_opener(SafeRedirectHandler())
+
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(staging_root), prefix="update-", suffix=_PARTIAL_SUFFIX
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        digest = hashlib.sha256()
+        total = 0
+        request = urllib.request.Request(release.url)
+        with os.fdopen(handle, "wb") as stream:
+            try:
+                response_cm = opener.open(request, timeout=30.0)
+            except OSError as exc:
+                raise UpdateFailure("download", "network", str(exc)) from exc
+            with response_cm as response:
+                while True:
+                    try:
+                        chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+                    except OSError as exc:
+                        raise UpdateFailure("download", "network", str(exc)) from exc
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > release.size or total > MAX_INSTALLER_BYTES:
+                        raise UpdateFailure(
+                            "download",
+                            "size",
+                            f"download exceeded the expected size: {total} bytes",
+                        )
+                    digest.update(chunk)
+                    stream.write(chunk)
+                    if on_progress is not None:
+                        on_progress(total, release.size)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        if total != release.size:
+            raise UpdateFailure(
+                "download",
+                "size",
+                f"download size mismatch: expected {release.size} bytes, got {total}",
+            )
+        if digest.hexdigest() != release.sha256:
+            raise UpdateFailure(
+                "download",
+                "checksum",
+                "downloaded file does not match the expected checksum",
+            )
+
+        ready_path = tmp_path.with_name(
+            tmp_path.name[: -len(_PARTIAL_SUFFIX)] + _READY_SUFFIX
+        )
+        os.replace(tmp_path, ready_path)
+        return ready_path
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def write_handoff_marker(path: Path, release: ReleaseInfo) -> Path:
+    """Durably classify *path* as handed-off without renaming it.
+
+    Wingman must never rename an installer after `ShellExecuteExW` has
+    started it, so classification is a separate atomic, fsynced sidecar
+    beside the installer rather than a rename or an in-memory flag -- this
+    is what lets `cleanup_staging` correctly retain a handed-off installer
+    even across a process restart, purely from what is on disk.
+    """
+    path = Path(path)
+    if not path.name.endswith(_READY_SUFFIX):
+        raise UpdateFailure("cleanup", "unexpected-path", path.name)
+    marker = path.with_name(path.name + _MARKER_SUFFIX)
+    payload = {
+        "file": path.name,
+        "sha256": release.sha256,
+        "version": ".".join(map(str, release.version)),
+    }
+    atomicio.write_atomic(
+        marker,
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+    )
+    return marker
+
+
+def remove_handoff_marker(marker: Path) -> None:
+    """Remove a handoff sidecar, leaving the installer it describes intact."""
+    Path(marker).unlink(missing_ok=True)
+
+
+def cleanup_staging(
+    staging_root: Path, *, now: datetime.datetime | None = None
+) -> None:
+    """Remove abandoned updater files at least `UPDATE_STALE_AFTER` old.
+
+    Constrained entirely to *staging_root*: only files matching this
+    module's own generated names (`*.partial`, `*.ready.exe`, and a matching
+    `*.ready.exe.handoff.json` sidecar) are ever considered, the directory
+    is never traversed recursively, symlinks are never followed or removed
+    (`lstat`/`follow_symlinks=False` throughout), and a name that resolves
+    outside *staging_root* is skipped rather than deleted. A handoff marker
+    classifies its matching installer as handed-off purely by filename
+    correlation on disk, which is what lets that classification survive a
+    process restart without ever renaming the installer. A sharing
+    violation or other in-use deletion failure is caught and treated as safe
+    retention, never forced.
+    """
+    staging_root = Path(staging_root)
+    try:
+        if not staging_root.is_dir():
+            return
+        resolved_root = staging_root.resolve()
+        entries = list(os.scandir(staging_root))
+    except OSError:
+        return
+
+    if now is None:
+        now = datetime.datetime.now(datetime.UTC)
+    cutoff = now - UPDATE_STALE_AFTER
+
+    marker_names = set()
+    candidates = []
+    for entry in entries:
+        try:
+            st = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            continue
+        if entry.name.endswith(_READY_SUFFIX + _MARKER_SUFFIX):
+            marker_names.add(entry.name[: -len(_MARKER_SUFFIX)])
+        elif entry.name.endswith(_PARTIAL_SUFFIX) or entry.name.endswith(_READY_SUFFIX):
+            candidates.append((entry.name, st))
+
+    for name, st in candidates:
+        mtime = datetime.datetime.fromtimestamp(st.st_mtime, datetime.UTC)
+        if mtime > cutoff:
+            continue
+        path = staging_root / name
+        try:
+            if path.resolve().parent != resolved_root:
+                continue
+        except OSError:
+            continue
+        marker_path = (
+            staging_root / (name + _MARKER_SUFFIX) if name in marker_names else None
+        )
+        try:
+            path.unlink()
+        except OSError:
+            # Sharing violation or similar in-use failure: safe retention.
+            continue
+        if marker_path is not None:
+            with contextlib.suppress(OSError):
+                marker_path.unlink(missing_ok=True)

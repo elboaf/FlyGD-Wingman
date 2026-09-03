@@ -7,7 +7,13 @@ every later update task (download, staging, install, UI) trusts a
 ReleaseInfo it received from here rather than re-validating the payload.
 """
 
+import hashlib
 import json
+import os
+import time
+import urllib.request
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -397,3 +403,386 @@ def test_latest_release_wraps_a_malformed_json_body():
         updates.latest_release(CURRENT, urlopen=lambda r, timeout: _BadResponse())
     assert exc_info.value.stage == "check"
     assert exc_info.value.code == "metadata"
+
+
+# ---- download/staging fixtures -------------------------------------------
+
+
+def release_info(*, payload=b"installer", size=None, sha256=None, url=None):
+    """A ReleaseInfo whose size/sha256 agree with *payload* by default.
+
+    Overriding size/sha256 independently of payload lets a test build a
+    release that legitimately disagrees with what the fake server sends --
+    that mismatch is exactly what download_release must detect.
+    """
+    return updates.ReleaseInfo(
+        version=(4, 9, 0),
+        tag="v4.9.0",
+        asset_name="FlyGD-Wingman-Setup-4.9.0.exe",
+        url=url
+        or (
+            "https://github.com/elboaf/FlyGD-Wingman/releases/download/"
+            "v4.9.0/FlyGD-Wingman-Setup-4.9.0.exe"
+        ),
+        size=len(payload) if size is None else size,
+        sha256=hashlib.sha256(payload).hexdigest() if sha256 is None else sha256,
+        content_type="application/x-msdos-program",
+    )
+
+
+class _FakeResponse:
+    def __init__(self, payload, *, fail_after=None):
+        self._payload = payload
+        self._pos = 0
+        self._fail_after = fail_after
+        self._reads = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, size):
+        self._reads += 1
+        if self._fail_after is not None and self._reads > self._fail_after:
+            raise OSError("connection reset")
+        chunk = self._payload[self._pos : self._pos + size]
+        self._pos += len(chunk)
+        return chunk
+
+
+def fake_opener(payload=b"installer", *, fail_after=None, fail_to_open=False):
+    """An object with urllib's opener.open(request, timeout=...) shape."""
+
+    class _Opener:
+        def open(self, request, timeout=None):
+            if fail_to_open:
+                raise OSError("connection refused")
+            return _FakeResponse(payload, fail_after=fail_after)
+
+    return _Opener()
+
+
+def _age_file(path: Path, days: float) -> None:
+    ts = time.time() - days * 86400
+    os.utime(path, (ts, ts))
+
+
+# ---- validate_download_origin / SafeRedirectHandler -----------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://github.com/elboaf/FlyGD-Wingman/releases/download/v4.9.0/setup.exe",
+        "https://user@github.com/elboaf/FlyGD-Wingman/releases/download/v4.9.0/setup.exe",
+        "https://github.com:444/elboaf/FlyGD-Wingman/releases/download/v4.9.0/setup.exe",
+        "https://github.com.evil.example/setup.exe",
+    ],
+)
+def test_download_origin_rejects_unsafe_urls(url):
+    with pytest.raises(updates.UpdateFailure, match="origin"):
+        updates.validate_download_origin(url)
+
+
+@pytest.mark.parametrize("host", sorted(updates.DOWNLOAD_HOSTS))
+def test_download_origin_accepts_every_allowed_host(host):
+    updates.validate_download_origin(
+        f"https://{host}/owner/repo/releases/download/v1/setup.exe"
+    )
+
+
+def test_download_origin_does_not_accept_a_githubusercontent_suffix_match():
+    # A naive endswith("githubusercontent.com") check would let an attacker
+    # register "evil-githubusercontent.com"; only exact members of
+    # DOWNLOAD_HOSTS are accepted.
+    with pytest.raises(updates.UpdateFailure, match="origin"):
+        updates.validate_download_origin("https://evil-githubusercontent.com/x")
+
+
+def test_redirect_handler_rejects_a_disallowed_intermediate_hop():
+    handler = updates.SafeRedirectHandler()
+    request = urllib.request.Request(
+        "https://github.com/owner/repo/releases/download/v1/setup.exe"
+    )
+    with pytest.raises(updates.UpdateFailure, match="origin"):
+        handler.redirect_request(
+            request, None, 302, "Found", {}, "https://evil.example/hop"
+        )
+
+
+def test_redirect_handler_allows_a_hop_to_an_allowed_host():
+    handler = updates.SafeRedirectHandler()
+    request = urllib.request.Request(
+        "https://github.com/owner/repo/releases/download/v1/setup.exe"
+    )
+    new_request = handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "https://release-assets.githubusercontent.com/owner/repo/asset",
+    )
+    assert new_request.full_url == (
+        "https://release-assets.githubusercontent.com/owner/repo/asset"
+    )
+
+
+# ---- download_release: streaming, progress, verification ------------------
+
+
+def test_download_streams_and_reports_bytes(tmp_path):
+    release = release_info(payload=b"installer")
+    progress = []
+    path = updates.download_release(
+        release,
+        tmp_path,
+        opener=fake_opener(payload=b"installer"),
+        on_progress=lambda done, total: progress.append((done, total)),
+    )
+    assert path.read_bytes() == b"installer"
+    assert path.name.endswith(".ready.exe")
+    assert progress[-1] == (len(b"installer"), len(b"installer"))
+
+
+def test_download_removes_partial_file_on_digest_mismatch(tmp_path):
+    release = replace(release_info(payload=b"good"), sha256="00" * 32)
+    with pytest.raises(updates.UpdateFailure, match="checksum"):
+        updates.download_release(release, tmp_path, opener=fake_opener(payload=b"gorp"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_wraps_an_interrupted_read_and_removes_the_partial(tmp_path):
+    release = release_info(payload=b"installer-bytes")
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.download_release(
+            release,
+            tmp_path,
+            opener=fake_opener(payload=b"installer-bytes", fail_after=0),
+        )
+    assert exc_info.value.stage == "download"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_rejects_a_final_byte_count_below_the_advertised_size(tmp_path):
+    release = release_info(payload=b"nine-bytes")
+    with pytest.raises(updates.UpdateFailure, match="size"):
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"short")
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_stops_a_stream_that_exceeds_the_advertised_size(tmp_path):
+    release = replace(release_info(payload=b"1234"), size=4)
+    with pytest.raises(updates.UpdateFailure, match="size"):
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"12345678")
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_stops_a_stream_that_exceeds_the_defensive_maximum(
+    tmp_path, monkeypatch
+):
+    # Even a release that (incorrectly) advertises a size larger than the
+    # defensive maximum must never let a stream actually write past it.
+    monkeypatch.setattr(updates, "MAX_INSTALLER_BYTES", 4)
+    release = replace(release_info(payload=b"12345678"), size=8)
+    with pytest.raises(updates.UpdateFailure, match="size"):
+        updates.download_release(
+            release, tmp_path, opener=fake_opener(payload=b"12345678")
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_uses_unique_exclusive_partial_names(tmp_path):
+    release = release_info(payload=b"installer")
+    first = updates.download_release(
+        release, tmp_path, opener=fake_opener(payload=b"installer")
+    )
+    second = updates.download_release(
+        release, tmp_path, opener=fake_opener(payload=b"installer")
+    )
+    assert first != second
+    assert first.exists()
+    assert second.exists()
+
+
+def test_download_validates_the_release_url_before_opening():
+    release = replace(
+        release_info(),
+        url="https://evil.example/FlyGD-Wingman-Setup-4.9.0.exe",
+    )
+
+    def fail_if_opened(*args, **kwargs):
+        raise AssertionError("opener.open must not be called for an unsafe origin")
+
+    class _Opener:
+        open = staticmethod(fail_if_opened)
+
+    with pytest.raises(updates.UpdateFailure, match="origin"):
+        updates.download_release(
+            release, Path("/tmp/does-not-matter"), opener=_Opener()
+        )
+
+
+# ---- write_handoff_marker / remove_handoff_marker --------------------------
+
+
+def test_write_handoff_marker_requires_a_ready_exe_name(tmp_path):
+    path = tmp_path / "update.exe"
+    path.write_bytes(b"x")
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.write_handoff_marker(path, release_info())
+    assert exc_info.value.code == "unexpected-path"
+
+
+def test_write_handoff_marker_creates_a_sidecar_without_renaming_the_installer(
+    tmp_path,
+):
+    release = release_info(payload=b"installer")
+    path = tmp_path / "update-abc123.ready.exe"
+    path.write_bytes(b"installer")
+
+    marker = updates.write_handoff_marker(path, release)
+
+    assert marker == path.with_name(path.name + ".handoff.json")
+    assert path.exists()
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload == {
+        "file": path.name,
+        "sha256": release.sha256,
+        "version": "4.9.0",
+    }
+
+
+def test_remove_handoff_marker_deletes_the_sidecar_but_not_the_installer(tmp_path):
+    release = release_info()
+    path = tmp_path / "update-abc123.ready.exe"
+    path.write_bytes(b"installer")
+    marker = updates.write_handoff_marker(path, release)
+
+    updates.remove_handoff_marker(marker)
+
+    assert not marker.exists()
+    assert path.exists()
+
+
+def test_remove_handoff_marker_is_a_noop_when_already_gone(tmp_path):
+    updates.remove_handoff_marker(tmp_path / "missing.ready.exe.handoff.json")
+
+
+# ---- cleanup_staging --------------------------------------------------------
+
+
+def test_cleanup_removes_stale_unmarked_partial_and_ready_files(tmp_path):
+    partial = tmp_path / "update-aaa.partial"
+    partial.write_bytes(b"x")
+    ready = tmp_path / "update-bbb.ready.exe"
+    ready.write_bytes(b"x")
+    _age_file(partial, 8)
+    _age_file(ready, 8)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert not partial.exists()
+    assert not ready.exists()
+
+
+def test_cleanup_keeps_a_fresh_unmarked_ready_file(tmp_path):
+    ready = tmp_path / "update-ccc.ready.exe"
+    ready.write_bytes(b"x")
+    _age_file(ready, 1)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert ready.exists()
+
+
+def test_cleanup_keeps_a_handed_off_file_younger_than_seven_days(tmp_path):
+    release = release_info()
+    ready = tmp_path / "update-ddd.ready.exe"
+    ready.write_bytes(b"x")
+    marker = updates.write_handoff_marker(ready, release)
+    _age_file(ready, 1)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert ready.exists()
+    assert marker.exists()
+
+
+def test_cleanup_removes_a_handed_off_file_at_least_seven_days_old(tmp_path):
+    release = release_info()
+    ready = tmp_path / "update-eee.ready.exe"
+    ready.write_bytes(b"x")
+    marker = updates.write_handoff_marker(ready, release)
+    _age_file(ready, 8)
+
+    updates.cleanup_staging(tmp_path)
+
+    assert not ready.exists()
+    assert not marker.exists()
+
+
+def test_cleanup_swallows_a_sharing_violation_as_safe_retention(tmp_path, monkeypatch):
+    ready = tmp_path / "update-fff.ready.exe"
+    ready.write_bytes(b"x")
+    _age_file(ready, 8)
+
+    real_unlink = Path.unlink
+
+    def locked_unlink(self, *args, **kwargs):
+        if self.name == ready.name:
+            raise PermissionError("in use")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    updates.cleanup_staging(tmp_path)  # must not raise
+
+    assert ready.exists()
+
+
+def test_cleanup_never_touches_files_outside_the_staging_directory(tmp_path):
+    outside = tmp_path.parent / "unrelated.ready.exe"
+    outside.write_bytes(b"x")
+    _age_file(outside, 8)
+    unexpected = tmp_path / "notes.txt"
+    unexpected.write_bytes(b"x")
+    _age_file(unexpected, 8)
+
+    try:
+        updates.cleanup_staging(tmp_path)
+
+        assert outside.exists()
+        assert unexpected.exists()
+    finally:
+        outside.unlink()
+
+
+def test_cleanup_never_follows_or_removes_a_symlink(tmp_path):
+    real_target = tmp_path.parent / "real-target.ready.exe"
+    real_target.write_bytes(b"x")
+    _age_file(real_target, 8)
+    link = tmp_path / "update-ggg.ready.exe"
+    try:
+        link.symlink_to(real_target)
+    except OSError:
+        pytest.skip("symlinks are not supported in this environment")
+
+    try:
+        updates.cleanup_staging(tmp_path)
+
+        assert link.is_symlink()
+        assert real_target.exists()
+    finally:
+        link.unlink(missing_ok=True)
+        real_target.unlink(missing_ok=True)
+
+
+def test_cleanup_is_a_noop_on_a_missing_staging_directory(tmp_path):
+    updates.cleanup_staging(tmp_path / "does-not-exist")
