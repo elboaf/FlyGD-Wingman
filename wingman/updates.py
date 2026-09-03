@@ -491,12 +491,15 @@ def write_handoff_marker(path: Path, release: ReleaseInfo) -> Path:
 
     Wingman must never rename an installer after `ShellExecuteExW` has started
     it, so classification is a separate atomically published sidecar rather
-    than a rename or an in-memory flag. `atomicio` fsyncs the sidecar contents
-    but not its parent directory, so this survives ordinary process restarts
-    without claiming power-loss durability.
+    than a rename or an in-memory flag. Only the updater-generated `update-*.ready.exe`
+    namespace is eligible, matching the files cleanup owns. `atomicio` fsyncs the
+    sidecar contents but not its parent directory, so this survives ordinary
+    process restarts without claiming power-loss durability.
     """
     path = Path(path)
-    if not path.name.endswith(_READY_SUFFIX):
+    if not path.name.startswith(_UPDATE_PREFIX) or not path.name.endswith(
+        _READY_SUFFIX
+    ):
         raise UpdateFailure("cleanup", "unexpected-path", path.name)
     marker = path.with_name(path.name + _MARKER_SUFFIX)
     payload = {

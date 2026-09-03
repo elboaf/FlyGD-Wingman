@@ -684,6 +684,14 @@ def test_write_handoff_marker_requires_a_ready_exe_name(tmp_path):
     assert exc_info.value.code == "unexpected-path"
 
 
+def test_write_handoff_marker_requires_the_updater_filename_prefix(tmp_path):
+    path = tmp_path / "foreign.ready.exe"
+    path.write_bytes(b"x")
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.write_handoff_marker(path, release_info())
+    assert exc_info.value.code == "unexpected-path"
+
+
 def test_write_handoff_marker_creates_a_sidecar_without_renaming_the_installer(
     tmp_path,
 ):
