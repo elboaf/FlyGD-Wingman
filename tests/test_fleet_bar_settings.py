@@ -29,3 +29,33 @@ def test_fleet_bar_defaults_are_not_shared():
     second = settings._fresh_defaults()
     first["fleet_bar"]["enabled"] = True
     assert second["fleet_bar"]["enabled"] is False
+
+
+def test_save_normalises_malformed_fleet_bar_in_the_file(tmp_path):
+    """settings.save() bypasses update()'s _normalize() call, so
+    _save_locked must guarantee the persisted fleet_bar shape itself.
+    A caller passing booleans as coordinates or missing keys must not
+    corrupt the stored document."""
+    import json
+
+    p = tmp_path / "s.json"
+    settings.save(
+        {**settings._fresh_defaults(), "fleet_bar": {"enabled": True, "x": True, "y": "bad"}},
+        p,
+    )
+    raw = json.loads(p.read_text())
+    assert raw["fleet_bar"] == {"enabled": True, "x": None, "y": None}
+
+
+def test_save_normalises_partial_fleet_bar_in_the_file(tmp_path):
+    """A partial section (missing x/y) written via save() must be stored
+    with the full normalized shape, not the partial dict."""
+    import json
+
+    p = tmp_path / "s.json"
+    settings.save(
+        {**settings._fresh_defaults(), "fleet_bar": {"enabled": True}},
+        p,
+    )
+    raw = json.loads(p.read_text())
+    assert raw["fleet_bar"] == {"enabled": True, "x": None, "y": None}

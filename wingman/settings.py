@@ -849,6 +849,12 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     path = path or paths.settings_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
+    # Guarantee the persisted shape is normalized even when save() is called
+    # directly (bypassing the _normalize() that update() runs first).
+    # Other nested sections are not touched here -- only fleet_bar was added
+    # after this pattern was established; extending the others is a separate
+    # decision that would need its own tests.
+    payload["fleet_bar"] = validated_fleet_bar(payload.get("fleet_bar"))
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 

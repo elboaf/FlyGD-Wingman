@@ -2697,19 +2697,22 @@ class Api:
         """Show or hide the EVE destinations and sections.
 
         VISIBILITY ONLY. It never starts or stops anything: eve_bookmarks
-        .enabled and preview.enabled stay the sole runtime switches.
+        .enabled, preview.enabled, and fleet_bar.enabled stay the sole
+        runtime switches.
 
         The guard is the whole design. Hiding a feature that is RUNNING
-        would conceal its off switch -- previews would keep painting and
-        eighteen global keybinds would keep firing in EVE, with no
-        reachable control to stop them. Making this a kill switch instead
-        was rejected: it would silently stop those from what reads as a
-        display preference, and re-enabling could not know which of the two
-        to restore without a third persisted value.
+        would conceal its off switch -- previews would keep painting,
+        eighteen global keybinds would keep firing in EVE, or the fleet
+        bar would keep running, with no reachable control to stop them.
+        Making this a kill switch instead was rejected: it would silently
+        stop those from what reads as a display preference, and re-enabling
+        could not know which of the three to restore without additional
+        persisted values.
 
-        So it simply refuses while either is on, and says which. Turning
-        them off first is one extra step, and it is the honest order --
-        that friction is what stops this being a kill switch by accident.
+        So it simply refuses while any of the three is on, and says which.
+        Turning them off first is one extra step, and it is the honest
+        order -- that friction is what stops this being a kill switch by
+        accident.
         """
         enabled = bool(enabled)
         if not enabled:
