@@ -23,6 +23,8 @@ def test_named_files_live_under_state_dir(monkeypatch, tmp_path):
     assert paths.seen_file() == root / "seen.json"
     assert paths.durations_file() == root / "durations.json"
     assert paths.links_file() == root / "links.json"
+    assert paths.eve_authority_file() == root / "eve_authority.json"
+    assert paths.eve_fittings_file() == root / "eve_fittings.json"
     assert paths.log_dir() == root / "logs"
     assert paths.tmp_dir() == root / "tmp"
 

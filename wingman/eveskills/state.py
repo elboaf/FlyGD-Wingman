@@ -103,6 +103,9 @@ class SkillsState:
     characters: list = field(default_factory=list)
     selected_plan_name: str = ""
     selected_group: str = ""
+    # One-way migration marker: if authority is later missing or corrupt,
+    # stale credential fields must never be recreated from this document.
+    authority_migrated: bool = False
 
     def find(self, character_id: int):
         for character in self.characters:
@@ -322,6 +325,7 @@ def to_dict(state: SkillsState) -> dict:
         "version": STATE_VERSION,
         "selected_plan_name": state.selected_plan_name,
         "selected_group": state.selected_group,
+        "authority_migrated": state.authority_migrated,
         "characters": [
             {
                 "character_id": character.character_id,
@@ -375,6 +379,7 @@ def from_dict(raw: object) -> SkillsState:
         raw.get("selected_plan_name")
     )
     result.selected_group = _coerce_group_name(raw.get("selected_group"))
+    result.authority_migrated = raw.get("authority_migrated") is True
 
     characters = raw.get("characters")
     if not isinstance(characters, list):

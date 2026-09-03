@@ -699,16 +699,24 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix(tmp_p
     assert stat.S_IMODE(bak.stat().st_mode) == 0o600
 
 
-def test_group_and_selected_group_survive_a_round_trip():
+def test_group_selected_group_and_authority_marker_survive_a_round_trip():
     built_state = state.SkillsState(
         characters=[state.Character(character_id=1, group="Wolfpack")],
         selected_group="Wolfpack",
+        authority_migrated=True,
     )
 
     restored = state.from_dict(state.to_dict(built_state))
 
     assert restored.characters[0].group == "Wolfpack"
     assert restored.selected_group == "Wolfpack"
+    assert restored.authority_migrated is True
+
+
+def test_pre_migration_document_defaults_authority_marker_to_false():
+    restored = state.from_dict({"characters": []})
+
+    assert restored.authority_migrated is False
 
 
 def test_an_over_long_group_name_is_cleared_not_truncated():

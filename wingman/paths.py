@@ -108,18 +108,24 @@ def eve_settings_backup_dir() -> Path:
     return state_dir() / "eve-settings-backups"
 
 
-def eve_skills_file() -> Path:
-    """Roster, snapshots, skill queue, ETags, and DPAPI-wrapped tokens.
+def eve_authority_file() -> Path:
+    """App-wide EVE identities, scopes, and DPAPI-wrapped credentials."""
+    return state_dir() / "eve_authority.json"
 
-    One document holds all of it, which is what makes forgetting a
-    character a single atomic write. TriffView splits tokens into
-    Windows Credential Manager and cannot update the two together; its
-    own error strings record the cost ("Forget was rolled back because
-    state could not be saved"). A .bak sibling is kept beside this file
-    by the controller, because merging the tokens in moved the one
-    non-rebuildable thing into a file that had no backup tier.
+
+def eve_skills_file() -> Path:
+    """Skills snapshots, queue, groups, plan selection, ETags, and errors.
+
+    Existing installs initially also have identities and credentials here.
+    The fail-closed authority migration splits those fields out before the
+    shared authority is wired into production.
     """
     return state_dir() / "eve_skills.json"
+
+
+def eve_fittings_file() -> Path:
+    """Curated fitting library and per-character fitting snapshots."""
+    return state_dir() / "eve_fittings.json"
 
 
 def eve_skills_cache_file() -> Path:
