@@ -83,6 +83,36 @@ def test_the_generator_runs_standalone_under_a_bare_interpreter():
     assert f'#define AppVersion "{__version__}"' in generated
 
 
+def test_release_tag_must_match_the_source_version(tmp_path):
+    """The release workflow's gate, exercised directly rather than only
+    through the CLI: a tag that disagrees with wingman.__version__ must
+    stop the build before it produces an installer named for the wrong
+    version."""
+    sys.path.insert(0, str(ROOT / "packaging"))
+    try:
+        import write_version_iss
+    finally:
+        sys.path.pop(0)
+
+    source = tmp_path / "__init__.py"
+    source.write_text('__version__ = "4.9.0"\n', encoding="utf-8")
+    assert write_version_iss.verify_release_tag("v4.9.0", source) == "4.9.0"
+    with pytest.raises(SystemExit, match=r"tag v5\.0\.0.*source version 4\.9\.0"):
+        write_version_iss.verify_release_tag("v5.0.0", source)
+
+
+def test_release_workflow_checks_the_tag_before_building():
+    """release.yml must verify the pushed tag against wingman.__version__
+    before the composite build and before publishing -- a build or a
+    release for the wrong version is worse than a build that never ran."""
+    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    check = text.index("--expect-tag")
+    build = text.index("uses: ./.github/actions/build-installer")
+    publish = text.index("uses: softprops/action-gh-release")
+    assert check < build < publish
+    assert "github.ref_name" in text[check - 300 : check + 300]
+
+
 def test_the_generated_file_is_not_committed():
     """A committed copy is still a copy. .gitignore carries it so a build
     that forgets the generator fails loudly at iscc rather than shipping a
