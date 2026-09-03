@@ -13,6 +13,7 @@ ladder, redaction, and no-redirect opener defined and tested in exactly
 one place as a second capability starts using them.
 """
 
+import http.client
 import json
 import re
 import time
@@ -254,7 +255,7 @@ def _extract_remote_error(text: str, token) -> str:
     return _redact(_sanitize(remote), token)
 
 
-def _append_rate_limit(error: str, headers) -> str:
+def _append_rate_limit(error: str, headers, token=None) -> str:
     """Append the error-limit and Retry-After headers to *error*.
 
     Ports EsiClient.cs's AppendRateLimit() (:212-222) whole. This is the
@@ -264,6 +265,13 @@ def _append_rate_limit(error: str, headers) -> str:
     (matching the source exactly) rather than trusting the values are
     already clean -- a header value is attacker- or proxy- controlled
     input exactly as much as the body is.
+
+    Also re-redacts the fully assembled string, not just the sanitized
+    *error* it started from: these header VALUES are exactly as
+    attacker/proxy-controlled as the body, and a hostile or misconfigured
+    proxy echoing the Authorization header back in Retry-After or an
+    error-limit header would otherwise leak the live bearer token into a
+    string this module hands back to a caller to log or display.
     """
     if headers is None:
         return error
@@ -274,7 +282,8 @@ def _append_rate_limit(error: str, headers) -> str:
             parts.append(f"{name}={_sanitize(str(value))}")
     if not parts:
         return error
-    return _sanitize(f"{error} ({'; '.join(parts)})")
+    combined = _sanitize(f"{error} ({'; '.join(parts)})")
+    return _redact(combined, token)
 
 
 def _bounded_headers(headers, token=None) -> dict[str, str]:
@@ -384,12 +393,40 @@ class EsiClient:
         )
         try:
             with self._transport(request, timeout=TIMEOUT_S) as response:
+                # Status and headers are already real the moment the
+                # transport returns a response object -- the connection
+                # succeeded and the status line/headers arrived. Only the
+                # BODY read below can still fail (a dropped connection
+                # mid-stream, a read timeout, an interrupted chunked
+                # transfer), and that failure must not erase the response
+                # that already happened: see the try/except around
+                # response.read() below.
                 status = getattr(response, "status", 200)
                 response_headers = _bounded_headers(response.headers, token)
-                # Read one byte past the cap so oversize is detectable
-                # without buffering the whole thing first, exactly as
-                # EsiClient._read does for GET.
-                raw = response.read(MAX_SUCCESS_BODY_BYTES + 1)
+                try:
+                    # Read one byte past the cap so oversize is detectable
+                    # without buffering the whole thing first, exactly as
+                    # EsiClient._read does for GET.
+                    raw = response.read(MAX_SUCCESS_BODY_BYTES + 1)
+                except (TimeoutError, OSError, http.client.IncompleteRead) as exc:
+                    # A response WAS received -- status and headers are
+                    # real -- but the body read itself failed partway
+                    # through. Without this clause, TimeoutError/OSError
+                    # would escape this inner try and be caught by the
+                    # outer no-response handler below, which reports
+                    # response_received=False and discards the real status
+                    # this attempt already has; http.client.IncompleteRead
+                    # (raised by http.client's own chunked/length-based
+                    # reader, and not an OSError subclass) would escape
+                    # post_once entirely with no handler at all. Both are a
+                    # definite response with a lost body, not "no response".
+                    return MutationResponse(
+                        True,
+                        status,
+                        None,
+                        _sanitize(_redact(f"Response body read failed: {exc}", token)),
+                        response_headers,
+                    )
                 if len(raw) > MAX_SUCCESS_BODY_BYTES:
                     return MutationResponse(
                         True,
@@ -424,12 +461,27 @@ class EsiClient:
             exc_headers = _bounded_headers(exc.headers, token) if exc.headers else {}
             return MutationResponse(True, exc.code, None, text, exc_headers)
         except (TimeoutError, urllib.error.URLError, OSError) as exc:
-            # No response at all -- there is nothing to report a status,
-            # data, or headers for, and nothing here retries: retrying a
-            # write whose delivery is unknown is exactly the duplicate-
-            # write hazard this method exists to avoid.
+            # No response at all -- the transport raised before a status
+            # line ever arrived (the inner try/except above is what
+            # reclassifies a body-read failure AFTER a real response, so
+            # this clause only ever sees a connection that never produced
+            # one). There is nothing to report a status, data, or headers
+            # for, and nothing here retries: retrying a write whose
+            # delivery is unknown is exactly the duplicate-write hazard
+            # this method exists to avoid.
+            #
+            # Redacted before sanitized, not after: nothing has bounded
+            # this text's length yet (unlike an HTTP error body, which is
+            # already byte-truncated before it ever reaches redaction), so
+            # redacting the full, untruncated message first is what
+            # guarantees the length cap below can never split a token in
+            # half and leave a partial, unredacted fragment in the output.
             return MutationResponse(
-                False, None, None, _redact(f"Network error: {exc}", token), {}
+                False,
+                None,
+                None,
+                _sanitize(_redact(f"Network error: {exc}", token)),
+                {},
             )
 
     def _request(
@@ -628,4 +680,4 @@ class EsiClient:
         # let a long, un-sanitized base swallow the values this step exists
         # to surface. Matches EsiClient.cs's own ordering: AppendRateLimit
         # runs on ReadError's already-sanitized result, not on the raw text.
-        return _append_rate_limit(error, exc.headers)
+        return _append_rate_limit(error, exc.headers, token)

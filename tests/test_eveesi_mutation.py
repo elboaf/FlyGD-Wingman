@@ -15,6 +15,7 @@ Modelled directly on test_eveskills_esi.py's fixtures (`_headers`,
 them, since post_once shares the exact same transport contract GET does.
 """
 
+import http.client
 import io
 import json
 import urllib.error
@@ -45,6 +46,28 @@ class _Response:
 
     def read(self, size=-1):
         return self._stream.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class _ResponseThatFailsOnRead:
+    """A response whose status line and headers arrived normally, but
+    whose body read raises. Models a connection that answered and then
+    dropped mid-body (a read timeout, a reset, an interrupted chunked
+    transfer) -- a definite response with a lost body, not "no response
+    at all"."""
+
+    def __init__(self, status, exc, headers=None):
+        self.status = status
+        self.headers = headers if headers is not None else Message()
+        self._exc = exc
+
+    def read(self, size=-1):
+        raise self._exc
 
     def __enter__(self):
         return self
@@ -326,3 +349,104 @@ def test_post_once_never_sleeps():
     client = eveesi.EsiClient(user_agent="A", transport=transport)
     result = client.post_once(PATH, BODY, token=TOKEN)
     assert result.status == 503
+
+
+def test_a_timeout_reading_the_body_preserves_the_real_status_as_received():
+    """The status line and headers already arrived before the body read
+    failed -- this is a definite response with a lost body, not "no
+    response at all". Without the fix, TimeoutError from response.read()
+    fell through to the same handler as a connection that never answered,
+    reporting response_received=False and status=None even though a real
+    500 (or any other status) had already been received."""
+    transport = FakeTransport(
+        _ResponseThatFailsOnRead(500, TimeoutError("read timed out"))
+    )
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=TOKEN)
+    assert result.response_received is True
+    assert result.status == 500
+    assert result.data is None
+    assert result.error != ""
+
+
+def test_an_oserror_reading_the_body_preserves_the_real_status_as_received():
+    transport = FakeTransport(
+        _ResponseThatFailsOnRead(201, ConnectionResetError("connection reset"))
+    )
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=TOKEN)
+    assert result.response_received is True
+    assert result.status == 201
+    assert result.data is None
+
+
+def test_an_incomplete_read_preserves_the_real_status_as_received():
+    """http.client.IncompleteRead is raised by http.client's own
+    chunked/length-based body reader and is NOT an OSError subclass (it
+    subclasses http.client.HTTPException, which subclasses Exception
+    directly) -- without a dedicated clause for it, this exception would
+    escape post_once entirely rather than being caught by any handler,
+    the exact "escapes entirely" failure mode this test guards against.
+    """
+    transport = FakeTransport(
+        _ResponseThatFailsOnRead(201, http.client.IncompleteRead(b"partial", 10))
+    )
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=TOKEN)
+    assert result.response_received is True
+    assert result.status == 201
+    assert result.data is None
+    assert result.error != ""
+
+
+def test_a_body_read_failure_message_is_redacted():
+    token = "eyJhbGciOiJSUzI1NiJ9.super-secret-access-token.sig"
+    transport = FakeTransport(
+        _ResponseThatFailsOnRead(500, TimeoutError(f"stalled after sending {token}"))
+    )
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=token)
+    assert token not in result.error
+    assert "[redacted]" in result.error
+
+
+def test_the_token_is_redacted_even_when_only_a_rate_limit_header_carries_it():
+    """_append_rate_limit's header values are exactly as attacker/proxy-
+    controlled as the response body: a hostile or misconfigured proxy
+    echoing the Authorization header back into Retry-After (or an
+    error-limit header) must not leak the live bearer token into
+    MutationResponse.error just because the leak came from a header
+    instead of the body."""
+    token = "eyJhbGciOiJSUzI1NiJ9.super-secret-access-token.sig"
+    headers = _headers(Retry_After=token)
+    transport = FakeTransport(
+        _http_error(429, json.dumps({"error": "throttled"}).encode(), headers)
+    )
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=token)
+    assert token not in result.error
+    assert "[redacted]" in result.error
+
+
+def test_a_long_no_response_exception_message_is_bounded():
+    def transport(request, timeout=None):
+        raise ConnectionResetError("x" * 5000)
+
+    result = eveesi.EsiClient(user_agent="A", transport=transport).post_once(
+        PATH, BODY, token=TOKEN
+    )
+    assert result.response_received is False
+    assert len(result.error) <= 2048
+
+
+def test_a_no_response_exception_message_with_control_characters_is_sanitized():
+    def transport(request, timeout=None):
+        raise ConnectionResetError("reset\x00\x07 by peer\ncontinued")
+
+    result = eveesi.EsiClient(user_agent="A", transport=transport).post_once(
+        PATH, BODY, token=TOKEN
+    )
+    assert result.response_received is False
+    assert "\x00" not in result.error
+    assert "\x07" not in result.error
+    assert "\n" not in result.error
