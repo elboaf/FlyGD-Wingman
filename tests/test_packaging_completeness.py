@@ -32,6 +32,20 @@ def test_readme_discloses_automatic_github_update_checks():
     assert "does not prove publisher identity" in readme
 
 
+def test_readme_google_token_note_links_to_the_network_table_without_relisting_it():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    start = readme.index("- **Google OAuth tokens")
+    end = readme.index("\n- **Video data", start)
+    note = readme[start:end]
+
+    assert "No FlyGD-operated backend receives" in note
+    assert "[Privacy section](#privacy)" in note
+    assert "network table" in note
+    assert "talks directly to" not in note
+    for omitted_destination in ("Discord", "GitHub", "CCP"):
+        assert omitted_destination not in note
+
+
 def test_readme_network_table_covers_eve_and_current_user_triggers():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "| CCP EVE SSO and ESI" in readme

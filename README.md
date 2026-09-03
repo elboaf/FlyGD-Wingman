@@ -135,10 +135,10 @@ which requires this scope. Wingman makes no other YouTube API call.
   on your channel.
 - **Your Google credentials are stored locally**, on your own computer, by the
   desktop application. See [Where credentials live](#where-credentials-live).
-- **Google OAuth tokens are not sent to any FlyGD server.** Wingman has no
-  backend. It talks directly to Google, to a Discord webhook you configure,
-  and to GitHub's release API for update checks; none of those requests sends
-  your Google OAuth token to FlyGD.
+- **Google OAuth tokens are not sent to FlyGD.** Wingman has no FlyGD
+  backend. No FlyGD-operated backend receives your token or any other
+  application data. See the [Privacy section](#privacy) network table for the
+  external services each feature contacts and what it sends.
 - **Video data goes straight from your computer to Google.** The upload is a
   resumable upload made by the application to the YouTube Data API. It does
   not pass through any FlyGD-controlled infrastructure.
