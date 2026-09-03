@@ -1367,7 +1367,7 @@ def test_locked_windows_file_denies_write_delete_and_hashes_held_handle():
 
     assert kernel32.create_calls == [
         (
-            "C:/Temp/update.ready.exe",
+            str(Path("C:/Temp/update.ready.exe")),
             0x80000000,
             0x00000001,
             None,
@@ -1395,7 +1395,26 @@ def test_locked_windows_file_reports_close_failure_after_one_attempt(monkeypatch
         pass
 
     assert exc_info.value.stage == "verify"
-    assert exc_info.value.code == "file"
+    assert exc_info.value.code == "file-close"
+    assert kernel32.closed_handles == [77]
+
+
+def test_verify_after_attachment_reports_protected_close_failure(tmp_path, monkeypatch):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    kernel32 = FakeLockedKernel32(b"verified", close_success=False)
+    monkeypatch.setattr(updates, "_get_last_error", lambda: 6)
+
+    with pytest.raises(updates.UpdateFailure) as exc_info:
+        updates.verify_after_attachment(
+            release,
+            path,
+            attachment=lambda p, u: None,
+            locked_open=lambda p: updates._WindowsLockedFile(p, kernel32),
+        )
+
+    assert exc_info.value.stage == "verify"
+    assert exc_info.value.code == "file-close"
     assert kernel32.closed_handles == [77]
 
 
@@ -1411,6 +1430,134 @@ def test_locked_close_failure_does_not_mask_the_primary_failure(monkeypatch):
 
     assert exc_info.value.__notes__ == ["CloseHandle failed with error 6"]
     assert kernel32.closed_handles == [77]
+
+
+def test_open_locked_selects_windows_handle_on_win32(monkeypatch):
+    path = Path("C:/Temp/update.ready.exe")
+    kernel32 = object()
+    expected = object()
+
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(
+        updates, "_load_win32_libs", lambda: SimpleNamespace(kernel32=kernel32)
+    )
+
+    def windows_locked(actual_path, actual_kernel32):
+        assert actual_path == path
+        assert actual_kernel32 is kernel32
+        return expected
+
+    monkeypatch.setattr(updates, "_WindowsLockedFile", windows_locked)
+    monkeypatch.setattr(updates, "_PortableLockedFile", fail_if_called)
+
+    assert updates._open_locked(path) is expected
+
+
+def test_open_locked_selects_portable_handle_off_windows(monkeypatch):
+    path = Path("/tmp/update.ready.exe")
+    expected = object()
+
+    monkeypatch.setattr(updates.sys, "platform", "linux")
+
+    def portable_locked(actual_path):
+        assert actual_path == path
+        return expected
+
+    monkeypatch.setattr(updates, "_WindowsLockedFile", fail_if_called)
+    monkeypatch.setattr(updates, "_PortableLockedFile", portable_locked)
+    monkeypatch.setattr(updates, "_load_win32_libs", fail_if_called)
+
+    assert updates._open_locked(path) is expected
+
+
+class FakeNativeFunction:
+    def __init__(self):
+        self.argtypes = object()
+        self.restype = object()
+
+
+class FakeNativeLibrary:
+    def __init__(self, *function_names):
+        for name in function_names:
+            setattr(self, name, FakeNativeFunction())
+
+
+def test_load_win32_libs_binds_every_used_native_signature(monkeypatch):
+    ole32 = FakeNativeLibrary(
+        "CoInitializeEx", "CoUninitialize", "CLSIDFromString", "CoCreateInstance"
+    )
+    kernel32 = FakeNativeLibrary(
+        "CreateFileW", "GetFileInformationByHandle", "ReadFile", "CloseHandle"
+    )
+    shell32 = FakeNativeLibrary("ShellExecuteExW")
+    libraries = {"ole32": ole32, "kernel32": kernel32, "shell32": shell32}
+    loaded = []
+
+    def fake_win_dll(name, *, use_last_error):
+        loaded.append((name, use_last_error))
+        return libraries[name]
+
+    monkeypatch.setattr(updates.ctypes, "WinDLL", fake_win_dll, raising=False)
+    updates._load_win32_libs.cache_clear()
+    try:
+        libs = updates._load_win32_libs()
+
+        assert libs == updates._Win32Libs(
+            ole32=ole32, kernel32=kernel32, shell32=shell32
+        )
+        assert loaded == [
+            ("ole32", True),
+            ("kernel32", True),
+            ("shell32", True),
+        ]
+        assert ole32.CoInitializeEx.argtypes == [ctypes.c_void_p, ctypes.c_uint32]
+        assert ole32.CoInitializeEx.restype is ctypes.c_int32
+        assert ole32.CoUninitialize.argtypes == []
+        assert ole32.CoUninitialize.restype is None
+        assert ole32.CLSIDFromString.argtypes == [
+            ctypes.c_wchar_p,
+            ctypes.POINTER(updates._GUID),
+        ]
+        assert ole32.CLSIDFromString.restype is ctypes.c_int32
+        assert ole32.CoCreateInstance.argtypes == [
+            ctypes.POINTER(updates._GUID),
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(updates._GUID),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        assert ole32.CoCreateInstance.restype is ctypes.c_int32
+        assert kernel32.CreateFileW.argtypes == [
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        ]
+        assert kernel32.CreateFileW.restype is ctypes.c_void_p
+        assert kernel32.GetFileInformationByHandle.argtypes == [
+            ctypes.c_void_p,
+            ctypes.POINTER(updates._BY_HANDLE_FILE_INFORMATION),
+        ]
+        assert kernel32.GetFileInformationByHandle.restype is ctypes.c_int32
+        assert kernel32.ReadFile.argtypes == [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_void_p,
+        ]
+        assert kernel32.ReadFile.restype is ctypes.c_int32
+        assert kernel32.CloseHandle.argtypes == [ctypes.c_void_p]
+        assert kernel32.CloseHandle.restype is ctypes.c_int32
+        assert shell32.ShellExecuteExW.argtypes == [
+            ctypes.POINTER(updates._SHELLEXECUTEINFO)
+        ]
+        assert shell32.ShellExecuteExW.restype is ctypes.c_int32
+    finally:
+        updates._load_win32_libs.cache_clear()
 
 
 _STDCALL = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
@@ -1693,6 +1840,8 @@ def test_shell_returned_process_handle_is_closed_only_by_explicit_owner(
 ):
     path = write_installer(tmp_path)
     release = release_info(payload=b"verified")
+    events = []
+    locked = FakeLockedFile(path, events)
     calls = FakeShellWin32(process_handle=321)
     monkeypatch.setattr(updates, "_load_win32_libs", lambda: calls)
 
@@ -1700,10 +1849,39 @@ def test_shell_returned_process_handle_is_closed_only_by_explicit_owner(
         release,
         path,
         attachment=lambda p, u: None,
+        locked_open=lambda p: locked,
         shell_execute=lambda p: 321,
     )
 
     assert process == 321
+    assert locked.closed == 1
     assert calls.closed_handles == []
     updates.close_process_handle(process)
     assert calls.closed_handles == [321]
+
+
+def test_protected_close_failure_after_shell_launch_preserves_process_handle(
+    tmp_path, monkeypatch, caplog
+):
+    path = write_installer(tmp_path)
+    release = release_info(payload=b"verified")
+    locked_kernel32 = FakeLockedKernel32(b"verified", close_success=False)
+    process_owner = FakeShellWin32(process_handle=321)
+    monkeypatch.setattr(updates, "_get_last_error", lambda: 6)
+    monkeypatch.setattr(updates, "_load_win32_libs", lambda: process_owner)
+
+    with caplog.at_level("WARNING", logger="wingman.updates"):
+        process = updates.launch_verified(
+            release,
+            path,
+            attachment=lambda p, u: None,
+            locked_open=lambda p: updates._WindowsLockedFile(p, locked_kernel32),
+            shell_execute=lambda p: 321,
+        )
+
+    assert process == 321
+    assert locked_kernel32.closed_handles == [77]
+    assert "process handle 321 remains owned by caller" in caplog.text
+    assert process_owner.closed_handles == []
+    updates.close_process_handle(process)
+    assert process_owner.closed_handles == [321]

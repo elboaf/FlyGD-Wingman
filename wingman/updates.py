@@ -19,6 +19,7 @@ import ctypes
 import datetime
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
@@ -31,6 +32,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import __version__, atomicio
+
+logger = logging.getLogger(__name__)
 
 RELEASES_API = "https://api.github.com/repos/elboaf/FlyGD-Wingman/releases/latest"
 MAX_INSTALLER_BYTES = 256 * 1024 * 1024
@@ -62,6 +65,13 @@ class UpdateFailure(RuntimeError):
         self.stage = stage
         self.code = code
         self.detail = detail
+
+
+class _ProtectedFileCloseFailure(UpdateFailure):
+    """A protected handle close failure that shell success may outlive."""
+
+    def __init__(self, detail: str):
+        super().__init__("verify", "file-close", detail)
 
 
 @dataclass(frozen=True)
@@ -842,7 +852,7 @@ class _WindowsLockedFile:
             if exc[1] is not None:
                 exc[1].add_note(detail)
             else:
-                raise UpdateFailure("verify", "file", detail)
+                raise _ProtectedFileCloseFailure(detail)
         return False
 
     def identity_and_size(self):
@@ -954,12 +964,29 @@ def launch_verified(
     attachment(path, release.url)
     if shell_execute is None:
         shell_execute = _shell_execute
-    with _locked_manager(path, locked_open) as locked:
-        identity, size = _verify_locked(release, locked)
-        if before_launch is not None:
-            before_launch()
-        _require_same_locked_file(locked, identity, size)
-        return shell_execute(path)
+    launched = False
+    process_handle = None
+    try:
+        with _locked_manager(path, locked_open) as locked:
+            identity, size = _verify_locked(release, locked)
+            if before_launch is not None:
+                before_launch()
+            _require_same_locked_file(locked, identity, size)
+            process_handle = shell_execute(path)
+            launched = True
+    except _ProtectedFileCloseFailure:
+        if not launched:
+            raise
+        # Setup has started and its process handle has transferred to our caller.
+        # Reporting launch failure here would orphan that handle and misclassify
+        # the durable handoff, so preserve ownership and leave a diagnostic.
+        logger.warning(
+            "Protected installer handle close failed after shell launch; "
+            "process handle %s remains owned by caller",
+            process_handle,
+            exc_info=True,
+        )
+    return process_handle
 
 
 def _shell_execute(path: Path, *, libs=None) -> int:
