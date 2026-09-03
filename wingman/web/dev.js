@@ -1479,7 +1479,19 @@
   };
   api.eve_settings_select = function (server, profile) {
     console.log('DEV api.eve_settings_select(', server, ',', profile, ')');
-    eve.server = server; eve.profile = profile;
+    // '' is not "no profile": Api.eve_settings_select hands discover()
+    // `profile or None`, and an empty token is its one deliberate
+    // fallback -- "the requested server's first profile". evesettings.js
+    // relies on it, sending '' on a SERVER change rather than the old
+    // server's profile path (which the endpoint would refuse). Assigning
+    // the token straight through emptied the Profile select here and
+    // disabled every control gated on state.profile, which no real server
+    // change does. The fixture carries one server and one flat `profiles`
+    // list -- that list IS what this server offers -- so its first entry
+    // is the faithful answer without inventing a per-server association
+    // the payload does not carry.
+    var resolved = profile || (eve.profiles.length ? eve.profiles[0].path : '');
+    eve.server = server; eve.profile = resolved;
     return Promise.resolve(true);
   };
   api.eve_settings_resolve_names = function () {

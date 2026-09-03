@@ -460,6 +460,64 @@ def test_profiles_delayed_mutation_logs_every_received_argument():
     )
 
 
+def _eve_select_stub_body() -> str:
+    match = re.search(
+        r"api\.eve_settings_select = function \(server, profile\) \{(.*?)\n  \};",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, "dev.js must double eve_settings_select(server, profile)"
+    return re.sub(r"(?m)^\s*//.*$", "", match.group(1))
+
+
+def test_eve_select_double_treats_an_empty_profile_as_the_servers_first():
+    """'' is not "no profile" on this endpoint.
+
+    Api.eve_settings_select hands discover() `profile or None`, and an empty
+    token is its one deliberate fallback: the requested server's FIRST
+    profile. evesettings.js now depends on that -- its server `change`
+    handler sends '' on purpose rather than carrying the old server's
+    profile path, which the endpoint would refuse -- so a double that
+    assigns the token straight onto eve.profile models a contract the
+    bridge does not have. In the harness that reads as a server change
+    emptying the Profile select and disabling every control gated on
+    `state.profile`, which is not what a real server change does.
+
+    The fixture carries one server and one flat `profiles` list, which IS
+    the list offered for the selected server, so its first entry is the
+    faithful answer here without inventing a per-server association the
+    payload does not carry.
+    """
+    body = _eve_select_stub_body()
+    assert "eve.profile = profile;" not in body, (
+        "the double must not assign the raw token: an empty profile is a "
+        "request for the server's first profile, not a request for none"
+    )
+    assert "eve.profiles" in body, (
+        "the empty-profile fallback must be derived from the profiles the "
+        "fixture offers for that server, not hard-coded"
+    )
+    assert re.search(r"\bif \(!profile\)|profile \|\|", body), (
+        "the double must branch on the empty token explicitly"
+    )
+
+
+def test_eve_select_double_still_honours_an_explicit_profile():
+    """The fallback is for the empty token alone. A named profile -- what
+    the Profile select itself sends -- is still taken verbatim, or every
+    selection would answer with the same first profile and the two-profile
+    fixture the copy checkpoints need would be unreachable.
+    """
+    body = _eve_select_stub_body()
+    assert "eve.server = server;" in body
+    assert re.search(r"eve\.profile = (?!profile;)\w+;", body), (
+        "the double must still record a resolved profile onto the fixture"
+    )
+    # It answers the way the real endpoint answers an ACCEPTED change; the
+    # double never second-guesses Python's own refusals.
+    assert "Promise.resolve(true)" in body
+
+
 # Task 7: the whole-profile copy double. Named by the scenario a session
 # needs to eyeball rather than by an implementation detail, so a driver or
 # a branch that stops being reachable from any of these names is caught

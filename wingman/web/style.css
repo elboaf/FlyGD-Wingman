@@ -4666,8 +4666,8 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    (see .rail-head's own comment). `flex: none` keeps it out of
    .skills-main's own flex sizing; --panel-border is the same working
    hairline token .es-profile-tools's boundary uses elsewhere in this
-   sheet -- not the unrelated, undefined --border some Profiles rules
-   still carry. */
+   sheet -- it is the sheet's only declared boundary token, and the
+   undefined --border every rule here used to reach for is gone. */
 .skills-roster-head {
   flex: none; padding-top: 8px; border-top: 1px solid var(--panel-border);
 }
