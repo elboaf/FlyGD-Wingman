@@ -48,12 +48,19 @@ def test_readme_google_token_note_is_only_the_boundary_and_table_link():
 
 def test_readme_network_table_covers_eve_and_current_user_triggers():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "| CCP EVE SSO and ESI" in readme
-    assert "login.eveonline.com" in readme
-    assert "esi.evetech.net" in readme
-    assert "skills, queue, and attributes" in readme
-    assert "Authenticated ESI skills, queue, and attributes requests" in readme
-    assert readme.index("`/characters/{id}/`") < readme.index("`/universe/names`")
+    ccp_row = next(
+        line for line in readme.splitlines() if line.startswith("| CCP EVE SSO and ESI")
+    )
+    assert "login.eveonline.com" in ccp_row
+    assert "esi.evetech.net" in ccp_row
+    assert "skills, queue, and attributes" in ccp_row
+    assert "Authenticated ESI skills, queue, and attributes requests" in ccp_row
+    assert "skill plans through unauthenticated" in ccp_row
+    assert "`/universe/ids`" in ccp_row
+    assert "type metadata" in ccp_row
+    assert "group metadata" in ccp_row
+    assert ccp_row.index("`/characters/{id}/`") < ccp_row.index("`/universe/names`")
+    assert "remaining display names" in ccp_row
     assert "FightRecorder" in readme
     assert not re.search(
         r"makes network connections to (?:exactly )?"
@@ -142,6 +149,12 @@ def test_updater_manual_docs_keep_fixture_and_windows_policy_claims_narrow():
     assert "guards do not identify the file's contents" in flat_manual
     assert "must compile and use the provided fixture" in flat_manual
     assert "ShellExecute starts only" not in flat_manual
+    assert "filesystem and local policy that support Mark-of-the-Web" in flat_manual
+    assert "`Zone.Identifier` is present and listed" in flat_manual
+    assert (
+        "must not be worked around by weakening host or Attachment Services validation"
+        in flat_manual
+    )
     assert "reputation warning depending on local policy" in flat_smoke
     assert "must leave zone checks enabled" in flat_smoke
     assert "normal visible installer" in flat_smoke

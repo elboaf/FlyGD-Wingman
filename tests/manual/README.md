@@ -73,12 +73,13 @@ uv run python tests\manual\update_harness.py attachment `
 Get-Item -LiteralPath $Fixture -Stream *
 ```
 
-Expected on the harmless fixture: the harness prints file identity, size,
-SHA-256, and `Zone.Identifier: present`; `Get-Item` lists both the ordinary
-data stream and `Zone.Identifier`. A policy rejection or quarantine must
-remain a typed updater failure and must not be worked around by weakening host
-or Attachment Services validation. Recompile the fixture if local policy
-quarantines it.
+Expected on a filesystem and local policy that support Mark-of-the-Web: the
+harness prints file identity, size, SHA-256, and `Zone.Identifier: present`;
+`Zone.Identifier` is present and listed by `Get-Item` beside the ordinary data
+stream. Where they do not support it, the zone stream may be absent. A policy
+rejection or quarantine must remain a typed updater failure and must not be
+worked around by weakening host or Attachment Services validation. Recompile
+the fixture if local policy quarantines it.
 
 ## Protected-handle replacement race
 
