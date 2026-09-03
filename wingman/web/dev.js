@@ -683,6 +683,21 @@
     };
   }
 
+  function devUpdateState() {
+    return {
+      state: 'available',
+      installed_version: '0.0.0-dev',
+      available_version: '4.9.0',
+      update_available: true,
+      downloaded_bytes: 0,
+      total_bytes: 0,
+      can_check: true,
+      can_download: true,
+      can_install: false,
+      error: ''
+    };
+  }
+
   // The bar page pulls its section once at load; so does bookmarks.js
   // for the toggle's initial paint. Returns the same object the payload
   // above carries, so the two doubles cannot disagree.
@@ -700,6 +715,14 @@
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());
+  };
+
+  api.update_status = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.check_for_updates = function () {
+    return Promise.resolve(devUpdateState());
   };
 
   // ---- FightRecorder: the harness has no OBS and no network, so the

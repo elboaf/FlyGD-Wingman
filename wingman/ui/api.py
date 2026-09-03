@@ -53,6 +53,7 @@ from .. import (
     uploader,
 )
 from .. import settings as settings_mod
+from .. import updates as updates_mod
 from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..evesettings import backup as evesettings_backup
@@ -537,6 +538,18 @@ class _WorkGate:
             return True
 
 
+@dataclass
+class _UpdateRuntime:
+    state: str = "idle"
+    release: updates_mod.ReleaseInfo | None = None
+    staged: Path | None = None
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    error: str = ""
+    automatic_failure: bool = False
+    worker: threading.Thread | None = None
+
+
 class Api:
     """JS-callable methods only. Every other attribute underscore-prefixed."""
 
@@ -555,6 +568,9 @@ class Api:
         preview_host=None,
         skills=None,
         alerts=None,
+        update_service=updates_mod,
+        update_spawn=threading.Thread,
+        is_frozen=lambda: bool(getattr(sys, "frozen", False)),
     ):
         self._state = state
         self._window = None  # assigned by ui.window.create()
@@ -656,6 +672,9 @@ class Api:
         self._spawn = spawn
         self._probe = probe
         self._timer = timer
+        self._update_service = update_service
+        self._update_spawn = update_spawn
+        self._is_frozen = is_frozen
         self._probe_queue: queue.Queue = queue.Queue()
         # Every list_rows() bumps this. A probe result carrying a stale
         # generation refers to rows that have since been replaced, and is
@@ -667,6 +686,8 @@ class Api:
         # target's finally. Thread liveness has a pre-start gap and therefore
         # cannot arbitrate concurrent pywebview bridge calls.
         self._work_gate = _WorkGate()
+        self._update_lock = threading.Lock()
+        self._update = _UpdateRuntime()
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
         # The standalone combat-log post, and Play. Separate handles rather
@@ -2605,6 +2626,154 @@ class Api:
         successful write, so the page has one renderer for both.
         """
         return self._settings_payload()
+
+    def update_status(self) -> dict:
+        return self._update_snapshot()
+
+    def check_for_updates(self) -> dict:
+        return self._start_update_check(automatic=False)
+
+    def _start_update_check(self, automatic: bool) -> dict:
+        allowed = {
+            "idle",
+            "current",
+            "available",
+            "unavailable",
+            "check_failed",
+            "download_failed",
+        }
+        previous = None
+        with self._update_lock:
+            if self._update.state == "checking":
+                if not automatic:
+                    self._update.automatic_failure = False
+                return self._update_snapshot_locked()
+            if self._update.state not in allowed:
+                return self._update_snapshot_locked()
+            previous = replace(self._update)
+            self._update.state = "checking"
+            self._update.error = ""
+            self._update.automatic_failure = automatic
+            snapshot = self._update_snapshot_locked()
+        try:
+            worker = self._update_spawn(
+                target=self._update_check_worker,
+                args=(),
+                daemon=True,
+            )
+        except Exception:  # noqa: BLE001 - construction failure becomes retryable update status
+            return self._rollback_update_check(previous, automatic)
+        with self._update_lock:
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure becomes retryable update status
+            return self._rollback_update_check(previous, automatic)
+        return snapshot
+
+    def _rollback_update_check(self, previous: _UpdateRuntime, automatic: bool) -> dict:
+        with self._update_lock:
+            self._update = replace(previous)
+            if not automatic:
+                self._update.error = self._update_start_error("check")
+            snapshot = self._update_snapshot_locked()
+        self._push_update_status()
+        return snapshot
+
+    def _update_check_worker(self) -> None:
+        try:
+            release = self._update_service.latest_release(_version)
+        except Exception as exc:
+            logger.debug("Wingman update check failed", exc_info=True)
+            with self._update_lock:
+                automatic = self._update.automatic_failure
+                self._update.worker = None
+                self._update.automatic_failure = False
+                if automatic:
+                    self._update.state = (
+                        "available"
+                        if self._update.release is not None
+                        else "unavailable"
+                    )
+                    self._update.error = ""
+                else:
+                    self._update.state = "check_failed"
+                    self._update.error = self._update_check_error(exc)
+        else:
+            with self._update_lock:
+                self._update.worker = None
+                self._update.automatic_failure = False
+                self._update.error = ""
+                self._update.staged = None
+                self._update.downloaded_bytes = 0
+                self._update.total_bytes = 0
+                if release is None:
+                    self._update.release = None
+                    self._update.state = "current"
+                else:
+                    self._update.release = release
+                    self._update.state = "available"
+        self._push_update_status()
+
+    @staticmethod
+    def _update_check_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "check" and exc.code == "network":
+                return (
+                    "Could not check for updates. Check your internet connection "
+                    "and try again."
+                )
+            if exc.stage == "check":
+                return (
+                    "Could not check for updates. The latest release could not "
+                    "be verified."
+                )
+        return "Could not check for updates. Try again."
+
+    @staticmethod
+    def _update_start_error(stage: str) -> str:
+        if stage == "check":
+            return "Could not start checking for updates. Try again."
+        if stage == "download":
+            return "Could not start downloading the update. Try again."
+        return "Could not start installing the update. Try again."
+
+    def _update_snapshot(self) -> dict:
+        with self._update_lock:
+            return self._update_snapshot_locked()
+
+    def _update_snapshot_locked(self) -> dict:
+        release = self._update.release
+        state = self._update.state
+        update_available = release is not None
+        available_version = ""
+        if release is not None:
+            available_version = ".".join(str(part) for part in release.version)
+        return {
+            "state": state,
+            "installed_version": _version,
+            "available_version": available_version,
+            "update_available": update_available,
+            "downloaded_bytes": self._update.downloaded_bytes,
+            "total_bytes": self._update.total_bytes,
+            "can_check": state
+            in {
+                "idle",
+                "current",
+                "available",
+                "unavailable",
+                "check_failed",
+                "download_failed",
+            },
+            "can_download": update_available
+            and state in {"available", "check_failed", "download_failed"},
+            "can_install": state == "ready" and self._is_frozen(),
+            "error": self._update.error,
+        }
+
+    def _push_update_status(self) -> None:
+        self._push("onUpdateStatus", self._update_snapshot())
 
     def pick_folder(self, which: str) -> str:
         """Native folder picker, seeded with what is configured now."""

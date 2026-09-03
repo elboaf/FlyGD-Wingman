@@ -153,6 +153,25 @@ def test_profile_copy_reuses_the_single_profiles_completion_push():
     assert set(registered_names().get("onEveSettingsDone", [])) == {"evesettings.js"}
 
 
+def test_update_status_handler_is_allowlisted_and_registered_literally():
+    source = (WEB / "app.js").read_text(encoding="utf-8")
+
+    assert "onUpdateStatus" in allowlist()
+    assert registered_names().get("onUpdateStatus") == ["app.js"]
+    assert "WM.handle('onUpdateStatus', renderUpdateBadge);" in source
+
+
+def test_get_settings_remains_a_network_free_read():
+    source = API.read_text(encoding="utf-8")
+    body = source.split("def get_settings(self) -> dict:", 1)[1].split(
+        "\n    def update_status", 1
+    )[0]
+
+    assert "return self._settings_payload()" in body
+    assert "latest_release" not in body
+    assert "_start_update_check" not in body
+
+
 def test_the_watch_url_is_written_exactly_once():
     """One place decides what a YouTube watch URL looks like, and it is
     uploader.watch_url.

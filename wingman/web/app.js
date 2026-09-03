@@ -55,7 +55,7 @@
                  'onPreviewBindCaptured',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
-                 'onSigBarState',
+                 'onSigBarState', 'onUpdateStatus',
                  'onSkills', 'onSkillsProgress'];
 
   WM.handle = function (name, fn) {
@@ -309,6 +309,16 @@
   });
 
   // ---- title bar ----------------------------------------------------
+  function renderUpdateBadge(payload) {
+    var gear = WM.el('btn-settings');
+    var available = !!payload.update_available;
+    gear.classList.toggle('update-available', available);
+    gear.title = available ? 'Settings — update available' : 'Settings';
+    gear.setAttribute('aria-label', gear.title);
+    document.dispatchEvent(new CustomEvent('wm:update-status', {detail: payload}));
+  }
+  WM.handle('onUpdateStatus', renderUpdateBadge);
+
   WM.el('btn-minimize').addEventListener('click', function () {
     WM.send('minimize');
   });
@@ -338,6 +348,9 @@
     // Save from it wrote the blanks back.
     WM.send('get_settings').then(function (payload) {
       if (payload) window.onSettings(payload);
+    });
+    WM.send('update_status').then(function (payload) {
+      if (payload) window.onUpdateStatus(payload);
     });
   });
 }());

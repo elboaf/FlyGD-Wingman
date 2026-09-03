@@ -155,6 +155,7 @@ def test_no_load_time_read_is_left_undoubled():
         "skills_state",
         "get_bookmarks",
         "get_preview_hotkey_state",
+        "update_status",
     }
     stubbed = _stubbed()
     undoubled = sorted(reads - stubbed)
@@ -162,6 +163,13 @@ def test_no_load_time_read_is_left_undoubled():
         "a screen's own content comes from these, so the harness renders "
         "that screen as a finished-looking shell without them: " + repr(undoubled)
     )
+
+
+def test_update_status_methods_share_one_dev_fixture():
+    assert "function devUpdateState()" in DEV_JS
+    assert "api.update_status = function ()" in DEV_JS
+    assert "api.check_for_updates = function ()" in DEV_JS
+    assert "Promise.resolve(devUpdateState())" in DEV_JS
 
 
 def _identity_scenarios() -> dict:

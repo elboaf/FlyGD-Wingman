@@ -42,6 +42,12 @@
 
   var current = {};    // last settings dict from Python
   var detected = {};   // detected-folder suggestions from the same payload
+  // Task 5's bridge contract lands in app.js; About owns the render later.
+  // Held here now so the event has a listener from the moment it exists.
+  var latestUpdateStatus = null;
+  document.addEventListener('wm:update-status', function (ev) {
+    latestUpdateStatus = ev.detail || {};
+  });
   // Fetched once from Python rather than duplicated here: ui/copy.py's
   // AUTH_STATES is the tested source, and a second table in JavaScript
   // would drift the moment a label changes.
