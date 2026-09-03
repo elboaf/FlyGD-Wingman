@@ -456,6 +456,70 @@ class AppState:
     engine: object | None = None
 
 
+class _WorkGate:
+    """Atomically arbitrate uploads, updater handoff, and process shutdown.
+
+    The lock protects state transitions only. Prompts, page pushes, I/O, worker
+    creation, and shutdown all happen after it has been released so no external
+    operation can park every claimant behind it.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._upload = False
+        self._handoff = ""
+        self._quitting = False
+
+    def claim_upload(self) -> bool:
+        with self._lock:
+            if self._upload or self._handoff or self._quitting:
+                return False
+            self._upload = True
+            return True
+
+    def upload_claimed(self) -> bool:
+        with self._lock:
+            return self._upload
+
+    def release_upload(self) -> None:
+        with self._lock:
+            self._upload = False
+
+    def claim_handoff(self, phase: str) -> bool:
+        with self._lock:
+            if self._upload or self._quitting:
+                return False
+            # The updater's own runtime lock excludes a second installer.
+            # Reusing this transition lets that owner advance the phase
+            # without releasing the claim between revalidation and launch.
+            self._handoff = phase
+            return True
+
+    def release_handoff(self) -> None:
+        with self._lock:
+            self._handoff = ""
+
+    def handoff_phase(self) -> str:
+        with self._lock:
+            return self._handoff
+
+    def claim_quit(self, *, force_upload: bool) -> bool:
+        with self._lock:
+            if self._handoff or self._quitting:
+                return False
+            if self._upload and not force_upload:
+                return False
+            self._quitting = True
+            return True
+
+    def begin_update_shutdown(self) -> bool:
+        with self._lock:
+            if not self._handoff:
+                return False
+            self._quitting = True
+            return True
+
+
 class Api:
     """JS-callable methods only. Every other attribute underscore-prefixed."""
 
@@ -582,6 +646,10 @@ class Api:
         self._generation = 0
         self._drain: Scheduler | None = None
 
+        # The claim exists before a worker handle and survives through its
+        # target's finally. Thread liveness has a pre-start gap and therefore
+        # cannot arbitrate concurrent pywebview bridge calls.
+        self._work_gate = _WorkGate()
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
         # The standalone combat-log post, and Play. Separate handles rather
@@ -591,13 +659,11 @@ class Api:
         # and Play is fire-and-forget with nothing to guard at all.
         self._logs_thread: threading.Thread | None = None
         self._play_thread: threading.Thread | None = None
-        # The log post's guard is a CLAIMED FLAG, not `thread.is_alive()`
-        # like _busy(). is_alive() answers False for a thread that has been
-        # created and not yet started, so assigning the handle before
-        # .start() -- which is what makes the upload guard safe enough --
-        # leaves a window where a second call sees "idle" and dispatches a
-        # second post. pywebview serves each bridge call on its own thread,
-        # so two fast clicks really can arrive concurrently.
+        # The log post has its own claimed flag rather than sharing the
+        # upload/update/Quit gate: its shorter lifecycle deliberately does
+        # not defer polling or require Quit confirmation. It still cannot
+        # use thread liveness because pywebview bridge calls are concurrent
+        # and a newly constructed thread is not alive before start().
         self._logs_lock = threading.Lock()
         self._logs_running = False
         self._retry_state: RetryState | None = None
@@ -1436,7 +1502,7 @@ class Api:
           rows, so deferring for it would make the list go stale for
           nothing.
         """
-        return self._upload_thread is not None and self._upload_thread.is_alive()
+        return self._work_gate.upload_claimed()
 
     def _logs_busy(self) -> bool:
         """Is a standalone combat-log post claimed or running?
@@ -1447,19 +1513,18 @@ class Api:
         beside `_logs_lock`.
 
         "Exclude each other" is intent, not an atomic transition: this and
-        `_busy()` are read separately by two check-then-act callers,
-        exactly as start_upload's own upload-versus-upload guard has always
-        worked. Both are reached by clicking a button, and a human cannot
-        click two at once.
+        `_busy()` are read separately by two check-then-act callers. The work
+        gate deliberately serializes upload, updater handoff, and Quit only;
+        standalone log-post separation remains unchanged.
         """
         with self._logs_lock:
             return self._logs_running
 
-    def _confirm_quit_if_busy(self) -> bool:
-        """Answer "may the app exit now?" for the tray's Quit item.
+    def _claim_quit(self) -> bool:
+        """Answer "may the app exit now?" and atomically close the work gate.
 
         Quit destroys the window, which returns from the GUI loop and ends
-        the process. `_upload_thread` is a daemon, so an upload in flight
+        the process. The upload worker is a daemon, so an upload in flight
         dies mid-chunk: no message, no log line, and a multi-gigabyte
         transfer discarded by one menu click. This is the only thing
         standing between that click and the discard.
@@ -1487,21 +1552,37 @@ class Api:
         silence as "stay running" costs a second click, reading it as
         "quit" costs the upload.
         """
-        if not self._busy():
+        upload_running = self._busy()
+        if upload_running:
+            window = self._window
+            if window is None:
+                # No page to ask and no way to warn. Refusing here would make
+                # Quit inert with nothing on screen explaining why, which is a
+                # worse failure than the discard this guard exists to prevent.
+                logger.warning("Quit requested with an upload running and no window.")
+            else:
+                window.show()
+                if not self._ask(
+                    "Upload in progress",
+                    copy_mod.format_quit_confirm(self._last_pct),
+                    timeout=QUIT_CONFIRM_TIMEOUT_S,
+                ):
+                    return False
+
+        if self._work_gate.claim_quit(force_upload=upload_running):
             return True
-        window = self._window
-        if window is None:
-            # No page to ask and no way to warn. Refusing here would make
-            # Quit inert with nothing on screen explaining why, which is a
-            # worse failure than the discard this guard exists to prevent.
-            logger.warning("Quit requested with an upload running and no window.")
-            return True
-        window.show()
-        return self._ask(
-            "Upload in progress",
-            copy_mod.format_quit_confirm(self._last_pct),
-            timeout=QUIT_CONFIRM_TIMEOUT_S,
-        )
+
+        # An updater can win after a confirmed upload ends but before Quit
+        # takes its claim. Never destroy the window under that handoff.
+        if self._work_gate.handoff_phase():
+            if self._window is not None:
+                self._window.show()
+            self._alert("info", "Update", "Update installation is being prepared.")
+        return False
+
+    def _confirm_quit_if_busy(self) -> bool:
+        """Compatibility wrapper until the tray calls `_claim_quit` directly."""
+        return self._claim_quit()
 
     def start_upload(self, title, description, stitch, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
@@ -1568,15 +1649,34 @@ class Api:
             # snapshotted here -- Settings is reachable between them.
             logs=True,
         )
-        # Cleared per dispatch, not per process: a stop answered by the
-        # PREVIOUS job would otherwise abort this one before its first chunk
-        # and report "Stopped. Nothing was uploaded." for a job the user
-        # just started. Retry clears it for the same reason.
-        self._cancel.clear()
-        self._upload_thread = threading.Thread(
-            target=self._confirm_then_upload, args=(job,), daemon=True
-        )
-        self._upload_thread.start()
+        if not self._work_gate.claim_upload():
+            if self._busy():
+                self._alert("warning", "Busy", "An upload is already in progress.")
+            elif self._work_gate.handoff_phase():
+                self._alert("info", "Update", "Update installation is being prepared.")
+            return
+        try:
+            # Cleared per dispatch, not per process: a stop answered by the
+            # PREVIOUS job would otherwise abort this one before its first chunk
+            # and report "Stopped. Nothing was uploaded." for a job the user
+            # just started. Retry clears it for the same reason.
+            self._cancel.clear()
+            self._upload_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._confirm_then_upload, job),
+                daemon=True,
+            )
+            self._upload_thread.start()
+        except Exception:
+            self._upload_thread = None
+            self._work_gate.release_upload()
+            raise
+
+    def _run_claimed_upload(self, target, *args) -> None:
+        try:
+            target(*args)
+        finally:
+            self._work_gate.release_upload()
 
     def _confirm_then_upload(self, job: UploadJob) -> None:
         # The confirm runs on the worker, not in start_upload, because
@@ -1934,16 +2034,23 @@ class Api:
 
     def retry(self) -> None:
         state = self._retry_state
-        if state is None:
+        if state is None or not self._work_gate.claim_upload():
             return
-        # Disabled immediately, not by the worker: the click that got here
-        # must not be repeatable while the resume is being set up.
-        self._push("onRetryAvailable", {"available": False})
-        self._cancel.clear()
-        self._upload_thread = threading.Thread(
-            target=self._retry_worker, args=(state,), daemon=True
-        )
-        self._upload_thread.start()
+        try:
+            # Disabled immediately, not by the worker: the click that got here
+            # must not be repeatable while the resume is being set up.
+            self._push("onRetryAvailable", {"available": False})
+            self._cancel.clear()
+            self._upload_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._retry_worker, state),
+                daemon=True,
+            )
+            self._upload_thread.start()
+        except Exception:
+            self._upload_thread = None
+            self._work_gate.release_upload()
+            raise
 
     def _retry_worker(self, state: RetryState) -> None:
         """Resume the interrupted upload, then finish the rest of the job."""

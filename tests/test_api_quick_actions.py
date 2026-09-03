@@ -223,6 +223,7 @@ def test_the_post_is_refused_while_an_upload_runs(tmp_path, monkeypatch):
     posted = posts(monkeypatch)
     sent = fakes.record_pushes(api)
     gate = threading.Event()
+    assert api._work_gate.claim_upload()
     api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
     api._upload_thread.start()
     try:
@@ -237,6 +238,7 @@ def test_the_post_is_refused_while_an_upload_runs(tmp_path, monkeypatch):
     finally:
         gate.set()
         api._upload_thread.join(timeout=5)
+        api._work_gate.release_upload()
 
 
 def test_an_upload_is_refused_while_a_post_runs_with_its_own_sentence(
@@ -547,6 +549,7 @@ def test_rename_is_refused_while_an_upload_runs(tmp_path):
     api, _window, rows, _watcher = rename_api(tmp_path)
     old = rows["r0"].path
     gate = threading.Event()
+    assert api._work_gate.claim_upload()
     api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
     api._upload_thread.start()
     try:
@@ -557,6 +560,7 @@ def test_rename_is_refused_while_an_upload_runs(tmp_path):
     finally:
         gate.set()
         api._upload_thread.join(timeout=5)
+        api._work_gate.release_upload()
 
 
 def test_rename_refuses_a_name_already_on_disk(tmp_path):
