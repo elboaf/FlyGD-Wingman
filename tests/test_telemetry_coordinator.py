@@ -1,0 +1,870 @@
+"""Serialized telemetry coordinator -- tests.
+
+Every test injects ``_noop_thread_factory`` so ``reconcile()`` sets up
+subscriptions and service lifecycle without spawning a real dispatcher
+thread, and drives ``dispatch_once(0)`` synchronously instead.  A zero
+timeout is a genuine non-blocking ``Queue.get``, so the "one-second
+dispatcher timeout" path is exercised without any test sleeping.
+
+Only ``TestDispatcherThread`` inspects the real thread factory's arguments,
+and it never starts a thread either.
+"""
+
+import datetime
+import queue
+
+import pytest
+
+from wingman.telemetry.coordinator import (
+    PUBLISH_INTERVAL_S,
+    TelemetryCoordinator,
+    _noop_thread_factory,
+)
+from wingman.telemetry.metrics import NO_LOG, FleetMetrics
+from wingman.telemetry.model import (
+    ClientSessionId,
+    CombatFact,
+    FleetSnapshot,
+    RosterClient,
+    RosterSnapshot,
+    SourceId,
+    SourceLifecycle,
+    StreamHealth,
+)
+
+UTC = datetime.UTC
+NOW = datetime.datetime(2026, 8, 25, 12, 0, 0, tzinfo=UTC)
+
+STREAM_HEALTH = StreamHealth(state="active")
+
+
+# ---------------------------------------------------------------------------
+# Payload helpers
+# ---------------------------------------------------------------------------
+
+
+def _session(character, *, hwnd=1, pid=100, generation=1):
+    return ClientSessionId(
+        hwnd=hwnd, pid=pid, character=character, first_seen_generation=generation
+    )
+
+
+def _roster(*sessions, generation=1):
+    clients = tuple(
+        RosterClient(
+            hwnd=s.hwnd, pid=s.pid, title=s.character, character=s.character, session=s
+        )
+        for s in sessions
+    )
+    return RosterSnapshot(generation=generation, clients=clients)
+
+
+def _source_id(path="C:/logs/alice.txt", session_start=NOW):
+    return SourceId(normalized_path=path, session_start_utc=session_start)
+
+
+def _lifecycle(character, *, generation=1, source_id=None, available=True, active=True):
+    return SourceLifecycle(
+        character=character,
+        generation=generation,
+        source_id=source_id if source_id is not None else _source_id(),
+        available=available,
+        active=active,
+    )
+
+
+def _fact(character, kind, *, amount=None, source="", occurred_at=NOW, generation=1):
+    return CombatFact(
+        character=character,
+        source_generation=generation,
+        source_id=_source_id(),
+        occurred_at=occurred_at,
+        kind=kind,
+        amount=amount,
+        source=source,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fakes
+# ---------------------------------------------------------------------------
+
+
+class FakeDiscovery:
+    """ClientDiscovery's coordinator-facing surface."""
+
+    def __init__(self):
+        self.starts = 0
+        self.stops = 0
+        self.scans = 0
+        self.subscribers = []
+
+    def subscribe(self, callback):
+        self.subscribers.append(callback)
+
+        def _unsub():
+            if callback in self.subscribers:
+                self.subscribers.remove(callback)
+
+        return _unsub
+
+    def start(self):
+        self.starts += 1
+
+    def stop(self, timeout=5.0):
+        self.stops += 1
+
+    def request_scan(self):
+        self.scans += 1
+
+    def publish(self, snapshot):
+        for callback in list(self.subscribers):
+            callback(snapshot)
+
+
+class FakeStream:
+    """GameLogStream's coordinator-facing surface.
+
+    ``request_source`` publishes synchronously on the CALLER's thread, as
+    the real stream does -- that is what makes the republished lifecycle
+    land behind the roster envelope that asked for it.
+    """
+
+    def __init__(self, health=STREAM_HEALTH):
+        self.starts = []
+        self.stops = 0
+        self.requested = []
+        self.subscribers = []
+        self.sources = {}
+        self._health = health
+
+    def subscribe(self, callback):
+        self.subscribers.append(callback)
+
+        def _unsub():
+            if callback in self.subscribers:
+                self.subscribers.remove(callback)
+
+        return _unsub
+
+    def start(self, folder):
+        self.starts.append(folder)
+
+    def stop(self, timeout=3.0):
+        self.stops += 1
+
+    def request_source(self, character):
+        self.requested.append(character)
+        self.publish(
+            self.sources.get(
+                character,
+                SourceLifecycle(
+                    character=character,
+                    generation=0,
+                    source_id=None,
+                    available=False,
+                    active=False,
+                ),
+            )
+        )
+
+    def health(self):
+        return self._health
+
+    def publish(self, event):
+        for callback in list(self.subscribers):
+            callback(event)
+
+
+class RecordingMetrics:
+    """FleetMetrics' interface, recording call ORDER as well as payloads."""
+
+    def __init__(self, rows=()):
+        self.calls = []
+        self.rows = rows
+        self.raise_on_consume = False
+
+    @property
+    def envelopes(self):
+        return [payload for kind, payload in self.calls if kind == "consume"]
+
+    @property
+    def sequences(self):
+        return [env.sequence for env in self.envelopes]
+
+    def consume(self, envelope):
+        self.calls.append(("consume", envelope))
+        if self.raise_on_consume:
+            raise RuntimeError("metrics exploded")
+
+    def snapshot(self, sequence, health):
+        self.calls.append(("snapshot", sequence))
+        return FleetSnapshot(rows=self.rows, stream_health=health)
+
+
+class FakePreviewHost:
+    def __init__(self, *, raises=False):
+        self.rosters = []
+        self.raises = raises
+
+    def apply_roster(self, snapshot):
+        self.rosters.append(snapshot)
+        if self.raises:
+            raise RuntimeError("preview exploded")
+
+
+class FakePolicy:
+    def __init__(self, *, raises=False):
+        self.calls = []
+        self.raises = raises
+
+    def handle(self, events, now):
+        self.calls.append((list(events), now))
+        if self.raises:
+            raise RuntimeError("policy exploded")
+        return []
+
+
+class _Harness:
+    """A coordinator plus every fake it was built from."""
+
+    def __init__(self, tmp_path, **kw):
+        self.flags = {
+            "preview": kw.pop("preview", False),
+            "fleet": kw.pop("fleet", True),
+            "alerts": kw.pop("alerts", False),
+        }
+        self.folder = kw.pop("folder", tmp_path)
+        self.discovery = kw.pop("discovery", None) or FakeDiscovery()
+        self.stream = kw.pop("stream", None) or FakeStream()
+        self.metrics = kw.pop("metrics", None) or RecordingMetrics()
+        self.preview = kw.pop("preview_host", None)
+        self.policy = kw.pop("alert_policy", None)
+        self.mono = [1000.0]
+        self.snapshots = []
+        self.coordinator = TelemetryCoordinator(
+            preview_enabled=lambda: self.flags["preview"],
+            fleet_enabled=lambda: self.flags["fleet"],
+            alerts_enabled=lambda: self.flags["alerts"],
+            gamelogs_folder=lambda: self.folder,
+            discovery=self.discovery,
+            stream=self.stream,
+            metrics=self.metrics,
+            preview_host=self.preview,
+            alert_policy=self.policy,
+            _thread_factory=_noop_thread_factory,
+            _clock=lambda: self.mono[0],
+            **kw,
+        )
+
+    def subscribe(self):
+        return self.coordinator.subscribe_fleet(self.snapshots.append)
+
+    def pump(self):
+        """One synchronous dispatcher iteration, never blocking."""
+        self.coordinator.dispatch_once(0)
+
+
+def _harness(tmp_path, **kw):
+    return _Harness(tmp_path, **kw)
+
+
+# ---------------------------------------------------------------------------
+# Step 1: runtime predicates
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimePredicates:
+    @pytest.mark.parametrize(
+        "preview,fleet,alerts,want_discovery,want_stream,want_policy",
+        [
+            (False, False, False, False, False, False),
+            (False, True, False, True, True, False),
+            (False, False, True, False, False, False),
+            (True, False, False, True, False, False),
+            (True, False, True, True, True, True),
+        ],
+    )
+    def test_runtime_predicates(
+        self, tmp_path, preview, fleet, alerts, want_discovery, want_stream, want_policy
+    ):
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=preview,
+            fleet=fleet,
+            alerts=alerts,
+            alert_policy=policy,
+            preview_host=FakePreviewHost(),
+        )
+        h.coordinator.reconcile()
+
+        assert (h.discovery.starts == 1) is want_discovery
+        assert (len(h.stream.starts) == 1) is want_stream
+
+        # Alert eligibility is only observable through delivery, and a fact
+        # can only arrive at all while the stream is running -- the two
+        # rows where want_stream is False assert the trivially-true half of
+        # that on purpose: no stream, no alert, whatever alerts_enabled says.
+        if want_stream:
+            h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+            h.pump()
+        assert (len(policy.calls) == 1) is want_policy
+
+    def test_stream_needs_a_resolvable_folder(self, tmp_path):
+        h = _harness(tmp_path, fleet=True, folder=tmp_path / "gone")
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 1
+        assert h.stream.starts == []
+
+    def test_stream_stops_when_the_folder_disappears(self, tmp_path):
+        folder = tmp_path / "logs"
+        folder.mkdir()
+        h = _harness(tmp_path, fleet=True, folder=folder)
+        h.coordinator.reconcile()
+        assert len(h.stream.starts) == 1
+
+        folder.rmdir()
+        h.coordinator.reconcile()
+
+        assert h.stream.stops == 1
+        assert h.stream.subscribers == []
+
+    def test_settings_are_read_live_not_captured(self, tmp_path):
+        h = _harness(tmp_path, preview=False, fleet=False, alerts=False)
+        h.coordinator.reconcile()
+        assert h.discovery.starts == 0
+
+        h.flags["fleet"] = True
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 1
+        assert len(h.stream.starts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 2: sequencing and source republication
+# ---------------------------------------------------------------------------
+
+
+class TestSequencing:
+    def test_service_callbacks_only_enqueue(self, tmp_path):
+        """A discovery/stream callback must return without touching a
+        consumer: the real GameLogStream preserves total order, but a
+        blocking subscriber stalls its producer."""
+        preview = FakePreviewHost()
+        h = _harness(tmp_path, preview=True, fleet=True, preview_host=preview)
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_lifecycle("Alice"))
+
+        assert h.metrics.calls == []
+        assert preview.rosters == []
+        assert h.snapshots == []
+
+        h.pump()
+
+        assert h.metrics.envelopes != []
+        assert preview.rosters != []
+        assert h.snapshots != []
+
+    def test_sequences_strictly_increase_across_interleaved_inputs(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        h.stream.publish(_lifecycle("Alice", generation=7))
+        h.pump()
+        h.discovery.publish(_roster(_session("Alice"), generation=2))
+        h.pump()
+        h.stream.publish(_fact("Alice", "outgoing_damage", amount=100, generation=7))
+        h.pump()
+
+        seqs = h.metrics.sequences
+        assert seqs == sorted(set(seqs))
+        kinds = [type(env.payload).__name__ for env in h.metrics.envelopes]
+        assert kinds == [
+            "RosterSnapshot",
+            "SourceLifecycle",  # the republication for the new session
+            "SourceLifecycle",
+            "RosterSnapshot",
+            "CombatFact",
+        ]
+
+    def test_new_session_republishes_its_source_after_the_roster(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.stream.sources["Alice"] = _lifecycle("Alice", generation=3)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert h.stream.requested == ["Alice"]
+        first, second = h.metrics.envelopes
+        assert isinstance(first.payload, RosterSnapshot)
+        assert second.payload == _lifecycle("Alice", generation=3)
+        assert second.sequence > first.sequence
+
+    def test_unchanged_session_does_not_republish(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        h.discovery.publish(_roster(_session("Alice"), generation=2))
+        h.pump()
+
+        assert h.stream.requested == ["Alice"]
+
+    def test_changed_session_republishes_again(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        # A relog: same name, new first_seen_generation.
+        h.discovery.publish(_roster(_session("Alice", generation=9), generation=2))
+        h.pump()
+
+        assert h.stream.requested == ["Alice", "Alice"]
+
+    def test_departed_character_is_forgotten_and_rerequested(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        h.discovery.publish(_roster(generation=2))
+        h.pump()
+        h.discovery.publish(_roster(_session("Alice"), generation=3))
+        h.pump()
+
+        assert h.stream.requested == ["Alice", "Alice"]
+
+    def test_unnamed_client_is_never_republished(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        snapshot = RosterSnapshot(
+            generation=1,
+            clients=(
+                RosterClient(hwnd=1, pid=2, title="EVE", character=None, session=None),
+            ),
+        )
+        h.discovery.publish(snapshot)
+        h.pump()
+
+        assert h.stream.requested == []
+
+    def test_no_republication_while_the_stream_is_stopped(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=False, alerts=False)
+        h.coordinator.reconcile()
+        assert h.stream.starts == []
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert h.stream.requested == []
+
+    def test_metrics_are_fed_before_the_snapshot_is_published(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        kinds = [kind for kind, _ in h.metrics.calls]
+        assert kinds[-1] == "snapshot"
+        assert kinds[:-1] == ["consume", "consume"]
+        assert len(h.snapshots) == 1
+
+    def test_alert_facts_reach_policy_once_per_batch_in_order(self, tmp_path):
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=True,
+            alerts=True,
+            fleet=False,
+            alert_policy=policy,
+            preview_host=FakePreviewHost(),
+        )
+        h.mono[0] = 1234.5
+        h.coordinator.reconcile()
+
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.stream.publish(_fact("Alice", "incoming_tackle", source="Bob"))
+        h.stream.publish(_fact("Alice", "incoming_miss", source="Rat"))
+        h.stream.publish(_fact("Alice", "decloak"))
+        h.stream.publish(_fact("Alice", "outgoing_damage", amount=10))
+        h.pump()
+
+        assert len(policy.calls) == 1
+        events, now = policy.calls[0]
+        assert now == 1234.5
+        assert [(e.character, e.event, e.source) for e in events] == [
+            ("Alice", "combat", "Rat"),
+            ("Alice", "warp_scramble", "Bob"),
+            ("Alice", "combat", "Rat"),
+            ("Alice", "decloak", ""),
+        ]
+
+    def test_preview_receives_rosters_only_while_preview_is_enabled(self, tmp_path):
+        preview = FakePreviewHost()
+        h = _harness(tmp_path, preview=False, fleet=True, preview_host=preview)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        assert preview.rosters == []
+
+        h.flags["preview"] = True
+        h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice"), generation=2))
+        h.pump()
+
+        assert [s.generation for s in preview.rosters] == [2]
+
+
+class TestConsumerFailureIsolation:
+    def test_preview_failure_stops_neither_alerts_nor_fleet(self, tmp_path):
+        preview = FakePreviewHost(raises=True)
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=True,
+            fleet=True,
+            alerts=True,
+            preview_host=preview,
+            alert_policy=policy,
+        )
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.pump()
+
+        assert preview.rosters != []
+        assert len(policy.calls) == 1
+        assert len(h.snapshots) == 1
+
+    def test_alert_failure_stops_neither_preview_nor_fleet(self, tmp_path):
+        preview = FakePreviewHost()
+        policy = FakePolicy(raises=True)
+        h = _harness(
+            tmp_path,
+            preview=True,
+            fleet=True,
+            alerts=True,
+            preview_host=preview,
+            alert_policy=policy,
+        )
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.pump()
+
+        assert preview.rosters != []
+        assert len(h.snapshots) == 1
+
+    def test_one_failing_fleet_subscriber_cannot_starve_the_others(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        def _boom(_snapshot):
+            raise RuntimeError("subscriber exploded")
+
+        h.coordinator.subscribe_fleet(_boom)
+        h.subscribe()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert len(h.snapshots) == 1
+
+    def test_metrics_failure_does_not_kill_the_dispatcher(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.metrics.raise_on_consume = True
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.stream.publish(_lifecycle("Alice"))
+        h.pump()
+        assert len(h.snapshots) == 1
+
+        h.metrics.raise_on_consume = False
+        h.stream.publish(_lifecycle("Alice", generation=2))
+        h.pump()
+
+        assert len(h.snapshots) == 2
+
+    def test_unsubscribed_fleet_callback_stops_receiving(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+        unsub = h.subscribe()
+
+        h.pump()
+        assert len(h.snapshots) == 1
+
+        unsub()
+        h.pump()
+
+        assert len(h.snapshots) == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 3: lifecycle and cadence
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycle:
+    def test_first_consumer_starts_each_service_exactly_once(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=True, alerts=True)
+
+        h.coordinator.reconcile()
+        h.coordinator.reconcile()
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 1
+        assert h.stream.starts == [tmp_path]
+        assert len(h.discovery.subscribers) == 1
+        assert len(h.stream.subscribers) == 1
+
+    def test_last_consumer_stops_each_service_exactly_once(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=True, alerts=True)
+        h.coordinator.reconcile()
+
+        h.flags.update(preview=False, fleet=False, alerts=False)
+        h.coordinator.reconcile()
+        h.coordinator.reconcile()
+
+        assert h.discovery.stops == 1
+        assert h.stream.stops == 1
+        assert h.discovery.subscribers == []
+        assert h.stream.subscribers == []
+
+    def test_dropping_only_the_fleet_keeps_discovery_for_preview(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=True, alerts=False)
+        h.coordinator.reconcile()
+
+        h.flags["fleet"] = False
+        h.coordinator.reconcile()
+
+        assert h.discovery.stops == 0
+        assert h.discovery.starts == 1
+        assert h.stream.stops == 1
+
+    def test_stop_stops_every_service_and_is_idempotent(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=True, alerts=True)
+        h.coordinator.reconcile()
+
+        h.coordinator.stop()
+        h.coordinator.stop()
+
+        assert h.discovery.stops == 1
+        assert h.stream.stops == 1
+        assert h.discovery.subscribers == []
+        assert h.stream.subscribers == []
+
+    def test_reconcile_after_stop_restarts(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+        h.coordinator.stop()
+
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 2
+        assert len(h.stream.starts) == 2
+        assert len(h.discovery.subscribers) == 1
+
+    def test_stop_discards_telemetry_nobody_consumed(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.coordinator.stop()
+        h.coordinator.reconcile()
+        h.pump()
+
+        # The queued roster described the session that ended; stamping it
+        # with a fresh sequence would present it to Fleet Metrics as now.
+        assert h.metrics.envelopes == []
+
+    def test_restart_reasks_the_stream_about_a_surviving_session(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        assert h.stream.requested == ["Alice"]
+
+        h.coordinator.stop()
+        h.coordinator.reconcile()
+        # ClientDiscovery keeps session identity across its own restart, so
+        # the very same session is republished -- and the binding it had is
+        # gone, so it must be asked for again.
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert h.stream.requested == ["Alice", "Alice"]
+
+    def test_a_changed_folder_restarts_the_stream(self, tmp_path):
+        second = tmp_path / "other"
+        second.mkdir()
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator.reconcile()
+
+        h.folder = second
+        h.coordinator.reconcile()
+
+        assert h.stream.stops == 1
+        assert h.stream.starts == [tmp_path, second]
+
+    def test_request_discovery_forwards_only_while_running(self, tmp_path):
+        h = _harness(tmp_path, preview=False, fleet=False)
+        h.coordinator.reconcile()
+
+        h.coordinator.request_discovery()
+        assert h.discovery.scans == 0
+
+        h.flags["fleet"] = True
+        h.coordinator.reconcile()
+        h.coordinator.request_discovery()
+
+        assert h.discovery.scans == 1
+
+
+class TestDispatcherThread:
+    def test_dispatcher_thread_is_non_daemon_and_single(self, tmp_path):
+        made = []
+
+        def _factory(*, target, args, name, daemon):
+            made.append({"name": name, "daemon": daemon})
+            return _noop_thread_factory(
+                target=target, args=args, name=name, daemon=daemon
+            )
+
+        coordinator = TelemetryCoordinator(
+            preview_enabled=lambda: True,
+            fleet_enabled=lambda: True,
+            alerts_enabled=lambda: False,
+            gamelogs_folder=lambda: tmp_path,
+            discovery=FakeDiscovery(),
+            stream=FakeStream(),
+            metrics=RecordingMetrics(),
+            _thread_factory=_factory,
+        )
+        coordinator.reconcile()
+        coordinator.reconcile()
+
+        assert made == [{"name": "telemetry-dispatch", "daemon": False}]
+
+    def test_real_dispatcher_thread_publishes_and_joins(self, tmp_path):
+        discovery = FakeDiscovery()
+        stream = FakeStream()
+        coordinator = TelemetryCoordinator(
+            preview_enabled=lambda: False,
+            fleet_enabled=lambda: True,
+            alerts_enabled=lambda: False,
+            gamelogs_folder=lambda: tmp_path,
+            discovery=discovery,
+            stream=stream,
+            metrics=RecordingMetrics(),
+        )
+        seen = queue.Queue()
+        coordinator.subscribe_fleet(seen.put)
+        coordinator.reconcile()
+        try:
+            discovery.publish(_roster(_session("Alice")))
+            snapshot = seen.get(timeout=5)
+            assert isinstance(snapshot, FleetSnapshot)
+        finally:
+            coordinator.stop(timeout=5)
+
+        assert discovery.stops == 1
+        assert stream.stops == 1
+
+
+class TestCadence:
+    def _fleet_harness(self, tmp_path):
+        """A harness wired to the REAL FleetMetrics on injected clocks."""
+        wall = [NOW]
+        mono = [1000.0]
+        metrics = FleetMetrics(_clock=lambda: mono[0], _utc_now=lambda: wall[0])
+        h = _harness(tmp_path, fleet=True, metrics=metrics)
+        return h, wall, mono
+
+    def test_timeout_publishes_a_freshly_decayed_snapshot(self, tmp_path):
+        h, wall, mono = self._fleet_harness(tmp_path)
+        h.stream.sources["Alice"] = _lifecycle("Alice", generation=3)
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()  # roster, then the republished lifecycle that binds it
+
+        h.stream.publish(_fact("Alice", "outgoing_damage", amount=100, generation=3))
+        h.pump()
+        assert h.snapshots[-1].rows[0].dps == 10
+
+        # No new fact: only the clocks move, and only the one-second
+        # dispatcher timeout publishes.
+        wall[0] = NOW + datetime.timedelta(seconds=1)
+        mono[0] += 1.0
+        h.pump()
+        assert h.snapshots[-1].rows[0].dps == 10
+
+        wall[0] = NOW + datetime.timedelta(seconds=11)
+        mono[0] += 10.0
+        h.pump()
+
+        assert h.snapshots[-1].rows[0].dps == 0
+        assert len(h.snapshots) == 4
+
+    def test_published_snapshot_carries_stream_health(self, tmp_path):
+        h = _harness(
+            tmp_path, fleet=True, stream=FakeStream(health=StreamHealth(state="stale"))
+        )
+        h.coordinator.reconcile()
+        h.subscribe()
+
+        h.pump()
+
+        assert h.snapshots[-1].stream_health == StreamHealth(state="stale")
+
+    def test_snapshot_returns_the_last_published_value(self, tmp_path):
+        h, _wall, _mono = self._fleet_harness(tmp_path)
+        h.coordinator.reconcile()
+
+        assert h.coordinator.snapshot().rows == ()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        rows = h.coordinator.snapshot().rows
+        assert [(r.character, r.log_status) for r in rows] == [("Alice", NO_LOG)]
+
+    def test_health_says_disabled_when_no_consumer_wants_the_stream(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=False, alerts=False)
+        h.coordinator.reconcile()
+
+        assert h.coordinator.snapshot().stream_health == StreamHealth(state="disabled")
+
+    def test_health_says_missing_folder_when_a_consumer_wants_the_stream(
+        self, tmp_path
+    ):
+        h = _harness(tmp_path, fleet=True, folder=tmp_path / "gone")
+        h.coordinator.reconcile()
+
+        health = h.coordinator.snapshot().stream_health
+        assert health.state == "missing_folder"
+        assert health.detail == str(tmp_path / "gone")
+
+    def test_publish_interval_is_one_second(self):
+        assert PUBLISH_INTERVAL_S == 1.0
