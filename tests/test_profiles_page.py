@@ -14,6 +14,25 @@ after someone edits the card is a question for here.
 import pathlib
 import re
 
+
+def _brace_block(text: str, marker: str) -> str:
+    """The body of the first `{...}` block whose opening line contains
+    `marker`, matched by brace DEPTH rather than by the first `}` -- a
+    naive `{([^}]*)}` stops at the first nested rule's own close, which is
+    exactly wrong for a block (an `@media` tier) that contains other rules.
+    """
+    start = text.index(marker)
+    open_at = text.index("{", start) + 1
+    depth, i = 1, open_at
+    while i < len(text) and depth:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    return text[open_at : i - 1]
+
+
 WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
@@ -143,6 +162,58 @@ def test_every_backup_column_class_has_a_rule():
     assert "'bk-when mono'" not in CODE and '"bk-when mono"' not in CODE, (
         "a bare .mono class does nothing; #es-backups .bk-when sets the face"
     )
+
+
+def test_backup_rows_align_target_and_origin_to_the_same_baseline():
+    """.bk-what stacks two lines (name, meta); centring every column across
+    the row's full height put Origin between them rather than beside the
+    name it actually describes. Aligning the row to its start keeps Origin
+    level with the name line the eye reads first, tightening the
+    Target-to-Origin association within one row.
+    """
+    grid = re.search(r"\.es-backup-grid \{([^}]*)\}", CSS)
+    assert grid, ".es-backup-grid has no rule"
+    assert "align-items: start" in grid.group(1)
+    assert "align-items: center" not in grid.group(1)
+    # The pinned track: the target identity keeps the flexible column
+    # regardless of the alignment fix above.
+    assert "minmax(220px, 1fr)" in grid.group(1)
+
+
+def test_origin_reads_as_its_own_column_not_as_the_targets_secondary_text():
+    """.bk-meta (the target's own raw id) and .bk-origin (the backup's
+    creation type) are two different axes of information about one row.
+    Painted in the same faint tone they read as one column of secondary
+    text; matching Origin to the date's tone instead keeps it visually
+    distinct from the identity it sits beside.
+    """
+    origin = re.search(r"#es-backups \.bk-origin \{([^}]*)\}", CSS)
+    assert origin, "#es-backups .bk-origin has no rule"
+    assert "var(--text-dim)" in origin.group(1)
+
+    when = re.search(r"#es-backups \.bk-when \{([^}]*)\}", CSS)
+    assert when and "var(--text-dim)" in when.group(1), (
+        "Date and Origin should share one tone as the row's two fact columns"
+    )
+    meta = re.search(r"(?<!bk-name, )#es-backups \.bk-meta \{([^}]*)\}", CSS)
+    assert meta and "var(--text-faint)" in meta.group(1), (
+        "the target's own secondary id must stay the dimmer of the two tones"
+    )
+
+
+def test_origin_still_names_only_the_backup_creation_type():
+    """Origin must never be read as which profile a backup came from -- it
+    is Automatic/Manual, and only that, in both the matcher and the row
+    builder. A geometry or colour change here must not have touched this.
+    """
+    matcher = re.search(
+        r"function backupMatches\(item, needle\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert matcher
+    assert "item.origin === 'auto' ? 'Automatic' : 'Manual'" in matcher.group(1)
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    assert "item.origin === 'auto' ? 'Automatic' : 'Manual'" in render.group(1)
 
 
 def test_the_backup_stamp_is_punctuated_but_not_sliced_blind():
@@ -395,6 +466,72 @@ def test_the_commit_row_carries_the_count_and_the_hazard():
     assert commit, "the commit row is gone"
     for part in ('id="es-copy"', 'id="es-copy-count"', 'id="es-eve-state-commit"'):
         assert part in commit.group(1), part
+
+
+def test_the_commit_row_groups_state_apart_from_action_and_hazard():
+    """The count and source are one fact -- what will happen, and to what.
+    Grouping them lets the wide tier give that group the row's remaining
+    space instead of leaving it as a bare gap between the button on the
+    left and a pill stranded at the far right edge.
+    """
+    commit = re.search(r'<div class="row" id="es-commit">(.*?)</div>', BODY, re.DOTALL)
+    assert commit, "the commit row is gone"
+    inner = commit.group(1)
+    info = re.search(
+        r'<span class="es-commit-info">\s*'
+        r'<span id="es-copy-count" class="es-count">[^<]*</span>\s*'
+        r'<span id="es-copy-source" class="es-copy-source"></span>\s*'
+        r"</span>",
+        inner,
+    )
+    assert info, "the count and source no longer share one grouping span"
+    assert inner.index('id="es-copy"') < inner.index('class="es-commit-info"')
+    assert inner.index('class="es-commit-info"') < inner.index(
+        'id="es-eve-state-commit"'
+    )
+
+    rule = re.search(r"\.es-commit-info \{([^}]*)\}", CSS)
+    assert rule, ".es-commit-info has no rule"
+
+
+def test_the_commit_bar_widens_to_meet_the_roster_above_the_floor():
+    """Capped to the card's 586px prose measure like every other row, the
+    commit bar read as a narrow aside pinned to the card's upper-left
+    corner while the roster it introduces already spans the full card
+    beneath it. Past the 840 floor the bar takes the SAME width the roster
+    does, so the two read as one region; at or below the floor nothing
+    changes -- DESIGN.md's complementary tier to a floor-anchored
+    `max-width: 840px` is `min-width: 841px`.
+    """
+    generic = re.search(
+        r"#route-evesettings > \.settings > \.card:has\(> \.es-roster\) > "
+        r":not\(\.es-roster\)([^{]*)\{([^}]*)\}",
+        CSS,
+    )
+    assert generic, "the shared 586px re-cap for the card's non-roster children is gone"
+    assert ":not(.es-commit-context)" in generic.group(1), (
+        "the commit bar must be excluded from the shared 586px re-cap so its "
+        "own rule, not a specificity fight, decides its width"
+    )
+
+    base = re.search(r"\.es-commit-context \{([^}]*)\}", CSS)
+    assert base and "max-width: 586px" in base.group(1), (
+        "below the floor the commit bar must keep the card's narrow prose measure"
+    )
+
+    wide = _brace_block(CSS, "@media (min-width: 841px)")
+    assert re.search(r"\.es-commit-context\s*\{[^}]*max-width:\s*none", wide), (
+        "the commit bar never widens past the card's narrow prose measure"
+    )
+    assert re.search(
+        r"\.es-commit-context > \.hint, \.es-commit-context > \.es-copy-followup\s*"
+        r"\{[^}]*max-width:\s*586px",
+        wide,
+    ), "the bar's own prose must keep the readable measure it widens away from"
+    assert re.search(r"\.es-commit-info\s*\{[^}]*flex:\s*1\b", wide), (
+        "above the floor the state group must absorb the row's slack, not "
+        "leave the pill stranded far from the button and count"
+    )
 
 
 def test_the_second_pill_is_the_same_pill_and_not_a_second_sentence():
@@ -772,14 +909,33 @@ def test_profiles_opens_backups_without_mounting_the_archive_inline():
 
 
 def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
-    """Backups and Formations stay grouped with the selected profile context."""
+    """Backups and Formations stay grouped with the selected profile context.
+
+    The group is now visibly AND programmatically named "Profile tools":
+    aria-labelledby points at a visible label rather than restating a
+    sentence in aria-label alone, and the sentence it used to carry --
+    "Tools for the selected EVE profile" -- overstated the case.
+    eve_settings_backup_dir() (paths.py) is one fixed store, not scoped to
+    the selected server or profile, so Backups reads across every profile
+    ever backed up on this machine -- a label claiming these tools were FOR
+    the selected profile was exactly the false claim the brief warns
+    against. The tie to context is proximity and style now, not a wording
+    promise the payload cannot back up.
+    """
     tools = re.findall(
         r'<div class="es-profile-tools"([^>]*)>(.*?)</div>', BODY, re.DOTALL
     )
     assert len(tools) == 1, "profile tools must remain one sibling group"
     attrs, content = tools[0]
     assert 'role="group"' in attrs
-    assert 'aria-label="Tools for the selected EVE profile"' in attrs
+    assert 'aria-labelledby="es-profile-tools-label"' in attrs
+    assert 'aria-label="Tools for the selected EVE profile"' not in attrs, (
+        "the group must not claim these tools belong only to the selected profile"
+    )
+    label = re.search(r'<span id="es-profile-tools-label"[^>]*>([^<]*)</span>', content)
+    assert label and label.group(1).strip() == "Profile tools", (
+        "the group's accessible name must also be its VISIBLE text"
+    )
     assert 'id="es-backups-open"' in content
     assert 'id="es-formations-open"' in content
 
@@ -788,6 +944,24 @@ def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
     copy_at = BODY.index("<h2>Copy EVE settings</h2>")
     assert context_end < tools_at < copy_at
     assert "card" not in attrs.split()
+
+
+def test_profile_tools_label_reads_as_subordinate_not_as_a_second_heading():
+    """.card > h2 is the one heading treatment on the screen; the tools
+    label sits outside any card and must not borrow it wholesale, or a
+    plain sibling group starts reading as a second card.
+    """
+    rule = re.search(r"\.es-profile-tools-label \{([^}]*)\}", CSS)
+    assert rule, ".es-profile-tools-label has no rule"
+    assert "var(--text-label)" in rule.group(1)
+    assert "text-transform: uppercase" in rule.group(1)
+
+    group = re.search(r"\.es-profile-tools \{([^}]*)\}", CSS)
+    assert group, ".es-profile-tools has no rule"
+    assert "border-top" in group.group(1), (
+        "the group should read as attached to the context card above it, "
+        "not just positioned near it"
+    )
 
 
 def test_backups_is_a_profiles_subroute_with_destination_chrome():
@@ -1494,3 +1668,64 @@ def test_retention_is_explicit_and_does_not_add_a_second_accent():
     assert "event.key === 'Enter'" in CODE
     assert BODY.count('class="btn acc"') == 1
     assert ACCOUNT_ROUTE.count('class="btn acc"') == 1
+
+
+# ---- account identity: wide-width composition ---------------------------
+
+
+def test_account_identity_shell_centers_at_wide_widths():
+    """.account-identity-shell kept its 620px measure but sat flush against
+    the route's left edge at every width past that measure -- the same
+    narrow-upper-left read the copy commit region had. `.route.active` is
+    `display: flex` (row direction, DESIGN.md `.route`/`.route.active`), so
+    an auto inline margin on this flex item is honoured by the flexbox spec
+    (auto margins on a flex item absorb the row's free space) and centres a
+    fixed-width item exactly the way a block box would.
+    """
+    rule = re.search(r"\.account-identity-shell \{([^}]*)\}", CSS)
+    assert rule, ".account-identity-shell has no rule"
+    assert "max-width: 620px" in rule.group(1), "the workflow's own measure must stay"
+    assert "margin-inline: auto" in rule.group(1), (
+        "the shell must centre once the route is wider than its own measure"
+    )
+
+
+def test_manual_identity_management_is_a_labelled_subordinate_group():
+    """Manage account names and character links... stays a linkbtn
+    disclosure right after the guided flow, but is now a named, subordinate
+    group -- visibly and programmatically -- rather than trailing the
+    roster step with nothing marking the boundary. Exact copy is untouched:
+    only the group wrapping and its own label are new.
+    """
+    open_tag = re.search(r'<div class="es-manual-identity"([^>]*)>', ACCOUNT_ROUTE)
+    assert open_tag, "the manual management path is no longer its own group"
+    attrs = open_tag.group(1)
+    assert 'role="group"' in attrs
+    assert 'aria-labelledby="es-manual-identity-label"' in attrs
+
+    label = re.search(
+        r'<p id="es-manual-identity-label"[^>]*>([^<]*)</p>', ACCOUNT_ROUTE
+    )
+    assert label and label.group(1).strip(), "the group has no visible label"
+
+    wrapper_at = ACCOUNT_ROUTE.index('class="es-manual-identity"')
+    toggle_at = ACCOUNT_ROUTE.index('id="es-manage-toggle"')
+    panel_at = ACCOUNT_ROUTE.index('id="es-identity-panel"')
+    roster_done_at = ACCOUNT_ROUTE.index('id="ai-roster-done"')
+    assert roster_done_at < wrapper_at < toggle_at < panel_at, (
+        "the manual path must stay close to, and after, the primary flow"
+    )
+
+    # Exact copy is pinned elsewhere (test_account_management_uses_the_
+    # specified_names_and_links_label); this only guards that wrapping the
+    # existing controls did not touch it.
+    assert (
+        'id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">'
+        "Manage account names and character links\u2026</button>" in ACCOUNT_ROUTE
+    )
+
+    rule = re.search(r"\.es-manual-identity \{([^}]*)\}", CSS)
+    assert rule, ".es-manual-identity has no rule"
+    assert "border-top" in rule.group(1), (
+        "the group boundary must be visible, not only programmatic"
+    )

@@ -2693,7 +2693,7 @@ button.btn:disabled,
 /* The card grew; its form rows and its prose did not. 586px, not 620:
    inside the card the 620 wrapper only ever gave them 586, and this is
    holding that measure rather than restoring a number from one level up. */
-#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster) {
+#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster):not(.es-commit-context) {
   max-width: 586px;
 }
 
@@ -2704,13 +2704,26 @@ button.btn:disabled,
 
 /* Quiet tools remain siblings between context and work rather than becoming
    another card or route. Pulling the group toward the context and aligning it
-   with that card's content associates Backups and Formations with the selected
-   profile without putting either inside the copy workflow. */
+   with that card's content ties Backups and Formations to the selected
+   profile through proximity, a shared border and a visible group label --
+   not through a sentence the payload cannot back up. Backups reads across
+   every profile ever backed up on this machine: eve_settings_backup_dir()
+   (paths.py) is one fixed store, never scoped to the selected server or
+   profile, so the old aria-label ("Tools for the selected EVE profile") was
+   the false claim. The group is named the same way for sighted and
+   assistive-tech users -- "Profile tools" -- through a visible label wired
+   with aria-labelledby, and the border-top reads as the context card's own
+   footer shelf rather than an unrelated row floating beneath it. */
 .es-profile-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
-  margin-top: -4px; padding-inline: 16px;
+  margin-top: -4px; padding: 8px 16px 0;
+  border-top: 1px solid var(--panel-border);
 }
 .es-profile-tools[hidden] { display: none; }
+.es-profile-tools-label {
+  flex: none; color: var(--text-label); font-size: var(--fs-muted);
+  letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
+}
 #es-formations-open[hidden] { display: none; }
 
 /* Backups are a focused Profiles child with one route-level scrollbar. The
@@ -2769,7 +2782,7 @@ button.btn:disabled,
   display: grid;
   grid-template-columns: 132px minmax(220px, 1fr) 80px 150px;
   column-gap: 10px;
-  align-items: center;
+  align-items: start;
 }
 .es-backup-head {
   padding: 0 8px 6px; color: var(--text-dim);
@@ -3148,10 +3161,40 @@ button.btn:disabled,
   position: sticky; top: 0; z-index: 1;
   margin: 0 0 12px; padding: 10px 0;
   border-bottom: 1px solid var(--border); background: var(--panel);
+  max-width: 586px;
 }
 .es-commit-context > .hint { margin: 6px 0 0; }
 .es-commit-context > .es-copy-followup { margin: 8px 0 0; }
 #es-commit { flex-wrap: wrap; row-gap: 8px; margin-bottom: 0; }
+/* The count and source are one fact -- what will happen, and to what --
+   grouped so the wide tier below can hand them the row's remaining space
+   instead of leaving it as a bare gap between the button and a pill
+   stranded at the far right edge. */
+.es-commit-info {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0;
+}
+
+/* Capped at the card's 586px prose measure like every other row in it, the
+   commit bar read as a narrow aside pinned to the card's upper-left corner
+   while the roster it introduces already spans the whole card beneath it --
+   summary, action and hazard crowded into a corner of a much wider region
+   they describe. Past the 840 floor the bar takes the SAME width the
+   roster does, so the two read as one region instead of two mismatched
+   measures stacked on each other; at or below the floor nothing here
+   changes. DESIGN.md: a tier that must fire AT the floor is written as
+   max-width: 840px, so the complementary "above it" tier is
+   min-width: 841px. Excluded from the shared re-cap above rather than
+   fought over with a higher-specificity override -- its own rule, not a
+   specificity contest, decides its width. The bar's own prose keeps the
+   586 measure a sentence wants: widening the BAR must not widen what the
+   reader reads left to right. */
+@media (min-width: 841px) {
+  .es-commit-context { max-width: none; }
+  .es-commit-context > .hint, .es-commit-context > .es-copy-followup {
+    max-width: 586px;
+  }
+  .es-commit-info { flex: 1; }
+}
 
 /* The quantity, stated before the irreversible action (PRODUCT.md). Body
    size, not muted: it is the number the user is meant to check, and the
@@ -3224,7 +3267,7 @@ button.btn:disabled,
 #route-accountidentity { overflow-y: auto; padding: 12px; }
 .account-identity-shell {
   display: flex; flex-direction: column; gap: 12px;
-  width: 100%; max-width: 620px;
+  width: 100%; max-width: 620px; margin-inline: auto;
 }
 .account-identity-shell h1 {
   margin: 0; color: var(--text); font-size: 20px; font-weight: 650;
@@ -3250,10 +3293,24 @@ button.btn:disabled,
 }
 .ai-head { flex: none; }
 .ai-status { min-height: 20px; margin: 0; color: var(--text-dim); }
-.ai-manage-toggle { align-self: flex-start; margin-top: 10px; }
+.ai-manage-toggle { align-self: flex-start; }
 .es-identity {
   display: flex; flex-direction: column; gap: 10px;
   padding-top: 14px; border-top: 1px solid var(--border);
+}
+/* The guided five-step flow above is the primary path; this toggle and its
+   disclosure are the fallback for fixing a wrong link or renaming an
+   account outside that flow. A border and a named, visibly labelled group
+   keep it a clearly secondary cluster sitting right after the flow it
+   stands in for, rather than trailing the roster step with nothing
+   marking the boundary. */
+.es-manual-identity {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.es-manual-identity-label {
+  margin: 0; color: var(--text-label); font-size: var(--fs-muted);
+  letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
 }
 .es-account-characters { width: 100%; }
 .es-linked-character {
@@ -3309,6 +3366,13 @@ button.btn:disabled,
    Fixed columns either side of a flexing description put both buttons on
    one edge and let the eye scan the dates.
 
+   align-items: start, not center: .bk-what stacks two lines (name, then
+   its raw id), so centring every column across the row's full height put
+   Date, Origin and Actions between those two lines rather than beside the
+   name row the eye actually reads first -- loosening exactly the
+   Target-to-Origin association a row exists to state. Aligned to the
+   row's start, Origin sits level with the name line instead.
+
    The date sets the monospace face here rather than borrowing .mono: that
    class only exists as input.field.mono / span.field.mono / textarea, so a
    bare .mono on a plain span is inert -- silently, which is this page's
@@ -3327,9 +3391,16 @@ button.btn:disabled,
   color: var(--text-faint); font-size: var(--fs-muted);
 }
 /* Wide enough for "Automatic"; a column rather than a suffix so the two
-   origins line up and read as one answer to the same question. */
+   origins line up and read as one answer to the same question.
+
+   --text-dim, not --text-faint: painted the same faint tone as .bk-meta
+   (the target's OWN raw id), Origin read as more of the target's own
+   secondary text rather than as its own axis of information -- the
+   backup's creation type, never which profile it came from. Matching
+   Date's tone instead keeps the two "fact" columns visually distinct from
+   the identity they sit beside. */
 #es-backups .bk-origin {
-  color: var(--text-faint); font-size: var(--fs-muted);
+  color: var(--text-dim); font-size: var(--fs-muted);
 }
 
 #es-auto-keep { flex: 0 0 84px; }
