@@ -3109,6 +3109,27 @@ so these are the checks that matter and only a Windows machine can run them.
       start a copy: `Identify accounts…` is disabled until it finishes. Leave
       the identity sub-screen with `‹ Profiles` during an observation and return:
       the observation was cancelled.
+- [ ] **Cancelling a check in flight reads as idle, not a false no-changes
+      message.** Start identification, launch a character, close it, then
+      press `Check changes` and immediately press `‹ Profiles` (or `Cancel`)
+      before the check would normally finish. Expected: the sub-screen
+      returns to Prepare with no leftover "No account and character changes
+      were found" text and no candidate offered — the cancelled check must
+      not be mistaken for one that genuinely found nothing.
+- [ ] **A deleted character retracts an offered candidate mid-flow.** Get
+      Wingman to offer a candidate (`Check changes` reaches Confirm
+      character), then, before confirming, have ESI/Wingman confirm that
+      character deleted (e.g. the resolver's next pass on a known deleted
+      ID). Expected: the candidate is withdrawn automatically, the
+      sub-screen returns to Prepare, and the status line reads exactly
+      `That character was deleted. Start account identification again.`
+      rather than silently keeping a stale offer on screen.
+- [ ] **Account identity controls are unavailable on a non-Tranquility
+      folder.** Point the EVE folder at a Serenity, Singularity, or
+      unrecognized shard directory. Expected: in Accounts mode, `Identify
+      accounts…` and the account-tools row are hidden entirely (not merely
+      disabled), account rows fall back to `Account <id>`, and copy/backup
+      for that profile's characters and accounts remain fully available.
 - [ ] **Inspect every deterministic identity fixture in a browser.** Open
       `?dev=1&identity=<state>` for `idle`, `waiting`, `none`, `ambiguous`,
       `candidate-multiple`, `pending-name`, `existing-name`, `roster-one`,

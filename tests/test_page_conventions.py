@@ -3543,3 +3543,123 @@ def test_delete_refusal_applies_authoritative_hotkeys():
     assert "focusGroupManager" in dg_block, (
         "deleteGroup refusal arm does not restore focus via focusGroupManager"
     )
+
+
+# ---- profile identity: generation-gated staleness (Task 6) -------------
+
+
+def test_identification_generation_is_retained_from_zero():
+    """Task 5 made every identification start/check/cancel response, and
+    the onEveSettingsNames push, carry identification_generation. Task 6
+    must retain the last one observed so a response or push older than it
+    can be told apart from the latest and discarded.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "var identificationGeneration = 0;" in src, (
+        "evesettings.js does not retain an identificationGeneration counter "
+        "initialized to zero"
+    )
+    assert "function acceptIdentification(" in src, (
+        "evesettings.js has no acceptIdentification helper to reject stale "
+        "identification responses/pushes"
+    )
+
+
+def test_generation_is_observed_before_deleted_candidate_inspection():
+    """onEveSettingsNames must update the retained generation before
+    inspecting deleted_candidate_ids, so event-before-promise and
+    promise-before-event both apply the newer of the two in the same
+    order: the generation that authorizes the inspection is observed
+    first, not derived from the outcome of the inspection.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    handler = src.split("WM.handle('onEveSettingsNames'", 1)[1]
+    handler = handler.split("\n  });", 1)[0]
+    accept_at = handler.find("acceptIdentification(")
+    deleted_at = handler.find("deleted_candidate_ids")
+    assert accept_at != -1 and deleted_at != -1, (
+        "onEveSettingsNames does not both observe the generation and "
+        "inspect deleted_candidate_ids"
+    )
+    assert accept_at < deleted_at, (
+        "onEveSettingsNames inspects deleted_candidate_ids before observing "
+        "the generation that authorizes the inspection"
+    )
+
+
+def test_every_render_candidate_call_is_preceded_by_a_generation_check():
+    """Every path that paints an identification candidate must first
+    confirm the response is not older than one already applied -- a stale
+    'candidate' response racing a newer cancel or restart must not repaint
+    an offer the user already dismissed.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    calls = [m.start() for m in re.finditer(r"renderCandidate\(result\)", src)]
+    assert calls, "no renderCandidate(result) call sites found"
+    for pos in calls:
+        preceding = src[:pos]
+        block_start = preceding.rfind("function (result)")
+        block = src[block_start:pos] if block_start != -1 else preceding
+        assert "acceptIdentification(result)" in block, (
+            "a renderCandidate(result) call site has no preceding "
+            "acceptIdentification(result) guard in its enclosing callback"
+        )
+
+
+def test_a_cancelled_identification_check_response_is_idle_with_no_message():
+    """Binding ruling from the Task 5 review: a generation-cancelled
+    eve_settings_identification_check response must not fall into the
+    generic branch, which used to paint 'watching' with the false
+    no-changes message. It must be recognized explicitly and treated as
+    idle with no message.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    check_block = src.split("WM.el('es-identify-check').addEventListener", 1)[1].split(
+        "\n\n    WM.el('es-identify-cancel')", 1
+    )[0]
+    assert "'cancelled'" in check_block, (
+        "the check click handler has no explicit 'cancelled' branch"
+    )
+    cancelled_arm = check_block.split("'cancelled'", 1)[1].split("}", 1)[0]
+    assert "paintIdentification('idle')" in cancelled_arm, (
+        "a cancelled check response must return to idle with no message, "
+        "not the generic watching/no-changes branch"
+    )
+
+
+def test_a_deleted_candidate_clears_local_state_with_the_approved_message():
+    """onEveSettingsNames must clear the offered candidate and repaint
+    idle with the approved copy when the pushed deleted_candidate_ids
+    intersect the character currently offered.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "That character was deleted. Start account identification again." in src, (
+        "the approved deleted-candidate reset message is missing"
+    )
+
+
+def test_account_identity_controls_are_gated_by_the_payload_flag():
+    """Design: account identification and manual account-link controls
+    are unavailable outside a trusted Tranquility context. The page must
+    take that from account_identity_available, never from server/path
+    text reimplemented in JavaScript.
+    """
+    src = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "state.account_identity_available" in src, (
+        "no identity control is gated on state.account_identity_available"
+    )
+    can_identify = re.search(r"var canIdentify = ([^;]*);", src, re.DOTALL)
+    assert can_identify and "account_identity_available" in can_identify.group(1), (
+        "canIdentify does not require account_identity_available"
+    )
+
+
+def test_on_eve_settings_names_handler_remains_the_sole_registration():
+    """Task 6 changes onEveSettingsNames's body (it now takes a payload),
+    not its name or its owner."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "'onEveSettingsNames'" in app
+    ev = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert ev.count("WM.handle('onEveSettingsNames'") == 1, (
+        "onEveSettingsNames must be registered exactly once, in evesettings.js"
+    )
