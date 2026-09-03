@@ -382,6 +382,61 @@ def test_stage_copy_cleans_up_a_failed_copy(copy_plan, monkeypatch):
     assert leftover == []
 
 
+def test_a_cleanup_failure_before_publication_is_not_swallowed(copy_plan, monkeypatch):
+    """Nothing was published, so a stage that could not be removed is this
+    operation's own failure and must reach the caller. Silence here would
+    leave an unreported directory behind after a copy that did nothing.
+    """
+    monkeypatch.setattr(
+        profilecopy.shutil,
+        "rmtree",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("handle open")),
+    )
+    with pytest.raises(OSError, match="handle open"), profilecopy.stage_copy(copy_plan):
+        pass  # the caller published nothing
+
+
+def test_a_cleanup_failure_after_a_published_replacement_does_not_undo_it(
+    replace_plan, monkeypatch
+):
+    """The replacement is settled on disk before the stage is removed, so a
+    scanner still holding the staging directory open must not turn a copy
+    that DID happen into "Copy failed" -- and must not invite a retry of it.
+    The stage stays, in the reserved never-discoverable namespace the next
+    run's cleanup_abandoned_stages sweeps.
+    """
+    real_rmtree = profilecopy.shutil.rmtree
+    refused = []
+
+    def rmtree(path, *args, **kwargs):
+        if Path(path).name.startswith(profilecopy.STAGE_PREFIX):
+            refused.append(Path(path))
+            raise OSError("handle open")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(profilecopy.shutil, "rmtree", rmtree)
+    with profilecopy.stage_copy(replace_plan) as staged:
+        published = profilecopy.publish_replacement(
+            staged, rollback=lambda: pytest.fail("must not roll back on success")
+        )
+        stage_path = staged.path
+
+    assert published == replace_plan.destination
+    assert (replace_plan.destination / "core_char_1.dat").read_bytes() == b"A"
+    assert (replace_plan.destination / "core_user_2.dat").read_bytes() == b"B"
+    assert refused == [stage_path]
+    assert stage_path.is_dir()
+    # Still not a profile any later discovery can offer, and the next run
+    # is the one that removes it.
+    found = tree.discover(replace_plan.root, replace_plan.server, replace_plan.source)
+    assert all(
+        not p.path.name.startswith(profilecopy.STAGE_PREFIX) for p in found.profiles
+    )
+    monkeypatch.setattr(profilecopy.shutil, "rmtree", real_rmtree)
+    profilecopy.cleanup_abandoned_stages(replace_plan.server)
+    assert not stage_path.exists()
+
+
 @pytest.mark.skipif(
     os.name == "nt", reason="POSIX symlink semantics used to fabricate the escape"
 )

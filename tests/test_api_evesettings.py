@@ -2500,6 +2500,47 @@ def test_replacing_a_profile_copies_the_recognized_set_and_keeps_the_source_sele
     assert len(archives) == 1
 
 
+def test_a_published_replacement_survives_a_failed_stage_cleanup(tmp_path, monkeypatch):
+    """The stage is removed AFTER the destination has settled, so a scanner
+    still holding it open must not convert a replacement that happened into
+    "Copy failed" -- an alert that both misreports the destination and
+    invites a retry of a copy already on disk. The stage is left for the
+    next run's sweep, in the namespace discovery can never offer.
+    """
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+    api._eve_confirm = lambda *args, **kwargs: True
+    real_rmtree = api_mod.evesettings_profilecopy.shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if Path(path).name.startswith(api_mod.evesettings_profilecopy.STAGE_PREFIX):
+            raise OSError("handle open")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(api_mod.evesettings_profilecopy.shutil, "rmtree", rmtree)
+    sent = fakes.record_pushes(api)
+
+    result = api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert result == {"accepted": True, "error": None}
+    assert sorted(p.name for p in destination.iterdir()) == [
+        "core_char_1.dat",
+        "core_char_2.dat",
+    ]
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload == {
+        "ok": True,
+        "operation": "profile_copy",
+        "mode": "replace",
+        "published": True,
+        "selection_persisted": True,
+        "error": None,
+    }
+    assert api._alert.raised == []
+    # The one visible trace is the stage the next run will clean up.
+    assert stages_left(source.parent) != []
+
+
 def test_a_declined_replacement_creates_no_backup_and_changes_nothing(
     tmp_path, monkeypatch
 ):

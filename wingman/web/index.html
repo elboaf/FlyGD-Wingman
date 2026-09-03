@@ -1465,13 +1465,20 @@
               Replace existing
             </label>
           </div>
+          <!-- aria-describedby: the status line under these two fields is
+               where every refusal about a NAME or a DESTINATION lands
+               (Python's), and where the panel says why its submit is
+               disabled. role="status" announces the change once; without
+               this association a screen-reader user who tabs BACK to the
+               field afterwards hears the field alone and never the reason
+               their last attempt was refused. -->
           <div class="row" id="es-profile-copy-new-fields">
             <label class="lab" for="es-profile-copy-name">Name</label>
-            <input id="es-profile-copy-name" class="field" type="text" maxlength="80">
+            <input id="es-profile-copy-name" class="field" type="text" maxlength="80" aria-describedby="es-profile-copy-status">
           </div>
           <div class="row" id="es-profile-copy-replace-fields" hidden>
             <label class="lab" for="es-profile-copy-destination">Replace</label>
-            <select id="es-profile-copy-destination" class="field"></select>
+            <select id="es-profile-copy-destination" class="field" aria-describedby="es-profile-copy-status"></select>
           </div>
           <p id="es-profile-copy-status" class="field-msg" role="status"></p>
           <div class="row">

@@ -133,6 +133,44 @@ def test_profiles_have_a_stable_path_tiebreaker(tmp_path):
     assert [p.path.name for p in found.profiles] == ["settings_Alt", "settings_alt"]
 
 
+def test_the_case_folding_tiebreaker_still_settles_the_order_it_folds(
+    tmp_path, monkeypatch
+):
+    """`os.path.normcase` LOWERCASES on Windows, so on a case-sensitive NTFS
+    directory the very pair the tiebreaker exists for ties under it and the
+    sort falls back to scandir's filesystem-dependent order -- the drift the
+    tiebreaker was added to stop. The raw path settles it last.
+
+    normcase and the scan order are both faked here rather than probed,
+    because the combination being tested (Windows' case-folding normcase
+    over a case-sensitive directory) is precisely the one this suite's host
+    cannot supply on either platform. `_scan` is the seam, not `os.scandir`:
+    `_has_profiles` uses the real scandir as a context manager, so a double
+    returning a plain list there would fail on the shape rather than on the
+    ordering rule under test.
+    """
+    if not case_distinct_names_supported(tmp_path):
+        pytest.skip(f"{tmp_path} cannot hold two names differing only by case")
+    server = tmp_path / "server_tranquility"
+    (server / "settings_alt").mkdir(parents=True)
+    (server / "settings_Alt").mkdir()
+    real_scan = tree._scan
+
+    def descending_scan(path):
+        # The reverse of what the sort must produce, so a rule that fell
+        # back to scan order would be visible in the assertion rather than
+        # accidentally agreeing with it.
+        entries, unreadable = real_scan(path)
+        return sorted(entries, key=lambda entry: entry.name, reverse=True), unreadable
+
+    monkeypatch.setattr(tree.os.path, "normcase", str.lower)
+    monkeypatch.setattr(tree, "_scan", descending_scan)
+
+    found = tree.discover(tmp_path, server)
+
+    assert [p.path.name for p in found.profiles] == ["settings_Alt", "settings_alt"]
+
+
 def test_normalize_selection_heals_a_root_pointed_at_a_profile(tmp_path):
     profile = build(tmp_path)
     root, server, selected = tree.normalize_selection(profile, None, None)

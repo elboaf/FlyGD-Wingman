@@ -303,16 +303,21 @@ def _profiles_in(server) -> tuple[list, bool]:
             modified = 0.0
         found.append(Profile(path, path.name[len(PROFILE_PREFIX) :], count, modified))
     # os.scandir's order is filesystem-dependent, so two profiles whose
-    # names differ only by case (a real thing on the case-sensitive
-    # filesystems this suite runs its Linux tests on -- Windows can never
-    # have both) would otherwise swap places between two renders of the
-    # same folder. normcase(str(path)) is the tiebreaker: stable across
-    # runs, and a no-op on Windows where such a pair cannot exist anyway.
+    # names differ only by case must not swap places between two renders of
+    # the same folder. Whether such a pair can exist is a property of the
+    # FILESYSTEM, not of the platform: a default NTFS volume folds case and
+    # cannot hold one, but NTFS supports per-directory case sensitivity
+    # (`fsutil file setCaseSensitiveInfo`, the flag WSL sets on its own
+    # directories). normcase alone is not the tiebreaker it looks like --
+    # on Windows it lowercases, so the very pair this rule exists for ties
+    # under it and falls back to scandir's order. The raw path settles it
+    # last, on every platform.
     found.sort(
         key=lambda p: (
             p.name.lower() != "default",
             p.name.casefold(),
             os.path.normcase(str(p.path)),
+            str(p.path),
         )
     )
     return found, unreadable

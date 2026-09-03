@@ -1562,6 +1562,20 @@ def test_profile_copy_name_and_destination_have_associated_labels():
     assert 'id="es-profile-copy-destination"' in BODY
 
 
+def test_profile_copy_fields_are_described_by_the_panels_status_line():
+    """Both fields point at the one status line that carries Python's
+    refusal about a name or a destination and the panel's own reason for a
+    disabled submit. Without the association the message is announced once
+    by role="status" and is then unreachable: a screen-reader user tabbing
+    back to the field hears the label alone.
+    """
+    for field in ("es-profile-copy-name", "es-profile-copy-destination"):
+        element = re.search(r'<(?:input|select) id="' + field + r'"[^>]*>', BODY)
+        assert element, field
+        assert 'aria-describedby="es-profile-copy-status"' in element.group(0), field
+    assert 'id="es-profile-copy-status"' in BODY
+
+
 def test_the_secondary_detail_no_longer_offers_a_profile_select():
     """Profile moved to the always-visible primary row; a second copy of it
     left behind in the collapsible detail would be two controls for the
@@ -1639,6 +1653,61 @@ def test_replace_destination_renders_a_disabled_empty_option_when_none_exist():
     body = render.group(1)
     assert "placeholder.disabled = true;" in body
     assert "No other profiles" in body
+
+
+def test_replace_with_no_destination_disables_submit_and_names_the_reason():
+    """Submitting Replace with nothing to replace sends an empty destination,
+    which Python refuses as "That destination is not on the selected server"
+    -- a race, not the truth that this server holds only the one profile.
+    Whether an option list is empty is the page's own fact, so the page says
+    it before the request and disables the button rather than after.
+    """
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert "if (profileCopy.mode === 'replace') {" in body
+    assert "if (!options.length) {" in body
+    assert "There is no other profile on this server to replace. " in body
+    assert re.search(
+        r"WM\.setEnabled\('es-profile-copy-submit',\s*"
+        r"!busy && !!profileCopy\.source && !blocked\);",
+        body,
+    )
+    # The blocking state owns the status line while it lasts, and is not an
+    # error: nothing failed, the panel is naming what it still needs.
+    assert "status.classList.remove('err');" in body
+    assert "paintFieldError('es-profile-copy-status', profileCopy.error);" in body
+
+
+def test_a_vanished_replace_destination_asks_for_a_fresh_choice():
+    """A refresh that removes the chosen destination must not leave the
+    browser's own default -- the first remaining profile -- sitting in the
+    control as though the user had picked it, for the one action on this
+    screen that overwrites a whole profile.
+    """
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert re.search(
+        r"var vanished = !!previous && !options\.filter\(function \(profile\) \{\s*"
+        r"return profile\.path === previous;\s*\}\)\.length;",
+        body,
+    )
+    assert "if (vanished) {" in body
+    assert "repick.value = '';" in body
+    assert "repick.disabled = true;" in body
+    assert "repick.selected = true;" in body
+    assert "repick.textContent = 'Choose a profile';" in body
+    assert "blocked = 'The profile you chose is no longer there. Choose another.';" in (
+        body
+    )
+    # Choosing a real destination has to repaint, or the submit this state
+    # disabled stays dead until some unrelated repaint happens by.
+    assert re.search(
+        r"WM\.el\('es-profile-copy-destination'\)\s*"
+        r"\.addEventListener\('change', renderProfileCopy\);",
+        CODE,
+    )
 
 
 def test_send_profile_copy_examines_accepted_not_truthiness():

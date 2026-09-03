@@ -219,14 +219,35 @@
     var destinationSelect = WM.el('es-profile-copy-destination');
     var previous = destinationSelect.value;
     var options = replaceOptions();
+    // A destination the user had chosen and that this refresh no longer
+    // offers. Re-rendering the list without it would leave the browser's
+    // own default -- the FIRST remaining profile -- sitting in the control
+    // as though the user had picked it, for the one operation on this
+    // screen that overwrites a whole profile. So the choice is taken away
+    // rather than moved, and the panel asks for it again.
+    var vanished = !!previous && !options.filter(function (profile) {
+      return profile.path === previous;
+    }).length;
     destinationSelect.innerHTML = '';
     if (!options.length) {
       var placeholder = document.createElement('option');
       placeholder.value = '';
       placeholder.disabled = true;
+      placeholder.selected = true;
       placeholder.textContent = 'No other profiles';
       destinationSelect.appendChild(placeholder);
     } else {
+      if (vanished) {
+        var repick = document.createElement('option');
+        repick.value = '';
+        // Disabled, so it is a state the control can show but not be
+        // returned to: once a real destination is chosen there is no
+        // "unchosen" to go back to.
+        repick.disabled = true;
+        repick.selected = true;
+        repick.textContent = 'Choose a profile';
+        destinationSelect.appendChild(repick);
+      }
       options.forEach(function (profile) {
         var option = document.createElement('option');
         option.value = profile.path;
@@ -241,12 +262,43 @@
     Array.prototype.forEach.call(
       document.querySelectorAll('input[name="es-profile-copy-mode"]'),
       function (radio) { radio.disabled = busy; });
-    // Enablement stops here at "is there a source and is nothing else
-    // running": what makes a NAME or a DESTINATION valid is Python's job,
-    // the same rule the rest of this file follows throughout -- see the
-    // header comment. A refusal comes back through profileCopy.error.
-    WM.setEnabled('es-profile-copy-submit', !busy && !!profileCopy.source);
-    paintFieldError('es-profile-copy-status', profileCopy.error);
+    // Enablement stops at "is there a source, is nothing else running, and
+    // is there a destination to act on at all": what makes a NAME or a
+    // chosen DESTINATION valid is Python's job, the same rule the rest of
+    // this file follows throughout -- see the header comment. A refusal
+    // comes back through profileCopy.error.
+    //
+    // The two cases below are not that judgement. They are states of this
+    // page's OWN option list, which Python cannot answer usefully: an
+    // empty destination comes back as "That destination is not on the
+    // selected server", which describes a race rather than the truth --
+    // that this server has no other profile, or that the one the user
+    // picked is gone. The page is the only side that can say so, and it
+    // says it before the request rather than after.
+    var blocked = '';
+    if (profileCopy.mode === 'replace') {
+      if (!options.length) {
+        blocked = 'There is no other profile on this server to replace. '
+          + 'Create a new profile instead.';
+      } else if (vanished) {
+        blocked = 'The profile you chose is no longer there. Choose another.';
+      }
+    }
+    WM.setEnabled('es-profile-copy-submit',
+      !busy && !!profileCopy.source && !blocked);
+    // One status line, two kinds of sentence, and the state message wins:
+    // it explains why the button in front of the user is disabled right
+    // now, while every path that sets profileCopy.error is a request that
+    // cannot be repeated unchanged anyway (the mode radios and
+    // sendProfileCopy both clear it). Not painted as an error -- nothing
+    // failed; the panel is naming what it still needs.
+    if (blocked) {
+      var status = WM.el('es-profile-copy-status');
+      status.textContent = blocked;
+      status.classList.remove('err');
+    } else {
+      paintFieldError('es-profile-copy-status', profileCopy.error);
+    }
   }
 
   function paintProfileCopyTool() {
@@ -1027,6 +1079,13 @@
           renderProfileCopy();
         });
       });
+    // The destination is the only control on this panel whose value the
+    // submit's own enabled state depends on: renderProfileCopy() disables
+    // submit while the select sits on the "Choose a profile" placeholder a
+    // vanished destination leaves behind, so picking a real one has to
+    // repaint or the button stays dead until some other repaint happens by.
+    WM.el('es-profile-copy-destination')
+      .addEventListener('change', renderProfileCopy);
 
     // Profiles 4. Both controls answer the same question -- where is the
     // EVE settings folder. A changed root drops the old selection (its

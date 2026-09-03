@@ -18,6 +18,7 @@ API integration is a later task.
 
 import contextlib
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -28,6 +29,8 @@ from typing import Literal
 
 from .. import atomicio
 from . import tree
+
+logger = logging.getLogger(__name__)
 
 ProfileCopyMode = Literal["new", "replace"]
 
@@ -74,6 +77,19 @@ class StagedProfileCopy:
     plan: ProfileCopyPlan
     path: Path
     members: tuple[str, ...]
+    # Whether the copy this stage holds has already landed on disk.
+    # `stage_copy`'s cleanup reads it and nothing else does: once the
+    # destination is settled, failing to delete a staging directory is
+    # housekeeping, and turning it into the operation's exception would
+    # report a replacement that DID happen as "Copy failed" and invite a
+    # retry of a copy that is already published. The three fields above
+    # name what was staged and must not drift, so the record stays frozen
+    # and this one legitimately-later fact is written through
+    # `object.__setattr__` rather than by unfreezing the whole record.
+    published: bool = False
+
+    def mark_published(self) -> None:
+        object.__setattr__(self, "published", True)
 
 
 def validate_friendly_name(value, existing) -> str:
@@ -367,10 +383,23 @@ def stage_copy(plan: ProfileCopyPlan, *, token_factory=lambda: uuid.uuid4().hex)
     `publish_new`) has already renamed it away -- `stage.exists()` is then
     False and cleanup is correctly a no-op rather than deleting what was
     just published.
+
+    Removing the stage can itself fail (a scanner holding a handle open,
+    a permission change), and what that failure means depends entirely on
+    whether the copy landed. BEFORE publication it is the operation's own
+    failure and propagates: nothing succeeded, and a stage left behind
+    unreported is a silent one. AFTER publication -- the caller marked the
+    staged copy published -- the destination is settled, so the failure is
+    logged and the stage is left for the next run's
+    `cleanup_abandoned_stages` to remove. It is named in the reserved,
+    never-discoverable namespace precisely so that waiting is safe, and
+    raising here instead would turn a replacement that DID happen into
+    "Copy failed".
     """
     cleanup_abandoned_stages(plan.server)
     stage = plan.server / f"{STAGE_PREFIX}{token_factory()}{STAGE_SUFFIX}"
     stage.mkdir()
+    staged = None
     try:
         members = _recognized_members(plan.source)
         for source in members:
@@ -378,10 +407,21 @@ def stage_copy(plan: ProfileCopyPlan, *, token_factory=lambda: uuid.uuid4().hex)
             atomicio.copy_atomic(source, target)
             if _sha256(source) != _sha256(target):
                 raise OSError(f"Staged copy did not match {source.name}.")
-        yield StagedProfileCopy(plan, stage, tuple(p.name for p in members))
+        staged = StagedProfileCopy(plan, stage, tuple(p.name for p in members))
+        yield staged
     finally:
         if stage.exists():
-            shutil.rmtree(stage)
+            try:
+                shutil.rmtree(stage)
+            except OSError:
+                if staged is None or not staged.published:
+                    raise
+                logger.exception(
+                    "Could not remove the staging directory %s after publishing "
+                    "%s; leaving it for the next run to clean up",
+                    stage,
+                    plan.destination,
+                )
 
 
 def publish_new(staged: StagedProfileCopy) -> Path:
@@ -396,6 +436,7 @@ def publish_new(staged: StagedProfileCopy) -> Path:
     if plan.destination.exists():
         raise FileExistsError(f"{plan.destination_name!r} already exists.")
     staged.path.rename(plan.destination)
+    staged.mark_published()
     return plan.destination
 
 
@@ -457,4 +498,5 @@ def publish_replacement(staged: StagedProfileCopy, *, rollback) -> Path:
         except Exception as failed_rollback:  # noqa: BLE001 - captured on the exception, not swallowed: ReplacementFailed.rollback_error reports it to the caller
             rollback_error = failed_rollback
         raise ReplacementFailed(error, rollback_error) from error
+    staged.mark_published()
     return destination
