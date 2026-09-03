@@ -11,6 +11,11 @@ http_error_301/302/303/307/308 -- there is no http_error_304 -- so a real
 304 falls through to http_error_default and raises. A test double that
 instead RETURNED a 304 response would exercise a code path production never
 takes.
+
+esi.py is now a compatibility re-export of wingman.eveesi, which is the
+shared implementation both Skills and Fittings call through -- see this
+file's own test_esi_re_exports_the_shared_eveesi_symbols below, which
+guards that against silently forking back into a duplicate copy.
 """
 
 import io
@@ -21,6 +26,7 @@ from email.message import Message
 
 import pytest
 
+from wingman import eveesi
 from wingman.eveskills import esi
 
 
@@ -606,3 +612,21 @@ def test_a_cross_host_redirect_does_not_leak_the_authorization_header():
         request, None, 302, "Found", redirect_headers, "https://evil.example/steal"
     )
     assert result is None
+
+
+def test_esi_re_exports_the_shared_eveesi_symbols():
+    """Guards the extraction itself: this module must be a re-export, not
+    a second copy. Identity (`is`), not equality -- a duplicated class
+    with the same shape would pass an equality check and still leave two
+    retry ladders to keep in sync by hand."""
+    assert esi.EsiClient is eveesi.EsiClient
+    assert esi.EsiResponse is eveesi.EsiResponse
+    assert esi.MutationResponse is eveesi.MutationResponse
+    assert esi.validate_path is eveesi.validate_path
+    assert esi.application is eveesi.application
+    assert esi._opener is eveesi._opener
+    assert esi._NoRedirectHandler is eveesi._NoRedirectHandler
+    assert esi.MAX_ATTEMPTS == eveesi.MAX_ATTEMPTS
+    assert esi.MAX_BACKOFF_S == eveesi.MAX_BACKOFF_S
+    assert esi.MAX_ERROR_BODY_BYTES == eveesi.MAX_ERROR_BODY_BYTES
+    assert esi.MAX_SUCCESS_BODY_BYTES == eveesi.MAX_SUCCESS_BODY_BYTES

@@ -1,0 +1,13 @@
+[
+  {
+    "fitting_id": 900004,
+    "ship_type_id": 600002,
+    "name": "Synthetic Fit With Invalid Row",
+    "description": "Contains the schema-defined Invalid flag: distinct canonical content, no deployment template.",
+    "items": [
+      { "flag": "HiSlot0", "quantity": 1, "type_id": 700001 },
+      { "flag": "MedSlot0", "quantity": 1, "type_id": 700003 },
+      { "flag": "Invalid", "quantity": 1, "type_id": 700011 }
+    ]
+  }
+]
