@@ -428,6 +428,46 @@ def test_the_token_is_redacted_even_when_only_a_rate_limit_header_carries_it():
     assert "[redacted]" in result.error
 
 
+def test_a_token_split_by_the_final_sanitize_boundary_in_rate_limit_headers_is_still_redacted():
+    """_append_rate_limit assembles "{error} ({headers...})" and then
+    sanitizes/truncates the WHOLE combined string to 2048 characters. If
+    redaction ran only after that truncation, a bearer token whose bytes
+    straddle the 2048-character cutoff would have its closing half cut
+    away while its opening half survived, unredacted -- _redact's exact
+    substring match can no longer recognize a fragment of the token as
+    the token once the rest of it is gone. This test places the real
+    token so its exact midpoint lands on that boundary in the assembled
+    string, reproducing the split precisely rather than by chance,
+    matching the safe redact-before-sanitize ordering already used for
+    no-response network exception text.
+    """
+    token = "eyJhbGciOiJSUzI1NiJ9.super-secret-access-token-crossing-boundary.sig"
+    header_name = "Retry-After"
+    infix = f" ({header_name}="
+    half = len(token) // 2
+    # Sized so that error_len + len(infix) + half lands exactly on the
+    # 2048-character sanitize cutoff -- everything up to and including
+    # the token's first `half` characters fits before the cut, and the
+    # token's remaining half falls past it.
+    error_len = eveesi._SANITIZE_MAX_CHARS - len(infix) - half
+    assert error_len > 0, "token too long for this boundary construction"
+    filler_error = "e" * error_len
+    body = json.dumps({"error": filler_error}).encode("utf-8")
+    headers = _headers(Retry_After=token)
+    transport = FakeTransport(_http_error(429, body, headers))
+    client = eveesi.EsiClient(user_agent="A", transport=transport)
+    result = client.post_once(PATH, BODY, token=token)
+
+    # The exact fragment a pre-fix implementation would leave unredacted:
+    # the first half of the token, surviving truncation because it landed
+    # before the 2048-character cut and redaction never saw the whole
+    # token to match against.
+    leaked_prefix = token[:half]
+    assert leaked_prefix not in result.error
+    assert token not in result.error
+    assert "[redacted]" in result.error
+
+
 def test_a_long_no_response_exception_message_is_bounded():
     def transport(request, timeout=None):
         raise ConnectionResetError("x" * 5000)

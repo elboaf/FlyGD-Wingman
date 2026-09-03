@@ -266,12 +266,23 @@ def _append_rate_limit(error: str, headers, token=None) -> str:
     already clean -- a header value is attacker- or proxy- controlled
     input exactly as much as the body is.
 
-    Also re-redacts the fully assembled string, not just the sanitized
+    Also redacts the fully assembled string, not just the sanitized
     *error* it started from: these header VALUES are exactly as
     attacker/proxy-controlled as the body, and a hostile or misconfigured
     proxy echoing the Authorization header back in Retry-After or an
     error-limit header would otherwise leak the live bearer token into a
     string this module hands back to a caller to log or display.
+
+    Redacted BEFORE the final sanitize/truncate, not after: _sanitize
+    caps this combined string at 2048 characters, and a token whose bytes
+    straddle that cutoff would have its closing half truncated away while
+    its opening half survived untouched -- a partial, unredacted token
+    prefix sitting in the output, silently missed by _redact's exact
+    substring match, which can no longer recognize a fragment of the
+    token as the token once the other half is gone. Redacting the
+    complete, untruncated assembly first guarantees the whole token is
+    still there to match against, and only the (now token-free) result is
+    ever truncated.
     """
     if headers is None:
         return error
@@ -282,8 +293,8 @@ def _append_rate_limit(error: str, headers, token=None) -> str:
             parts.append(f"{name}={_sanitize(str(value))}")
     if not parts:
         return error
-    combined = _sanitize(f"{error} ({'; '.join(parts)})")
-    return _redact(combined, token)
+    combined = f"{error} ({'; '.join(parts)})"
+    return _sanitize(_redact(combined, token))
 
 
 def _bounded_headers(headers, token=None) -> dict[str, str]:
