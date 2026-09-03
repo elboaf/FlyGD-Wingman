@@ -876,18 +876,24 @@ def test_the_retention_note_follows_the_action_it_qualifies():
     )
 
 
-def test_the_collapsed_summary_names_the_server_and_the_profile():
-    """R5. `Tranquility - Default` sat beside a labelled `Folder`, unlabelled,
-    though the server and the profile decide what a copy will hit exactly as
-    much as the folder does -- and `Default` alone does not read as a profile
-    name. The words go in the TEXT: `.settings .row > .lab` is width:100%, so
-    a second label in that row would stack and break it into three lines.
+def test_the_collapsed_summary_names_the_server():
+    """R5, revised for round 7. `Tranquility - Default` sat beside a
+    labelled `Folder`, unlabelled, and this row's own words go in the TEXT
+    rather than a second `.lab` -- `.settings .row > .lab` is width:100%, so
+    a second label here would stack and break the row into three lines.
+
+    The profile HALF of R5's finding moved rather than disappeared: Profile
+    is now the primary, always-visible row's own labelled control (see
+    `test_profile_is_the_primary_context_control`), so naming it a second
+    time in the row that collapses away would restate what the row above
+    never hides.
     """
     assert re.search(r"setLabel\(nameOf\(state\.servers", CODE), (
         "the collapsed summary prints the server name bare again"
     )
-    assert re.search(r"setLabel\(nameOf\(state\.profiles", CODE), (
-        "the collapsed summary prints the profile name bare again"
+    assert "setLabel(nameOf(state.profiles" not in CODE, (
+        "the collapsed summary names the profile again, restating the "
+        "always-visible primary row's own control"
     )
     summary = re.search(r'id="es-folder-summary".*?</div>', BODY, re.DOTALL).group(0)
     assert summary.count('class="lab"') == 1, (
@@ -1494,3 +1500,263 @@ def test_retention_is_explicit_and_does_not_add_a_second_accent():
     assert "event.key === 'Enter'" in CODE
     assert BODY.count('class="btn acc"') == 1
     assert ACCOUNT_ROUTE.count('class="btn acc"') == 1
+
+
+# ---- round 7: Profiles is profile-first, with an inline New/Replace ----
+
+
+def profiles_context_body() -> str:
+    """The `.es-context-card` section alone: Profile, the New/Replace
+    disclosure, and the collapsible folder/server setup all live here, and
+    the ordering between them is what "profile-first" is actually about.
+    Scoped narrower than BODY so a control that migrated to a sibling card
+    could not still satisfy an ordering assertion aimed at this one.
+    """
+    start = BODY.index('<section class="card es-context-card">')
+    end = BODY.index("</section>", start) + len("</section>")
+    return BODY[start:end]
+
+
+def profile_copy_panel_body() -> str:
+    """The disclosure alone, bounded by the next sibling row rather than by
+    counting braces: BODY has already had its HTML comments stripped, so the
+    next literal landmark after the panel is the folder card's own summary
+    row.
+    """
+    start = BODY.index('<div id="es-profile-copy-panel"')
+    end = BODY.index('<div class="row" id="es-folder-summary"')
+    return BODY[start:end]
+
+
+def test_profile_is_the_primary_context_control():
+    """Profile decides what a copy reads and what a copy targets, which is
+    the reason the screen exists -- so it renders ahead of the folder/server
+    setup that collapses away after the first visit, not folded inside it.
+    The opener beside it is a plain .btn: the disclosure it opens is not the
+    route's one irreversible action, .es-copy already is.
+    """
+    context = profiles_context_body()
+    assert context.index('id="es-profile"') < context.index('id="es-folder-summary"')
+    assert 'id="es-profile-copy-open" class="btn"' in context
+    assert 'id="es-profile-copy-open" class="btn acc"' not in context
+
+
+def test_profile_copy_modes_use_shared_radio_markup():
+    """The New/Replace switch is a .radio/.ring pair like every other radio
+    on the route, not a bare input rendering as a white Win32 dot.
+    """
+    assert re.search(
+        r'name="es-profile-copy-mode" value="new" checked><span class="ring"></span>',
+        BODY,
+    )
+    assert re.search(
+        r'name="es-profile-copy-mode" value="replace"><span class="ring"></span>',
+        BODY,
+    )
+
+
+def test_profile_copy_name_and_destination_have_associated_labels():
+    assert re.search(r'<label class="lab" for="es-profile-copy-name">', BODY)
+    assert 'id="es-profile-copy-name"' in BODY
+    assert re.search(r'<label class="lab" for="es-profile-copy-destination">', BODY)
+    assert 'id="es-profile-copy-destination"' in BODY
+
+
+def test_the_secondary_detail_no_longer_offers_a_profile_select():
+    """Profile moved to the always-visible primary row; a second copy of it
+    left behind in the collapsible detail would be two controls for the
+    same choice, one of them invisible on every later visit.
+    """
+    detail = BODY[BODY.index('id="es-folder-detail"') : BODY.index('id="es-warning"')]
+    assert 'id="es-profile"' not in detail
+    assert 'id="es-server"' in detail
+
+
+def test_folder_edit_names_both_things_it_changes():
+    """Renamed from `Change…`: the row it sits on now also carries the
+    server name (R5), so the action must say what it reopens.
+    """
+    summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
+    assert (
+        'id="es-folder-edit" class="btn">Change folder or server\u2026</button>'
+        in summary
+    )
+
+
+def test_the_disclosure_carries_no_second_accent_button():
+    """One .btn.acc on the whole route (test_profiles_keeps_one_existing_
+    primary_action), and it is .es-copy. Creating or replacing a profile is
+    reversible through Backups' automatic archive, unlike overwriting a
+    live roster, so its own submit stays a plain .btn.
+    """
+    panel = profile_copy_panel_body()
+    assert 'class="btn acc"' not in panel
+    assert 'id="es-profile-copy-submit" class="btn"' in panel
+    assert 'id="es-profile-copy-cancel" class="btn"' in panel
+
+
+def test_profile_copy_hidden_overrides_exist_for_every_display_setting_selector():
+    """`.es-profile-copy` and the two field rows each set their own display,
+    which beats the UA's `[hidden] { display: none }` regardless of
+    specificity -- DESIGN.md's named trap, and test_page_conventions.py's
+    repo-wide sweep for it is what caught the first draft of this rule
+    keyed to the wrong (id) selector.
+    """
+    assert re.search(
+        r"\.es-profile-copy\[hidden\],\s*"
+        r"#es-profile-copy-new-fields\[hidden\],\s*"
+        r"#es-profile-copy-replace-fields\[hidden\]\s*\{\s*display:\s*none;\s*\}",
+        CSS,
+    )
+
+
+def test_profile_copy_state_carries_exactly_six_fields():
+    match = re.search(r"var profileCopy = \{(.*?)\n  \};", CODE, re.DOTALL)
+    assert match, "the module-level profileCopy state is gone"
+    fields = set(re.findall(r"(\w+):", match.group(1)))
+    assert fields == {"open", "source", "mode", "name", "destination", "error"}
+
+
+def test_open_profile_copy_freezes_the_source_from_state_profile():
+    """The source is read once, at open, not re-read at submit -- so a
+    root/server/profile change accepted while the disclosure sits open
+    cannot silently retarget an already-open request.
+    """
+    fn = re.search(r"function openProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    assert "source: state.profile" in fn.group(1)
+
+
+def test_replace_options_exclude_the_frozen_source():
+    fn = re.search(r"function replaceOptions\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    assert "profile.path !== profileCopy.source" in fn.group(1)
+
+
+def test_replace_destination_renders_a_disabled_empty_option_when_none_exist():
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert "placeholder.disabled = true;" in body
+    assert "No other profiles" in body
+
+
+def test_send_profile_copy_examines_accepted_not_truthiness():
+    """mutate() treats any returned object as truthy, which is wrong for an
+    endpoint that can return `{accepted: false, error: ...}` -- a refusal
+    object is itself truthy, and mutate() would read it as "started".
+    """
+    fn = re.search(r"function sendProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    body = fn.group(1)
+    assert "if (busy || !profileCopy.source) return;" in body
+    assert "if (result && result.accepted) return;" in body
+    assert "mutate(" not in body
+
+
+def test_immediate_refusal_writes_the_error_and_clears_busy():
+    fn = re.search(r"function sendProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    refusal = fn.group(1).split(".then(function (result) {", 1)[1]
+    assert "pendingMutation = '';" in refusal
+    assert "profileCopy.error = result && result.error" in refusal
+    assert "setBusy(false);" in refusal
+    assert "renderProfileCopy();" in refusal
+
+
+def test_completion_closes_the_disclosure_on_published_regardless_of_selection_persisted():
+    """A created profile whose selection could not be saved is still ok:True
+    and published:True from Python -- the file exists and the dropdown
+    offers it, only the remembered selection failed -- and the warning
+    alert already carries \"Select it from Profile\" for that half. Closing
+    must key on `published` alone, or that case would leave the disclosure
+    open over a request that already succeeded.
+    """
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    branch = re.search(
+        r"if \(completedMutation === 'eve_settings_copy_profile'\) \{(.*?)\n    \}",
+        done.group(1),
+        re.DOTALL,
+    )
+    assert branch
+    body = branch.group(1)
+    assert "if (payload.published) resetProfileCopy();" in body
+    assert "selection_persisted" not in body
+
+
+def test_failed_publication_retains_the_disclosure_state():
+    """A refused or failed copy must not silently drop the mode, name or
+    destination the user entered -- only the error changes, and the panel
+    stays open so the message lands beside the fields it is about.
+    """
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    branch = re.search(
+        r"if \(completedMutation === 'eve_settings_copy_profile'\) \{(.*?)\n    \}",
+        done.group(1),
+        re.DOTALL,
+    )
+    assert branch
+    body = branch.group(1)
+    failure = body.split("else", 1)[1]
+    assert "profileCopy.error = payload.error || profileCopy.error;" in failure
+    assert "resetProfileCopy()" not in failure
+
+
+def test_root_change_resets_profile_copy_only_when_the_root_actually_changed():
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert root
+    before, _, after = root.group(1).partition(
+        "if (payload && payload.root !== previousRoot)"
+    )
+    assert "resetProfileCopy();" not in before, (
+        "a no-op or refused root change must not close the disclosure"
+    )
+    changed = re.search(r"\{(.*?)\n            \}", after, re.DOTALL)
+    assert changed and "resetProfileCopy();" in changed.group(1)
+
+
+def test_selection_change_resets_profile_copy_only_when_accepted():
+    handler = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    then = re.search(
+        r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", handler.group(1), re.DOTALL
+    )
+    assert then and "if (accepted) resetProfileCopy();" in then.group(1)
+
+
+def test_profile_copy_controls_join_busy_state_while_navigation_stays_enabled():
+    """setBusy is the shared owner of "can this act right now" for the whole
+    route (paintCommit, paintFormationsTool); the disclosure and its opener
+    follow the same rule rather than a hand-rolled parallel one. Route
+    navigation is never touched here at all -- #nav-* ids belong to app.js,
+    not this file -- so leaving the route mid-mutation was never blocked by
+    this function and stays that way.
+    """
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    body = busy.group(1)
+    assert "renderProfileCopy();" in body
+    assert "paintProfileCopyTool();" in body
+    assert "nav-" not in body
+
+
+def test_profile_copy_tool_is_unavailable_without_a_selected_profile():
+    fn = re.search(r"function paintProfileCopyTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    assert "state.profile" in fn.group(1)
+    assert "WM.setEnabled('es-profile-copy-open'" in fn.group(1)

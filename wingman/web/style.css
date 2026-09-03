@@ -2702,6 +2702,36 @@ button.btn:disabled,
    a long root from pushing Change beyond that width. */
 .es-context-card { width: 100%; }
 
+/* Profile is the primary control on this card now (round 7): it is alone in
+   its own row beside New/Replace, not sharing one with Server the way it
+   used to. `.settings .row > select.field { flex: 0 0 150px }` is written
+   for that shared row and would otherwise leave the widest decision on the
+   card in the narrowest control, exactly P3's finding against #es-source. */
+#es-profile { flex: 1; }
+
+/* The inline New/Replace disclosure: a bordered region beside the row it
+   opens from, not a second card and not a modal, so the source, the mode
+   and the destination stay in the one place a mistake here would be
+   caught. Its own rows keep the shared .row/.lab/.field treatment. */
+.es-profile-copy {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 4px 0 0; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+/* [hidden] overrides required: .es-profile-copy sets its own display, and
+   the two field rows are plain .row (already covered by .row[hidden], but
+   named here anyway so this block is a complete, self-contained answer to
+   "what hides this disclosure" without a reader having to know that). The
+   guard is keyed to the CLASS that sets display, `.es-profile-copy`, not
+   the id the element also carries -- an id-keyed guard here would leave
+   the class's own display rule unguarded and the panel on screen anyway. */
+.es-profile-copy[hidden],
+#es-profile-copy-new-fields[hidden],
+#es-profile-copy-replace-fields[hidden] { display: none; }
+/* Alone in its row, the same reason #es-profile and #es-source are: the
+   shared two-up track is wrong for a single decision-making control. */
+#es-profile-copy-destination { flex: 1; }
+
 /* Quiet tools remain siblings between context and work rather than becoming
    another card or route. Pulling the group toward the context and aligning it
    with that card's content associates Backups and Formations with the selected
@@ -3279,6 +3309,16 @@ button.btn:disabled,
    on the page is disabled by setBusy for the length of a copy, and dimming
    those would make a two-second mutation look like a broken form. */
 #es-server:disabled, #es-profile:disabled, #es-source:disabled {
+  color: var(--text-faint); opacity: 1; cursor: default;
+}
+
+/* Same rule, its own destination select rather than an edit to the fixed
+   Profiles-6 list above: that selector list is pinned by its own test as
+   the exact three original controls, and #es-profile-copy-destination is a
+   fourth control the disclosure introduces rather than a member of that
+   original finding. "No other profiles" is the disabled empty state; a
+   populated-but-busy select needs the same visible dimming. */
+#es-profile-copy-destination:disabled {
   color: var(--text-faint); opacity: 1; cursor: default;
 }
 

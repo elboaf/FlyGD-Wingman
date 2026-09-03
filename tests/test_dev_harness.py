@@ -114,6 +114,7 @@ def test_every_bridge_method_the_page_calls_has_a_double():
         "bookmarks.js: parse_bind",
         "bookmarks.js: reset_binds",
         "bookmarks.js: save_bookmarks",
+        "evesettings.js: eve_settings_copy_profile",
         "firstrun.js: skip_first_run",
         "list.js: open_recording_dir",
         "previews.js: alert_bookmarks",
