@@ -16,3 +16,24 @@ requires its caller to name an explicit scope set, always.
 this package's public names for backward compatibility; new code should
 import from here directly.
 """
+
+from .application import FITTINGS, SKILLS
+from .controller import (
+    AccessTokenResult,
+    AuthorityCharacter,
+    AuthorityController,
+    CharacterParticipant,
+    LifecycleLease,
+    MutationResult,
+)
+
+__all__ = [
+    "FITTINGS",
+    "SKILLS",
+    "AccessTokenResult",
+    "AuthorityCharacter",
+    "AuthorityController",
+    "CharacterParticipant",
+    "LifecycleLease",
+    "MutationResult",
+]
