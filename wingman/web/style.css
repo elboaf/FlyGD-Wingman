@@ -2986,26 +2986,6 @@ button.btn:disabled,
   grid-column: 1 / -1; margin: 0 0 4px; padding-left: 48px;
   width: 0; min-width: 100%;
 }
-/* The second line of an event's row: how many flashes it gets and how
-   fast they go. A LINE and not two more columns -- the four tracks above
-   are already at the card's width at the 840 floor (see the track
-   comment: the sound column is the only one that can give), grid tracks
-   do not wrap, and an overflow here is a horizontally scrolling page.
-
-   `width: 0; min-width: 100%` for the same reason .field-msg above needs
-   it: a grid item spanning intrinsic tracks contributes its max-content
-   width to them, so without this the two labels and two selects would
-   push the NAME column wide and shove Test off the right edge. */
-.alert-events .alert-row > .alert-flash {
-  grid-column: 1 / -1; width: 0; min-width: 100%;
-  display: flex; align-items: center; gap: 8px; margin: 2px 0 2px 48px;
-}
-/* Indented to 48px above, matching the event label text after its checkbox.
-   The modifier boxes stay on the 24px rail because they are one level up:
-   they modify the table rather than one event row inside it. */
-.alert-events .alert-row > .alert-flash > select.field {
-  width: auto; min-width: 0; flex: 0 0 auto;
-}
 /* Not .lab: these sit BESIDE their control rather than above it, which is
    the one place in the card that is true. .lab is full-width and stacks
    (DESIGN.md), so using it here would put four lines where one belongs.
@@ -3014,19 +2994,61 @@ button.btn:disabled,
 .alert-flash > .flash-lab {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
-/* The name takes its own line before the controls start colliding. */
 @media (max-width: 720px) {
   .alert-events { grid-template-columns: max-content minmax(90px, 1fr) max-content; }
   .alert-events .alert-row > .check { grid-column: 1 / -1; }
-  /* The flash line wraps rather than pushing its own tracks: it is two
-     label/control pairs, and at this width they stack in pairs instead of
-     forcing the row wider. */
-  .alert-events .alert-row > .alert-flash { flex-wrap: wrap; }
   /* Four header cells against three tracks below 720px, and the name is on
      its own line here anyway -- so the headers would label the wrong
      columns rather than merely wrap. There is nothing left for them to
      name, which is why this hides rather than re-spans them. */
   .alert-head { display: none; }
+}
+
+/* Task 1. Flashes and Speed used to be a second grid line under every
+   event row, spanning 1 / -1 the same way .field-msg above still does.
+   They moved into one shared disclosure below the table instead: both
+   are secondary to the row's primary decision (is this event on, what
+   colour, what sound, does it work), and a second line per row was
+   already the reason the sound column was "the only one allowed to
+   give" at the 840 floor (see .alert-events' own comment above).
+   `#es-retention` already established the mechanism this reuses --
+   secondary controls behind a native disclosure, collapsed by default,
+   on a surface whose primary controls lead.
+
+   Outside the grid entirely now, so none of .field-msg's grid-item
+   tricks apply: a plain flex row is what .alert-flash always wanted to
+   be, and the grid only forced the width:0/min-width:100% workaround
+   because Flashes and Speed used to share tracks with the checkbox, the
+   swatches and Test. */
+#alert-advanced {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border);
+}
+#alert-advanced > summary {
+  display: inline-flex; align-items: center; padding: 4px 6px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--text-dim); font-size: var(--fs-body);
+}
+#alert-advanced > summary::before {
+  content: "›"; margin-right: 6px; transform: rotate(0deg);
+  color: var(--text-faint); font-size: 16px; line-height: 1;
+}
+#alert-advanced[open] > summary::before { transform: rotate(90deg); }
+#alert-advanced > summary:hover { color: var(--text); background: var(--hover); }
+#alert-advanced > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
+#alert-advanced[open] > summary { margin-bottom: 10px; }
+/* One row per event, each opening with its own name -- .bind-group-name,
+   not a new class, since this is the same "name a subordinate group" job
+   .bind-group already does on Previews. Flashes and Speed keep the flex
+   row they always were; only the 48px indent and the grid-spanning width
+   hack are gone, because both existed only to fit this content into a
+   row that no longer contains it. */
+.alert-advanced-row > .alert-flash {
+  display: flex; align-items: center; gap: 8px;
+}
+.alert-advanced-row > .alert-flash > select.field {
+  width: auto; min-width: 0; flex: 0 0 auto;
 }
 
 /* Round 5, A4. The PvE filter and Keep-pulsing render below the event

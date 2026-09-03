@@ -1522,6 +1522,15 @@ def test_the_alert_volume_note_finishes_its_thought():
 
 
 def test_alert_event_controls_share_deliberate_box_and_text_rails():
+    """Flashes and Speed used to be the fourth rail checked here -- a
+    second grid line beginning at the same 48px text rail as the event
+    name. Task 1 moved both out of the row entirely, into the shared
+    #alert-advanced disclosure, so that rail no longer describes anything
+    inside `.alert-events .alert-row`.
+    `test_flash_and_speed_share_one_collapsed_advanced_disclosure` is the
+    guard for where they went instead; this one keeps checking the three
+    rails that are still inside the row.
+    """
     event_box = re.search(
         r"\.alert-events \.alert-row > \.check \{(.*?)\}", CSS, re.DOTALL
     )
@@ -1534,18 +1543,109 @@ def test_alert_event_controls_share_deliberate_box_and_text_rails():
         "the Event header must align with event label text, not hang over its box"
     )
 
-    flash = re.search(
-        r"\.alert-events \.alert-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
-    )
-    assert flash and re.search(r"margin:\s*2px 0 2px 48px", flash.group(1)), (
-        "Flashes and Speed must begin on the event text rail"
-    )
-
     message = re.search(
         r"\.alert-events \.alert-row > \.field-msg \{(.*?)\}", CSS, re.DOTALL
     )
     assert message and "padding-left: 48px" in message.group(1), (
         "an event write outcome must align with the event text it describes"
+    )
+
+
+def test_flash_and_speed_share_one_collapsed_advanced_disclosure():
+    """Task 1. Flashes and Speed used to be a second grid line under every
+    event row -- two label/select pairs beneath four tracks already tight
+    at the 840 floor (`.alert-events`' own comment: "the sound column is
+    the only one allowed to give"). Both are secondary to the row's
+    primary decision -- is this event on, what colour, what sound, does it
+    work -- so they move into one shared native `<details>` disclosure,
+    collapsed by default, below the table, rather than repeating a second
+    line three times.
+
+    A row in the primary table is atomic after this: one enable box, one
+    swatch group, one sound select, one Test button, and its own status
+    line (still visible outside the disclosure, since a write outcome must
+    stay readable without opening anything first).
+    """
+    events_block = re.search(
+        r'<div class="alert-events">(.*?\n\s*</div>\s*\n)\s*<!-- A colour collision',
+        HTML,
+        re.DOTALL,
+    )
+    assert events_block, "the alert-events table markup has moved or been renamed"
+    table = events_block.group(1)
+
+    assert "alert-flash" not in table, (
+        "Flashes/Speed still render inside the primary event table; they "
+        "must move into the shared advanced disclosure so a row stays one "
+        "enable box, one swatch group, one sound and one Test button"
+    )
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-msg"' in table, (
+            f"the {event} row's status line must stay in the primary table, "
+            "outside the collapsed disclosure, so a write outcome stays "
+            "visible without opening anything"
+        )
+        assert f'id="alert-event-{event}-flashes"' not in table, (
+            f"{event}'s Flashes select must move out of the primary table"
+        )
+        assert f'id="alert-event-{event}-speed"' not in table, (
+            f"{event}'s Speed select must move out of the primary table"
+        )
+
+    disclosures = re.findall(r'<details id="alert-advanced"[^>]*>', HTML)
+    assert len(disclosures) == 1, (
+        f"expected exactly one #alert-advanced disclosure, found {len(disclosures)}"
+    )
+    assert "open" not in disclosures[0], (
+        "the advanced disclosure must be collapsed by default"
+    )
+
+    advanced = re.search(
+        r'<details id="alert-advanced"[^>]*>(.*?)</details>', HTML, re.DOTALL
+    )
+    assert advanced, "the #alert-advanced disclosure markup is missing"
+    body = advanced.group(1)
+
+    summary = re.search(r"<summary>([^<]*)</summary>", body)
+    assert summary and summary.group(1).strip() == "Advanced pulse behavior", (
+        "the disclosure must be titled exactly 'Advanced pulse behavior'"
+    )
+
+    for event in _ALERT_EVENT_IDS:
+        assert f'id="alert-event-{event}-flashes"' in body, (
+            f"{event}'s Flashes select is missing from the advanced disclosure"
+        )
+        assert f'id="alert-event-{event}-speed"' in body, (
+            f"{event}'s Speed select is missing from the advanced disclosure"
+        )
+        # Each row must visibly and accessibly name its event -- a named
+        # group heading before the pair, not just position in a list a
+        # screen reader flattens. Structural (a name element immediately
+        # precedes the pair), not the display text itself, which stays
+        # the checkbox label's job to own -- see alerts.js's eventLabel().
+        row = re.search(
+            rf'<span class="bind-group-name">[^<]+</span>\s*'
+            rf'<span class="alert-flash">.*?'
+            rf'id="alert-event-{event}-flashes"',
+            body,
+            re.DOTALL,
+        )
+        assert row, (
+            f"{event}'s advanced row must visibly name its event immediately "
+            "before its Flashes/Speed controls"
+        )
+
+    # The old grid-row alignment is gone with the row it used to sit in;
+    # the disclosure lays Flashes/Speed out as a plain flex line instead.
+    assert not re.search(r"\.alert-events \.alert-row > \.alert-flash \{", CSS), (
+        "a grid-row rule for .alert-flash survives inside .alert-events, but "
+        "it no longer renders there"
+    )
+    advanced_flash = re.search(
+        r"\.alert-advanced-row > \.alert-flash \{(.*?)\}", CSS, re.DOTALL
+    )
+    assert advanced_flash and "display: flex" in advanced_flash.group(1), (
+        "Flashes/Speed must still lay out as one flex line inside the disclosure"
     )
 
 

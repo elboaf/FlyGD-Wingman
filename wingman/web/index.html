@@ -1134,6 +1134,10 @@
         <div class="alert-head" aria-hidden="true">
           <span>Event</span><span>Colour</span><span>Sound</span><span></span>
         </div>
+        <!-- A row is atomic: one enable box, one swatch group, one sound
+             and one Test button, nothing pushed to a second line any
+             more. Flashes and Speed used to be that second line -- see
+             #alert-advanced below, which is where they moved and why. -->
         <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>
@@ -1156,24 +1160,6 @@
           </select>
           <button class="btn" id="alert-event-combat-test"
             aria-label="Test the Combat alert">Test</button>
-          <!-- A SECOND LINE, not two more columns. The four tracks above
-               already overflowed the card at the 840 floor once (see
-               .alert-events in style.css, where the sound column is "the
-               only one allowed to give"), and grid tracks do not wrap: six
-               of them would be a horizontally scrolling page, which
-               DESIGN.md forbids outright. Spanning 1 / -1 is what
-               .field-msg already does one line below for the same
-               reason. -->
-          <span class="alert-flash">
-            <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
-            <select class="field" id="alert-event-combat-flashes"></select>
-            <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
-            <select class="field" id="alert-event-combat-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-combat-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1198,18 +1184,6 @@
           </select>
           <button class="btn" id="alert-event-warp_scramble-test"
             aria-label="Test the Warp scramble alert">Test</button>
-          <span class="alert-flash">
-            <label class="flash-lab"
-              for="alert-event-warp_scramble-flashes">Flashes</label>
-            <select class="field" id="alert-event-warp_scramble-flashes"></select>
-            <label class="flash-lab"
-              for="alert-event-warp_scramble-speed">Speed</label>
-            <select class="field" id="alert-event-warp_scramble-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-warp_scramble-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1234,16 +1208,6 @@
           </select>
           <button class="btn" id="alert-event-decloak-test"
             aria-label="Test the Decloak alert">Test</button>
-          <span class="alert-flash">
-            <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
-            <select class="field" id="alert-event-decloak-flashes"></select>
-            <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
-            <select class="field" id="alert-event-decloak-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
         </div>
         </div>
@@ -1251,6 +1215,75 @@
              below the table rather than repeated under every participating
              row. Per-row live regions remain reserved for write outcomes. -->
         <p id="alerts-collision" class="field-msg warn" role="status"></p>
+        <!-- Task 1. Flashes and Speed used to be a second grid line under
+             every event row above -- two label/select pairs beneath four
+             tracks already tight at the 840 floor (.alert-events' own
+             comment: "the sound column is the only one allowed to
+             give"). Both are secondary to the row's primary decision --
+             is this event on, what colour, what sound, does it work --
+             so they move into one shared disclosure instead of repeating
+             a second line three times. Collapsed by default (no `open`
+             attribute), the same mechanism #es-retention already
+             established for secondary controls behind a native
+             disclosure.
+
+             Every id stays exactly what alerts.js already looks up
+             (eventRow() builds `alert-event-<id>-flashes` and `-speed`
+             regardless of where they sit in the DOM), and each row's own
+             status line (`alert-event-<id>-msg`) stays in the table
+             above, not in here -- a refused write, or a session-only one,
+             has to stay visible without the reader having to open this
+             first. -->
+        <details id="alert-advanced">
+          <summary>Advanced pulse behavior</summary>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Combat</span>
+            <span class="alert-flash">
+              <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
+              <select class="field" id="alert-event-combat-flashes"
+                aria-label="Combat flash count"></select>
+              <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
+              <select class="field" id="alert-event-combat-speed"
+                aria-label="Combat flash speed">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Warp scramble</span>
+            <span class="alert-flash">
+              <label class="flash-lab"
+                for="alert-event-warp_scramble-flashes">Flashes</label>
+              <select class="field" id="alert-event-warp_scramble-flashes"
+                aria-label="Warp scramble flash count"></select>
+              <label class="flash-lab"
+                for="alert-event-warp_scramble-speed">Speed</label>
+              <select class="field" id="alert-event-warp_scramble-speed"
+                aria-label="Warp scramble flash speed">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Decloak</span>
+            <span class="alert-flash">
+              <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
+              <select class="field" id="alert-event-decloak-flashes"
+                aria-label="Decloak flash count"></select>
+              <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
+              <select class="field" id="alert-event-decloak-speed"
+                aria-label="Decloak flash speed">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+        </details>
         <!-- Round 5, A4. These two were the third and fourth checkboxes on
              the card, directly under the master switch and rendered at its
              indent and weight -- so the card offered five peer switches, of
