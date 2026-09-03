@@ -131,6 +131,48 @@ def test_an_unanswered_quit_is_read_as_do_not_quit(tmp_path, monkeypatch):
     assert api._confirm_quit_if_busy() is False
 
 
+def test_quit_refusal_keeps_handoff_reason_if_state_changes_before_alert(tmp_path):
+    window = FakeWindow()
+    api = make_api(tmp_path, window)
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    assert api._work_gate.claim_handoff("handing_off")
+    after_claim = threading.Barrier(2)
+    real_claim = api._work_gate.claim_quit
+
+    def paused_claim(*, force_upload):
+        result = real_claim(force_upload=force_upload)
+        after_claim.wait(timeout=2)
+        after_claim.wait(timeout=2)
+        return result
+
+    api._work_gate.claim_quit = paused_claim
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
+    worker.start()
+    after_claim.wait(timeout=2)
+    api._work_gate.release_handoff()
+    after_claim.wait(timeout=2)
+    worker.join(timeout=2)
+
+    assert result == {"ok": False}
+    assert window.shown == 1
+    assert alerts == [("info", "Update", "Update installation is being prepared.")]
+
+
+def test_quit_refused_while_quitting_explains_update_shutdown(tmp_path):
+    window = FakeWindow()
+    api = make_api(tmp_path, window)
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    assert api._work_gate.claim_quit(force_upload=False)
+
+    assert api._claim_quit() is False
+
+    assert window.shown == 1
+    assert alerts == [("info", "Update", "Update installation is being prepared.")]
+
+
 def test_quit_is_refused_with_information_during_each_handoff_phase(tmp_path):
     for phase in ("handing_off", "revalidating", "launching"):
         window = FakeWindow()
@@ -143,6 +185,42 @@ def test_quit_is_refused_with_information_during_each_handoff_phase(tmp_path):
 
         assert window.shown == 1
         assert alerts == [("info", "Update", "Update installation is being prepared.")]
+
+
+def test_forced_quit_refusal_keeps_handoff_reason_if_handoff_then_releases(tmp_path):
+    window = FakeWindow()
+    api = busy_api(tmp_path, window)
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    after_claim = threading.Barrier(2)
+    real_claim = api._work_gate.claim_quit
+
+    def approve_then_handoff(*args, **kwargs):
+        stop.set()
+        api._upload_thread.join(timeout=5)
+        assert api._work_gate.claim_handoff("handing_off")
+        return True
+
+    def paused_claim(*, force_upload):
+        result = real_claim(force_upload=force_upload)
+        if force_upload and not result:
+            after_claim.wait(timeout=2)
+            after_claim.wait(timeout=2)
+        return result
+
+    api._ask = approve_then_handoff
+    api._work_gate.claim_quit = paused_claim
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
+    worker.start()
+    after_claim.wait(timeout=2)
+    api._work_gate.release_handoff()
+    after_claim.wait(timeout=2)
+    worker.join(timeout=2)
+
+    assert result == {"ok": False}
+    assert window.shown == 2
+    assert alerts == [("info", "Update", "Update installation is being prepared.")]
 
 
 def test_handoff_winning_during_upload_confirmation_refuses_quit(tmp_path):

@@ -23,6 +23,22 @@ def _join_upload(api):
         assert not thread.is_alive()
 
 
+def _enable_retry(api):
+    api._retry_state = api_mod.RetryState(
+        job=api_mod.UploadJob(
+            items=[],
+            ids=[],
+            title="Fight",
+            description="",
+            stitch=False,
+            privacy="unlisted",
+            category="20",
+        ),
+        resume_index=0,
+        request=None,
+    )
+
+
 # ---- private work gate ----------------------------------------------------
 
 
@@ -160,6 +176,96 @@ def test_retry_and_handoff_race_has_exactly_one_winner(tmp_path):
         release_worker.set()
         _join_upload(api)
         api._work_gate.release_handoff()
+
+
+def test_upload_refusal_keeps_handoff_reason_if_state_changes_before_alert(
+    tmp_path,
+):
+    api, _window = _upload_api(tmp_path)
+    assert api._work_gate.claim_handoff("handing_off")
+    after_claim = threading.Barrier(2)
+    real_claim = api._work_gate.claim_upload
+
+    def paused_claim():
+        result = real_claim()
+        after_claim.wait(timeout=2)
+        after_claim.wait(timeout=2)
+        return result
+
+    api._work_gate.claim_upload = paused_claim
+    bridge = threading.Thread(
+        target=lambda: api.start_upload("Fight", "", False, ["r1"])
+    )
+    bridge.start()
+    after_claim.wait(timeout=2)
+    api._work_gate.release_handoff()
+    after_claim.wait(timeout=2)
+    bridge.join(timeout=2)
+
+    assert not bridge.is_alive()
+    assert api._alert.raised == [
+        ("info", "Update", "Update installation is being prepared.")
+    ]
+
+
+def test_upload_refused_while_quitting_explains_update_shutdown(tmp_path):
+    api, _window = _upload_api(tmp_path)
+    assert api._work_gate.claim_quit(force_upload=False)
+
+    api.start_upload("Fight", "", False, ["r1"])
+
+    assert api._upload_thread is None
+    assert api._alert.raised == [
+        ("info", "Update", "Update installation is being prepared.")
+    ]
+
+
+def test_retry_refused_during_handoff_is_disabled_and_explained(tmp_path):
+    api, _window = _upload_api(tmp_path)
+    _enable_retry(api)
+    assert api._work_gate.claim_handoff("handing_off")
+    sent = fakes.record_pushes(api)
+
+    api.retry()
+
+    assert api._upload_thread is None
+    assert fakes.payloads(sent, "onRetryAvailable") == [{"available": False}]
+    assert api._alert.raised == [
+        ("info", "Update", "Update installation is being prepared.")
+    ]
+
+
+def test_retry_refused_while_quitting_is_disabled_and_explained(tmp_path):
+    api, _window = _upload_api(tmp_path)
+    _enable_retry(api)
+    assert api._work_gate.claim_quit(force_upload=False)
+    sent = fakes.record_pushes(api)
+
+    api.retry()
+
+    assert api._upload_thread is None
+    assert fakes.payloads(sent, "onRetryAvailable") == [{"available": False}]
+    assert api._alert.raised == [
+        ("info", "Update", "Update installation is being prepared.")
+    ]
+
+
+def test_retry_refused_by_an_upload_is_disabled_and_names_the_upload(tmp_path):
+    api, _window = _upload_api(tmp_path)
+    _enable_retry(api)
+    assert api._work_gate.claim_upload()
+    sent = fakes.record_pushes(api)
+
+    try:
+        api.retry()
+    finally:
+        api._work_gate.release_upload()
+
+    assert api._upload_thread is None
+    assert fakes.payloads(sent, "onRetryAvailable") == [{"available": False}]
+    assert api._alert.raised == [
+        ("warning", "Busy", "An upload is already in progress.")
+    ]
 
 
 def test_upload_claim_lives_until_worker_finally(tmp_path):

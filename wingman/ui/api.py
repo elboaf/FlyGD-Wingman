@@ -456,6 +456,17 @@ class AppState:
     engine: object | None = None
 
 
+@dataclass(frozen=True)
+class _ClaimResult:
+    """One locked claim decision, including why a caller was refused."""
+
+    ok: bool
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
 class _WorkGate:
     """Atomically arbitrate uploads, updater handoff, and process shutdown.
 
@@ -470,12 +481,16 @@ class _WorkGate:
         self._handoff = ""
         self._quitting = False
 
-    def claim_upload(self) -> bool:
+    def claim_upload(self) -> _ClaimResult:
         with self._lock:
-            if self._upload or self._handoff or self._quitting:
-                return False
+            if self._handoff:
+                return _ClaimResult(False, "handoff")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
+            if self._upload:
+                return _ClaimResult(False, "upload")
             self._upload = True
-            return True
+            return _ClaimResult(True)
 
     def upload_claimed(self) -> bool:
         with self._lock:
@@ -503,14 +518,16 @@ class _WorkGate:
         with self._lock:
             return self._handoff
 
-    def claim_quit(self, *, force_upload: bool) -> bool:
+    def claim_quit(self, *, force_upload: bool) -> _ClaimResult:
         with self._lock:
-            if self._handoff or self._quitting:
-                return False
+            if self._handoff:
+                return _ClaimResult(False, "handoff")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
             if self._upload and not force_upload:
-                return False
+                return _ClaimResult(False, "upload")
             self._quitting = True
-            return True
+            return _ClaimResult(True)
 
     def begin_update_shutdown(self) -> bool:
         with self._lock:
@@ -1489,10 +1506,11 @@ class Api:
         three different sentences from this one predicate, and each would
         become false for a log post:
 
-        - `_confirm_quit_if_busy` renders `format_quit_confirm(_last_pct)`,
-          which says "An upload is N% complete" -- during a log post there
-          is no upload and `_last_pct` is a stale number from a previous
-          job. A log post is seconds long and loses a Discord post, not a
+        - `_claim_quit` renders `format_quit_confirm(_last_pct)` when its
+          atomic claim reports an upload. That says "An upload is N% complete" --
+          during a log post there is no upload and `_last_pct` is a stale
+          number from a previous job. A log post is seconds long and loses a
+          Discord post, not a
           multi-gigabyte transfer, so Quit does not ask about it at all.
         - `start_upload` says "An upload is already in progress", which a
           log post is not. It refuses on `_logs_busy` separately, in its own
@@ -1519,6 +1537,11 @@ class Api:
         """
         with self._logs_lock:
             return self._logs_running
+
+    def _update_installation_preparing(self, *, show_window: bool) -> None:
+        if show_window and self._window is not None:
+            self._window.show()
+        self._alert("info", "Update", "Update installation is being prepared.")
 
     def _claim_quit(self) -> bool:
         """Answer "may the app exit now?" and atomically close the work gate.
@@ -1552,32 +1575,35 @@ class Api:
         silence as "stay running" costs a second click, reading it as
         "quit" costs the upload.
         """
-        upload_running = self._busy()
-        if upload_running:
-            window = self._window
-            if window is None:
-                # No page to ask and no way to warn. Refusing here would make
-                # Quit inert with nothing on screen explaining why, which is a
-                # worse failure than the discard this guard exists to prevent.
-                logger.warning("Quit requested with an upload running and no window.")
-            else:
-                window.show()
-                if not self._ask(
-                    "Upload in progress",
-                    copy_mod.format_quit_confirm(self._last_pct),
-                    timeout=QUIT_CONFIRM_TIMEOUT_S,
-                ):
-                    return False
+        claim = self._work_gate.claim_quit(force_upload=False)
+        if claim:
+            return True
+        if claim.reason != "upload":
+            self._update_installation_preparing(show_window=True)
+            return False
 
-        if self._work_gate.claim_quit(force_upload=upload_running):
+        window = self._window
+        if window is None:
+            # No page to ask and no way to warn. Refusing here would make
+            # Quit inert with nothing on screen explaining why, which is a
+            # worse failure than the discard this guard exists to prevent.
+            logger.warning("Quit requested with an upload running and no window.")
+        else:
+            window.show()
+            if not self._ask(
+                "Upload in progress",
+                copy_mod.format_quit_confirm(self._last_pct),
+                timeout=QUIT_CONFIRM_TIMEOUT_S,
+            ):
+                return False
+
+        claim = self._work_gate.claim_quit(force_upload=True)
+        if claim:
             return True
 
         # An updater can win after a confirmed upload ends but before Quit
         # takes its claim. Never destroy the window under that handoff.
-        if self._work_gate.handoff_phase():
-            if self._window is not None:
-                self._window.show()
-            self._alert("info", "Update", "Update installation is being prepared.")
+        self._update_installation_preparing(show_window=True)
         return False
 
     def _confirm_quit_if_busy(self) -> bool:
@@ -1622,9 +1648,6 @@ class Api:
         if stitch and len(pairs) < 2:
             self._alert("warning", "Stitch", "Select at least two videos to stitch.")
             return
-        if self._busy():
-            self._alert("warning", "Busy", "An upload is already in progress.")
-            return
         if self._logs_busy():
             # Its own sentence. Reusing the line above would say an upload
             # is running when none is, on the one screen where the user can
@@ -1649,11 +1672,12 @@ class Api:
             # snapshotted here -- Settings is reachable between them.
             logs=True,
         )
-        if not self._work_gate.claim_upload():
-            if self._busy():
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            if claim.reason == "upload":
                 self._alert("warning", "Busy", "An upload is already in progress.")
-            elif self._work_gate.handoff_phase():
-                self._alert("info", "Update", "Update installation is being prepared.")
+            else:
+                self._update_installation_preparing(show_window=False)
             return
         try:
             # Cleared per dispatch, not per process: a stop answered by the
@@ -2034,7 +2058,15 @@ class Api:
 
     def retry(self) -> None:
         state = self._retry_state
-        if state is None or not self._work_gate.claim_upload():
+        if state is None:
+            return
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            self._push("onRetryAvailable", {"available": False})
+            if claim.reason == "upload":
+                self._alert("warning", "Busy", "An upload is already in progress.")
+            else:
+                self._update_installation_preparing(show_window=False)
             return
         try:
             # Disabled immediately, not by the worker: the click that got here
