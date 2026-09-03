@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import threading
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -33,7 +34,7 @@ from pathlib import Path
 # re-export. Capability lookup and authorization now live in eveauth, so
 # Skills names that same module when requesting its read-only capability.
 from ..eveauth import application
-from ..eveauth.controller import MutationResult
+from ..eveauth.controller import ACCESS_REASON_OWNER_CHANGED, MutationResult
 from . import esi as esi_mod
 from . import evaluator, plans, planstore, skillids
 from . import state as state_mod
@@ -991,16 +992,21 @@ class SkillsController:
 
     def _refresh_one(self, character_id: int) -> str:
         """Refresh one character under shared lifecycle authority."""
-        try:
-            with self._authority.lifecycle(character_id, application.SKILLS):
-                return self._refresh_one_leased(character_id)
-        except KeyError:
-            return ""
-        except PermissionError:
-            status = self._authority.capability_status(character_id, application.SKILLS)
-            message = MSG_NO_TOKEN if status == "missing" else MSG_REAUTH
-            self._commit_failure(character_id, message)
-            return message
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(
+                    self._authority.lifecycle(character_id, application.SKILLS)
+                )
+            except KeyError:
+                return ""
+            except PermissionError:
+                status = self._authority.capability_status(
+                    character_id, application.SKILLS
+                )
+                message = MSG_NO_TOKEN if status == "missing" else MSG_REAUTH
+                self._commit_failure(character_id, message)
+                return message
+            return self._refresh_one_leased(character_id)
 
     def _refresh_one_leased(self, character_id: int) -> str:
         """Fetch and commit while the authority lifecycle lease is held."""
@@ -1044,7 +1050,7 @@ class SkillsController:
         if result.token is None and result.grant_invalidated:
             error = (
                 MSG_OWNER_CHANGE_DETECTED
-                if "ownership changed" in error.lower()
+                if result.reason == ACCESS_REASON_OWNER_CHANGED
                 else MSG_REAUTH
             )
         return result.token, error, result.grant_invalidated

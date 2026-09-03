@@ -292,6 +292,56 @@ def test_character_identity_is_joined_from_shared_authority(tmp_path):
     assert row["needs_reauth"] is False
 
 
+def test_refresh_body_key_error_is_not_mistaken_for_missing_authority(tmp_path):
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+    )
+
+    def fail_after_lease(_character_id):
+        raise KeyError("malformed ESI payload")
+
+    controller._refresh_one_leased = fail_after_lease
+
+    with pytest.raises(KeyError, match="malformed ESI payload"):
+        controller._refresh_one(95)
+
+
+def test_owner_change_mapping_uses_reason_not_human_text(tmp_path):
+    authority = FakeAuthority(
+        [
+            AuthorityCharacter(
+                character_id=95,
+                character_name="Aiga",
+                owner_hash="old-owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ],
+        token_results=[
+            AccessTokenResult(
+                None,
+                "This wording no longer mentions the classification.",
+                True,
+                "owner_changed",
+            )
+        ],
+    )
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        authority=authority,
+    )
+
+    token, error, invalidated = controller._access_token(95)
+
+    assert token is None
+    assert invalidated is True
+    assert error == "Character ownership changed. Re-authenticate this character."
+
+
 def test_authority_persistence_warning_survives_a_skills_error(tmp_path):
     authority = FakeAuthority(
         [

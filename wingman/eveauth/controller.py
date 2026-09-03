@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 TOKEN_EXPIRY_MARGIN_S = 30
 ROTATION_PERSISTENCE_ERROR = "The rotated EVE token is live but could not be saved."
 GRANT_PERSISTENCE_ERROR = "The EVE grant changed in memory but could not be saved."
+ACCESS_REASON_INVALID_GRANT = "invalid_grant"
+ACCESS_REASON_IDENTITY_MISMATCH = "identity_mismatch"
+ACCESS_REASON_OWNER_CHANGED = "owner_changed"
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,7 @@ class AccessTokenResult:
     token: str | None
     error: str
     grant_invalidated: bool
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -255,7 +259,10 @@ class AuthorityController:
                 if exc.code == "invalid_grant":
                     self._invalidate_grant(wanted)
                     return AccessTokenResult(
-                        None, "Re-authenticate this EVE character.", True
+                        None,
+                        "Re-authenticate this EVE character.",
+                        True,
+                        ACCESS_REASON_INVALID_GRANT,
                     )
                 return AccessTokenResult(
                     None, f"EVE SSO refused the token refresh: {exc}", False
@@ -275,6 +282,7 @@ class AuthorityController:
                     None,
                     "The refreshed token belongs to a different character.",
                     True,
+                    ACCESS_REASON_IDENTITY_MISMATCH,
                 )
             if (
                 stored_owner
@@ -283,7 +291,10 @@ class AuthorityController:
             ):
                 self._invalidate_grant(wanted)
                 return AccessTokenResult(
-                    None, "Character ownership changed. Re-authenticate.", True
+                    None,
+                    "Character ownership changed. Re-authenticate.",
+                    True,
+                    ACCESS_REASON_OWNER_CHANGED,
                 )
 
             rotated = bool(token_set.refresh_token.strip())

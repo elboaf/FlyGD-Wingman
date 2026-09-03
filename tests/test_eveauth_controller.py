@@ -174,6 +174,7 @@ def test_invalid_grant_globally_invalidates_the_grant(tmp_path):
     result = authority.access_token(42, application.SKILLS)
 
     assert result.grant_invalidated is True
+    assert result.reason == "invalid_grant"
     assert authority.character(42).needs_reauth is True
     assert authority.capability_status(42, application.SKILLS) == "reauthenticate"
 
@@ -196,6 +197,7 @@ def test_validated_character_mismatch_globally_invalidates_the_grant(tmp_path):
     result = authority.access_token(42, application.SKILLS)
 
     assert result.grant_invalidated is True
+    assert result.reason == "identity_mismatch"
     assert authority.character(42).needs_reauth is True
 
 
@@ -207,6 +209,7 @@ def test_validated_owner_mismatch_globally_invalidates_the_grant(tmp_path):
     result = authority.access_token(42, application.SKILLS)
 
     assert result.grant_invalidated is True
+    assert result.reason == "owner_changed"
     assert authority.character(42).needs_reauth is True
 
 
@@ -382,8 +385,10 @@ def test_eveauth_package_exports_the_shared_authority_contract():
 
 
 def test_controller_results_and_leases_are_immutable():
+    legacy_result = AccessTokenResult("token", "", False)
+    assert legacy_result.reason == ""
     values = [
-        AccessTokenResult("token", "", False),
+        legacy_result,
         MutationResult(True, True, ""),
         LifecycleLease(None, application.SKILLS, 0),
     ]
