@@ -557,6 +557,17 @@ def test_auth_is_globally_single_flight_and_cancel_reaches_listener(tmp_path):
     assert any("already" in title.lower() for _, title, _ in alerts)
 
 
+def test_shutdown_refuses_new_token_work(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+
+    authority.shutdown()
+    result = authority.access_token(42, application.SKILLS)
+
+    assert result.token is None
+    assert result.grant_invalidated is False
+    assert "shutting down" in result.error.lower()
+
+
 def test_shutdown_cancels_a_bound_listener_without_raising(tmp_path):
     authority = None
 

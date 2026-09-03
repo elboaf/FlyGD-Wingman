@@ -762,6 +762,19 @@ def test_two_concurrent_refreshes_produce_exactly_one_worker(tmp_path):
     assert len(spawn.targets) == 1
 
 
+def test_refresh_spawn_failure_restores_idle_shutdown_state(tmp_path):
+    def fail_spawn(**_kwargs):
+        raise RuntimeError("thread unavailable")
+
+    controller, _, _ = build(tmp_path, spawn=fail_spawn)
+
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        controller.refresh_characters()
+
+    assert controller._refresh_in_flight is False
+    assert controller._refresh_idle.is_set()
+
+
 def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
     """The latch drops the *worker*, never the *request*. A refresh clicked
     while one is running must still produce fresh data -- otherwise the
@@ -993,8 +1006,14 @@ def test_a_definitive_oauth_error_is_definitive_here_too(tmp_path):
     controller.refresh_characters()
 
     authority = controller._authority.character(95)
+    snapshot = controller._state.find(95)
     assert authority.needs_reauth is True
     assert controller._authority._state.characters[0].refresh_token_blob == ""
+    assert snapshot.fetched_utc is None
+    assert snapshot.active_levels == {}
+    assert snapshot.trained_levels == {}
+    assert snapshot.queue == ()
+    assert snapshot.skills_etag == snapshot.queue_etag == ""
     assert esi.calls == [], "no ESI call is worth making without a token"
 
 
@@ -2096,6 +2115,52 @@ def test_shutdown_swallows_a_failing_listener(tmp_path):
     controller._listener = FailingListener()
 
     controller.shutdown()  # Must not raise.
+
+
+def test_shutdown_refuses_new_refresh_work(tmp_path):
+    spawn = DeferredSpawn()
+    controller, _, _ = build(tmp_path, spawn=spawn)
+
+    controller.shutdown()
+    controller.refresh_characters()
+
+    assert spawn.targets == []
+    assert controller._refresh_in_flight is False
+
+
+def test_shutdown_waits_for_the_active_refresh_worker(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingEsi(FakeEsi):
+        def get(self, path, *, token=None, etag=None):
+            if not started.is_set():
+                started.set()
+                assert release.wait(timeout=2)
+            return super().get(path, token=token, etag=etag)
+
+    controller, _, _ = build(
+        tmp_path,
+        characters=[with_snapshot()],
+        client=BlockingEsi(),
+        sso=FakeSso(),
+        spawn=threading.Thread,
+    )
+    shutdown_finished = threading.Event()
+    controller.refresh_characters()
+    assert started.wait(timeout=2)
+
+    worker = threading.Thread(
+        target=lambda: (controller.shutdown(), shutdown_finished.set())
+    )
+    worker.start()
+    assert not shutdown_finished.wait(timeout=0.1)
+
+    release.set()
+    worker.join(timeout=2)
+
+    assert shutdown_finished.is_set()
+    assert controller._refresh_in_flight is False
 
 
 def test_shutdown_stops_a_refresh_pass_between_characters(tmp_path):

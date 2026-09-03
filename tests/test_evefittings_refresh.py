@@ -418,6 +418,65 @@ def test_304_does_not_supersede_newer_local_terminal_evidence(
     assert result["write_count"] == 0
 
 
+def test_backward_clock_304_keeps_monotonic_snapshot_and_unknown_evidence(tmp_path):
+    initial = seeded_state(intent=unknown_intent)
+    initial = replace(
+        initial,
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"current"',
+            ),
+        ),
+    )
+    controller, _authority, esi, path = make_controller(
+        tmp_path,
+        [response(304)],
+        initial=initial,
+        now=lambda: NOW - timedelta(minutes=1),
+    )
+
+    assert controller.refresh([42])["ok"] is True
+
+    snapshot = controller.character_status(42)
+    assert snapshot.fetched_utc == snapshot.content_utc == NOW
+    assert controller.state.intents[0].status == "unknown"
+    assert esi.get_calls[-1][2] == '"current"'
+    assert load_fittings(path)[0] == controller.state
+
+
+def test_backward_clock_200_cannot_age_or_resolve_unknown_evidence(tmp_path):
+    initial = seeded_state(intent=unknown_intent)
+    initial = replace(
+        initial,
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"current"',
+            ),
+        ),
+    )
+    controller, _authority, esi, path = make_controller(
+        tmp_path,
+        [response(200, [fitting(name="Seeded")])],
+        initial=initial,
+        now=lambda: NOW - timedelta(minutes=1),
+    )
+
+    assert controller.refresh([42])["ok"] is True
+
+    snapshot = controller.character_status(42)
+    assert snapshot.fetched_utc == snapshot.content_utc == NOW
+    assert controller.state.presences[0].last_confirmed_utc == NOW
+    assert controller.state.intents[0].status == "unknown"
+    assert esi.get_calls[-1][2] == '"current"'
+    assert load_fittings(path)[0] == controller.state
+
+
 def test_invalid_flag_import_is_retained_but_not_deployable(tmp_path):
     controller, _authority, _esi, _path = make_controller(
         tmp_path, [response(200, [fitting(flag="Invalid")])]
@@ -465,6 +524,160 @@ def test_refresh_preserves_unknown_intent_overlay(tmp_path):
     controller.refresh([42])
 
     assert controller.state.intents == initial.intents
+
+
+def test_post_horizon_unconditional_200_absence_resolves_unknown(tmp_path):
+    initial = seeded_state(intent=unknown_intent)
+    initial = replace(
+        initial,
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"possibly-before-create"',
+            ),
+        ),
+    )
+    clock = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS + 1)
+    controller, _authority, esi, path = make_controller(
+        tmp_path,
+        [response(200, [])],
+        initial=initial,
+        now=lambda: clock,
+    )
+
+    assert controller.refresh([42])["ok"] is True
+
+    assert esi.get_calls == [(42, "token-42", None)]
+    assert not any(item.unresolved for item in controller.state.intents)
+    assert not any(item.unresolved for item in load_fittings(path)[0].intents)
+    preflight = controller.preflight_copy(["existing-entry"], [42])
+    assert preflight["pairs"][0]["status"] == "ready"
+
+
+def test_post_horizon_absence_clears_detached_unknown_evidence(tmp_path):
+    fit = seeded_state().entries[0]
+    detached = replace(unknown_intent(fit), library_entry_id="")
+    initial = FittingsState(
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"possibly-before-create"',
+            ),
+        ),
+        intents=(detached,),
+    )
+    clock = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS + 1)
+    controller, _authority, _esi, path = make_controller(
+        tmp_path,
+        [response(200, [])],
+        initial=initial,
+        now=lambda: clock,
+    )
+
+    assert controller.refresh([42])["ok"] is True
+
+    assert controller.state.intents == ()
+    assert load_fittings(path)[0].intents == ()
+
+
+def test_post_horizon_200_presence_resolves_unknown_to_success(tmp_path):
+    initial = seeded_state(intent=unknown_intent)
+    initial = replace(
+        initial,
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"possibly-before-create"',
+            ),
+        ),
+    )
+    clock = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS + 1)
+    controller, _authority, _esi, path = make_controller(
+        tmp_path,
+        [response(200, [fitting(name="Seeded")])],
+        initial=initial,
+        now=lambda: clock,
+    )
+
+    assert controller.refresh([42])["ok"] is True
+
+    resolved = controller.state.intents[0]
+    assert resolved.status == "success"
+    assert resolved.remote_fitting_id == 10
+    assert resolved.completed_utc == clock
+    assert load_fittings(path)[0].intents[0] == resolved
+
+
+def test_failed_reconciliation_save_keeps_unknown_blocking_copy_and_forget(tmp_path):
+    initial = seeded_state(intent=unknown_intent)
+    initial = replace(
+        initial,
+        presences=(),
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"possibly-before-create"',
+            ),
+        ),
+    )
+    clock = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS + 1)
+
+    def fail_save(_path, _state):
+        raise OSError("disk full")
+
+    controller, _authority, _esi, path = make_controller(
+        tmp_path,
+        [response(200, [])],
+        initial=initial,
+        now=lambda: clock,
+        save=fail_save,
+    )
+
+    assert controller.refresh([42])["ok"] is False
+
+    assert controller.state.intents[0].status == "unknown"
+    assert load_fittings(path)[0].intents[0].status == "unknown"
+    assert controller.prepare_forget(42).applied is False
+    controller._now = lambda: NOW
+    preflight = controller.preflight_copy(["existing-entry"], [42])
+    assert preflight["pairs"][0]["status"] == "unavailable"
+    assert "unknown" in preflight["pairs"][0]["error"].lower()
+
+
+def test_post_horizon_304_cannot_resolve_unknown(tmp_path):
+    initial = seeded_state(intent=unknown_intent)
+    initial = replace(
+        initial,
+        snapshots=(
+            CharacterSnapshot(
+                character_id=42,
+                fetched_utc=NOW,
+                content_utc=NOW,
+                etag='"possibly-before-create"',
+            ),
+        ),
+    )
+    clock = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS + 1)
+    controller, _authority, esi, _path = make_controller(
+        tmp_path,
+        [response(304)],
+        initial=initial,
+        now=lambda: clock,
+    )
+
+    assert controller.refresh([42])["ok"] is True
+
+    assert esi.get_calls == [(42, "token-42", None)]
+    assert controller.state.intents[0].status == "unknown"
+    assert controller.prepare_forget(42).applied is False
 
 
 def test_failed_snapshot_save_preserves_prior_durable_and_live_state(tmp_path):

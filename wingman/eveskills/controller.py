@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # reload that found it.
 MAX_WARNINGS = 20
 MAX_DIAGNOSTICS_PER_ISSUE = 20
+SHUTDOWN_WAIT_SECONDS = 2.0
 
 # Exact user-facing text. These land in a roster row next to the data they
 # describe, so they say what the user must DO, not what the transport
@@ -285,6 +286,8 @@ class SkillsController:
         # dropping it, so a click during a refresh is never silently lost.
         self._refresh_in_flight = False
         self._refresh_again = False
+        self._refresh_idle = threading.Event()
+        self._refresh_idle.set()
         # Set on shutdown so a refresh pass stops between characters rather
         # than finishing eighty requests after the window has gone.
         self._stopping = threading.Event()
@@ -912,12 +915,22 @@ class SkillsController:
         requests.
         """
         with self._lock:
+            if self._stopping.is_set():
+                return
             if self._refresh_in_flight:
                 self._refresh_again = True
                 return
             self._refresh_in_flight = True
+            self._refresh_idle.clear()
         self._push_state(force=True)  # The button becomes "Refreshing...".
-        self._spawn(target=self._refresh_worker, daemon=True).start()
+        try:
+            self._spawn(target=self._refresh_worker, daemon=True).start()
+        except Exception:
+            with self._lock:
+                self._refresh_in_flight = False
+                self._refresh_idle.set()
+            self._push_state(force=True)
+            raise
 
     def _refresh_worker(self) -> None:
         try:
@@ -951,6 +964,9 @@ class SkillsController:
                 self._spawn(target=self._refresh_worker, daemon=True).start()
                 return
         finally:
+            with self._lock:
+                if not self._refresh_in_flight:
+                    self._refresh_idle.set()
             # Unconditional: the page's "Refreshing..." state is driven by
             # refresh_in_flight, and a pass that died without this push
             # leaves the button stuck forever.
@@ -1225,7 +1241,7 @@ class SkillsController:
             )
 
     def grant_invalidated(self, character_id: int) -> None:
-        """Discard snapshots only when authority reports an ownership change."""
+        """Discard snapshots after any definitive shared-grant invalidation."""
         authority = self._authority.character(character_id)
         new_owner = authority.owner_hash if authority is not None else ""
         with self._lock:
@@ -1239,23 +1255,22 @@ class SkillsController:
                 and previous_owner != new_owner
             )
             saved = True
-            if owner_changed:
+            if character is not None:
                 character.active_levels = {}
                 character.trained_levels = {}
                 character.queue = ()
                 character.fetched_utc = None
                 character.skills_etag = ""
                 character.queue_etag = ""
-                character.error = MSG_OWNER_CHANGED
+                character.error = MSG_OWNER_CHANGED if owner_changed else MSG_REAUTH
                 saved = self._save_locked()
         self._push_state(force=True)
         if not saved:
             self._alert(
                 "warning",
                 "Skills cleanup is not saved",
-                "The character ownership changed, but the cleared Skills "
-                "snapshot could not be saved. Wingman will retry cleanup "
-                "at the next startup.",
+                "The EVE grant became invalid, but the cleared Skills snapshot "
+                "could not be saved. Wingman will retry cleanup at the next startup.",
             )
 
     def reconcile_characters(self, characters) -> None:
@@ -1427,3 +1442,6 @@ class SkillsController:
     def shutdown(self) -> None:
         """Stop feature workers before shared authority is torn down."""
         self._stopping.set()
+        with self._lock:
+            self._refresh_again = False
+        self._refresh_idle.wait(timeout=SHUTDOWN_WAIT_SECONDS)

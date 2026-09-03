@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 MSG_REAUTH = "Re-authenticate this EVE character to refresh fittings."
 MSG_SAVE_FAILED = "The fitting refresh could not be saved."
 _MAX_ERROR_CHARS = store.MAX_ERROR_CHARS
+SHUTDOWN_WAIT_SECONDS = 2.0
 
 
 def _utcnow() -> datetime:
@@ -201,6 +203,14 @@ class FittingsController:
                 "error": "A fitting refresh is already in progress.",
             }
         try:
+            if self._stopping.is_set():
+                return {
+                    "ok": False,
+                    "busy": False,
+                    "batch_id": "",
+                    "characters": [],
+                    "error": "The fitting subsystem is shutting down.",
+                }
             targets = self._refresh_targets(character_ids)
             batch_id = str(self._batch_id_factory())[: store.MAX_BATCH_ID_CHARS]
             if not batch_id:
@@ -282,9 +292,13 @@ class FittingsController:
             return self._result(character_id, False, message)
 
     def _refresh_one_leased(self, character_id: int, batch_id: str) -> dict:
+        requested_utc = self._now()
         with self._lock:
             snapshot = self._snapshot_locked(character_id)
-            etag = snapshot.etag if snapshot is not None else ""
+            reconcile = self._can_reconcile_any_locked(
+                character_id, requested_utc, snapshot
+            )
+            etag = "" if reconcile else snapshot.etag if snapshot is not None else ""
 
         response, error = self._authorised_get(character_id, etag)
         if response is None:
@@ -324,12 +338,23 @@ class FittingsController:
             return self._result(character_id, False, error)
 
         with self._lock:
+            current = self._snapshot_locked(character_id)
+            timestamp = max(
+                value
+                for value in (
+                    timestamp,
+                    current.fetched_utc if current is not None else None,
+                    current.content_utc if current is not None else None,
+                )
+                if value is not None
+            )
             candidate = self._import_locked(
                 character_id,
                 fittings,
                 batch_id=batch_id,
                 timestamp=timestamp,
                 etag=response.etag,
+                reconciliation_requested_utc=requested_utc if reconcile else None,
             )
             if not self._publish_locked(candidate):
                 return self._result(character_id, False, MSG_SAVE_FAILED)
@@ -406,6 +431,7 @@ class FittingsController:
         batch_id: str,
         timestamp: datetime,
         etag: str,
+        reconciliation_requested_utc: datetime | None = None,
     ) -> FittingsState:
         entries = list(self._state.entries)
         positions = {entry.id: index for index, entry in enumerate(entries)}
@@ -486,12 +512,90 @@ class FittingsController:
                 content_utc=timestamp,
             ),
         )
+        intents = self._reconcile_intents_locked(
+            character_id,
+            tuple(entries),
+            tuple(presences),
+            reconciliation_requested_utc,
+            timestamp,
+        )
         return replace(
             self._state,
             entries=tuple(entries),
             presences=tuple(presences),
             snapshots=snapshots,
+            intents=intents,
         )
+
+    def _can_reconcile_any_locked(
+        self,
+        character_id: int,
+        requested_utc: datetime,
+        snapshot: CharacterSnapshot | None,
+    ) -> bool:
+        # A wall clock that moved behind persisted snapshot time cannot prove
+        # that ESI's five-minute cache horizon elapsed. Waiting until it catches
+        # up retains safety evidence instead of guessing from a negative age.
+        if snapshot is not None and any(
+            value is not None and requested_utc < value
+            for value in (snapshot.fetched_utc, snapshot.content_utc)
+        ):
+            return False
+        return any(
+            intent.character_id == character_id
+            and intent.unresolved
+            and requested_utc
+            >= (intent.sent_utc or intent.created_utc)
+            + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+            for intent in self._state.intents
+        )
+
+    def _reconcile_intents_locked(
+        self,
+        character_id: int,
+        entries: tuple[LibraryEntry, ...],
+        presences: tuple[Presence, ...],
+        requested_utc: datetime | None,
+        confirmed_utc: datetime,
+    ) -> tuple[WriteIntent, ...]:
+        if requested_utc is None:
+            return self._state.intents
+        entries_by_id = {entry.id: entry for entry in entries}
+        present_by_content = {
+            entries_by_id[presence.library_entry_id].content: presence
+            for presence in presences
+            if presence.character_id == character_id
+            and presence.library_entry_id in entries_by_id
+        }
+        resolved = []
+        for intent in self._state.intents:
+            evidence_utc = intent.sent_utc or intent.created_utc
+            if (
+                intent.character_id != character_id
+                or not intent.unresolved
+                or requested_utc
+                < evidence_utc + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+            ):
+                resolved.append(intent)
+                continue
+            presence = present_by_content.get(intent.content)
+            if presence is None:
+                # The post-horizon 200 is the durable proof of absence. No
+                # terminal row is needed, and dropping the unresolved row also
+                # handles content-only evidence whose library entry was lost
+                # during tolerant local recovery.
+                continue
+            resolved.append(
+                replace(
+                    intent,
+                    library_entry_id=presence.library_entry_id,
+                    status="success",
+                    completed_utc=confirmed_utc,
+                    remote_fitting_id=presence.remote_fitting_id,
+                    error="",
+                )
+            )
+        return tuple(resolved)
 
     @staticmethod
     def _find_content_match(
@@ -532,14 +636,27 @@ class FittingsController:
     def _confirmed_not_modified_locked(
         self, character_id: int, timestamp: datetime, etag: str
     ) -> FittingsState:
+        current = self._snapshot_locked(character_id)
+        effective = max(
+            value
+            for value in (
+                timestamp,
+                current.fetched_utc if current is not None else None,
+                current.content_utc if current is not None else None,
+            )
+            if value is not None
+        )
         presences = tuple(
-            replace(item, last_confirmed_utc=timestamp)
+            replace(
+                item,
+                last_confirmed_utc=max(item.last_confirmed_utc, effective),
+            )
             if item.character_id == character_id
             else item
             for item in self._state.presences
         )
         snapshots = tuple(
-            replace(item, fetched_utc=timestamp, etag=etag, error="")
+            replace(item, fetched_utc=effective, etag=etag, error="")
             if item.character_id == character_id
             else item
             for item in self._state.snapshots
@@ -967,6 +1084,8 @@ class FittingsController:
         if not self._copy_gate.acquire(blocking=False):
             return self._copy_result("busy", "", [])
         try:
+            if self._stopping.is_set():
+                return self._copy_result("shutting_down", "", [])
             now = self._now()
             ticket = self._take_ticket(ticket_id, now)
             if ticket is None:
@@ -1827,7 +1946,9 @@ class FittingsController:
                     if item.character_id in wanted
                 ),
                 intents=tuple(
-                    item for item in self._state.intents if item.character_id in wanted
+                    item
+                    for item in self._state.intents
+                    if item.unresolved or item.character_id in wanted
                 ),
             )
             if candidate == self._state:
@@ -1878,5 +1999,12 @@ class FittingsController:
             )
 
     def shutdown(self) -> None:
+        """Cancel queued work and wait a bounded time for active requests."""
         self._stopping.set()
         self._copy_cancelled.set()
+        deadline = time.monotonic() + SHUTDOWN_WAIT_SECONDS
+        for gate in (self._copy_gate, self._refresh_gate):
+            remaining = max(0.0, deadline - time.monotonic())
+            acquired = gate.acquire(timeout=remaining)
+            if acquired:
+                gate.release()

@@ -207,12 +207,16 @@ class AuthorityController:
         for a refresh, but only the refresh response and validated identity can
         invalidate the shared grant.
         """
+        if self._stopping.is_set():
+            return AccessTokenResult(None, "EVE authority is shutting down.", False)
         wanted = self._coerce_character_id(character_id)
         if wanted is None:
             return AccessTokenResult(None, "Unknown EVE character.", False)
         required = self._capability_scopes(capability)
         gate = self._lifecycle_gate(wanted)
         with gate:
+            if self._stopping.is_set():
+                return AccessTokenResult(None, "EVE authority is shutting down.", False)
             with self._lock:
                 row = self._find_locked(wanted)
                 if row is None:

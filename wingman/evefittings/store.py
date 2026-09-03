@@ -502,12 +502,20 @@ def _snapshot_from_dict(raw: object) -> CharacterSnapshot:
     content_raw = (
         raw.get("content_utc") if "content_utc" in raw else raw.get("fetched_utc")
     )
+    content_utc = _parse_utc(content_raw, "Snapshot content time", required=False)
+    # Local recovery is tolerant, but its result must still satisfy the strict
+    # save contract. Never advance transport freshness from a suspect content
+    # timestamp: clamping content backward retains more local safety evidence.
+    if fetched_utc is None:
+        content_utc = None
+    elif content_utc is not None and content_utc > fetched_utc:
+        content_utc = fetched_utc
     return CharacterSnapshot(
         character_id=_positive_int(raw.get("character_id"), "Snapshot character ID"),
         fetched_utc=fetched_utc,
         etag=_text(raw.get("etag"), "Snapshot ETag", MAX_ETAG_CHARS),
         error=_text(raw.get("error"), "Snapshot error", MAX_ERROR_CHARS),
-        content_utc=_parse_utc(content_raw, "Snapshot content time", required=False),
+        content_utc=content_utc,
     )
 
 

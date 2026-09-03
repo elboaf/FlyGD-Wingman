@@ -724,21 +724,26 @@ def wire_eve_controllers(api):
         api._authority_warnings = startup_warnings
         return None, None
 
-    api._authority = authority
     skills = build_skills_controller(api, authority, startup_warnings=startup_warnings)
+    fittings = build_fittings_controller(api, authority)
+
+    # Load both feature documents before startup reconciliation. In particular,
+    # Fittings converts crash-surviving in_flight intents to Unknown on load;
+    # no route may observe either feature before all derived rows have been
+    # reconciled against the successfully loaded authority roster.
+    if skills is not None:
+        authority.register_participant(skills)
+    if fittings is not None:
+        authority.register_participant(fittings)
+
+    api._authority = authority
+    api._skills = skills
+    api._fittings = fittings
     if skills is None:
         api._authority_warnings = [
             *startup_warnings,
             "The EVE skills subsystem is unavailable.",
         ]
-    else:
-        api._skills = skills
-        authority.register_participant(skills)
-
-    fittings = build_fittings_controller(api, authority)
-    if fittings is not None:
-        api._fittings = fittings
-        authority.register_participant(fittings)
     return authority, skills
 
 

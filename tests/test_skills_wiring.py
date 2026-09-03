@@ -118,9 +118,6 @@ def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch)
     """No feature may load credentials before the ordered split completes."""
     order = []
     migration = MigrationResult(AuthorityState(), SimpleNamespace(), True)
-    authority = SimpleNamespace(
-        register_participant=lambda participant: order.append(("register", participant))
-    )
     skills = object()
     fittings = object()
     api = SimpleNamespace(
@@ -129,6 +126,12 @@ def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch)
         _fittings=None,
         _authority_warnings=[],
     )
+
+    def register(participant):
+        assert api._skills is None and api._fittings is None
+        order.append(("register", participant))
+
+    authority = SimpleNamespace(register_participant=register)
 
     monkeypatch.setattr(
         main_mod,
@@ -161,8 +164,8 @@ def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch)
     assert order[0] == "migration"
     assert order[1][0] == "authority"
     assert order[2][0] == "skills"
-    assert order[3] == ("register", skills)
-    assert order[4][0] == "fittings"
+    assert order[3][0] == "fittings"
+    assert order[4] == ("register", skills)
     assert order[5] == ("register", fittings)
     assert api._authority is authority and api._skills is skills
     assert api._fittings is fittings

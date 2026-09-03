@@ -187,6 +187,40 @@ def test_legacy_snapshot_without_content_time_falls_back_to_fetch_time(tmp_path)
     assert warnings == ()
 
 
+def test_inconsistent_content_time_loads_conservatively_and_remains_resavable(
+    tmp_path,
+):
+    path = tmp_path / "eve_fittings.json"
+    save_fittings(path, full_state())
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["snapshots"][0]["content_utc"] = (NOW + timedelta(minutes=5)).isoformat()
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, _warnings = load_fittings(path)
+
+    snapshot = loaded.snapshots[0]
+    assert snapshot.content_utc == snapshot.fetched_utc == NOW
+    save_fittings(path, loaded)
+    assert load_fittings(path)[0] == loaded
+
+
+def test_content_time_without_fetch_time_loads_as_unfetched_and_resavable(tmp_path):
+    path = tmp_path / "eve_fittings.json"
+    save_fittings(path, full_state())
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["snapshots"][0]["fetched_utc"] = ""
+    document["snapshots"][0]["content_utc"] = NOW.isoformat()
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded, _warnings = load_fittings(path)
+
+    snapshot = loaded.snapshots[0]
+    assert snapshot.fetched_utc is None
+    assert snapshot.content_utc is None
+    save_fittings(path, loaded)
+    assert load_fittings(path)[0] == loaded
+
+
 def test_authoritative_snapshot_and_unresolved_intent_are_separate_overlays(tmp_path):
     path = tmp_path / "eve_fittings.json"
     original = full_state()
