@@ -11,6 +11,7 @@ from tests.fakes import FakeWindow
 from wingman import paths, settings
 from wingman.evesettings import identity as evesettings_identity
 from wingman.evesettings import tree
+from wingman.preview import discovery as discovery_mod
 from wingman.ui import api as api_mod
 
 
@@ -2157,5 +2158,557 @@ def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
     _fake_codec(monkeypatch, FORMATION_DOC)
     api._eve_client_running = lambda: False
     api.eve_settings_save_formations(str(account), [])
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+# ---- whole-profile copy ---------------------------------------------------
+
+
+def copy_profile_setup(tmp_path, monkeypatch, others=()):
+    """A root holding settings_Default (the source) plus named siblings."""
+    source = eve_tree(tmp_path)
+    for name in others:
+        other = source.parent / f"{tree.PROFILE_PREFIX}{name}"
+        other.mkdir()
+        (other / "core_char_9.dat").write_bytes(b"old-9")
+    api = build(tmp_path, monkeypatch)
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._alert = fakes.Alerts()
+    return api, source
+
+
+def probe_returning(*states):
+    """A probe_eve_client_state double answering one state per call."""
+    answers = list(states)
+
+    def probe(*args, **kwargs):
+        state = answers.pop(0) if len(answers) > 1 else answers[0]
+        return discovery_mod.EveClientProbe(state=state)
+
+    return probe
+
+
+def watch(order, label, func):
+    def wrapper(*args, **kwargs):
+        order.append(label)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def order_spies(api, monkeypatch):
+    """Record the whole orchestration sequence, real behaviour intact."""
+    order = []
+    api._eve_discover = watch(order, "discover", api._eve_discover)
+    api._eve_persist_selection = watch(order, "persist", api._eve_persist_selection)
+    api._eve_confirm = watch(order, "confirm", api._eve_confirm)
+    api._eve_prune = watch(order, "prune", api._eve_prune)
+    api._eve_done = watch(order, "done", api._eve_done)
+    for module, name, label in (
+        (api_mod.evesettings_profilecopy, "prepare_copy", "prepare"),
+        (api_mod.evesettings_profilecopy, "stage_copy", "stage"),
+        (api_mod.evesettings_profilecopy, "publish_new", "publish"),
+        (api_mod.evesettings_profilecopy, "publish_replacement", "publish"),
+        (api_mod.evesettings_backup, "create_profile_backup", "backup"),
+        (discovery_mod, "probe_eve_client_state", "probe"),
+    ):
+        monkeypatch.setattr(module, name, watch(order, label, getattr(module, name)))
+    return order
+
+
+def stages_left(server):
+    return [
+        entry.name
+        for entry in server.iterdir()
+        if entry.name.startswith(api_mod.evesettings_profilecopy.STAGE_PREFIX)
+    ]
+
+
+def test_profile_copy_returns_an_inline_refusal_when_another_operation_runs(
+    tmp_path, monkeypatch
+):
+    """The page renders this beside its own button, so the refusal is the
+    return value rather than an alert -- and it is decided before anything
+    reads the tree, exactly as the character copy's busy check is."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    api._eve_discover = lambda: pytest.fail("busy must not inspect the tree")
+    assert api._eve_mutation.acquire(blocking=False)
+    try:
+        assert api.eve_settings_copy_profile(str(source), "new", "Fleet") == {
+            "accepted": False,
+            "error": "Another Profiles operation is running.",
+        }
+    finally:
+        api._eve_mutation.release()
+    assert not (source.parent / "settings_Fleet").exists()
+
+
+def test_profile_copy_is_refused_while_account_identification_is_active(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    api._eve_identification = object()
+    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
+    assert result == {
+        "accepted": False,
+        "error": "Finish or cancel account identification first.",
+    }
+    assert not (source.parent / "settings_Fleet").exists()
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.mark.parametrize(
+    ("mode", "destination", "fragment"),
+    [
+        ("new", "Fleet/1", "cannot contain /"),
+        ("new", "   ", "cannot be empty"),
+        ("new", "Default", "already exists"),
+        ("new", "settings_Fleet", "without the settings_ prefix"),
+        ("replace", "nowhere", "not on the selected server"),
+        ("sideways", "Fleet", "Unknown copy mode"),
+    ],
+)
+def test_profile_copy_refuses_an_invalid_request_before_starting_a_worker(
+    tmp_path, monkeypatch, mode, destination, fragment
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    api._spawn = lambda **kwargs: pytest.fail("a refused request starts no worker")
+    result = api.eve_settings_copy_profile(str(source), mode, destination)
+    assert result["accepted"] is False
+    assert fragment in result["error"]
+    assert sorted(p.name for p in source.parent.iterdir()) == ["settings_Default"]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_profile_copy_refuses_a_stale_expected_source(tmp_path, monkeypatch):
+    """The page may have rendered one source while a separate selection
+    request was still in flight. The token it showed must still name the
+    freshly discovered profile."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    result = api.eve_settings_copy_profile(
+        str(source.parent / "settings_Backup"), "new", "Fleet"
+    )
+    assert result["accepted"] is False
+    assert "selected profile changed" in result["error"]
+    assert not (source.parent / "settings_Fleet").exists()
+
+
+def test_profile_copy_aborts_untouched_when_the_canonical_save_fails(
+    tmp_path, monkeypatch
+):
+    """A legacy deep root is canonicalized before any file is touched, and
+    a copy whose selection could not be saved must not proceed: the tree it
+    validated against is not the one that would be persisted."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    api._spawn = lambda **kwargs: pytest.fail("a refused request starts no worker")
+
+    def refuse(*args, **kwargs):
+        raise OSError("settings.json is read-only")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", refuse)
+    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
+    assert result["accepted"] is False
+    assert "nothing was copied" in result["error"]
+    assert sorted(p.name for p in source.parent.iterdir()) == ["settings_Default"]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_profile_copy_releases_the_lock_when_the_worker_cannot_start(
+    tmp_path, monkeypatch
+):
+    """Only the worker releases the lock, so a worker that never started
+    would refuse every later Profiles operation for good."""
+    source = eve_tree(tmp_path)
+
+    class Refuses:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    state = api_mod.AppState(
+        recording_dir=tmp_path, settings=settings.load(tmp_path / "s.json")
+    )
+    api = api_mod.Api(state, spawn=Refuses)
+    api._window = FakeWindow()
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
+    assert result == {
+        "accepted": False,
+        "error": "Profile copy could not be started.",
+    }
+    assert api._eve_mutation.acquire(blocking=False) is True
+    api._eve_mutation.release()
+
+
+def test_creating_a_profile_copies_every_recognized_file_and_selects_it(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    api._eve_confirm = lambda *args, **kwargs: pytest.fail("creation never confirms")
+    monkeypatch.setattr(
+        api_mod.evesettings_backup,
+        "create_profile_backup",
+        lambda *args, **kwargs: pytest.fail("creation overwrites nothing"),
+    )
+    sent = fakes.record_pushes(api)
+
+    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
+
+    created = source.parent / "settings_Fleet"
+    assert result == {"accepted": True, "error": None}
+    assert sorted(p.name for p in created.iterdir()) == [
+        "core_char_1.dat",
+        "core_char_2.dat",
+    ]
+    assert (created / "core_char_1.dat").read_bytes() == (
+        source / "core_char_1.dat"
+    ).read_bytes()
+    assert stages_left(source.parent) == []
+    stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
+    assert stored["eve_settings"]["profile"] == str(created)
+    assert fakes.payloads(sent, "onEveSettingsDone") == [
+        {
+            "ok": True,
+            "operation": "profile_copy",
+            "mode": "new",
+            "published": True,
+            "selection_persisted": True,
+            "error": None,
+        }
+    ]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_a_created_profile_survives_a_failed_selection_save(tmp_path, monkeypatch):
+    """Publication and remembering the selection are separate outcomes. The
+    profile exists, so a retry must not imply it was not created."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    real_update = api_mod.settings_mod.update_section
+    calls = []
+
+    def flaky(*args, **kwargs):
+        calls.append(args)
+        if len(calls) > 1:
+            raise OSError("settings.json is read-only")
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", flaky)
+    sent = fakes.record_pushes(api)
+
+    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
+
+    created = source.parent / "settings_Fleet"
+    assert result == {"accepted": True, "error": None}
+    assert (created / "core_char_1.dat").exists()
+    stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
+    assert stored["eve_settings"]["profile"] == str(source)
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is True
+    assert payload["published"] is True
+    assert payload["selection_persisted"] is False
+    assert "Select it from Profile" in payload["error"]
+    assert api._alert.raised[0][0] == "warning"
+    assert "Select it from Profile" in api._alert.raised[0][2]
+
+
+def test_profile_copy_runs_its_steps_in_the_documented_order(tmp_path, monkeypatch):
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    order = order_spies(api, monkeypatch)
+
+    result = api.eve_settings_copy_profile(
+        str(source), "replace", str(source.parent / "settings_Backup")
+    )
+
+    assert result == {"accepted": True, "error": None}
+    assert order == [
+        "discover",
+        "prepare",
+        "persist",
+        "probe",
+        "stage",
+        "confirm",
+        "probe",
+        "backup",
+        "publish",
+        "prune",
+        "done",
+    ]
+
+
+def test_replacing_a_profile_copies_the_recognized_set_and_keeps_the_source_selected(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+    (destination / "notes.txt").write_text("mine", encoding="utf-8")
+    asked = []
+    api._eve_confirm = lambda title, body, **kw: asked.append((title, body, kw)) or True
+    sent = fakes.record_pushes(api)
+
+    result = api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert result == {"accepted": True, "error": None}
+    assert sorted(p.name for p in destination.iterdir()) == [
+        "core_char_1.dat",
+        "core_char_2.dat",
+        "notes.txt",
+    ]
+    assert (destination / "core_char_1.dat").read_bytes() == (
+        source / "core_char_1.dat"
+    ).read_bytes()
+    assert (destination / "notes.txt").read_text(encoding="utf-8") == "mine"
+    assert stages_left(source.parent) == []
+    ((_title, body, kw),) = asked
+    assert "Default" in body and "Backup" in body and "backed up" in body
+    assert kw["destructive"] is True
+    stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
+    assert stored["eve_settings"]["profile"] == str(source)
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload == {
+        "ok": True,
+        "operation": "profile_copy",
+        "mode": "replace",
+        "published": True,
+        "selection_persisted": True,
+        "error": None,
+    }
+    archives = list(paths.eve_settings_backup_dir().glob("*.zip"))
+    assert len(archives) == 1
+
+
+def test_a_declined_replacement_creates_no_backup_and_changes_nothing(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+    api._eve_confirm = lambda *args, **kwargs: False
+    monkeypatch.setattr(
+        api_mod.evesettings_backup,
+        "create_profile_backup",
+        lambda *args, **kwargs: pytest.fail("a declined copy backs nothing up"),
+    )
+    prunes = []
+    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
+    sent = fakes.record_pushes(api)
+
+    api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert sorted(p.name for p in destination.iterdir()) == ["core_char_9.dat"]
+    assert stages_left(source.parent) == []
+    assert prunes == []
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.mark.parametrize(
+    ("state", "fragment"),
+    [
+        (discovery_mod.EveClientState.RUNNING, "EVE is running"),
+        (discovery_mod.EveClientState.UNKNOWN, "could not verify"),
+    ],
+)
+def test_profile_copy_refuses_unless_the_probe_proves_eve_is_closed(
+    tmp_path, monkeypatch, state, fragment
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(discovery_mod, "probe_eve_client_state", probe_returning(state))
+    monkeypatch.setattr(
+        api_mod.evesettings_profilecopy,
+        "stage_copy",
+        lambda *args, **kwargs: pytest.fail("a refused copy stages nothing"),
+    )
+    sent = fakes.record_pushes(api)
+
+    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
+
+    assert result == {"accepted": True, "error": None}
+    assert not (source.parent / "settings_Fleet").exists()
+    assert len(api._alert.raised) == 1
+    assert fragment in api._alert.raised[0][2]
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert fragment in payload["error"]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_a_replacement_probes_again_after_the_confirmation(tmp_path, monkeypatch):
+    """EVE can start while the confirmation is on screen, and everything
+    after it writes into the destination."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+    monkeypatch.setattr(
+        discovery_mod,
+        "probe_eve_client_state",
+        probe_returning(
+            discovery_mod.EveClientState.CLOSED, discovery_mod.EveClientState.RUNNING
+        ),
+    )
+    monkeypatch.setattr(
+        api_mod.evesettings_backup,
+        "create_profile_backup",
+        lambda *args, **kwargs: pytest.fail("a refused copy backs nothing up"),
+    )
+
+    api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert sorted(p.name for p in destination.iterdir()) == ["core_char_9.dat"]
+    assert stages_left(source.parent) == []
+    assert "EVE is running" in api._alert.raised[0][2]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_a_failed_destination_backup_leaves_the_destination_unchanged(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+
+    def refuse(*args, **kwargs):
+        raise OSError("the backup store is read-only")
+
+    monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", refuse)
+    monkeypatch.setattr(
+        api_mod.evesettings_profilecopy,
+        "publish_replacement",
+        lambda *args, **kwargs: pytest.fail("publication needs a backup first"),
+    )
+    prunes = []
+    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
+    sent = fakes.record_pushes(api)
+
+    api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert sorted(p.name for p in destination.iterdir()) == ["core_char_9.dat"]
+    assert (destination / "core_char_9.dat").read_bytes() == b"old-9"
+    assert stages_left(source.parent) == []
+    assert prunes == []
+    assert api._alert.raised[0][1] == "Destination unchanged"
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def failing_publication(monkeypatch, destination):
+    """Break the second per-file replacement, so publication fails after it
+    has already changed the destination."""
+    real_copy = api_mod.evesettings_profilecopy.atomicio.copy_atomic
+
+    def flaky(source, target, **kwargs):
+        if Path(target).parent == destination and Path(target).name.endswith("2.dat"):
+            raise OSError("the destination went away")
+        return real_copy(source, target, **kwargs)
+
+    monkeypatch.setattr(api_mod.evesettings_profilecopy.atomicio, "copy_atomic", flaky)
+
+
+def test_a_failed_publication_rolls_back_from_the_backup_it_just_took(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+    archives = []
+    real_backup = api_mod.evesettings_backup.create_profile_backup
+
+    def record(*args, **kwargs):
+        archives.append(real_backup(*args, **kwargs))
+        return archives[-1]
+
+    restores = []
+    real_restore = api_mod.evesettings_backup.restore
+
+    def watched_restore(store, archive, root, **kwargs):
+        restores.append((Path(archive), kwargs))
+        return real_restore(store, archive, root, **kwargs)
+
+    monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", record)
+    monkeypatch.setattr(api_mod.evesettings_backup, "restore", watched_restore)
+    failing_publication(monkeypatch, destination)
+    prunes = []
+    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
+    sent = fakes.record_pushes(api)
+
+    api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert sorted(p.name for p in destination.iterdir()) == ["core_char_9.dat"]
+    assert (destination / "core_char_9.dat").read_bytes() == b"old-9"
+    assert restores == [(archives[0], {"backup_current": False})]
+    assert stages_left(source.parent) == []
+    # Settled: the destination is back to what it was, so retention may run.
+    assert len(prunes) == 1
+    assert api._alert.raised[0][1] == "Replacement failed"
+    assert "restored" in api._alert.raised[0][2]
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert "restored" in payload["error"]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_a_failed_rollback_names_the_backup_and_prunes_nothing(tmp_path, monkeypatch):
+    """The durable archive is the only way back, so it is named in the
+    message and retention does not get to consider deleting anything."""
+    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
+    destination = source.parent / "settings_Backup"
+    archives = []
+    real_backup = api_mod.evesettings_backup.create_profile_backup
+
+    def record(*args, **kwargs):
+        archives.append(real_backup(*args, **kwargs))
+        return archives[-1]
+
+    def refuse_restore(*args, **kwargs):
+        raise OSError("the archive could not be read")
+
+    monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", record)
+    monkeypatch.setattr(api_mod.evesettings_backup, "restore", refuse_restore)
+    failing_publication(monkeypatch, destination)
+    prunes = []
+    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
+    sent = fakes.record_pushes(api)
+
+    api.eve_settings_copy_profile(str(source), "replace", str(destination))
+
+    assert prunes == []
+    assert archives[0].exists()
+    kind, _title, body = api._alert.raised[0]
+    assert kind == "error"
+    assert archives[0].name in body
+    assert "Backups" in body
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert archives[0].name in payload["error"]
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_an_unexpected_worker_failure_still_releases_and_completes_once(
+    tmp_path, monkeypatch
+):
+    api, source = copy_profile_setup(tmp_path, monkeypatch)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(api_mod.evesettings_profilecopy, "stage_copy", explode)
+    sent = fakes.record_pushes(api)
+
+    api.eve_settings_copy_profile(str(source), "new", "Fleet")
+
+    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
+    assert payload["ok"] is False and payload["published"] is False
+    assert payload["error"]
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()

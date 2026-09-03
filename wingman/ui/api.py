@@ -61,6 +61,7 @@ from ..evesettings import formations as evesettings_formations
 from ..evesettings import identity as evesettings_identity
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
+from ..evesettings import profilecopy as evesettings_profilecopy
 from ..evesettings import selective as evesettings_selective
 from ..evesettings import tree as evesettings_tree
 from ..preview import geometry as preview_geometry
@@ -5499,11 +5500,18 @@ class Api:
             title, body, timeout=EVE_CONFIRM_TIMEOUT_S, destructive=destructive
         )
 
-    def _eve_done(self, ok: bool) -> None:
+    def _eve_done(self, ok: bool, **details) -> None:
         """Tell the page the mutation finished, so it can re-enable its
         buttons and refresh. The bridge call returned as soon as the worker
-        was spawned, so this push is the page's only completion signal."""
-        self._push("onEveSettingsDone", {"ok": bool(ok)})
+        was spawned, so this push is the page's only completion signal.
+
+        *details* is how whole-profile copy says more than "finished"
+        without a second completion channel: two handlers for one operation
+        would let the page close its disclosure on one event and refresh on
+        the other, in whichever order they happened to arrive. Callers with
+        nothing extra to say pass `ok` alone and the payload is unchanged.
+        """
+        self._push("onEveSettingsDone", {"ok": bool(ok), **details})
 
     def _eve_auto_backup(self, target):
         store = paths.eve_settings_backup_dir()
@@ -5697,6 +5705,260 @@ class Api:
         finally:
             self._eve_mutation.release()
             self._eve_done(ok)
+
+    # ---- whole-profile copy ----------------------------------------------
+
+    def eve_settings_copy_profile(
+        self, expected_source: str, mode: str, destination: str
+    ) -> dict:
+        """Create a new profile from the selected one, or replace another.
+
+        The lock is claimed here rather than through _eve_begin, because two
+        things have to happen on the bridge thread before a worker can
+        exist. The request is validated against a freshly discovered tree,
+        so a token the page rendered before a selection change landed comes
+        back as a refusal the user reads beside the button they pressed --
+        not as an alert about work that appeared to start. And any legacy
+        deep `root` is canonicalized and persisted before a single file is
+        touched. A worker could do neither: its answer would arrive after
+        this call had already returned "accepted".
+
+        Returns immediately. The outcome arrives through _eve_done.
+        """
+        if self._eve_identification is not None:
+            return {
+                "accepted": False,
+                "error": "Finish or cancel account identification first.",
+            }
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "accepted": False,
+                "error": "Another Profiles operation is running.",
+            }
+        try:
+            found = self._eve_discover()
+            plan = evesettings_profilecopy.prepare_copy(
+                found, expected_source, mode, destination
+            )
+            try:
+                self._eve_persist_selection(found)
+            except OSError as error:
+                # Aborts untouched. The tree this request was validated
+                # against would not be the one on disk in settings, and the
+                # design's rule is that a failed canonical write is a copy
+                # that never started rather than one that half-happened.
+                logger.exception("Could not persist the canonical EVE selection")
+                raise ValueError(
+                    "Wingman could not save the folder selection, so nothing was "
+                    "copied. Check that the settings file is writable and retry."
+                ) from error
+            self._spawn(
+                target=self._eve_copy_profile_worker, args=(plan,), daemon=True
+            ).start()
+        except (OSError, ValueError) as error:
+            self._eve_mutation.release()
+            return {"accepted": False, "error": str(error)}
+        except Exception:
+            # Only the worker releases the lock, and a worker that never
+            # started never will -- _eve_begin's rule, and the same cost:
+            # every later Profiles mutation refused until the app restarts.
+            self._eve_mutation.release()
+            logger.exception("Could not start EVE profile copy")
+            return {"accepted": False, "error": "Profile copy could not be started."}
+        except BaseException:
+            self._eve_mutation.release()
+            raise
+        return {"accepted": True, "error": None}
+
+    def _eve_profile_copy_refusal(self) -> str | None:
+        """None when EVE is provably closed; the refusal to show otherwise.
+
+        Deliberately not _eve_client_running_strict(): that predicate reads
+        an EVE-titled window whose PID or executable image could not be
+        resolved as "not a client", which for a write that rewrites a whole
+        profile is a guess in the dangerous direction. UNKNOWN gets its own
+        message rather than borrowing the running one, because "EVE is
+        running" sends the user to close a client that may not be there.
+        """
+        from ..preview import discovery
+
+        probe = discovery.probe_eve_client_state()
+        if probe.state is discovery.EveClientState.CLOSED:
+            return None
+        if probe.state is discovery.EveClientState.RUNNING:
+            return "EVE is running. Close EVE and retry."
+        logger.warning("Could not verify that EVE is closed: %r", probe.errors)
+        return "Wingman could not verify that EVE is closed. Close EVE and retry."
+
+    def _eve_select_created_profile(self, plan, created) -> bool:
+        """Persist the newly created profile as the selection.
+
+        Returns False rather than raising: the profile exists on disk
+        either way, and the design keeps publication and remembering the
+        selection as separate outcomes so a retry never implies nothing was
+        created. A discover() that fell back to some OTHER profile (the
+        created one vanished under us) is that same failure, not a licence
+        to persist a selection nobody asked for.
+        """
+        try:
+            found = evesettings_tree.discover(plan.root, plan.server, created)
+            if not _eve_same_path(found.profile, created):
+                logger.warning("The created profile %s was not discoverable", created)
+                return False
+            self._eve_persist_selection(found)
+        except (OSError, ValueError):
+            logger.exception("Could not persist the new EVE profile selection")
+            return False
+        return True
+
+    def _eve_copy_profile_worker(self, plan) -> None:
+        ok = False
+        published = False
+        selection_persisted = False
+        error_message = None
+        # Retention runs only once the destination has settled -- after a
+        # successful publication, or after a rollback that put the old one
+        # back. Pruning while the destination holds a mix of both profiles
+        # would consider deleting automatic backups during the one window
+        # in which the newest of them is the only way back.
+        prune_after = False
+        try:
+            error_message = self._eve_profile_copy_refusal()
+            if error_message:
+                self._alert("error", "Copy not started", error_message)
+                return
+            created = None
+            with evesettings_profilecopy.stage_copy(plan) as staged:
+                if plan.mode == "new":
+                    # No confirmation: creating a profile overwrites
+                    # nothing, so there is nothing to warn about.
+                    created = evesettings_profilecopy.publish_new(staged)
+                    published = True
+                else:
+                    if not self._eve_confirm(
+                        "Confirm Replace",
+                        f"Replace {plan.destination_name} with a copy of "
+                        f"{plan.source_name}?\n\n{plan.destination_name} is backed "
+                        "up first. Its EVE settings files are replaced with "
+                        f"{plan.source_name}'s, and any settings file "
+                        f"{plan.source_name} does not have is removed.",
+                        destructive=True,
+                    ):
+                        return
+                    # Staging happened before the question, so the answer is
+                    # the last thing between here and the destination -- and
+                    # EVE can start while a confirmation sits on screen.
+                    error_message = self._eve_profile_copy_refusal()
+                    if error_message:
+                        self._alert("error", "Copy not started", error_message)
+                        return
+                    store = paths.eve_settings_backup_dir()
+                    try:
+                        archive = evesettings_backup.create_profile_backup(
+                            store, plan.destination, origin="auto"
+                        )
+                    except Exception as failure:
+                        logger.exception(
+                            "Could not back up %s before replacing it", plan.destination
+                        )
+                        error_message = (
+                            f"{plan.destination_name} was not changed: Wingman "
+                            "could not back it up first. "
+                            f"{evesettings_ops.describe(failure)}"
+                        )
+                        self._alert("error", "Destination unchanged", error_message)
+                        return
+
+                    def rollback() -> None:
+                        # backup_current=False: the archive taken moments ago
+                        # IS what rollback restores from. A fresh backup here
+                        # would archive the half-published profile this call
+                        # exists to erase, and would add a second chance to
+                        # fail inside the recovery path itself.
+                        evesettings_backup.restore(
+                            store, archive, plan.root, backup_current=False
+                        )
+
+                    try:
+                        evesettings_profilecopy.publish_replacement(
+                            staged, rollback=rollback
+                        )
+                    except evesettings_profilecopy.ReplacementFailed as failure:
+                        logger.exception("EVE profile replacement failed")
+                        prune_after = failure.destination_restored
+                        if failure.destination_restored:
+                            error_message = (
+                                f"{plan.destination_name} was restored from its "
+                                "automatic backup and is unchanged. "
+                                f"{evesettings_ops.describe(failure.publication_error)}"
+                            )
+                            self._alert("error", "Replacement failed", error_message)
+                        else:
+                            # The archive is named because it is now the only
+                            # way back, and Backups is where it is restored
+                            # from -- an instruction, not an error code.
+                            error_message = (
+                                f"{plan.destination_name} may now hold a mix of both "
+                                "profiles and Wingman could not put it back. Restore "
+                                f"{archive.name} from Backups. "
+                                f"{evesettings_ops.describe(failure.publication_error)}"
+                            )
+                            self._alert(
+                                "error",
+                                "Replacement and rollback failed",
+                                error_message,
+                            )
+                        return
+                    published = True
+                    prune_after = True
+            # Staging is gone by here: the design removes it before
+            # retention runs, and before anything reports success.
+            if plan.mode == "new":
+                selection_persisted = self._eve_select_created_profile(plan, created)
+                if selection_persisted:
+                    self._status(f"Created {plan.destination_name}.")
+                else:
+                    # Still ok: the profile is on disk and the refreshed
+                    # dropdown offers it. Only the selection was lost, and
+                    # saying "failed" would invite a retry that collides
+                    # with the profile this call just created.
+                    error_message = (
+                        f"Created {plan.destination_name}, but Wingman could not "
+                        "remember the selection. Select it from Profile."
+                    )
+                    self._alert("warning", "Profile created", error_message)
+            else:
+                # The source stays selected, and it already is: the
+                # canonical triple was persisted when the request was
+                # accepted, and replacement does not move the selection.
+                selection_persisted = True
+                self._status(
+                    f"Replaced {plan.destination_name} with a copy of "
+                    f"{plan.source_name}."
+                )
+            ok = True
+        except Exception as failure:
+            logger.exception("EVE profile copy failed")
+            error_message = evesettings_ops.describe(failure)
+            self._alert("error", "Copy failed", error_message)
+        finally:
+            if prune_after:
+                try:
+                    self._eve_prune(int(self._eve_section().get("auto_keep", 10)))
+                except Exception:
+                    # Retention is housekeeping. It must never be the reason
+                    # the lock is not released or the page never hears that
+                    # the copy it is waiting on has finished.
+                    logger.exception("Could not prune automatic backups")
+            self._eve_mutation.release()
+            self._eve_done(
+                ok,
+                operation="profile_copy",
+                mode=plan.mode,
+                published=published,
+                selection_persisted=selection_persisted,
+                error=error_message,
+            )
 
     def eve_settings_backup(self, path: str, kind: str) -> bool:
         return self._eve_begin(self._eve_backup_worker, (path, kind))
