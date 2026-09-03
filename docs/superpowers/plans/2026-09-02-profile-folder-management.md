@@ -65,7 +65,7 @@
 
 **Interfaces:**
 - Consumes: existing `evesettings_tree.discover(root, server, profile) -> Tree` and `settings_mod.update_section(...)`.
-- Produces: `Api._eve_persist_selection(found: Tree, *, profile: Path | None = None) -> None`; canonical picker/select behavior; restore validated against `_eve_discover().root`.
+- Produces: `Api._eve_persist_selection(found: Tree) -> None`, which persists that Tree's complete root/server/profile triple and takes no per-leg override; canonical picker/select behavior; restore validated against `_eve_discover().root`.
 
 - [ ] **Step 1: Add failing normalization and stable-order tests**
 
@@ -91,7 +91,7 @@ def test_profiles_have_a_stable_path_tiebreaker(tmp_path):
     assert [p.path.name for p in found.profiles] == ["settings_Alt", "settings_alt"]
 ```
 
-Sort profiles by `(name.lower() != "default", name.casefold(), os.path.normcase(str(path)))`.
+Sort profiles by `(name.lower() != "default", name.casefold(), os.path.normcase(str(path)), str(path))`. The raw `str(path)` after `normcase` is the tie-breaker that actually settles it: `normcase` lowercases on Windows, so two names differing only by case — the very pair this rule exists for — tie under it and fall back to `os.scandir`'s filesystem-dependent order.
 
 - [ ] **Step 2: Run the tree tests and verify the ordering test fails**
 
@@ -148,18 +148,27 @@ Expected: picker stores the raw path and clears selection; `eve_settings_select(
 Add to `Api` near `_eve_discover()`:
 
 ```python
-def _eve_persist_selection(self, found, *, profile=None) -> None:
-    selected = profile if profile is not None else found.profile
+def _eve_persist_selection(self, found) -> None:
     settings_mod.update_section(
         self._state.settings,
         "eve_settings",
         {
             "root": str(found.root) if found.root else None,
             "server": str(found.server) if found.server else None,
-            "profile": str(selected) if selected else None,
+            "profile": str(found.profile) if found.profile else None,
         },
     )
 ```
+
+There is no per-leg override argument. The whole point of the boundary is
+that one discovered Tree is persisted whole, so the stored root can never
+drift out of step with the server and profile saved beside it; pasting a
+caller's preferred profile over a Tree that disagrees with it would put the
+three legs back out of step. A caller that wants a particular profile
+remembered rediscovers first and persists THAT Tree — the contract
+`_eve_select_created_profile` follows for a freshly created profile:
+`discover(plan.root, plan.server, created)`, confirm the result really is
+`created`, then `_eve_persist_selection(found)`.
 
 For picker and Detect, call `discover(picked)` or `discover(default_root())`, persist its complete triple, and return the canonical root. For selection, discover from the effective current root with the requested tokens, verify the requested server/profile actually matched an offered item, then persist the complete result. Preserve `_eve_hold()` and identification clearing.
 
@@ -409,6 +418,7 @@ def stage_copy(plan, *, token_factory=lambda: uuid.uuid4().hex):
     cleanup_abandoned_stages(plan.server)
     stage = plan.server / f"{STAGE_PREFIX}{token_factory()}{STAGE_SUFFIX}"
     stage.mkdir()
+    staged = None
     try:
         members = _recognized_members(plan.source)
         for source in members:
@@ -416,11 +426,33 @@ def stage_copy(plan, *, token_factory=lambda: uuid.uuid4().hex):
             atomicio.copy_atomic(source, target)
             if _sha256(source) != _sha256(target):
                 raise OSError(f"Staged copy did not match {source.name}.")
-        yield StagedProfileCopy(plan, stage, tuple(p.name for p in members))
+        staged = StagedProfileCopy(plan, stage, tuple(p.name for p in members))
+        yield staged
     finally:
         if stage.exists():
-            shutil.rmtree(stage)
+            try:
+                shutil.rmtree(stage)
+            except OSError:
+                if staged is None or not staged.published:
+                    raise
+                logger.exception(
+                    "Could not remove the staging directory %s after "
+                    "publishing %s; leaving it for the next run",
+                    stage,
+                    plan.destination,
+                )
 ```
+
+Removing the stage can itself fail (a scanner holding a handle open, a
+permission change), and what that failure means depends entirely on whether
+the copy landed. BEFORE publication it is the operation's own failure and
+propagates: nothing succeeded, and a stage left behind unreported is a
+silent one. AFTER publication — the caller marked the staged copy published
+— the destination is settled, so the failure is logged and the stage is
+left in its reserved, never-discoverable namespace for the next run's
+`cleanup_abandoned_stages` to remove; the successful outcome is not
+changed. Raising there would turn a replacement that DID happen into "Copy
+failed" and invite a retry of work already done.
 
 `cleanup_abandoned_stages()` accepts only direct, non-reparse directories matching the exact prefix/suffix grammar and propagates cleanup failures. Detect reparse points with `Path.is_symlink()` and, on Windows, `os.lstat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT`. `publish_new()` rechecks nonexistence and calls `stage.path.rename(plan.destination)`; the context manager sees the old stage path no longer exists.
 
@@ -702,7 +734,7 @@ git commit -m "feat: expose whole-profile copy through Profiles API"
 
 **Interfaces:**
 - Consumes: `eve_settings_state.profile`, `.profiles`, `.server`, `.servers`, `.root`; Task 5 endpoint and completion payload.
-- Produces: profile-first context and `profileCopy = {open, source, mode, name, destination, error}` page state.
+- Produces: profile-first context and `profileCopy = {open, source, mode, name, destination, error, destinationInvalid}` page state.
 
 - [ ] **Step 1: Write failing DOM convention tests**
 
@@ -727,7 +759,12 @@ Also assert associated labels for the name and destination, **Change folder or s
 
 Lexically pin:
 
-- one `profileCopy` object with all six fields;
+- one `profileCopy` object with all seven fields;
+- `destinationInvalid` set by the render that first notices the chosen
+  Replace destination has vanished, read back on every later render rather
+  than re-derived from the select's own value (that render is what just
+  overwrote it with the placeholder), and cleared only by the destination
+  select's own `change` handler, which repaints;
 - source frozen from `state.profile` on open;
 - replace options exclude source;
 - root/server/profile accepted changes reset the disclosure and character/account selection;
@@ -778,7 +815,8 @@ var profileCopy = {
   mode: 'new',
   name: '',
   destination: '',
-  error: ''
+  error: '',
+  destinationInvalid: false
 };
 ```
 

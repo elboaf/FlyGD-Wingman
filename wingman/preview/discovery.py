@@ -1,8 +1,10 @@
 """Discover running EVE clients, with a stable identity per client.
 
 Separate from `evewindows.list_eve_windows` on purpose: that function's
-string-list return type is consumed by ui/api.py and is frozen. Both share
-`_enumerate_windows` so the argtypes discipline lives in one place.
+string-list return type is consumed by ui/api.py and is frozen. Both views
+of the desktop come from `evewindows._enumerate`, so the argtypes discipline
+lives in one place -- `list_clients` through its best-effort wrapper and
+`probe_eve_client_state` through its strict one.
 """
 
 import enum
@@ -196,11 +198,17 @@ def probe_eve_client_state(
     profile and "probably closed" is a guess in the dangerous direction.
     RUNNING needs one candidate verified as CLIENT_IMAGE; CLOSED is what is
     left when nothing errored and nothing verified.
+
+    The default enumerator is the STRICT one for the same reason: the
+    best-effort sweep list_clients uses drops a window it could not read,
+    and a dropped window is indistinguishable from an absent one here --
+    an EVE client nobody managed to look at would read as CLOSED and clear
+    the write.
     """
     if sys.platform != "win32" and enumerator is None:
         return EveClientProbe(state=EveClientState.CLOSED)
 
-    enumerator = enumerator or evewindows._enumerate_windows
+    enumerator = enumerator or evewindows._enumerate_windows_strict
     pids = pids or _pid_for_window
     image_name = image_name or _image_name_for_pid
 

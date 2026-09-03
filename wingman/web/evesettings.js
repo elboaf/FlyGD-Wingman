@@ -1160,8 +1160,17 @@
 
     ['es-server', 'es-profile'].forEach(function (id) {
       WM.el(id).addEventListener('change', function () {
+        // A SERVER change must not carry the old server's profile: that
+        // path is not under the requested server, and eve_settings_select
+        // refuses a profile it cannot match against the server it was
+        // asked for -- so the change came back refused and the page kept
+        // the old context under a select already showing the new one.
+        // '' is not "no profile": it is the endpoint's one deliberate
+        // fallback, "the requested server's first profile", which is
+        // exactly what changing server means.
+        var profile = id === 'es-server' ? '' : WM.el('es-profile').value;
         WM.send('eve_settings_select', WM.el('es-server').value,
-                WM.el('es-profile').value).then(function (accepted) {
+                profile).then(function (accepted) {
           if (accepted) {
             // A source picked in the old settings set does not exist in
             // the new one, so the selection is dropped rather than

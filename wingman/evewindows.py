@@ -4,7 +4,7 @@ Windows-only at runtime; imports and tests cleanly on Linux, following the
 ui/chrome.py precedent. ctypes is imported lazily inside the enumerator so
 the module itself has no platform dependency at import time.
 
-`_enumerate_titles` declares argtypes/restype on every Win32 call, matching
+`_enumerate` declares argtypes/restype on every Win32 call, matching
 ui/chrome.py:127-128. This is deliberate, not decoration: EnumWindows hands
 the callback an hwnd as a plain Python int, and passing that int to an
 *undeclared* function makes ctypes marshal it as a 32-bit C int, truncating
@@ -32,7 +32,26 @@ logger = logging.getLogger(__name__)
 TITLE_PREFIX = bookmarks.ENGINE_TITLE_PREFIX
 
 
-def _enumerate_windows() -> list:
+class WindowEnumerationError(OSError):
+    """A strict enumeration could not read every window.
+
+    Carries the individual failures on `.errors` so the caller can report
+    WHY it is refusing rather than only that it did.
+    """
+
+    def __init__(self, message: str, errors=()) -> None:
+        super().__init__(message)
+        self.errors = tuple(errors)
+
+
+def _enumerate(errors) -> list:
+    """One sweep of the desktop, shared by both enumeration contracts.
+
+    `errors` is None for the best-effort caller and a list for the strict
+    one. It is deliberately a collector rather than a "raise now" flag: an
+    exception cannot leave the callback (see below), and returning early
+    would truncate the very sweep whose completeness is in question.
+    """
     import ctypes
     from ctypes import wintypes
 
@@ -59,7 +78,8 @@ def _enumerate_windows() -> list:
         # An exception raised here does NOT reach the caller: ctypes reports
         # it via sys.unraisablehook and returns a falsy value, which Windows
         # reads as "stop enumerating" -- silently truncating the list. Catch
-        # everything and skip the offending window instead.
+        # everything and skip the offending window instead. A strict caller
+        # gets it back on `errors`, raised once the sweep has finished.
         try:
             if not user32.IsWindowVisible(hwnd):
                 return True
@@ -68,12 +88,50 @@ def _enumerate_windows() -> list:
                 buffer = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, buffer, length + 1)
                 titles.append((hwnd, buffer.value))
-        except Exception:
+        except Exception as error:
             logger.exception("Skipped a window during enumeration.")
+            if errors is not None:
+                errors.append(error)
         return True
 
-    user32.EnumWindows(wndenumproc(callback), 0)
+    if not user32.EnumWindows(wndenumproc(callback), 0) and errors is not None:
+        # EnumWindows returns FALSE when the callback stopped it or the call
+        # itself failed. This callback always returns TRUE, so a falsy result
+        # means the list is short for a reason nobody saw. No error code is
+        # quoted: ctypes.windll does not preserve GetLastError across the
+        # call, and a stale code reads as fact. Only the strict caller is
+        # told -- logging it best-effort would write a line per preview
+        # sweep, several times a second.
+        errors.append(OSError("EnumWindows reported an incomplete enumeration."))
     return titles
+
+
+def _enumerate_windows() -> list:
+    """Best effort: an unreadable window is skipped, the rest are returned.
+
+    What previews and the bookmarks checkbox want -- one locked-down window
+    must not cost the user every client on the list.
+    """
+    return _enumerate(None)
+
+
+def _enumerate_windows_strict() -> list:
+    """The same sweep, but an unreadable window is a failure, not a skip.
+
+    For `preview.discovery.probe_eve_client_state`, which asks "is any EVE
+    client running" before a whole-profile write. A skipped window is
+    indistinguishable from an absent one in the returned list, so the
+    best-effort sweep can answer CLOSED on the strength of the single
+    window nobody managed to read -- and CLOSED is the answer that lets the
+    destructive write proceed. Raising here is what turns that into UNKNOWN.
+    """
+    errors: list[BaseException] = []
+    windows = _enumerate(errors)
+    if errors:
+        raise WindowEnumerationError(
+            f"Could not read {len(errors)} window(s) during enumeration.", errors
+        )
+    return windows
 
 
 def _enumerate_titles() -> list:

@@ -1938,6 +1938,46 @@ def test_refused_selection_change_retains_selection_and_disclosure():
     assert "resetProfileCopy();" in branch_body
 
 
+def test_a_server_change_does_not_carry_the_old_servers_profile():
+    """Both controls share one handler, and it used to send whatever
+    `#es-profile` still held. On a SERVER change that value is a profile
+    under the OLD server, and `eve_settings_select` refuses a profile that
+    is not the one the requested server resolves to -- so changing server
+    was rejected outright and the page silently kept the old context under
+    a select showing the new one. An empty profile is the deliberate "the
+    requested server's first profile" fallback (api.py's
+    eve_settings_select), which is what a server change means.
+    """
+    handler = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    assert re.search(
+        r"id === 'es-server' \? '' : WM\.el\('es-profile'\)\.value", body
+    ), "a server change must ask for the new server's first profile"
+    send = re.search(r"WM\.send\('eve_settings_select',(.*?)\)\.then", body, re.DOTALL)
+    assert send
+    assert "WM.el('es-profile').value" not in send.group(1), (
+        "the profile argument must go through the server-aware variable"
+    )
+
+    # The fix must not loosen the accepted-only reset it sits beside.
+    then = re.search(
+        r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", body, re.DOTALL
+    )
+    assert then
+    accepted_branch = re.search(
+        r"if \(accepted\) \{(.*?)\n\s*\}", then.group(1), re.DOTALL
+    )
+    assert accepted_branch
+    for statement in ("clearCopyFollowup();", "selected = {};", "resetProfileCopy();"):
+        assert statement in accepted_branch.group(1)
+
+
 def test_profile_copy_controls_join_busy_state_while_navigation_stays_enabled():
     """setBusy is the shared owner of "can this act right now" for the whole
     route (paintCommit, paintFormationsTool); the disclosure and its opener

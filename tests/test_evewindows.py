@@ -2,6 +2,8 @@
 (docs/history/window-resize-plan.md:130-140). The enumerator is injected so
 the matching and de-duplication logic is testable off-platform."""
 
+import pytest
+
 from wingman import bookmarks, evewindows
 
 
@@ -70,6 +72,48 @@ def test_enumerate_titles_is_derived_from_the_handle_enumerator(monkeypatch):
         lambda: [(0x10, "EVE - Pilot"), (0x20, "Notepad")],
     )
     assert evewindows._enumerate_titles() == ["EVE - Pilot", "Notepad"]
+
+
+def test_strict_enumeration_reports_a_skipped_window(monkeypatch):
+    """The best-effort enumerator swallows a per-window callback failure and
+    returns the rest. For previews that is right; for the whole-profile EVE
+    probe it is not -- the one window it skipped may be the running client,
+    and a short list would read as "EVE is closed" and let a destructive
+    write proceed. Strict enumeration finishes the sweep (returning False
+    from the callback would truncate it further) and then raises."""
+
+    def enumerate_with_one_skip(errors):
+        if errors is not None:
+            errors.append(OSError("window disappeared"))
+        return [(0x10, "Notepad")]
+
+    monkeypatch.setattr(evewindows, "_enumerate", enumerate_with_one_skip)
+    with pytest.raises(evewindows.WindowEnumerationError) as caught:
+        evewindows._enumerate_windows_strict()
+    assert len(caught.value.errors) == 1
+    assert isinstance(caught.value.errors[0], OSError)
+
+
+def test_strict_enumeration_returns_a_complete_sweep(monkeypatch):
+    monkeypatch.setattr(evewindows, "_enumerate", lambda errors: [(0x10, "EVE - A")])
+    assert evewindows._enumerate_windows_strict() == [(0x10, "EVE - A")]
+
+
+def test_best_effort_enumeration_collects_nothing_and_never_raises(monkeypatch):
+    """Previews and the bookmarks checkbox keep the old contract: one
+    unreadable window must not cost them the whole list, and it must not
+    cost them an exception either."""
+    seen = []
+
+    def enumerate_with_one_skip(errors):
+        seen.append(errors)
+        if errors is not None:
+            errors.append(OSError("window disappeared"))
+        return [(0x10, "EVE - A")]
+
+    monkeypatch.setattr(evewindows, "_enumerate", enumerate_with_one_skip)
+    assert evewindows._enumerate_windows() == [(0x10, "EVE - A")]
+    assert seen == [None], "best-effort enumeration must not collect errors"
 
 
 def test_list_eve_windows_still_returns_plain_sorted_titles(monkeypatch):

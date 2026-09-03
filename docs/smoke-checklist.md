@@ -3201,11 +3201,18 @@ so these are the checks that matter and only a Windows machine can run them.
 The `Copy profile…` disclosure beside the primary Profile control
 (`Api.eve_settings_copy_profile`, evesettings.js's `profileCopy` state)
 creates a new `settings_*` folder from the selected profile, or replaces
-another profile's files with a copy of it. Every deterministic branch below
-is covered by `tests/test_api_evesettings.py` and by the eleven
+another profile's files with a copy of it. Its deterministic branches are
+covered by `tests/test_api_evesettings.py`, and the eleven
 `?dev=1&profile=<key>` checkpoints in `wingman/web/dev.js`
-(`tests/test_dev_harness.py`'s `PROFILE_COPY_SCENARIOS`); this section is
-what only a Windows machine with real `settings_*` folders can still prove.
+(`tests/test_dev_harness.py`'s `PROFILE_COPY_SCENARIOS`) are a
+REPRESENTATIVE set of rendered states, not an exhaustive one. Two outcomes
+in particular have no checkpoint of their own: the UNKNOWN probe ("Wingman
+could not verify that EVE is closed"), where only the RUNNING refusal and
+the FAILED rollback are staged in `dev.js`, and a SUCCESSFUL rollback after
+a caught publication failure. Both are covered in
+`tests/test_api_evesettings.py`, and their rendered wording is proved only
+by the manual checks below. This section is what only a Windows machine
+with real `settings_*` folders can still prove.
 
 - [ ] **Inspect every deterministic checkpoint in a browser first.** Open
       `?dev=1&profile=<key>` for `multiple`, `new-disclosure`,
@@ -3237,8 +3244,10 @@ what only a Windows machine with real `settings_*` folders can still prove.
       it is not remembered across a visit, the same rule the folder card's
       own collapse follows. Reopen it and drive the whole flow — mode
       radios, Name, Replace, Copy profile, Cancel — using only Tab, Space,
-      and Enter; nothing requires a pointer, and focus never leaves the
-      panel while it is open.
+      and Enter; nothing requires a pointer, the order through the panel is
+      the order it reads in, and every control in it is reachable. Tabbing
+      on past Cancel continues into the rest of the route, as it should —
+      this is an inline disclosure, not a modal, so focus is not trapped.
 - [ ] **Create success, and the created profile is visible everywhere it
       should be.** With EVE closed, open `New profile`, type a name, and
       press `Copy profile`. Expected: the button reads a neutral busy state
@@ -3298,11 +3307,17 @@ what only a Windows machine with real `settings_*` folders can still prove.
 - [ ] **A real Windows junction inside the EVE settings folder is refused
       as a copy source or destination**, the same as it already is for a
       selective copy target (see the junction check above): create one
-      pointing outside the root with
-      `mklink /J <root>\settings_Escape C:\SomewhereElse`, then attempt
-      both `New profile` (typing a name that would collide with it) and
-      `Replace existing` against it. Neither publishes through the
-      junction; the escape is refused before anything is staged.
+      beside the real profiles, INSIDE the selected server rather than at
+      the canonical root — `mklink /J <root>\<server>\settings_Escape
+      C:\SomewhereElse` — so that it is offered as a profile at all; a
+      junction at the root is not a profile and the copy would never look
+      at it. Then exercise it both ways. As DESTINATION: `Replace existing`
+      against it, and `New profile` typing a name that would collide with
+      it. As SOURCE: select `Escape` in the primary Profile control and
+      run both `New profile` and `Replace existing` from it. Nothing
+      publishes through the junction in either direction; the escape is
+      refused before anything is staged, and `C:\SomewhereElse` is
+      untouched afterwards.
 - [ ] **840×625 at 100% and 200% scaling.** At the CSS viewport floor, open
       `Copy profile…` in both modes. Expected: the panel, its radios, the
       Name/Replace fields, and both buttons fit without horizontal
