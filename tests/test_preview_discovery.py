@@ -3,6 +3,7 @@ filtering logic is testable off Windows."""
 
 import pytest
 
+from wingman import evewindows
 from wingman.preview import discovery
 
 WINDOWS = [(0x10, "EVE - Pilot One"), (0x20, "Firefox"), (0x30, "EVE - Pilot Two")]
@@ -109,3 +110,193 @@ def test_window_inspection_failure_is_skipped_by_default_but_strict_propagates()
 
 def test_strict_discovery_still_skips_an_inaccessible_process():
     assert _list(image_name=lambda pid: None, strict=True) == []
+
+
+# Probe tests: fail-closed EVE client state detection
+@pytest.mark.parametrize(
+    ("windows", "pid", "image", "expected"),
+    [
+        ([], 7, "exefile.exe", discovery.EveClientState.CLOSED),
+        ([(1, "Browser")], 7, None, discovery.EveClientState.CLOSED),
+        ([(1, "EVE - Alice")], 7, "exefile.exe", discovery.EveClientState.RUNNING),
+        ([(1, "EVE - Alice")], 7, "chrome.exe", discovery.EveClientState.CLOSED),
+        ([(1, "EVE - Alice")], 0, "exefile.exe", discovery.EveClientState.UNKNOWN),
+        ([(1, "EVE - Alice")], 7, None, discovery.EveClientState.UNKNOWN),
+    ],
+)
+def test_profile_probe_states(windows, pid, image, expected):
+    """Probe returns tri-state: CLOSED, RUNNING, or UNKNOWN."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: windows,
+        pids=lambda _hwnd: pid,
+        image_name=lambda _pid: image,
+    )
+    assert result.state is expected
+
+
+def test_probe_reports_a_zero_pid_as_a_collected_error():
+    """A zero PID is a failed lookup, not an absent client.
+
+    The state alone cannot tell the two synthesised failures apart from a
+    caught exception, and _eve_profile_copy_refusal logs probe.errors as the
+    only account of WHY it refused a whole-profile write. An empty errors
+    tuple beside an UNKNOWN state would leave that refusal unexplainable."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(0x10, "EVE - Alice")],
+        pids=lambda _hwnd: 0,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], OSError)
+    assert "0x10" in str(result.errors[0])
+
+
+def test_probe_reports_an_unresolvable_image_as_a_collected_error():
+    """None from image_name means the process could not be opened.
+
+    list_clients reads that as "owned by another user, not a client" and
+    skips it; the probe must instead name it, for the same reason as the
+    zero-PID case above."""
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(0x10, "EVE - Alice")],
+        pids=lambda _hwnd: 7,
+        image_name=lambda _pid: None,
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], OSError)
+    assert "7" in str(result.errors[0])
+
+
+def test_probe_enumerator_exception_is_collected():
+    """Enumerator exception collects as an error; probe returns UNKNOWN."""
+
+    def boom():
+        raise OSError("no window station")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=boom,
+        pids=lambda _hwnd: 7,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], OSError)
+
+
+def test_probe_pid_exception_is_collected():
+    """PID lookup exception collects as an error; with EVE window, returns UNKNOWN."""
+
+    def boom(_hwnd):
+        raise OSError("process disappeared")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(1, "EVE - Alice")],
+        pids=boom,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+
+
+def test_probe_image_exception_is_collected():
+    """Image lookup exception collects as an error; with EVE window, returns UNKNOWN."""
+
+    def boom(_pid):
+        raise OSError("access denied")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(1, "EVE - Alice")],
+        pids=lambda _hwnd: 7,
+        image_name=boom,
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+
+
+def test_probe_mixed_known_and_unresolved_returns_unknown():
+    """UNKNOWN dominates: if any candidate has errors, probe returns UNKNOWN."""
+
+    def pids(hwnd):
+        if hwnd == 1:
+            return 7
+        raise OSError("process disappeared")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(1, "EVE - Alice"), (2, "EVE - Bob")],
+        pids=pids,
+        image_name=lambda _pid: "exefile.exe",
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) > 0
+
+
+def test_probe_defaults_to_strict_enumeration(monkeypatch):
+    """The probe must not inherit the preview enumerator's best-effort skip.
+
+    `_enumerate_windows` catches a per-window callback failure and returns
+    the rest, so an EVE client whose window could not be read simply is not
+    in the list -- and "no EVE-titled window" is exactly what CLOSED means.
+    A whole-profile write would then go ahead on the strength of a window
+    nobody managed to look at. The default enumerator is the strict one,
+    whose refusal reaches the probe as an error and forces UNKNOWN.
+    """
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    monkeypatch.setattr(evewindows, "_enumerate_windows", list)
+
+    def strict():
+        raise evewindows.WindowEnumerationError(
+            "Skipped 1 window during enumeration.", (OSError("window disappeared"),)
+        )
+
+    monkeypatch.setattr(evewindows, "_enumerate_windows_strict", strict)
+    result = discovery.probe_eve_client_state(
+        pids=lambda _hwnd: 7, image_name=lambda _pid: "exefile.exe"
+    )
+    assert result.state is discovery.EveClientState.UNKNOWN
+    assert len(result.errors) == 1
+
+
+def test_previews_keep_the_best_effort_enumerator(monkeypatch):
+    """The other half of the fix: strictness is the probe's alone. A preview
+    sweep runs every 700ms and must still draw the clients it CAN see."""
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    monkeypatch.setattr(
+        evewindows, "_enumerate_windows", lambda: [(0x10, "EVE - Pilot One")]
+    )
+
+    def strict():
+        raise evewindows.WindowEnumerationError(
+            "Skipped 1 window during enumeration.", (OSError("window disappeared"),)
+        )
+
+    monkeypatch.setattr(evewindows, "_enumerate_windows_strict", strict)
+    clients = discovery.list_clients(
+        pids=lambda _hwnd: 7, image_name=lambda _pid: "exefile.exe"
+    )
+    assert [client.character for client in clients] == ["Pilot One"]
+
+
+def test_probe_does_not_widen_the_title_net_to_non_eve_windows():
+    """Only EVE-titled windows are probed at all.
+
+    An unresolvable window that is not EVE's is not doubt about EVE, and
+    collecting it would make every machine with one locked-down process
+    permanently UNKNOWN -- a refusal the user could never clear. The
+    collaborators fail outright rather than returning a value the probe
+    could quietly absorb: the point is that they are never called."""
+
+    def pids(_hwnd):
+        pytest.fail("a non-EVE window must not be resolved to a PID")
+
+    def image_name(_pid):
+        pytest.fail("a non-EVE window must not be resolved to an image name")
+
+    result = discovery.probe_eve_client_state(
+        enumerator=lambda: [(0x20, "Firefox")],
+        pids=pids,
+        image_name=image_name,
+    )
+    assert result.state is discovery.EveClientState.CLOSED
+    assert result.errors == ()
