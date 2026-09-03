@@ -32,18 +32,18 @@ def test_readme_discloses_automatic_github_update_checks():
     assert "does not prove publisher identity" in readme
 
 
-def test_readme_google_token_note_links_to_the_network_table_without_relisting_it():
+def test_readme_google_token_note_is_only_the_boundary_and_table_link():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    start = readme.index("- **Google OAuth tokens")
+    previous = readme.index("- **Your Google credentials")
+    start = readme.index("\n- **", previous) + 1
     end = readme.index("\n- **Video data", start)
-    note = readme[start:end]
+    note = " ".join(readme[start:end].split())
 
-    assert "No FlyGD-operated backend receives" in note
-    assert "[Privacy section](#privacy)" in note
-    assert "network table" in note
-    assert "talks directly to" not in note
-    for omitted_destination in ("Discord", "GitHub", "CCP"):
-        assert omitted_destination not in note
+    assert note == (
+        "- **No FlyGD-operated backend receives Google OAuth tokens or other "
+        "application data.** See the [Privacy section](#privacy) network table "
+        "for the external services each feature contacts and what it sends."
+    )
 
 
 def test_readme_network_table_covers_eve_and_current_user_triggers():
