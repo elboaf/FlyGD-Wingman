@@ -172,6 +172,33 @@ def test_update_status_methods_share_one_dev_fixture():
     assert "Promise.resolve(devUpdateState())" in DEV_JS
 
 
+def test_update_action_methods_have_dev_doubles():
+    """Task 7 adds two click-only actions the About card calls;
+    test_every_bridge_method_the_page_calls_has_a_double already fails
+    generically if these are missing a double, but the specific assertion
+    here is what keeps a future refactor from silently reintroducing the
+    gap by renaming `devUpdateState` out from under one of the two.
+    """
+    assert "api.download_update = function" in DEV_JS
+    assert "api.install_update = function" in DEV_JS
+
+
+def test_dev_update_state_selects_by_query_string():
+    """`?dev=1&update=<state>` must return the exact production payload
+    shape for whichever state is asked for, not a single fixed fixture --
+    the checklist needs `available`, `downloading`, `ready` and a failure
+    state reachable without touching Python.
+    """
+    fn = DEV_JS[DEV_JS.index("function devUpdateState()") :]
+    fn = fn[: fn.index("\n  }\n")]
+    assert "location.search" in fn, (
+        "devUpdateState must read ?update=... from the query string rather "
+        "than always returning the same fixed state"
+    )
+    for state in ("available", "downloading", "ready", "error"):
+        assert f"'{state}'" in fn, f"devUpdateState has no branch for {state!r}"
+
+
 def _identity_scenarios() -> dict:
     match = re.search(
         r"var identityScenarios = JSON\.parse\('(.*?)'\);", DEV_JS, re.DOTALL

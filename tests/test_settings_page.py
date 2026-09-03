@@ -424,3 +424,117 @@ def test_each_folder_field_reaches_its_own_note_and_message():
             f"{name} is keyed {sorted(got)} but the folders are "
             f"{sorted(keys)}; the odd one out silently reports nothing"
         )
+
+
+# ---- Task 7: About-card update UI --------------------------------------
+
+
+def about_card_html() -> str:
+    """The `About Wingman` card's markup, comments stripped.
+
+    Same reasoning as `_settings_route`/`_panes` above: this file is read
+    lexically, so a helper narrows every assertion below to the one card
+    rather than to the whole page, which is what makes a false pass here
+    findable.
+    """
+    body = re.sub(r"<!--.*?-->", "", HTML, flags=re.DOTALL)
+    start = body.index("<h2>About Wingman</h2>")
+    end = body.index("</section>", start)
+    return body[start:end]
+
+
+def test_about_card_has_live_update_status_progress_and_actions():
+    card = about_card_html()
+    assert 'aria-label="Settings"' in HTML
+    assert 'id="update-status"' in card and 'role="status"' in card
+    assert 'id="update-progress"' in card and "<progress" in card
+    for control in ("btn-update-check", "btn-update-download", "btn-update-install"):
+        assert f'id="{control}"' in card
+    # Determinate from the start, not an indeterminate bar dressed as one:
+    # the renderer only ever sets `.max`/`.value`, never removes them.
+    assert 'max="1" value="0"' in card
+    # One accent or none, and this card offers none -- `.btn.acc` is
+    # reserved for the single primary action a screen exists to perform,
+    # and Settings has no such action.
+    assert "btn acc" not in card
+    # Start-on-login and the licence line survive; this is an addition to
+    # the card, not a replacement of it.
+    assert 'id="start-on-login"' in card
+    assert 'id="msg-about"' in card
+
+
+def test_update_progress_is_hidden_until_a_download_starts():
+    card = about_card_html()
+    assert re.search(r'<progress id="update-progress"[^>]*\bhidden\b', card), (
+        "the progress element must start hidden -- there is nothing to "
+        "show a percentage of before a download begins"
+    )
+
+
+def test_install_uses_app_confirm_before_bridge_call():
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    confirm = settings_js.index("WM.confirm('Install update?'")
+    send = settings_js.index("WM.send('install_update')", confirm)
+    assert confirm < send
+    assert "window.confirm" not in settings_js
+
+
+def test_general_entry_reads_update_status_and_no_other_section_does():
+    """The read that fills the card's content must be scoped the same way
+    every other section-owned fetch is (alerts.js, bookmarks.js,
+    previews.js): on `wm:section === 'general'`, not on every section
+    change, or a screen the user is not looking at keeps polling.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    match = re.search(
+        r"document\.addEventListener\('wm:section', function \(ev\) \{\s*"
+        r"if \(ev\.detail === 'general'\) \{([^}]*)\}",
+        settings_js,
+    )
+    assert match, "no wm:section listener scoped to 'general' was found"
+    assert "WM.send('update_status')" in match.group(1)
+
+
+def test_renderer_reads_only_payload_booleans_for_permission():
+    """Task 7's binding rule: the renderer must not reconstruct
+    can_check/can_download/can_install from `state`; it reads exactly the
+    fields Python already computed.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    renderer = settings_js[settings_js.index("function renderUpdate(") :]
+    renderer = renderer[: renderer.index("\n  }\n")]
+    for flag in ("can_check", "can_download", "can_install"):
+        assert f"p.{flag}" in renderer, (
+            f"renderUpdate must read {flag} from the payload rather than "
+            "deriving it from p.state"
+        )
+
+
+def test_confirm_fires_once_on_a_true_downloading_to_ready_transition():
+    """The transition check must be one function taking the previous
+    phase, not a copy re-derived at each of the three render entry points
+    (general-entry read, a button's own resolved promise, and the
+    `wm:update-status` push listener) -- three copies is three chances for
+    one of them to auto-confirm on a phase it never actually crossed, or
+    for a cached `ready` seen on first paint to pop a dialog nobody asked
+    for.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    assert re.search(
+        r"function \w+\(\s*\w+\s*,\s*\w+\s*\)\s*\{[^}]*downloading[^}]*ready",
+        settings_js,
+        re.DOTALL,
+    ), (
+        "expected one function receiving (previous, next) that tests for "
+        "the downloading -> ready transition"
+    )
+    # Every call to renderUpdate must feed and update the SAME previous-phase
+    # variable, so a transition detected by one entry point cannot be missed
+    # or double-counted by another.
+    assert settings_js.count("updatePhase = ") >= 1
+    calls = len(re.findall(r"renderUpdate\(", settings_js))
+    assert calls >= 4, (
+        "expected renderUpdate to be the one renderer called from the "
+        "general-entry read, all three button handlers and the push "
+        f"listener; found only {calls} call sites"
+    )

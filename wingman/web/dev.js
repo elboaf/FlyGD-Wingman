@@ -684,18 +684,67 @@
   }
 
   function devUpdateState() {
-    return {
-      state: 'available',
+    // ?dev=1&update=<state> selects which of the card's states renders,
+    // so every state Task 7's smoke checklist calls for is reachable by
+    // hand without touching Python: current, checking, an automatic
+    // offline failure, available, downloading (with real bytes for the
+    // progress bar), ready (declared frozen so Install actually shows,
+    // which a real source checkout never is), and a manual failure.
+    var match = /[?&]update=([\w-]+)/.exec(window.location.search);
+    var state = match ? match[1] : 'available';
+    var base = {
       installed_version: '0.0.0-dev',
       available_version: '4.9.0',
-      update_available: true,
       downloaded_bytes: 0,
-      total_bytes: 0,
+      total_bytes: 42000000,
       can_check: true,
-      can_download: true,
+      can_download: false,
       can_install: false,
       error: ''
     };
+    // update_available mirrors Api._update_snapshot_locked: true whenever
+    // a release is cached, which survives through check_failed/ready/
+    // download_failed rather than flickering off the moment a later
+    // action fails -- app.js's gear badge reads exactly this field.
+    switch (state) {
+      case 'idle':
+        return Object.assign({}, base, {
+          state: 'idle', available_version: '', update_available: false
+        });
+      case 'checking':
+        return Object.assign({}, base, {
+          state: 'checking', available_version: '', can_check: false,
+          update_available: false
+        });
+      case 'current':
+        return Object.assign({}, base, {
+          state: 'current', available_version: '', update_available: false
+        });
+      case 'unavailable':
+        return Object.assign({}, base, {
+          state: 'unavailable', available_version: '', update_available: false
+        });
+      case 'downloading':
+        return Object.assign({}, base, {
+          state: 'downloading', can_check: false,
+          downloaded_bytes: 18000000, update_available: true
+        });
+      case 'ready':
+        return Object.assign({}, base, {
+          state: 'ready', downloaded_bytes: 42000000, can_install: true,
+          update_available: true
+        });
+      case 'error':
+        return Object.assign({}, base, {
+          state: 'download_failed', update_available: true,
+          error: 'The download did not match what the release published. '
+               + 'Try downloading again.'
+        });
+      default:
+        return Object.assign({}, base, {
+          state: 'available', can_download: true, update_available: true
+        });
+    }
   }
 
   // The bar page pulls its section once at load; so does bookmarks.js
@@ -722,6 +771,16 @@
   };
 
   api.check_for_updates = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.download_update = function () {
+    console.log('DEV api.download_update()');
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.install_update = function () {
+    console.log('DEV api.install_update()');
     return Promise.resolve(devUpdateState());
   };
 

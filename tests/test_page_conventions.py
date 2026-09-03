@@ -176,6 +176,52 @@ def test_no_native_dialogs():
             assert call not in src, f"{path.name} calls {call}"
 
 
+def test_the_gear_carries_a_static_accessible_name_before_the_first_update_push():
+    """renderUpdateBadge (app.js) sets `title`/`aria-label` from the first
+    `onUpdateStatus` push, but that push is a round trip after the page
+    paints. A screen reader that names the gear before it lands would read
+    nothing at all without a name baked into the markup itself.
+    """
+    gear = re.search(r'<button class="winbtn gear"[^>]*>', HTML)
+    assert gear, "#btn-settings markup not found"
+    assert 'aria-label="Settings"' in gear.group(0)
+
+
+def test_the_gear_can_show_active_and_update_available_together():
+    """The gear is both a destination (`.active` while Settings is open)
+    and a badge carrier (`.update-available`). Neither renderer may clear
+    the other's class, or opening Settings while an update is available
+    would erase the badge, or the reverse.
+    """
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert (
+        "WM.el('btn-settings').classList.toggle('active', name === 'settings');" in app
+    )
+    assert "gear.classList.toggle('update-available', available);" in app
+    css = CSS
+    assert ".winbtn.gear.update-available" in css
+    assert ".winbtn.gear.active" in css
+
+
+def test_update_progress_has_an_explicit_hidden_override():
+    """`#update-progress` sets its own `display` for full-width layout, so
+    it needs the author `[hidden]` override the same way `.routenav` and
+    `.field-msg` do, or the UA stylesheet's rule loses to specificity-
+    matched author origin and the bar stays visible once download finishes
+    or a check turns up nothing to show a percentage of.
+    """
+    assert "#update-progress[hidden] { display: none; }" in CSS
+
+
+def test_update_progress_animation_is_disabled_under_reduced_motion():
+    reduced = re.search(
+        r"@media \(prefers-reduced-motion: reduce\) \{(.*?)\n\}",
+        CSS,
+        re.DOTALL,
+    )
+    assert reduced and "update-progress" in reduced.group(1)
+
+
 # ---- the label column --------------------------------------------------
 
 

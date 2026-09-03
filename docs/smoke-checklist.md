@@ -4145,3 +4145,55 @@ behaviour a lexical guard cannot reach.
 - [ ] **The frozen build reaches only CCP.** With previews and the uploader
       idle, the only hosts this feature contacts are `login.eveonline.com`
       and `esi.evetech.net`.
+
+### Checking for and installing an update
+
+- [ ] **Current.** With no newer release published, Settings > General
+      shows `Wingman is up to date.` and `Check again` is the only visible
+      button.
+- [ ] **Checking.** Click `Check again`. The line reads
+      `Checking for updates\u2026` and the button disables for the
+      round trip.
+- [ ] **Available.** With a newer release published, the card names the
+      version and shows `Download update`; `Install update` stays hidden.
+- [ ] **Automatic offline check fails quietly.** Disconnect networking,
+      relaunch. The startup check must not surface a stack of retryable
+      copy on first paint -- the card reads the neutral
+      `Update status unavailable.`, not a specific network error.
+- [ ] **Manual failure names the stage.** With networking still down,
+      click `Check again` by hand. This time the card shows Python's own
+      stage-specific copy, not the neutral automatic-failure sentence.
+- [ ] **Progress.** Click `Download update`. The progress bar appears
+      determinate from the first tick (never an indeterminate sweep) and
+      advances to full as the download completes; the status line reads
+      `Downloading the update\u2026` throughout.
+- [ ] **Declined install.** When the download finishes, `Install update?`
+      pops automatically once. Click the dialog's Cancel/close. The card
+      is left on `Update downloaded. Ready to install.` with `Install
+      update` still visible and enabled -- not reverted to `Download
+      update` and not stuck disabled.
+- [ ] **Retained Install action confirms again.** After declining, click
+      `Install update` directly. The same confirm reappears; accepting it
+      this time hands off to the installer.
+- [ ] **Active-upload refusal.** Start an upload, then try to install a
+      staged update. The card reports
+      `Finish the active upload before installing the update.` and stays
+      on `Install update` rather than silently doing nothing.
+- [ ] **Gear tooltip and accessible name.** Before any check completes,
+      the gear's accessible name already reads `Settings` (a screen reader
+      queried at first paint, not after the round trip). Once an update is
+      available, the title and accessible name both read
+      `Settings — update available`, and the small dot survives opening
+      Settings (the gear's `.active` state does not erase the badge).
+- [ ] **Keyboard focus.** Tab to `Check again`, `Download update` and
+      `Install update` in turn (as each becomes visible). Each shows the
+      app's visible focus ring, and Enter/Space activates it the same as a
+      click.
+- [ ] **840x625 layout.** At the window floor, the update block does not
+      push the licence line, the Start-on-login checkbox or `msg-about`
+      off screen or force a horizontal scrollbar.
+- [ ] **Real WebView2 rendering.** `?dev=1&update=downloading`,
+      `&update=ready` and `&update=error` each render the card's markup,
+      the progress fill and the button set correctly in an actual
+      WebView2 window, not only in the lexical test suite -- nothing in
+      that suite renders the page.

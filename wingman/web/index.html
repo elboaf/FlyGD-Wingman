@@ -28,7 +28,7 @@
       <button class="navbtn" id="nav-evesettings" data-route="evesettings">Profiles</button>
       <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
     </nav>
-    <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
+    <button class="winbtn gear" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
     <button class="winbtn close" id="btn-close" title="Close">&#10005;</button>
   </div>
@@ -1425,6 +1425,22 @@
              typed into this page. .hint carries user-select: text, so the
              number can be copied into a bug report. -->
         <p class="hint" id="about-version">Version &mdash;</p>
+        <!-- Tasks 5-7. Checked once automatically after startup and again
+             on demand; one renderer (settings.js's renderUpdate) reads
+             exactly what Python computed -- can_check/can_download/
+             can_install -- so this card can never offer an action the
+             backend has already refused. -->
+        <div class="update-block">
+          <p class="hint" id="update-status" role="status" aria-live="polite">
+            Update status not checked.
+          </p>
+          <progress id="update-progress" max="1" value="0" hidden></progress>
+          <div class="actions update-actions">
+            <button class="btn" id="btn-update-check">Check again</button>
+            <button class="btn" id="btn-update-download" hidden>Download update</button>
+            <button class="btn" id="btn-update-install" hidden>Install update</button>
+          </div>
+        </div>
         <!-- The one string on this card that IS typed here. There is no
              payload key for it and ui/api.py belongs to another lane; the
              SPDX identifier is also stable in a way the version is not --
