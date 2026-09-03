@@ -826,6 +826,7 @@ button.btn:disabled,
 .rail-plan:focus-visible,
 .rail-item:focus-visible,
 .skills-row-top:focus-visible,
+.skills-estimate-info:focus-visible,
 .ctxmenu button:focus-visible,
 .linkish:focus-visible,
 .list-head > span:focus-visible {
@@ -1364,7 +1365,13 @@ button.btn:disabled,
   opacity: 0; visibility: hidden;
   transition: opacity .1s linear .45s, visibility 0s linear .45s;
 }
-[data-tip]:hover::after { opacity: 1; visibility: visible; }
+/* Task 6. Every list.js caller of this primitive is a <span> that only a
+   mouse can rest on; the Skills estimate info button is a real <button>,
+   and native `title` does not reliably open on keyboard focus at all -- so
+   this primitive is extended from hover-only to hover plus :focus-visible
+   rather than duplicated for one caller. */
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after { opacity: 1; visibility: visible; }
 /* Any click means the user is acting, not asking. */
 [data-tip]:active::after { opacity: 0; visibility: hidden; transition: none; }
 
@@ -4426,6 +4433,40 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
 #skills-copy-plan { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
+/* Task 6. The disclosure behind every training ETA and remaining-time
+   figure: current attributes at Omega speed, implants and any requirement
+   not explicitly listed in the plan excluded from the number.
+   `align-self: center` for the same reason #skills-copy-plan carries it --
+   baselined against the h1 hangs a small control below the text. No new
+   colour: --text-faint is the plan count's own token, one line up, and
+   `cursor: help` matches list.js's existing dur-unknown/dur-pending
+   glyphs (round 1). A real <button>, so the shared :focus-visible rule
+   below reaches it -- a <span> with `title` cannot be focused at all. */
+.skills-estimate-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  align-self: center; width: 18px; height: 18px; padding: 0;
+  border: 0; border-radius: 4px; background: none;
+  color: var(--text-faint); font: inherit; font-size: var(--fs-muted);
+  cursor: help;
+}
+.skills-estimate-info:hover { color: var(--text-dim); }
+/* The [hidden] trap DESIGN.md names in six places: the rule above sets
+   `display`, so an author rule beats the UA stylesheet's own
+   `[hidden] { display: none }` regardless of specificity. */
+.skills-estimate-info[hidden] { display: none; }
+/* Fix round 1, WCAG 1.4.13 (Content on Hover or Focus): the primitive's
+   :focus-visible rule made this tooltip persistent for as long as the
+   button holds focus, with no way to dismiss it short of tabbing away --
+   which moves focus, the one thing 1.4.13 says dismissal must not do.
+   skills.js's keydown listener adds this class on Escape while the
+   button KEEPS focus, and removes it on blur so the next focus still
+   shows the tooltip. Three selectors of specificity (two classes plus
+   :focus-visible) beat the primitive's `[data-tip]:focus-visible::after`
+   (attribute plus pseudo-class) on purpose, so this always wins over the
+   shared rule regardless of source order. */
+.skills-estimate-info.tip-dismissed:focus-visible::after {
+  opacity: 0; visibility: hidden;
+}
 /* Clipboard access finishes in the page, not Python, so this local status
    confirms the action at its source. It remains mounted while empty because
    a role=status region shown only with new text can be missed by a reader. */

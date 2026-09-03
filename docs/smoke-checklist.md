@@ -3550,18 +3550,101 @@ against a placeholder id; only these items are blocked on the registration.
       resolving after the switch and rendering under the wrong plan is a
       silent bug — the row looks populated and correct, but every
       requirement on it belongs to the plan you left.
-- [ ] **LOAD-BEARING: the roster group order and the within-group sort are
-      both exactly right.** Launch with `?dev=1` (it seeds one character
-      per bucket) and confirm the groups appear top to bottom in this
-      order: `Ready`, `Training`, `Locked`, `Missing`, `Unknown`,
-      `Unscored`, then the catch-all bucket last. Within `Missing`, with
-      more than one character in it, confirm the character with the
-      **fewest** missing requirements sorts first. Nothing under `tests/`
-      exercises this grouping or ordering at all — it lives entirely in
-      `skills.js` — so this item is the only thing standing between a
-      regression here and a release. A silent reorder or a resorted
-      `Missing` group would not error or throw; it would just be wrong,
-      and nothing else in this checklist or the suite would catch it.
+- [ ] **LOAD-BEARING: the roster group order is exactly right.** Launch
+      with `?dev=1` (it seeds one character per bucket) and confirm the
+      groups appear top to bottom in this order: `Ready`, `Training`,
+      `Locked`, `Missing`, `Unknown`, `Unscored`, then the catch-all
+      bucket last. Nothing under `tests/` exercises this grouping at
+      all — it lives entirely in `skills.js` — so this item is the only
+      thing standing between a regression here and a release. A silent
+      reorder would not error or throw; it would just be wrong, and
+      nothing else in this checklist or the suite would catch it.
+- [ ] **`Missing` sorts by training time, not by requirement count.**
+      Same `?dev=1` roster. Confirm the `Missing` group reads top to
+      bottom: Nera Tal (`1h 30m`), Aveline Castellane (`2d 0h`), Zara
+      Castellane (`2d 0h`), Konstantina Alexandrovna Winterbourne
+      (`7d 0h`), Gustav Oswaldo (`15d 0h`), then Petra Ilyenko last with
+      no duration shown at all. Aveline before Zara is the deliberate
+      tie-break: the fixture gives the two characters the identical raw
+      `172800` seconds on purpose, so the sort can only separate them by
+      falling through to character name — and it must do that on the RAW
+      seconds, never on a text comparison of the rendered `2d 0h` label,
+      which would not even distinguish the tie. A character with no
+      usable estimate (Petra: confirmed but unusable attributes) sorts
+      last regardless of how few requirements it is missing, the same
+      way a `Training` row with no queue finish sorts last below.
+- [ ] **`Training` sorts by real queue finish, not by name.** Same
+      roster. Confirm the order is Zuelo Parvi (finishes 2026-08-25),
+      Bel Ansgar (finishes 2026-08-27, later, despite sorting
+      alphabetically before Zuelo), then Kaska Rin last. Kaska's own
+      queue is `queue_timing_unknown`, so it has no finish to compare —
+      and her row still shows her OWN plan-wide training estimate
+      (`1d 2h`) beside `timing unknown`, because that is a different
+      computation (training.estimate() over the whole plan) from EVE's
+      queue-finish fact, and the missing fact must not borrow the
+      other's number to fake a sort position.
+- [ ] **A mixed row's duration includes SP already queued.** Still
+      `?dev=1`, expand Konstantina Alexandrovna Winterbourne
+      (`queued_count: 2`, `missing_count: 3`). Confirm her status line
+      reads `3 unqueued · 7d 0h training remaining` — the duration is
+      the WHOLE plan's remaining SP, not just the three unqueued skills,
+      because `training.estimate()` is handed every requirement in the
+      plan and only zeroes a skill's own contribution once ITS SP
+      threshold is met, queued or not. If a future change scoped the
+      estimate to `missing_names` alone, this row's duration would read
+      shorter than the plan will actually take, silently.
+- [ ] **`Stale` still carries a full training estimate.** Expand Gustav
+      Oswaldo (`stale: true`, last refresh failed). Confirm the `Stale`
+      badge sits beside his name AND the status line still reads a real
+      duration — `6 unqueued · 15d 0h training remaining` — rather than
+      falling back to `training time unavailable`. The estimate is
+      scored against the LAST successful refresh, which is exactly what
+      stale data is, not against the failed one.
+- [ ] **The estimate assumptions live only in the tooltip, never as
+      permanent copy.** With a plan selected, confirm no sentence about
+      Omega speed, current attributes, implants or unlisted requirements
+      is printed anywhere on the page by default. Hover the ⓘ button
+      beside the plan heading: the tooltip `Estimates use current
+      attributes at Omega speed. Implants and requirements not listed in
+      this plan are excluded.` appears, and clears when the mouse moves
+      away. Tab to the same button instead: the identical tooltip
+      appears on keyboard focus alone, with no hover. Press Escape while
+      it is focused: the tooltip is dismissed but focus visibly stays on
+      the button — it must not move to the next control. Tab away and
+      back (or click elsewhere, then click or Tab back to the button):
+      the tooltip reopens. A suppression that survived a real blur would
+      mean the button permanently omitted its own explanation for the
+      rest of the session.
+- [ ] **No plan selected, and a character whose attributes were never
+      confirmed, both avoid a misleading zero.** Clear the plan
+      selection: every roster row becomes `Unscored` and carries no
+      status line at all — not `0 unqueued` and not `0m` — because an
+      empty `training_estimate_status` means no estimate was ever asked
+      for (Task 5's ruling), never a fifth failure worth a phrase.
+      Reselect a plan and expand Petra Ilyenko
+      (`attributes_unavailable` — the same outcome a pre-attributes
+      build produces for a character it has never confirmed attributes
+      for). Confirm her status reads `4 unqueued · training time
+      unavailable`, never `4 unqueued · 0m training remaining`: `0m` is
+      `training.estimate()`'s real answer for an already-trained target
+      and must never stand in for a number the estimator could not
+      compute at all.
+- [ ] **At the 840x625 floor, long names still read as themselves and
+      every collapsed status stays on one line.** Drag the window to its
+      floor with `?dev=1` loaded. Confirm Konstantina Alexandrovna
+      Winterbourne's name ellipsises at the 240px name-column cap rather
+      than overflowing or wrapping: `text-overflow: ellipsis` truncates
+      from the end, so enough of the PREFIX stays visible to tell her
+      apart from every other row at a glance — `.skills-name` carries no
+      `title`, so this is the only identity the collapsed row offers, not
+      a fallback for a full string recoverable on hover. Then confirm the
+      roster's worst case for the status column: Gustav Oswaldo, whose
+      `Stale` badge and `6 unqueued · 15d 0h training remaining` status
+      sit on the same line as his name. Neither wraps to a second line,
+      neither is cut off without an ellipsis, and the badge and status do
+      not overlap the name or each other — the chevron, badge and status
+      are all `flex: none`, so the name column is the only thing that
+      gives way, and this row is where it has to give way the most.
 - [ ] **The Groups block sits above Plans and its list stays capped.**
       With `?dev=1`'s seeded groups, confirm the rail lists `All` followed
       by every seeded group, top to bottom, each member count matching the

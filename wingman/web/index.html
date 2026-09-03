@@ -1870,6 +1870,21 @@
       <header class="skills-head">
         <h1 id="skills-plan-name">No plan selected</h1>
         <span class="skills-plan-count" id="skills-plan-count"></span>
+        <!-- Task 6. Every training ETA and remaining-time figure on this
+             screen rests on the same assumptions the payload cannot
+             restate per row: current attributes at Omega training speed,
+             with implants and any requirement not explicitly listed in
+             the plan excluded from the number entirely -- not merely
+             skipped for that one skill, the WHOLE estimate is withheld
+             (training.estimate()'s all-or-nothing contract). A real
+             <button>, not a titled span -- list.js's existing `data-tip`
+             glyphs carry a `title` a mouse can read but a keyboard cannot
+             reach at all. Starts hidden: there is nothing to assume about
+             until a plan is selected. -->
+        <button type="button" class="skills-estimate-info"
+                id="skills-estimate-info" hidden
+                aria-label="Estimates use current attributes at Omega speed. Implants and requirements not listed in this plan are excluded."
+                data-tip="Estimates use current attributes at Omega speed. Implants and requirements not listed in this plan are excluded.">ⓘ</button>
         <!-- S7. The maintainer's answer to "what do you end up doing
              twice": retyping a character's missing skills into EVE. It
              sits on the PLAN heading rather than in a character's row

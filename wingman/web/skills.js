@@ -418,6 +418,12 @@
     });
     WM.el('skills-plan-count').textContent = name
       ? count + (count === 1 ? ' requirement' : ' requirements') : '';
+    // Task 6. There is nothing to assume about until a plan is selected --
+    // the estimator itself is never even asked (Task 5's ruling: an empty
+    // `training_estimate_status` means no estimate was requested, not a
+    // fifth failure mode), so the button that explains its assumptions has
+    // nothing to explain either.
+    WM.el('skills-estimate-info').hidden = !name;
     // The object of this action is the plan, so with no plan selected
     // there is nothing to copy and the control says so by being disabled
     // rather than by failing when pressed.
@@ -485,6 +491,30 @@
         setCopyStatus('Could not copy the plan to the clipboard.', true);
       }
     });
+  });
+
+  /* Fix round 1, WCAG 1.4.13. The primitive's `:focus-visible` addition
+   * made this tooltip appear on keyboard focus and STAY until focus left
+   * -- with no way to dismiss it that does not also move focus, which is
+   * exactly what 1.4.13 forbids. Escape suppresses the pseudo-tooltip
+   * WITHOUT blurring the button (no `.blur()` call here -- focus stays
+   * exactly where the reader left it), and only a real blur (Tab away,
+   * click elsewhere) clears the suppression, so returning to the button
+   * later shows the tooltip again rather than disabling it for the rest
+   * of the session. `.tip-dismissed` carries no visual treatment of its
+   * own; style.css's `.skills-estimate-info.tip-dismissed:focus-visible
+   * ::after` rule is the only thing that reads it, and its three-selector
+   * specificity is what lets it beat the primitive's own
+   * `[data-tip]:focus-visible::after` rule.
+   */
+  var estimateInfo = WM.el('skills-estimate-info');
+  estimateInfo.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      estimateInfo.classList.add('tip-dismissed');
+    }
+  });
+  estimateInfo.addEventListener('blur', function () {
+    estimateInfo.classList.remove('tip-dismissed');
   });
 
   function renderNotices() {
@@ -612,10 +642,21 @@
     order.forEach(function (name) {
       var rows = buckets[name];
       if (!rows.length) return;          // empty groups are omitted
-      rows.sort(name === 'Missing' ? byMissingThenName : byName);
+      rows.sort(comparatorFor(name));
       groups.push({ name: name, rows: rows });
     });
     return groups;
+  }
+
+  // Task 6. One comparator per group, chosen by the group's OWN name --
+  // never a blanket default with per-group exceptions bolted on, because
+  // that shape is how a Ready or Locked row would silently start sorting
+  // by a training-time field it has no opinion about the moment a future
+  // group's name collided with a stray `if`.
+  function comparatorFor(name) {
+    if (name === 'Training') return byTrainingFinishThenName;
+    if (name === 'Missing') return byTrainingRemainingThenName;
+    return byName;
   }
 
   function byName(a, b) {
@@ -623,12 +664,40 @@
       .localeCompare((b.character_name || '').toLowerCase());
   }
 
-  // Fewest missing first. This is the whole surviving remnant of
-  // TriffView's "Train next" tab: the tab never shipped, but the ordering
-  // it existed to provide did, as the sort inside this one group.
-  function byMissingThenName(a, b) {
-    if (a.missing_count !== b.missing_count) {
-      return a.missing_count - b.missing_count;
+  /* Task 6. Soonest first, same as the group's own status line reads --
+   * `estimated_finish_utc` is EVE's own queue fact (the analysis' queued
+   * requirements), not the plan's whole remaining-duration estimate, so a
+   * character already training finishes when its QUEUE says, never when
+   * training.estimate() guesses. A timing-unknown row has no finish to
+   * compare at all -- EVE reported a paused queue -- and claiming one from
+   * the rest would be exactly the guess the group's own status line
+   * refuses to make, so it sorts last rather than first or by name alone.
+   */
+  function byTrainingFinishThenName(a, b) {
+    var aTime = Date.parse(a.estimated_finish_utc || '');
+    var bTime = Date.parse(b.estimated_finish_utc || '');
+    var aKnown = !isNaN(aTime);
+    var bKnown = !isNaN(bTime);
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (aKnown && aTime !== bTime) return aTime - bTime;
+    return byName(a, b);
+  }
+
+  /* Task 6. Replaces byMissingThenName (fewest requirements first), which
+   * answered "how much is left" rather than "how long does it take" --
+   * two skills at level V cost far more training time than five at level
+   * I, and the count sort put the five-skill row first regardless. Sorts
+   * on the RAW seconds Task 5 published, never the formatted label: a
+   * text sort would put "1d 2h" before "9h", which is backwards. A
+   * character with no usable estimate (an unresolved skill, stale
+   * attributes, an incomplete SP snapshot) sorts last, the same way an
+   * unknown Training finish does. */
+  function byTrainingRemainingThenName(a, b) {
+    var aKnown = typeof a.training_remaining_seconds === 'number';
+    var bKnown = typeof b.training_remaining_seconds === 'number';
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (aKnown && a.training_remaining_seconds !== b.training_remaining_seconds) {
+      return a.training_remaining_seconds - b.training_remaining_seconds;
     }
     return byName(a, b);
   }
@@ -644,13 +713,16 @@
    * What is left is only what the header CANNOT carry, because it varies
    * per character inside one group:
    *
-   *   Missing    how many requirements -- and it carries its noun, which
-   *              is the other half of S1. `Missing 2` under a header
-   *              reading `Missing requirements` was the collision; `2
-   *              requirements` under it is not. The number also explains
-   *              the group's own sort (byMissingThenName, fewest first).
-   *   Training   the ETA, which is the answer someone came here for. The
-   *              word `Training` in front of it was the header's.
+   *   Missing    how many requirements are still unqueued -- the other
+   *              half of S1 -- and, when Task 5's estimator could answer,
+   *              how long the whole plan still takes to train. `unqueued`
+   *              rather than `missing`: every one of these is about to be
+   *              queued, not merely absent, and the number also explains
+   *              the group's own sort (byTrainingRemainingThenName).
+   *   Training   how many are already queued, and the ETA that answer
+   *              someone came here for -- EVE's own queue fact, not a
+   *              guess. The word `Training` in front of it was the
+   *              header's.
    *   Other      the raw readiness string. NOT a restatement: the
    *              catch-all header says `Unrecognised` for every row in
    *              it, so the string that put a character there is stated
@@ -664,15 +736,34 @@
    * "timing unknown" is a real state, not a fallback: a queued
    * requirement with no finish date means EVE reported a paused queue,
    * and claiming an ETA from the rest would be a guess.
+   *
+   * Task 6's estimate carries the same discipline one status word
+   * further: `training_estimate_status` is one of Task 5's four real
+   * failure/success words ONLY when a plan is selected and the row's
+   * readiness could therefore be `Missing` at all -- the empty string
+   * means no estimate was ever asked for (Task 5's ruling), which
+   * controller._character_row can only pair with `Unscored`, never with
+   * `Missing`. The `? :` below is not defensive filler: it is what stops
+   * that empty string from ever being folded into "training time
+   * unavailable", a claim about a REAL failure, if that invariant ever
+   * moved.
    */
   function statusLine(ch) {
     if (ch.readiness === 'Training') {
+      var queued = ch.queued_count + ' queued';
       var eta = formatEta(ch.estimated_finish_utc);
-      return (ch.queue_timing_unknown || !eta) ? 'timing unknown' : eta;
+      return (ch.queue_timing_unknown || !eta)
+        ? queued + ' \u00b7 timing unknown'
+        : queued + ' \u00b7 ready in ' + eta;
     }
     if (ch.readiness === 'Missing') {
-      return ch.missing_count
-        + (ch.missing_count === 1 ? ' requirement' : ' requirements');
+      var unqueued = ch.missing_count + ' unqueued';
+      if (ch.training_estimate_status === 'available') {
+        return unqueued + ' \u00b7 ' + ch.training_remaining_label
+          + ' training remaining';
+      }
+      return ch.training_estimate_status ?
+        unqueued + ' \u00b7 training time unavailable' : unqueued;
     }
     if (GROUPS.indexOf(ch.readiness) !== -1) return '';
     return ch.readiness || '';
@@ -825,8 +916,20 @@
     // status at all that is a gap after the last thing on the line.
     var status = statusLine(ch);
     if (status) {
-      top.appendChild(
-        WM.make('span', 'skills-status status-' + ch.readiness, status));
+      var statusNode = WM.make('span', 'skills-status status-' + ch.readiness,
+                               status);
+      // Task 6. The info button beside the plan heading is the
+      // keyboard-reachable affordance for the assumptions behind this
+      // number; this carries the SAME text so a mouse resting on the
+      // number gets the same explanation without tabbing up to the
+      // header. Read off the button rather than retyped, so the two
+      // copies of this sentence cannot drift apart -- and only on
+      // Missing, whose status is the one that names a duration at all.
+      if (ch.readiness === 'Missing') {
+        var tip = WM.el('skills-estimate-info').getAttribute('data-tip');
+        if (tip) statusNode.setAttribute('data-tip', tip);
+      }
+      top.appendChild(statusNode);
     }
     top.addEventListener('click', function () { toggle(ch.character_id); });
     row.appendChild(top);

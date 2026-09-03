@@ -13,12 +13,15 @@ from types import SimpleNamespace
 import pytest
 
 from wingman.eveskills import application
+from wingman.eveskills import controller as controller_mod
 from wingman.eveskills import esi as esi_mod
+from wingman.eveskills import evaluator as evaluator_mod
 from wingman.eveskills import jwt as jwt_mod
 from wingman.eveskills import loopback as loopback_mod
 from wingman.eveskills import skillids as skillids_mod
 from wingman.eveskills import sso as sso_mod
 from wingman.eveskills import state as state_mod
+from wingman.eveskills import training as training_mod
 from wingman.eveskills.controller import SkillsController
 
 T0 = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
@@ -312,7 +315,25 @@ def esi_response(status, data=None, etag="", error="", path="/x/"):
 
 
 SKILLS_BODY = {
-    "skills": [{"skill_id": 3327, "active_skill_level": 4, "trained_skill_level": 5}]
+    "skills": [
+        {
+            "skill_id": 3327,
+            "active_skill_level": 4,
+            "trained_skill_level": 5,
+            "skillpoints_in_skill": 200000,
+        }
+    ]
+}
+# Exactly the five learning attributes the estimator needs. Real ESI sends
+# remap dates and counts alongside them; the parser drops those, and
+# `test_extra_attribute_fields_are_dropped_not_stored` pins that it must --
+# state.py only accepts a map that is exactly these five keys.
+ATTRIBUTES_BODY = {
+    "charisma": 19,
+    "intelligence": 20,
+    "memory": 20,
+    "perception": 27,
+    "willpower": 21,
 }
 QUEUE_BODY = [
     {
@@ -324,6 +345,34 @@ QUEUE_BODY = [
     }
 ]
 
+# Name -> dogma attribute id, inverted from skillids' own table rather than
+# retyped: a fixture that disagreed with the decoder would pass by
+# describing a response ESI never sends.
+_ATTRIBUTE_IDS = {name: aid for aid, name in skillids_mod.ATTRIBUTE_ID_TO_NAME.items()}
+
+
+def _type_body(rank: int, primary: str, secondary: str) -> dict:
+    """One /v3/universe/types/{id}/ body carrying a skill's training dogma.
+
+    275 is rank (skillTimeConstant); 180/181 are REFERENCES to one of the
+    five attribute ids, which is why the values here are ids and not the
+    attribute names the decoded metadata carries.
+    """
+    return {
+        "group_id": 255,
+        "dogma_attributes": [
+            {"attribute_id": skillids_mod.DOGMA_SKILL_TIME_CONSTANT, "value": rank},
+            {
+                "attribute_id": skillids_mod.DOGMA_PRIMARY_ATTRIBUTE,
+                "value": _ATTRIBUTE_IDS[primary],
+            },
+            {
+                "attribute_id": skillids_mod.DOGMA_SECONDARY_ATTRIBUTE,
+                "value": _ATTRIBUTE_IDS[secondary],
+            },
+        ],
+    }
+
 
 class FakeEsi:
     """Replays scripted responses per path suffix, and records every call.
@@ -334,11 +383,19 @@ class FakeEsi:
     these tests exist to catch.
     """
 
-    def __init__(self, skills=None, queue=None):
+    def __init__(self, skills=None, queue=None, attributes=None, types=None):
         self.skills = list(skills or [esi_response(200, SKILLS_BODY, etag='"s1"')])
         self.queue = list(queue or [esi_response(200, QUEUE_BODY, etag='"q1"')])
+        self.attributes = list(
+            attributes or [esi_response(200, ATTRIBUTES_BODY, etag='"a1"')]
+        )
+        # Public type details, keyed by type id rather than scripted in
+        # order: the metadata backfill fetches them concurrently, so there
+        # is no call order for a list to stand for.
+        self.types = dict(types or {})
         self.calls = []
         self.on_get = None
+        self.on_type = None
         self._hooked = False
 
     def get(self, path, *, token=None, etag=None):
@@ -346,7 +403,21 @@ class FakeEsi:
         if self.on_get is not None and not self._hooked:
             self._hooked = True  # Fires once, or the test never ends.
             self.on_get(path)
-        script = self.skills if path.endswith("/skills/") else self.queue
+        if "/universe/types/" in path:
+            # Checked first, and by id rather than by suffix: an unrouted
+            # type call would otherwise be answered by the queue script and
+            # silently look like a malformed type body.
+            if self.on_type is not None:
+                self.on_type(path)
+            type_id = int(path.rstrip("/").rsplit("/", 1)[-1])
+            assert type_id in self.types, f"unscripted ESI type call: {path}"
+            return self.types[type_id]
+        if path.endswith("/skills/"):
+            script = self.skills
+        elif path.endswith("/attributes/"):
+            script = self.attributes
+        else:
+            script = self.queue
         assert script, f"unscripted ESI call: {path}"
         return script.pop(0) if len(script) > 1 else script[0]
 
@@ -456,8 +527,10 @@ def test_the_running_pass_re_enters_when_one_was_requested_during_it(tmp_path):
 
     controller.refresh_characters()
 
-    # Two passes over the one character: two skills calls, two queue calls.
+    # Two passes over the one character: two skills calls, and (since both
+    # core halves succeed each time) two attributes calls behind them.
     assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
+    assert len([c for c in esi.calls if c[0].endswith("/attributes/")]) == 2
 
 
 def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
@@ -486,16 +559,28 @@ def test_a_request_that_arrives_during_a_pass_that_then_blows_up_is_not_dropped(
 
     # The failed pass's one (raising) skills call, plus a second pass that
     # runs to completion: the request was not dropped just because the
-    # first pass blew up instead of finishing cleanly.
+    # first pass blew up instead of finishing cleanly. Only the completed
+    # pass reaches the queue and the supplemental attributes call.
     assert len([c for c in esi.calls if c[0].endswith("/skills/")]) == 2
     assert len([c for c in esi.calls if c[0].endswith("skillqueue/")]) == 1
+    assert len([c for c in esi.calls if c[0].endswith("/attributes/")]) == 1
     assert controller._refresh_in_flight is False
     assert controller._refresh_again is False
 
 
 def with_snapshot(**kwargs):
     """A character that already has committed data, so a later refresh has
-    something to preserve or overwrite."""
+    something to preserve or overwrite.
+
+    skill_points/skill_points_complete default to a valid, complete map so
+    the stored skills_etag stays valid under from_dict's migration rule
+    (state.py: an ETag survives a load only alongside a complete SP map) -- keeping every existing conditional-request test representing a modern,
+    complete snapshot rather than a legacy one whose ETag load() would
+    silently discard. The attributes triplet defaults the same way and for
+    the same reason: a stored attributes ETag only survives a load beside a
+    valid map AND a timestamp, so a 304 test starting from anything less
+    would be testing the migration, not the conditional request.
+    """
     defaults = dict(
         character_id=95,
         character_name="Aiga Otsolen",
@@ -505,6 +590,11 @@ def with_snapshot(**kwargs):
         trained_levels={3327: 3},
         skills_etag='"old-s"',
         queue_etag='"old-q"',
+        skill_points={3327: 1000},
+        skill_points_complete=True,
+        attributes=dict(ATTRIBUTES_BODY),
+        attributes_fetched_utc=T0,
+        attributes_etag='"old-a"',
     )
     defaults.update(kwargs)
     return state_mod.Character(**defaults)
@@ -525,9 +615,10 @@ def run_refresh(tmp_path, esi, character=None, clock=None, **kwargs):
     return controller, pushed, clock
 
 
-def test_200_and_200_commits_both_halves(tmp_path):
-    """The ordinary path. fetched_utc moves, both etags are stored, and any
-    previous error is cleared."""
+def test_200_responses_commit_core_and_attributes(tmp_path):
+    """The ordinary path. fetched_utc moves, all three etags are stored, the
+    estimate inputs (SP and attributes) land with them, and any previous
+    error is cleared."""
     clock = Clock()
     clock.advance(3600)
     esi = FakeEsi()
@@ -539,6 +630,12 @@ def test_200_and_200_commits_both_halves(tmp_path):
     assert ch.active_levels == {3327: 4} and ch.trained_levels == {3327: 5}
     assert (ch.skills_etag, ch.queue_etag) == ('"s1"', '"q1"')
     assert row["error"] == "" and row["stale"] is False
+    assert ch.skill_points == {3327: 200000}
+    assert ch.skill_points_complete is True
+    assert ch.attributes == ATTRIBUTES_BODY
+    assert ch.attributes_etag == '"a1"'
+    assert ch.attributes_fetched_utc == clock.value
+    assert ch.attributes_error == ""
 
 
 def test_304_and_304_keeps_the_data_and_still_advances_fetched_utc(tmp_path):
@@ -571,6 +668,243 @@ def test_200_and_304_commits_the_fresh_half_and_keeps_the_stored_one(tmp_path):
     assert ch.error == ""
 
 
+def test_a_legacy_snapshot_refetches_skills_unconditionally(tmp_path):
+    """A document written before this package tracked SP has a skills ETag
+    and no SP. Sending that ETag would earn a 304 -- a confirmation that
+    levels already in hand are current -- and the SP that is missing would
+    never arrive, so the estimate would stay unavailable forever. state.py
+    drops such an ETag on load; this pins that the refresh built from that
+    load really does send an unconditional request and really does backfill.
+
+    Built from a document on disk rather than from a saved `Character`,
+    because the migration rule this depends on lives in `from_dict` and a
+    freshly constructed object never passes through it.
+    """
+    legacy = {
+        "version": 1,
+        "characters": [
+            {
+                "character_id": 95,
+                "character_name": "Aiga Otsolen",
+                "refresh_token_blob": "blob",
+                "fetched_utc": T0.isoformat(),
+                "active_levels": {"3327": 3},
+                "trained_levels": {"3327": 3},
+                "skills_etag": '"old-s"',
+                "queue_etag": '"old-q"',
+            }
+        ],
+    }
+    (tmp_path / "eve_skills.json").write_text(json.dumps(legacy), encoding="utf-8")
+    esi = FakeEsi()
+    controller, _, _ = build(tmp_path, client=esi, sso=FakeSso(), spawn=DirectSpawn())
+
+    controller.refresh_characters()
+
+    skills_calls = [c for c in esi.calls if c[0].endswith("/skills/")]
+    assert [c[2] for c in skills_calls] == [None], "no conditional header"
+    ch = controller._state.characters[0]
+    assert ch.skill_points == {3327: 200000}
+    assert ch.skill_points_complete is True
+    assert ch.skills_etag == '"s1"', "and the fresh ETag is worth keeping"
+
+
+def test_an_incomplete_sp_body_keeps_readiness_and_retries_unconditionally(tmp_path):
+    """The two halves of a skills response have different failure rules.
+    Levels stay tolerant -- one bad row costs one skill, which is all
+    readiness needs -- while SP is all-or-nothing, because a partial SP map
+    cannot say it is partial and would be summed into a confidently wrong
+    training estimate. The ETag goes with the SP: keeping it would earn a
+    304 next time and lock the character out of ever getting a complete
+    body."""
+    incomplete = {
+        "skills": [
+            {
+                "skill_id": 3327,
+                "active_skill_level": 4,
+                "trained_skill_level": 5,
+                "skillpoints_in_skill": 200000,
+            },
+            # Valid to the level parser, no SP at all: NOT zero SP.
+            {"skill_id": 3300, "active_skill_level": 2, "trained_skill_level": 2},
+        ]
+    }
+    esi = FakeEsi(
+        skills=[
+            esi_response(200, incomplete, etag='"s2"'),
+            esi_response(200, SKILLS_BODY, etag='"s3"'),
+        ]
+    )
+    controller, _, _ = run_refresh(tmp_path, esi)
+
+    ch = controller._state.characters[0]
+    assert ch.active_levels, "readiness levels still follow tolerant parsing"
+    assert ch.active_levels == {3327: 4, 3300: 2}
+    assert ch.skill_points == {}
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == "", "the next refresh must fetch another body"
+
+    controller.refresh_characters()
+
+    skills_calls = [c for c in esi.calls if c[0].endswith("/skills/")]
+    assert skills_calls[1][2] is None, "the retry is unconditional"
+    ch = controller._state.characters[0]
+    assert ch.skill_points == {3327: 200000}
+    assert ch.skill_points_complete is True
+    assert ch.skills_etag == '"s3"'
+
+
+def test_extra_attribute_fields_are_dropped_not_stored(tmp_path):
+    """ESI sends remap dates and counts alongside the five learning
+    attributes. state.py accepts a map that is EXACTLY the five, so storing
+    the response whole would load back as no attributes at all on the next
+    launch -- a refresh that looks successful and silently stops working
+    when the app restarts."""
+    esi = FakeEsi(
+        attributes=[
+            esi_response(
+                200,
+                dict(
+                    ATTRIBUTES_BODY,
+                    bonus_remaps=2,
+                    last_remap_date="2026-01-01T00:00:00Z",
+                    accrued_remap_cooldown_date="2026-02-01T00:00:00Z",
+                ),
+                etag='"a1"',
+            )
+        ]
+    )
+    controller, _, _ = run_refresh(
+        tmp_path,
+        esi,
+        # No stored attributes to fall back on, so this can only pass by
+        # actually parsing the response.
+        character=with_snapshot(
+            attributes={}, attributes_fetched_utc=None, attributes_etag=""
+        ),
+    )
+
+    assert controller._state.characters[0].attributes == ATTRIBUTES_BODY
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    assert reloaded.find(95).attributes == ATTRIBUTES_BODY
+
+
+def test_committed_estimate_inputs_survive_a_reload(tmp_path):
+    """Attributes and their timestamp are persisted as a pair, and state.py
+    loads them only when BOTH are valid. A commit that wrote one without the
+    other would look right in memory and come back empty next launch, which
+    is the failure mode nothing in memory can catch."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi()
+    run_refresh(tmp_path, esi, clock=clock)
+
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    ch = reloaded.find(95)
+    assert ch.attributes == ATTRIBUTES_BODY
+    assert ch.attributes_fetched_utc == clock.value
+    assert ch.attributes_etag == '"a1"'
+    assert ch.skill_points == {3327: 200000}
+    assert ch.skill_points_complete is True
+    assert ch.skills_etag == '"s1"'
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(esi_response(500, error="upstream"), id="server_error"),
+        pytest.param(esi_response(403, error="forbidden"), id="forbidden"),
+        pytest.param(
+            esi_response(200, {"charisma": 19}, etag='"a2"'), id="malformed_body"
+        ),
+    ],
+)
+def test_a_failed_attributes_call_still_commits_the_core_snapshot(tmp_path, response):
+    """Attributes are supplemental. Discarding a good skills-and-queue
+    refresh because a training estimate could not be computed would trade
+    the feature the route exists for against a number beside it -- and the
+    403 case would additionally delete a working refresh token, costing a
+    re-authentication for a request readiness never needed."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi(attributes=[response])
+    controller, pushed, _ = run_refresh(tmp_path, esi, clock=clock)
+
+    ch = controller._state.characters[0]
+    assert ch.active_levels == {3327: 4}, "the core snapshot still commits"
+    assert ch.skill_points == {3327: 200000}
+    assert ch.fetched_utc == clock.value
+    assert (ch.skills_etag, ch.queue_etag) == ('"s1"', '"q1"')
+    assert ch.error == "" and ch.needs_reauth is False
+    assert ch.refresh_token_blob == "refresh-1", "the grant is untouched"
+    assert controller.state_payload()["characters"][0]["stale"] is False
+    progress = [p for handler, p in pushed if handler == "onSkillsProgress"]
+    assert [p["error"] for p in progress] == [""], "not a per-character failure"
+    # Unusable for an estimate, and honest about why: the stored attributes
+    # are kept for recovery and diagnostics, but their confirmed time does
+    # NOT move, so nothing can pair them with the SP just downloaded.
+    assert ch.attributes_error
+    assert ch.attributes == ATTRIBUTES_BODY
+    assert ch.attributes_fetched_utc == T0
+    assert ch.attributes_fetched_utc < ch.fetched_utc
+
+
+def test_a_supplemental_failure_persists_beside_the_unmoved_pair(tmp_path):
+    """The failure has to outlive the process for the same reason the
+    success does: a restart that lost `attributes_error` would present a
+    stale attribute snapshot as if it had just been confirmed."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi(attributes=[esi_response(500, error="upstream")])
+    run_refresh(tmp_path, esi, clock=clock)
+
+    reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
+    ch = reloaded.find(95)
+    assert ch.attributes_error
+    assert ch.attributes == ATTRIBUTES_BODY
+    assert ch.attributes_fetched_utc == T0
+
+
+def test_a_304_attributes_response_reconfirms_the_stored_snapshot(tmp_path):
+    """Same rule as the core 304: nothing being modified is a successful
+    confirmation, not a skipped one. Without the stamp a character whose
+    attributes never change (most of them, most of the time) would drift
+    toward looking permanently unconfirmed."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi(attributes=[esi_response(304)])
+    controller, _, _ = run_refresh(
+        tmp_path,
+        esi,
+        character=with_snapshot(attributes_error="a previous fetch failed"),
+        clock=clock,
+    )
+
+    attribute_calls = [c for c in esi.calls if c[0].endswith("/attributes/")]
+    assert [c[2] for c in attribute_calls] == ['"old-a"'], "conditional request"
+    ch = controller._state.characters[0]
+    assert ch.attributes == ATTRIBUTES_BODY
+    assert ch.attributes_etag == '"old-a"', "a 304 carries no new etag"
+    assert ch.attributes_fetched_utc == clock.value
+    assert ch.attributes_error == "", "the stale failure is cleared"
+
+
+def test_an_attributes_200_without_an_etag_does_not_invent_one(tmp_path):
+    """An empty ETag header only means the next request is unconditional,
+    which is wasteful rather than wrong -- but clearing the stored one, or
+    keeping it as if it described this new body, would be either a wasted
+    request forever or a 304 answering for a body it never saw."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi(attributes=[esi_response(200, ATTRIBUTES_BODY)])
+    controller, _, _ = run_refresh(tmp_path, esi, clock=clock)
+
+    ch = controller._state.characters[0]
+    assert ch.attributes_etag == '"old-a"'
+    assert ch.attributes_fetched_utc == clock.value
+    assert ch.attributes_error == ""
+
+
 def test_a_failing_queue_call_commits_nothing_at_all(tmp_path):
     """THE critical rule. Current skills evaluated against a stale queue
     produce a Training verdict with an ETA drawn from a queue the character
@@ -587,11 +921,16 @@ def test_a_failing_queue_call_commits_nothing_at_all(tmp_path):
     assert ch.fetched_utc == T0, "fetched_utc must not move"
     assert ch.error and ch.needs_reauth is False
     assert controller.state_payload()["characters"][0]["stale"] is True
+    assert not [c for c in esi.calls if c[0].endswith("/attributes/")], (
+        "no snapshot is being committed, so the supplemental call has "
+        "nothing to attach to"
+    )
 
 
 def test_a_failing_skills_call_skips_the_queue_call_entirely(tmp_path):
     """Ported short-circuit. The queue result could not be committed on its
-    own, so spending the request only burns error-limit budget."""
+    own, so spending the request only burns error-limit budget -- and the
+    supplemental attributes call is skipped for the same reason."""
     esi = FakeEsi(skills=[esi_response(503, error="busy")])
     controller, _, _ = run_refresh(tmp_path, esi)
 
@@ -681,9 +1020,9 @@ def test_a_transient_oauth_error_keeps_the_token(tmp_path):
     assert ch.needs_reauth is False and ch.refresh_token_blob == "blob"
 
 
-def test_a_cached_token_is_reused_across_both_calls(tmp_path):
-    """Two ESI calls per character must not mean two token refreshes. At
-    forty characters that is forty wasted SSO round trips per click."""
+def test_a_cached_token_is_reused_across_every_call(tmp_path):
+    """Three ESI calls per character must not mean three token refreshes. At
+    forty characters that is eighty wasted SSO round trips per click."""
     sso = FakeSso()
     controller, _, _ = build(
         tmp_path,
@@ -718,7 +1057,8 @@ def test_a_401_forces_exactly_one_refresh_and_one_retry(tmp_path):
     assert len(skills_calls) == 2  # One 401, one retry.
     assert skills_calls[0][1] != skills_calls[1][1]  # A different token.
     # Two refreshes total: the initial mint, and the one the 401 forced.
-    # The queue call that follows reuses the second and adds none.
+    # The queue and attributes calls that follow reuse the second and add
+    # none.
     assert len(sso.refreshes) == 2
 
 
@@ -735,7 +1075,7 @@ def test_an_expiring_token_is_refreshed_before_it_is_used(tmp_path):
     )
     controller.refresh_characters()
 
-    assert len(sso.refreshes) == 2, "the second call must not reuse it"
+    assert len(sso.refreshes) == 3, "the later calls must not reuse it"
 
 
 def test_omitted_refresh_token_does_not_wipe_the_stored_one(tmp_path):
@@ -1048,7 +1388,11 @@ def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
     controller, _, _ = build(
         tmp_path,
         characters=[with_snapshot()],
-        client=FakeEsi(),
+        # A name resolved in this pass has no training metadata yet, so the
+        # backfill that runs behind resolution asks for its type detail.
+        client=FakeEsi(
+            types={3327: esi_response(200, _type_body(1, "perception", "willpower"))}
+        ),
         sso=FakeSso(),
         spawn=DirectSpawn(),
         plans={"Interceptor": "Navigation V\n"},
@@ -1332,7 +1676,23 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
     controller, _, _alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
-        characters=[with_snapshot(owner_hash="hash-1")],
+        characters=[
+            with_snapshot(
+                owner_hash="hash-1",
+                skill_points={3327: 1000},
+                skill_points_complete=True,
+                attributes={
+                    "charisma": 19,
+                    "intelligence": 20,
+                    "memory": 20,
+                    "perception": 27,
+                    "willpower": 21,
+                },
+                attributes_fetched_utc=T0,
+                attributes_error="",
+                attributes_etag='"old-attrs"',
+            )
+        ],
         validate_token=lambda *a, **k: IDENTITY,
     )
 
@@ -1342,6 +1702,17 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
     found = reloaded.find(95)
     assert found.active_levels == {3327: 3}
     assert found.error == ""
+    assert found.skill_points == {3327: 1000}
+    assert found.skill_points_complete is True
+    assert found.attributes == {
+        "charisma": 19,
+        "intelligence": 20,
+        "memory": 20,
+        "perception": 27,
+        "willpower": 21,
+    }
+    assert found.attributes_fetched_utc == T0
+    assert found.attributes_etag == '"old-attrs"'
 
 
 def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
@@ -1350,7 +1721,23 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     controller, _, _, _, _ = build_auth(
         tmp_path,
         monkeypatch,
-        characters=[with_snapshot(owner_hash="old-hash")],
+        characters=[
+            with_snapshot(
+                owner_hash="old-hash",
+                skill_points={3327: 1000},
+                skill_points_complete=True,
+                attributes={
+                    "charisma": 19,
+                    "intelligence": 20,
+                    "memory": 20,
+                    "perception": 27,
+                    "willpower": 21,
+                },
+                attributes_fetched_utc=T0,
+                attributes_error="",
+                attributes_etag='"old-attrs"',
+            )
+        ],
         validate_token=lambda *a, **k: IDENTITY,
     )
 
@@ -1364,6 +1751,12 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
     assert found.fetched_utc is None
     assert found.skills_etag == ""
     assert found.queue_etag == ""
+    assert found.skill_points == {}
+    assert found.skill_points_complete is False
+    assert found.attributes == {}
+    assert found.attributes_fetched_utc is None
+    assert found.attributes_error == ""
+    assert found.attributes_etag == ""
     assert found.error == (
         "Character ownership changed; cached skill data was cleared."
     )
@@ -2115,3 +2508,365 @@ def test_a_failed_delete_restores_members_and_selection_together(tmp_path, monke
     assert payload["groups"] == [{"name": "Wolfpack", "member_count": 1}]
     assert payload["selected_group"] == "Wolfpack"
     assert alerts and alerts[-1][0] == "warning"
+
+
+# ----- training metadata backfill and estimates -------------------------
+
+GUNNERY_ID = 3300
+# Gunnery V at rank 1 is 256,000 SP. with_snapshot's attributes give
+# perception 27 / willpower 21, which is the Omega rate 27 + 21/2 = 37.5
+# SP per minute: 256000 / 37.5 = 6826.67 minutes = 409,600 seconds, which
+# rounds to the two-unit label below. Written out rather than recomputed
+# from training.py's own formula, which would only assert that the code
+# agrees with itself.
+GUNNERY_V_SECONDS = 409600
+GUNNERY_V_LABEL = "4d 17h"
+
+
+def _meta(fetched_utc):
+    """Gunnery's decoded training metadata, stamped when the caller says."""
+    return training_mod.SkillTrainingMetadata(1, "perception", "willpower", fetched_utc)
+
+
+def _estimate_character(**kwargs):
+    """with_snapshot(), but with nothing trained and nothing queued.
+
+    The plan's target is then entirely untrained, so the estimate under
+    test is the whole skill rather than an arbitrary remainder.
+    """
+    defaults = dict(active_levels={}, trained_levels={}, skill_points={}, queue=())
+    defaults.update(kwargs)
+    return with_snapshot(**defaults)
+
+
+def _estimating(
+    tmp_path,
+    character=None,
+    *,
+    plan="Gunnery V\n",
+    selected="Gunnery",
+    metadata=T0,
+    clock=None,
+):
+    """A controller holding every estimate input, so a test varies one.
+
+    `metadata=None` leaves the id cache enriched with nothing, which is the
+    "never backfilled" case; any other value is the stamp the metadata
+    carries, so an expired record is one argument away.
+    """
+    clock = clock or Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    controller, _, _ = build(
+        tmp_path,
+        characters=[character if character is not None else _estimate_character()],
+        plans={"Gunnery": plan},
+        selected=selected,
+        now=clock,
+    )
+    if metadata is not None:
+        assert controller._cache.merge_metadata({GUNNERY_ID: _meta(metadata)}) == 1
+    return controller
+
+
+def _estimate_row(controller):
+    return controller.state_payload()["characters"][0]
+
+
+def test_metadata_backfill_enriches_an_id_only_cache_entry(tmp_path):
+    """Ids were resolved long before training metadata existed, so a real
+    user's cache is entirely id-only. Without a backfill pass their
+    estimates would stay unavailable forever -- resolve() never revisits a
+    name it has already answered."""
+    clock = Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    esi = FakeEsi(
+        types={GUNNERY_ID: esi_response(200, _type_body(1, "perception", "willpower"))}
+    )
+    controller, _, _ = run_refresh(
+        tmp_path,
+        esi,
+        character=_estimate_character(),
+        clock=clock,
+        plans={"Gunnery": "Gunnery V\n"},
+        selected="Gunnery",
+    )
+
+    assert controller._cache.get("Gunnery") == GUNNERY_ID
+    assert controller._cache.training_metadata(clock.value)[GUNNERY_ID].rank == 1
+    # Saved in the same lock hold, or the next launch pays for it again.
+    reloaded, warnings = skillids_mod.load(tmp_path / "eve_skills_cache.json")
+    assert warnings == []
+    assert reloaded.training_metadata(clock.value)[GUNNERY_ID].rank == 1
+
+
+def test_metadata_backfill_publishes_every_answer_or_none(tmp_path):
+    """A payload built halfway through a two-type backfill would score one
+    plan skill with an estimate and the other without, so the row would
+    show a number that is confidently too small. The fetch is staged and
+    merged once, and it happens with the state lock released."""
+    clock = Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID, "navigation": NAVIGATION_ID})
+    esi = FakeEsi(
+        types={
+            GUNNERY_ID: esi_response(200, _type_body(1, "perception", "willpower")),
+            NAVIGATION_ID: esi_response(200, _type_body(1, "intelligence", "memory")),
+        }
+    )
+    controller = None
+    observed = []
+    lock_free = []
+    # The probes themselves are serialized. Two of them run concurrently on
+    # the fetch's worker threads, and one probe holding the state lock
+    # would make the other's non-blocking acquire fail -- reporting the
+    # test's own instrumentation as the production bug it is looking for.
+    probe_gate = threading.Lock()
+
+    def observe(path):
+        # Runs on the backfill's own worker threads, i.e. WHILE it is in
+        # flight. A lock it cannot take here is a lock the fetch is holding
+        # across the network, which is the rule this asserts rather than
+        # hangs on.
+        with probe_gate:
+            taken = controller._lock.acquire(blocking=False)
+            lock_free.append(taken)
+            if not taken:
+                # Return, do not read the payload: state_payload() takes
+                # the same lock BLOCKING, and the thread that already
+                # holds it is waiting on this pool to finish -- so the
+                # regression this test exists to catch would hang the
+                # suite instead of failing it. The assertion below is what
+                # reports it.
+                return
+            try:
+                # Both reads happen under the lock this probe just proved
+                # was free: a merge cannot land between the payload and
+                # the count, so a half-merged pass cannot be sampled as a
+                # whole one.
+                controller.state_payload()
+                observed.append(len(controller._cache.training_metadata(clock.value)))
+            finally:
+                controller._lock.release()
+
+    controller, _, _ = build(
+        tmp_path,
+        characters=[_estimate_character()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+        now=clock,
+        plans={"Gunnery": "Gunnery V\nNavigation I\n"},
+        selected="Gunnery",
+    )
+    esi.on_type = observe
+
+    controller.refresh_characters()
+
+    assert lock_free == [True, True], "the fetch held the state lock across ESI"
+    assert len(observed) == 2
+    assert set(observed) <= {0, 2}  # never one entry of a two-entry merge
+    assert len(controller._cache.training_metadata(clock.value)) == 2
+
+
+def test_metadata_backfill_failure_only_stops_the_estimate(tmp_path):
+    """Public metadata is not character data. A type call that fails must
+    leave readiness -- the answer the whole screen exists for -- exactly
+    where a successful refresh put it."""
+    clock = Clock()
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    esi = FakeEsi(types={GUNNERY_ID: esi_response(500, error="upstream")})
+    controller, _, _ = run_refresh(
+        tmp_path,
+        esi,
+        character=_estimate_character(),
+        clock=clock,
+        plans={"Gunnery": "Gunnery V\n"},
+        selected="Gunnery",
+    )
+
+    row = _estimate_row(controller)
+    assert (row["readiness"], row["missing_count"]) == ("Missing", 1)
+    assert row["error"] == "" and row["stale"] is False
+    assert row["training_remaining_seconds"] is None
+    assert row["training_remaining_label"] == ""
+    assert row["training_estimate_status"] == training_mod.METADATA_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("age", "expected_calls"),
+    [
+        pytest.param(timedelta(0), 0, id="fresh"),
+        pytest.param(skillids_mod.METADATA_MAX_AGE, 1, id="expired"),
+    ],
+)
+def test_metadata_backfill_spends_a_request_only_on_an_aged_record(
+    tmp_path, age, expected_calls
+):
+    """Thirty days of freshness is the point of caching it at all: a
+    refresh that re-fetched every plan skill's type detail would spend one
+    public request per skill, per click, forever. Both directions are
+    asserted together -- a backfill that never fired would satisfy the
+    fresh case for entirely the wrong reason."""
+    clock = Clock()
+    esi = FakeEsi(
+        types={GUNNERY_ID: esi_response(200, _type_body(1, "perception", "willpower"))}
+    )
+    _seed_cache(tmp_path, {"gunnery": GUNNERY_ID})
+    controller, _, _ = build(
+        tmp_path,
+        characters=[_estimate_character()],
+        client=esi,
+        sso=FakeSso(),
+        spawn=DirectSpawn(),
+        now=clock,
+        plans={"Gunnery": "Gunnery V\n"},
+        selected="Gunnery",
+    )
+    controller._cache.merge_metadata({GUNNERY_ID: _meta(clock.value - age)})
+
+    controller.refresh_characters()
+
+    assert len([c for c in esi.calls if "/universe/types/" in c[0]]) == expected_calls
+    # Either way the record ends the pass fresh and usable, so the estimate
+    # an expired record suppressed is restored by the same refresh.
+    assert _estimate_row(controller)["training_estimate_status"] == (
+        training_mod.AVAILABLE
+    )
+
+
+def test_training_remaining_is_published_for_the_selected_plan(tmp_path):
+    """The whole feature: raw seconds for the page to sort on, a formatted
+    label for it to print, and a status word that says which."""
+    controller = _estimating(tmp_path)
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] == GUNNERY_V_SECONDS
+    assert row["training_remaining_label"] == GUNNERY_V_LABEL
+    assert row["training_estimate_status"] == training_mod.AVAILABLE
+
+
+def test_training_remaining_needs_a_complete_sp_snapshot(tmp_path):
+    """A partial SP map reads every absent skill as zero, which inflates
+    the estimate rather than admitting it does not know."""
+    controller = _estimating(tmp_path, _estimate_character(skill_points_complete=False))
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_remaining_label"] == ""
+    assert row["training_estimate_status"] == training_mod.REFRESH_REQUIRED
+
+
+def test_training_remaining_needs_attributes_that_were_confirmed(tmp_path):
+    """Attributes carry their own freshness. An unconfirmed set beside
+    newly refreshed SP is exactly the silent mismatch the supplemental
+    timestamp exists to prevent."""
+    controller = _estimating(tmp_path)
+    controller._state.characters[0].attributes_fetched_utc = None
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.ATTRIBUTES_UNAVAILABLE
+
+
+def test_training_remaining_needs_attributes_that_did_not_fail(tmp_path):
+    """A recorded attributes_error means the stored map is last-known, not
+    current, so it must not feed a number the row presents as a fact."""
+    controller = _estimating(
+        tmp_path,
+        _estimate_character(attributes_error=controller_mod.MSG_ATTRIBUTES_UNREADABLE),
+    )
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.ATTRIBUTES_UNAVAILABLE
+
+
+def test_the_attributes_error_text_never_reaches_the_payload(tmp_path):
+    """attributes_error carries transport wording and can carry the
+    re-authenticate message for a scope-shaped 403 -- on a character whose
+    core refresh succeeded and whose token is fine. Putting that on the
+    roster would tell the user to fix an account that is not broken."""
+    controller = _estimating(
+        tmp_path, _estimate_character(attributes_error=controller_mod.MSG_REAUTH)
+    )
+
+    payload = controller.state_payload()
+
+    assert controller_mod.MSG_REAUTH not in json.dumps(payload, default=str)
+    assert payload["characters"][0]["needs_reauth"] is False
+    assert (
+        payload["characters"][0]["training_estimate_status"]
+        == training_mod.ATTRIBUTES_UNAVAILABLE
+    )
+
+
+def test_training_remaining_needs_metadata_that_was_resolved(tmp_path):
+    controller = _estimating(tmp_path, metadata=None)
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.METADATA_UNAVAILABLE
+
+
+def test_training_remaining_needs_metadata_that_has_not_expired(tmp_path):
+    """Expiry has to be enforced where the estimate is READ, not only where
+    the backfill decides what to fetch: a refresh that failed to renew an
+    aged record must not leave the last render's number standing."""
+    controller = _estimating(tmp_path, metadata=T0 - skillids_mod.METADATA_MAX_AGE)
+
+    row = _estimate_row(controller)
+
+    assert row["training_remaining_seconds"] is None
+    assert row["training_estimate_status"] == training_mod.METADATA_UNAVAILABLE
+
+
+def test_training_remaining_includes_queued_requirements(tmp_path):
+    """Queued is not trained. The SP is still owed, so it stays in the
+    duration -- and estimated_finish_utc stays EVE's own queue fact rather
+    than being recomputed from it."""
+    finish = T0 + timedelta(days=2)
+    queued = _estimate_character(
+        queue=(evaluator_mod.QueueEntry(GUNNERY_ID, 5, T0, finish, 0),)
+    )
+    controller = _estimating(tmp_path, queued)
+
+    row = _estimate_row(controller)
+
+    assert (row["readiness"], row["queued_count"]) == ("Training", 1)
+    assert row["training_remaining_seconds"] == GUNNERY_V_SECONDS
+    assert row["estimated_finish_utc"] == finish.isoformat()
+
+
+def test_training_remaining_is_zero_for_a_target_already_trained(tmp_path):
+    """Trained-but-inactive is an Omega lapse, not missing SP: the skill is
+    paid for, so it contributes no training time even though the row is not
+    Ready."""
+    trained = _estimate_character(
+        trained_levels={GUNNERY_ID: 5},
+        skill_points={GUNNERY_ID: training_mod.skill_point_threshold(1, 5)},
+    )
+    controller = _estimating(tmp_path, trained)
+
+    row = _estimate_row(controller)
+
+    assert row["trained_inactive_count"] == 1
+    assert row["training_remaining_seconds"] == 0
+    assert row["training_remaining_label"] == "0m"
+    assert row["training_estimate_status"] == training_mod.AVAILABLE
+
+
+def test_training_remaining_is_empty_with_no_plan_selected(tmp_path):
+    """Nothing was asked for, so nothing is unavailable. The row keeps its
+    existing Unscored shape and the estimate fields are simply empty."""
+    controller = _estimating(tmp_path, selected="")
+
+    row = _estimate_row(controller)
+
+    assert row["readiness"] == "Unscored"
+    assert row["training_remaining_seconds"] is None
+    assert row["training_remaining_label"] == ""
+    assert row["training_estimate_status"] == ""
