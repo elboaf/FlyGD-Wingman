@@ -52,7 +52,9 @@ Character names truncate with an ellipsis. DPS uses tabular monospace figures. H
 
 The full surface is a drag region. The bar is display-only: it does not activate clients, clear effects, or expose row actions. Text selection is disabled so dragging remains predictable.
 
-The page measures its laid-out dimensions and asks Python to fit the native window, following the signature bar's safe resize pattern. Dynamic height changes retain the user's chosen anchor as far as possible while clamping Wingman's own window into the nearest monitor work area. A disconnected monitor must not strand the bar off-screen.
+The page measures its laid-out dimensions and asks Python to fit the native window, following the signature bar's safe resize pattern. Python obtains the nearest monitor with `MonitorFromRect` and its physical work area with `GetMonitorInfoW.rcWork`, then converts that rectangle to the logical units pywebview uses with the process's system scale.
+
+On every fit, Wingman derives horizontal and vertical anchors from whichever work-area edges are nearest to the window's pre-fit rectangle. It preserves those edge distances while applying the new dimensions, then clamps the complete rectangle inside the work area. Deriving the anchor again from persisted `x` and `y` on restore avoids another persisted setting. If content ever exceeds a work area, the window is capped to that work area, placed at its top-left, and the page permits vertical wheel scrolling as a defensive fallback; the supported one-to-ten-client layout must fit without scrolling at the smallest work area covered by the smoke pass. After monitor removal, the nearest remaining work area is selected and at least a 32 by 32 logical-pixel drag region remains visible even if native geometry prevents a full clamp.
 
 ### Empty and degraded states
 
@@ -75,6 +77,8 @@ The section contains one wrapped checkbox using the standard `.check` and `.box`
 
 A quick show/hide button sits in the main status strip beside the signature-bar button. The Settings checkbox and quick button reflect the same persisted state and update together. Enabling the fleet bar does not enable preview thumbnails, alerts, sounds, or alert flashes.
 
+The extra 44-pixel button is not assumed to fit mechanically. Implementation must measure the status strip at both known 839/840 CSS-pixel floors with both quick buttons, the full EVE segment, maximum representative status text, a visible percentage, and active upload progress. Upload status and progress have priority, followed by the two quick controls. The EVE readout is the first segment that yields, matching its existing priority; if flex shrink would clip it into misleading partial values, a measured reachable rule hides the complete EVE readout for that stressed state instead. The verification records the chosen breakpoint and resulting progress-track width.
+
 No additional user-facing preferences ship in the first release.
 
 ## Architecture
@@ -83,13 +87,17 @@ No additional user-facing preferences ship in the first release.
 
 Client discovery becomes reusable infrastructure rather than an inseparable part of preview rendering.
 
-A client-discovery service owns the periodic Windows scan and publishes immutable roster snapshots containing the identity needed by consumers, including HWND, PID, and the title-derived logged-in character name. It preserves the repository's existing EVE window acceptance and identity rules.
+A client-discovery service owns read-only EVE-window enumeration and publishes immutable roster snapshots containing a monotonically increasing generation plus each client's HWND, PID, and title-derived logged-in character name. It preserves the repository's existing window acceptance and identity rules. A client session is identified by `(HWND, PID, character, first_seen_generation)`, where `first_seen_generation` remains stable while that tuple remains continuously present. A changed HWND/PID or a name disappearing and returning creates a new session for Fleet Metrics; an ordinary unchanged scan does not.
+
+The service runs its scans on one owned execution context. Its ordinary cadence remains no slower than the current 700 milliseconds while Previews is enabled. The Preview foreground hook requests an immediate shared discovery sweep rather than directly reconciling windows, preserving the current low-latency foreground behavior.
 
 Consumers include:
 
 - Preview rendering, only when Previews is enabled.
 - Alert focus and roster behavior where currently required.
 - Fleet Metrics, whenever the fleet bar is enabled.
+
+A Preview adapter posts each discovery snapshot onto `PreviewHost`'s Win32 message pump. Preview reconciliation, identity continuity, selection, EVE show-state calls, and preview-HWND mutation continue only on that pump. The adapter records the latest applied generation and rejects stale or duplicate snapshots, so a delayed ordinary scan cannot overwrite a newer foreground-triggered scan. Consumer callbacks never reconcile Preview state directly on the discovery execution context.
 
 Starting discovery for the fleet bar must not create preview windows, register preview-only behavior, or make Alerts eligible. Generic character-selection titles remain unnamed and do not produce fleet rows. Characters excluded from preview thumbnails still appear in fleet snapshots when their logged-in clients are running.
 
@@ -105,14 +113,24 @@ One generalized gamelog stream owns:
 - Replay prevention when folders or files disappear and return.
 - Timestamp parsing and semantic fact publication.
 
-The stream runs whenever Alerts or Fleet Bar needs it. Enabling one consumer does not alter the other's setting or policy.
+Selection or retirement of a source emits an immutable lifecycle snapshot before any facts for the corresponding generation. It contains the stream generation, character, normalized path/file identity, UTC session start, availability, and active/retired state. Every semantic fact carries that same source generation and file identity. Source lifecycle snapshots and facts travel through one serialized dispatcher, preserving their order. Facts buffered from a retired or superseded generation are discarded.
+
+The coordinator stamps roster snapshots, source lifecycle snapshots, and facts with one monotonically increasing telemetry sequence before serialized consumer delivery. When a newly identified client session arrives, it requests a fresh publication of that character's current source lifecycle state, including an unavailable state when no source exists. Fleet Metrics binds the client only to a source lifecycle envelope sequenced after that session's first roster envelope. This establishes ordering across the otherwise independent roster and stream generations without treating every roster scan as a new session.
+
+The stream's runtime predicate is exactly:
+
+```text
+fleet_bar.enabled || (preview.enabled && preview.alerts.enabled)
+```
+
+A valid Gamelogs folder is still required before the worker polls. The first term permits fleet-only telemetry. Only the second term makes Alert policy eligible, preserving the existing rule that Alerts are inert when Previews is disabled. Enabling one consumer does not alter the other's setting or policy.
 
 The stream emits timestamped facts rather than alert decisions. Existing incoming damage, miss, tackle, and decloak facts continue feeding Alert policy without changing their behavior. The additional facts needed by this feature are:
 
 ```text
-outgoing_damage(character, occurred_at, amount)
-incoming_tackle(character, observed_at)
-incoming_jam(character, observed_at)
+outgoing_damage(character, source_generation, source_id, occurred_at, amount)
+incoming_tackle(character, source_generation, source_id, occurred_at)
+incoming_jam(character, source_generation, source_id, occurred_at)
 ```
 
 Alert policy remains responsible for cooldowns, sounds, flashes, persistence, foreground suppression, and PvE filtering. Fleet Metrics does not consume post-policy alert events because disabled alerts and cooldowns must not suppress combat state.
@@ -127,10 +145,12 @@ For each character, it owns:
 
 - A bounded deque of recent outgoing damage facts.
 - Monotonic EWAR expiry deadlines.
-- Whether an attributable current gamelog is available.
-- The current client session identity needed to prevent relog carry-over.
+- The active client-session identity and latest roster generation.
+- The active log-source generation, file identity, UTC session start, and availability.
 
-It joins state against the current named-client roster and emits case-insensitively alphabetized rows. Removing a client immediately removes its row and clears that session's accumulated metrics. A rapid relog begins cleanly.
+A row enters observed state only after the current client session receives an active log-source lifecycle envelope whose telemetry sequence follows that session's first roster envelope. Until then it reports `NO LOG`. A changed client-session identity or log-source generation clears the deque and EWAR deadlines before accepting new facts. A fact is accepted only when its source generation and identity equal the row's current active source and its telemetry sequence is newer than that source's lifecycle envelope; delayed facts from retired sources are ignored. Older roster, source, or fact envelopes cannot roll either side of the join backward.
+
+It joins state against the current named-client roster and emits case-insensitively alphabetized rows. Removing a client immediately removes its row and clears that session's accumulated metrics. A rapid relog begins cleanly and remains `NO LOG` until the stream publishes its matching active source.
 
 ### Fleet-bar controller and WebView
 
@@ -142,9 +162,11 @@ The window follows the established signature-bar constraints:
 - Underscore-prefixed references on `Api`.
 - `frameless=True`, `on_top=True`, `easy_drag=False`.
 - Explicit minimum native size.
-- Hidden creation followed by initial state, fit, and reveal.
+- Hidden creation followed by a page-driven readiness handshake.
 - No pywebview `shown` or `moved` handlers.
 - Position saved from page `mouseup`, not native move events.
+
+The hidden page waits for `pywebviewready` and `document.fonts.ready`, then calls a fleet-bar readiness endpoint and receives the current complete snapshot as its response. After rendering, it sends its measured dimensions with a boot token to the fit endpoint. Python resizes the native client area, applies work-area anchoring/clamping, and reveals the window only after those operations succeed. A native-not-ready response leaves the window hidden and causes bounded page-side fit retries; no arbitrary reveal timer is used. Subsequent pushes begin only after the controller marks that boot token ready, so an early dropped global-handler push cannot create an empty first frame.
 
 Fleet updates are sent only to the fleet window. They are not added to the main page or signature bar's generic push fan-out. The standalone page registers plain global handlers and does not load the main page shell.
 
@@ -160,19 +182,21 @@ sum(outgoing damage with timestamp in (now - 10 seconds, now]) / 10
 
 The denominator is always ten seconds. Quiet time is part of the window. This prevents the first volley from being presented as an inflated one-second rate and makes values comparable across characters.
 
-The EVE log timestamp places damage in the window. Reading time is not used because filesystem buffering can deliver several older lines in one batch and create a false spike. Events outside the valid current session or replay horizon are rejected.
+The parser accepts the EVE line prefix exactly as `[ YYYY.MM.DD HH:MM:SS ]`, with flexible surrounding whitespace but fixed numeric field widths and separators, and constructs a timezone-aware UTC `datetime`. Reading time is not used because filesystem buffering can deliver several older lines in one batch and create a false spike.
+
+Fleet Metrics receives an injected UTC wall clock as well as its monotonic clock. At ingestion, damage older than ten seconds is ignored. A timestamp up to two seconds ahead of the injected UTC clock is clamped to `now` to tolerate one-second log precision and polling boundaries; a timestamp further in the future is rejected and recorded in stream health. A malformed or missing timestamp suppresses only the metric fact: body parsing still feeds the existing Alert policy using observed ingestion time, so a timestamp defect cannot silence an alert. Source generation/session checks apply before this horizon check.
 
 Snapshots continue every second without new lines so values decay and reach zero. Values display as rounded whole numbers. Outgoing player and NPC damage are both included; the Alerts PvE filter does not affect Fleet Metrics.
 
 ### Incoming tackle
 
-An attributable `Warp scramble attempt` or `Warp disruption attempt` refreshes one combined `SCRAM/POINT` state for that character. The state expires eight seconds after the latest matching event using a monotonic deadline.
+An attributable `Warp scramble attempt` or `Warp disruption attempt` emits an `occurred_at` from the parsed UTC line timestamp. On ingestion, Fleet Metrics computes `remaining = occurred_at + 8 seconds - utc_now`. A non-positive remainder is ignored; a positive remainder is capped at eight seconds and converted to `monotonic_now + remaining`. A delayed filesystem read therefore cannot grant an old tackle event a fresh lifetime.
 
-The tag reports the best state the gamelog supports, not confirmed server-side application. Existing fleet-broadcast ownership checks remain mandatory so one pilot's tackle does not appear on every row.
+The combined `SCRAM/POINT` state expires at that monotonic deadline and refreshes only from a newer accepted fact for the active source generation. The tag reports the best state the gamelog supports, not confirmed server-side application. Existing fleet-broadcast ownership checks remain mandatory so one pilot's tackle does not appear on every row.
 
 ### Successful ECM jam
 
-`JAM` expires 22 seconds after the latest verified successful-jam event using a monotonic deadline.
+A verified successful-jam fact carries its parsed UTC `occurred_at`. Fleet Metrics converts the unexpired portion of `occurred_at + 22 seconds` to a capped monotonic deadline using the same injected-clock rule as tackle; delayed or already-expired jam lines do not create a fresh state. `JAM` expires at that deadline.
 
 JAM is a release-gated capability. It ships only when a real sample demonstrates all of the following:
 
@@ -213,14 +237,17 @@ The EVE-tools visibility guard treats an enabled fleet bar as active EVE functio
 
 A coordinator reconciles infrastructure against active consumers:
 
-- Client discovery is wanted by Preview rendering, Alerts where needed, or Fleet Bar.
-- Gamelog streaming is wanted by Alerts or Fleet Bar.
+- Client discovery runs when `preview.enabled || fleet_bar.enabled`.
+- Gamelog streaming runs when `fleet_bar.enabled || (preview.enabled && preview.alerts.enabled)`, provided the configured folder resolves.
+- Alert dispatch runs only when `preview.enabled && preview.alerts.enabled`.
 - Consumers attach and detach independently.
 - Infrastructure starts once on the first consumer and stops after the final consumer detaches.
 
-Published roster, fact, and metric snapshots are immutable. Callbacks crossing from discovery or gamelog threads must catch consumer exceptions so one failed UI push cannot terminate a polling or Win32 message thread.
+An enabled-but-inert Alerts preference therefore starts no work and plays no sound while Previews is disabled. Fleet-only mode starts the shared discovery and stream but never attaches Alert policy or Preview rendering.
 
-At application startup, persisted runtime consumers are reconciled before auxiliary windows need their first state. Auxiliary WebViews are created only after pywebview's main loop is running. The fleet bar is restored hidden, receives a complete snapshot, fits, and then appears.
+Published roster, source-lifecycle, fact, and metric snapshots are immutable and generation-bearing. Callbacks crossing from discovery or gamelog threads must catch consumer exceptions so one failed UI push cannot terminate a polling or Win32 message thread. Each consumer processes its inputs on one serialized context; the Preview adapter additionally posts onto the existing Win32 pump.
+
+At application startup, persisted runtime consumers are reconciled before auxiliary windows need their first state. Auxiliary WebViews are created only after pywebview's main loop is running. The fleet bar is restored hidden and uses the page-driven snapshot/render/fit/reveal handshake defined above.
 
 On quit, the fleet bar and signature bar are destroyed before the main WebView. This ordering is mandatory because pywebview's WinForms loop remains alive while any auxiliary window survives. Shared workers stop and join after their consumers detach, preserving the existing non-daemon shutdown guarantees.
 
@@ -246,6 +273,7 @@ Window creation, show, resize, move, and push failures are contained and logged.
 ### Pure behavior
 
 - Real fixtures for outgoing direct and drone damage.
+- Exact `[ YYYY.MM.DD HH:MM:SS ]` UTC parsing, whitespace, invalid dates, future skew, delayed ingestion, and horizon rejection.
 - Amount parsing, separators, markup, malformed and partial lines.
 - Existing tackle ownership, including third-party fleet-broadcast copies.
 - Successful ECM parsing and attribution only if the real fixture gate is met.
@@ -254,12 +282,14 @@ Window creation, show, resize, move, and push failures are contained and logged.
 - One-second idle decay to zero.
 - Tackle refresh and eight-second expiry.
 - Jam refresh and 22-second expiry if enabled.
-- Roster join, case-insensitive ordering, preview-excluded inclusion, and relog clearing.
+- Roster/source generation ordering, stale snapshot rejection, case-insensitive ordering, preview-excluded inclusion, `NO LOG` transitions, and relog clearing.
 - NPC and player damage/EWAR inclusion.
 
 ### Shared infrastructure
 
 - One discovery scan fans out to independent consumers.
+- Ordinary 700-millisecond and foreground-triggered discovery paths carry ordered generations.
+- Preview reconciliation is posted to its Win32 pump; stale discovery callbacks cannot mutate it.
 - Fleet-only mode creates no preview thumbnails and activates no alert policy.
 - One gamelog cursor feeds Alerts and Fleet Metrics.
 - First-scan EOF baseline prevents history replay.
@@ -273,10 +303,12 @@ Window creation, show, resize, move, and push failures are contained and logged.
 - Defaults, validation, normalization, round-trip persistence, and malformed data.
 - Independent fleet and signature bar settings and positions.
 - Synchronized Settings and status-strip toggles.
+- A measured 839/840 CSS-pixel status-strip case with both quick buttons, full EVE readout, maximum representative status text, percentage, and active progress; the documented yield order produces no partial values or clipped controls.
 - EVE-tools visibility guard.
 - Targeted fleet pushes do not fan out to unrelated pages.
 - Standalone handler names and packaged web assets.
-- Fit deduplication/retry behavior and work-area clamping.
+- Page readiness, snapshot response, fit retry, reveal token, and no-empty-first-frame behavior.
+- Physical work-area conversion, derived edge anchoring, full clamp, monitor removal, minimum visible drag region, and oversized fallback.
 - Empty and degraded states.
 - Creation/show failures revert controls honestly.
 - Restore after startup and auxiliary-before-main shutdown order.
@@ -314,9 +346,9 @@ The existing stale signature-bar smoke instructions for removed color and opacit
 ## Acceptance criteria
 
 1. Enabling Fleet Bar with Previews and Alerts disabled shows a draggable, topmost `No active clients` window and starts no preview or alert behavior.
-2. Each logged-in EVE client produces one alphabetically stable row, including clients excluded from preview thumbnails.
-3. Verified outgoing damage appears as a fixed-window ten-second DPS value and decays to zero within the defined cadence.
-4. An attributable tackle event displays `SCRAM/POINT` only on the affected character and expires after eight seconds without refresh.
+2. Each logged-in EVE client produces one alphabetically stable row, including clients excluded from preview thumbnails; stale roster or source generations cannot repopulate a retired session.
+3. Verified outgoing damage from the active log-source generation appears as a fixed-window ten-second DPS value based on its parsed UTC line timestamp and decays to zero within the defined cadence.
+4. An attributable tackle event displays `SCRAM/POINT` only on the affected character and only for the unexpired portion of its eight-second event-time lifetime.
 5. JAM appears only if the successful-event fixture gate is met; unsupported EWAR never produces guessed labels.
 6. Missing per-character logs and global reader failures are visually distinct from healthy zero DPS.
 7. The fleet and signature bars can be enabled, positioned, hidden, restored, and shut down independently.
