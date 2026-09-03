@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from wingman.eveauth.migration import (
     LegacyDisposition,
     inspect_legacy_skills,
@@ -54,6 +56,39 @@ def test_empty_but_valid_legacy_document_is_loaded_not_absent(tmp_path):
     assert result.disposition is LegacyDisposition.LOADED
     assert result.state == skills_state.SkillsState()
     assert result.error == ""
+
+
+@pytest.mark.parametrize("document", ["[]", '{"characters": {}}'])
+def test_parseable_but_malformed_legacy_envelope_is_failed_not_loaded_empty(
+    tmp_path, document
+):
+    target = tmp_path / "eve_skills.json"
+    target.write_text(document, encoding="utf-8")
+    before = target.read_bytes()
+
+    result = inspect_legacy_skills(target)
+
+    assert result.disposition is LegacyDisposition.FAILED
+    assert result.state is None
+    assert result.error
+    assert target.read_bytes() == before
+
+
+def test_malformed_legacy_envelope_recovers_from_valid_backup_without_mutation(
+    tmp_path,
+):
+    target = tmp_path / "eve_skills.json"
+    target.write_text('{"characters": {}}', encoding="utf-8")
+    backup = target.with_name(target.name + ".bak")
+    copy_fixture("legacy-valid.json", backup)
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+
+    result = inspect_legacy_skills(target)
+
+    assert result.disposition is LegacyDisposition.RECOVERED
+    assert result.state is not None
+    assert result.state.characters[0].refresh_token_blob == "QUJD"
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
 def test_corrupt_primary_recovers_from_valid_backup_without_mutating_evidence(tmp_path):
@@ -221,6 +256,7 @@ def test_failed_legacy_inspection_writes_neither_document_nor_marker(tmp_path):
     )
 
     assert result.completed is False
+    assert result.skills is None
     assert result.error
     assert calls == []
     assert not authority_path.exists()
@@ -245,6 +281,7 @@ def test_authority_save_failure_never_strips_skills(tmp_path):
     )
 
     assert result.completed is False
+    assert result.skills is None
     assert "disk full" in result.error
     assert calls == ["authority"]
     unchanged = json.loads(legacy_path.read_text(encoding="utf-8"))
@@ -265,6 +302,8 @@ def test_interruption_after_authority_save_resumes_without_reimporting_credentia
     first = migrate_legacy_skills(legacy_path, authority_path, skills_saver=fail_skills)
 
     assert first.completed is False
+    assert first.authority is not None
+    assert first.skills is None
     saved_authority, warnings = load_authority(authority_path)
     assert warnings == ()
     assert saved_authority is not None
@@ -305,6 +344,60 @@ def test_existing_valid_authority_is_one_way_authoritative(tmp_path):
     loaded_skills, _warnings = skills_state.load(legacy_path)
     assert loaded_skills.authority_migrated is True
     assert loaded_skills.characters[0].refresh_token_blob == ""
+
+
+def test_genuine_empty_existing_authority_is_one_way_authoritative(tmp_path):
+    legacy_path = tmp_path / "eve_skills.json"
+    authority_path = tmp_path / "eve_authority.json"
+    copy_fixture("legacy-valid.json", legacy_path)
+    save_authority(authority_path, AuthorityState())
+
+    result = migrate_legacy_skills(legacy_path, authority_path)
+
+    assert result.completed is True
+    assert result.authority == AuthorityState()
+    loaded_skills, warnings = skills_state.load(legacy_path)
+    assert warnings == []
+    assert loaded_skills.authority_migrated is True
+    assert loaded_skills.characters[0].refresh_token_blob == ""
+
+
+def test_all_dropped_authority_rows_fail_closed_without_stripping_legacy(tmp_path):
+    legacy_path = tmp_path / "eve_skills.json"
+    authority_path = tmp_path / "eve_authority.json"
+    copy_fixture("legacy-valid.json", legacy_path)
+    authority_path.write_text(
+        json.dumps({"characters": [None, {"character_id": 0}]}), encoding="utf-8"
+    )
+    before = legacy_path.read_bytes()
+
+    result = migrate_legacy_skills(legacy_path, authority_path)
+
+    assert result.completed is False
+    assert result.authority == AuthorityState()
+    assert result.skills is None
+    assert "dropped" in result.error.lower()
+    assert legacy_path.read_bytes() == before
+
+
+def test_all_dropped_authority_backup_rows_remain_failed_on_retry(tmp_path):
+    legacy_path = tmp_path / "eve_skills.json"
+    authority_path = tmp_path / "eve_authority.json"
+    copy_fixture("legacy-valid.json", legacy_path)
+    authority_path.with_name(authority_path.name + ".bak").write_text(
+        json.dumps({"characters": [None, {"character_id": 0}]}), encoding="utf-8"
+    )
+    before = legacy_path.read_bytes()
+
+    first = migrate_legacy_skills(legacy_path, authority_path)
+    second = migrate_legacy_skills(legacy_path, authority_path)
+
+    assert first.completed is False
+    assert first.skills is None
+    assert second.completed is False
+    assert second.skills is None
+    assert not authority_path.exists()
+    assert legacy_path.read_bytes() == before
 
 
 def test_corrupt_existing_authority_never_falls_back_to_legacy_credentials(tmp_path):
@@ -354,6 +447,7 @@ def test_completion_marker_without_authority_never_resurrects_legacy_credentials
     result = migrate_legacy_skills(legacy_path, authority_path)
 
     assert result.completed is False
+    assert result.skills is None
     assert "completion marker" in result.error
     assert not authority_path.exists()
     unchanged = json.loads(legacy_path.read_text(encoding="utf-8"))

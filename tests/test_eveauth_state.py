@@ -135,10 +135,33 @@ def test_authority_load_drops_invalid_character_ids(tmp_path):
         encoding="utf-8",
     )
 
-    loaded, _warnings = load_authority(target)
+    loaded, warnings = load_authority(target)
 
     assert loaded is not None
     assert [character.character_id for character in loaded.characters] == [8]
+    assert warnings and "dropped" in warnings[0]
+
+
+def test_genuine_empty_authority_has_no_row_degradation_warning(tmp_path):
+    target = tmp_path / "eve_authority.json"
+    save_authority(target, AuthorityState())
+
+    loaded, warnings = load_authority(target)
+
+    assert loaded == AuthorityState()
+    assert warnings == ()
+
+
+def test_authority_reports_when_every_malformed_row_is_dropped(tmp_path):
+    target = tmp_path / "eve_authority.json"
+    target.write_text(
+        json.dumps({"characters": [None, {"character_id": 0}]}), encoding="utf-8"
+    )
+
+    loaded, warnings = load_authority(target)
+
+    assert loaded == AuthorityState()
+    assert warnings and "dropped 2 invalid character rows" in warnings[0]
 
 
 def test_authority_save_refuses_more_than_fifty_characters(tmp_path):

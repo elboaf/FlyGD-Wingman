@@ -9,6 +9,7 @@ from pathlib import Path
 from ..eveskills import state as skills_state
 from .state import (
     MAX_REFRESH_TOKEN_BLOB_CHARS,
+    ROW_DEGRADATION_WARNING_PREFIX,
     AuthorityCharacter,
     AuthorityState,
     load_authority,
@@ -33,6 +34,14 @@ class LegacyLoadResult:
 
 @dataclass(frozen=True)
 class MigrationResult:
+    """Migration output safe for the next startup composition step.
+
+    ``skills`` is present only after migration completed and contains either
+    an already-marked document or the stripped state that was successfully
+    persisted. An incomplete result never exposes credential-bearing legacy
+    state (or an unpersisted stripped candidate) for a caller to save later.
+    """
+
     authority: AuthorityState | None
     skills: skills_state.SkillsState | None
     completed: bool
@@ -48,7 +57,13 @@ def _read_legacy_document(path: Path) -> skills_state.SkillsState:
         data = stream.read(limit + 1)
     if len(data) > limit:
         raise ValueError(f"{path.name} exceeds the {limit // (1024 * 1024)} MiB limit.")
-    return skills_state.from_dict(json.loads(data.decode("utf-8")))
+    raw = json.loads(data.decode("utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("characters"), list):
+        # The ordinary Skills loader tolerates malformed envelopes by returning
+        # an empty state. Migration cannot: empty becomes authoritative and the
+        # next writes permanently remove the only credential evidence.
+        raise ValueError("Legacy Skills state has an invalid document shape.")
+    return skills_state.from_dict(raw)
 
 
 def _failed_legacy(error: str, warnings: tuple[str, ...] = ()) -> LegacyLoadResult:
@@ -126,6 +141,12 @@ def _authority_evidence(path: Path) -> tuple[bool, str]:
     return False, ""
 
 
+def _authority_rows_degraded(warnings: tuple[str, ...]) -> bool:
+    return any(
+        warning.startswith(ROW_DEGRADATION_WARNING_PREFIX) for warning in warnings
+    )
+
+
 def _authority_from_legacy(legacy: skills_state.SkillsState) -> AuthorityState:
     characters = []
     for character in legacy.characters:
@@ -199,6 +220,15 @@ def migrate_legacy_skills(
                 authority_warnings,
                 f"Existing EVE authority could not be loaded: {detail}",
             )
+        if not authority.characters and _authority_rows_degraded(authority_warnings):
+            return MigrationResult(
+                authority,
+                None,
+                False,
+                authority_warnings,
+                "Existing EVE authority retained no characters after invalid rows "
+                "were dropped; legacy credentials were left unchanged.",
+            )
 
     legacy = inspector(legacy_path)
     warnings = authority_warnings + legacy.warnings
@@ -208,7 +238,7 @@ def migrate_legacy_skills(
     if authority is None and legacy.state.authority_migrated:
         return MigrationResult(
             None,
-            legacy.state,
+            None,
             False,
             warnings,
             "Skills has an authority migration completion marker, but authority "
@@ -226,7 +256,7 @@ def migrate_legacy_skills(
         except (OSError, ValueError) as exc:
             return MigrationResult(
                 None,
-                legacy.state,
+                None,
                 False,
                 warnings,
                 f"EVE authority could not be saved ({exc}).",
@@ -237,7 +267,7 @@ def migrate_legacy_skills(
     except (OSError, ValueError) as exc:
         return MigrationResult(
             authority,
-            legacy.state,
+            None,
             False,
             warnings,
             f"EVE authority was saved, but Skills could not be stripped ({exc}).",

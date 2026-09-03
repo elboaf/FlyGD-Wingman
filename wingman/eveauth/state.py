@@ -25,6 +25,7 @@ MAX_STATE_FILE_BYTES = 16 * 1024 * 1024
 # base64 encoding; 16 KiB is generous headroom while still bounding corrupt
 # local input before it becomes long-lived authority state.
 MAX_REFRESH_TOKEN_BLOB_CHARS = 16 * 1024
+ROW_DEGRADATION_WARNING_PREFIX = "Authority state row degradation:"
 
 
 @dataclass(frozen=True)
@@ -118,7 +119,7 @@ def _to_dict(authority: AuthorityState) -> dict:
     }
 
 
-def _from_dict(raw: object) -> AuthorityState:
+def _from_dict(raw: object) -> tuple[AuthorityState, int]:
     if not isinstance(raw, dict) or not isinstance(raw.get("characters"), list):
         # Per-row tolerance is safe; losing a malformed character asks only
         # that character to re-authenticate. Treating a malformed document
@@ -127,11 +128,14 @@ def _from_dict(raw: object) -> AuthorityState:
     rows = raw["characters"]
 
     by_id: dict[int, AuthorityCharacter] = {}
+    dropped_rows = 0
     for item in rows:
         if not isinstance(item, dict):
+            dropped_rows += 1
             continue
         character_id = _coerce_character_id(item.get("character_id"))
         if character_id is None:
+            dropped_rows += 1
             continue
         blob, blob_was_rejected = _coerce_blob(item.get("refresh_token_blob"))
         by_id[character_id] = AuthorityCharacter(
@@ -143,7 +147,7 @@ def _from_dict(raw: object) -> AuthorityState:
             needs_reauth=item.get("needs_reauth") is True or blob_was_rejected,
             refresh_token_blob=blob,
         )
-    return AuthorityState(list(by_id.values())[:MAX_CHARACTERS])
+    return AuthorityState(list(by_id.values())[:MAX_CHARACTERS]), dropped_rows
 
 
 def _read_bounded(path: Path) -> str:
@@ -157,8 +161,14 @@ def _read_bounded(path: Path) -> str:
     return data.decode("utf-8")
 
 
-def _read_document(path: Path) -> AuthorityState:
-    return _from_dict(json.loads(_read_bounded(path)))
+def _read_document(path: Path) -> tuple[AuthorityState, tuple[str, ...]]:
+    authority, dropped_rows = _from_dict(json.loads(_read_bounded(path)))
+    if not dropped_rows:
+        return authority, ()
+    return authority, (
+        f"{ROW_DEGRADATION_WARNING_PREFIX} {path.name} dropped {dropped_rows} "
+        "invalid character rows.",
+    )
 
 
 def _preserve_corrupt(path: Path) -> str:
@@ -177,20 +187,28 @@ def _preserve_corrupt(path: Path) -> str:
 
 def _recover_missing_primary(path: Path, backup: Path) -> tuple:
     try:
-        recovered = _read_document(backup)
+        recovered, row_warnings = _read_document(backup)
     except (OSError, ValueError, RecursionError) as exc:
         return None, (
             f"{path.name} was missing and its authority backup could not be "
             f"read ({exc}); EVE identity features are unavailable.",
         )
+    if row_warnings and not recovered.characters:
+        return recovered, (
+            *row_warnings,
+            f"{path.name} was missing; {backup.name} retained no valid authority "
+            "rows and was left unchanged.",
+        )
     try:
         save_authority(path, recovered)
     except OSError as exc:
         return recovered, (
+            *row_warnings,
             f"{path.name} was missing and was read from {backup.name}, but the "
             f"recovery could not be saved ({exc}).",
         )
     return recovered, (
+        *row_warnings,
         f"{path.name} was missing and was recovered from {backup.name}.",
     )
 
@@ -199,7 +217,7 @@ def _recover_corrupt_primary(path: Path) -> tuple:
     preserved = _preserve_corrupt(path)
     backup = path.with_name(path.name + ".bak")
     try:
-        recovered = _read_document(backup)
+        recovered, row_warnings = _read_document(backup)
     except (OSError, ValueError, RecursionError) as exc:
         return None, (
             f"{path.name} could not be recovered from its authority backup "
@@ -209,17 +227,26 @@ def _recover_corrupt_primary(path: Path) -> tuple:
 
     if not preserved:
         return recovered, (
+            *row_warnings,
             f"Recovered {path.name} from {backup.name}, but the corrupt "
             "authority file could not be moved aside and remains in place.",
+        )
+    if row_warnings and not recovered.characters:
+        return recovered, (
+            *row_warnings,
+            f"{backup.name} retained no valid authority rows and was left "
+            f"unchanged; the corrupt primary was preserved as {preserved}.",
         )
     try:
         save_authority(path, recovered)
     except OSError as exc:
         return recovered, (
+            *row_warnings,
             f"Recovered {path.name} from {backup.name}, but the recovery could "
             f"not be saved ({exc}); the corrupt file was preserved as {preserved}.",
         )
     return recovered, (
+        *row_warnings,
         f"Recovered {path.name} from {backup.name}; the corrupt authority "
         f"file was preserved as {preserved}.",
     )
@@ -234,7 +261,7 @@ def load_authority(path: Path) -> tuple[AuthorityState | None, tuple[str, ...]]:
     """
     path = Path(path)
     try:
-        return _read_document(path), ()
+        return _read_document(path)
     except FileNotFoundError:
         backup = path.with_name(path.name + ".bak")
         try:
