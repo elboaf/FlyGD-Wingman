@@ -42,8 +42,18 @@ def build(tmp_path, monkeypatch, answer=True):
     return built
 
 
-def eve_tree(tmp_path, files=("core_char_1.dat", "core_char_2.dat")):
-    profile = tmp_path / "EVE" / "server_tranquility" / "settings_Default"
+# EVE's own name for the live shard's settings folder. The strict
+# predicate (tree.is_tranquility_server) accepts it, so this fixture builds
+# the TRUSTED context every account-identity behaviour needs -- the older
+# "server_tranquility" only ever passed the display heuristic, which is
+# deliberately not enough to authorize identity or deletion cleanup.
+TRUSTED_SERVER = "c_ccp_eve_tq_tranquility"
+
+
+def eve_tree(
+    tmp_path, files=("core_char_1.dat", "core_char_2.dat"), server=TRUSTED_SERVER
+):
+    profile = tmp_path / "EVE" / server / "settings_Default"
     profile.mkdir(parents=True)
     for name in files:
         (profile / name).write_bytes(b"payload-" + name.encode())
@@ -55,6 +65,50 @@ def account_setup(tmp_path, monkeypatch, name="core_user_1.dat"):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     return api, profile / name
+
+
+def mark_deleted(api, *character_ids, datasource="tranquility"):
+    """Record ESI deletion verdicts the way a resolver pass would."""
+    for character_id in character_ids:
+        api._eve_deleted.add((datasource, int(character_id)))
+
+
+def fake_status(api, monkeypatch, names=None, deleted=(), seen=None, error=None):
+    """Answer both ESI paths from memory.
+
+    Nothing in this suite may reach the network: the character-status pass
+    is bounded but real, and an unstubbed one costs a request timeout per
+    id in every test that opens a trusted profile.
+    """
+
+    def resolve(ids, *args, **kwargs):
+        if seen is not None:
+            seen.append(list(ids))
+        if error is not None:
+            raise error
+        return dict(names or {}), {int(i) for i in deleted}
+
+    monkeypatch.setattr(api_mod.evesettings_characters, "resolve", resolve)
+    api._eve_names.resolve_missing = lambda ids, **kwargs: False
+
+
+class QueuedThreads:
+    """A spawn seam a test drives by hand, to observe the coordinator."""
+
+    def __init__(self):
+        self.queued = []
+
+    def spawn(self, target=None, args=(), kwargs=None, daemon=None):
+        queued = self.queued
+
+        class Handle:
+            def start(self):
+                queued.append(lambda: target(*args, **(kwargs or {})))
+
+        return Handle()
+
+    def run_next(self):
+        self.queued.pop(0)()
 
 
 def test_state_is_empty_before_a_root_is_chosen(tmp_path, monkeypatch):
@@ -442,16 +496,17 @@ def test_names_are_pushed_once_a_pass_resolves_something(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api._eve_names.resolve_missing = lambda ids, **kw: True
+    fake_status(api, monkeypatch, names={1: "Pilot One"})
     api.eve_settings_resolve_names()
-    assert any("onEveSettingsNames" in call for call in api._window.calls)
+    assert api._eve_names.names[1] == "Pilot One"
+    assert [call for call in api._window.calls if "onEveSettingsNames" in call]
 
 
 def test_no_push_when_a_pass_resolves_nothing(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api._eve_names.resolve_missing = lambda ids, **kw: False
+    fake_status(api, monkeypatch)
     api.eve_settings_resolve_names()
     assert not any("onEveSettingsNames" in call for call in api._window.calls)
 
@@ -1804,6 +1859,506 @@ def test_detect_root_reports_agreement_rather_than_rewriting_the_selection(
     section = api._state.settings["eve_settings"]
     assert section["server"] == "tranquility"
     assert section["profile"] == "Default"
+
+
+# ----- confirmed deletions: filtering, cleanup, and the resolver ---------
+
+
+def test_confirmed_deleted_character_is_hidden_but_its_file_and_backup_remain(
+    tmp_path, monkeypatch
+):
+    """The verdict hides a row. It never touches EVE's own data: the file
+    and every backup of it are recovery artifacts and stay exactly where
+    the user left them."""
+    profile = eve_tree(tmp_path, files=("core_char_20.dat", "core_char_21.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api_mod.evesettings_backup.create_file_backup(
+        paths.eve_settings_backup_dir(), profile / "core_char_21.dat", origin="manual"
+    )
+    mark_deleted(api, 21)
+
+    state = api.eve_settings_state()
+
+    assert [row["id"] for row in state["characters"]] == ["20"]
+    assert (profile / "core_char_21.dat").exists()
+    assert any(row["stem"] == "core_char_21" for row in state["backups"])
+
+
+def test_unresolved_character_remains_visible(tmp_path, monkeypatch):
+    """Offline is the normal case, and silence is not a deletion."""
+    eve_tree(tmp_path, files=("core_char_20.dat", "core_char_21.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+
+    assert {row["id"] for row in api.eve_settings_state()["characters"]} == {
+        "20",
+        "21",
+    }
+
+
+def test_deleted_links_are_filtered_from_account_rows_and_the_identity_picker(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20", "21"]}
+    api._eve_names.names.update({20: "Alpha", 21: "Beta"})
+    mark_deleted(api, 21)
+
+    state = api.eve_settings_state()
+
+    assert state["account_identity_available"] is True
+    assert state["accounts"][0]["character_ids"] == ["20"]
+    assert state["accounts"][0]["display_meta"] == "Alpha · Account 10"
+    assert {row["id"] for row in state["identity_characters"]} == {"20"}
+
+
+@pytest.mark.parametrize("server", ["tranquility_backup", "server_singularity"])
+def test_untrusted_servers_expose_no_account_identity_and_filter_nothing(
+    tmp_path, monkeypatch, server
+):
+    """A Tranquility verdict says nothing about another shard, and the
+    display heuristic that calls `tranquility_backup` Tranquility is not
+    evidence enough to apply Tranquility metadata to it."""
+    profile = eve_tree(
+        tmp_path,
+        files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat"),
+        server=server,
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20", "21"]}
+    mark_deleted(api, 21)
+
+    state = api.eve_settings_state()
+
+    assert state["account_identity_available"] is False
+    assert {row["id"] for row in state["characters"]} == {"20", "21"}
+    assert state["accounts"][0]["account_name"] == ""
+    assert state["accounts"][0]["character_ids"] == []
+    assert state["accounts"][0]["display_name"] == "Account 10"
+    assert state["identity_characters"] == []
+    assert (profile / "core_char_21.dat").exists()
+    assert api._eve_section()["account_characters"] == {"10": ["20", "21"]}
+
+
+def test_an_untrusted_server_refuses_identity_edits_and_identification(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path,
+        files=("core_user_10.dat", "core_char_20.dat"),
+        server="server_singularity",
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    unavailable = "Account identity is available only for Tranquility profiles."
+
+    assert api.eve_settings_set_account_name("10", "Other")["error"] == unavailable
+    assert api.eve_settings_set_account_characters("10", ["20"])["error"] == unavailable
+    assert api.eve_settings_identification_start() == {
+        "status": "error",
+        "error": unavailable,
+    }
+    assert api._eve_section()["account_names"] == {"10": "LoginName"}
+    assert api._eve_section()["account_characters"] == {}
+
+
+def test_a_deleted_character_cannot_be_linked_or_confirmed(tmp_path, monkeypatch):
+    eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    mark_deleted(api, 21)
+    _pending_identification(api, "10", ("21",))
+
+    linked = api.eve_settings_set_account_characters("10", ["20", "21"])
+    confirmed = api.eve_settings_identification_confirm("10", "21", "LoginName")
+
+    assert linked["error"] == "That character no longer exists."
+    assert confirmed["error"] == "That character no longer exists."
+    assert api._eve_section()["account_characters"] == {}
+
+
+def test_identification_does_not_offer_a_confirmed_deleted_character(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
+    mark_deleted(api, 21)
+    assert api.eve_settings_identification_start()["status"] == "watching"
+    (profile / "core_user_10.dat").write_bytes(b"changed account")
+    (profile / "core_char_21.dat").write_bytes(b"changed deleted character")
+
+    assert api.eve_settings_identification_check()["status"] == "none"
+
+    (profile / "core_char_20.dat").write_bytes(b"changed live character")
+
+    result = api.eve_settings_identification_check()
+
+    assert result["status"] == "candidate"
+    assert [row["id"] for row in result["characters"]] == ["20"]
+    assert api._eve_identification_candidate == ("10", ("20",))
+
+
+def test_cleanup_removes_deleted_links_from_every_account_and_survives_reload(
+    tmp_path, monkeypatch
+):
+    profile = eve_tree(
+        tmp_path,
+        files=(
+            "core_user_10.dat",
+            "core_user_11.dat",
+            "core_char_20.dat",
+            "core_char_21.dat",
+        ),
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "First", "11": "Second"}
+    section["account_characters"] = {"10": ["21"], "11": ["20", "21"]}
+    fake_status(api, monkeypatch, names={20: "Alpha"}, deleted={21})
+
+    api.eve_settings_resolve_names()
+
+    assert api._eve_section()["account_characters"] == {"11": ["20"]}
+    stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
+    assert stored["eve_settings"]["account_characters"] == {"11": ["20"]}
+    assert stored["eve_settings"]["account_names"] == {"10": "First", "11": "Second"}
+    assert (profile / "core_char_21.dat").exists()
+    assert any("onEveSettingsNames" in call for call in api._window.calls)
+
+
+def test_cleanup_write_failure_keeps_the_links_but_the_payload_still_hides_them(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20", "21"]}
+    fake_status(api, monkeypatch, deleted={21})
+    monkeypatch.setattr(
+        api_mod.settings_mod,
+        "update_section",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    api.eve_settings_resolve_names()
+
+    assert api._eve_section()["account_characters"] == {"10": ["20", "21"]}
+    assert api.eve_settings_state()["accounts"][0]["character_ids"] == ["20"]
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("eve_settings_set_account_name", ("10", "Renamed")),
+        ("eve_settings_set_account_characters", ("10", ["20"])),
+    ],
+)
+def test_a_pending_cleanup_that_cannot_save_refuses_the_account_edit(
+    tmp_path, monkeypatch, method, args
+):
+    """The page submits its VISIBLE list as the complete roster, so accepting
+    an edit while a hidden link is still saved would either resurrect it or
+    delete it silently. Refuse instead."""
+    eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20", "21"]}
+    mark_deleted(api, 21)
+    monkeypatch.setattr(
+        api_mod.settings_mod,
+        "update_section",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    result = getattr(api, method)(*args)
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Could not remove deleted character links.",
+    }
+    assert api._eve_section()["account_names"] == {"10": "LoginName"}
+    assert api._eve_section()["account_characters"] == {"10": ["20", "21"]}
+
+
+def test_a_later_edit_retries_the_pending_cleanup_before_applying(
+    tmp_path, monkeypatch
+):
+    eve_tree(
+        tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["20", "21"]}
+    mark_deleted(api, 21)
+
+    assert api.eve_settings_set_account_name("10", "Renamed")["applied"] is True
+
+    assert api._eve_section()["account_names"] == {"10": "Renamed"}
+    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+
+
+def test_cleanup_rereads_the_links_only_after_taking_the_mutation_lock(
+    tmp_path, monkeypatch
+):
+    """The pattern of the blocking-update_section test above: a manual edit
+    that lands while the resolver is on the network must survive it. A prune
+    computed from a pre-lock read would write back the older roster."""
+    eve_tree(
+        tmp_path,
+        files=(
+            "core_user_10.dat",
+            "core_char_20.dat",
+            "core_char_21.dat",
+            "core_char_22.dat",
+        ),
+    )
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["21"]}
+    fake_status(api, monkeypatch, deleted={21})
+    original = api_mod.settings_mod.update_section
+    writing = threading.Event()
+    release_write = threading.Event()
+
+    def blocking_write(data, name, values):
+        writing.set()
+        assert release_write.wait(5), "test did not release the manual edit"
+        return original(data, name, values)
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", blocking_write)
+    writer = threading.Thread(
+        target=lambda: api.eve_settings_set_account_characters("10", ["21", "22"])
+    )
+    writer.start()
+    assert writing.wait(5), "the manual edit never reached the settings write"
+    resolver = threading.Thread(target=api.eve_settings_resolve_names)
+    resolver.start()
+    release_write.set()
+    writer.join(5)
+    resolver.join(5)
+
+    assert not writer.is_alive() and not resolver.is_alive()
+    assert api._eve_section()["account_characters"] == {"10": ["22"]}
+
+
+def test_cleanup_clears_an_identification_candidate_it_invalidates(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    fake_status(api, monkeypatch, deleted={21})
+    _pending_identification(api, "10", ("21",))
+
+    api.eve_settings_resolve_names()
+
+    assert api._eve_identification is None
+    assert api._eve_identification_candidate is None
+    assert any("onEveSettingsNames" in call for call in api._window.calls)
+
+
+def test_an_unrelated_identification_candidate_survives_a_deletion(
+    tmp_path, monkeypatch
+):
+    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    fake_status(api, monkeypatch, deleted={21})
+    _pending_identification(api, "10", ("20",))
+
+    api.eve_settings_resolve_names()
+
+    assert api._eve_identification_candidate == ("10", ("20",))
+
+
+def test_a_second_request_coalesces_into_one_trailing_pass(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_char_20.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_refresh_running = lambda: None
+    threads = QueuedThreads()
+    api._spawn = threads.spawn
+    seen = []
+    fake_status(api, monkeypatch, seen=seen)
+
+    api.eve_settings_resolve_names()
+    api.eve_settings_resolve_names()
+    api.eve_settings_resolve_names()
+
+    assert len(threads.queued) == 1
+    threads.run_next()
+    assert len(threads.queued) == 1, "the two later requests coalesced into one"
+    threads.run_next()
+
+    assert threads.queued == []
+    assert seen == [[20], [20]]
+    assert api._eve_resolve_running is False
+    assert api._eve_resolve_pending is False
+
+
+def test_switching_profiles_during_a_pass_resolves_the_new_one(tmp_path, monkeypatch):
+    first = eve_tree(tmp_path, files=("core_char_20.dat",))
+    second = first.parent / "settings_Other"
+    second.mkdir()
+    (second / "core_char_30.dat").write_bytes(b"payload")
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["profile"] = str(first)
+    api._eve_refresh_running = lambda: None
+    threads = QueuedThreads()
+    api._spawn = threads.spawn
+    api._eve_names.resolve_missing = lambda ids, **kwargs: False
+    seen = []
+
+    def switch_while_resolving(ids, *args, **kwargs):
+        seen.append(list(ids))
+        if section["profile"] == str(first):
+            # The user switches, and the page asks again, while this pass
+            # is still on the network.
+            section["profile"] = str(second)
+            api.eve_settings_resolve_names()
+        return {}, set()
+
+    monkeypatch.setattr(
+        api_mod.evesettings_characters, "resolve", switch_while_resolving
+    )
+
+    api.eve_settings_resolve_names()
+    threads.run_next()
+
+    assert len(threads.queued) == 1, "the request made mid-pass owes one more"
+    threads.run_next()
+
+    assert seen == [[20], [30]]
+    assert threads.queued == []
+
+
+def test_a_stale_pass_caches_facts_but_cannot_clean_or_push_another_profile(
+    tmp_path, monkeypatch
+):
+    first = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
+    second = first.parent / "settings_Other"
+    second.mkdir()
+    (second / "core_char_30.dat").write_bytes(b"payload")
+    api = build(tmp_path, monkeypatch)
+    section = api._eve_section()
+    section["root"] = str(tmp_path / "EVE")
+    section["profile"] = str(first)
+    section["account_names"] = {"10": "LoginName"}
+    section["account_characters"] = {"10": ["21"]}
+    api._eve_names.resolve_missing = lambda ids, **kwargs: False
+
+    def switch_then_report(ids, *args, **kwargs):
+        section["profile"] = str(second)
+        return {}, {21}
+
+    monkeypatch.setattr(api_mod.evesettings_characters, "resolve", switch_then_report)
+
+    api.eve_settings_resolve_names()
+
+    assert ("tranquility", 21) in api._eve_deleted
+    assert api._eve_section()["account_characters"] == {"10": ["21"]}
+    assert not any("onEveSettingsNames" in call for call in api._window.calls)
+
+
+def test_a_pass_publishes_cached_facts_newly_applicable_to_its_profile(
+    tmp_path, monkeypatch
+):
+    """What a stale pass learned still has to reach the selected profile,
+    and only once: application is tracked apart from the remote cache."""
+    eve_tree(tmp_path, files=("core_char_20.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_names.names[20] = "Alpha"
+    fake_status(api, monkeypatch)
+
+    api.eve_settings_resolve_names()
+
+    assert len([c for c in api._window.calls if "onEveSettingsNames" in c]) == 1
+
+    api.eve_settings_resolve_names()
+
+    assert len([c for c in api._window.calls if "onEveSettingsNames" in c]) == 1
+
+
+def test_active_ids_are_rechecked_while_deleted_ids_are_never_fetched_again(
+    tmp_path, monkeypatch
+):
+    """Active is not a cacheable verdict -- a character deleted during a long
+    session must still be found -- while deleted is monotonic."""
+    eve_tree(tmp_path, files=("core_char_20.dat", "core_char_21.dat"))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    seen = []
+    fake_status(api, monkeypatch, names={20: "Alpha"}, deleted={21}, seen=seen)
+
+    api.eve_settings_resolve_names()
+    api.eve_settings_resolve_names()
+
+    assert seen == [[20, 21], [20]]
+
+
+def test_a_resolver_that_cannot_spawn_clears_its_running_state(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_char_20.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+
+    def refuses(**kwargs):
+        raise RuntimeError("can't start new thread")
+
+    api._spawn = refuses
+
+    api.eve_settings_resolve_names()
+
+    assert api._eve_resolve_running is False
+    assert api._eve_resolve_pending is False
+
+
+def test_a_resolver_that_raises_clears_its_running_state(tmp_path, monkeypatch):
+    eve_tree(tmp_path, files=("core_char_20.dat",))
+    api = build(tmp_path, monkeypatch)
+    api._eve_section()["root"] = str(tmp_path / "EVE")
+    fake_status(api, monkeypatch, error=RuntimeError("ESI exploded"))
+
+    api.eve_settings_resolve_names()
+
+    assert api._eve_resolve_running is False
+    assert api._eve_resolve_pending is False
 
 
 def _fake_codec(monkeypatch, doc, *, available=True):
