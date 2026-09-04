@@ -63,7 +63,19 @@ def api(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sigbar, "reveal_bar", reveal)
     monkeypatch.setattr(sigbar, "hide_bar", hide)
-    return built
+    yield built
+    # The focus-gate timer chain is self-re-arming and daemon; a test that
+    # ends with the bar enabled would leave it ticking into LATER tests,
+    # where it can construct whatever threading.Timer they have patched
+    # (the startup suite counts Timer constructions -- see the ubuntu-only
+    # failure this teardown exists to prevent). Close the lifecycle and
+    # cancel: a tick racing this teardown sees quitting under the lock and
+    # never re-arms.
+    with built._sigbar_lifecycle_lock:
+        built._sigbar_quitting = True
+        if built._sigbar_focus_timer is not None:
+            built._sigbar_focus_timer.cancel()
+            built._sigbar_focus_timer = None
 
 
 def state_pushes(window):

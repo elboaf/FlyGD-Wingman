@@ -3662,12 +3662,19 @@ class Api:
             # reads as broken. The page pulls nothing at load, so this push
             # is its content.
             self._push_eve_status()
-        # Arm (on) or disarm (off) the focus gate, then apply it once so an
-        # enable while a non-allowed client holds the foreground hides the
-        # freshly revealed bar immediately instead of one tick later.
-        self._schedule_sig_bar_focus_poll()
-        if on:
+            # Arm the focus gate ONLY on a successful reveal, then apply it
+            # once so an enable while a non-allowed client holds the
+            # foreground hides the freshly revealed bar immediately
+            # instead of one tick later. A toggle that was refused
+            # (shutdown won the lifecycle) must not arm: the chain
+            # outlives the call and would tick at a quitting process.
+            self._schedule_sig_bar_focus_poll()
             self._apply_sig_bar_focus_gate()
+        elif not on:
+            # Disarm on a clean toggle-off. A refused toggle-on leaves any
+            # existing chain alone -- if the bar never showed there is
+            # nothing to disarm, and shutdown disarms its own way.
+            self._schedule_sig_bar_focus_poll()
         logger.info(
             "Sig bar toggle done: enabled=%s, visible=%s.",
             self._state.settings["sig_bar"]["enabled"],
