@@ -49,6 +49,10 @@ def create(api, hidden: bool = True):
             easy_drag=False,
             on_top=True,
             focus=False,
+            # True per-pixel transparency, for the same reason as the sig
+            # bar's: without it the form paints its square background
+            # behind the shell's CSS rounded corners.
+            transparent=True,
             background_color=window_mod.BACKGROUND,
             min_size=MIN_SIZE,
             # Tool-window styling must land before the first show or Windows
