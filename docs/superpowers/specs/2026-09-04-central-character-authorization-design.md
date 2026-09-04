@@ -288,7 +288,7 @@ Errors are bounded, sanitized, and contain no token or raw claim material.
 
 Existing authority and feature documents remain valid. Existing Skills-only grants continue to serve Skills. Users upgrade them through one generic full authorization round trip per character when they want Fittings or need to reauthenticate.
 
-The previous Fittings design's exact-row capability-upgrade requirement is superseded by this design. Its security goals remain, but the UI no longer promises a row-specific flow that EVE cannot present. The generic returned identity is accepted only after full validation and is reconciled by character ID. A changed owner is refused until global cleanup completes.
+The previous Fittings design's exact-row capability-upgrade requirement is superseded by this design. Its security goals remain, but the UI no longer promises a row-specific flow that EVE cannot present. The generic returned identity is accepted only after full validation and is reconciled by character ID. A proven owner change, meaning two present and unequal owner hashes, is refused until global cleanup completes.
 
 The registered EVE application must permit every scope in the explicit Skills-and-Fittings full authorization set. If deployment configuration does not permit those scopes, the release must not present full authorization as available.
 
