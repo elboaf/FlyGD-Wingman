@@ -128,6 +128,7 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         "settings-previews",
         "settings-previews-middle",
         "settings-previews-table",
+        "settings-previews-sticky-conflict",
         "settings-previews-detail",
         "settings-previews-copy",
         "settings-previews-groups",
@@ -528,6 +529,7 @@ def test_gate_on_shoots_every_screen_including_new_group_stages():
     assert {screen.key for screen in to_shoot} >= {
         "settings-previews-groups",
         "settings-previews-narrow",
+        "settings-alerts-advanced",
         "fittings-copy-progress",
         "fittings-copy-result",
     }
@@ -1605,3 +1607,252 @@ def test_groups_stage_closes_inherited_detail_before_framing_management():
     assert expanded in script
     assert "No preview detail was closed" in script
     assert script.index(expanded) < script.index(".preview-group-manager")
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Alerts Advanced disclosure and Previews sticky-conflict captures
+# ---------------------------------------------------------------------------
+
+
+def test_alerts_advanced_stage_is_present_and_gated():
+    """Task 5: a dedicated capture opens #alert-advanced and frames it,
+    alongside -- not instead of -- the existing settings-alerts capture,
+    which still shows the primary rows/modifiers."""
+    keys = [s.key for s in shoot.SCREENS]
+    assert "settings-alerts" in keys, "the existing Alerts capture must stay"
+    assert "settings-alerts-advanced" in keys, (
+        "settings-alerts-advanced stage missing from SCREENS"
+    )
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    assert screen.route == "settings"
+    assert screen.section == "alerts"
+    assert screen.gated, "settings-alerts-advanced must be gated (EVE required)"
+
+
+def test_alerts_advanced_stage_opens_and_frames_the_disclosure():
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    script = shoot.screen_setup_script(screen)
+    assert script is not None, "settings-alerts-advanced needs a setup script"
+    assert "getElementById('alert-advanced')" in script
+    assert "details.open = true" in script
+    assert "scrollIntoView" in script
+    assert "throw new Error" in script
+
+
+def test_alerts_advanced_stage_does_not_touch_any_bridge_api():
+    """Opening a native <details> is presentation only -- alerts.js has no
+    listener on #alert-advanced (0fd49d8), so this capture must call no
+    Api method and must not simulate a click on any control inside it."""
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts-advanced")
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "pywebview.api" not in script
+    assert "WM.call(" not in script
+    assert ".click()" not in script
+
+
+def test_previews_sticky_conflict_stage_is_present_and_gated():
+    keys = [s.key for s in shoot.SCREENS]
+    assert "settings-previews-sticky-conflict" in keys, (
+        "settings-previews-sticky-conflict stage missing from SCREENS"
+    )
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    assert screen.route == "settings"
+    assert screen.section == "previews"
+    assert screen.gated, "settings-previews-sticky-conflict must be gated"
+
+
+def test_previews_sticky_conflict_stage_targets_aigas_owner_prefixed_conflict():
+    """Aiga Otsolen's direct bind (Ctrl+Alt+1) collides with an ACTIVE EVE
+    bookmark keybind in the authoritative fixture (dev.js's
+    bookmark_chords.active), and she is the FIRST ONLINE character row --
+    directly under the sticky column header, with every other online row,
+    the Offline heading and every offline row still beneath her.
+
+    Tanuki Solette (the FIRST OFFLINE row, close to the bottom of the
+    whole list) used to be the target; staging her behind BOTH the sticky
+    column header and the sticky Offline heading left nothing further to
+    scroll into, so the capture clamped to the same maximum scrollTop
+    settings-previews-table reaches and the two captures were
+    pixel-identical. Aiga has ample content below her, so this capture can
+    stage her row just behind the (single) sticky column header without
+    running out of room the way Tanuki's did.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "typeof window.onPreviewHotkeys !== 'function'" in script
+    assert "window.onPreviewHotkeys(payload);" in script
+    assert "encodeURIComponent(" in script
+    assert "character:Aiga Otsolen" in script
+    assert "character:Tanuki Solette" not in script
+    assert "cycle:next" not in script
+    assert "preview-bind-conflict-" in script
+    assert "conflict.previousElementSibling" in script
+    assert "throw new Error" in script
+
+
+def test_previews_sticky_conflict_stage_opens_the_lower_detail_before_positioning_aiga():
+    """Measured directly (headless Chromium against the real fixture): at
+    the app's own default window (1040x680, window.py), aligning Aiga's
+    row behind the sticky column header asks for ~54px more scroll than
+    the pane has -- the roster card above #preview-binds is tall enough,
+    with the fixture's twelve characters, that her row already sits close
+    to the pane's bottom clamp. Nudging her there without adding anything
+    reproduced the exact pixel-identical bug this stage exists to fix.
+
+    Opening Aleksandrina Shadowbanes Voidstriders' Configure detail --
+    the same read-only disclosure settings-previews-detail already drives
+    -- adds ~70px of real content below Aiga (no fabricated spacing, no
+    dev.js data), which is enough headroom to clear that gap. It must
+    happen BEFORE Aiga is located and positioned, or the scroll extent it
+    adds is not there yet when the nudge is computed; and it must be a
+    plain DOM click with no bridge write, exactly like
+    settings-previews-detail's own Configure click.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+
+    long_name = "Aleksandrina Shadowbanes Voidstriders"
+    detail_selector = f'[data-preview-configure="{long_name}"]'
+    detail_index = script.find(detail_selector)
+    aiga_index = script.find("character:Aiga Otsolen")
+    assert detail_index != -1, (
+        "the script must reference Aleksandrina's Configure control"
+    )
+    assert aiga_index != -1
+    assert detail_index < aiga_index, (
+        "Aleksandrina's detail must be opened BEFORE Aiga's conflict is "
+        "located and positioned, or its added scroll extent is not there "
+        "yet when the nudge is computed"
+    )
+    assert f'[data-preview-configure="{long_name}"]' in script
+    assert ".click();" in script
+    assert "aria-expanded" in script
+    assert "did not" in script.lower() and "open" in script.lower(), (
+        "opening the lower detail must fail closed if it does not open"
+    )
+
+    # No bridge writer may be called anywhere in this script -- opening a
+    # Configure detail is a local click (previews.js), the same as
+    # settings-previews-detail's own read-only stage.
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+        "set_bind_capture",
+        "WM.send",
+    )
+    for writer in writers:
+        assert writer not in script, (
+            f"{writer} must not appear -- this stage is read-only"
+        )
+
+
+def test_previews_sticky_conflict_stage_measures_the_real_sticky_column_header():
+    """The capture must not hardcode pixel offsets: it measures the
+    rendered column header live via getBoundingClientRect, so it holds if
+    its height ever changes. Only the column header is measured now --
+    Aiga is online, directly under it, and the Offline heading (which sits
+    well below every online row) never covers her -- unlike Tanuki's
+    version of this stage, which had to measure both.
+
+    The row itself is display:contents (style.css), so scrollIntoView on
+    it is a silent no-op; the script must scroll its rendered first child
+    instead, or the measurement below is taken from a scroll position
+    that never actually moved.
+    """
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "#preview-binds .bind-head > span" in script
+    assert "#preview-binds .bind-group:not(:empty)" not in script, (
+        "the Offline heading never covers Aiga's row and must not be part "
+        "of this stage's measurement"
+    )
+    assert "row.firstElementChild" in script, (
+        "row.scrollIntoView() is a no-op on a display:contents element; "
+        "the script must scroll a rendered child instead"
+    )
+    assert "row.scrollIntoView" not in script
+    assert "getBoundingClientRect()" in script
+    assert "scrollTop" in script
+
+
+def test_previews_sticky_conflict_stage_differs_from_the_table_stage():
+    """The bug this rewrite exists to fix: the sticky-conflict capture and
+    settings-previews-table came out pixel-identical because both scroll
+    positions clamped to the same bottom state. settings-previews-table
+    reaches that state by assigning `pane.scrollTop = pane.scrollHeight`
+    directly; the sticky-conflict stage must never do the same thing by a
+    different name, and must fail closed rather than silently reproduce
+    that state if its own nudge still lands there.
+    """
+    sticky_screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    table_screen = next(s for s in shoot.SCREENS if s.key == "settings-previews-table")
+    sticky_script = shoot.screen_setup_script(sticky_screen)
+    table_script = shoot.screen_setup_script(table_screen)
+    assert sticky_script is not None and table_script is not None
+    assert sticky_script != table_script
+    assert "pane.scrollTop = pane.scrollHeight" in table_script
+    assert "pane.scrollTop = pane.scrollHeight" not in sticky_script
+    # A guard that fails closed rather than silently landing on the same
+    # bottom-clamped scrollTop the table stage reaches.
+    assert "scrollHeight - pane.clientHeight" in sticky_script
+    assert "bottom clamp" in sticky_script.lower()
+
+
+def test_previews_sticky_conflict_stage_fails_closed_when_the_owner_row_is_missing():
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    assert "conflict warning is missing" in script.lower()
+    assert "owning row" in script.lower()
+    assert "sticky" in script.lower()
+    assert "scrollport" in script.lower()
+
+
+def test_previews_sticky_conflict_stage_is_read_only():
+    """Same contract as every other fixture-backed previews stage: no
+    bridge writer may be called."""
+    screen = next(
+        s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
+    )
+    script = shoot.screen_setup_script(screen)
+    assert script is not None
+    writers = (
+        "create_preview_cycle_group",
+        "rename_preview_cycle_group",
+        "delete_preview_cycle_group",
+        "set_preview_cycle_group_bind",
+        "set_preview_character_group",
+        "set_preview_binds",
+        "set_preview_size",
+        "copy_preview_layout",
+        "set_preview_excluded",
+        "set_preview_locked",
+        "set_never_minimize",
+    )
+    for writer in writers:
+        assert writer not in script

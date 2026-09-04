@@ -29,7 +29,7 @@
       <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
       <button class="navbtn" id="nav-fittings" data-route="fittings">Fittings</button>
     </nav>
-    <button class="winbtn gear" id="btn-settings" title="Settings">&#9881;</button>
+    <button class="winbtn gear" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
     <button class="winbtn close" id="btn-close" title="Close">&#10005;</button>
   </div>
@@ -1135,6 +1135,10 @@
         <div class="alert-head" aria-hidden="true">
           <span>Event</span><span>Colour</span><span>Sound</span><span></span>
         </div>
+        <!-- A row is atomic: one enable box, one swatch group, one sound
+             and one Test button, nothing pushed to a second line any
+             more. Flashes and Speed used to be that second line -- see
+             #alert-advanced below, which is where they moved and why. -->
         <div class="row alert-row">
           <label class="check">
             <input type="checkbox" id="alert-event-combat-enabled"><span class="box"></span>
@@ -1157,24 +1161,6 @@
           </select>
           <button class="btn" id="alert-event-combat-test"
             aria-label="Test the Combat alert">Test</button>
-          <!-- A SECOND LINE, not two more columns. The four tracks above
-               already overflowed the card at the 840 floor once (see
-               .alert-events in style.css, where the sound column is "the
-               only one allowed to give"), and grid tracks do not wrap: six
-               of them would be a horizontally scrolling page, which
-               DESIGN.md forbids outright. Spanning 1 / -1 is what
-               .field-msg already does one line below for the same
-               reason. -->
-          <span class="alert-flash">
-            <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
-            <select class="field" id="alert-event-combat-flashes"></select>
-            <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
-            <select class="field" id="alert-event-combat-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-combat-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1199,18 +1185,6 @@
           </select>
           <button class="btn" id="alert-event-warp_scramble-test"
             aria-label="Test the Warp scramble alert">Test</button>
-          <span class="alert-flash">
-            <label class="flash-lab"
-              for="alert-event-warp_scramble-flashes">Flashes</label>
-            <select class="field" id="alert-event-warp_scramble-flashes"></select>
-            <label class="flash-lab"
-              for="alert-event-warp_scramble-speed">Speed</label>
-            <select class="field" id="alert-event-warp_scramble-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-warp_scramble-msg" role="status" hidden></span>
         </div>
         <div class="row alert-row">
@@ -1235,16 +1209,6 @@
           </select>
           <button class="btn" id="alert-event-decloak-test"
             aria-label="Test the Decloak alert">Test</button>
-          <span class="alert-flash">
-            <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
-            <select class="field" id="alert-event-decloak-flashes"></select>
-            <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
-            <select class="field" id="alert-event-decloak-speed">
-              <option value="slow">Slow</option>
-              <option value="normal">Normal</option>
-              <option value="fast">Fast</option>
-            </select>
-          </span>
           <span class="field-msg" id="alert-event-decloak-msg" role="status" hidden></span>
         </div>
         </div>
@@ -1252,6 +1216,85 @@
              below the table rather than repeated under every participating
              row. Per-row live regions remain reserved for write outcomes. -->
         <p id="alerts-collision" class="field-msg warn" role="status"></p>
+        <!-- Task 1. Flashes and Speed used to be a second grid line under
+             every event row above -- two label/select pairs beneath four
+             tracks already tight at the 840 floor (.alert-events' own
+             comment: "the sound column is the only one allowed to
+             give"). Both are secondary to the row's primary decision --
+             is this event on, what colour, what sound, does it work --
+             so they move into one shared disclosure instead of repeating
+             a second line three times. Collapsed by default (no `open`
+             attribute), the same mechanism #es-retention already
+             established for secondary controls behind a native
+             disclosure.
+
+             Every id stays exactly what alerts.js already looks up
+             (eventRow() builds `alert-event-<id>-flashes` and `-speed`
+             regardless of where they sit in the DOM), and each row's own
+             status line (`alert-event-<id>-msg`) stays in the table
+             above, not in here -- a refused write, or a session-only one,
+             has to stay visible without the reader having to open this
+             first. -->
+        <details id="alert-advanced">
+          <summary>Advanced pulse behavior</summary>
+          <!-- Task 6. Three independent flex rows put Flashes/Speed at
+               whatever x the row's OWN name pushed them to ("Combat" and
+               "Decloak" sat close together, "Warp scramble" -- the longest
+               of the three -- pushed its pair ~58px further right). One
+               grid over all three rows, with the rows themselves
+               display:contents, is the same fix .alert-events and
+               #preview-binds already apply to the identical problem: see
+               .alert-advanced-body below. -->
+          <div class="alert-advanced-body">
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Combat</span>
+            <span class="alert-flash">
+              <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
+              <select class="field" id="alert-event-combat-flashes"
+                aria-label="Flashes: Combat"></select>
+              <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
+              <select class="field" id="alert-event-combat-speed"
+                aria-label="Speed: Combat">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Warp scramble</span>
+            <span class="alert-flash">
+              <label class="flash-lab"
+                for="alert-event-warp_scramble-flashes">Flashes</label>
+              <select class="field" id="alert-event-warp_scramble-flashes"
+                aria-label="Flashes: Warp scramble"></select>
+              <label class="flash-lab"
+                for="alert-event-warp_scramble-speed">Speed</label>
+              <select class="field" id="alert-event-warp_scramble-speed"
+                aria-label="Speed: Warp scramble">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          <div class="row alert-advanced-row">
+            <span class="bind-group-name">Decloak</span>
+            <span class="alert-flash">
+              <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
+              <select class="field" id="alert-event-decloak-flashes"
+                aria-label="Flashes: Decloak"></select>
+              <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
+              <select class="field" id="alert-event-decloak-speed"
+                aria-label="Speed: Decloak">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </span>
+          </div>
+          </div>
+        </details>
         <!-- Round 5, A4. These two were the third and fourth checkboxes on
              the card, directly under the master switch and rendered at its
              indent and weight -- so the card offered five peer switches, of
@@ -1383,6 +1426,22 @@
              typed into this page. .hint carries user-select: text, so the
              number can be copied into a bug report. -->
         <p class="hint" id="about-version">Version &mdash;</p>
+        <!-- Tasks 5-7. Checked once automatically after startup and again
+             on demand; one renderer (settings.js's renderUpdate) reads
+             exactly what Python computed -- can_check/can_download/
+             can_install -- so this card can never offer an action the
+             backend has already refused. -->
+        <div class="update-block">
+          <p class="hint" id="update-status" role="status" aria-live="polite">
+            Update status not checked.
+          </p>
+          <progress id="update-progress" max="1" value="0" hidden></progress>
+          <div class="actions update-actions">
+            <button class="btn" id="btn-update-check">Check again</button>
+            <button class="btn" id="btn-update-download" hidden>Download update</button>
+            <button class="btn" id="btn-update-install" hidden>Install update</button>
+          </div>
+        </div>
         <!-- The one string on this card that IS typed here. There is no
              payload key for it and ui/api.py belongs to another lane; the
              SPDX identifier is also stable in a way the version is not --
@@ -1429,12 +1488,72 @@
              argument here is unchanged either way: qualify the word, do
              not drop it. -->
         <h2>EVE settings folder<span id="es-eve-state" class="pill">EVE closed</span></h2>
-        <!-- Two faces of one card. Folder, server and profile are set on the
-             first visit and rarely again, while the copy card below is why
-             the screen exists; five controls above it pushed the target list
+        <!-- Profile-first (round 7): the profile decides what a copy reads
+             and what a copy targets, which is the reason the screen exists,
+             so it is the one control this card shows on every visit rather
+             than the one folder/server setup collapses away after the
+             first. The New/Replace disclosure sits beside it for the same
+             reason -- creating or replacing a whole profile is a decision
+             about THIS profile, not a fourth folder-setup control -- and it
+             opens inline rather than as a dialog so the source, the mode
+             and the destination stay in the one place a mistake here would
+             be caught: beside the Profile picker itself. -->
+        <div class="row" id="es-profile-primary">
+          <label class="lab" for="es-profile">Profile</label>
+          <select id="es-profile" class="field"></select>
+          <button id="es-profile-copy-open" class="btn" type="button">Copy profile…</button>
+        </div>
+        <!-- Explicit disclosure state (profileCopy), not a details/summary:
+             the source is FROZEN at open from state.profile, so a root,
+             server or profile change Python accepts must close it rather
+             than leave it open over a source that no longer exists. A
+             native <details> has no hook for that; evesettings.js owns it
+             instead, the same way it owns the folder card's own open/closed
+             face. -->
+        <div id="es-profile-copy-panel" class="es-profile-copy" hidden>
+          <div class="row" id="es-profile-copy-source-row">
+            <span class="lab">Copying</span>
+            <span id="es-profile-copy-source" class="es-path"></span>
+          </div>
+          <div class="row">
+            <label class="radio">
+              <input type="radio" id="es-profile-copy-new" name="es-profile-copy-mode" value="new" checked><span class="ring"></span>
+              New profile
+            </label>
+            <label class="radio">
+              <input type="radio" id="es-profile-copy-replace" name="es-profile-copy-mode" value="replace"><span class="ring"></span>
+              Replace existing
+            </label>
+          </div>
+          <!-- aria-describedby: the status line under these two fields is
+               where every refusal about a NAME or a DESTINATION lands
+               (Python's), and where the panel says why its submit is
+               disabled. role="status" announces the change once; without
+               this association a screen-reader user who tabs BACK to the
+               field afterwards hears the field alone and never the reason
+               their last attempt was refused. -->
+          <div class="row" id="es-profile-copy-new-fields">
+            <label class="lab" for="es-profile-copy-name">Name</label>
+            <input id="es-profile-copy-name" class="field" type="text" maxlength="80" aria-describedby="es-profile-copy-status">
+          </div>
+          <div class="row" id="es-profile-copy-replace-fields" hidden>
+            <label class="lab" for="es-profile-copy-destination">Replace</label>
+            <select id="es-profile-copy-destination" class="field" aria-describedby="es-profile-copy-status"></select>
+          </div>
+          <p id="es-profile-copy-status" class="field-msg" role="status"></p>
+          <div class="row">
+            <button id="es-profile-copy-submit" class="btn" type="button">Copy profile</button>
+            <button id="es-profile-copy-cancel" class="btn" type="button">Cancel</button>
+          </div>
+        </div>
+        <!-- Two faces of one card. Folder and server are set on the first
+             visit and rarely again, while the copy card below is why the
+             screen exists; five controls above it pushed the target list
              under the fold at the window floor. evesettings.js chooses which
              face renders and forces the controls open when there is nothing
-             to summarise.
+             to summarise. Profile itself is no longer part of either face --
+             see the primary row above -- because it is not setup, it is the
+             thing that changes on every visit.
 
              The floor is 840x625 CSS at every scaling (DESIGN.md). This
              comment used to say "the 560px floor", a viewport S4 established
@@ -1454,7 +1573,7 @@
                (The box is gone too now -- see .es-path, round 3's P4 -- so
                the row no longer offers a second thing that looks clickable
                for this button to lose against.) -->
-          <button id="es-folder-edit" class="btn">Change…</button>
+          <button id="es-folder-edit" class="btn">Change folder or server…</button>
         </div>
         <div id="es-folder-detail">
           <div class="row">
@@ -1494,14 +1613,13 @@
           <div class="row">
             <label class="lab" for="es-server">Server</label>
             <select id="es-server" class="field"></select>
-            <label class="lab" for="es-profile">Profile</label>
-            <select id="es-profile" class="field"></select>
           </div>
         </div>
         <p id="es-warning" class="hint" hidden></p>
       </section>
 
-      <div class="es-profile-tools" role="group" aria-label="Tools for the selected EVE profile">
+      <div class="es-profile-tools" role="group" aria-labelledby="es-profile-tools-label">
+        <span id="es-profile-tools-label" class="es-profile-tools-label">Profile tools</span>
         <button class="btn" id="es-backups-open" type="button">Backups…</button>
         <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
       </div>
@@ -1577,8 +1695,10 @@
         <div id="es-commit-context" class="es-commit-context">
           <div class="row" id="es-commit">
             <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
-            <span id="es-copy-count" class="es-count">Nothing selected</span>
-            <span id="es-copy-source" class="es-copy-source"></span>
+            <span class="es-commit-info">
+              <span id="es-copy-count" class="es-count">Nothing selected</span>
+              <span id="es-copy-source" class="es-copy-source"></span>
+            </span>
             <span id="es-eve-state-commit" class="pill">EVE closed</span>
           </div>
           <p id="es-copy-backup-note" class="hint"></p>
@@ -1705,29 +1825,32 @@
         </div>
       </section>
 
-      <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage account names and character links…</button>
-      <section id="es-identity-panel" class="es-identity" hidden>
-        <h2>Names and character links</h2>
-        <div class="row">
-          <label class="lab" for="es-identity-account">Account</label>
-          <select id="es-identity-account" class="field"></select>
-        </div>
-        <div class="row">
-          <label class="lab" for="es-manage-account-name">Account name</label>
-          <input id="es-manage-account-name" class="field" maxlength="80">
-          <button id="es-account-name-apply" class="btn" type="button">Apply</button>
-        </div>
-        <div class="row">
-          <span class="lab">Confirmed characters</span>
-          <div id="es-account-characters" class="es-account-characters"></div>
-        </div>
-        <div id="es-character-add-row" class="row">
-          <label class="lab" for="es-character-add">Add character</label>
-          <select id="es-character-add" class="field"></select>
-          <button id="es-character-add-btn" class="btn" type="button">Add</button>
-        </div>
-        <p id="es-manage-status" class="field-msg" role="status"></p>
-      </section>
+      <div class="es-manual-identity" role="group" aria-labelledby="es-manual-identity-label">
+        <p id="es-manual-identity-label" class="es-manual-identity-label">Manual management</p>
+        <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage account names and character links…</button>
+        <section id="es-identity-panel" class="es-identity" hidden>
+          <h2>Names and character links</h2>
+          <div class="row">
+            <label class="lab" for="es-identity-account">Account</label>
+            <select id="es-identity-account" class="field"></select>
+          </div>
+          <div class="row">
+            <label class="lab" for="es-manage-account-name">Account name</label>
+            <input id="es-manage-account-name" class="field" maxlength="80">
+            <button id="es-account-name-apply" class="btn" type="button">Apply</button>
+          </div>
+          <div class="row">
+            <span class="lab">Confirmed characters</span>
+            <div id="es-account-characters" class="es-account-characters"></div>
+          </div>
+          <div id="es-character-add-row" class="row">
+            <label class="lab" for="es-character-add">Add character</label>
+            <select id="es-character-add" class="field"></select>
+            <button id="es-character-add-btn" class="btn" type="button">Add</button>
+          </div>
+          <p id="es-manage-status" class="field-msg" role="status"></p>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -1848,6 +1971,18 @@
           <span class="rail-head-key">Ready</span>
         </div>
         <div class="rail-plans" id="skills-plans"></div>
+        <!-- Directly below the list they act on, and before the
+             disclosure and the block's own flexible slack -- not after
+             them, where they used to sit. Both are `flex: none` siblings
+             of the same shrinkable list (.rail-plans-block's own comment:
+             the slack is the block's own, at its foot), so reordering the
+             two costs nothing: the block's total height, and the
+             four-plan-row floor measured against it, do not move either
+             way. -->
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
+          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
+        </div>
         <!-- The plan file format was stated in ONE place: the hint shown
              when the folder holds no plans at all -- that is, only to
              users who have no reason to care yet. A user with one plan and
@@ -1860,10 +1995,6 @@
              line with the level you want in roman numerals, like
              <code>Shield Operation V</code>.</p>
         </details>
-        <div class="rail-plan-actions">
-          <button class="linkbtn" id="skills-open-folder">Open plans folder</button>
-          <button class="linkbtn" id="skills-reload-plans">Reload plans</button>
-        </div>
       </div>
     </aside>
 
@@ -1871,6 +2002,21 @@
       <header class="skills-head">
         <h1 id="skills-plan-name">No plan selected</h1>
         <span class="skills-plan-count" id="skills-plan-count"></span>
+        <!-- Task 6. Every training ETA and remaining-time figure on this
+             screen rests on the same assumptions the payload cannot
+             restate per row: current attributes at Omega training speed,
+             with implants and any requirement not explicitly listed in
+             the plan excluded from the number entirely -- not merely
+             skipped for that one skill, the WHOLE estimate is withheld
+             (training.estimate()'s all-or-nothing contract). A real
+             <button>, not a titled span -- list.js's existing `data-tip`
+             glyphs carry a `title` a mouse can read but a keyboard cannot
+             reach at all. Starts hidden: there is nothing to assume about
+             until a plan is selected. -->
+        <button type="button" class="skills-estimate-info"
+                id="skills-estimate-info" hidden
+                aria-label="Estimates use current attributes at Omega speed. Implants and requirements not listed in this plan are excluded."
+                data-tip="Estimates use current attributes at Omega speed. Implants and requirements not listed in this plan are excluded.">ⓘ</button>
         <!-- S7. The maintainer's answer to "what do you end up doing
              twice": retyping a character's missing skills into EVE. It
              sits on the PLAN heading rather than in a character's row
@@ -1903,6 +2049,20 @@
         <summary id="skills-issues-summary"></summary>
         <div id="skills-issues-body"></div>
       </details>
+
+      <!-- The pane above this line is scoped to the SELECTED PLAN (the
+           heading, its copy control, notices, plan-file issues); this
+           line down is scoped to CHARACTERS -- the filter, the roster and
+           its empty state all read the roster, never the plan. Nothing
+           marked where one ends and the other begins, and the roster was
+           the one independent scroll region of the route's three (Groups,
+           Plans, this one) with no persistent heading of its own -- only
+           the filter bar sat above it, and Clear filter hides itself
+           until a filter is typed. Reuses .rail-head rather than adding a
+           second heading treatment; .skills-roster-head only adds the
+           boundary. Inert text, not a control: no tabindex, no handler,
+           nothing skills.js renders here. -->
+      <h2 class="rail-head skills-roster-head">Characters</h2>
 
       <div class="skills-filterbar">
         <input class="field" id="skills-filter" type="text" spellcheck="false"

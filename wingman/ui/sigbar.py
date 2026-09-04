@@ -18,6 +18,7 @@ WebView2 host, which the already-running previews subsystem dwarfs.
 """
 
 import logging
+import sys
 import threading
 
 from wingman.ui import window as window_mod
@@ -61,49 +62,175 @@ def _default_placement(scale) -> tuple[int, int]:
     )
 
 
-def create(api, hidden: bool = True):
-    """Build the bar window and hand *api* its back-reference.
+def create(api):
+    """Build the bar window, hidden, and hand *api* its back-reference.
 
     Mirrors ui.window.create's invariant: the `api._sigbar_window` MUST be
     assigned via the underscore name AFTER create_window, for the same
     RecursionError reason documented there (pywebview's js_api proxy walk
     over public attributes).
 
-    `on_top=True` is pywebview's own pinned flag: the WinForms backend sets
-    TopMost on the form at creation, on the UI thread, which is the whole
-    feature. There is deliberately NO handler on `shown` or `moved` here --
-    see the comment at the bottom of the file for the deadlock that taught
-    this module to leave pywebview's event threads alone.
+    Always created hidden and shown by reveal_bar: the taskbar button is
+    created at a window's first show, so the tool-window style below has
+    to land while it is still hidden or the button (and its aero
+    preview) can persist past the style change. The synchronous style
+    patch is safe because a secondary pywebview window's form is built
+    on the UI thread through a synchronous Invoke -- the handle exists
+    by the time create_window returns.
+
+    `on_top=True` is pywebview's own pinned flag: the WinForms backend
+    sets TopMost on the form at creation, on the UI thread, which is the
+    whole feature. There is deliberately NO handler on `shown` or
+    `moved` here -- see the comment at the bottom of the file for the
+    deadlock that taught this module to leave pywebview's event threads
+    alone.
+
+    Returns None when the app is quitting: the guided-update flow tears
+    the bar down before restarting, and a create racing that teardown
+    would leak a WebView2 window into the relaunch.
     """
     import webview
 
-    section = api._state.settings.get("sig_bar") or {}
-    x, y = section.get("x"), section.get("y")
-    if x is None or y is None:
-        x, y = _default_placement(window_mod._system_scale)
+    # Covers the native create AND publication. Shutdown taking the same lock
+    # either waits and destroys this exact bar, or wins first and closes the
+    # lifecycle before WebView2 can allocate another window.
+    with api._sigbar_lifecycle_lock:
+        if api._sigbar_quitting:
+            return None
+        section = api._state.settings.get("sig_bar") or {}
+        x, y = section.get("x"), section.get("y")
+        if x is None or y is None:
+            x, y = _default_placement(window_mod._system_scale)
 
-    bar = webview.create_window(
-        "Wingman sig bar",
-        str(window_mod._web_dir() / "sigbar.html"),
-        js_api=api,
-        width=WIDTH,
-        height=HEIGHT,
-        x=x,
-        y=y,
-        frameless=True,
-        # The page marks its whole body as the drag region; nothing on the
-        # bar is clickable, so easy_drag=False stays honest here exactly as
-        # it does on the main window.
-        easy_drag=False,
-        on_top=True,
-        # The native surface paints before the first HTML frame; a mismatch
-        # is a white flash, same as the main window's BACKGROUND note.
-        background_color=window_mod.BACKGROUND,
-        min_size=MIN_SIZE,
-        hidden=hidden,
+        bar = webview.create_window(
+            "Wingman sig bar",
+            str(window_mod._web_dir() / "sigbar.html"),
+            js_api=api,
+            width=WIDTH,
+            height=HEIGHT,
+            x=x,
+            y=y,
+            frameless=True,
+            # The page marks its whole body as the drag region; nothing on the
+            # bar is clickable, so easy_drag=False stays honest here exactly as
+            # it does on the main window.
+            easy_drag=False,
+            on_top=True,
+            # The bar is dragged by its body and must never steal focus
+            # from the client being flown.
+            focus=False,
+            # The native surface paints before the first HTML frame; a
+            # mismatch is a white flash, same as the main window's note.
+            background_color=window_mod.BACKGROUND,
+            min_size=MIN_SIZE,
+            # ALWAYS hidden at creation, including the first enable -- see
+            # the docstring. reveal_bar does the showing.
+            hidden=True,
+        )
+        api._sigbar_window = bar
+        if sys.platform == "win32":
+            _apply_tool_style(bar)
+        return bar
+
+
+# Native show/hide and the style patch all key off the HWND. ctypes calls
+# are used instead of pywebview's show()/hide() on purpose: pywebview's
+# show() ACTIVATES the form (focus steal from the client being flown) and
+# both go through `shown`-event waits designed for windows that load
+# content, which a chrome bar has no use for. ShowWindow and
+# SetWindowLongW are safe from any thread and pump nothing -- unlike the
+# property sets that hung the drag (see the block comment at the bottom).
+
+
+def _hwnd(bar):
+    """The bar's HWND as an int, or None when it cannot be read.
+
+    Blind except on purpose: `native` and `Handle` are WinForms objects
+    whose failure modes here (no native yet, handle not created, torn
+    down mid-call) are all "there is no window", and every caller's
+    next step for None is the same as for a dead window.
+    """
+    try:
+        return bar.native.Handle.ToInt32()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _apply_tool_style(bar) -> None:
+    """Add WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE to the bar's window.
+
+    Called right after create_window returns: a secondary window's form
+    is built on the UI thread through a SYNCHRONOUS Invoke, so the
+    handle already exists and no timer is needed -- the timer this
+    replaced could also lose a race with the window's first show, which
+    is how the bar shipped a taskbar button in the first release of
+    this feature. Idempotent, and applied to a window that is still
+    hidden, so the shell never creates the button.
+    """
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    if handle is None:
+        logger.warning("sig bar handle unavailable; tool-window style skipped")
+        return
+    GWL_EXSTYLE = -20
+    WS_EX_TOOLWINDOW = 0x80
+    WS_EX_NOACTIVATE = 0x08000000
+    style = windll.user32.GetWindowLongW(handle, GWL_EXSTYLE)
+    windll.user32.SetWindowLongW(
+        handle, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
     )
-    api._sigbar_window = bar
-    return bar
+
+
+def is_alive(bar) -> bool:
+    """Whether the bar's window still exists as an OS window.
+
+    The close-an-aero-preview destruction path is gone with the aero
+    preview itself, but IsWindow is a one-call answer that also covers
+    any other teardown, and unlike pywebview's `closed` event it needs
+    no attribute walk over a possibly-stubbed object.
+    """
+    from ctypes import windll
+
+    if bar is None:
+        return False
+    handle = _hwnd(bar)
+    return bool(handle and windll.user32.IsWindow(handle))
+
+
+def is_visible(bar) -> bool:
+    """Whether the bar is on screen. Used by Api.fit_sig_bar, whose
+    resize would otherwise SHOW a hidden bar (pywebview's resize passes
+    SWP_SHOWWINDOW) -- which is how a toggled-off bar kept coming back
+    on the next status poll."""
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    return bool(handle and windll.user32.IsWindowVisible(handle))
+
+
+def reveal_bar(bar) -> None:
+    """Show the bar without activating it."""
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    if handle:
+        # SW_SHOWNOACTIVATE: shown, but the foreground stays where it
+        # is. Re-asserting the tool style costs one syscall and covers
+        # a window whose creation somehow skipped it.
+        _apply_tool_style(bar)
+        windll.user32.ShowWindow(handle, 8)
+
+
+def hide_bar(bar) -> None:
+    """Hide the bar. Native, because pywebview's hide marshals an
+    Invoke at a form that may be mid-teardown; SW_HIDE has no such
+    dependency."""
+    from ctypes import windll
+
+    handle = _hwnd(bar)
+    if handle:
+        windll.user32.ShowWindow(handle, 0)
 
 
 def restore(api) -> None:
@@ -121,19 +248,31 @@ def restore(api) -> None:
     if not section.get("enabled"):
         return
     try:
-        bar = create(api, hidden=True)
+        bar = create(api)
     except Exception:
         logger.exception("sig bar window could not be created")
         return
+    if bar is None:
+        return
 
     def reveal() -> None:
+        shown = False
         try:
-            bar.show()
-            # Same instant-content rule as Api.toggle_sig_bar: the poll is
-            # up to 3s away and an empty bar reads as broken.
-            api._push_eve_status()
+            with api._sigbar_lifecycle_lock:
+                # The timer belongs to this exact creation. A shutdown or a
+                # replacement makes it stale; neither may resurrect the old
+                # native window after teardown has begun.
+                if api._sigbar_quitting or api._sigbar_window is not bar:
+                    return
+                reveal_bar(bar)
+                shown = True
         except Exception:
             logger.exception("sig bar window could not be shown")
+        if shown:
+            # Same instant-content rule as Api.toggle_sig_bar: the poll is
+            # up to 3s away and an empty bar reads as broken. The render
+            # this triggers also re-fits the (now visible) bar.
+            api._push_eve_status()
 
     threading.Timer(0.3, reveal).start()
 

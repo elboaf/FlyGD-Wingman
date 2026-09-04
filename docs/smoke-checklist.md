@@ -49,6 +49,26 @@ Run on Windows against a real install before each release.
       renames the state directory on first launch. If two entries appear,
       or the old state directory is still there afterward, one of those two
       steps is broken.
+- [ ] **A normal in-place Wingman upgrade preserves current settings and
+      sign-in.** Install the previous 4.x release, change a visible setting,
+      sign in, quit Wingman, and save the state before running the candidate:
+
+      ```powershell
+      $State = Join-Path $env:LOCALAPPDATA "FlyGD Wingman"
+      Copy-Item "$State\settings.json" "$env:TEMP\wingman-settings-before.json"
+      Copy-Item "$State\token.json" "$env:TEMP\wingman-token-before.json"
+      $Installer = Get-ChildItem .\dist\FlyGD-Wingman-Setup-*.exe |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      Start-Process -FilePath $Installer.FullName -Wait
+      ```
+
+      Expected: the visible Inno wizard recognises the existing install and
+      replaces it in place; Add/Remove Programs still has exactly one FlyGD
+      Wingman entry; the changed setting remains selected after launch; and
+      `Compare-Object (Get-Content "$env:TEMP\wingman-token-before.json")
+      (Get-Content "$State\token.json")` prints nothing. The application
+      remains signed in. This is the ordinary same-AppId update path, separate
+      from the pre-4.0 identity migration above.
 - [ ] **Upgrading resets the "start at login" task to checked, even if the
       3.x user had turned it off.** Because `AppId` changed in 4.0, Inno
       treats the install as fresh and does not carry forward [Tasks]
@@ -68,6 +88,83 @@ Run on Windows against a real install before each release.
 - [ ] Window title bar and tray-icon tooltip both read **FlyGD Wingman**
 - [ ] A "new recording(s) ready to upload" notification is titled
       **FlyGD Wingman**
+
+## Guided updater native harness
+
+Run the checkout-only fixture before each release on Windows; the complete
+commands and expected output are in `tests/manual/README.md`. These checks must
+use `tests/manual/update_fixture.iss`, never an installed application binary.
+
+```powershell
+iscc /O"$PWD\dist" tests\manual\update_fixture.iss
+$Fixture = Join-Path $PWD "dist\Wingman-Update-Harness-Setup.exe"
+$SourceUrl = "https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe"
+```
+
+- [ ] **Injected download modes preserve production validation and cleanup.**
+      Run `uv run python tests\manual\update_harness.py serve --mode complete`,
+      then repeat with `truncated` and `checksum-mismatch`. Expected: complete
+      prints verified identity/size/digest and marker create/remove; truncated
+      fails with `code=size`; checksum mismatch fails with `code=checksum`;
+      both faults print `partial retention: none`; every run prints
+      `temporary staging root removed: yes` and makes no network request.
+- [ ] **Attachment Services handles the fixture and preserves MOTW where
+      supported.** Run: `uv run python
+      tests\manual\update_harness.py attachment
+      --i-understand-this-launches-a-test-exe $Fixture $SourceUrl`, then
+      `Get-Item -LiteralPath $Fixture -Stream *`. Expected on a filesystem and
+      policy that support Mark-of-the-Web: identity, size and digest print and
+      `Zone.Identifier` is present and listed. This is the real Attachment
+      Services path, not a fabricated alternate data stream. A local policy
+      rejection or quarantine remains a typed failure rather than a reason to
+      bypass it.
+- [ ] **The protected handle wins a real replacement race.** Run:
+      `uv run python tests\manual\update_harness.py lock-race
+      --i-understand-this-launches-a-test-exe $Fixture`. Expected:
+      `safe retention: replacement denied (winerror=5)` or the same line with
+      `winerror=32`, followed by unchanged identity, size, and SHA-256. The
+      command prints the actual code; success, any other code, timeout, or
+      mutation must fail. It races only a temporary staged copy and removes
+      that staging root.
+- [ ] **The fixture mutex produces deterministic prompt/no-prompt runs.** In
+      one terminal run
+      `uv run python tests\manual\update_harness.py mutex-holder`; in another,
+      open `dist\Wingman-Update-Harness-Setup.exe`. Expected: Inno's close/OK
+      prompt. Press Enter in the holder, open the fixture again, and expect no
+      app-close prompt.
+- [ ] **Verified ShellExecute transfers and closes its process handle.** Run:
+
+      ```powershell
+      uv run python tests\manual\update_harness.py shell-launch `
+        --i-understand-this-launches-a-test-exe `
+        dist\Wingman-Update-Harness-Setup.exe `
+        https://github.com/elboaf/FlyGD-Wingman/releases/download/v0.0.0/test.exe
+      ```
+
+      Expected: the normal visible Inno fixture starts, a non-zero process
+      handle prints, and `process handle closed: yes` follows. Windows may show
+      a SmartScreen/Mark-of-the-Web reputation warning depending on local
+      policy and the fixture's reputation. If it appears, choose **More info →
+      Run anyway** only for this compiled no-payload fixture. Neither the
+      harness nor Wingman disables zone checks. Repeat with the fixture mutex
+      held to get the close/OK prompt. For the deterministic launch-failure
+      command, create and remove the required basename before invoking the
+      harness:
+
+      ```powershell
+      $Missing = Join-Path $env:TEMP "Wingman-Update-Harness-Setup.exe"
+      Copy-Item -LiteralPath $Fixture -Destination $Missing -Force
+      Remove-Item -LiteralPath $Missing
+      uv run python tests\manual\update_harness.py shell-launch `
+        --i-understand-this-launches-a-test-exe $Missing $SourceUrl
+      $LASTEXITCODE
+      ```
+
+      Expected: no process opens, `updater failure` prints, and the exit code
+      is 1. The successful path must use real Attachment Services and retain
+      Mark-of-the-Web where supported, must leave zone checks enabled, and must
+      show the normal visible installer; reputation UI itself is policy- and
+      reputation-dependent.
 
 ## WebView2 runtime
 
@@ -2724,6 +2821,23 @@ pytest.
 - [ ] **With both running, a press always moves you.** Press it repeatedly
   from one of the two clients. Expected: it goes to the OTHER one rather
   than re-focusing the client already in front.
+- [ ] **LOAD-BEARING: a burst of presses ends when the keys stop.** With
+  two clients running, alternate their character chords as fast as you
+  can for a couple of seconds, then STOP and hold still. Expected: at
+  most ONE more switch happens — to whichever client you pressed LAST —
+  and then the desktop is still. The bug this pins: every press used to
+  be a queued, fully-executed switch, so after a burst the clients kept
+  trading places on their own. Also check the press for the client you
+  are ALREADY on costs nothing: no minimize, no visible flicker, no
+  delay — it is a recognised no-op now.
+- [ ] **Input lands immediately after a switch.** Switch to a client
+  with a hotkey (and separately, by clicking its preview) and
+  immediately — within a fraction of a second — type a character or
+  click a UI button in the game. Expected: the input goes to that
+  client at once. The bug this pins: the switch left the client
+  foreground but focusless, and roughly the first 0.5-1s of input was
+  swallowed. Try it on a client that was MINIMIZED before the switch —
+  the async restore is the likeliest moment for a relapse.
 - [ ] **A character chord that collides with a cycle chord is still a
   clash.** Bind `Ctrl+Alt+Right` to a character while it is also Cycle
   forward. Expected: both rows go red and the tooltip says the cycle keybind
@@ -2733,6 +2847,27 @@ pytest.
 
 Nothing in the suite can open a second window, so every item here is a
 manual check by construction.
+
+- [ ] **The bar has no taskbar presence.** With the bar open, hover
+      Wingman's taskbar icon: only the main window's preview appears.
+      Expected: no second entry, no aero preview for the bar, and
+      therefore no X to close it with. (The bar now carries
+      WS_EX_TOOLWINDOW; before this it shipped a taskbar button like a
+      real window.)
+- [ ] **Toggling cannot be desynced by a repaint.** Toggle the bar off
+      from Wingman, then hover/minimise/restore windows and click
+      around the desktop. Expected: the bar stays hidden. The bug this
+      pins: the toggle wrote its state at a window object that an
+      external close had already killed, and any repaint resurrected a
+      bar the GUI believed hidden.
+- [ ] **The GUI toggle is the only way the bar changes, and it always
+      recovers.** With the bar open, toggle it off and on from
+      Settings/strip: it reappears at its last position. (Historical:
+      an externally-closed bar used to stay dead until Wingman was
+      restarted; the toggle now detects the dead window and rebuilds
+      it. The aero-preview close that triggered this no longer exists,
+      so the recovery path is exercised by toggling rapidly while the
+      bar is still initialising.)
 
 - [ ] **The bar opens, floats, and stays on top.** Click the `⌒`-style
       toggle at the right end of the status strip with the bookmark engine
@@ -2828,18 +2963,35 @@ headless.
       and survive a restart. An alert already pulsing when you change them
       finishes at its old rate — the values are read when an alert is
       armed, not per frame.
+- [ ] **Advanced pulse behavior opens and closes by keyboard, and fits at
+      the 840px floor.** Settings > Alerts. Expected: `#alert-advanced`
+      starts collapsed under the table, titled `Advanced pulse behavior`.
+      Tab to its summary and press Enter or Space — no mouse required — to
+      open it; press it again to close it. With it open at the 840x625
+      window floor, `document.documentElement.scrollWidth` must equal
+      `clientWidth`, and none of its three rows (Combat, Warp scramble,
+      Decloak) wraps its Flashes/Speed pair onto a second line.
+- [ ] **Opening it does not disturb the card's live regions.** With the
+      disclosure open or closed, `#alerts-health` and `#alerts-status`
+      (both `role="status"`) keep whatever text they already held —
+      alerts.js has no listener on `#alert-advanced`'s `toggle` event, so a
+      screen reader must not re-announce either line just because the
+      disclosure state changed.
 - [ ] **Alert colours stay distinct without native chrome.** Open Settings >
-      Alerts. Each event offers the same five named swatches: Red, Amber,
-      Green, Cyan, and Magenta, and prints the selected name below its dots.
-      Change each event once and confirm the word follows the selected dot.
-      Event boxes align with the modifier boxes below; event names and the
-      Flashes/Speed line share the next inset, so no checkbox hangs by itself
-      at the card edge. They render as dark-theme controls rather than opening
-      a native Windows colour picker. Give two enabled events the same
-      colour. Expected: one warning below the table names both events and says
-      their preview pulses are indistinguishable; the warning is not repeated
-      under both rows. Disable either event or choose a distinct colour and it
-      clears without clearing a row-local save error.
+      Alerts. Each event offers the same five swatches: Red, Amber, Green,
+      Cyan, and Magenta — one line, vertically centered with the checkbox/
+      name, Sound and Test beside it, not a two-line control. Each swatch
+      announces its colour name to a screen reader (`aria-label`) and shows
+      it in its tooltip; nothing prints the selected name visibly below the
+      dots any more. Event boxes align with the modifier boxes below; event
+      names and the Flashes/Speed line share the next inset, so no checkbox
+      hangs by itself at the card edge. They render as dark-theme controls
+      rather than opening a native Windows colour picker. Give two enabled
+      events the same colour. Expected: one warning below the table names
+      both events and says their preview pulses are indistinguishable; the
+      warning is not repeated under both rows. Disable either event or
+      choose a distinct colour and it clears without clearing a row-local
+      save error.
 
 ### The alert render path
 
@@ -2938,6 +3090,14 @@ so these are the checks that matter and only a Windows machine can run them.
       sits directly beneath that context when the codec is available, without
       becoming another card or route. In Accounts mode, the Copy card contains
       **Identify accounts…**; none of these tools is an inline card below Copy.
+- [ ] **Profile tools are named for what they are, not for who they seem
+      scoped to.** Inspect the **Backups…** / **Edit formations…** tool
+      group with a screen reader or the accessibility pane. Expected: its
+      accessible name is `Profile tools` via `aria-labelledby`, not an
+      `aria-label` claiming the group belongs only to the selected
+      server/profile — `eve_settings_backup_dir()` is one fixed store, not
+      scoped to that selection, so switching profiles must not change what
+      the group's name implies it is showing.
 - [ ] **Account identities are recognizable.** In Accounts mode, the summary
       reports the identified count. A named account leads with its username
       and retains its character summary and `Account <id>` secondarily; an
@@ -2962,20 +3122,25 @@ so these are the checks that matter and only a Windows machine can run them.
       newest 20 entries on each entry.
 - [ ] Choose the EVE folder. Servers and profiles populate; characters
       show names within a second or two of the route opening.
-- [ ] **The folder card is one line on every visit after the first.** With a
-      folder already chosen, open the route. Expected: the EVE settings
-      folder card is a single row — `Folder`, the path, the server and
-      profile, and a `Change…` button. The server and the profile each
-      carry their noun, `Tranquility server · Default profile` (round 5's
-      R5); bare, `Default` did not read as a profile name at all. Check the
-      path still fits beside them at the floor with the default EVE root.
-      And the Copy EVE settings card's
-      target list is on screen without scrolling. Press `Change…`: the
-      folder, Server and Profile controls appear. Leave the route and come
-      back: it is one line again. This is deliberate and not a bug — the
-      collapse is what puts the task on screen, so it is not remembered.
+- [ ] **The folder card is one line on every visit after the first, and
+      Profile is not part of it.** With a folder already chosen, open the
+      route. Expected: `Profile` is its own always-visible row above the
+      folder card, with `Copy profile…` beside it — present on every visit,
+      never collapsed, because it is the control that changes, not setup.
+      The EVE settings folder card below it is a single row — `Folder`, the
+      path, the server (`Tranquility server`, round 5's R5 pattern) and a
+      `Change folder or server…` button. Profile is not repeated here (round
+      7's profile-first change): the folder card names only what rarely
+      changes. Check the path still fits beside the server at the floor
+      with the default EVE root. And the Copy EVE settings card's target
+      list is on screen without scrolling. Press `Change folder or
+      server…`: the folder and Server controls appear (Profile does not,
+      it is never part of this face). Leave the route and come back: the
+      folder card is one line again and Profile still shows above it. This
+      is deliberate and not a bug — the collapse is what puts the task on
+      screen, so it is not remembered.
 - [ ] **Neither folder path can be clicked into.** Open the route with a
-      folder chosen, then press `Change…`. Expected: the path in both faces
+      folder chosen, then press `Change folder or server…`. Expected: the path in both faces
       of the card is monospace text on the card's own left edge, with no
       fill, no border and no focus ring — click it and nothing happens and
       nothing is focused. Compare it against Settings › Folders, where the
@@ -3024,6 +3189,17 @@ so these are the checks that matter and only a Windows machine can run them.
       the prose, the `Copy from` row and the filter row are all still held to
       the old 586px measure on purpose, so a filter row narrower than the
       roster beneath it is correct here, not a bug.
+- [ ] **The copy commit bar widens with the roster above the 840px floor,
+      and only there.** With a folder chosen, put the window at its floor
+      and note the commit bar (`Copy to selected`, its count, source, and
+      the EVE pill) — it is capped to the card's ~586px prose measure
+      alongside the rest of the setup controls. Drag the window past
+      841px CSS width. Expected: the bar now spans the roster's full width
+      below it, and the count and source sit grouped together rather than
+      leaving a bare gap before the pill. Return to the floor (or measure
+      at exactly 840px): the bar reverts to the capped layout — the
+      widening is gated behind `min-width: 841px` and must not appear at
+      or below it.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a
@@ -3035,8 +3211,10 @@ so these are the checks that matter and only a Windows machine can run them.
       copy below; it may not only appear when the card is expanded.
 - [ ] **The settings-folder path is monospace and truncates.** Both faces of
       the card. Expected: the same monospace face as the webhook and the
-      recordings folder, on the same label column as Server and Profile, and
-      a long root ends in an ellipsis rather than pushing `Change…` or
+      recordings folder, on the same label column as Server (Profile is its
+      own always-visible row above the card, not part of either face), and
+      a long root ends in an ellipsis rather than pushing `Change folder or
+      server…` or
       `Choose folder…` toward the right edge. Check at 150% scaling, where
       the card is narrower than its own 620px.
 - [ ] **The Characters / Accounts switch says what it is.** Expected:
@@ -3051,6 +3229,15 @@ so these are the checks that matter and only a Windows machine can run them.
       label was added for.
 - [ ] Pull the network cable and reopen the route — characters render as
       `Character <id>`, nothing errors.
+- [ ] **Identify accounts composes correctly at wide widths and keeps
+      manual management subordinate.** Open `Identify accounts…` in a
+      window past the floor. Expected: the guided flow's ~620px-capped
+      column centres in the available width rather than sitting flush
+      against the left edge. Below the guided flow, `Manage account names
+      and character links…` is a single visibly and programmatically
+      labelled disclosure group. Confirm with a screen reader or the
+      accessibility pane that its name is `Manual management` and that the
+      disclosure's own ids, copy, and behavior are otherwise unchanged.
 - [ ] **Identify one account through a controlled client session.** Switch to
       Accounts and open `Identify accounts…`. Expected: a focused sub-screen,
       not a panel inserted into the copy card. Before anything starts it explains
@@ -3130,6 +3317,70 @@ so these are the checks that matter and only a Windows machine can run them.
       start a copy: `Identify accounts…` is disabled until it finishes. Leave
       the identity sub-screen with `‹ Profiles` during an observation and return:
       the observation was cancelled.
+- [ ] **Cancelling a check in flight reads as idle, not a false no-changes
+      message.** Start identification, launch a character, close it, then
+      press `Check changes` and immediately press `‹ Profiles` (or `Cancel`)
+      before the check would normally finish. Expected: the sub-screen
+      returns to Prepare with no leftover "No account and character changes
+      were found" text and no candidate offered — the cancelled check must
+      not be mistaken for one that genuinely found nothing.
+- [ ] **A deleted character retracts an offered candidate mid-flow.** Get
+      Wingman to offer a candidate (`Check changes` reaches Confirm
+      character), then, before confirming, have ESI/Wingman confirm that
+      character deleted (e.g. the resolver's next pass on a known deleted
+      ID). Expected: the candidate is withdrawn automatically, the
+      sub-screen returns to Prepare, and the status line reads exactly
+      `That character was deleted. Start account identification again.`
+      rather than silently keeping a stale offer on screen.
+- [ ] **Account identity controls are unavailable on a non-Tranquility
+      folder.** Point the EVE folder at a Serenity, Singularity, or
+      unrecognized shard directory. Expected: in Accounts mode, `Identify
+      accounts…` and the account-tools row are hidden entirely (not merely
+      disabled), account rows fall back to `Account <id>`, and copy/backup
+      for that profile's characters and accounts remain fully available.
+- [ ] **A deleted character may appear before ESI answers, then disappears.**
+      Open Profiles with a known deleted local character file. Expected: the
+      character may render in the list initially (before ESI resolves), then
+      disappears once ESI confirms the deletion. The row stays hidden on
+      subsequent refreshes in that process. After restart it may briefly
+      reappear, then disappears once ESI reconfirms deletion.
+- [ ] **Selected source or target disappearing leaves copy controls coherent.**
+      Set up a copy with source and targets selected. During in-flight ESI
+      resolution for deleted characters, remove a selected target from the
+      roster (delete its `.dat` file). Expected: the Copy card remains usable,
+      the selection updates, and completion succeeds for surviving targets
+      without errors or corrupted state.
+- [ ] **The deleted account link is absent after refresh and restart.**
+      Identify and link a Tranquility character to an account, then confirm
+      that character is deleted via ESI. Refresh the Profiles route and
+      restart the app. Expected: the link is removed from Wingman's persisted
+      account-character metadata; the account and other characters survive
+      intact. Inspect `settings.json` to confirm the character ID is absent
+      from `account_characters` for that account.
+- [ ] **Active and unresolved characters remain usable.** With an active
+      character, a character pending ESI resolution (network down), and a
+      confirmed deleted character all in the same profile: Expected: active
+      and unresolved characters remain visible, selectable, and copyable; only
+      the confirmed-deleted row hides. The unresolved character persists
+      across route refresh and Wingman restart.
+- [ ] **The deleted character's local `.dat` and backup remain intact and
+      listed.** After deletion filtering hides a character from Profiles and
+      removes its account link, verify its `core_char_<id>.dat` file still
+      exists in the profile folder unchanged. Open Backups and confirm the
+      character's backup (if one exists) is still listed and restorable.
+- [ ] **Switching profiles during in-flight resolution settles the latest
+      profile.** Start resolution for profile A (Characters mode), switch to
+      profile B while ESI requests are pending. Expected: profile A's in-flight
+      pass finishes, then one coalesced trailing pass automatically resolves the
+      latest selected profile without another user action; no deletion filtering
+      or cleanup from stale passes mutate the current context.
+- [ ] **A misleadingly named `tranquil*` directory remains untrusted and
+      non-destructive.** Point the EVE folder at a directory named
+      `tranquility_backup` or `fake_tranquility_other`. Expected: Profiles
+      opens normally; character names use fallback resolution; no deletion
+      filtering or account-link cleanup occurs, regardless of the directory
+      name. In Accounts mode, identity controls remain unavailable. Copy and
+      backup remain fully available.
 - [ ] **Inspect every deterministic identity fixture in a browser.** Open
       `?dev=1&identity=<state>` for `idle`, `waiting`, `none`, `ambiguous`,
       `candidate-multiple`, `pending-name`, `existing-name`, `roster-one`,
@@ -3209,6 +3460,137 @@ so these are the checks that matter and only a Windows machine can run them.
       thing before the write. Close every client and confirm the sentence
       disappears — it is probed fresh each time the dialog is raised, not
       read from the pill.
+
+### Copy a whole profile (New/Replace)
+
+The `Copy profile…` disclosure beside the primary Profile control
+(`Api.eve_settings_copy_profile`, evesettings.js's `profileCopy` state)
+creates a new `settings_*` folder from the selected profile, or replaces
+another profile's files with a copy of it. Its deterministic branches are
+covered by `tests/test_api_evesettings.py`, and the eleven
+`?dev=1&profile=<key>` checkpoints in `wingman/web/dev.js`
+(`tests/test_dev_harness.py`'s `PROFILE_COPY_SCENARIOS`) are a
+REPRESENTATIVE set of rendered states, not an exhaustive one. Two outcomes
+in particular have no checkpoint of their own: the UNKNOWN probe ("Wingman
+could not verify that EVE is closed"), where only the RUNNING refusal and
+the FAILED rollback are staged in `dev.js`, and a SUCCESSFUL rollback after
+a caught publication failure. Both are covered in
+`tests/test_api_evesettings.py`, and their rendered wording is proved only
+by the manual checks below. This section is what only a Windows machine
+with real `settings_*` folders can still prove.
+
+- [ ] **Inspect every deterministic checkpoint in a browser first.** Open
+      `?dev=1&profile=<key>` for `multiple`, `new-disclosure`,
+      `replace-disclosure`, `invalid-name`, `collision`, `busy`, `created`,
+      `replaced`, `eve-running`, `rollback-failed`, and `unsaved-selection`.
+      Expected: each opens Profiles already showing its own state — the
+      disclosure open in the right mode, the right inline error beside
+      `Copy profile`, or the right settled outcome — without hand-driving
+      the panel. Check `multiple` shows more than one profile with
+      `Default` selected, so the Replace destination dropdown is not stuck
+      on `No other profiles`.
+- [ ] **No folder, one profile, multiple profiles, multiple servers.**
+      With no EVE folder set, `Copy profile…` is unavailable (there is no
+      selected profile to freeze as the source). With exactly one profile,
+      `New profile` is the only usable mode — `Replace existing` offers
+      no destination. Add a second profile, and separately a second server
+      with its own profiles: the Replace destination list is always the
+      OTHER profiles on the currently selected server, never a profile
+      that belongs to a different one.
+- [ ] **Root, server, and profile picks show canonical context before the
+      disclosure opens.** Point the folder picker at a `settings_*`
+      directory or a legacy deep root and let it heal upward. Change server
+      and profile. Expected: `Copy profile…` opens against the canonical
+      profile actually selected, and `Copying` inside the panel names that
+      profile — never a stale or pre-canonicalization path.
+- [ ] **Route re-entry and keyboard-only use of the disclosure.** Open
+      `Copy profile…`, then leave Profiles for another route (Backups,
+      Settings, Skills) and come back. Expected: the disclosure is closed —
+      it is not remembered across a visit, the same rule the folder card's
+      own collapse follows. Reopen it and drive the whole flow — mode
+      radios, Name, Replace, Copy profile, Cancel — using only Tab, Space,
+      and Enter; nothing requires a pointer, the order through the panel is
+      the order it reads in, and every control in it is reachable. Tabbing
+      on past Cancel continues into the rest of the route, as it should —
+      this is an inline disclosure, not a modal, so focus is not trapped.
+- [ ] **Create success, and the created profile is visible everywhere it
+      should be.** With EVE closed, open `New profile`, type a name, and
+      press `Copy profile`. Expected: the button reads a neutral busy state
+      while the copy runs, the disclosure closes on completion, and the new
+      profile is now selected in the primary Profile control. Launch EVE's
+      own launcher/client and confirm the created `settings_*` profile is
+      visible there as a distinct profile, not merged into an existing one.
+- [ ] **Replace: confirm, decline, the backup, and the retained source.**
+      With EVE closed, open `Replace existing`, choose another profile as
+      the destination, and press `Copy profile`. Expected: a destructive
+      confirmation names both the source and the destination profile and
+      states that the destination is backed up first. Decline it once —
+      nothing in the destination changes and no backup is taken. Accept it
+      once — Backups gains a fresh automatic backup of the destination
+      taken before the replace, the destination's files now match the
+      source, and the SOURCE remains the selected profile throughout;
+      replacing a profile never moves the selection onto the one just
+      replaced.
+- [ ] **Running and unknown EVE both refuse the copy.** With an EVE client
+      open, attempt both `New profile` and `Replace existing`. Expected:
+      the copy is refused with "EVE is running. Close EVE and retry."
+      beside `Copy profile`, and nothing on disk changes. Separately, with
+      EVE closed but its process state impossible for Wingman to confirm
+      (for example, a permissions-restricted process list), expect the
+      "Wingman could not verify that EVE is closed" refusal instead of a
+      guess in either direction. For Replace specifically, start EVE
+      AFTER accepting the confirmation dialog but before the copy runs:
+      the second, later probe must still catch it and refuse.
+- [ ] **Created-but-selection-unsaved warning.** Make the settings file
+      that stores the EVE folder selection briefly unwritable (read-only,
+      or the containing directory locked), then create a new profile.
+      Expected: the profile exists on disk and the Profile dropdown offers
+      it, but the warning explains Wingman could not remember the
+      selection and to select it manually — never a plain "failed" that
+      would invite retrying a creation that already happened.
+- [ ] **A caught publication failure recovers from its own backup, and a
+      failed rollback still names the way back.** For Replace, interrupt
+      the copy partway (for example, revoke write access to one file
+      inside the destination profile mid-copy) so publication raises after
+      writing some but not all files. Expected: Wingman restores the
+      destination from the automatic backup it took moments before, reports
+      the destination is unchanged, and leaves no partial write behind.
+      Separately, make that same restore itself fail (for example, revoke
+      read access to the backup archive). Expected: the message names the
+      destination as possibly holding a mix of both profiles and names the
+      specific backup archive to restore from Backups by hand — the
+      archive is now the only way back, and this is an instruction, not an
+      error code.
+- [ ] **The hard-kill boundary relies on Backups, not on rollback.** Kill
+      Wingman's process (not EVE's) mid-replace, after the destructive
+      confirmation but before the worker finishes. Expected: on relaunch,
+      the destination profile may be left partially written with no
+      automatic rollback attempted — recovery is restoring the automatic
+      backup taken just before the replace from **Backups**, which is
+      exactly why that backup is unconditional and taken before a single
+      file changes.
+- [ ] **A real Windows junction inside the EVE settings folder is refused
+      as a copy source or destination**, the same as it already is for a
+      selective copy target (see the junction check above): create one
+      beside the real profiles, INSIDE the selected server rather than at
+      the canonical root — `mklink /J <root>\<server>\settings_Escape
+      C:\SomewhereElse` — so that it is offered as a profile at all; a
+      junction at the root is not a profile and the copy would never look
+      at it. Then exercise it both ways. As DESTINATION: `Replace existing`
+      against it, and `New profile` typing a name that would collide with
+      it. As SOURCE: select `Escape` in the primary Profile control and
+      run both `New profile` and `Replace existing` from it. Nothing
+      publishes through the junction in either direction; the escape is
+      refused before anything is staged, and `C:\SomewhereElse` is
+      untouched afterwards.
+- [ ] **840×625 at 100% and 200% scaling.** At the CSS viewport floor, open
+      `Copy profile…` in both modes. Expected: the panel, its radios, the
+      Name/Replace fields, and both buttons fit without horizontal
+      scrolling, and the inline error message wraps rather than truncating.
+      Repeat at 200% Windows scaling — the disclosure is still fully
+      reachable and legible, and the primary Profile row does not crowd
+      `Copy profile…` off the row's right edge.
+
 ### Backups
 
 - [ ] Open **Backups** from Profiles and verify an empty history, an unreadable
@@ -3239,6 +3621,15 @@ so these are the checks that matter and only a Windows machine can run them.
       Alt. Expected: the button reads `Back up Default profile` and `Back up Alt
       profile`; with no profile selected it reads `Back up profile` and is
       disabled.
+- [ ] **Backups' Origin column aligns with the target's name, not its id.**
+      Open Backups with a mixed history of automatic and manual entries.
+      Expected: each row's `.es-backup-grid` aligns to the row's start, so
+      Origin sits level with the target's name line rather than between
+      the name and its raw id beneath it. Origin's text reads in a
+      distinct, slightly dimmer colour than Date — not the same faint
+      colour the target's own secondary (raw id) line uses — so the two
+      read as separate columns; Origin still names only Automatic or
+      Manual, nothing else.
 - [ ] Check the packaged build: Profiles and Backups open, and the folder picker
       opens.
 
@@ -3637,6 +4028,33 @@ against a placeholder id; only these items are blocked on the registration.
       Check the second case at the window floor — that is the one the
       list's `min-height: 0` exists for. Collapse it again and the list
       returns to its height.
+- [ ] **The plan-file actions sit directly below the plan list, above
+      `What is a plan?`.** With plans present, read down the Plans block:
+      the list, then `Open plans folder` / `Reload plans`, then the `What
+      is a plan?` disclosure last. They act on the folder the list above
+      them reads from, so they no longer wait behind an explanation almost
+      nobody opens. Reordering costs no height: `<details>` and the
+      actions row are both `flex: none` siblings of the same shrinkable
+      list, so the four-plan-row floor measured against the block is
+      unaffected.
+- [ ] **The roster has its own persistent heading, like Groups and Plans.**
+      Above the filter bar and the character list, a `Characters` heading
+      (the route's own vocabulary — Add character, Filter characters, N
+      characters added) sits in the same `.rail-head` treatment the Groups
+      and Plans blocks already use, with only a hairline boundary added.
+      It is inert text — no tabindex, no click handler — confirming the
+      roster is the third of the rail's three independent scroll regions,
+      not the one region with no label above its own scrollbar.
+- [ ] **A collapsed row's missing-skill names stay legible at a glance.**
+      With a character missing three or more skills for the selected plan,
+      its collapsed roster row shows at most two names before `and N
+      more` — a smaller cap than the plan-issues disclosure's own list
+      (which spells out every requirement) and smaller again than the copy
+      confirm dialog's name cap, because a roster row is scanned in
+      passing across many rows rather than opened and read like a dialog.
+      Confirm the `N` in `and N more` matches the character's real missing
+      count minus the two names shown, not the number of names the
+      payload happened to include.
 - [ ] **An empty roster names the control.** With no characters
       authorised, the roster reads `No characters yet. Press “Add
       character” to sign one in with EVE SSO.` — the name on the button,
@@ -3753,18 +4171,101 @@ against a placeholder id; only these items are blocked on the registration.
       resolving after the switch and rendering under the wrong plan is a
       silent bug — the row looks populated and correct, but every
       requirement on it belongs to the plan you left.
-- [ ] **LOAD-BEARING: the roster group order and the within-group sort are
-      both exactly right.** Launch with `?dev=1` (it seeds one character
-      per bucket) and confirm the groups appear top to bottom in this
-      order: `Ready`, `Training`, `Locked`, `Missing`, `Unknown`,
-      `Unscored`, then the catch-all bucket last. Within `Missing`, with
-      more than one character in it, confirm the character with the
-      **fewest** missing requirements sorts first. Nothing under `tests/`
-      exercises this grouping or ordering at all — it lives entirely in
-      `skills.js` — so this item is the only thing standing between a
-      regression here and a release. A silent reorder or a resorted
-      `Missing` group would not error or throw; it would just be wrong,
-      and nothing else in this checklist or the suite would catch it.
+- [ ] **LOAD-BEARING: the roster group order is exactly right.** Launch
+      with `?dev=1` (it seeds one character per bucket) and confirm the
+      groups appear top to bottom in this order: `Ready`, `Training`,
+      `Locked`, `Missing`, `Unknown`, `Unscored`, then the catch-all
+      bucket last. Nothing under `tests/` exercises this grouping at
+      all — it lives entirely in `skills.js` — so this item is the only
+      thing standing between a regression here and a release. A silent
+      reorder would not error or throw; it would just be wrong, and
+      nothing else in this checklist or the suite would catch it.
+- [ ] **`Missing` sorts by training time, not by requirement count.**
+      Same `?dev=1` roster. Confirm the `Missing` group reads top to
+      bottom: Nera Tal (`1h 30m`), Aveline Castellane (`2d 0h`), Zara
+      Castellane (`2d 0h`), Konstantina Alexandrovna Winterbourne
+      (`7d 0h`), Gustav Oswaldo (`15d 0h`), then Petra Ilyenko last with
+      no duration shown at all. Aveline before Zara is the deliberate
+      tie-break: the fixture gives the two characters the identical raw
+      `172800` seconds on purpose, so the sort can only separate them by
+      falling through to character name — and it must do that on the RAW
+      seconds, never on a text comparison of the rendered `2d 0h` label,
+      which would not even distinguish the tie. A character with no
+      usable estimate (Petra: confirmed but unusable attributes) sorts
+      last regardless of how few requirements it is missing, the same
+      way a `Training` row with no queue finish sorts last below.
+- [ ] **`Training` sorts by real queue finish, not by name.** Same
+      roster. Confirm the order is Zuelo Parvi (finishes 2026-08-25),
+      Bel Ansgar (finishes 2026-08-27, later, despite sorting
+      alphabetically before Zuelo), then Kaska Rin last. Kaska's own
+      queue is `queue_timing_unknown`, so it has no finish to compare —
+      and her row still shows her OWN plan-wide training estimate
+      (`1d 2h`) beside `timing unknown`, because that is a different
+      computation (training.estimate() over the whole plan) from EVE's
+      queue-finish fact, and the missing fact must not borrow the
+      other's number to fake a sort position.
+- [ ] **A mixed row's duration includes SP already queued.** Still
+      `?dev=1`, expand Konstantina Alexandrovna Winterbourne
+      (`queued_count: 2`, `missing_count: 3`). Confirm her status line
+      reads `3 unqueued · 7d 0h training remaining` — the duration is
+      the WHOLE plan's remaining SP, not just the three unqueued skills,
+      because `training.estimate()` is handed every requirement in the
+      plan and only zeroes a skill's own contribution once ITS SP
+      threshold is met, queued or not. If a future change scoped the
+      estimate to `missing_names` alone, this row's duration would read
+      shorter than the plan will actually take, silently.
+- [ ] **`Stale` still carries a full training estimate.** Expand Gustav
+      Oswaldo (`stale: true`, last refresh failed). Confirm the `Stale`
+      badge sits beside his name AND the status line still reads a real
+      duration — `6 unqueued · 15d 0h training remaining` — rather than
+      falling back to `training time unavailable`. The estimate is
+      scored against the LAST successful refresh, which is exactly what
+      stale data is, not against the failed one.
+- [ ] **The estimate assumptions live only in the tooltip, never as
+      permanent copy.** With a plan selected, confirm no sentence about
+      Omega speed, current attributes, implants or unlisted requirements
+      is printed anywhere on the page by default. Hover the ⓘ button
+      beside the plan heading: the tooltip `Estimates use current
+      attributes at Omega speed. Implants and requirements not listed in
+      this plan are excluded.` appears, and clears when the mouse moves
+      away. Tab to the same button instead: the identical tooltip
+      appears on keyboard focus alone, with no hover. Press Escape while
+      it is focused: the tooltip is dismissed but focus visibly stays on
+      the button — it must not move to the next control. Tab away and
+      back (or click elsewhere, then click or Tab back to the button):
+      the tooltip reopens. A suppression that survived a real blur would
+      mean the button permanently omitted its own explanation for the
+      rest of the session.
+- [ ] **No plan selected, and a character whose attributes were never
+      confirmed, both avoid a misleading zero.** Clear the plan
+      selection: every roster row becomes `Unscored` and carries no
+      status line at all — not `0 unqueued` and not `0m` — because an
+      empty `training_estimate_status` means no estimate was ever asked
+      for (Task 5's ruling), never a fifth failure worth a phrase.
+      Reselect a plan and expand Petra Ilyenko
+      (`attributes_unavailable` — the same outcome a pre-attributes
+      build produces for a character it has never confirmed attributes
+      for). Confirm her status reads `4 unqueued · training time
+      unavailable`, never `4 unqueued · 0m training remaining`: `0m` is
+      `training.estimate()`'s real answer for an already-trained target
+      and must never stand in for a number the estimator could not
+      compute at all.
+- [ ] **At the 840x625 floor, long names still read as themselves and
+      every collapsed status stays on one line.** Drag the window to its
+      floor with `?dev=1` loaded. Confirm Konstantina Alexandrovna
+      Winterbourne's name ellipsises at the 240px name-column cap rather
+      than overflowing or wrapping: `text-overflow: ellipsis` truncates
+      from the end, so enough of the PREFIX stays visible to tell her
+      apart from every other row at a glance — `.skills-name` carries no
+      `title`, so this is the only identity the collapsed row offers, not
+      a fallback for a full string recoverable on hover. Then confirm the
+      roster's worst case for the status column: Gustav Oswaldo, whose
+      `Stale` badge and `6 unqueued · 15d 0h training remaining` status
+      sit on the same line as his name. Neither wraps to a second line,
+      neither is cut off without an ellipsis, and the badge and status do
+      not overlap the name or each other — the chevron, badge and status
+      are all `flex: none`, so the name column is the only thing that
+      gives way, and this row is where it has to give way the most.
 - [ ] **The Groups block sits above Plans and its list stays capped.**
       With `?dev=1`'s seeded groups, confirm the rail lists `All` followed
       by every seeded group, top to bottom, each member count matching the
@@ -3939,6 +4440,19 @@ behaviour a lexical guard cannot reach.
       normal edge of the opaque sticky layer, not overlap inside it. This is the
       whole reason both are sticky — a label that scrolls off the controls it
       explains recreates the original context-loss defect.
+- [ ] **A conflict warning still names its owner once its row is behind the
+      sticky headers.** Same scroll-to-bottom scenario, using a character
+      whose direct bind collides with a cycle keybind (the dev fixture's
+      Tanuki Solette, whose chord matches `All forward`). Scroll until her
+      row sits fully or partly behind the column headers/`OFFLINE` heading
+      while the warning directly below it is still visible. Expected: the
+      warning's own sentence still opens with `Tanuki Solette: …` rather
+      than assuming the row above it is on screen, and her `Keybind` button
+      still points `aria-describedby` at that exact warning's id. Confirm
+      with a screen reader or the accessibility pane: focusing the button
+      announces its own label (the chord) followed by the description, and
+      the description text alone still names the owner even though the row
+      it explains may be hidden.
 - [ ] **The rule above the column headers is one line, not four dashes.**
       `.row` is `display: contents` in this grid, so a border on the
       header CELLS is cut by every 10px column gap. It is drawn by an
@@ -3966,6 +4480,126 @@ behaviour a lexical guard cannot reach.
       control is inert is exactly what a missing script looks like —
       PyInstaller exits 0 when a `datas` entry resolves to nothing, and
       pywebview reports no error for a script that 404s.
-- [ ] **The frozen build reaches only CCP.** With previews and the uploader
-      idle, the only hosts this feature contacts are `login.eveonline.com`
-      and `esi.evetech.net`.
+- [ ] **The frozen Skills interaction reaches only CCP after startup traffic
+      is excluded.** Start the installed build with an HTTPS capture running
+      and wait for the automatic GitHub startup check to finish. Clear the
+      capture after the automatic GitHub startup check finishes, then perform
+      only the Skills interaction: add or refresh a character and inspect its
+      plan. Expected: only the Skills interaction contacts the network, and its
+      hosts are `login.eveonline.com` and `esi.evetech.net`; there is no FlyGD,
+      Google, Discord, or unrelated GitHub request in the cleared capture.
+
+### Checking for and installing an update
+
+- [ ] **Every deterministic dev state fits and is keyboard-operable.** From
+      the checkout, serve the browser-only harness with
+      `uv run python -m http.server 8765 --directory wingman/web`, set the
+      browser viewport to 840x625, and open each of:
+
+      ```text
+      http://127.0.0.1:8765/index.html?dev=1&update=idle
+      http://127.0.0.1:8765/index.html?dev=1&update=checking
+      http://127.0.0.1:8765/index.html?dev=1&update=current
+      http://127.0.0.1:8765/index.html?dev=1&update=unavailable
+      http://127.0.0.1:8765/index.html?dev=1&update=available
+      http://127.0.0.1:8765/index.html?dev=1&update=downloading
+      http://127.0.0.1:8765/index.html?dev=1&update=ready
+      http://127.0.0.1:8765/index.html?dev=1&update=error
+      ```
+
+      Expected: each state has the documented status, progress, and button
+      set; General's licence line, Start-on-login checkbox, and `msg-about`
+      remain reachable; and no horizontal scrollbar appears. In every state,
+      Tab reaches each visible action with a focus ring and Enter/Space behaves
+      like a click. Repeat `downloading`, `ready`, and `error` in the real
+      Windows WebView2 app; pytest never renders either path.
+- [ ] **The automatic check is once per process, including hidden login
+      starts.** With an HTTPS monitor filtered to
+      `api.github.com/repos/elboaf/FlyGD-Wingman/releases/latest`, fully quit
+      Wingman, launch it normally, and leave it running for five minutes.
+      Expected: one non-blocking request after the page is ready and no polling.
+      Quit, then launch the installed `Wingman.exe --hidden`; expected: exactly
+      one request again even though no window opens. Opening General only reads
+      the cached result and creates no request.
+- [ ] **Current.** With no newer release published, Settings > General shows
+      `Wingman is up to date.` and `Check again` is the only visible button.
+- [ ] **Checking and manual retry.** Click `Check again`. Exactly one new API
+      request occurs, the line reads `Checking for updates…`, and the button
+      disables for the round trip. Repeated clicks cannot create concurrent
+      requests.
+- [ ] **Available.** With a newer stable release published, the card names the
+      version and shows `Download update`; `Install update` stays hidden.
+- [ ] **Automatic offline check fails quietly.** Disconnect networking and
+      relaunch. No dialog, banner, badge, or retry stack appears; General reads
+      the neutral `Update status unavailable.`, not a specific network error.
+- [ ] **Manual failure names the stage.** With networking still down, click
+      `Check again`. The card shows Python's stage-specific failure and leaves
+      an explicit retry rather than the neutral automatic-failure sentence.
+- [ ] **Progress.** Reconnect and click `Download update`. The download starts
+      only now. Its progress bar is determinate from the first tick, advances
+      to full, and the status reads `Downloading the update…` throughout.
+- [ ] **Post-attachment mutation is rejected.** Let a real download reach
+      `Update downloaded. Ready to install.`, decline its automatic install
+      prompt, then alter the newest already-marked staging file:
+
+      ```powershell
+      $Ready = Get-ChildItem "$env:LOCALAPPDATA\FlyGD Wingman\tmp\updates\*.ready.exe" |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      Add-Content -LiteralPath $Ready -Value "post-attachment mutation"
+      ```
+
+      Click `Install update`. Expected: no Setup process opens; the card says
+      the installer changed or is unavailable, returns to a download-required
+      state, and removes the invalid staged file. Do not run the altered file.
+- [ ] **Declined install.** On a fresh valid download, `Install update?` pops
+      automatically once. Cancel it. The card remains on `Update downloaded.
+      Ready to install.` with `Install update` visible and enabled -- not
+      reverted to `Download update` or stuck disabled.
+- [ ] **Retained Install action confirms again.** Click `Install update`; the
+      same confirm reappears. Accept it: the normal visible Inno installer
+      appears before any upgrade proceeds. Windows may also show its unsigned-
+      file reputation warning depending on policy and reputation; zone checks
+      must remain enabled, and Attachment Services must retain Mark-of-the-Web
+      where supported.
+- [ ] **Active-upload and retry exclusion.** Start an upload, then try to
+      install a staged update. Expected: `Finish the active upload before
+      installing the update.`, no Setup process, and `Install update` remains
+      available; after the upload finishes, normal install still works. On the
+      Windows checkout also run:
+
+      ```powershell
+      uv run --no-sync python -m pytest tests/test_api_updates.py `
+        -k "upload_and_handoff_race or retry_and_handoff_race or retry_refused_during_handoff" -v
+      ```
+
+      Expected: all selected cases pass, proving a claimed handoff also refuses
+      both a new upload and Retry rather than racing launch or shutdown.
+- [ ] **Tray Quit is refused in every handoff phase.** On Windows run:
+
+      ```powershell
+      uv run --no-sync python -m pytest `
+        tests/test_api_quit.py::test_quit_is_refused_with_information_during_each_handoff_phase `
+        tests/test_api_updates.py::test_quit_is_refused_during_each_handoff_phase -v
+      ```
+
+      Expected: both tests pass for `handing_off`, `revalidating`, and
+      `launching`. During a real install handoff, choosing tray **Quit** must
+      raise/show Wingman, report `Update installation is being prepared.`, and
+      leave the app alive until the updater-owned orderly shutdown begins.
+- [ ] **Shell-launch failure recovers without stranding Wingman.** Run the
+      deleted-path `shell-launch` case in **Guided updater native harness** and
+      the focused recovery cases:
+
+      ```powershell
+      uv run --no-sync python -m pytest tests/test_api_updates.py `
+        -k "shell_failure_removes_marker_and_recovers_ready_state" -v
+      ```
+
+      Expected: no installer process, no handoff marker, Wingman remains
+      responsive, the card returns to enabled `Install update`, and a later
+      retry can succeed.
+- [ ] **Gear tooltip and accessible name.** Before any check completes, the
+      gear's accessible name reads `Settings`. Once an update is available,
+      its title and accessible name read `Settings — update available`, and
+      the dot survives opening Settings (the `.active` state does not erase
+      it).

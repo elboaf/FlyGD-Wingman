@@ -837,6 +837,8 @@ def main() -> int:
     scheduler = None
     window = None
     poll_state = PollState()
+    shutdown_lock = threading.Lock()
+    main_window_destroyed = False
 
     def on_open() -> None:
         # Called on the pystray thread. show() and destroy() are safe from
@@ -848,31 +850,54 @@ def main() -> int:
         if window is not None:
             window.show()
 
+    def destroy_windows() -> None:
+        """Destroy each window once, retrying only targets that failed."""
+        nonlocal main_window_destroyed
+        # Serialize the native calls, not just their bookkeeping. A concurrent
+        # updater/tray request then observes the first call's result and can
+        # retry its failure without repeating a successful destruction.
+        # LOCK ORDER: shutdown_lock, then Api._sigbar_lifecycle_lock. Sig-bar
+        # create/show paths never take shutdown_lock, so a creation already in
+        # progress can finish and be observed here without an inversion.
+        with shutdown_lock:
+            with api._sigbar_lifecycle_lock:
+                # Close the lifecycle before inspecting the window. A creator
+                # that won the lock has already assigned its bar; one that lost
+                # refuses before allocating a native WebView2 window.
+                api._sigbar_quitting = True
+                # The sig bar must be destroyed FIRST. pywebview's WinForms loop
+                # is Application.Run() with no context: it pumps until
+                # Application.Exit(), which fires only when the LAST window is
+                # gone. Leaving the bar alive parks the process inside
+                # window_mod.run() forever after the user chose Quit --
+                # reproduced, not theorised.
+                bar = api._sigbar_window
+                if bar is not None:
+                    try:
+                        bar.destroy()
+                    except Exception:
+                        logger.exception("Sig bar window did not destroy cleanly")
+                    else:
+                        api._sigbar_window = None
+
+            if window is not None and not main_window_destroyed:
+                try:
+                    window.destroy()  # unblocks window_mod.run() below
+                except Exception:
+                    logger.exception("Main window did not destroy cleanly")
+                else:
+                    main_window_destroyed = True
+
     def on_quit() -> None:
-        if window is None:
-            return
         # An upload runs on a daemon thread, so destroying the window here
         # kills it mid-chunk with nothing on screen -- a multi-gigabyte
         # transfer discarded by one menu click. The decision lives on Api
-        # because it has to raise the hidden window and bound its own wait;
-        # see _confirm_quit_if_busy. A refusal leaves the app running,
-        # which is the recoverable half of the two failures.
-        if not api._confirm_quit_if_busy():
-            return
-        # The sig bar must be destroyed FIRST. pywebview's WinForms loop is
-        # Application.Run() with no context: it pumps until Application.
-        # Exit(), which fires only when the LAST window is gone. Leaving
-        # the bar alive parks the process inside window_mod.run() forever
-        # after the user chose Quit -- reproduced, not theorised.
-        bar = api._sigbar_window
-        if bar is not None:
-            try:
-                bar.destroy()
-                api._sigbar_window = None
-            except Exception:
-                logger.exception("Sig bar window did not destroy cleanly")
-        window.destroy()  # unblocks window_mod.run() below
+        # because it raises a hidden window and bounds its own wait. A
+        # handoff refusal likewise leaves every service and window intact.
+        if window is not None and api._claim_quit():
+            destroy_windows()
 
+    api._request_shutdown = destroy_windows
     icon = build_tray(on_open=on_open, on_quit=on_quit)
     threading.Thread(target=icon.run, daemon=True, name="pystray").start()
 
@@ -894,9 +919,8 @@ def main() -> int:
     # Ignoring what we do not understand is the right failure here.
     window = window_mod.create(api, hidden="--hidden" in sys.argv[1:])
 
-    # The floating sig bar reopens here, not in run()'s startup func:
-    # test_startup pins that func to `api.refresh_auth` itself, and this
-    # hook is the better home anyway -- `shown` fires on the GUI thread
+    # The floating sig bar reopens here, not in run()'s startup func. This
+    # hook is the better home -- `shown` fires on the GUI thread
     # (the same thread chrome.enable_resize rides), which is the thread a
     # second WebView2 window has to be built on. The events guard is for
     # the startup tests' window fake, which has no `events` attribute.
@@ -953,21 +977,24 @@ def main() -> int:
         # its handlers is logged and dropped (see Api._push).
         api._push_first_run_when_ready()
 
-    # Resolve the account state off the bridge thread so the Settings route
-    # is correct the first time it is opened rather than after a click.
+    # Resolve account and update state off the bridge thread so Settings is
+    # correct the first time it opens and the gear can show availability.
     #
-    # Handed to run() rather than called here. refresh_auth's first act is
-    # a push, and a push before webview.start() blocks the MAIN thread on
-    # pywebview's twenty-second readiness timeout -- an invisible window on
-    # every launch, and the push lost to _push's bare except when the
-    # timeout finally raises. pywebview runs this on its own thread once
-    # the GUI loop owns the main one.
-    window_mod.run(api.refresh_auth)  # Blocks until the window is destroyed.
+    # Handed to run() rather than called here. Both operations push, and a
+    # push before webview.start() blocks the MAIN thread on pywebview's
+    # twenty-second readiness timeout -- an invisible window on every
+    # launch, with the push dropped when that timeout raises. pywebview runs
+    # this callback on its own thread once the GUI loop owns the main one.
+    window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
 
     icon.stop()
     if scheduler is not None:
         scheduler.stop()
     shutdown_engine(engine)
+    # Close updater state before subsystem teardown. This suppresses late
+    # worker pushes and removes a ready file on ordinary Quit while retaining
+    # the persistent on-disk marker/file pair already handed to Setup.
+    api.shutdown_updates()
     # Last, and unconditional: a preview thread that outlives the window
     # still owns HWNDs, and Wingman leaves the tray but stays in Task
     # Manager. A live loopback socket on the fixed redirect port would

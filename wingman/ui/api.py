@@ -53,15 +53,18 @@ from .. import (
     uploader,
 )
 from .. import settings as settings_mod
+from .. import updates as updates_mod
 from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..eveauth import application as eveauth_application
 from ..evesettings import backup as evesettings_backup
+from ..evesettings import characters as evesettings_characters
 from ..evesettings import codec as evesettings_codec
 from ..evesettings import formations as evesettings_formations
 from ..evesettings import identity as evesettings_identity
 from ..evesettings import names as evesettings_names
 from ..evesettings import ops as evesettings_ops
+from ..evesettings import profilecopy as evesettings_profilecopy
 from ..evesettings import selective as evesettings_selective
 from ..evesettings import tree as evesettings_tree
 from ..preview import geometry as preview_geometry
@@ -123,6 +126,26 @@ def _folder_dialog_kind():
     import webview
 
     return webview.FileDialog.FOLDER
+
+
+def _eve_same_path(candidate: Path | None, requested) -> bool:
+    """Whether *candidate* IS the path the caller named, not a fallback
+    discover() supplied for it.
+
+    discover() falls back to the first server/profile it finds when a
+    requested token matches nothing on disk, so comparing the requested
+    token against the RESULT can't tell a genuine selection from a
+    fabricated one that happened to land on the default. Two-way
+    containment (rather than a lexical `==`) is what tree.py's own
+    equality-through-is_under idiom uses, and it is what makes this call
+    resilient to a trailing separator or an unresolved symlink either
+    side names the same directory with.
+    """
+    if candidate is None:
+        return False
+    return evesettings_tree.is_under(
+        candidate, requested
+    ) and evesettings_tree.is_under(requested, candidate)
 
 
 def _open_file_dialog_kind():
@@ -366,6 +389,64 @@ class RetryState:
     request: object | None
 
 
+@dataclass(frozen=True)
+class _EveContext:
+    """The Profiles selection a resolver pass may speak for.
+
+    Canonical paths -- realpath plus platform case folding, the same
+    identity rule evesettings.tree containment uses -- because a pass that
+    started on one selection must not clean or repaint another that merely
+    spells its folder differently.
+
+    `datasource` is ESI's, and it is empty for anything but a server this
+    process could positively identify as Tranquility. Empty therefore means
+    "no authoritative status source": no deletion verdict may be recorded
+    against it, none may be read for it, and no account identity metadata
+    -- which this product interprets as Tranquility's -- may be applied.
+    """
+
+    root: str = ""
+    server: str = ""
+    profile: str = ""
+    datasource: str = ""
+
+    @property
+    def trusted(self) -> bool:
+        return bool(self.datasource)
+
+
+# What a context had already published: (id, name) pairs and deleted ids.
+_EVE_NO_FACTS: tuple[frozenset, frozenset] = (frozenset(), frozenset())
+
+
+@dataclass(frozen=True)
+class _EveCandidate:
+    """One offered account/character pair, and what authorized it.
+
+    `generation` is the identification generation the observation behind
+    this offer was made under. It travels WITH the pair rather than beside
+    it so a publication cannot half-happen: an offer that outlives its
+    generation -- cancelled, superseded, or invalidated by a learned
+    deletion -- is recognizable as stale by the value it carries, both here
+    and on the page one round trip later.
+    """
+
+    generation: int
+    account_id: str
+    character_ids: tuple[str, ...]
+
+
+# Saved account names and links carry no datasource, so this product reads
+# them as Tranquility's. Elsewhere they are not applied and not editable --
+# a migration would be disproportionate for a feature used off Tranquility
+# about never, and a Tranquility verdict must not rewrite another shard.
+_EVE_IDENTITY_UNAVAILABLE = (
+    "Account identity is available only for Tranquility profiles."
+)
+_EVE_CHARACTER_DELETED = "That character no longer exists."
+_EVE_CLEANUP_FAILED = "Could not remove deleted character links."
+
+
 @dataclass
 class AppState:
     """Everything the bridge needs that is not the page.
@@ -393,6 +474,101 @@ class AppState:
     engine: object | None = None
 
 
+@dataclass(frozen=True)
+class _ClaimResult:
+    """One locked claim decision, including why a caller was refused."""
+
+    ok: bool
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+class _WorkGate:
+    """Atomically arbitrate uploads, updater handoff, and process shutdown.
+
+    The lock protects state transitions only. Prompts, page pushes, I/O, worker
+    creation, and shutdown all happen after it has been released so no external
+    operation can park every claimant behind it.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._upload = False
+        self._handoff = ""
+        self._quitting = False
+
+    def claim_upload(self) -> _ClaimResult:
+        with self._lock:
+            if self._handoff:
+                return _ClaimResult(False, "handoff")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
+            if self._upload:
+                return _ClaimResult(False, "upload")
+            self._upload = True
+            return _ClaimResult(True)
+
+    def upload_claimed(self) -> bool:
+        with self._lock:
+            return self._upload
+
+    def release_upload(self) -> None:
+        with self._lock:
+            self._upload = False
+
+    def claim_handoff(self, phase: str) -> _ClaimResult:
+        with self._lock:
+            if self._upload:
+                return _ClaimResult(False, "upload")
+            if self._quitting:
+                return _ClaimResult(False, "quitting")
+            # The updater's own runtime lock excludes a second installer.
+            # Reusing this transition lets that owner advance the phase
+            # without releasing the claim between revalidation and launch.
+            self._handoff = phase
+            return _ClaimResult(True)
+
+    def release_handoff(self) -> None:
+        with self._lock:
+            self._handoff = ""
+
+    def handoff_phase(self) -> str:
+        with self._lock:
+            return self._handoff
+
+    def claim_quit(self, *, force_upload: bool) -> _ClaimResult:
+        with self._lock:
+            if self._quitting:
+                return _ClaimResult(True)
+            if self._handoff:
+                return _ClaimResult(False, "handoff")
+            if self._upload and not force_upload:
+                return _ClaimResult(False, "upload")
+            self._quitting = True
+            return _ClaimResult(True)
+
+    def begin_update_shutdown(self) -> bool:
+        with self._lock:
+            if not self._handoff:
+                return False
+            self._quitting = True
+            return True
+
+
+@dataclass
+class _UpdateRuntime:
+    state: str = "idle"
+    release: updates_mod.ReleaseInfo | None = None
+    staged: Path | None = None
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    error: str = ""
+    automatic_failure: bool = False
+    worker: threading.Thread | None = None
+
+
 class Api:
     """JS-callable methods only. Every other attribute underscore-prefixed."""
 
@@ -414,6 +590,9 @@ class Api:
         fittings=None,
         authority_warnings=(),
         alerts=None,
+        update_service=updates_mod,
+        update_spawn=threading.Thread,
+        is_frozen=lambda: bool(getattr(sys, "frozen", False)),
     ):
         self._state = state
         self._window = None  # assigned by ui.window.create()
@@ -421,6 +600,16 @@ class Api:
         # _window above: a public attribute here reaches the js_api proxy
         # walk and the same RecursionError follows.
         self._sigbar_window = None
+        # Creation, assignment, showing, delayed reveal, and shutdown's
+        # destroy/clear are one lifecycle transaction at a time. RLock lets
+        # toggle_sig_bar hold the boundary while sigbar.create enforces it
+        # independently for startup restore.
+        #
+        # LOCK ORDER: main's shutdown_lock, then this lock. Sig-bar code never
+        # takes shutdown_lock, and neither lock is held while claiming the work
+        # gate; updater handoff marks quitting before it requests teardown.
+        self._sigbar_lifecycle_lock = threading.RLock()
+        self._sigbar_quitting = False
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -438,14 +627,45 @@ class Api:
         # independently -- so two operations approved moments apart could
         # otherwise interleave over the same files.
         self._eve_mutation = threading.Lock()
+        # Identification state is reached by the bridge thread (start,
+        # check, confirm, cancel) and by the resolver worker (a learned
+        # deletion invalidates the offer it names). Its own lock, held only
+        # to read, clear, or compare-and-publish the three fields below --
+        # never across discovery, an ESI call, a settings write or a
+        # dialog. LOCK ORDER IS FIXED: _eve_mutation may be taken before
+        # this one, NEVER after, so cleanup (which owns _eve_mutation) and
+        # a cancellation (which must never wait for it) cannot deadlock.
+        self._eve_identification_lock = threading.Lock()
+        # Monotonic for the process. Every invalidation -- cancel, restart,
+        # selection change, learned deletion -- claims a new number, which
+        # is what makes "this answer was computed before that event"
+        # decidable here and on the page.
+        self._eve_identification_generation = 0
         # A snapshot exists only during an explicit identification pass.
         # Timestamps are evidence for that pass, never durable identity.
         self._eve_identification = None
         # The latest observed account and the characters it offered. This is
         # ephemeral authorization for confirmation, not persisted identity.
-        self._eve_identification_candidate: tuple[str, tuple[str, ...]] | None = None
+        self._eve_identification_candidate: _EveCandidate | None = None
         # Process-lifetime memo. Names are cosmetic and free to re-fetch.
         self._eve_names = evesettings_names.NameCache()
+        # (datasource, character id) pairs ESI explicitly reported as
+        # deleted. Monotonic for the process and NEVER persisted: a launch
+        # that cannot reach ESI must not inherit a blacklist from an
+        # obsolete answer, and every launch revalidates when Profiles opens.
+        # "Active" is deliberately not cached here -- see the resolver.
+        self._eve_deleted: set[tuple[str, int]] = set()
+        # What each canonical context last PUBLISHED. Remote facts are
+        # global; applying them to a selection is not, so a trailing pass
+        # can push what a superseded pass merely learned, and a pass that
+        # changes nothing for its own context stays silent.
+        self._eve_applied: dict[_EveContext, tuple[frozenset, frozenset]] = {}
+        # Single-flight with one coalesced trailing pass. Held only to read
+        # and write the two flags below -- never across a network call, a
+        # settings write, or a spawn.
+        self._eve_resolve_lock = threading.Lock()
+        self._eve_resolve_running = False
+        self._eve_resolve_pending = False
         # Last known answer for the advisory "EVE running" pill, or None
         # for "nobody has looked yet". None rather than False because the
         # pill is the ONLY warning before a copy, and False is the
@@ -493,6 +713,13 @@ class Api:
         self._spawn = spawn
         self._probe = probe
         self._timer = timer
+        self._update_service = update_service
+        self._update_spawn = update_spawn
+        self._is_frozen = is_frozen
+        # Assigned by main() once its idempotent window teardown exists.
+        # Tests and partial construction leave it unset; a successful native
+        # launch still closes its process handle and owns the work gate.
+        self._request_shutdown = None
         self._probe_queue: queue.Queue = queue.Queue()
         # Every list_rows() bumps this. A probe result carrying a stale
         # generation refers to rows that have since been replaced, and is
@@ -500,6 +727,13 @@ class Api:
         self._generation = 0
         self._drain: Scheduler | None = None
 
+        # The claim exists before a worker handle and survives through its
+        # target's finally. Thread liveness has a pre-start gap and therefore
+        # cannot arbitrate concurrent pywebview bridge calls.
+        self._work_gate = _WorkGate()
+        self._update_lock = threading.Lock()
+        self._update = _UpdateRuntime()
+        self._update_staging_cleaned = False
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
         # The standalone combat-log post, and Play. Separate handles rather
@@ -509,13 +743,11 @@ class Api:
         # and Play is fire-and-forget with nothing to guard at all.
         self._logs_thread: threading.Thread | None = None
         self._play_thread: threading.Thread | None = None
-        # The log post's guard is a CLAIMED FLAG, not `thread.is_alive()`
-        # like _busy(). is_alive() answers False for a thread that has been
-        # created and not yet started, so assigning the handle before
-        # .start() -- which is what makes the upload guard safe enough --
-        # leaves a window where a second call sees "idle" and dispatches a
-        # second post. pywebview serves each bridge call on its own thread,
-        # so two fast clicks really can arrive concurrently.
+        # The log post has its own claimed flag rather than sharing the
+        # upload/update/Quit gate: its shorter lifecycle deliberately does
+        # not defer polling or require Quit confirmation. It still cannot
+        # use thread liveness because pywebview bridge calls are concurrent
+        # and a newly constructed thread is not alive before start().
         self._logs_lock = threading.Lock()
         self._logs_running = False
         self._retry_state: RetryState | None = None
@@ -1356,10 +1588,11 @@ class Api:
         three different sentences from this one predicate, and each would
         become false for a log post:
 
-        - `_confirm_quit_if_busy` renders `format_quit_confirm(_last_pct)`,
-          which says "An upload is N% complete" -- during a log post there
-          is no upload and `_last_pct` is a stale number from a previous
-          job. A log post is seconds long and loses a Discord post, not a
+        - `_claim_quit` renders `format_quit_confirm(_last_pct)` when its
+          atomic claim reports an upload. That says "An upload is N% complete" --
+          during a log post there is no upload and `_last_pct` is a stale
+          number from a previous job. A log post is seconds long and loses a
+          Discord post, not a
           multi-gigabyte transfer, so Quit does not ask about it at all.
         - `start_upload` says "An upload is already in progress", which a
           log post is not. It refuses on `_logs_busy` separately, in its own
@@ -1369,7 +1602,7 @@ class Api:
           rows, so deferring for it would make the list go stale for
           nothing.
         """
-        return self._upload_thread is not None and self._upload_thread.is_alive()
+        return self._work_gate.upload_claimed()
 
     def _logs_busy(self) -> bool:
         """Is a standalone combat-log post claimed or running?
@@ -1380,19 +1613,23 @@ class Api:
         beside `_logs_lock`.
 
         "Exclude each other" is intent, not an atomic transition: this and
-        `_busy()` are read separately by two check-then-act callers,
-        exactly as start_upload's own upload-versus-upload guard has always
-        worked. Both are reached by clicking a button, and a human cannot
-        click two at once.
+        `_busy()` are read separately by two check-then-act callers. The work
+        gate deliberately serializes upload, updater handoff, and Quit only;
+        standalone log-post separation remains unchanged.
         """
         with self._logs_lock:
             return self._logs_running
 
-    def _confirm_quit_if_busy(self) -> bool:
-        """Answer "may the app exit now?" for the tray's Quit item.
+    def _update_installation_preparing(self, *, show_window: bool) -> None:
+        if show_window and self._window is not None:
+            self._window.show()
+        self._alert("info", "Update", "Update installation is being prepared.")
+
+    def _claim_quit(self) -> bool:
+        """Answer "may the app exit now?" and atomically close the work gate.
 
         Quit destroys the window, which returns from the GUI loop and ends
-        the process. `_upload_thread` is a daemon, so an upload in flight
+        the process. The upload worker is a daemon, so an upload in flight
         dies mid-chunk: no message, no log line, and a multi-gigabyte
         transfer discarded by one menu click. This is the only thing
         standing between that click and the discard.
@@ -1420,21 +1657,36 @@ class Api:
         silence as "stay running" costs a second click, reading it as
         "quit" costs the upload.
         """
-        if not self._busy():
+        claim = self._work_gate.claim_quit(force_upload=False)
+        if claim:
             return True
+        if claim.reason != "upload":
+            self._update_installation_preparing(show_window=True)
+            return False
+
         window = self._window
         if window is None:
             # No page to ask and no way to warn. Refusing here would make
             # Quit inert with nothing on screen explaining why, which is a
             # worse failure than the discard this guard exists to prevent.
             logger.warning("Quit requested with an upload running and no window.")
+        else:
+            window.show()
+            if not self._ask(
+                "Upload in progress",
+                copy_mod.format_quit_confirm(self._last_pct),
+                timeout=QUIT_CONFIRM_TIMEOUT_S,
+            ):
+                return False
+
+        claim = self._work_gate.claim_quit(force_upload=True)
+        if claim:
             return True
-        window.show()
-        return self._ask(
-            "Upload in progress",
-            copy_mod.format_quit_confirm(self._last_pct),
-            timeout=QUIT_CONFIRM_TIMEOUT_S,
-        )
+
+        # An updater can win after a confirmed upload ends but before Quit
+        # takes its claim. Never destroy the window under that handoff.
+        self._update_installation_preparing(show_window=True)
+        return False
 
     def start_upload(self, title, description, stitch, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
@@ -1474,9 +1726,6 @@ class Api:
         if stitch and len(pairs) < 2:
             self._alert("warning", "Stitch", "Select at least two videos to stitch.")
             return
-        if self._busy():
-            self._alert("warning", "Busy", "An upload is already in progress.")
-            return
         if self._logs_busy():
             # Its own sentence. Reusing the line above would say an upload
             # is running when none is, on the one screen where the user can
@@ -1501,15 +1750,35 @@ class Api:
             # snapshotted here -- Settings is reachable between them.
             logs=True,
         )
-        # Cleared per dispatch, not per process: a stop answered by the
-        # PREVIOUS job would otherwise abort this one before its first chunk
-        # and report "Stopped. Nothing was uploaded." for a job the user
-        # just started. Retry clears it for the same reason.
-        self._cancel.clear()
-        self._upload_thread = threading.Thread(
-            target=self._confirm_then_upload, args=(job,), daemon=True
-        )
-        self._upload_thread.start()
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            if claim.reason == "upload":
+                self._alert("warning", "Busy", "An upload is already in progress.")
+            else:
+                self._update_installation_preparing(show_window=False)
+            return
+        try:
+            # Cleared per dispatch, not per process: a stop answered by the
+            # PREVIOUS job would otherwise abort this one before its first chunk
+            # and report "Stopped. Nothing was uploaded." for a job the user
+            # just started. Retry clears it for the same reason.
+            self._cancel.clear()
+            self._upload_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._confirm_then_upload, job),
+                daemon=True,
+            )
+            self._upload_thread.start()
+        except Exception:
+            self._upload_thread = None
+            self._work_gate.release_upload()
+            raise
+
+    def _run_claimed_upload(self, target, *args) -> None:
+        try:
+            target(*args)
+        finally:
+            self._work_gate.release_upload()
 
     def _confirm_then_upload(self, job: UploadJob) -> None:
         # The confirm runs on the worker, not in start_upload, because
@@ -1869,14 +2138,29 @@ class Api:
         state = self._retry_state
         if state is None:
             return
-        # Disabled immediately, not by the worker: the click that got here
-        # must not be repeatable while the resume is being set up.
-        self._push("onRetryAvailable", {"available": False})
-        self._cancel.clear()
-        self._upload_thread = threading.Thread(
-            target=self._retry_worker, args=(state,), daemon=True
-        )
-        self._upload_thread.start()
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            self._push("onRetryAvailable", {"available": False})
+            if claim.reason == "upload":
+                self._alert("warning", "Busy", "An upload is already in progress.")
+            else:
+                self._update_installation_preparing(show_window=False)
+            return
+        try:
+            # Disabled immediately, not by the worker: the click that got here
+            # must not be repeatable while the resume is being set up.
+            self._push("onRetryAvailable", {"available": False})
+            self._cancel.clear()
+            self._upload_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._retry_worker, state),
+                daemon=True,
+            )
+            self._upload_thread.start()
+        except Exception:
+            self._upload_thread = None
+            self._work_gate.release_upload()
+            raise
 
     def _retry_worker(self, state: RetryState) -> None:
         """Resume the interrupted upload, then finish the rest of the job."""
@@ -2400,6 +2684,522 @@ class Api:
         """
         return self._settings_payload()
 
+    def update_status(self) -> dict:
+        return self._update_snapshot()
+
+    def check_for_updates(self) -> dict:
+        return self._start_update_check(automatic=False)
+
+    def _page_ready(self) -> None:
+        """Start optional network work only after WebView2 owns the page."""
+        self.refresh_auth()
+        self._cleanup_update_staging_once()
+        self._start_update_check(automatic=True)
+
+    def _cleanup_update_staging_once(self) -> None:
+        with self._update_lock:
+            if self._update_staging_cleaned:
+                return
+            # Claim the attempt before I/O. A locked staging directory is retried
+            # on the next launch, not repeatedly during this one.
+            self._update_staging_cleaned = True
+        try:
+            self._update_service.cleanup_staging(self._update_staging_root())
+        except Exception:
+            logger.warning("Could not clean updater staging at startup", exc_info=True)
+
+    def download_update(self) -> dict:
+        with self._update_lock:
+            if (
+                self._update.state
+                not in {
+                    "available",
+                    "check_failed",
+                    "download_failed",
+                }
+                or self._update.release is None
+            ):
+                return self._update_snapshot_locked()
+            release = self._update.release
+            self._update.state = "downloading"
+            self._update.staged = None
+            self._update.downloaded_bytes = 0
+            self._update.total_bytes = release.size
+            self._update.error = ""
+            snapshot = self._update_snapshot_locked()
+        try:
+            worker = self._update_spawn(
+                target=self._update_download_worker,
+                args=(release,),
+                daemon=True,
+                name="wingman-update-download",
+            )
+        except Exception:  # noqa: BLE001 - construction failure becomes retryable status
+            return self._rollback_update_start("download")
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure becomes retryable status
+            return self._rollback_update_start("download")
+        return snapshot
+
+    def _update_download_worker(self, release: updates_mod.ReleaseInfo) -> None:
+        path = None
+
+        def progress(done: int, total: int) -> None:
+            with self._update_lock:
+                if self._update.state != "downloading":
+                    return
+                self._update.downloaded_bytes = done
+                self._update.total_bytes = total
+            self._push_update_status()
+
+        try:
+            path = self._update_service.download_release(
+                release,
+                self._update_staging_root(),
+                on_progress=progress,
+            )
+            with self._update_lock:
+                closed = self._update.state == "closed"
+            if closed:
+                self._remove_unhanded_update(path)
+                return
+            self._update_service.verify_after_attachment(release, path)
+        except Exception as exc:
+            if path is not None:
+                self._remove_unhanded_update(path)
+            logger.debug("Wingman update download failed", exc_info=True)
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                self._update.worker = None
+                self._update.state = "download_failed"
+                self._update.staged = None
+                self._update.error = self._update_download_error(exc)
+            self._push_update_status()
+            return
+
+        with self._update_lock:
+            if self._update.state == "closed":
+                closed = True
+            else:
+                closed = False
+                self._update.worker = None
+                self._update.state = "ready"
+                self._update.staged = Path(path)
+                self._update.downloaded_bytes = release.size
+                self._update.total_bytes = release.size
+                self._update.error = ""
+        if closed:
+            self._remove_unhanded_update(path)
+            return
+        self._push_update_status()
+
+    def install_update(self) -> dict:
+        if not self._is_frozen():
+            return self._update_snapshot()
+        # Reserve the runtime phase before consulting the work gate. That
+        # reservation is the owner token Task 4 deliberately did not add to
+        # _WorkGate, and avoids nesting the two locks.
+        with self._update_lock:
+            if (
+                self._update.state != "ready"
+                or self._update.release is None
+                or self._update.staged is None
+            ):
+                return self._update_snapshot_locked()
+            release = self._update.release
+            path = self._update.staged
+            self._update.state = "handing_off"
+            self._update.error = ""
+            snapshot = self._update_snapshot_locked()
+
+        claim = self._work_gate.claim_handoff("handing_off")
+        if not claim:
+            with self._update_lock:
+                if self._update.state == "handing_off":
+                    self._update.state = "ready"
+                    if claim.reason == "upload":
+                        self._update.error = (
+                            "Finish the active upload before installing the update."
+                        )
+                    snapshot = self._update_snapshot_locked()
+            self._push_update_status()
+            return snapshot
+
+        try:
+            worker = self._update_spawn(
+                target=self._update_install_worker,
+                args=(release, path),
+                daemon=True,
+                name="wingman-update-install",
+            )
+        except Exception:  # noqa: BLE001 - construction failure rolls back handoff
+            return self._rollback_update_start("install")
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure rolls back handoff
+            return self._rollback_update_start("install")
+        return snapshot
+
+    def _update_install_worker(
+        self, release: updates_mod.ReleaseInfo, path: Path
+    ) -> None:
+        with self._update_lock:
+            if self._update.state != "handing_off":
+                return
+            self._update.state = "revalidating"
+        if not self._work_gate.claim_handoff("revalidating"):
+            self._finish_install_failure(
+                updates_mod.UpdateFailure(
+                    "launch", "claim", "update handoff ownership was lost"
+                ),
+                path,
+            )
+            return
+        self._push_update_status()
+
+        marker = None
+
+        def before_launch() -> None:
+            nonlocal marker
+            marker = self._update_service.write_handoff_marker(path, release)
+
+        try:
+            process = self._update_service.launch_verified(
+                release,
+                path,
+                before_launch=before_launch,
+            )
+            if not process:
+                raise updates_mod.UpdateFailure(
+                    "launch", "shell", "installer launch returned no process"
+                )
+        except Exception as exc:  # noqa: BLE001 - handoff failure must recover the app
+            marker_failure = (
+                isinstance(exc, updates_mod.UpdateFailure) and exc.stage == "cleanup"
+            )
+            marker_to_remove = marker
+            if marker_to_remove is None and marker_failure:
+                marker_to_remove = path.with_name(path.name + ".handoff.json")
+            if marker_to_remove is not None:
+                try:
+                    self._update_service.remove_handoff_marker(marker_to_remove)
+                except Exception:
+                    logger.warning(
+                        "Could not remove failed updater handoff marker",
+                        exc_info=True,
+                    )
+            self._finish_install_failure(exc, path)
+            return
+
+        with self._update_lock:
+            if self._update.state == "closed":
+                closed = True
+            else:
+                closed = False
+                self._update.state = "launching"
+                self._update.worker = None
+        if closed:
+            self._close_update_process(process)
+            return
+        if not self._work_gate.claim_handoff("launching"):
+            # This cannot happen while this runtime owns `revalidating`, but
+            # retain the launched process handle even if lifecycle state is
+            # corrupted: Setup already exists and must not be leaked.
+            logger.error("Update handoff ownership was lost after Setup launch")
+        self._push_update_status()
+        self._close_update_process(process)
+        if not self._work_gate.begin_update_shutdown():
+            logger.error("Update handoff could not begin orderly shutdown")
+        request_shutdown = self._request_shutdown
+        if request_shutdown is not None:
+            try:
+                request_shutdown()
+            except Exception:
+                # Setup is already launched and classified by its on-disk
+                # handoff marker. Per-window teardown failures are handled
+                # inside the retryable callback;
+                # an unexpected boundary failure still cannot roll back Setup.
+                logger.exception("Window shutdown failed after installer launch")
+
+    def _close_update_process(self, process: int) -> None:
+        try:
+            self._update_service.close_process_handle(process)
+        except Exception:
+            logger.warning("Could not close installer process handle", exc_info=True)
+
+    def _finish_install_failure(self, exc: Exception, path: Path) -> None:
+        retry_ready = isinstance(exc, updates_mod.UpdateFailure) and exc.stage in {
+            "cleanup",
+            "launch",
+        }
+        requires_download = not retry_ready
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+        self._work_gate.release_handoff()
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            self._update.worker = None
+            self._update.state = "download_failed" if requires_download else "ready"
+            if requires_download:
+                self._update.staged = None
+            self._update.error = self._update_install_error(exc)
+        if requires_download:
+            self._remove_unhanded_update(path)
+        self._push_update_status()
+
+    def _rollback_update_start(self, stage: str) -> dict:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+        if stage == "install":
+            self._work_gate.release_handoff()
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = None
+            self._update.state = "ready" if stage == "install" else "download_failed"
+            self._update.error = self._update_start_error(stage)
+            snapshot = self._update_snapshot_locked()
+        self._push_update_status()
+        return snapshot
+
+    def shutdown_updates(self) -> None:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            preserve = self._update.state == "launching"
+            staged = self._update.staged
+            self._update.state = "closed"
+            self._update.staged = None
+            self._update.worker = None
+            self._update.error = ""
+        if staged is not None and not preserve:
+            self._remove_unhanded_update(staged)
+        self._update_service.cleanup_staging(self._update_staging_root())
+
+    @staticmethod
+    def _update_staging_root() -> Path:
+        return paths.tmp_dir() / "updates"
+
+    @staticmethod
+    def _remove_unhanded_update(path: Path) -> None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            # A native scanner or Setup may still have the file. Stale cleanup
+            # retries later; forcing deletion is never safe on this path.
+            logger.warning("Could not remove updater staging file", exc_info=True)
+
+    def _start_update_check(self, automatic: bool) -> dict:
+        allowed = {
+            "idle",
+            "current",
+            "available",
+            "unavailable",
+            "check_failed",
+            "download_failed",
+        }
+        previous = None
+        with self._update_lock:
+            if self._update.state == "checking":
+                if not automatic:
+                    self._update.automatic_failure = False
+                return self._update_snapshot_locked()
+            if self._update.state not in allowed:
+                return self._update_snapshot_locked()
+            previous = replace(self._update)
+            self._update.state = "checking"
+            self._update.error = ""
+            self._update.automatic_failure = automatic
+            snapshot = self._update_snapshot_locked()
+        try:
+            worker = self._update_spawn(
+                target=self._update_check_worker,
+                args=(),
+                daemon=True,
+            )
+        except Exception:  # noqa: BLE001 - construction failure becomes retryable update status
+            return self._rollback_update_check(previous, automatic)
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update.worker = worker
+        self._push_update_status()
+        try:
+            worker.start()
+        except Exception:  # noqa: BLE001 - start failure becomes retryable update status
+            return self._rollback_update_check(previous, automatic)
+        return snapshot
+
+    def _rollback_update_check(self, previous: _UpdateRuntime, automatic: bool) -> dict:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return self._update_snapshot_locked()
+            self._update = replace(previous)
+            if not automatic:
+                self._update.error = self._update_start_error("check")
+            snapshot = self._update_snapshot_locked()
+        self._push_update_status()
+        return snapshot
+
+    def _update_check_worker(self) -> None:
+        try:
+            release = self._update_service.latest_release(_version)
+        except Exception as exc:
+            logger.debug("Wingman update check failed", exc_info=True)
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                automatic = self._update.automatic_failure
+                self._update.worker = None
+                self._update.automatic_failure = False
+                if automatic:
+                    self._update.state = (
+                        "available"
+                        if self._update.release is not None
+                        else "unavailable"
+                    )
+                    self._update.error = ""
+                else:
+                    self._update.state = "check_failed"
+                    self._update.error = self._update_check_error(exc)
+        else:
+            with self._update_lock:
+                if self._update.state == "closed":
+                    return
+                self._update.worker = None
+                self._update.automatic_failure = False
+                self._update.error = ""
+                self._update.staged = None
+                self._update.downloaded_bytes = 0
+                self._update.total_bytes = 0
+                if release is None:
+                    self._update.release = None
+                    self._update.state = "current"
+                else:
+                    self._update.release = release
+                    self._update.state = "available"
+        self._push_update_status()
+
+    @staticmethod
+    def _update_check_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "check" and exc.code == "network":
+                return (
+                    "Could not check for updates. Check your internet connection "
+                    "and try again."
+                )
+            if exc.stage == "check":
+                return (
+                    "Could not check for updates. The latest release could not "
+                    "be verified."
+                )
+        return "Could not check for updates. Try again."
+
+    @staticmethod
+    def _update_download_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "download" and exc.code == "network":
+                return (
+                    "Could not download the update. Check your internet connection "
+                    "and try again."
+                )
+            if exc.code == "checksum":
+                return (
+                    "The download did not match the release checksum. "
+                    "It was not installed."
+                )
+            if exc.stage == "download" and exc.code == "filesystem":
+                return (
+                    "Could not save the update. Check available disk space "
+                    "and try again."
+                )
+            if exc.stage == "verify" and exc.code == "attachment":
+                return (
+                    "Windows could not mark the installer as an internet download. "
+                    "It was not installed."
+                )
+        return "Could not download the update. Try again."
+
+    @staticmethod
+    def _update_install_error(exc: Exception) -> str:
+        if isinstance(exc, updates_mod.UpdateFailure):
+            if exc.stage == "launch":
+                return "Could not open the installer. Try again."
+            if exc.stage == "cleanup":
+                return "Could not prepare the installer. Try installing again."
+            if exc.stage == "verify" and exc.code == "attachment":
+                return (
+                    "Windows could not mark the installer as an internet download. "
+                    "Download it again."
+                )
+        return (
+            "The downloaded installer changed or is no longer available. "
+            "Download it again."
+        )
+
+    @staticmethod
+    def _update_start_error(stage: str) -> str:
+        if stage == "check":
+            return "Could not start checking for updates. Try again."
+        if stage == "download":
+            return "Could not start downloading the update. Try again."
+        return "Could not start installing the update. Try again."
+
+    def _update_snapshot(self) -> dict:
+        with self._update_lock:
+            return self._update_snapshot_locked()
+
+    def _update_snapshot_locked(self) -> dict:
+        release = self._update.release
+        state = self._update.state
+        update_available = release is not None
+        available_version = ""
+        if release is not None:
+            available_version = ".".join(str(part) for part in release.version)
+        return {
+            "state": state,
+            "installed_version": _version,
+            "available_version": available_version,
+            "update_available": update_available,
+            "downloaded_bytes": self._update.downloaded_bytes,
+            "total_bytes": self._update.total_bytes,
+            "can_check": state
+            in {
+                "idle",
+                "current",
+                "available",
+                "unavailable",
+                "check_failed",
+                "download_failed",
+            },
+            "can_download": update_available
+            and state in {"available", "check_failed", "download_failed"},
+            "can_install": state == "ready" and self._is_frozen(),
+            "error": self._update.error,
+        }
+
+    def _push_update_status(self) -> None:
+        with self._update_lock:
+            if self._update.state == "closed":
+                return
+            snapshot = self._update_snapshot_locked()
+        self._push("onUpdateStatus", snapshot)
+
     def pick_folder(self, which: str) -> str:
         """Native folder picker, seeded with what is configured now."""
         if which == "gamelogs":
@@ -2795,35 +3595,48 @@ class Api:
 
         The window is created on first enable and kept hidden afterwards
         (ui/sigbar.py's docstring holds the cost argument), so this only
-        ever shows or hides -- except the first time, which builds it.
+        ever shows or hides -- except the first time, and except after
+        the window was destroyed out from under us (see _sig_bar_alive).
         """
         from wingman.ui import sigbar
 
         on = bool(on)
         settings_mod.update_section(self._state.settings, "sig_bar", {"enabled": on})
-        bar = self._sigbar_window
-        logger.info(
-            "Sig bar toggle: requested %s, window %s.",
-            on,
-            "exists" if bar is not None else "not built yet",
-        )
+        shown = False
         try:
-            if on:
-                if bar is None:
-                    sigbar.create(self, hidden=False)
-                else:
-                    bar.show()
-                # The poll can be up to 3s away; a bar that opens empty for
-                # 3s reads as broken. The page pulls nothing at load, so
-                # this push is its content.
-                self._push_eve_status()
-            elif bar is not None:
-                bar.hide()
+            with self._sigbar_lifecycle_lock:
+                bar = self._sigbar_window
+                logger.info(
+                    "Sig bar toggle: requested %s, window %s.",
+                    on,
+                    "exists" if bar is not None else "not built yet",
+                )
+                if not self._sigbar_quitting:
+                    if on:
+                        # is_alive, not `is None`: a destroyed window
+                        # leaves the Python object behind, and a toggle
+                        # at the corpse must rebuild rather than report
+                        # success at nothing. create() builds the bar
+                        # hidden and styled; reveal_bar shows it without
+                        # activating (pywebview's show() would steal the
+                        # foreground from the client being flown).
+                        if not sigbar.is_alive(bar):
+                            bar = sigbar.create(self)
+                        if bar is not None:
+                            sigbar.reveal_bar(bar)
+                            shown = True
+                    elif sigbar.is_alive(bar):
+                        sigbar.hide_bar(bar)
         except Exception:
             # A bar that cannot appear is degraded chrome, not a failed
             # setting: the persisted choice stands and the next toggle
             # retries the window.
             logger.exception("sig bar window toggle failed")
+        if shown:
+            # The poll can be up to 3s away; a bar that opens empty for 3s
+            # reads as broken. The page pulls nothing at load, so this push
+            # is its content.
+            self._push_eve_status()
         logger.info(
             "Sig bar toggle done: enabled=%s, visible=%s.",
             self._state.settings["sig_bar"]["enabled"],
@@ -2831,6 +3644,20 @@ class Api:
         )
         self._push_sig_bar_state()
         return self._field_ok()
+
+    @staticmethod
+    def _sig_bar_alive(bar) -> bool:
+        """Whether the bar window can still be shown or hidden.
+
+        Retired in favour of sigbar.is_alive (IsWindow on the HWND): the
+        closed-event walk this replaced needed attribute-shape guesses
+        over test fakes, while a handle check is one syscall and covers
+        every teardown route. Kept as a thin delegate so the existing
+        log-line helper and any page-side callers keep their name.
+        """
+        from wingman.ui import sigbar
+
+        return sigbar.is_alive(bar)
 
     def _sig_bar_visible(self):
         """Best-effort visibility readback, for the toggle log line only."""
@@ -2867,8 +3694,20 @@ class Api:
         bar at its broken birth size for the session. The caller is a
         per-call bridge thread, so parking here costs nothing else.
         """
+        from wingman.ui import sigbar
+
         bar = self._sigbar_window
         if bar is None:
+            return
+        # NEVER resize a hidden bar: pywebview's resize is a raw
+        # SetWindowPos carrying SWP_SHOWWINDOW, so a fit against a hidden
+        # window SHOWS it. The page renders on every push -- including the
+        # 3s poll aimed at a bar the user toggled off -- and each render
+        # re-fits, which is how a toggled-off bar kept reappearing on the
+        # next poll with the GUI still reporting it off. The reveal path
+        # pushes status the moment it shows the bar, so the first fit a
+        # visible bar receives is only ever one tick away.
+        if not sigbar.is_visible(bar):
             return
         try:
             width, height = int(width), int(height)
@@ -4708,22 +5547,70 @@ class Api:
             "eve_settings", settings_mod.validated_eve_settings({})
         )
 
-    def _eve_clear_identification(self) -> None:
-        """Discard the observation and any pair it authorized."""
+    def _eve_clear_identification(self) -> int:
+        """Discard the observation and any pair it authorized.
+
+        Claims a new generation as it goes, and returns it: everything
+        computed under the old number -- an in-flight publication here, a
+        rendered offer on the page -- is stale from this moment.
+        """
+        with self._eve_identification_lock:
+            return self._eve_clear_identification_locked()
+
+    def _eve_clear_identification_locked(self) -> int:
+        """_eve_clear_identification for a caller that already holds the lock."""
+        self._eve_identification_generation += 1
         self._eve_identification = None
         self._eve_identification_candidate = None
+        return self._eve_identification_generation
 
-    def _eve_account_identity(self, account_id: str) -> dict:
+    def _eve_generation(self) -> int:
+        """The identification generation, read atomically."""
+        with self._eve_identification_lock:
+            return self._eve_identification_generation
+
+    def _eve_identification_state(
+        self,
+    ) -> tuple[int, evesettings_identity.Snapshot | None, _EveCandidate | None]:
+        """Generation, observation and offer, as one coherent reading."""
+        with self._eve_identification_lock:
+            return (
+                self._eve_identification_generation,
+                self._eve_identification,
+                self._eve_identification_candidate,
+            )
+
+    def _eve_identification_cancelled_locked(self) -> dict:
+        """The answer to a pass whose generation was claimed by someone else.
+
+        No error text: nothing failed. The user (or a confirmed deletion)
+        ended this pass while it was still working, and the number tells
+        the page that this response is the older of the two it holds.
+        """
+        return {
+            "status": "cancelled",
+            "error": None,
+            "identification_generation": self._eve_identification_generation,
+        }
+
+    def _eve_account_identity(self, account_id: str, names=None, links=None) -> dict:
         section = self._eve_section()
         return evesettings_identity.account_identity(
             account_id,
-            section.get("account_names") or {},
-            section.get("account_characters") or {},
+            section.get("account_names") or {} if names is None else names,
+            section.get("account_characters") or {} if links is None else links,
             lambda character_id: self._eve_names.label(int(character_id)),
         )
 
-    def _eve_identity(self, path) -> dict:
-        """One display representation for every Profiles identity surface."""
+    def _eve_identity(self, path, names=None, links=None) -> dict:
+        """One display representation for every Profiles identity surface.
+
+        `names`/`links` are the account metadata to apply. They are passed
+        explicitly rather than read here so one state request decides ONCE
+        whether Tranquility metadata may be applied at all -- the answer
+        depends on the discovered server, and re-deriving it per row would
+        cost a discovery pass per file.
+        """
         kind = evesettings_tree.file_kind(path)
         ident = evesettings_tree.file_id(path)
         if kind == "character" and ident.isdigit():
@@ -4734,7 +5621,7 @@ class Api:
                 "option": primary,
             }
         if kind == "account" and ident:
-            return self._eve_account_identity(ident)
+            return self._eve_account_identity(ident, names, links)
         primary = Path(path).stem
         return {"primary": primary, "secondary": "", "option": primary}
 
@@ -4742,12 +5629,12 @@ class Api:
         """The compact label shared by pickers, confirmations and status."""
         return self._eve_identity(path)["option"]
 
-    def _eve_backup_identity(self, item) -> tuple[str, str]:
+    def _eve_backup_identity(self, item, names=None, links=None) -> tuple[str, str]:
         if item.kind in ("character", "account"):
             prefix = "core_char_" if item.kind == "character" else "core_user_"
             suffix = item.stem.removeprefix(prefix)
             if suffix != item.stem and suffix.isascii() and suffix.isdigit():
-                identity = self._eve_identity(f"{item.stem}.dat")
+                identity = self._eve_identity(f"{item.stem}.dat", names, links)
                 if item.kind == "account":
                     return identity["primary"], identity["secondary"]
                 return identity["primary"], f"Character {suffix}"
@@ -4755,6 +5642,116 @@ class Api:
         if item.kind == "profile":
             return item.stem.removeprefix("settings_"), "Profile"
         return item.stem, item.kind.title()
+
+    @staticmethod
+    def _eve_canonical(path) -> str:
+        """realpath plus platform case folding, or "" for nothing selected."""
+        if not path:
+            return ""
+        return os.path.normcase(os.path.realpath(os.path.expandvars(str(path))))
+
+    def _eve_context(self, found) -> _EveContext:
+        """The context *found* speaks for, and whether it can be trusted.
+
+        Trust needs BOTH halves. `_shard()` calls anything containing
+        "tranquil" Tranquility, which is right for a label and far too
+        permissive for a persisted deletion, so the strict predicate has to
+        agree -- and the server must be one discovery actually offered under
+        that key, not a stale stored string.
+        """
+        server = self._eve_canonical(found.server)
+        known = next(
+            (s for s in found.servers if self._eve_canonical(s.path) == server), None
+        )
+        trusted = bool(
+            server
+            and known is not None
+            and known.key == "tranquility"
+            and evesettings_tree.is_tranquility_server(found.server)
+        )
+        return _EveContext(
+            root=self._eve_canonical(found.root),
+            server=server,
+            profile=self._eve_canonical(found.profile),
+            datasource="tranquility" if trusted else "",
+        )
+
+    def _eve_account_identity_available(self, found) -> bool:
+        """Whether saved account names and links apply to this selection."""
+        return self._eve_context(found).trusted
+
+    def _eve_deleted_ids(self, found) -> set[str]:
+        """Ids confirmed deleted that this selection would otherwise show.
+
+        Empty for an untrusted context, whatever the cache holds: a
+        Tranquility verdict is not evidence about another shard.
+        """
+        context = self._eve_context(found)
+        if not context.trusted:
+            return set()
+        candidates = {r.file_id for r in found.characters if r.file_id.isdigit()}
+        candidates.update(
+            character_id
+            for values in (self._eve_section().get("account_characters") or {}).values()
+            for character_id in values
+            if character_id.isdigit()
+        )
+        return {
+            character_id
+            for character_id in candidates
+            if (context.datasource, int(character_id)) in self._eve_deleted
+        }
+
+    def _eve_is_deleted(self, character_id) -> bool:
+        """One confirmed-deleted id, without a discovery pass.
+
+        Account metadata is Tranquility's by definition (there is no
+        datasource in the schema), so a Tranquility verdict disqualifies an
+        id from being linked regardless of what is selected right now.
+        """
+        return (
+            isinstance(character_id, str)
+            and character_id.isascii()
+            and character_id.isdigit()
+            and ("tranquility", int(character_id)) in self._eve_deleted
+        )
+
+    def _eve_prune_deleted_links_locked(self, deleted_ids: set) -> bool:
+        """Drop *deleted_ids* from every saved account. Caller holds the lock.
+
+        True when no saved link references a deleted id any more -- both
+        "there was nothing to do" and "pruned and persisted". False means the
+        write failed and the links are still saved, which is the pending
+        state: the payload keeps hiding them, the next pass retries, and an
+        account edit is refused until it succeeds.
+        """
+        if not deleted_ids:
+            return True
+        section = self._eve_section()
+        saved = section.get("account_characters") or {}
+        pruned = {
+            account_id: [c for c in character_ids if c not in deleted_ids]
+            for account_id, character_ids in saved.items()
+        }
+        pruned = {
+            account_id: character_ids
+            for account_id, character_ids in pruned.items()
+            if character_ids
+        }
+        if pruned == saved:
+            return True
+        try:
+            settings_mod.update_section(
+                self._state.settings, "eve_settings", {"account_characters": pruned}
+            )
+        except OSError:
+            # Ids only. Account names are private local metadata and never
+            # belong in a log line.
+            logger.exception(
+                "Could not remove deleted EVE character links %s", sorted(deleted_ids)
+            )
+            return False
+        return True
 
     def eve_settings_state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
@@ -4770,9 +5767,32 @@ class Api:
             root, section.get("server"), section.get("profile")
         )
         store = paths.eve_settings_backup_dir()
+        # Decided ONCE per request, from the discovered server: whether this
+        # selection may wear Tranquility's account metadata, and which of
+        # its characters ESI has confirmed deleted. Nothing below re-derives
+        # either, and found.characters is never mutated -- only the payload
+        # is filtered, so discovery stays a pure inventory of local files.
+        identity_available = self._eve_account_identity_available(found)
+        deleted_ids = self._eve_deleted_ids(found)
+        identity_names = (
+            (section.get("account_names") or {}) if identity_available else {}
+        )
+        identity_links = (
+            {
+                account_id: [c for c in character_ids if c not in deleted_ids]
+                for account_id, character_ids in (
+                    section.get("account_characters") or {}
+                ).items()
+            }
+            if identity_available
+            else {}
+        )
+        visible_characters = [
+            record for record in found.characters if record.file_id not in deleted_ids
+        ]
 
         def describe(record):
-            identity = self._eve_identity(record.path)
+            identity = self._eve_identity(record.path, identity_names, identity_links)
             item = {
                 "path": str(record.path),
                 "id": record.file_id,
@@ -4781,16 +5801,14 @@ class Api:
                 "display_meta": identity["secondary"],
             }
             if record.kind == "account":
-                item["account_name"] = (section.get("account_names") or {}).get(
-                    record.file_id, ""
-                )
-                item["character_ids"] = list(
-                    (section.get("account_characters") or {}).get(record.file_id, [])
-                )
+                item["account_name"] = identity_names.get(record.file_id, "")
+                item["character_ids"] = list(identity_links.get(record.file_id, []))
             return item
 
         def backup_payload(item):
-            display_name, display_meta = self._eve_backup_identity(item)
+            display_name, display_meta = self._eve_backup_identity(
+                item, identity_names, identity_links
+            )
             return {
                 "path": str(item.path),
                 "created": item.created,
@@ -4832,12 +5850,14 @@ class Api:
 
         listed, backups_unreadable = evesettings_backup.enumerate_backups(store)
         codec_available = evesettings_codec.codec_available()
-        identity_character_ids = {record.file_id for record in found.characters}
-        identity_character_ids.update(
-            character_id
-            for values in (section.get("account_characters") or {}).values()
-            for character_id in values
-        )
+        identity_character_ids: set = set()
+        if identity_available:
+            identity_character_ids = {record.file_id for record in visible_characters}
+            identity_character_ids.update(
+                character_id
+                for values in identity_links.values()
+                for character_id in values
+            )
         return {
             "root": str(found.root) if found.root else "",
             "default_root": str(evesettings_tree.default_root()),
@@ -4853,12 +5873,16 @@ class Api:
             # a few dozen files and must stay that.
             "eve_running": self._eve_running,
             "identification_active": self._eve_identification is not None,
+            # Derived here, never in the page: account names and links are
+            # this product's Tranquility metadata, and recognizing a shard
+            # is a Python job with a strict predicate behind it.
+            "account_identity_available": identity_available,
             "servers": [{"path": str(s.path), "name": s.name} for s in found.servers],
             "profiles": [
                 {"path": str(p.path), "name": p.name, "file_count": p.file_count}
                 for p in found.profiles
             ],
-            "characters": roster(found.characters),
+            "characters": roster(visible_characters),
             "identity_characters": sorted(
                 (
                     {
@@ -5010,15 +6034,19 @@ class Api:
             if not chosen:
                 return ""
             picked = str(chosen[0])
-            # Selection is cleared, not carried: the old server and profile
-            # belong to a tree that is no longer the one on screen.
+            # The old server and profile belong to a tree that is no
+            # longer the one on screen -- but rather than merely clearing
+            # them, discover the tree the picked folder actually names
+            # and persist ITS complete triple. normalize_selection lifts a
+            # folder pointed at a server or a profile back up to the real
+            # root, and the freshly discovered server/profile are what the
+            # page renders as selected on the very next state() call,
+            # instead of showing "none chosen" for a folder that plainly
+            # has one.
             self._eve_clear_identification()
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"root": picked, "server": None, "profile": None},
-            )
-            return picked
+            found = evesettings_tree.discover(picked)
+            self._eve_persist_selection(found)
+            return str(found.root) if found.root else ""
 
     def eve_settings_detect_root(self) -> str:
         """Detect the EVE settings root, the way Folders detects OBS's.
@@ -5047,8 +6075,8 @@ class Api:
         with self._eve_hold() as held:
             if not held:
                 return ""
-            found = evesettings_tree.default_root()
-            if not found.is_dir():
+            default = evesettings_tree.default_root()
+            if not default.is_dir():
                 # Named, not just refused. The path is the useful half of
                 # the answer: a user whose EVE lives somewhere else learns
                 # where we looked, which is what tells them Choose folder...
@@ -5057,42 +6085,90 @@ class Api:
                     "info",
                     "EVE settings folder not found",
                     "Could not find an EVE settings folder at:\n"
-                    f"{found}\n\n"
+                    f"{default}\n\n"
                     "Use Choose folder... to point at it.",
                 )
                 return ""
+            found = evesettings_tree.discover(default)
             section = self._eve_section()
-            if str(found) == str(section.get("root") or ""):
+            if str(found.root) == str(section.get("root") or ""):
                 # Agreement reported as agreement, not as a silent rewrite
-                # -- detect_folder's rule, and the reason it takes the live
-                # value rather than the stored one. Returning "" here also
-                # keeps the selection intact, which the write path below
-                # would otherwise clear for no reason.
+                # -- detect_folder's rule, and the reason it compares the
+                # live value rather than blindly rewriting. Returning ""
+                # here also keeps the selection intact, which the write
+                # path below would otherwise clear for no reason.
                 self._alert(
                     "info",
                     "EVE settings folder",
-                    f"Already set to the detected folder:\n{found}",
+                    f"Already set to the detected folder:\n{found.root}",
                 )
                 return ""
             self._eve_clear_identification()
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"root": str(found), "server": None, "profile": None},
-            )
-            return str(found)
+            self._eve_persist_selection(found)
+            return str(found.root)
 
     def eve_settings_select(self, server: str, profile: str) -> bool:
         with self._eve_hold() as held:
             if not held:
                 return False
-            self._eve_clear_identification()
-            settings_mod.update_section(
-                self._state.settings,
-                "eve_settings",
-                {"server": server or None, "profile": profile or None},
+            # The EFFECTIVE root, not the raw stored value: normalize_selection
+            # rewrites a root pointed at a profile or server directory, and
+            # in doing so it also discards whatever server/profile the
+            # caller asked for in favor of the ones implied by that deep
+            # root (see tree.py's normalize_selection). Discovering directly
+            # from a legacy deep `root` would therefore silently overrule a
+            # real selection change -- e.g. picking a sibling profile from a
+            # pre-canonicalization install that stored `root` as the
+            # original profile itself. Resolving the canonical root FIRST,
+            # then discovering from IT with the requested tokens, is what
+            # lets normalize_selection's third branch (which passes both
+            # tokens through untouched) actually see them.
+            effective_root = self._eve_discover().root
+            found = evesettings_tree.discover(
+                effective_root, server or None, profile or None
             )
+            if found.root is None:
+                return False
+            # discover() falls back to the first server/profile it finds
+            # when the requested token matches nothing on disk -- a
+            # fabricated server or profile must not silently persist as
+            # "whatever discover() picked instead". An empty profile is
+            # the one deliberate case that IS a fallback: it asks for the
+            # requested server's first profile, which is exactly what
+            # discover() returns for a None profile.
+            if server and not _eve_same_path(found.server, server):
+                return False
+            if profile and not _eve_same_path(found.profile, profile):
+                return False
+            self._eve_clear_identification()
+            self._eve_persist_selection(found)
             return True
+
+    def _eve_persist_selection(self, found) -> None:
+        """The one place that writes root/server/profile to settings.
+
+        Every explicit selection -- picker, Detect, eve_settings_select, and
+        the profile a copy creates -- discovers a Tree first and persists ITS
+        complete triple here, rather than writing back whatever the caller
+        was originally given. A picked or typed value can be a server or a
+        profile directory, or a legacy root that pointed one or two levels
+        too deep; discover() already normalizes all of those, and persisting
+        anything other than its answer would let the stored root drift out of
+        step with the server/profile that were actually chosen alongside it.
+        That is also why there is no per-leg override argument: a caller that
+        wants a particular profile remembered discovers it first (see
+        _eve_select_created_profile) so the whole triple stays consistent,
+        rather than pasting one leg over a Tree that disagrees with it.
+        """
+        settings_mod.update_section(
+            self._state.settings,
+            "eve_settings",
+            {
+                "root": str(found.root) if found.root else None,
+                "server": str(found.server) if found.server else None,
+                "profile": str(found.profile) if found.profile else None,
+            },
+        )
 
     def _eve_discover(self):
         section = self._eve_section()
@@ -5175,8 +6251,12 @@ class Api:
             if not self._eve_decimal_id(account_id) or not isinstance(name, str):
                 return self._field_refused("Choose a valid account.")
             found = self._eve_discover()
+            if not self._eve_account_identity_available(found):
+                return self._field_refused(_EVE_IDENTITY_UNAVAILABLE)
             if account_id not in {item.file_id for item in found.accounts}:
                 return self._field_refused("That account is not in this profile.")
+            if not self._eve_prune_deleted_links_locked(self._eve_deleted_ids(found)):
+                return self._field_refused(_EVE_CLEANUP_FAILED)
             names = dict(self._eve_section().get("account_names") or {})
             cleaned, error = self._eve_validate_account_name(account_id, name, names)
             if error:
@@ -5202,6 +6282,8 @@ class Api:
             ):
                 return self._field_refused("Choose a valid account and characters.")
             found = self._eve_discover()
+            if not self._eve_account_identity_available(found):
+                return self._field_refused(_EVE_IDENTITY_UNAVAILABLE)
             if account_id not in {item.file_id for item in found.accounts}:
                 return self._field_refused("That account is not in this profile.")
             section = self._eve_section()
@@ -5209,14 +6291,32 @@ class Api:
                 return self._field_refused(
                     "Name this account before adding characters."
                 )
+            # Before reading the roster, not after: the page submits its
+            # VISIBLE list as the complete set, so a link it cannot see must
+            # be gone from the saved mapping first or this edit would decide
+            # its fate silently.
+            deleted_ids = self._eve_deleted_ids(found)
+            if not self._eve_prune_deleted_links_locked(deleted_ids):
+                return self._field_refused(_EVE_CLEANUP_FAILED)
+            # Re-read live section: update_section replaces the nested dict
+            # object, so the snapshot taken above is stale after the prune.
+            # Reading associations from it would re-persist a deleted link
+            # that the prune just removed from another account.
+            section = self._eve_section()
             associations = {
                 key: list(value)
                 for key, value in (section.get("account_characters") or {}).items()
             }
-            known = {item.file_id for item in found.characters}
+            known = {
+                item.file_id
+                for item in found.characters
+                if item.file_id not in deleted_ids
+            }
             known.update(value for values in associations.values() for value in values)
             wanted = []
             for value in character_ids:
+                if self._eve_is_deleted(value):
+                    return self._field_refused(_EVE_CHARACTER_DELETED)
                 if not self._eve_decimal_id(value) or value not in known:
                     return self._field_refused(
                         "That character is not known to Wingman."
@@ -5244,21 +6344,47 @@ class Api:
             return {
                 "status": "busy",
                 "error": "Another Profiles operation is running.",
+                "identification_generation": self._eve_generation(),
             }
         try:
-            self._eve_clear_identification()
+            # The claim comes first: the previous observation dies here, so
+            # anything still working under the old number is already stale.
+            generation = self._eve_clear_identification()
             found = self._eve_discover()
+            if not self._eve_account_identity_available(found):
+                raise ValueError(_EVE_IDENTITY_UNAVAILABLE)
+            deleted_ids = self._eve_deleted_ids(found)
             snapshot = evesettings_identity.take_snapshot(found)
-            if not found.accounts or not found.characters:
+            if not found.accounts or not [
+                record
+                for record in found.characters
+                if record.file_id not in deleted_ids
+            ]:
                 raise ValueError(
                     "This profile needs an account and a character to identify."
                 )
-            self._eve_identification = snapshot
+            # Compare-and-publish. The discovery above is filesystem work
+            # done off the state lock, and a cancellation that landed
+            # during it must win: either it ran before this and the claim
+            # no longer matches, or it runs after and clears what was
+            # published. There is no window in which neither is true.
+            with self._eve_identification_lock:
+                if self._eve_identification_generation != generation:
+                    return self._eve_identification_cancelled_locked()
+                self._eve_identification = snapshot
         except (OSError, ValueError) as error:
-            return {"status": "error", "error": str(error)}
+            return {
+                "status": "error",
+                "error": str(error),
+                "identification_generation": self._eve_generation(),
+            }
         finally:
             self._eve_mutation.release()
-        return {"status": "watching", "error": None}
+        return {
+            "status": "watching",
+            "error": None,
+            "identification_generation": generation,
+        }
 
     def eve_settings_identification_check(self) -> dict:
         # A worker can hold this lock while parked on a bridge confirmation.
@@ -5267,22 +6393,33 @@ class Api:
             return {
                 "status": "busy",
                 "error": "Another Profiles operation is running.",
+                "identification_generation": self._eve_generation(),
             }
         try:
-            snapshot = self._eve_identification
+            # A check speaks for the observation it reads, so it publishes
+            # under that observation's generation rather than claiming one
+            # of its own. Every status below carries the number it was
+            # computed under, and the page discards an answer older than
+            # the highest it has already seen.
+            generation, snapshot, _ = self._eve_identification_state()
             if snapshot is None:
                 return {
                     "status": "error",
                     "error": "Start account identification first.",
+                    "identification_generation": generation,
                 }
             # A new check supersedes every former offer, including one that
             # cannot compare because EVE has not closed yet.
-            self._eve_identification_candidate = None
+            with self._eve_identification_lock:
+                if self._eve_identification_generation != generation:
+                    return self._eve_identification_cancelled_locked()
+                self._eve_identification_candidate = None
             try:
                 if self._eve_client_running_strict():
                     return {
                         "status": "watching",
                         "error": "EVE is still running. Close that client, then check again.",
+                        "identification_generation": generation,
                     }
             except Exception:
                 # Fail closed: an unverified running state must not be treated as
@@ -5293,26 +6430,48 @@ class Api:
                 return {
                     "status": "watching",
                     "error": "Could not confirm that EVE is closed. Close it and try again.",
+                    "identification_generation": generation,
                 }
-            changed = evesettings_identity.changes_since(snapshot, self._eve_discover())
+            found = self._eve_discover()
+            changed = evesettings_identity.changes_since(snapshot, found)
             if changed.invalidated:
-                self._eve_clear_identification()
+                with self._eve_identification_lock:
+                    if self._eve_identification_generation != generation:
+                        return self._eve_identification_cancelled_locked()
+                    invalidated = self._eve_clear_identification_locked()
                 return {
                     "status": "invalidated",
                     "error": "The selected EVE profile changed. Start identification again.",
+                    "identification_generation": invalidated,
                 }
             if len(changed.accounts) > 1:
                 return {
                     "status": "ambiguous",
                     "error": "More than one account changed. Close the other EVE clients and start again.",
+                    "identification_generation": generation,
                 }
-            if len(changed.accounts) != 1 or not changed.characters:
+            # A deleted character's file can still be written by the client
+            # that owned it, so it can still LOOK like the change that
+            # identifies an account. It can never be offered as one.
+            deleted_ids = self._eve_deleted_ids(found)
+            characters = tuple(
+                character_id
+                for character_id in changed.characters
+                if character_id not in deleted_ids
+            )
+            if len(changed.accounts) != 1 or not characters:
                 return {
                     "status": "none",
                     "error": "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
+                    "identification_generation": generation,
                 }
             account_id = changed.accounts[0]
-            self._eve_identification_candidate = (account_id, tuple(changed.characters))
+            with self._eve_identification_lock:
+                if self._eve_identification_generation != generation:
+                    return self._eve_identification_cancelled_locked()
+                self._eve_identification_candidate = _EveCandidate(
+                    generation, account_id, characters
+                )
             return {
                 "status": "candidate",
                 "error": None,
@@ -5322,8 +6481,9 @@ class Api:
                         "id": character_id,
                         "name": self._eve_names.label(int(character_id)),
                     }
-                    for character_id in changed.characters
+                    for character_id in characters
                 ],
+                "identification_generation": generation,
             }
         finally:
             self._eve_mutation.release()
@@ -5335,18 +6495,37 @@ class Api:
         with self._eve_identity_hold() as held:
             if not held:
                 return self._field_refused("Another Profiles operation is running.")
-            candidate = self._eve_identification_candidate
+            candidate = None
+            generation, _, offered = self._eve_identification_state()
+            # The generation is read WITH the offer, not beside it: an
+            # offer whose authorizing observation has been replaced is
+            # stale even if the object survived the swap.
+            if offered is not None and offered.generation == generation:
+                candidate = offered
             if candidate is None:
                 return self._field_refused("Start account identification again.")
-            candidate_account, candidate_characters = candidate
             if (
-                account_id != candidate_account
-                or character_id not in candidate_characters
+                account_id != candidate.account_id
+                or character_id not in candidate.character_ids
             ):
                 return self._field_refused("That account match is no longer available.")
             if not isinstance(account_name, str):
                 return self._field_refused("Enter an EVE Online username.")
+            # The offer may have been made before the resolver learned this
+            # character was gone; authorization is revalidated at the write.
+            if self._eve_is_deleted(character_id):
+                return self._field_refused(_EVE_CHARACTER_DELETED)
+            # Pending cleanup first, exactly as the manual account edits do
+            # it: this write replaces the whole mapping, so a deleted link
+            # still saved for ANOTHER account would be carried along by it.
+            if not self._eve_prune_deleted_links_locked(
+                self._eve_deleted_ids(self._eve_discover())
+            ):
+                return self._field_refused(_EVE_CLEANUP_FAILED)
 
+            # Read the live section AFTER the prune: update_section replaces
+            # the nested dict object rather than mutating it, so a snapshot
+            # taken earlier would re-persist the links just removed.
             section = self._eve_section()
             names = dict(section.get("account_names") or {})
             cleaned_name, error = self._eve_validate_account_name(
@@ -5392,40 +6571,204 @@ class Api:
             self._eve_clear_identification()
             return self._field_ok()
 
-    def eve_settings_identification_cancel(self) -> bool:
-        self._eve_clear_identification()
-        return True
+    def eve_settings_identification_cancel(self) -> dict:
+        """End the pass. Never refused, never blocked, always a new number.
+
+        Takes only the identification-state lock. Route exit cancels, and
+        cleanup can own _eve_mutation for a whole ESI pass -- a cancel that
+        waited for it would freeze the page on the way out of Profiles.
+
+        The generation is the answer's substance, not decoration: a check
+        whose candidate is still in flight returns the OLD number, so the
+        page can drop it instead of rendering an offer the user just
+        cancelled.
+        """
+        return {
+            "status": "idle",
+            "error": None,
+            "identification_generation": self._eve_clear_identification(),
+        }
 
     def eve_settings_resolve_names(self) -> None:
-        """Resolve on a background thread, then tell the page to refetch.
+        """Verify and name the selected profile's characters, off the bridge.
 
         The one thing a request/response bridge cannot express on its own:
         the state that triggered this was already returned, carrying
-        fallback ids. One push per pass, not per name.
+        fallback ids and possibly a row for a character that no longer
+        exists. One push per pass, not per name.
+
+        Single-flight with ONE trailing pass. The page asks on every route
+        entry and every profile switch, so requests arrive in bursts; a
+        worker per request would multiply ESI traffic and let a slow pass
+        publish over a newer one. A request that arrives while a pass runs
+        is remembered, not queued, so switching A -> B mid-pass always ends
+        up resolving B without another user action.
         """
+        with self._eve_resolve_lock:
+            if self._eve_resolve_running:
+                self._eve_resolve_pending = True
+                return
+            self._eve_resolve_running = True
+        self._eve_spawn_resolver()
 
-        def worker() -> None:
-            try:
-                found = evesettings_tree.discover(
-                    self._eve_section().get("root"),
-                    self._eve_section().get("server"),
-                    self._eve_section().get("profile"),
-                )
-                ids = {int(c.file_id) for c in found.characters if c.file_id.isdigit()}
-                ids.update(
-                    int(character_id)
-                    for values in (
-                        self._eve_section().get("account_characters") or {}
-                    ).values()
-                    for character_id in values
-                    if character_id.isdigit()
-                )
-                if self._eve_names.resolve_missing(sorted(ids)):
-                    self._push("onEveSettingsNames", {})
-            except Exception:
-                logger.warning("EVE character name lookup failed", exc_info=True)
+    def _eve_spawn_resolver(self) -> None:
+        """Start the worker that owns the claim, or give the claim back.
 
-        self._spawn(target=worker, daemon=True).start()
+        A claim held by a worker that never started would silence the
+        resolver for the life of the process -- every later request would
+        coalesce into a pass nobody is running.
+        """
+        try:
+            self._spawn(target=self._eve_resolve_worker, daemon=True).start()
+        except Exception:
+            self._eve_release_resolver()
+            logger.warning("Could not start the EVE character resolver", exc_info=True)
+        except BaseException:
+            self._eve_release_resolver()
+            raise
+
+    def _eve_release_resolver(self) -> None:
+        with self._eve_resolve_lock:
+            self._eve_resolve_running = False
+            self._eve_resolve_pending = False
+
+    def _eve_resolve_worker(self) -> None:
+        try:
+            self._eve_resolve_pass()
+        except Exception:
+            logger.warning("EVE character resolution failed", exc_info=True)
+        finally:
+            # Running stays claimed ACROSS the handoff when a pass is owed,
+            # so a request arriving in this gap coalesces into that pass
+            # instead of starting a second worker beside it. The spawn is
+            # decided under the lock and performed outside it: spawning
+            # while holding it would re-enter this method under an inline
+            # thread seam and deadlock.
+            with self._eve_resolve_lock:
+                restart = self._eve_resolve_pending
+                self._eve_resolve_pending = False
+                self._eve_resolve_running = restart
+            if restart:
+                self._eve_spawn_resolver()
+
+    def _eve_resolve_pass(self) -> None:
+        found = self._eve_discover()
+        context = self._eve_context(found)
+        local_ids = {int(r.file_id) for r in found.characters if r.file_id.isdigit()}
+        linked_ids = {
+            int(character_id)
+            for values in (self._eve_section().get("account_characters") or {}).values()
+            for character_id in values
+            if character_id.isdigit()
+        }
+        if context.trusted:
+            # Deleted is monotonic, so a confirmed id is never asked about
+            # again. Active is NOT cached: a character alive on this visit
+            # can be deleted before the next one, and a session can outlive
+            # both. /universe/names still answers for ids with no local file
+            # here -- they are names to show, not deletion candidates.
+            unchecked = sorted(
+                ident
+                for ident in local_ids
+                if (context.datasource, ident) not in self._eve_deleted
+            )
+            names, deleted = evesettings_characters.resolve(unchecked)
+            self._eve_names.names.update(names)
+            for ident in deleted:
+                self._eve_deleted.add((context.datasource, ident))
+            self._eve_names.resolve_missing(sorted(linked_ids - local_ids))
+        else:
+            self._eve_names.resolve_missing(sorted(local_ids | linked_ids))
+        self._eve_apply_facts(context, local_ids | linked_ids)
+
+    def _eve_apply_facts(self, context: _EveContext, ids: set) -> None:
+        """Publish what the caches now say about *context*, if it is current.
+
+        Remote facts are global and were cached above regardless. Applying
+        them is per selection: a superseded pass may not clean, clear an
+        identification, or repaint the profile that replaced it, and the
+        trailing pass that follows re-evaluates the same cache against the
+        selection that IS current -- which is how a fact learned by a stale
+        pass still reaches the page.
+        """
+        if self._eve_context(self._eve_discover()) != context:
+            return
+        changed = False
+        invalidated: tuple[str, ...] = ()
+        deleted_ids = {
+            str(ident)
+            for ident in ids
+            if (context.datasource, ident) in self._eve_deleted
+        }
+        if context.trusted and deleted_ids:
+            changed, invalidated = self._eve_clean_deleted(context, deleted_ids)
+        facts = (
+            frozenset(
+                (ident, self._eve_names.names[ident])
+                for ident in ids
+                if ident in self._eve_names.names
+            ),
+            frozenset(deleted_ids),
+        )
+        if facts != self._eve_applied.get(context, _EVE_NO_FACTS):
+            self._eve_applied[context] = facts
+            changed = True
+        if changed:
+            # Both keys always, the list empty when this pass invalidated
+            # nothing: the page decides from the values, never from whether
+            # a key happens to be present.
+            self._push(
+                "onEveSettingsNames",
+                {
+                    "identification_generation": self._eve_generation(),
+                    "deleted_candidate_ids": sorted(invalidated),
+                },
+            )
+
+    def _eve_clean_deleted(
+        self, context: _EveContext, deleted_ids: set
+    ) -> tuple[bool, tuple[str, ...]]:
+        """Remove confirmed deleted ids from saved metadata.
+
+        Returns (changed, invalidated_candidate_ids): whether anything the
+        page shows moved, and which offered character ids this pass
+        disqualified -- the page needs the ids to reset the one focused
+        step it may be sitting on.
+
+        Waits for the mutation lock rather than declining like the bridge
+        endpoints do: this is already a background thread, so waiting costs
+        nothing a user sees, and no network call is held across it. The
+        context is revalidated INSIDE the lock, and the mapping is read
+        there too -- a prune computed before the wait would write back a
+        roster the user edited during it.
+        """
+        with self._eve_mutation:
+            if self._eve_context(self._eve_discover()) != context:
+                return False, ()
+            before = self._eve_section().get("account_characters") or {}
+            saved = {key: list(value) for key, value in before.items()}
+            persisted = self._eve_prune_deleted_links_locked(deleted_ids)
+            changed = (
+                persisted
+                and (self._eve_section().get("account_characters") or {}) != saved
+            )
+            # The offer on screen may name a character ESI has just called
+            # deleted. Confirming it would persist a link this pass exists
+            # to remove, so the whole observation goes -- under the state
+            # lock, which this thread takes while holding _eve_mutation and
+            # never the other way round.
+            with self._eve_identification_lock:
+                candidate = self._eve_identification_candidate
+                invalidated: tuple[str, ...] = ()
+                if candidate is not None:
+                    invalidated = tuple(
+                        character_id
+                        for character_id in candidate.character_ids
+                        if character_id in deleted_ids
+                    )
+                if invalidated:
+                    self._eve_clear_identification_locked()
+            return changed or bool(invalidated), invalidated
 
     def _eve_begin(self, worker, args) -> bool:
         """Claim the mutation lock and hand the work to a thread.
@@ -5474,11 +6817,18 @@ class Api:
             title, body, timeout=EVE_CONFIRM_TIMEOUT_S, destructive=destructive
         )
 
-    def _eve_done(self, ok: bool) -> None:
+    def _eve_done(self, ok: bool, **details) -> None:
         """Tell the page the mutation finished, so it can re-enable its
         buttons and refresh. The bridge call returned as soon as the worker
-        was spawned, so this push is the page's only completion signal."""
-        self._push("onEveSettingsDone", {"ok": bool(ok)})
+        was spawned, so this push is the page's only completion signal.
+
+        *details* is how whole-profile copy says more than "finished"
+        without a second completion channel: two handlers for one operation
+        would let the page close its disclosure on one event and refresh on
+        the other, in whichever order they happened to arrive. Callers with
+        nothing extra to say pass `ok` alone and the payload is unchanged.
+        """
+        self._push("onEveSettingsDone", {"ok": bool(ok), **details})
 
     def _eve_auto_backup(self, target):
         store = paths.eve_settings_backup_dir()
@@ -5673,6 +7023,267 @@ class Api:
             self._eve_mutation.release()
             self._eve_done(ok)
 
+    # ---- whole-profile copy ----------------------------------------------
+
+    def eve_settings_copy_profile(
+        self, expected_source: str, mode: str, destination: str
+    ) -> dict:
+        """Create a new profile from the selected one, or replace another.
+
+        The lock is claimed here rather than through _eve_begin, because two
+        things have to happen on the bridge thread before a worker can
+        exist. The request is validated against a freshly discovered tree,
+        so a token the page rendered before a selection change landed comes
+        back as a refusal the user reads beside the button they pressed --
+        not as an alert about work that appeared to start. And any legacy
+        deep `root` is canonicalized and persisted before a single file is
+        touched. A worker could do neither: its answer would arrive after
+        this call had already returned "accepted".
+
+        Returns immediately. The outcome arrives through _eve_done.
+        """
+        if self._eve_identification is not None:
+            return {
+                "accepted": False,
+                "error": "Finish or cancel account identification first.",
+            }
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "accepted": False,
+                "error": "Another Profiles operation is running.",
+            }
+        try:
+            found = self._eve_discover()
+            plan = evesettings_profilecopy.prepare_copy(
+                found, expected_source, mode, destination
+            )
+            try:
+                self._eve_persist_selection(found)
+            except OSError as error:
+                # Aborts untouched. The tree this request was validated
+                # against would not be the one on disk in settings, and the
+                # design's rule is that a failed canonical write is a copy
+                # that never started rather than one that half-happened.
+                logger.exception("Could not persist the canonical EVE selection")
+                raise ValueError(
+                    "Wingman could not save the folder selection, so nothing was "
+                    "copied. Check that the settings file is writable and retry."
+                ) from error
+            self._spawn(
+                target=self._eve_copy_profile_worker, args=(plan,), daemon=True
+            ).start()
+        except (OSError, ValueError) as error:
+            self._eve_mutation.release()
+            return {"accepted": False, "error": str(error)}
+        except Exception:
+            # Only the worker releases the lock, and a worker that never
+            # started never will -- _eve_begin's rule, and the same cost:
+            # every later Profiles mutation refused until the app restarts.
+            self._eve_mutation.release()
+            logger.exception("Could not start EVE profile copy")
+            return {"accepted": False, "error": "Profile copy could not be started."}
+        except BaseException:
+            self._eve_mutation.release()
+            raise
+        return {"accepted": True, "error": None}
+
+    def _eve_profile_copy_refusal(self) -> str | None:
+        """None when EVE is provably closed; the refusal to show otherwise.
+
+        Deliberately not _eve_client_running_strict(): that predicate reads
+        an EVE-titled window whose PID or executable image could not be
+        resolved as "not a client", which for a write that rewrites a whole
+        profile is a guess in the dangerous direction. UNKNOWN gets its own
+        message rather than borrowing the running one, because "EVE is
+        running" sends the user to close a client that may not be there.
+        """
+        from ..preview import discovery
+
+        probe = discovery.probe_eve_client_state()
+        if probe.state is discovery.EveClientState.CLOSED:
+            return None
+        if probe.state is discovery.EveClientState.RUNNING:
+            return "EVE is running. Close EVE and retry."
+        logger.warning("Could not verify that EVE is closed: %r", probe.errors)
+        return "Wingman could not verify that EVE is closed. Close EVE and retry."
+
+    def _eve_select_created_profile(self, plan, created) -> bool:
+        """Persist the newly created profile as the selection.
+
+        Returns False rather than raising: the profile exists on disk
+        either way, and the design keeps publication and remembering the
+        selection as separate outcomes so a retry never implies nothing was
+        created. A discover() that fell back to some OTHER profile (the
+        created one vanished under us) is that same failure, not a licence
+        to persist a selection nobody asked for.
+        """
+        try:
+            found = evesettings_tree.discover(plan.root, plan.server, created)
+            if not _eve_same_path(found.profile, created):
+                logger.warning("The created profile %s was not discoverable", created)
+                return False
+            self._eve_persist_selection(found)
+        except (OSError, ValueError):
+            logger.exception("Could not persist the new EVE profile selection")
+            return False
+        return True
+
+    def _eve_copy_profile_worker(self, plan) -> None:
+        ok = False
+        published = False
+        # Whether the selection the page will see is the one this operation
+        # intends. Replacement does not move the selection, and the source
+        # it retains was persisted with the whole canonical triple before
+        # this worker was spawned -- so it is already true here, on every
+        # exit including a declined confirmation or a failed rollback.
+        # Creation is the only mode with a NEW selection to save, and only
+        # its own save decides this.
+        selection_persisted = plan.mode != "new"
+        error_message = None
+        # Retention runs only once the destination has settled -- after a
+        # successful publication, or after a rollback that put the old one
+        # back. Pruning while the destination holds a mix of both profiles
+        # would consider deleting automatic backups during the one window
+        # in which the newest of them is the only way back.
+        prune_after = False
+        try:
+            error_message = self._eve_profile_copy_refusal()
+            if error_message:
+                self._alert("error", "Copy not started", error_message)
+                return
+            created = None
+            with evesettings_profilecopy.stage_copy(plan) as staged:
+                if plan.mode == "new":
+                    # No confirmation: creating a profile overwrites
+                    # nothing, so there is nothing to warn about.
+                    created = evesettings_profilecopy.publish_new(staged)
+                    published = True
+                else:
+                    if not self._eve_confirm(
+                        "Confirm Replace",
+                        f"Replace {plan.destination_name} with a copy of "
+                        f"{plan.source_name}?\n\n{plan.destination_name} is backed "
+                        "up first. Its EVE settings files are replaced with "
+                        f"{plan.source_name}'s, and any settings file "
+                        f"{plan.source_name} does not have is removed.",
+                        destructive=True,
+                    ):
+                        return
+                    # Staging happened before the question, so the answer is
+                    # the last thing between here and the destination -- and
+                    # EVE can start while a confirmation sits on screen.
+                    error_message = self._eve_profile_copy_refusal()
+                    if error_message:
+                        self._alert("error", "Copy not started", error_message)
+                        return
+                    store = paths.eve_settings_backup_dir()
+                    try:
+                        archive = evesettings_backup.create_profile_backup(
+                            store, plan.destination, origin="auto"
+                        )
+                    except Exception as failure:
+                        logger.exception(
+                            "Could not back up %s before replacing it", plan.destination
+                        )
+                        error_message = (
+                            f"{plan.destination_name} was not changed: Wingman "
+                            "could not back it up first. "
+                            f"{evesettings_ops.describe(failure)}"
+                        )
+                        self._alert("error", "Destination unchanged", error_message)
+                        return
+
+                    def rollback() -> None:
+                        # backup_current=False: the archive taken moments ago
+                        # IS what rollback restores from. A fresh backup here
+                        # would archive the half-published profile this call
+                        # exists to erase, and would add a second chance to
+                        # fail inside the recovery path itself.
+                        evesettings_backup.restore(
+                            store, archive, plan.root, backup_current=False
+                        )
+
+                    try:
+                        evesettings_profilecopy.publish_replacement(
+                            staged, rollback=rollback
+                        )
+                    except evesettings_profilecopy.ReplacementFailed as failure:
+                        logger.exception("EVE profile replacement failed")
+                        prune_after = failure.destination_restored
+                        if failure.destination_restored:
+                            error_message = (
+                                f"{plan.destination_name} was restored from its "
+                                "automatic backup and is unchanged. "
+                                f"{evesettings_ops.describe(failure.publication_error)}"
+                            )
+                            self._alert("error", "Replacement failed", error_message)
+                        else:
+                            # The archive is named because it is now the only
+                            # way back, and Backups is where it is restored
+                            # from -- an instruction, not an error code.
+                            error_message = (
+                                f"{plan.destination_name} may now hold a mix of both "
+                                "profiles and Wingman could not put it back. Restore "
+                                f"{archive.name} from Backups. "
+                                f"{evesettings_ops.describe(failure.publication_error)}"
+                            )
+                            self._alert(
+                                "error",
+                                "Replacement and rollback failed",
+                                error_message,
+                            )
+                        return
+                    published = True
+                    prune_after = True
+            # Staging is gone by here: the design removes it before
+            # retention runs, and before anything reports success.
+            if plan.mode == "new":
+                selection_persisted = self._eve_select_created_profile(plan, created)
+                if selection_persisted:
+                    self._status(f"Created {plan.destination_name}.")
+                else:
+                    # Still ok: the profile is on disk and the refreshed
+                    # dropdown offers it. Only the selection was lost, and
+                    # saying "failed" would invite a retry that collides
+                    # with the profile this call just created.
+                    error_message = (
+                        f"Created {plan.destination_name}, but Wingman could not "
+                        "remember the selection. Select it from Profile."
+                    )
+                    self._alert("warning", "Profile created", error_message)
+            else:
+                # The source stays selected, and it already is -- see the
+                # initialiser above: the canonical triple was persisted
+                # when the request was accepted, and replacement never
+                # moves the selection.
+                self._status(
+                    f"Replaced {plan.destination_name} with a copy of "
+                    f"{plan.source_name}."
+                )
+            ok = True
+        except Exception as failure:
+            logger.exception("EVE profile copy failed")
+            error_message = evesettings_ops.describe(failure)
+            self._alert("error", "Copy failed", error_message)
+        finally:
+            if prune_after:
+                try:
+                    self._eve_prune(int(self._eve_section().get("auto_keep", 10)))
+                except Exception:
+                    # Retention is housekeeping. It must never be the reason
+                    # the lock is not released or the page never hears that
+                    # the copy it is waiting on has finished.
+                    logger.exception("Could not prune automatic backups")
+            self._eve_mutation.release()
+            self._eve_done(
+                ok,
+                operation="profile_copy",
+                mode=plan.mode,
+                published=published,
+                selection_persisted=selection_persisted,
+                error=error_message,
+            )
+
     def eve_settings_backup(self, path: str, kind: str) -> bool:
         return self._eve_begin(self._eve_backup_worker, (path, kind))
 
@@ -5737,8 +7348,10 @@ class Api:
             ):
                 return
             store = paths.eve_settings_backup_dir()
-            root = self._eve_section().get("root")
-            written = evesettings_backup.restore(store, archive, root)
+            found = self._eve_discover()
+            if found.root is None:
+                raise ValueError("Choose the EVE settings folder first.")
+            written = evesettings_backup.restore(store, archive, found.root)
             keep = int(self._eve_section().get("auto_keep", 10))
             self._eve_prune(keep)
             self._status(f"Restored into {written.name}.")

@@ -8,6 +8,8 @@ A source checkout passes every test while the frozen release dies on
 launch, so only a test that reads the manifest can catch it here.
 """
 
+import ast
+import importlib.util
 import json
 import pathlib
 import re
@@ -18,6 +20,145 @@ import tomllib
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
+MANUAL_UPDATE_HARNESS = ROOT / "tests" / "manual" / "update_harness.py"
+
+
+def test_readme_discloses_automatic_github_update_checks():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "GitHub release API" in readme
+    assert "once each time Wingman starts" in readme
+    assert "SHA-256" in readme
+    assert "does not prove publisher identity" in readme
+
+
+def test_readme_google_token_note_is_only_the_boundary_and_table_link():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    previous = readme.index("- **Your Google credentials")
+    start = readme.index("\n- **", previous) + 1
+    end = readme.index("\n- **Video data", start)
+    note = " ".join(readme[start:end].split())
+
+    assert note == (
+        "- **No FlyGD-operated backend receives Google OAuth tokens or other "
+        "application data.** See the [Privacy section](#privacy) network table "
+        "for the external services each feature contacts and what it sends."
+    )
+
+
+def test_readme_network_table_covers_eve_and_current_user_triggers():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    ccp_row = next(
+        line for line in readme.splitlines() if line.startswith("| CCP EVE SSO and ESI")
+    )
+    assert "login.eveonline.com" in ccp_row
+    assert "esi.evetech.net" in ccp_row
+    assert "skills, queue, and attributes" in ccp_row
+    assert "Authenticated ESI skills, queue, and attributes requests" in ccp_row
+    assert "skill plans through unauthenticated" in ccp_row
+    assert "`/universe/ids`" in ccp_row
+    assert "type metadata" in ccp_row
+    assert "group metadata" in ccp_row
+    assert ccp_row.index("`/characters/{id}/`") < ccp_row.index("`/universe/names`")
+    assert "remaining display names" in ccp_row
+    assert "FightRecorder" in readme
+    assert not re.search(
+        r"makes network connections to (?:exactly )?"
+        r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten) places",
+        readme,
+        re.IGNORECASE,
+    )
+    for removed_copy in (
+        "Also post combat logs to Discord",
+        "combat logs go with it only while that box is ticked",
+        "Untick the box to upload the video alone",
+    ):
+        assert removed_copy not in readme
+
+
+def test_smoke_network_checks_scope_ccp_after_the_startup_update_check():
+    smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
+    flat = " ".join(smoke.split())
+    assert "Clear the capture after the automatic GitHub startup check finishes" in flat
+    assert "only the Skills interaction" in flat
+
+
+def test_external_privacy_policy_is_not_a_repository_release_gate():
+    documents = {
+        "plan": ROOT
+        / "docs"
+        / "superpowers"
+        / "plans"
+        / "2026-09-02-guided-updates.md",
+        "spec": ROOT
+        / "docs"
+        / "superpowers"
+        / "specs"
+        / "2026-09-02-guided-updates-design.md",
+        "smoke": ROOT / "docs" / "smoke-checklist.md",
+    }
+    forbidden = {
+        "plan": (
+            "External release action:",
+            "Update and deploy the published privacy statement",
+            "external privacy-policy deployment",
+        ),
+        "spec": (
+            "Before release, the externally published",
+            "shipping is blocked until the public statement",
+            "Published privacy policy:",
+        ),
+        "smoke": ("The published privacy policy matches before release",),
+    }
+
+    for name, path in documents.items():
+        text = path.read_text(encoding="utf-8")
+        for phrase in forbidden[name]:
+            assert phrase not in text
+
+
+def test_updater_docs_do_not_claim_power_loss_durability():
+    documents = (
+        ROOT / "docs" / "superpowers" / "plans" / "2026-09-02-guided-updates.md",
+        ROOT / "docs" / "superpowers" / "specs" / "2026-09-02-guided-updates-design.md",
+    )
+    forbidden = (
+        "durable handoff",
+        "durable classification",
+        "durably classified",
+        "durably classifies",
+        "durable handed-off",
+    )
+
+    for path in documents:
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        assert all(phrase not in text for phrase in forbidden)
+        assert "power-loss durability" in text
+        assert "marker's mtime" in text
+        assert "stale orphan marker" in text
+        assert "best-effort" in text
+
+
+def test_updater_manual_docs_keep_fixture_and_windows_policy_claims_narrow():
+    manual = (ROOT / "tests" / "manual" / "README.md").read_text(encoding="utf-8")
+    smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
+    flat_manual = " ".join(manual.split())
+    flat_smoke = " ".join(smoke.split())
+
+    assert "verify the exact basename" in flat_manual
+    assert "guards do not identify the file's contents" in flat_manual
+    assert "must compile and use the provided fixture" in flat_manual
+    assert "ShellExecute starts only" not in flat_manual
+    assert "filesystem and local policy that support Mark-of-the-Web" in flat_manual
+    assert "`Zone.Identifier` is present and listed" in flat_manual
+    assert (
+        "must not be worked around by weakening host or Attachment Services validation"
+        in flat_manual
+    )
+    assert "reputation warning depending on local policy" in flat_smoke
+    assert "must leave zone checks enabled" in flat_smoke
+    assert "normal visible installer" in flat_smoke
+    assert "reputation UI is mandatory" not in flat_smoke
 
 
 def test_every_subpackage_is_declared():
@@ -28,6 +169,21 @@ def test_every_subpackage_is_declared():
         for p in (ROOT / "wingman").rglob("__init__.py")
     }
     assert on_disk <= declared, f"undeclared packages: {sorted(on_disk - declared)}"
+
+
+def test_profilecopy_module_ships_under_the_already_declared_evesettings_package():
+    """Whole-profile copy (wingman/evesettings/profilecopy.py) added no new
+    subpackage -- it is a module inside wingman.evesettings, which
+    pyproject.toml already lists. `test_every_subpackage_is_declared` above
+    only ever sees __init__.py directories, so it would stay silent if this
+    file were ever hoisted into its own undeclared subpackage (e.g.
+    wingman.evesettings.profilecopy as a package). This pins both halves of
+    that assumption directly, without touching pyproject.toml."""
+    module = ROOT / "wingman" / "evesettings" / "profilecopy.py"
+    assert module.is_file(), "profilecopy.py must live inside wingman/evesettings/"
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])
+    assert "wingman.evesettings" in declared
 
 
 CODEC = (
@@ -123,6 +279,264 @@ def test_the_installer_fightrecorder_feature_is_wired():
     assert r'Source: "bin\obs-fightrecorder.dll"; Flags: dontcopy noencryption' in iss
     assert "procedure InstallFightRecorder();" in iss
     assert "WizardIsTaskSelected('fightrecorder')" in iss
+
+
+def _load_manual_update_harness():
+    spec = importlib.util.spec_from_file_location(
+        "manual_update_harness", MANUAL_UPDATE_HARNESS
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_manual_update_harness_is_not_packaged():
+    spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
+    assert "tests/manual" not in spec
+    assert MANUAL_UPDATE_HARNESS.is_file() and MANUAL_UPDATE_FIXTURE.is_file()
+
+
+@pytest.mark.parametrize(
+    ("mode", "failure_code"),
+    [
+        ("complete", None),
+        ("truncated", "size"),
+        ("checksum-mismatch", "checksum"),
+    ],
+)
+def test_manual_update_harness_serve_modes_run_without_native_dependencies(
+    mode, failure_code
+):
+    result = subprocess.run(
+        [sys.executable, str(MANUAL_UPDATE_HARNESS), "serve", "--mode", mode],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert "temporary staging root removed: yes" in result.stdout
+    staging_line = next(
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("temporary staging root: ")
+    )
+    assert not pathlib.Path(
+        staging_line.removeprefix("temporary staging root: ")
+    ).exists()
+
+    if failure_code is None:
+        assert "size: 36" in result.stdout
+        assert (
+            "sha256: 00bf96a604486a01f524855947924d49b14deced0ca87bc90143e0034bf91434"
+            in result.stdout
+        )
+        assert "handoff marker created: update-" in result.stdout
+        assert "handoff marker removed: True" in result.stdout
+        assert "expected failure:" not in result.stdout
+        assert "partial retention:" not in result.stdout
+    else:
+        assert f"expected failure: stage=download code={failure_code}" in result.stdout
+        assert "partial retention: none" in result.stdout
+        assert "downloaded:" not in result.stdout
+
+
+def test_manual_update_harness_rejects_non_fixture_basenames():
+    harness = _load_manual_update_harness()
+    with pytest.raises(RuntimeError, match="must name the harmless"):
+        harness._require_fixture(ROOT / "FlyGD-Wingman-Setup-4.9.0.exe")
+
+
+def test_manual_update_harness_rejects_fixture_named_symlinks(tmp_path):
+    harness = _load_manual_update_harness()
+    target = tmp_path / "harmless-target.exe"
+    target.write_bytes(b"not an installer")
+    link = tmp_path / "Wingman-Update-Harness-Setup.exe"
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    with pytest.raises(RuntimeError, match="symlinks are refused"):
+        harness._require_fixture(link)
+
+
+def test_manual_update_fixture_is_inert_and_separate_from_production():
+    text = MANUAL_UPDATE_FIXTURE.read_text(encoding="utf-8")
+    sections = re.findall(r"^\[([^]]+)]$", text, re.MULTILINE)
+    setup_text = text.split("[Setup]\n", 1)[1].split("\n[", 1)[0]
+    setup = dict(
+        line.split("=", 1)
+        for line in setup_text.splitlines()
+        if line and not line.startswith(";")
+    )
+
+    assert sections == ["Setup"]
+    assert setup == {
+        "AppId": "FlyGD Wingman Update Harness",
+        "AppName": "FlyGD Wingman Update Harness",
+        "AppVersion": "1.0.0",
+        "DefaultDirName": r"{tmp}\FlyGD-Wingman-Update-Harness",
+        "PrivilegesRequired": "lowest",
+        "Uninstallable": "no",
+        "AppMutex": r"Local\FlyGDWingmanUpdateHarness",
+        "OutputBaseFilename": "Wingman-Update-Harness-Setup",
+    }
+    for production_identity in (
+        "Wingman.exe",
+        r"{autopf}\FlyGD Wingman",
+        r"Global\OBSYouTubeUploader",
+        r"Global\FlyGDWingman",
+        "FlyGD-Wingman-Setup-{#AppVersion}",
+    ):
+        assert production_identity not in text
+
+
+def _os_error_with_winerror(code):
+    error = OSError(code, f"Windows error {code}")
+    error.winerror = code
+    return error
+
+
+@pytest.mark.parametrize("code", [5, 32])
+def test_manual_update_harness_accepts_only_known_replacement_denials(code):
+    harness = _load_manual_update_harness()
+
+    assert (
+        harness._replacement_denial_code({"error": _os_error_with_winerror(code)})
+        == code
+    )
+
+
+def test_manual_update_harness_rejects_other_replacement_errors():
+    harness = _load_manual_update_harness()
+
+    with pytest.raises(RuntimeError, match=r"unexpected error code 87"):
+        harness._replacement_denial_code({"error": _os_error_with_winerror(87)})
+
+
+def test_manual_update_harness_rejects_successful_replacement():
+    harness = _load_manual_update_harness()
+
+    with pytest.raises(RuntimeError, match="replacement unexpectedly succeeded"):
+        harness._replacement_denial_code({"replaced": True})
+
+
+def test_manual_update_harness_reports_replacement_barrier_timeout():
+    harness = _load_manual_update_harness()
+
+    with pytest.raises(RuntimeError, match="timed out waiting for the barrier"):
+        harness._replacement_denial_code({"timed_out": True})
+
+
+@pytest.mark.parametrize(
+    ("during", "after"),
+    [
+        (("changed-identity", 10), ("original-identity", 10, "original-digest")),
+        (("original-identity", 11), ("original-identity", 10, "original-digest")),
+        (("original-identity", 10), ("original-identity", 10, "changed-digest")),
+    ],
+)
+def test_manual_update_harness_rejects_mutated_lock_race_facts(during, after):
+    harness = _load_manual_update_harness()
+    before = ("original-identity", 10, "original-digest")
+
+    with pytest.raises(RuntimeError, match="identity, size, or digest changed"):
+        harness._require_unchanged_file_facts(before, during, after)
+
+
+def test_manual_update_harness_pins_its_deliberate_production_seams():
+    tree = ast.parse(MANUAL_UPDATE_HARNESS.read_text(encoding="utf-8"))
+    referenced = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "updates"
+    }
+
+    # _open_locked is deliberately included: the harness must exercise the
+    # same protected-handle implementation as launch verification, not a
+    # friendlier test-only file reader.
+    assert referenced == {
+        "ReleaseInfo",
+        "UpdateFailure",
+        "_open_locked",
+        "close_process_handle",
+        "download_release",
+        "launch_verified",
+        "remove_handoff_marker",
+        "save_attachment",
+        "validate_download_origin",
+        "write_handoff_marker",
+    }
+
+
+@pytest.mark.parametrize(
+    ("argv", "command"),
+    [
+        (["serve", "--mode", "complete"], "serve"),
+        (
+            [
+                "attachment",
+                "--i-understand-this-launches-a-test-exe",
+                "fixture.exe",
+                "https://example.test/fixture.exe",
+            ],
+            "attachment",
+        ),
+        (
+            [
+                "lock-race",
+                "--i-understand-this-launches-a-test-exe",
+                "fixture.exe",
+            ],
+            "lock-race",
+        ),
+        (
+            [
+                "shell-launch",
+                "--i-understand-this-launches-a-test-exe",
+                "fixture.exe",
+                "https://example.test/fixture.exe",
+            ],
+            "shell-launch",
+        ),
+        (["mutex-holder"], "mutex-holder"),
+    ],
+)
+def test_manual_update_harness_parser_exposes_every_command(argv, command):
+    harness = _load_manual_update_harness()
+    assert harness.build_parser().parse_args(argv).command == command
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["attachment", "fixture.exe", "https://example.test/fixture.exe"],
+        ["lock-race", "fixture.exe"],
+        ["shell-launch", "fixture.exe", "https://example.test/fixture.exe"],
+    ],
+)
+def test_manual_update_harness_dangerous_commands_require_opt_in(argv):
+    harness = _load_manual_update_harness()
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(argv)
+
+
+def test_manual_update_harness_rejects_an_abbreviated_opt_in():
+    harness = _load_manual_update_harness()
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(
+            [
+                "attachment",
+                "--i-understand-this-launches",
+                "fixture.exe",
+                "https://example.test/fixture.exe",
+            ]
+        )
 
 
 def test_the_fightrecorder_fetcher_is_on_the_ci_allowlist():

@@ -21,6 +21,7 @@ Stdlib only, and no third-party imports, for that same reason.
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -58,7 +59,45 @@ def render(version: str) -> str:
     )
 
 
+def verify_release_tag(tag: str, source: Path = SOURCE) -> str:
+    """Raise unless the pushed tag names the source's declared version.
+
+    release.yml triggers on `push: tags: ["v*"]`, so nothing stops a tag
+    being pushed that disagrees with wingman.__version__ -- the tag is
+    typed by a human, the version is read from source, and until this check
+    the two were never compared. The installer filename and its baked-in
+    AppVersion both derive from source; the mismatch risk is attaching and
+    publishing that source-versioned installer under a differently versioned
+    tag and release.
+    """
+    version = read_version(source)
+    expected = f"v{version}"
+    if tag != expected:
+        raise SystemExit(
+            f"release tag {tag} does not match source version {version} "
+            f"(expected {expected}); wingman/__init__.py and the pushed tag "
+            "must agree before the installer is built."
+        )
+    return version
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--expect-tag",
+        help=(
+            "Verify this release tag (e.g. v4.9.0) matches "
+            "wingman.__version__ and exit without writing version.iss. "
+            "Used by release.yml to gate the build on a matching tag."
+        ),
+    )
+    args = parser.parse_args()
+
+    if args.expect_tag is not None:
+        version = verify_release_tag(args.expect_tag)
+        print(f"release tag {args.expect_tag} matches source version {version}")
+        return 0
+
     version = read_version()
     TARGET.write_text(render(version), encoding="utf-8")
     print(f"{TARGET.relative_to(ROOT)}: AppVersion {version}")

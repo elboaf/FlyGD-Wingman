@@ -1082,6 +1082,20 @@
   // one so the roster's catch-all bucket is visible in the browser. The
   // Unscored row is the common case, not padding: every character is
   // Unscored between authorisation and its first refresh.
+  //
+  // Task 6 adds every sort/status edge byTrainingFinishThenName and
+  // byTrainingRemainingThenName exist to handle, on top of the original
+  // nine: a third Training row so the two dated ones are out of name
+  // order (Zuelo finishes before Bel despite sorting after it
+  // alphabetically); a Missing tie (Zara/Aveline Castellane, inserted in
+  // that order so array order alone cannot stand in for the name
+  // tie-break); a Missing row with an unavailable estimate
+  // (Petra Ilyenko); and a Missing row carrying both `queued_count` and
+  // `missing_count` above zero with a long character name and the
+  // longest skill name EVE has (.skills-main's own CSS comment measures
+  // it). Every character below now carries all three of Task 5's
+  // estimate fields, matching what a real payload always sends once a
+  // plan is selected.
   var skills = {
     auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
@@ -1104,29 +1118,47 @@
         needs_reauth: false, stale: false, readiness: 'Ready',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 14, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // Ready: every plan skill is already trained and active, so
+        // there is nothing left to train.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 2, character_name: 'Zuelo Parvi',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
-        estimated_finish_utc: '2026-08-26T12:00:00+00:00',
+        // Earlier than Bel Ansgar (character_id 10) below despite sorting
+        // AFTER it alphabetically -- byTrainingFinishThenName must put
+        // Zuelo first, which a name sort would get backwards.
+        estimated_finish_utc: '2026-08-25T09:00:00+00:00',
         queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 2,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        training_remaining_seconds: 45000,
+        training_remaining_label: '12h 30m', training_estimate_status: 'available' },
       { character_id: 3, character_name: 'Kaska Rin',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
         estimated_finish_utc: '', queue_timing_unknown: true,
         active_count: 13, trained_inactive_count: 0, queued_count: 1,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // A timing-unknown queue does not stop the SEPARATE plan-wide
+        // estimate from being available -- the two are different
+        // computations (EVE's queue fact vs training.estimate()).
+        training_remaining_seconds: 93600,
+        training_remaining_label: '1d 2h', training_estimate_status: 'available' },
       { character_id: 4, character_name: 'Delen Vok',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Locked',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 11, trained_inactive_count: 3, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 0, group: 'Logi Wing',
+        // Locked is an inactive-clone problem, not a training one: the
+        // trained_inactive skills are already paid for.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 5, character_name: 'Gustav Oswaldo',
         fetched_utc: '2026-08-23T20:00:00+00:00',
         fetched_label: 'Last fetched 17h ago',
@@ -1139,7 +1171,13 @@
         // (controller._ROSTER_NAME_CAP).
         missing_names: ['Heavy Assault Cruisers V',
                         'Tactical Shield Manipulation V',
-                        'Gunnery V'] },
+                        'Gunnery V'],
+        // Task 6: stale carries a REAL training estimate, same as a fresh
+        // row -- the last successful refresh is what it is scored
+        // against, and the multi-week case (the largest duration in the
+        // fixture, so it sorts last among available estimates).
+        training_remaining_seconds: 1296000,
+        training_remaining_label: '15d 0h', training_estimate_status: 'available' },
       { character_id: 6, character_name: 'Nera Tal',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
@@ -1148,28 +1186,111 @@
         active_count: 12, trained_inactive_count: 0, queued_count: 0,
         missing_count: 2, unknown_count: 0, group: 'Wolfpack',
         // Under the cap, so no remainder clause.
-        missing_names: ['Motion Prediction V', 'Sharpshooter IV'] },
+        missing_names: ['Motion Prediction V', 'Sharpshooter IV'],
+        // The short case -- smallest duration in the fixture, so it sorts
+        // first among available estimates.
+        training_remaining_seconds: 5400,
+        training_remaining_label: '1h 30m', training_estimate_status: 'available' },
       { character_id: 7, character_name: 'Orin Kesh',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Unknown',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 13, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 1, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 1, group: 'Logi Wing',
+        // A skill this build has never resolved an id for -- the
+        // metadata_unavailable case.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'metadata_unavailable' },
       { character_id: 8, character_name: 'Tavi Solen', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: 'The refresh token was rejected', needs_reauth: true,
         stale: false, readiness: 'Unscored', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' },
+        missing_count: 0, unknown_count: 0, group: '',
+        // No snapshot at all -- skill_points_complete is never true, so
+        // this is the refresh_required case, not the empty ("no plan")
+        // status: a plan IS selected here, and Unscored is the only
+        // readiness this status can pair with.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
       { character_id: 9, character_name: 'Mira Halcyon', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: '', needs_reauth: false, stale: false,
         readiness: 'Ascendant', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' }
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
+      { character_id: 10, character_name: 'Bel Ansgar',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Training',
+        // Later than Zuelo Parvi (character_id 2) above -- the two dated
+        // Training rows are deliberately out of name order.
+        estimated_finish_utc: '2026-08-27T21:00:00+00:00',
+        queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 3,
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: 100800,
+        training_remaining_label: '1d 4h', training_estimate_status: 'available' },
+      // The tie-break pair. Inserted Zara-then-Aveline -- alphabetically
+      // backwards -- so a fixture whose array order already matched the
+      // name order could not make byTrainingRemainingThenName's tie-break
+      // pass by accident.
+      { character_id: 11, character_name: 'Zara Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 9, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 3, unknown_count: 0, group: '',
+        missing_names: ['Advanced Spaceship Command III',
+                        'Target Painting IV'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 12, character_name: 'Aveline Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 2, unknown_count: 0, group: '',
+        missing_names: ['Signature Focusing V'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 13, character_name: 'Petra Ilyenko',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 7, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 4, unknown_count: 0, group: '',
+        missing_names: ['Cynosural Field Theory V', 'Titan Synergy V'],
+        // Confirmed but unusable attributes (attributes_fetched_utc set,
+        // attributes_error non-empty) -- the unavailable case, which must
+        // sort last regardless of missing_count.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'attributes_unavailable' },
+      { character_id: 14,
+        // Long enough to exercise .skills-main's 240px --name-col ellipsis.
+        character_name: 'Konstantina Alexandrovna Winterbourne',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 11, trained_inactive_count: 0,
+        // Both above zero: some of this plan is already queued while the
+        // rest is entirely untrained, which is what makes the overall
+        // readiness Missing even though training has started.
+        queued_count: 2, missing_count: 3, unknown_count: 0, group: '',
+        // The exact skill .skills-main's own CSS comment measures as the
+        // longest name EVE has (39 characters).
+        missing_names: ['Heavy Assault Missile Specialization V'],
+        training_remaining_seconds: 604800,
+        training_remaining_label: '7d 0h', training_estimate_status: 'available' }
     ],
     plan_issues: [
       { file_name: 'Broken.txt', message: 'The file was rejected.',
@@ -1311,6 +1432,79 @@
     };
   }
 
+  // Exact copy of Api._update_snapshot_locked's permission policy for a
+  // cached release in a frozen build. Keeping every state here makes fixture
+  // drift visible instead of letting base defaults silently grant an action.
+  var DEV_UPDATE_PERMISSIONS = JSON.parse('{"idle":{"can_check":true,"can_download":false,"can_install":false},"checking":{"can_check":false,"can_download":false,"can_install":false},"current":{"can_check":true,"can_download":false,"can_install":false},"unavailable":{"can_check":true,"can_download":false,"can_install":false},"available":{"can_check":true,"can_download":true,"can_install":false},"check_failed":{"can_check":true,"can_download":true,"can_install":false},"download_failed":{"can_check":true,"can_download":true,"can_install":false},"downloading":{"can_check":false,"can_download":false,"can_install":false},"ready":{"can_check":false,"can_download":false,"can_install":true},"handing_off":{"can_check":false,"can_download":false,"can_install":false},"revalidating":{"can_check":false,"can_download":false,"can_install":false},"launching":{"can_check":false,"can_download":false,"can_install":false},"closed":{"can_check":false,"can_download":false,"can_install":false}}');
+
+  function devUpdateState() {
+    // ?dev=1&update=<state> selects which of the card's states renders,
+    // so every state Task 7's smoke checklist calls for is reachable by
+    // hand without touching Python: current, checking, an automatic
+    // offline failure, available, downloading (with real bytes for the
+    // progress bar), ready (declared frozen so Install actually shows,
+    // which a real source checkout never is), and a manual failure.
+    var match = /[?&]update=([\w-]+)/.exec(window.location.search);
+    var state = match ? match[1] : 'available';
+    var base = {
+      installed_version: '0.0.0-dev',
+      available_version: '4.9.0',
+      downloaded_bytes: 0,
+      total_bytes: 42000000,
+      error: ''
+    };
+    var payload;
+    // update_available mirrors Api._update_snapshot_locked: true whenever
+    // a release is cached, which survives through check_failed/ready/
+    // download_failed rather than flickering off the moment a later
+    // action fails -- app.js's gear badge reads exactly this field.
+    switch (state) {
+      case 'idle':
+        payload = Object.assign({}, base, {
+          state: 'idle', available_version: '', update_available: false
+        });
+        break;
+      case 'checking':
+        payload = Object.assign({}, base, {
+          state: 'checking', available_version: '', update_available: false
+        });
+        break;
+      case 'current':
+        payload = Object.assign({}, base, {
+          state: 'current', available_version: '', update_available: false
+        });
+        break;
+      case 'unavailable':
+        payload = Object.assign({}, base, {
+          state: 'unavailable', available_version: '', update_available: false
+        });
+        break;
+      case 'downloading':
+        payload = Object.assign({}, base, {
+          state: 'downloading', downloaded_bytes: 18000000,
+          update_available: true
+        });
+        break;
+      case 'ready':
+        payload = Object.assign({}, base, {
+          state: 'ready', downloaded_bytes: 42000000, update_available: true
+        });
+        break;
+      case 'error':
+        payload = Object.assign({}, base, {
+          state: 'download_failed', update_available: true,
+          error: 'The download did not match what the release published. '
+               + 'Try downloading again.'
+        });
+        break;
+      default:
+        payload = Object.assign({}, base, {
+          state: 'available', update_available: true
+        });
+    }
+    return Object.assign(payload, DEV_UPDATE_PERMISSIONS[payload.state]);
+  }
+
   // The bar page pulls its section once at load; so does bookmarks.js
   // for the toggle's initial paint. Returns the same object the payload
   // above carries, so the two doubles cannot disagree.
@@ -1328,6 +1522,24 @@
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());
+  };
+
+  api.update_status = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.check_for_updates = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.download_update = function () {
+    console.log('DEV api.download_update()');
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.install_update = function () {
+    console.log('DEV api.install_update()');
+    return Promise.resolve(devUpdateState());
   };
 
   // ---- FightRecorder: the harness has no OBS and no network, so the
@@ -1794,6 +2006,17 @@
   // the harness cannot show that a LIVE upload survives a trip to Skills
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
+  // Pushes an onEveSettingsNames payload carrying the current
+  // devIdentificationGeneration so acceptIdentification() in evesettings.js
+  // accepts it. deleted_candidate_ids is always empty here — the console
+  // helpers only change structural state, not character existence.
+  function devPushEveNames() {
+    window.onEveSettingsNames({
+      identification_generation: devIdentificationGeneration,
+      deleted_candidate_ids: []
+    });
+  }
+
   window.DEV = {
     // The same bounded fixture scripts/shoot_screens.py injects into the live
     // app. This manual driver keeps every field browser-consumed rather than
@@ -1903,16 +2126,16 @@
       eve.root = ''; eve.server = ''; eve.profile = '';
       eve.servers = []; eve.profiles = [];
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveUnreadable: function () {
       eve.unreadable = true;
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveSelectiveAvailable: function (available) {
       eve.selective_copy_available = !!available;
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     skillsEmpty: function () {
       skills.characters = [];
@@ -1939,8 +2162,12 @@
   var backupsScenario = identitySearch.get('backups') || '';
   var copyScenario = identitySearch.get('copy') || '';
   var formationsAccountScenario = identitySearch.get('formations-account') || '';
+  // Task 7: the whole-profile copy checkpoints. A named scenario drives
+  // the eve_settings_copy_profile double below through the real panel
+  // rather than through a harness-only shortcut.
+  var profileCopyScenario = identitySearch.get('profile') || '';
   var profilesScenarioRequested = !!(backupsScenario || copyScenario
-    || formationsAccountScenario);
+    || formationsAccountScenario || profileCopyScenario);
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -2002,10 +2229,20 @@
     eve_running: null,
     identification_active: selectedIdentityScenario.stage !== 'intro'
       && selectedIdentityScenario.stage !== 'manage',
+    // True unconditionally: the dev harness always points at a Tranquility
+    // fixture. Without this the canIdentify guard Task 6 added hides every
+    // identity control and all identification scenarios render as inert.
+    account_identity_available: true,
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
-    profiles: [{ path: 'default', name: 'Default', file_count: 72 }],
+    // Two profiles, not one: every profile-copy checkpoint needs a real
+    // Replace target, and 'multiple profiles with Default selected' is
+    // itself one of the named scenarios below.
+    profiles: [
+      { path: 'default', name: 'Default', file_count: 72 },
+      { path: 'fleet', name: 'Fleet', file_count: 58 }
+    ],
     // Name-ordered, because the payload is: R1/D4 moved the roster's sort
     // out of evesettings.tree (which has only file ids) and into
     // Api.eve_settings_state (which has the resolved labels), so a
@@ -2089,14 +2326,128 @@
   };
   api.eve_settings_select = function (server, profile) {
     console.log('DEV api.eve_settings_select(', server, ',', profile, ')');
-    eve.server = server; eve.profile = profile;
+    // '' is not "no profile": Api.eve_settings_select hands discover()
+    // `profile or None`, and an empty token is its one deliberate
+    // fallback -- "the requested server's first profile". evesettings.js
+    // relies on it, sending '' on a SERVER change rather than the old
+    // server's profile path (which the endpoint would refuse). Assigning
+    // the token straight through emptied the Profile select here and
+    // disabled every control gated on state.profile, which no real server
+    // change does. The fixture carries one server and one flat `profiles`
+    // list -- that list IS what this server offers -- so its first entry
+    // is the faithful answer without inventing a per-server association
+    // the payload does not carry.
+    var resolved = profile || (eve.profiles.length ? eve.profiles[0].path : '');
+    eve.server = server; eve.profile = resolved;
     return Promise.resolve(true);
   };
   api.eve_settings_resolve_names = function () {
     console.log('DEV api.eve_settings_resolve_names()');
     return Promise.resolve(null);
   };
+  // Task 7's specialized double. Validated the same way the bridge
+  // validates it -- against a freshly discovered tree's current
+  // selection -- so a stale token reads as the same refusal a real race
+  // would produce. Every outcome after that point is one of the eleven
+  // named checkpoints in PROFILE_COPY_SCENARIOS
+  // (tests/test_dev_harness.py), selected by ?dev=1&profile=<key> and
+  // driven through the real panel by paintProfileCopyScenario() below.
+  //
+  // Round 1 fix: PROFILE_COPY_SCENARIO_REQUESTS below pins the exact
+  // mode/destination each scripted checkpoint's driver sends, and the
+  // double refuses a request that does not match -- a sender-wiring
+  // regression (sendProfileCopy shipping the wrong mode, or reading the
+  // wrong field) is caught here rather than silently rendering some
+  // OTHER checkpoint's canned outcome. This is a bridge-argument check
+  // only: it never evaluates whether a name is well-formed or a
+  // destination genuinely collides on disk -- that stays Python's job,
+  // and a double that second-guessed it would drift from the bridge it
+  // exists to imitate.
+  var PROFILE_COPY_SCENARIO_REQUESTS = {
+    'invalid-name': { mode: 'new', destination: '' },
+    'collision': { mode: 'new', destination: 'dEfAuLt' },
+    'busy': { mode: 'new', destination: 'New Ops' },
+    'created': { mode: 'new', destination: 'New Ops' },
+    'unsaved-selection': { mode: 'new', destination: 'New Ops' },
+    'eve-running': { mode: 'new', destination: 'New Ops' },
+    'replaced': { mode: 'replace', destination: 'fleet' },
+    'rollback-failed': { mode: 'replace', destination: 'fleet' }
+  };
+  api.eve_settings_copy_profile = function (expectedSource, mode, destination) {
+    console.log('DEV api.eve_settings_copy_profile(', expectedSource, mode,
+                destination, ')');
+    if (expectedSource !== eve.profile) {
+      return Promise.resolve({ accepted: false, error: 'The selected profile changed.' });
+    }
+    var expectedRequest = PROFILE_COPY_SCENARIO_REQUESTS[profileCopyScenario];
+    if (expectedRequest
+        && (mode !== expectedRequest.mode || destination !== expectedRequest.destination)) {
+      return Promise.resolve({
+        accepted: false,
+        error: 'Dev harness: the \'' + profileCopyScenario + '\' checkpoint expected '
+          + 'mode=' + expectedRequest.mode + ' destination='
+          + JSON.stringify(expectedRequest.destination) + ', got mode=' + mode
+          + ' destination=' + JSON.stringify(destination) + '.'
+      });
+    }
+    if (profileCopyScenario === 'invalid-name') {
+      return Promise.resolve({
+        accepted: false, error: 'Profile name cannot be empty.'
+      });
+    }
+    if (profileCopyScenario === 'collision') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'A profile named \'' + destination + '\' already exists.'
+      });
+    }
+    window.setTimeout(function () {
+      // The accepted-busy checkpoint: the request was taken, but nothing
+      // ever completes, so the disabled panel stays inspectable exactly
+      // as the character-copy busy fixture already leaves it.
+      if (profileCopyScenario === 'busy') return;
+      var payload = {
+        ok: true, operation: 'profile_copy', mode: mode,
+        published: true, selection_persisted: true, error: null
+      };
+      if (profileCopyScenario === 'created') {
+        // Mirrors Api._eve_select_created_profile: a successful creation
+        // both adds the new profile and moves the selection onto it.
+        var createdProfile = { path: 'newops', name: destination, file_count: 0 };
+        eve.profiles = eve.profiles.concat([createdProfile]);
+        eve.profile = createdProfile.path;
+      } else if (profileCopyScenario === 'unsaved-selection') {
+        eve.profiles = eve.profiles.concat(
+          [{ path: 'newops', name: destination, file_count: 0 }]);
+        payload.selection_persisted = false;
+        payload.error = 'Created ' + destination + ', but Wingman '
+          + 'could not remember the selection. Select it from Profile.';
+      } else if (profileCopyScenario === 'eve-running') {
+        payload.ok = false;
+        payload.published = false;
+        payload.selection_persisted = false;
+        payload.error = 'EVE is running. Close EVE and retry.';
+      } else if (profileCopyScenario === 'rollback-failed') {
+        var target = eve.profiles.filter(function (profile) {
+          return profile.path === destination;
+        })[0];
+        payload.ok = false;
+        payload.published = false;
+        payload.error = (target ? target.name : destination) + ' may now hold '
+          + 'a mix of both profiles and Wingman could not put it back. '
+          + 'Restore core_profile_20260824-140300.zip from Backups.';
+      }
+      window.onEveSettingsDone(payload);
+    }, 250);
+    return Promise.resolve({ accepted: true, error: null });
+  };
   var pendingDevCandidate = null;
+  // Monotonic counter matching Task 5's Python generation scheme: bumped
+  // on every start and cancel so a stale promise from a superseded pass
+  // is rejected by acceptIdentification() the same way it would be in
+  // production. Carried by start/check/cancel responses and by every
+  // onEveSettingsNames push.
+  var devIdentificationGeneration = 0;
 
   function devAccount(accountId) {
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
@@ -2192,16 +2543,25 @@
   api.eve_settings_identification_start = function () {
     pendingDevCandidate = null;
     eve.identification_active = true;
-    return Promise.resolve({ status: 'watching', error: null });
+    // Bump the generation so any in-flight check promise resolves stale.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'watching', error: null,
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_check = function () {
     var result = selectedIdentityScenario.check
       || { status: 'watching', error: null };
     pendingDevCandidate = result.status === 'candidate' ? result : null;
-    if (result.status !== 'candidate') return Promise.resolve(result);
+    if (result.status !== 'candidate') {
+      return Promise.resolve(Object.assign({}, result,
+        { identification_generation: devIdentificationGeneration }));
+    }
     var account = devAccount(result.account_id);
     return Promise.resolve({
       status: 'candidate', error: null,
+      identification_generation: devIdentificationGeneration,
       account: { id: account.id, primary: account.display_name,
                  secondary: account.display_meta, option: account.name },
       characters: result.character_ids.map(devCharacter).filter(Boolean)
@@ -2210,7 +2570,12 @@
   api.eve_settings_identification_cancel = function () {
     pendingDevCandidate = null;
     eve.identification_active = false;
-    return Promise.resolve(true);
+    // Bump so any racing check that resolves after this cancel is rejected.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'cancelled',
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_confirm = function (accountId, characterId, name) {
     var offered = pendingDevCandidate
@@ -2427,7 +2792,39 @@
           picker.dispatchEvent(new Event('change'));
         }, 250);
       }
+      return;
     }
+    if (profileCopyScenario) {
+      paintProfileCopyScenario();
+    }
+  }
+
+  // The eleven whole-profile-copy checkpoints, driven through the real
+  // panel controls (open, mode radios, name/destination fields, submit)
+  // rather than a harness-only shortcut. 'multiple' is the fixture's own
+  // base state -- see the profiles list above -- so it opens nothing.
+  function paintProfileCopyScenario() {
+    if (profileCopyScenario === 'multiple') return;
+    WM.el('es-profile-copy-open').click();
+    if (profileCopyScenario === 'new-disclosure') return;
+    if (profileCopyScenario === 'replace-disclosure') {
+      WM.el('es-profile-copy-replace').click();
+      return;
+    }
+    if (profileCopyScenario === 'replaced' || profileCopyScenario === 'rollback-failed') {
+      WM.el('es-profile-copy-replace').click();
+      WM.el('es-profile-copy-destination').value = 'fleet';
+    } else if (profileCopyScenario === 'collision') {
+      WM.el('es-profile-copy-name').value = 'dEfAuLt';
+    } else if (profileCopyScenario === 'invalid-name') {
+      // No field to set: the checkpoint is a blank, untouched name field,
+      // submitted as-is -- the same request an idle click would send.
+    } else if (profileCopyScenario === 'busy' || profileCopyScenario === 'created'
+        || profileCopyScenario === 'eve-running'
+        || profileCopyScenario === 'unsaved-selection') {
+      WM.el('es-profile-copy-name').value = 'New Ops';
+    }
+    WM.el('es-profile-copy-submit').click();
   }
 
   function showIdentityScenario() {

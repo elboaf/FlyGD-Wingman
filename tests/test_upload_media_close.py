@@ -188,8 +188,11 @@ def _run_retry(tmp_path, monkeypatch, outcome):
     rows = fakes.FakeRows({"r1": fakes.info(tmp_path / "a.mkv")})
     api, _window = fakes.build_api(tmp_path, rows=rows)
     job = _job(ids=("r1",), stitch=False)
-    state = RetryState(job=job, resume_index=0, request=request)
-    api._retry_worker(state)
+    api._retry_state = RetryState(job=job, resume_index=0, request=request)
+    api.retry()
+    api._upload_thread.join(timeout=5)
+    assert not api._upload_thread.is_alive()
+    assert not api._busy()
     return api, media
 
 

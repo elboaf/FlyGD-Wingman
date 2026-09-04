@@ -14,6 +14,46 @@ after someone edits the card is a question for here.
 import pathlib
 import re
 
+import pytest
+
+
+def _brace_block(text: str, marker: str) -> str:
+    """The body of the first `{...}` block whose opening line contains
+    `marker`, matched by brace DEPTH rather than by the first `}` -- a
+    naive `{([^}]*)}` stops at the first nested rule's own close, which is
+    exactly wrong for a block (an `@media` tier) that contains other rules.
+
+    Raises if the text runs out before depth returns to zero, rather than
+    silently returning whatever the scan reached: an unbalanced input (a
+    typo'd marker landing on the wrong open brace, or CSS/JS with a stray
+    unmatched `{`) must not hand back a truncated slice that a caller's
+    `in`/`not in` assertion can then pass on by accident.
+    """
+    start = text.index(marker)
+    open_at = text.index("{", start) + 1
+    depth, i = 1, open_at
+    while i < len(text) and depth:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    if depth:
+        raise ValueError(
+            f"_brace_block: unterminated block for marker {marker!r} -- "
+            f"reached end of text with {depth} brace(s) still open"
+        )
+    return text[open_at : i - 1]
+
+
+def test_brace_block_raises_on_unterminated_input():
+    """An opening brace with no matching close must raise rather than
+    return a truncated block: reaching EOF with nonzero depth is malformed
+    input, not a valid (if short) result."""
+    with pytest.raises(ValueError):
+        _brace_block("selector { still open", "selector")
+
+
 WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
@@ -143,6 +183,58 @@ def test_every_backup_column_class_has_a_rule():
     assert "'bk-when mono'" not in CODE and '"bk-when mono"' not in CODE, (
         "a bare .mono class does nothing; #es-backups .bk-when sets the face"
     )
+
+
+def test_backup_rows_align_target_and_origin_to_the_same_baseline():
+    """.bk-what stacks two lines (name, meta); centring every column across
+    the row's full height put Origin between them rather than beside the
+    name it actually describes. Aligning the row to its start keeps Origin
+    level with the name line the eye reads first, tightening the
+    Target-to-Origin association within one row.
+    """
+    grid = re.search(r"\.es-backup-grid \{([^}]*)\}", CSS)
+    assert grid, ".es-backup-grid has no rule"
+    assert "align-items: start" in grid.group(1)
+    assert "align-items: center" not in grid.group(1)
+    # The pinned track: the target identity keeps the flexible column
+    # regardless of the alignment fix above.
+    assert "minmax(220px, 1fr)" in grid.group(1)
+
+
+def test_origin_reads_as_its_own_column_not_as_the_targets_secondary_text():
+    """.bk-meta (the target's own raw id) and .bk-origin (the backup's
+    creation type) are two different axes of information about one row.
+    Painted in the same faint tone they read as one column of secondary
+    text; matching Origin to the date's tone instead keeps it visually
+    distinct from the identity it sits beside.
+    """
+    origin = re.search(r"#es-backups \.bk-origin \{([^}]*)\}", CSS)
+    assert origin, "#es-backups .bk-origin has no rule"
+    assert "var(--text-dim)" in origin.group(1)
+
+    when = re.search(r"#es-backups \.bk-when \{([^}]*)\}", CSS)
+    assert when and "var(--text-dim)" in when.group(1), (
+        "Date and Origin should share one tone as the row's two fact columns"
+    )
+    meta = re.search(r"(?<!bk-name, )#es-backups \.bk-meta \{([^}]*)\}", CSS)
+    assert meta and "var(--text-faint)" in meta.group(1), (
+        "the target's own secondary id must stay the dimmer of the two tones"
+    )
+
+
+def test_origin_still_names_only_the_backup_creation_type():
+    """Origin must never be read as which profile a backup came from -- it
+    is Automatic/Manual, and only that, in both the matcher and the row
+    builder. A geometry or colour change here must not have touched this.
+    """
+    matcher = re.search(
+        r"function backupMatches\(item, needle\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert matcher
+    assert "item.origin === 'auto' ? 'Automatic' : 'Manual'" in matcher.group(1)
+    render = re.search(r"function renderBackups\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    assert "item.origin === 'auto' ? 'Automatic' : 'Manual'" in render.group(1)
 
 
 def test_the_backup_stamp_is_punctuated_but_not_sliced_blind():
@@ -397,6 +489,72 @@ def test_the_commit_row_carries_the_count_and_the_hazard():
         assert part in commit.group(1), part
 
 
+def test_the_commit_row_groups_state_apart_from_action_and_hazard():
+    """The count and source are one fact -- what will happen, and to what.
+    Grouping them lets the wide tier give that group the row's remaining
+    space instead of leaving it as a bare gap between the button on the
+    left and a pill stranded at the far right edge.
+    """
+    commit = re.search(r'<div class="row" id="es-commit">(.*?)</div>', BODY, re.DOTALL)
+    assert commit, "the commit row is gone"
+    inner = commit.group(1)
+    info = re.search(
+        r'<span class="es-commit-info">\s*'
+        r'<span id="es-copy-count" class="es-count">[^<]*</span>\s*'
+        r'<span id="es-copy-source" class="es-copy-source"></span>\s*'
+        r"</span>",
+        inner,
+    )
+    assert info, "the count and source no longer share one grouping span"
+    assert inner.index('id="es-copy"') < inner.index('class="es-commit-info"')
+    assert inner.index('class="es-commit-info"') < inner.index(
+        'id="es-eve-state-commit"'
+    )
+
+    rule = re.search(r"\.es-commit-info \{([^}]*)\}", CSS)
+    assert rule, ".es-commit-info has no rule"
+
+
+def test_the_commit_bar_widens_to_meet_the_roster_above_the_floor():
+    """Capped to the card's 586px prose measure like every other row, the
+    commit bar read as a narrow aside pinned to the card's upper-left
+    corner while the roster it introduces already spans the full card
+    beneath it. Past the 840 floor the bar takes the SAME width the roster
+    does, so the two read as one region; at or below the floor nothing
+    changes -- DESIGN.md's complementary tier to a floor-anchored
+    `max-width: 840px` is `min-width: 841px`.
+    """
+    generic = re.search(
+        r"#route-evesettings > \.settings > \.card:has\(> \.es-roster\) > "
+        r":not\(\.es-roster\)([^{]*)\{([^}]*)\}",
+        CSS,
+    )
+    assert generic, "the shared 586px re-cap for the card's non-roster children is gone"
+    assert ":not(.es-commit-context)" in generic.group(1), (
+        "the commit bar must be excluded from the shared 586px re-cap so its "
+        "own rule, not a specificity fight, decides its width"
+    )
+
+    base = re.search(r"\.es-commit-context \{([^}]*)\}", CSS)
+    assert base and "max-width: 586px" in base.group(1), (
+        "below the floor the commit bar must keep the card's narrow prose measure"
+    )
+
+    wide = _brace_block(CSS, "@media (min-width: 841px)")
+    assert re.search(r"\.es-commit-context\s*\{[^}]*max-width:\s*none", wide), (
+        "the commit bar never widens past the card's narrow prose measure"
+    )
+    assert re.search(
+        r"\.es-commit-context > \.hint, \.es-commit-context > \.es-copy-followup\s*"
+        r"\{[^}]*max-width:\s*586px",
+        wide,
+    ), "the bar's own prose must keep the readable measure it widens away from"
+    assert re.search(r"\.es-commit-info\s*\{[^}]*flex:\s*1\b", wide), (
+        "above the floor the state group must absorb the row's slack, not "
+        "leave the pill stranded far from the button and count"
+    )
+
+
 def test_the_second_pill_is_the_same_pill_and_not_a_second_sentence():
     """A hand-written hazard string here would be free to drift from the one
     ui/copy.py states in the confirm a second later. One painter, two mount
@@ -649,9 +807,9 @@ def test_copy_followup_tracks_only_a_successful_copy_lifecycle():
         CODE,
         re.DOTALL,
     )
-    assert root and "var previousRoot = state && state.root;" in root.group(1)
+    assert root and "var previous = contextOf(state);" in root.group(1)
     assert "clearCopyFollowup();" not in root.group(1).split("WM.send", 1)[0]
-    assert "payload && payload.root !== previousRoot" in root.group(1)
+    assert "payload && contextChanged(previous, payload)" in root.group(1)
     for name, handler in (
         ("server/profile", select),
         ("kind", kind),
@@ -772,14 +930,33 @@ def test_profiles_opens_backups_without_mounting_the_archive_inline():
 
 
 def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
-    """Backups and Formations stay grouped with the selected profile context."""
+    """Backups and Formations stay grouped with the selected profile context.
+
+    The group is now visibly AND programmatically named "Profile tools":
+    aria-labelledby points at a visible label rather than restating a
+    sentence in aria-label alone, and the sentence it used to carry --
+    "Tools for the selected EVE profile" -- overstated the case.
+    eve_settings_backup_dir() (paths.py) is one fixed store, not scoped to
+    the selected server or profile, so Backups reads across every profile
+    ever backed up on this machine -- a label claiming these tools were FOR
+    the selected profile was exactly the false claim the brief warns
+    against. The tie to context is proximity and style now, not a wording
+    promise the payload cannot back up.
+    """
     tools = re.findall(
         r'<div class="es-profile-tools"([^>]*)>(.*?)</div>', BODY, re.DOTALL
     )
     assert len(tools) == 1, "profile tools must remain one sibling group"
     attrs, content = tools[0]
     assert 'role="group"' in attrs
-    assert 'aria-label="Tools for the selected EVE profile"' in attrs
+    assert 'aria-labelledby="es-profile-tools-label"' in attrs
+    assert 'aria-label="Tools for the selected EVE profile"' not in attrs, (
+        "the group must not claim these tools belong only to the selected profile"
+    )
+    label = re.search(r'<span id="es-profile-tools-label"[^>]*>([^<]*)</span>', content)
+    assert label and label.group(1).strip() == "Profile tools", (
+        "the group's accessible name must also be its VISIBLE text"
+    )
     assert 'id="es-backups-open"' in content
     assert 'id="es-formations-open"' in content
 
@@ -788,6 +965,24 @@ def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
     copy_at = BODY.index("<h2>Copy EVE settings</h2>")
     assert context_end < tools_at < copy_at
     assert "card" not in attrs.split()
+
+
+def test_profile_tools_label_reads_as_subordinate_not_as_a_second_heading():
+    """.card > h2 is the one heading treatment on the screen; the tools
+    label sits outside any card and must not borrow it wholesale, or a
+    plain sibling group starts reading as a second card.
+    """
+    rule = re.search(r"\.es-profile-tools-label \{([^}]*)\}", CSS)
+    assert rule, ".es-profile-tools-label has no rule"
+    assert "var(--text-label)" in rule.group(1)
+    assert "text-transform: uppercase" in rule.group(1)
+
+    group = re.search(r"\.es-profile-tools \{([^}]*)\}", CSS)
+    assert group, ".es-profile-tools has no rule"
+    assert "border-top" in group.group(1), (
+        "the group should read as attached to the context card above it, "
+        "not just positioned near it"
+    )
 
 
 def test_backups_is_a_profiles_subroute_with_destination_chrome():
@@ -876,18 +1071,24 @@ def test_the_retention_note_follows_the_action_it_qualifies():
     )
 
 
-def test_the_collapsed_summary_names_the_server_and_the_profile():
-    """R5. `Tranquility - Default` sat beside a labelled `Folder`, unlabelled,
-    though the server and the profile decide what a copy will hit exactly as
-    much as the folder does -- and `Default` alone does not read as a profile
-    name. The words go in the TEXT: `.settings .row > .lab` is width:100%, so
-    a second label in that row would stack and break it into three lines.
+def test_the_collapsed_summary_names_the_server():
+    """R5, revised for round 7. `Tranquility - Default` sat beside a
+    labelled `Folder`, unlabelled, and this row's own words go in the TEXT
+    rather than a second `.lab` -- `.settings .row > .lab` is width:100%, so
+    a second label here would stack and break the row into three lines.
+
+    The profile HALF of R5's finding moved rather than disappeared: Profile
+    is now the primary, always-visible row's own labelled control (see
+    `test_profile_is_the_primary_context_control`), so naming it a second
+    time in the row that collapses away would restate what the row above
+    never hides.
     """
     assert re.search(r"setLabel\(nameOf\(state\.servers", CODE), (
         "the collapsed summary prints the server name bare again"
     )
-    assert re.search(r"setLabel\(nameOf\(state\.profiles", CODE), (
-        "the collapsed summary prints the profile name bare again"
+    assert "setLabel(nameOf(state.profiles" not in CODE, (
+        "the collapsed summary names the profile again, restating the "
+        "always-visible primary row's own control"
     )
     summary = re.search(r'id="es-folder-summary".*?</div>', BODY, re.DOTALL).group(0)
     assert summary.count('class="lab"') == 1, (
@@ -1454,7 +1655,7 @@ def test_root_changes_repaint_cleared_targets_and_commit_state():
     root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
     assert root
     changed = re.search(
-        r"if \(payload && payload\.root !== previousRoot\) \{(.*?)\n            \}",
+        r"if \(payload && contextChanged\(previous, payload\)\) \{(.*?)\n            \}",
         root.group(1),
         re.DOTALL,
     )
@@ -1494,3 +1695,605 @@ def test_retention_is_explicit_and_does_not_add_a_second_accent():
     assert "event.key === 'Enter'" in CODE
     assert BODY.count('class="btn acc"') == 1
     assert ACCOUNT_ROUTE.count('class="btn acc"') == 1
+
+
+# ---- round 7: Profiles is profile-first, with an inline New/Replace ----
+
+
+def profiles_context_body() -> str:
+    """The `.es-context-card` section alone: Profile, the New/Replace
+    disclosure, and the collapsible folder/server setup all live here, and
+    the ordering between them is what "profile-first" is actually about.
+    Scoped narrower than BODY so a control that migrated to a sibling card
+    could not still satisfy an ordering assertion aimed at this one.
+    """
+    start = BODY.index('<section class="card es-context-card">')
+    end = BODY.index("</section>", start) + len("</section>")
+    return BODY[start:end]
+
+
+def profile_copy_panel_body() -> str:
+    """The disclosure alone, bounded by the next sibling row rather than by
+    counting braces: BODY has already had its HTML comments stripped, so the
+    next literal landmark after the panel is the folder card's own summary
+    row.
+    """
+    start = BODY.index('<div id="es-profile-copy-panel"')
+    end = BODY.index('<div class="row" id="es-folder-summary"')
+    return BODY[start:end]
+
+
+def test_profile_is_the_primary_context_control():
+    """Profile decides what a copy reads and what a copy targets, which is
+    the reason the screen exists -- so it renders ahead of the folder/server
+    setup that collapses away after the first visit, not folded inside it.
+    The opener beside it is a plain .btn: the disclosure it opens is not the
+    route's one irreversible action, .es-copy already is.
+    """
+    context = profiles_context_body()
+    assert context.index('id="es-profile"') < context.index('id="es-folder-summary"')
+    assert 'id="es-profile-copy-open" class="btn"' in context
+    assert 'id="es-profile-copy-open" class="btn acc"' not in context
+
+
+def test_profile_copy_modes_use_shared_radio_markup():
+    """The New/Replace switch is a .radio/.ring pair like every other radio
+    on the route, not a bare input rendering as a white Win32 dot.
+    """
+    assert re.search(
+        r'name="es-profile-copy-mode" value="new" checked><span class="ring"></span>',
+        BODY,
+    )
+    assert re.search(
+        r'name="es-profile-copy-mode" value="replace"><span class="ring"></span>',
+        BODY,
+    )
+
+
+def test_profile_copy_name_and_destination_have_associated_labels():
+    assert re.search(r'<label class="lab" for="es-profile-copy-name">', BODY)
+    assert 'id="es-profile-copy-name"' in BODY
+    assert re.search(r'<label class="lab" for="es-profile-copy-destination">', BODY)
+    assert 'id="es-profile-copy-destination"' in BODY
+
+
+def test_profile_copy_fields_are_described_by_the_panels_status_line():
+    """Both fields point at the one status line that carries Python's
+    refusal about a name or a destination and the panel's own reason for a
+    disabled submit. Without the association the message is announced once
+    by role="status" and is then unreachable: a screen-reader user tabbing
+    back to the field hears the label alone.
+    """
+    for field in ("es-profile-copy-name", "es-profile-copy-destination"):
+        element = re.search(r'<(?:input|select) id="' + field + r'"[^>]*>', BODY)
+        assert element, field
+        assert 'aria-describedby="es-profile-copy-status"' in element.group(0), field
+    assert 'id="es-profile-copy-status"' in BODY
+
+
+def test_the_secondary_detail_no_longer_offers_a_profile_select():
+    """Profile moved to the always-visible primary row; a second copy of it
+    left behind in the collapsible detail would be two controls for the
+    same choice, one of them invisible on every later visit.
+    """
+    detail = BODY[BODY.index('id="es-folder-detail"') : BODY.index('id="es-warning"')]
+    assert 'id="es-profile"' not in detail
+    assert 'id="es-server"' in detail
+
+
+def test_folder_edit_names_both_things_it_changes():
+    """Renamed from `Change…`: the row it sits on now also carries the
+    server name (R5), so the action must say what it reopens.
+    """
+    summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
+    assert (
+        'id="es-folder-edit" class="btn">Change folder or server\u2026</button>'
+        in summary
+    )
+
+
+def test_the_disclosure_carries_no_second_accent_button():
+    """One .btn.acc on the whole route (test_profiles_keeps_one_existing_
+    primary_action), and it is .es-copy. Creating or replacing a profile is
+    reversible through Backups' automatic archive, unlike overwriting a
+    live roster, so its own submit stays a plain .btn.
+    """
+    panel = profile_copy_panel_body()
+    assert 'class="btn acc"' not in panel
+    assert 'id="es-profile-copy-submit" class="btn"' in panel
+    assert 'id="es-profile-copy-cancel" class="btn"' in panel
+
+
+def test_profile_copy_hidden_overrides_exist_for_every_display_setting_selector():
+    """`.es-profile-copy` and the two field rows each set their own display,
+    which beats the UA's `[hidden] { display: none }` regardless of
+    specificity -- DESIGN.md's named trap, and test_page_conventions.py's
+    repo-wide sweep for it is what caught the first draft of this rule
+    keyed to the wrong (id) selector.
+    """
+    assert re.search(
+        r"\.es-profile-copy\[hidden\],\s*"
+        r"#es-profile-copy-new-fields\[hidden\],\s*"
+        r"#es-profile-copy-replace-fields\[hidden\]\s*\{\s*display:\s*none;\s*\}",
+        CSS,
+    )
+
+
+def test_profile_copy_state_carries_exactly_seven_fields():
+    match = re.search(r"var profileCopy = \{(.*?)\n  \};", CODE, re.DOTALL)
+    assert match, "the module-level profileCopy state is gone"
+    fields = set(re.findall(r"(\w+):", match.group(1)))
+    assert fields == {
+        "open",
+        "source",
+        "mode",
+        "name",
+        "destination",
+        "error",
+        "destinationInvalid",
+    }
+
+
+def test_open_profile_copy_freezes_the_source_from_state_profile():
+    """The source is read once, at open, not re-read at submit -- so a
+    root/server/profile change accepted while the disclosure sits open
+    cannot silently retarget an already-open request.
+    """
+    fn = re.search(r"function openProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    assert "source: state.profile" in fn.group(1)
+
+
+def test_replace_options_exclude_the_frozen_source():
+    fn = re.search(r"function replaceOptions\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    assert "profile.path !== profileCopy.source" in fn.group(1)
+
+
+def test_replace_destination_renders_a_disabled_empty_option_when_none_exist():
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert "placeholder.disabled = true;" in body
+    assert "No other profiles" in body
+
+
+def test_replace_with_no_destination_disables_submit_and_names_the_reason():
+    """Submitting Replace with nothing to replace sends an empty destination,
+    which Python refuses as "That destination is not on the selected server"
+    -- a race, not the truth that this server holds only the one profile.
+    Whether an option list is empty is the page's own fact, so the page says
+    it before the request and disables the button rather than after.
+    """
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert "if (profileCopy.mode === 'replace') {" in body
+    assert "if (!options.length) {" in body
+    assert "There is no other profile on this server to replace. " in body
+    assert re.search(
+        r"WM\.setEnabled\('es-profile-copy-submit',\s*"
+        r"!busy && !!profileCopy\.source && !blocked\);",
+        body,
+    )
+    # The blocking state owns the status line while it lasts, and is not an
+    # error: nothing failed, the panel is naming what it still needs.
+    assert "status.classList.remove('err');" in body
+    assert "paintFieldError('es-profile-copy-status', profileCopy.error);" in body
+
+
+def test_a_vanished_replace_destination_asks_for_a_fresh_choice():
+    """A refresh that removes the chosen destination must not leave the
+    browser's own default -- the first remaining profile -- sitting in the
+    control as though the user had picked it, for the one action on this
+    screen that overwrites a whole profile.
+    """
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    assert re.search(
+        r"if \(previous && !options\.filter\(function \(profile\) \{\s*"
+        r"return profile\.path === previous;\s*\}\)\.length\) \{\s*"
+        r"profileCopy\.destinationInvalid = true;\s*\}",
+        body,
+    )
+    assert "var vanished = profileCopy.destinationInvalid;" in body
+    assert "if (vanished) {" in body
+    assert "repick.value = '';" in body
+    assert "repick.disabled = true;" in body
+    assert "repick.selected = true;" in body
+    assert "repick.textContent = 'Choose a profile';" in body
+    assert "blocked = 'The profile you chose is no longer there. Choose another.';" in (
+        body
+    )
+    # Choosing a real destination has to repaint, or the submit this state
+    # disabled stays dead until some unrelated repaint happens by -- and it
+    # must be the one thing that clears the latched invalid flag back.
+    change_handler = re.search(
+        r"WM\.el\('es-profile-copy-destination'\)\.addEventListener\("
+        r"'change', function \(\) \{(.*?)\n\s*\}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert change_handler
+    assert "profileCopy.destinationInvalid = false;" in change_handler.group(1)
+    assert "renderProfileCopy();" in change_handler.group(1)
+
+
+def test_a_vanished_destination_survives_a_second_ordinary_repaint():
+    """The prior fix computed `vanished` fresh on every call from the
+    destination select's OWN live `.value` -- but the very same call had
+    just replaced that value with the disabled placeholder's `''`. A
+    second, unrelated repaint (a poll, a busy toggle, any of the many
+    other triggers that call renderProfileCopy() -- setBusy(), refresh(),
+    the mode radios) reads that `''` back, sees no previous value to have
+    vanished, and lets the browser's own default -- the first remaining
+    profile -- silently reappear as though re-picked, submit re-enabled
+    under it with nobody having chosen anything.
+
+    So the invalidated state cannot live only in what the DOM's `.value`
+    happens to read at the top of this call; it has to survive on
+    `profileCopy` itself across repaints, and only a genuine user pick --
+    the destination select's OWN 'change' event, which can only fire for
+    one of the enabled real options, never the disabled placeholder --
+    may clear it back.
+    """
+    render = re.search(r"function renderProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert render
+    body = render.group(1)
+    # Set when a chosen destination first vanishes...
+    assert re.search(r"profileCopy\.destinationInvalid = true;", body)
+    # ...and READ from profileCopy on every call, not recomputed solely from
+    # the select's own live value (which this same function just wrote).
+    assert re.search(r"var vanished = profileCopy\.destinationInvalid\b", body)
+
+    # Only the destination select's own change handler may clear it, and it
+    # must do so before repainting -- not the generic renderProfileCopy the
+    # mode radios and every other trigger on this route call directly.
+    change_handler = re.search(
+        r"WM\.el\('es-profile-copy-destination'\)\s*"
+        r"\.addEventListener\('change', function \(\) \{(.*?)\n\s*\}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert change_handler, "the destination select needs its own change handler"
+    handler_body = change_handler.group(1)
+    assert "profileCopy.destinationInvalid = false;" in handler_body
+    assert "renderProfileCopy();" in handler_body
+
+
+def test_send_profile_copy_examines_accepted_not_truthiness():
+    """mutate() treats any returned object as truthy, which is wrong for an
+    endpoint that can return `{accepted: false, error: ...}` -- a refusal
+    object is itself truthy, and mutate() would read it as "started".
+    """
+    fn = re.search(r"function sendProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    body = fn.group(1)
+    assert "if (busy || !profileCopy.source) return;" in body
+    assert "if (result && result.accepted) return;" in body
+    assert "mutate(" not in body
+
+
+def test_immediate_refusal_writes_the_error_and_clears_busy():
+    fn = re.search(r"function sendProfileCopy\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    refusal = fn.group(1).split(".then(function (result) {", 1)[1]
+    assert "pendingMutation = '';" in refusal
+    assert "profileCopy.error = result && result.error" in refusal
+    assert "setBusy(false);" in refusal
+    assert "renderProfileCopy();" in refusal
+
+
+def test_completion_closes_the_disclosure_on_published_regardless_of_selection_persisted():
+    """A created profile whose selection could not be saved is still ok:True
+    and published:True from Python -- the file exists and the dropdown
+    offers it, only the remembered selection failed -- and the warning
+    alert already carries \"Select it from Profile\" for that half. Closing
+    must key on `published` alone, or that case would leave the disclosure
+    open over a request that already succeeded.
+    """
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    branch = re.search(
+        r"if \(completedMutation === 'eve_settings_copy_profile'\) \{(.*?)\n    \}",
+        done.group(1),
+        re.DOTALL,
+    )
+    assert branch
+    body = branch.group(1)
+    assert "if (payload.published) resetProfileCopy();" in body
+    assert "selection_persisted" not in body
+
+
+def test_failed_publication_retains_the_disclosure_state():
+    """A refused or failed copy must not silently drop the mode, name or
+    destination the user entered -- only the error changes, and the panel
+    stays open so the message lands beside the fields it is about.
+    """
+    done = re.search(
+        r"WM\.handle\('onEveSettingsDone', function \(payload\) \{(.*?)\n  \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert done
+    branch = re.search(
+        r"if \(completedMutation === 'eve_settings_copy_profile'\) \{(.*?)\n    \}",
+        done.group(1),
+        re.DOTALL,
+    )
+    assert branch
+    body = branch.group(1)
+    failure = body.split("else", 1)[1]
+    assert "profileCopy.error = payload.error || profileCopy.error;" in failure
+    assert "resetProfileCopy()" not in failure
+
+
+def test_root_change_resets_profile_copy_only_when_the_root_actually_changed():
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert root
+    before, _, after = root.group(1).partition(
+        "if (payload && contextChanged(previous, payload))"
+    )
+    assert "resetProfileCopy();" not in before, (
+        "a no-op or refused root change must not close the disclosure"
+    )
+    changed = re.search(r"\{(.*?)\n            \}", after, re.DOTALL)
+    assert changed and "resetProfileCopy();" in changed.group(1)
+
+
+def test_chooseroot_compares_the_full_persisted_context_not_only_root():
+    """Fix round 1. A folder pick can silently change the SERVER or the
+    PROFILE too -- discover()'s own fallback when the prior selection no
+    longer resolves on the newly picked tree -- so a same-root pick that
+    moved the profile out from under an open disclosure or a ticked roster
+    used to go unnoticed: the old condition compared `payload.root` alone.
+    """
+    root = re.search(r"function chooseRoot\(method\) \{(.*?)\n    \}", CODE, re.DOTALL)
+    assert root
+    assert "var previous = contextOf(state);" in root.group(1), (
+        "chooseRoot must capture the full context before the pick, not root alone"
+    )
+    assert "payload.root !== previousRoot" not in root.group(1), (
+        "chooseRoot still compares root alone; a same-root server/profile "
+        "fallback would go unnoticed"
+    )
+
+
+def test_context_comparison_covers_root_server_and_profile():
+    fn = re.search(
+        r"function contextChanged\(before, after\) \{(.*?)\n  \}", CODE, re.DOTALL
+    )
+    assert fn, "the full-context comparison helper is gone"
+    body = fn.group(1)
+    assert "before.root !== next.root" in body
+    assert "before.server !== next.server" in body
+    assert "before.profile !== next.profile" in body
+
+
+def test_selection_change_resets_profile_copy_only_when_accepted():
+    handler = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    then = re.search(
+        r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", handler.group(1), re.DOTALL
+    )
+    assert then
+    accepted_branch = re.search(
+        r"if \(accepted\) \{(.*?)\n\s*\}", then.group(1), re.DOTALL
+    )
+    assert accepted_branch and "resetProfileCopy();" in accepted_branch.group(1)
+
+
+def test_refused_selection_change_retains_selection_and_disclosure():
+    """Fix round 1. `selected = {}` and `clearCopyFollowup()` used to run
+    the instant the control changed, before `eve_settings_select` had even
+    been asked -- so a refused or no-op selection change silently dropped
+    the ticked roster and the open New/Replace disclosure anyway. Every
+    clearing statement must sit behind the accepted branch instead.
+    """
+    handler = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    before_send = body.split("WM.send", 1)[0]
+    assert "selected = {}" not in before_send, (
+        "the roster selection is cleared before Python answers"
+    )
+    assert "clearCopyFollowup();" not in before_send, (
+        "the copy follow-up is cleared before Python answers"
+    )
+    assert "resetProfileCopy();" not in before_send, (
+        "the disclosure is reset before Python answers"
+    )
+
+    then = re.search(
+        r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", body, re.DOTALL
+    )
+    assert then
+    accepted_branch = re.search(
+        r"if \(accepted\) \{(.*?)\n\s*\}", then.group(1), re.DOTALL
+    )
+    assert accepted_branch, "the clearing statements must be gated on `accepted`"
+    branch_body = accepted_branch.group(1)
+    assert "clearCopyFollowup();" in branch_body
+    assert "selected = {};" in branch_body
+    assert "resetProfileCopy();" in branch_body
+
+
+def test_a_server_change_does_not_carry_the_old_servers_profile():
+    """Both controls share one handler, and it used to send whatever
+    `#es-profile` still held. On a SERVER change that value is a profile
+    under the OLD server, and `eve_settings_select` refuses a profile that
+    is not the one the requested server resolves to -- so changing server
+    was rejected outright and the page silently kept the old context under
+    a select showing the new one. An empty profile is the deliberate "the
+    requested server's first profile" fallback (api.py's
+    eve_settings_select), which is what a server change means.
+    """
+    handler = re.search(
+        r"\['es-server', 'es-profile'\]\.forEach.*?"
+        r"addEventListener\('change', function \(\) \{(.*?)\n      \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert handler
+    body = handler.group(1)
+    assert re.search(
+        r"id === 'es-server' \? '' : WM\.el\('es-profile'\)\.value", body
+    ), "a server change must ask for the new server's first profile"
+    send = re.search(r"WM\.send\('eve_settings_select',(.*?)\)\.then", body, re.DOTALL)
+    assert send
+    assert "WM.el('es-profile').value" not in send.group(1), (
+        "the profile argument must go through the server-aware variable"
+    )
+
+    # The fix must not loosen the accepted-only reset it sits beside.
+    then = re.search(
+        r"\.then\(function \(accepted\) \{(.*?)\n\s*\}\);", body, re.DOTALL
+    )
+    assert then
+    accepted_branch = re.search(
+        r"if \(accepted\) \{(.*?)\n\s*\}", then.group(1), re.DOTALL
+    )
+    assert accepted_branch
+    for statement in ("clearCopyFollowup();", "selected = {};", "resetProfileCopy();"):
+        assert statement in accepted_branch.group(1)
+
+
+def test_profile_copy_controls_join_busy_state_while_navigation_stays_enabled():
+    """setBusy is the shared owner of "can this act right now" for the whole
+    route (paintCommit, paintFormationsTool); the disclosure and its opener
+    follow the same rule rather than a hand-rolled parallel one. Route
+    navigation is never touched here at all -- #nav-* ids belong to app.js,
+    not this file -- so leaving the route mid-mutation was never blocked by
+    this function and stays that way.
+    """
+    busy = re.search(r"function setBusy\(value\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert busy
+    body = busy.group(1)
+    assert "renderProfileCopy();" in body
+    assert "paintProfileCopyTool();" in body
+    assert "nav-" not in body
+
+
+def test_profile_copy_tool_is_unavailable_without_a_selected_profile():
+    fn = re.search(r"function paintProfileCopyTool\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
+    assert fn
+    assert "state.profile" in fn.group(1)
+    assert "WM.setEnabled('es-profile-copy-open'" in fn.group(1)
+
+
+# ---- account identity: wide-width composition ---------------------------
+
+
+def test_account_identity_shell_centers_at_wide_widths():
+    """.account-identity-shell kept its 620px measure but sat flush against
+    the route's left edge at every width past that measure -- the same
+    narrow-upper-left read the copy commit region had. `.route.active` is
+    `display: flex` (row direction, DESIGN.md `.route`/`.route.active`), so
+    an auto inline margin on this flex item is honoured by the flexbox spec
+    (auto margins on a flex item absorb the row's free space) and centres a
+    fixed-width item exactly the way a block box would.
+    """
+    rule = re.search(r"\.account-identity-shell \{([^}]*)\}", CSS)
+    assert rule, ".account-identity-shell has no rule"
+    assert "max-width: 620px" in rule.group(1), "the workflow's own measure must stay"
+    assert "margin-inline: auto" in rule.group(1), (
+        "the shell must centre once the route is wider than its own measure"
+    )
+
+
+def test_manual_identity_management_is_a_labelled_subordinate_group():
+    """Manage account names and character links... stays a linkbtn
+    disclosure right after the guided flow, but is now a named, subordinate
+    group -- visibly and programmatically -- rather than trailing the
+    roster step with nothing marking the boundary. Exact copy is untouched:
+    only the group wrapping and its own label are new.
+    """
+    open_tag = re.search(r'<div class="es-manual-identity"([^>]*)>', ACCOUNT_ROUTE)
+    assert open_tag, "the manual management path is no longer its own group"
+    attrs = open_tag.group(1)
+    assert 'role="group"' in attrs
+    assert 'aria-labelledby="es-manual-identity-label"' in attrs
+
+    label = re.search(
+        r'<p id="es-manual-identity-label"[^>]*>([^<]*)</p>', ACCOUNT_ROUTE
+    )
+    assert label and label.group(1).strip(), "the group has no visible label"
+
+    wrapper_at = ACCOUNT_ROUTE.index('class="es-manual-identity"')
+    toggle_at = ACCOUNT_ROUTE.index('id="es-manage-toggle"')
+    panel_at = ACCOUNT_ROUTE.index('id="es-identity-panel"')
+    roster_done_at = ACCOUNT_ROUTE.index('id="ai-roster-done"')
+    assert roster_done_at < wrapper_at < toggle_at < panel_at, (
+        "the manual path must stay close to, and after, the primary flow"
+    )
+
+    # Exact copy is pinned elsewhere (test_account_management_uses_the_
+    # specified_names_and_links_label); this only guards that wrapping the
+    # existing controls did not touch it.
+    assert (
+        'id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">'
+        "Manage account names and character links\u2026</button>" in ACCOUNT_ROUTE
+    )
+
+    rule = re.search(r"\.es-manual-identity \{([^}]*)\}", CSS)
+    assert rule, ".es-manual-identity has no rule"
+    assert "border-top" in rule.group(1), (
+        "the group boundary must be visible, not only programmatic"
+    )
+    assert "align-items: flex-start" not in rule.group(1), (
+        "the wrapper must keep column flex's default stretch so the expanded "
+        "identity panel uses the full workflow width; the toggle already has "
+        "its own align-self rule"
+    )
+
+
+# ---- undefined --border custom property ----------------------------------
+
+
+def test_profiles_boundaries_use_the_defined_panel_border_token():
+    """`--border` is never declared in `:root` -- only `--panel-border` is
+    (style.css:73) -- so every `var(--border)` on this page silently
+    computes invalid and the declaration is dropped, leaving the boundary
+    unstyled. Six rules on this route carried it: the Backups retention
+    disclosure and archive row, the sticky commit-context bar, and the
+    Account Identity manual-management separator, identity boundary and
+    linked-character row. Each must use the same `--panel-border` token
+    every working boundary on the page already uses (e.g. .es-backup-head,
+    style.css:3163), and none may still reference the undefined name.
+    """
+    selectors = [
+        "#es-retention",
+        ".es-backup-row",
+        ".es-commit-context",
+        ".es-identity",
+        ".es-manual-identity",
+        ".es-linked-character",
+    ]
+    for selector in selectors:
+        rule = _brace_block(CSS, selector + " {")
+        assert "var(--panel-border)" in rule, (
+            f"{selector} must use the defined --panel-border token for its border"
+        )
+        assert "var(--border)" not in rule, (
+            f"{selector} still references the undefined --border custom property"
+        )
+
+    assert "var(--border)" not in CSS, (
+        "no rule on the page may reference the undefined --border custom "
+        "property; every boundary must use --panel-border instead"
+    )
