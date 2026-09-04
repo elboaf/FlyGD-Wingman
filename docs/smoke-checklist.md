@@ -2916,6 +2916,37 @@ independent of both preview thumbnails and alert preferences.
       Expected: every logged-in character appears exactly once in alphabetical
       order, including the preview-excluded one; the character-select client has
       no row until its title identifies a character.
+- [ ] **Characters groups known names truthfully.** In Settings › Previews ›
+      Fleet combat bar, open **Characters** after Wingman has seen several
+      characters. With Fleet Bar on, running names are under `Running` and
+      remembered logged-out names are under `Offline`; no name appears twice.
+      Turn Fleet Bar off: the same choices are editable under `Known characters`,
+      without calling anyone Offline. Turn it on and wait for its first roster:
+      the Running/Offline groups replace Known characters.
+- [ ] **Hide and restore every position.** With at least three visible running
+      characters, hide then restore the first, middle, and final row from the
+      Characters disclosure. Expected: each change immediately removes or
+      returns only that Fleet Bar row; the checkbox remains available to restore
+      a hidden row, and alphabetical order of remaining rows is preserved.
+- [ ] **All-hidden state remains usable.** Hide every running character.
+      Expected: the still-open bar says `All running characters are hidden.`,
+      has no row/count/badge that exposes a hidden name, and can be dragged from
+      the empty message as well as its header. Restore one character and confirm
+      its row returns immediately.
+- [ ] **Visibility never resets live metrics.** While one character has live
+      outgoing DPS and/or an active `SCRAM/POINT`, hide it and restore it before
+      the metric naturally expires. Expected: its current DPS/tackle state
+      returns immediately; hiding did not restart collection or reset metrics.
+- [ ] **Choices survive restart and offline time.** Hide a character, quit and
+      relaunch Wingman while that character is offline. Expected: it remains an
+      unticked restoration control in `Offline` (or `Known characters` while
+      Fleet Bar is off). Restore it while offline, then log it in: it appears in
+      the bar without another Settings change.
+- [ ] **Fleet visibility is separate from Preview, Alerts, and keybinds.** Hide
+      a running character from Fleet, then independently exclude/include it in
+      Preview configuration, trigger an alert, and use Preview keybinds. Expected:
+      each feature follows only its own setting; Fleet hiding neither suppresses
+      previews/alerts/keybinds nor is changed by Preview exclusion.
 - [ ] **No log is not zero.** Point Gamelogs at a folder with no current log for
       one running character. Expected: that row remains stable and says `NO LOG`
       rather than `0`; restoring a current log changes it to a numeric DPS value
@@ -2941,10 +2972,20 @@ independent of both preview thumbnails and alert preferences.
 - [ ] **Drag, pinning, and persistence.** Drag from the name, number, header,
       and empty-state surfaces. Expected: every pixel moves the bar, no text is
       interactive, and it remains above both EVE and other applications. At
-      100%, 125%, 150%, and 200% scaling, add/remove rows near every work-area
-      edge and confirm fit/clamp never clips the bar. Quit and relaunch at each
-      scale; it restores at the saved logical position with no clipping or
-      white first-frame flash.
+      100%, 125%, 150%, and 200% scaling, open and close the Characters
+      disclosure, add/remove visible rows near every work-area edge, and confirm
+      both the Settings card and bar fit without clipping. Quit and relaunch at
+      each scale; the bar restores at the saved logical position with no clipping
+      or white first-frame flash.
+- [ ] **Characters disclosure preserves state and keyboard focus.** In real
+      WebView2, open and close **Characters** with Enter and Space. Expected:
+      closed content is not visible; an open disclosure stays open across live
+      roster updates and visibility saves. Tab to a character checkbox and test
+      a successful hide/restore, a 65th-hide refusal, an instrumented bridge
+      failure, a deliberately stale response, and a running/offline row move.
+      After every terminal path the checkbox is re-enabled; if focus fell to the
+      page body it returns to that character's current checkbox, but deliberate
+      focus movement to another control is never stolen.
 - [ ] **Shutdown leaves one clean generation.** Toggle Fleet, Previews, and
       Alerts through several combinations, then quit. Expected: no duplicate
       discovery/gamelog/dispatcher threads ever appear, and Wingman leaves Task
