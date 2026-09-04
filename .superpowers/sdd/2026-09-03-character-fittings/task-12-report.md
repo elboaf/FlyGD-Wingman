@@ -11,6 +11,50 @@ Personal-Fittings read/create. Every new Windows/live-EVE smoke item remains
 explicitly unverified. `docs/assets/wingman-screenshot.png` was not modified;
 no screenshot binary was fabricated from Chromium or the dev harness.
 
+## Fix round 1/5
+
+Review found that the nine variant scripts selected names that existed only in
+`dev.js`, while the shooter deliberately launches the query-free live app. The
+variants therefore could not succeed on a real machine. The repair follows the
+existing Preview injection precedent without introducing a durable or remote
+write path:
+
+- `dev.js` now owns one strict, bounded `DEV_FITTINGS_SCREENSHOT_FIXTURE` with
+  workspace summaries, details, characters, mixed preflight, and one
+  production-reachable copy sequence;
+- `app.js` allowlists `onFittingsScreenshotState`, and `fittings.js` owns its
+  sole registration. There is no Python producer, startup call, or user
+  control for this screenshot-only handler;
+- the handler accepts only the versioned shape under 512 KiB with bounded
+  characters, collections, entries, details, preflight rows, and result rows;
+- while injected, state, detail, and preflight reads are answered page-side.
+  A live state request started before injection cannot repaint over the fixture;
+  route leave clears the fixture and restores ordinary bridge reads;
+- `walk()` injects the fixture before the base Fittings capture and before every
+  variant reset/action. Stage scripts invoke no Fittings writer, and the handler
+  neither replaces nor calls one, so live EVE and durable local state remain
+  untouched; and
+- Alliance/detail generation now passes `action="open"` to an explicit helper.
+  The previous silent string `.replace(...)` surgery is gone.
+
+The former standalone copy-result JSON was also removed. Its stale Bex failure
+and throttle actor could not come from the dev loop. The canonical result now
+models two generated fits over Eryn, Fio, and Gio: Success, Unknown, the
+throttle-triggering Failed/attempted row, then three Unattempted due to throttle
+rows. `write_count` is derived from the three attempted rows. The dev loop's
+Unknown/throttle role constants derive from this fixture, `DEV.fittingsScreenshot()`
+renders it in a normal dev browser, and Python parses the same object for live
+screenshot injection.
+
+Focused tests were added for injection-before-action ordering, exact fixture
+serialization, bounded/allowlisted production handler ownership, no Python
+producer, local read interception, route-leave cleanup, absence of durable and
+remote writers, explicit row-action generation, and fixture actor/status/
+attempt consistency. The initial focused run failed in eight places for the
+missing handler/injection/canonical fixture and the silent `.replace(...)`
+path; the first complete green run was 212 passing tests, followed by the
+broader 322-test page/convention set recorded below.
+
 ## Inherited work audited and completed
 
 The worktree arrived with uncommitted Task 12 edits in the build action,
@@ -47,14 +91,11 @@ Fittings fixture now covers:
 - Success, Already present, Conflict/skipped, Unavailable, Unknown,
   throttle-stopped remainder, Cancelled, and Failed results.
 
-The strict `DEV_FITTINGS_COPY_RESULT_FIXTURE` is consumed by screenshot tooling
-rather than duplicating crafted outcomes in Python. During final browser review,
-the inherited dev-copy implementation was corrected to match production result
-semantics: `write_count` counts attempted requests, the pair receiving the
-scripted throttle response is Failed/attempted, and only later pairs are
-Unattempted due to throttle. A two-fit/three-character run therefore reports
-three attempted writes: Success, Unknown, and throttle Failed, followed by
-three unattempted rows.
+The strict `DEV_FITTINGS_SCREENSHOT_FIXTURE` is consumed by both the browser's
+manual screenshot driver and Python screenshot tooling rather than duplicating
+crafted outcomes. Its reachable two-fit/three-character result reports three
+attempted writes: Success, Unknown, and throttle Failed, followed by three
+unattempted rows.
 
 `tests/test_dev_harness.py` now explicitly proves every bridge method called by
 `fittings.js` has a double and pins the fixture's import/access, conflict,
@@ -80,21 +121,13 @@ All are EVE-gated, so gate-off runs skip and record every Fittings stage. Counts
 in `tests/test_shoot_screens.py` are derived from `SCREENS` rather than repeated
 integers or hand-maintained skip lists.
 
-The inherited staging needed two correctness fixes found during audit:
-
-- collection switches and page changes resolve through `requestState()`
-  promises, while the shooter's `Runtime.evaluate` does not await those
-  promises. Reset, the Alliance scope switch, the detail-page advance, and the
-  final row action are now separate CDP evaluations with settle boundaries;
-  otherwise detail searched stale page 1 immediately after clicking Next;
-- copy result data was moved out of the Python shooter into the strict dev
-  fixture, preserving `dev.js` as the only fabricated-data source.
-
-Every setup fails closed when its required control/row is absent. Tests also
-assert that no Fittings screenshot setup calls a remote or durable writer,
-including `fittings_start_copy`, refresh, capability enable, Forget, collection
-or metadata mutations. The copy preflight call is classification-only; the
-progress/result screens use the page's semantic handler.
+The final staging injects the canonical dev fixture into the query-free page
+before any stage action. Collection/reset/action boundaries remain separate CDP
+evaluations, and every required control/row fails closed. State, detail and
+preflight are local read paths in screenshot mode; no Fittings screenshot setup
+calls `fittings_start_copy`, refresh, capability enable, Forget, collection,
+metadata, membership, supersession, delete, or any other durable/remote writer.
+Progress/results use the same semantic handler as the controller.
 
 ### Page convention guard
 
@@ -139,7 +172,18 @@ self-review so a violation reports the actual matched expression.
 ## Browser verification actually performed
 
 Chrome was attached over CDP after clearing its browser cache and file-origin
-storage. The exact page was then loaded and force-reloaded:
+storage. Fix round 1 first loaded and force-reloaded the exact query-free
+production page:
+
+```text
+file:///mnt/c/dev/flygd-wingman/.worktrees/fittings-management/wingman/web/index.html
+```
+
+`dev.js` remained inert (`window.DEV` absent). The shooter fixture was injected
+through `onFittingsScreenshotState`, and all base/variant actions below rendered
+without a Python bridge or a live state dependency. The browser then loaded the
+exact dev page to verify `DEV.fittingsScreenshot()` consumes the same fixture
+and to run the real asynchronous dev-copy loop:
 
 ```text
 file:///mnt/c/dev/flygd-wingman/.worktrees/fittings-management/wingman/web/index.html?dev=1
@@ -162,11 +206,12 @@ fittings-copy-result
 fittings-copy-actual
 ```
 
-Assertions covered the 100-row default page and page 2, derived collection
+Assertions covered the injected 27-row live-page state, derived collection
 views, recent Alliance source evidence, rack/presence detail, all character
 access states and stale error, present/conflict/non-deployable preflight,
-20-write refusal, progress, every result label, and the real asynchronous dev
-copy loop's attempted-write count.
+20-write refusal, progress, the reachable copy-result sequence, and the real
+asynchronous dev loop's attempted-write count. The ordinary dev fixture still
+exercised its >100-row paging separately from screenshot injection.
 
 Final browser-side title-bar measurements:
 
@@ -185,22 +230,20 @@ real fitting mutation.
 
 ## Automated verification actually performed
 
-Focused Task 12 suites after the final scenario/result fixes:
+Focused screenshot/dev/page/bridge suites after fix round 1:
 
 ```text
-uv run --no-sync python -m pytest \
-  tests/test_packaging_completeness.py tests/test_dev_harness.py \
-  tests/test_shoot_screens.py tests/test_page_conventions.py -q
-250 passed, 1 skipped in 6.51s
+uv run --no-sync python -m pytest tests/test_shoot_screens.py \
+  tests/test_dev_harness.py tests/test_fittings_page.py \
+  tests/test_bridge_contract.py tests/test_page_conventions.py -q
+322 passed in 10.52s
 ```
 
-The skip is the existing optional built settings-codec artifact check.
-
-Fresh final full suite:
+Fresh final full suite after fix round 1:
 
 ```text
 uv run --no-sync python -m pytest tests/
-3989 passed, 8 skipped in 62.16s
+3996 passed, 8 skipped in 66.86s
 ```
 
 Fresh static gates:
@@ -216,8 +259,7 @@ node --check wingman/web/*.js
 14 JavaScript files passed node --check
 
 python -m py_compile scripts/shoot_screens.py tests/test_dev_harness.py \
-  tests/test_packaging_completeness.py tests/test_page_conventions.py \
-  tests/test_shoot_screens.py
+  tests/test_fittings_page.py tests/test_shoot_screens.py
 # exit 0
 
 git diff --check
@@ -242,7 +284,8 @@ git diff --check
   before POST and no send after intent-save failure, startup conversion to
   Unknown, post-horizon unconditional `200` reconciliation, `304` refusal, and
   Unknown blocking copy/Forget after failed reconciliation persistence.
-- The screenshot setup scripts perform no live write. The full Windows shooter
+- The screenshot setup scripts perform no live write. The query-free production
+  page was exercised over CDP with `dev.js` inert, but the full Windows shooter
   itself was not run in this Linux environment.
 
 ## Explicitly unverified / remaining release risk

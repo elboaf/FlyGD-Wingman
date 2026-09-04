@@ -1459,24 +1459,78 @@ def test_every_fittings_variant_has_fail_closed_staging():
 
 
 def test_fittings_result_data_is_owned_by_the_dev_harness():
-    fixture = shoot.load_dev_fittings_result_fixture(str(ROOT))
+    fixture = shoot.load_dev_fittings_screenshot_fixture(str(ROOT))["copy_result"]
     assert fixture["write_count"] == sum(
         bool(row["attempted"]) for row in fixture["results"]
     )
     assert fixture["write_count"] == 3
     assert {row["status"] for row in fixture["results"]} == {
         "success",
-        "present",
-        "conflict_skipped",
-        "unavailable",
         "unknown",
         "unattempted_throttle",
-        "cancelled",
         "failed",
     }
     assert not hasattr(shoot, "_FITTINGS_COPY_RESULT_PAYLOAD")
     for key in ("fittings-copy-progress", "fittings-copy-result"):
-        assert json.dumps(fixture["results"][4]) in _fittings_capture_scripts()[key]
+        assert json.dumps(fixture["results"][1]) in _fittings_capture_scripts()[key]
+
+
+def test_fittings_fixture_injection_is_semantic_bounded_and_exact():
+    fixture = shoot.load_dev_fittings_screenshot_fixture(str(ROOT))
+    script = shoot.fittings_fixture_setup_script()
+    assert "window.onFittingsScreenshotState(payload);" in script
+    assert "typeof window.onFittingsScreenshotState !== 'function'" in script
+    assert "Fittings screenshot fixture was not accepted" in script
+    assert "rendered.length !== payload.entries.length" in script
+    match = re.search(r"var payload = (\{.*\});", script, re.DOTALL)
+    assert match
+    assert json.loads(match.group(1)) == fixture
+
+
+def test_fittings_stage_generator_uses_an_explicit_row_action():
+    import inspect
+
+    source = inspect.getsource(shoot._fittings_setup_script)
+    assert ".replace(" not in source
+    assert 'action="open"' in source
+    opened = shoot._fit_check_row_js("row", "true", "row", action="open")
+    selected = shoot._fit_check_row_js("row", "true", "row", action="select")
+    assert "target.click();" in opened
+    assert "box.dispatchEvent(new Event('change'));" not in opened
+    assert "box.dispatchEvent(new Event('change'));" in selected
+
+
+def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatch):
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+
+    class RecordingCDP(_TrackedCDP):
+        def evaluate(self, expression: str):
+            self._ops.append(expression)
+            return super().evaluate(expression)
+
+    cdp = RecordingCDP()
+    shoot.walk(cdp, tmp_path, settle_ms=0)
+    injections = [
+        index
+        for index, expression in enumerate(cdp._ops)
+        if "window.onFittingsScreenshotState(payload);" in expression
+    ]
+    fitting_screens = [screen for screen in shoot.SCREENS if screen.route == "fittings"]
+    assert len(injections) == len(fitting_screens)
+    for stage_number, index in enumerate(injections):
+        following = cdp._ops[index + 1 :]
+        next_injection = next(
+            (
+                offset
+                for offset, expression in enumerate(following)
+                if "window.onFittingsScreenshotState(payload);" in expression
+            ),
+            len(following),
+        )
+        stage = following[:next_injection]
+        assert stage
+        if stage_number:
+            assert any("var openToggle" in expression for expression in stage)
 
 
 def test_fittings_capture_staging_never_starts_a_remote_write():

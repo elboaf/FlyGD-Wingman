@@ -328,16 +328,23 @@ _FIT_CHECK_TARGET_JS = (
 )
 
 
-def _fit_check_row_js(var_name: str, predicate_js: str, label: str) -> str:
-    """Check one library row's selection checkbox by a JS predicate over its
-    `.fit-row-toggle` button (which carries the rendered name and meta).
-
-    A function rather than a bare selector because two library rows can
-    legitimately share one rendered name -- the engineered conflict fixture
-    (`fit-conflict-existing` / `fit-conflict-source` in dev.js) both display
-    as "Fleet Doctrine Alpha" on purpose, so callers that need the specific
-    one disambiguate on the row's meta text instead of its name alone.
-    """
+def _fit_check_row_js(
+    var_name: str, predicate_js: str, label: str, *, action: str = "select"
+) -> str:
+    """Find one summary row, then explicitly select or open it."""
+    if action not in {"select", "open"}:
+        raise ValueError(f"unsupported fitting row action: {action!r}")
+    act = (
+        "    target.click();\n"
+        if action == "open"
+        else (
+            "    var row = target.closest('.fit-row');\n"
+            "    var box = row.querySelector('.fit-select input[type=checkbox]');\n"
+            f"    if (!box) {{ throw new Error({label!r} + ' checkbox is missing'); }}\n"
+            "    box.checked = true;\n"
+            "    box.dispatchEvent(new Event('change'));\n"
+        )
+    )
     return (
         f"  (function checkRow_{var_name}() {{\n"
         "    var toggles = document.querySelectorAll(\n"
@@ -348,25 +355,21 @@ def _fit_check_row_js(var_name: str, predicate_js: str, label: str) -> str:
         f"      if ({predicate_js}) {{ target = btn; }}\n"
         "    });\n"
         f"    if (!target) {{ throw new Error({label!r} + ' row is missing'); }}\n"
-        "    var row = target.closest('.fit-row');\n"
-        "    var box = row.querySelector('.fit-select input[type=checkbox]');\n"
-        f"    if (!box) {{ throw new Error({label!r} + ' checkbox is missing'); }}\n"
-        "    box.checked = true;\n"
-        "    box.dispatchEvent(new Event('change'));\n"
-        "  }());\n"  # Semicolon: two adjacent IIFEs with none between them
+        + act
+        + "  }());\n"  # Semicolon: two adjacent IIFEs with none between them
         # (as happens when two of these are concatenated back to back) let
         # ASI read the second '(function...' as a call on the first's
         # return value instead of a new statement.
     )
 
 
-def load_dev_fittings_result_fixture(checkout: str | None = None) -> dict:
-    """Load the strict JSON copy-result fixture owned by web/dev.js."""
+def load_dev_fittings_screenshot_fixture(checkout: str | None = None) -> dict:
+    """Load the strict JSON screenshot fixture owned by web/dev.js."""
     if checkout is None:
         checkout = str(pathlib.Path(__file__).resolve().parent.parent)
     path = pathlib.Path(checkout) / "wingman" / "web" / "dev.js"
     source = path.read_text(encoding="utf-8")
-    marker = "DEV_FITTINGS_COPY_RESULT_FIXTURE"
+    marker = "DEV_FITTINGS_SCREENSHOT_FIXTURE"
     if marker not in source:
         raise ValueError(f"{marker} not found in {path}")
     raw = source[source.index(marker) :]
@@ -392,28 +395,42 @@ def load_dev_fittings_result_fixture(checkout: str | None = None) -> dict:
         raise ValueError(f"{marker} body in {path} is not valid JSON: {exc}") from exc
 
 
+def fittings_fixture_setup_script() -> str:
+    """Inject the bounded dev.js fixture through the screenshot-only handler."""
+    payload = json.dumps(load_dev_fittings_screenshot_fixture())
+    return (
+        "(function () {\n"
+        "  var payload = " + payload + ";\n"
+        "  if (typeof window.onFittingsScreenshotState !== 'function') {\n"
+        "    throw new Error('onFittingsScreenshotState is missing');\n"
+        "  }\n"
+        "  window.onFittingsScreenshotState(payload);\n"
+        "  var rendered = document.querySelectorAll('#fittings-list .fit-row');\n"
+        "  var heading = document.getElementById('fittings-collection-name');\n"
+        "  if (!heading || heading.textContent !== 'All fittings'\n"
+        "      || rendered.length !== payload.entries.length) {\n"
+        "    throw new Error('Fittings screenshot fixture was not accepted');\n"
+        "  }\n"
+        "}())"
+    )
+
+
 def _fittings_setup_script(key: str) -> str:
     """Deterministic staging for every fittings-* screenshot stage.
 
     Every stage is read-only against the harness's fabricated fixture and
     drives only controls a user could actually press -- selection
     checkboxes, the rail, Copy selected, target checkboxes, Review -- with
-    one deliberate exception: the progress/result stages inject crafted
-    onFittingsProgress pushes directly, the same pattern the Previews stages
-    already use for onPreviewHotkeys, because driving eight distinct
-    outcomes (success/present/conflict/unavailable/unknown/throttle/
-    cancelled/failed) through the real 250ms-per-pair async copy loop in
-    one screenshot would need this tool to await promises CDP.evaluate
-    does not await, for no benefit over asserting the exact result shape
-    fittings.js already contracts on.
+    one deliberate exception: the progress/result stages inject the canonical
+    dev fixture's production-reachable copy sequence through onFittingsProgress,
+    the same read-side pattern the Preview stages use for onPreviewHotkeys. This
+    avoids waiting through timer-throttled dev execution while keeping one data
+    owner and the same semantic handler the real controller pushes.
 
-    Does NOT include _FIT_RESET_JS, the detail page advance, or the Alliance
-    scope switch: walk() runs each async-boundary action as its own evaluate
-    call with a settle sleep afterward. Collection switches and page changes
-    fetch through requestState()'s Promise chain, and microtasks only drain once a
-    synchronous script finishes. A script that clicked Next and immediately
-    searched page 2 would still be reading page 1 and fail closed for the
-    wrong reason.
+    Does NOT include _FIT_RESET_JS or the Alliance scope switch: walk() runs
+    each boundary action as its own evaluate call with a settle sleep afterward.
+    The injected screenshot state answers collection reads synchronously, but
+    retaining the boundary keeps staging equivalent to the ordinary async route.
     """
     body = ""
     if key in {"fittings-unfiled", "fittings-superseded"}:
@@ -436,28 +453,17 @@ def _fittings_setup_script(key: str) -> str:
             "btn.querySelector('.fit-name') "
             "&& btn.querySelector('.fit-name').textContent === 'Merlin - Fleet Doctrine'",
             "recent Alliance import",
-        ).replace(
-            "    box.checked = true;\n    box.dispatchEvent(new Event('change'));\n",
-            "    target.click();\n",
+            action="open",
         )
     elif key == "fittings-detail":
+        # Open rather than select: this fixture carries aliases, presences,
+        # and three racks specifically for the detail capture.
         body += _fit_check_row_js(
             "detail",
             "btn.querySelector('.fit-name') "
             "&& btn.querySelector('.fit-name').textContent === 'Rifter - Solo PvP'",
             "Rifter - Solo PvP",
-        ).replace(
-            # This stage wants the row OPENED (its detail on screen), not
-            # merely selected -- click the toggle itself, not the checkbox,
-            # after confirming the row exists. "Rifter - Solo PvP" carries
-            # two aliases, two character presences and a three-rack module
-            # layout, which is what makes it worth a dedicated detail shot
-            # -- but it sorts alphabetically AFTER the whole 108-entry
-            # generated-filler block (Task 12's fixtures included), so it
-            # lives on page 2 of the default "All fittings" scope and page 1
-            # must be advanced first.
-            "    box.checked = true;\n    box.dispatchEvent(new Event('change'));\n",
-            "    target.click();\n",
+            action="open",
         )
     elif key == "fittings-characters":
         body += (
@@ -470,14 +476,9 @@ def _fittings_setup_script(key: str) -> str:
             "  }\n"
         )
     elif key == "fittings-copy-preflight":
-        # All three selected pairs are deliberately entries that sort
-        # BEFORE the 108-entry generated-filler block (the two engineered
-        # "Fleet Doctrine Alpha" fixtures) or that ARE the filler block's
-        # own first row ("Generated Fit 001", the one deliberately
-        # non-deployable entry -- see dev.js). All three therefore share
-        # page 1 of the default "All fittings" scope: paging clears the
-        # page-owned selection (fittings.js's pruneSelection), so a batch
-        # spanning two pages could never be selected in one pass.
+        # The injected fixture puts the present/conflict pair and its one
+        # non-deployable generated fit on the same bounded page. Paging clears
+        # page-owned selection, so a mixed preflight must remain one-page data.
         body += (
             _fit_check_row_js(
                 "present",
@@ -572,15 +573,15 @@ def _fittings_setup_script(key: str) -> str:
         # overlay open (onCopyProgress ignores copy events while it is
         # closed). The result data itself remains owned by dev.js; this
         # tool only serializes that single authoritative fixture.
-        fixture = load_dev_fittings_result_fixture()
+        fixture = load_dev_fittings_screenshot_fixture()["copy_result"]
         payload = (
             {
                 "kind": "copy",
                 "phase": "progress",
                 "operation_id": fixture["operation_id"],
-                "completed": 5,
+                "completed": 2,
                 "total": len(fixture["results"]),
-                "result": fixture["results"][4],
+                "result": fixture["results"][1],
             }
             if key == "fittings-copy-progress"
             else {
@@ -620,17 +621,8 @@ def _fittings_setup_script(key: str) -> str:
 
 
 def _fittings_prepare_script(key: str) -> str | None:
-    """Optional async-boundary setup run between reset and final staging."""
-    if key == "fittings-detail":
-        body = (
-            "  var nextPage = document.getElementById('fittings-page-next');\n"
-            "  if (!nextPage) { throw new Error('Page next control is missing'); }\n"
-            "  if (nextPage.disabled) {\n"
-            "    throw new Error('Fittings detail page 2 is missing');\n"
-            "  }\n"
-            "  nextPage.click();\n"
-        )
-    elif key == "fittings-alliance":
+    """Optional collection switch run between reset and final staging."""
+    if key == "fittings-alliance":
         body = (
             "  var alliance = null;\n"
             "  Array.prototype.forEach.call(\n"
@@ -1185,22 +1177,24 @@ def walk(
                     (out_dir / name).write_bytes(cdp.screenshot())
                 finally:
                     cdp.clear_device_metrics_override()
-            elif screen.key.startswith("fittings-"):
-                # Separate every action whose requestState() promise must
-                # settle before the next action inspects its DOM: reset can
-                # switch collections; detail advances to page 2, and the
-                # Alliance stage enters its collection before opening the
-                # recent import. See the setup function's docstring.
-                cdp.evaluate(_fittings_reset_script())
+            elif screen.route == "fittings":
+                # Replace live read state through the bounded page-side
+                # screenshot handler before ANY stage action. This follows
+                # the Preview fixture precedent and cannot call Python, ESI,
+                # or a durable writer. Route leave clears the injected state.
+                cdp.evaluate(fittings_fixture_setup_script())
                 time.sleep(0.25)
-                prepare = _fittings_prepare_script(screen.key)
-                if prepare:
-                    cdp.evaluate(prepare)
+                if screen.key.startswith("fittings-"):
+                    cdp.evaluate(_fittings_reset_script())
                     time.sleep(0.25)
-                setup = screen_setup_script(screen)
-                if setup:
-                    cdp.evaluate(setup)
-                    time.sleep(0.25)
+                    prepare = _fittings_prepare_script(screen.key)
+                    if prepare:
+                        cdp.evaluate(prepare)
+                        time.sleep(0.25)
+                    setup = screen_setup_script(screen)
+                    if setup:
+                        cdp.evaluate(setup)
+                        time.sleep(0.25)
                 (out_dir / name).write_bytes(cdp.screenshot())
             else:
                 setup = screen_setup_script(screen)

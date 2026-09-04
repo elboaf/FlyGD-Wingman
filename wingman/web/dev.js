@@ -724,96 +724,104 @@
     return Promise.resolve(!!entry);
   };
 
-  // Strict JSON so screenshot tooling can reuse the same deterministic copy
-  // outcomes without becoming a second source of fabricated product data.
-  // It names every terminal result category the Fittings page renders.
-  var DEV_FITTINGS_COPY_RESULT_FIXTURE = {
-    "status": "complete",
-    "operation_id": "dev-operation-results",
-    "write_count": 3,
-    "results": [
-      {
-        "entry_id": "fit-rifter-solo",
-        "character_id": 90000014,
-        "fitting_name": "Rifter - Solo PvP",
-        "character_name": "Eryn Voss",
-        "chosen_name": "Rifter - Solo PvP",
-        "status": "success",
-        "remote_fitting_id": 9101,
-        "error": "",
-        "attempted": true
+  // Strict JSON and the sole fabricated-data source for both ?dev=1 and
+  // the live-app screenshot tool. fittings.js accepts it only through its
+  // bounded, CDP-invoked screenshot handler; ordinary production reads and
+  // writes never consult it. Keep result rows in an order the dev copy loop
+  // can really produce: first fit succeeds/turns Unknown/hits throttle, then
+  // every pair for the second fit is unattempted.
+  var DEV_FITTINGS_SCREENSHOT_FIXTURE = {
+    "kind": "fittings-screenshot-v1",
+    "copy_roles": {
+      "unknown_character_id": 90000015,
+      "throttle_character_id": 90000016
+    },
+    "characters": [
+      {"character_id": 90000010, "character_name": "Aria Voss", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000011, "character_name": "Bex Talon", "status": "enabled", "fetched_utc": "2026-08-20T08:00:00+00:00", "error": "ESI request failed (500): Internal Server Error", "stale": true},
+      {"character_id": 90000012, "character_name": "Cato Rune", "status": "enable", "fetched_utc": "", "error": "", "stale": false},
+      {"character_id": 90000013, "character_name": "Dess Marlow", "status": "reauthenticate", "fetched_utc": "", "error": "", "stale": false},
+      {"character_id": 90000014, "character_name": "Eryn Voss", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000015, "character_name": "Fio Kest", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000016, "character_name": "Gio Renn", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false}
+    ],
+    "collections": [
+      {"id": "all", "name": "All fittings", "count": 27},
+      {"id": "unfiled", "name": "Unfiled", "count": 25},
+      {"id": "superseded", "name": "Superseded", "count": 1},
+      {"id": "dev-alliance", "name": "Alliance", "count": 2},
+      {"id": "dev-ratting", "name": "Ratting", "count": 0}
+    ],
+    "entries": [
+      {"id": "fit-conflict-existing", "name": "Fleet Doctrine Alpha", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-08-15T00:00:00+00:00"},
+      {"id": "fit-conflict-source", "name": "Fleet Doctrine Alpha", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-02T00:00:00+00:00"},
+      {"id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-merlin-old", "name": "Merlin - Old Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": "fit-merlin-fleet", "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 2, "deployable": true, "updated_utc": "2026-08-01T00:00:00+00:00"},
+      {"id": "fit-gen-0", "name": "Generated Fit 001", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": false, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-1", "name": "Generated Fit 002", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-2", "name": "Generated Fit 003", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-3", "name": "Generated Fit 004", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-4", "name": "Generated Fit 005", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-5", "name": "Generated Fit 006", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-6", "name": "Generated Fit 007", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-7", "name": "Generated Fit 008", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-8", "name": "Generated Fit 009", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-9", "name": "Generated Fit 010", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-10", "name": "Generated Fit 011", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-11", "name": "Generated Fit 012", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-12", "name": "Generated Fit 013", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-13", "name": "Generated Fit 014", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-14", "name": "Generated Fit 015", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-15", "name": "Generated Fit 016", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-16", "name": "Generated Fit 017", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-17", "name": "Generated Fit 018", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-18", "name": "Generated Fit 019", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-19", "name": "Generated Fit 020", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-20", "name": "Generated Fit 021", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-21", "name": "Generated Fit 022", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"}
+    ],
+    "details": {
+      "fit-rifter-solo": {
+        "id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "description": "Fast tackle, disengages on a scram.", "ship_type_id": 587, "ship_name": "Rifter", "deployable": true, "collection_ids": [], "superseded_by": null, "created_utc": "2026-08-01T00:00:00+00:00", "updated_utc": "2026-08-01T00:00:00+00:00",
+        "items": [
+          {"location": "high", "type_id": 2456, "type_name": "150mm Light AutoCannon II", "quantity": 3},
+          {"location": "medium", "type_id": 3244, "type_name": "1MN Afterburner II", "quantity": 1},
+          {"location": "low", "type_id": 519, "type_name": "Gyrostabilizer II", "quantity": 2}
+        ],
+        "aliases": [{"name": "Rifter - Solo PvP", "description": ""}, {"name": "Rifter Tackle Fit", "description": "imported alias"}],
+        "presences": [
+          {"character_id": 90000010, "character_name": "Aria Voss", "source_name": "Rifter - Solo PvP", "first_seen_utc": "2026-08-01T00:00:00+00:00", "last_confirmed_utc": "2026-09-03T10:00:00+00:00", "discovered_batch_id": "batch-1"},
+          {"character_id": 90000011, "character_name": "Bex Talon", "source_name": "Rifter Tackle Fit", "first_seen_utc": "2026-08-05T00:00:00+00:00", "last_confirmed_utc": "2026-08-20T08:00:00+00:00", "discovered_batch_id": "batch-2"}
+        ]
       },
-      {
-        "entry_id": "fit-merlin-fleet",
-        "character_id": 90000010,
-        "fitting_name": "Merlin - Fleet Doctrine",
-        "character_name": "Aria Voss",
-        "chosen_name": "Merlin - Fleet Doctrine",
-        "status": "present",
-        "error": "",
-        "attempted": false
-      },
-      {
-        "entry_id": "fit-conflict-source",
-        "character_id": 90000014,
-        "fitting_name": "Fleet Doctrine Alpha",
-        "character_name": "Eryn Voss",
-        "chosen_name": "Fleet Doctrine Alpha",
-        "status": "conflict_skipped",
-        "error": "",
-        "attempted": false
-      },
-      {
-        "entry_id": "fit-noncombat",
-        "character_id": 90000010,
-        "fitting_name": "Impairor - Rookie",
-        "character_name": "Aria Voss",
-        "chosen_name": "Impairor - Rookie",
-        "status": "unavailable",
-        "error": "This fitting has no safe deployment template.",
-        "attempted": false
-      },
-      {
-        "entry_id": "fit-stale-owner",
-        "character_id": 90000015,
-        "fitting_name": "Punisher - Mission Runner",
-        "character_name": "Fio Kest",
-        "chosen_name": "Punisher - Mission Runner",
-        "status": "unknown",
-        "error": "No response was received before the request timed out.",
-        "attempted": true
-      },
-      {
-        "entry_id": "fit-stale-owner",
-        "character_id": 90000016,
-        "fitting_name": "Punisher - Mission Runner",
-        "character_name": "Gio Renn",
-        "chosen_name": "Punisher - Mission Runner",
-        "status": "unattempted_throttle",
-        "error": "Stopped after a fitting-bucket throttle response on an earlier pair.",
-        "attempted": false
-      },
-      {
-        "entry_id": "fit-unresolved",
-        "character_id": 90000010,
-        "fitting_name": "Unnamed Import",
-        "character_name": "Aria Voss",
-        "chosen_name": "Unnamed Import",
-        "status": "cancelled",
-        "error": "",
-        "attempted": false
-      },
-      {
-        "entry_id": "fit-rifter-solo",
-        "character_id": 90000011,
-        "fitting_name": "Rifter - Solo PvP",
-        "character_name": "Bex Talon",
-        "chosen_name": "Rifter - Solo PvP",
-        "status": "failed",
-        "error": "ESI stopped the batch after a fitting-bucket 429 response.",
-        "attempted": true
+      "fit-merlin-fleet": {
+        "id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "description": "Standard fleet doctrine fit.", "ship_type_id": 603, "ship_name": "Merlin", "deployable": true, "collection_ids": ["dev-alliance"], "superseded_by": null, "created_utc": "2026-09-01T00:00:00+00:00", "updated_utc": "2026-09-01T00:00:00+00:00",
+        "items": [{"location": "high", "type_id": 2453, "type_name": "Light Neutron Blaster II", "quantity": 3}, {"location": "medium", "type_id": 12613, "type_name": "Medium Shield Extender II", "quantity": 2}, {"location": "low", "type_id": 519, "type_name": "Gyrostabilizer II", "quantity": 1}],
+        "aliases": [{"name": "Merlin - Fleet Doctrine", "description": ""}],
+        "presences": [{"character_id": 90000010, "character_name": "Aria Voss", "source_name": "Merlin - Old Doctrine", "first_seen_utc": "2026-09-01T00:00:00+00:00", "last_confirmed_utc": "2026-09-03T10:00:00+00:00", "discovered_batch_id": "batch-3"}]
       }
-    ]
+    },
+    "mixed_preflight": {
+      "accepted": true, "ticket_id": "screenshot-ticket", "created_utc": "2026-09-03T10:01:00+00:00", "write_count": 0,
+      "counts": {"ready": 0, "present": 1, "conflict": 1, "unavailable": 1}, "requires_resolution": true, "error": "",
+      "pairs": [
+        {"entry_id": "fit-conflict-existing", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "present", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-0", "character_id": 90000014, "fitting_name": "Generated Fit 001", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 001", "status": "unavailable", "error": "This fitting has no safe deployment template.", "skipped": false},
+        {"entry_id": "fit-conflict-source", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "conflict", "error": "", "skipped": false}
+      ]
+    },
+    "copy_result": {
+      "status": "complete", "operation_id": "dev-operation-results", "write_count": 3,
+      "results": [
+        {"entry_id": "fit-gen-1", "character_id": 90000014, "fitting_name": "Generated Fit 002", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 002", "status": "success", "remote_fitting_id": 9101, "error": "", "attempted": true},
+        {"entry_id": "fit-gen-1", "character_id": 90000015, "fitting_name": "Generated Fit 002", "character_name": "Fio Kest", "chosen_name": "Generated Fit 002", "status": "unknown", "remote_fitting_id": null, "error": "No response was received before the request timed out.", "attempted": true},
+        {"entry_id": "fit-gen-1", "character_id": 90000016, "fitting_name": "Generated Fit 002", "character_name": "Gio Renn", "chosen_name": "Generated Fit 002", "status": "failed", "remote_fitting_id": null, "error": "The fitting write rate limit was reached; the remaining batch was stopped.", "attempted": true},
+        {"entry_id": "fit-gen-2", "character_id": 90000014, "fitting_name": "Generated Fit 003", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000015, "fitting_name": "Generated Fit 003", "character_name": "Fio Kest", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000016, "fitting_name": "Generated Fit 003", "character_name": "Gio Renn", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false}
+      ]
+    }
   };
 
   var fitCopyTickets = {};
@@ -829,8 +837,10 @@
   // non-success outcome for, so a hand reviewer can reach Unknown and
   // throttle-stop without needing a real ESI failure. Both are otherwise
   // ordinary eligible copy targets (see the characters array above).
-  var FIT_COPY_UNKNOWN_CHARACTER = 90000015; // Fio Kest
-  var FIT_COPY_THROTTLE_CHARACTER = 90000016; // Gio Renn
+  var FIT_COPY_UNKNOWN_CHARACTER =
+    DEV_FITTINGS_SCREENSHOT_FIXTURE.copy_roles.unknown_character_id; // Fio Kest
+  var FIT_COPY_THROTTLE_CHARACTER =
+    DEV_FITTINGS_SCREENSHOT_FIXTURE.copy_roles.throttle_character_id; // Gio Renn
 
   function devCopyPair(entry, character, names) {
     var base = {
@@ -1785,6 +1795,13 @@
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
   window.DEV = {
+    // The same bounded fixture scripts/shoot_screens.py injects into the live
+    // app. This manual driver keeps every field browser-consumed rather than
+    // leaving a Python-only JSON island in dev.js.
+    fittingsScreenshot: function () {
+      window.onFittingsScreenshotState(
+        JSON.parse(JSON.stringify(DEV_FITTINGS_SCREENSHOT_FIXTURE)));
+    },
     // `busy` defaults to true -- a percentage arriving usually means a live
     // transfer -- but it is a PARAMETER because the two payloads that carry
     // busy=false were otherwise unreachable from this harness, and both are

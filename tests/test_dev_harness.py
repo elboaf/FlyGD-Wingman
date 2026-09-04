@@ -82,8 +82,8 @@ def test_the_scan_found_both_sides():
     assert "get_settings" in stubbed and "list_rows" in stubbed
 
 
-def _fittings_result_fixture() -> dict:
-    marker = "DEV_FITTINGS_COPY_RESULT_FIXTURE"
+def _fittings_screenshot_fixture() -> dict:
+    marker = "DEV_FITTINGS_SCREENSHOT_FIXTURE"
     assert marker in DEV_JS
     raw = DEV_JS[DEV_JS.index(marker) :]
     opening = raw.index("{")
@@ -128,30 +128,77 @@ def test_fittings_fixture_covers_library_import_and_access_scenarios():
 
 
 def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
-    fixture = _fittings_result_fixture()
-    statuses = [row["status"] for row in fixture["results"]]
+    fixture = _fittings_screenshot_fixture()
+    result = fixture["copy_result"]
+    statuses = [row["status"] for row in result["results"]]
     assert set(statuses) == {
         "success",
-        "present",
-        "conflict_skipped",
-        "unavailable",
         "unknown",
         "unattempted_throttle",
-        "cancelled",
         "failed",
     }
     assert "counts.ready > 20" in DEV_JS
     assert "Split this copy into batches of 20 fittings or fewer." in DEV_JS
     assert "phase: 'progress'" in DEV_JS
     assert "phase: 'complete'" in DEV_JS
-    assert fixture["write_count"] == sum(
-        bool(row["attempted"]) for row in fixture["results"]
+    assert result["write_count"] == sum(
+        bool(row["attempted"]) for row in result["results"]
     )
     assert "FIT_COPY_UNKNOWN_CHARACTER" in DEV_JS
     assert "fitCopyThrottled" in DEV_JS
     assert "return row.attempted;" in DEV_JS
     assert any(status == "success" for status in statuses)
     assert any(status != "success" for status in statuses)
+
+
+def test_fittings_screenshot_fixture_is_browser_consumed_and_semantically_valid():
+    fixture = _fittings_screenshot_fixture()
+    assert fixture["kind"] == "fittings-screenshot-v1"
+    assert "DEV_FITTINGS_COPY_RESULT_FIXTURE" not in DEV_JS
+    assert "window.onFittingsScreenshotState(" in DEV_JS
+    assert "DEV_FITTINGS_SCREENSHOT_FIXTURE" in DEV_JS[DEV_JS.index("window.DEV = {") :]
+
+    character_ids = {row["character_id"] for row in fixture["characters"]}
+    entry_ids = {row["id"] for row in fixture["entries"]}
+    generated = [row for row in fixture["entries"] if row["id"].startswith("fit-gen-")]
+    assert len(generated) >= 21
+    assert sum(not row["deployable"] for row in generated) == 1
+    results = fixture["copy_result"]["results"]
+    assert [
+        (row["entry_id"], row["character_id"], row["status"], row["attempted"])
+        for row in results
+    ] == [
+        ("fit-gen-1", 90000014, "success", True),
+        ("fit-gen-1", 90000015, "unknown", True),
+        ("fit-gen-1", 90000016, "failed", True),
+        ("fit-gen-2", 90000014, "unattempted_throttle", False),
+        ("fit-gen-2", 90000015, "unattempted_throttle", False),
+        ("fit-gen-2", 90000016, "unattempted_throttle", False),
+    ]
+    by_character = {row["character_id"]: row for row in fixture["characters"]}
+    for row in results:
+        assert row["character_id"] in character_ids
+        assert row["entry_id"] in entry_ids
+        assert row["status"] != "failed" or row["attempted"]
+        assert row["status"] != "unattempted_throttle" or not row["attempted"]
+        if row["attempted"]:
+            character = by_character[row["character_id"]]
+            assert character["status"] == "enabled"
+            assert character["fetched_utc"]
+            assert not character["stale"]
+    failed = next(
+        row for row in fixture["copy_result"]["results"] if row["status"] == "failed"
+    )
+    assert failed["character_id"] == fixture["copy_roles"]["throttle_character_id"]
+    unknown = next(
+        row for row in fixture["copy_result"]["results"] if row["status"] == "unknown"
+    )
+    assert unknown["character_id"] == fixture["copy_roles"]["unknown_character_id"]
+    assert not next(
+        row
+        for row in fixture["characters"]
+        if row["character_id"] == unknown["character_id"]
+    )["stale"]
 
 
 def test_every_bridge_method_the_page_calls_has_a_double():

@@ -44,6 +44,10 @@
   var searchDebounce = null;
   var charactersOverlayOpen = false;
   var confirmingForgetId = 0;
+  // Non-null only while the Windows screenshot tool has explicitly injected
+  // its bounded fixture over CDP. It is cleared on route leave and never set
+  // by Python, startup, or a user control.
+  var screenshotFixture = null;
 
   var RACK_ORDER = ['high', 'medium', 'low', 'rig', 'subsystem', 'service',
                      'Cargo', 'DroneBay', 'FighterBay', 'Invalid'];
@@ -63,8 +67,128 @@
     };
   }
 
+  function validScreenshotFixture(payload) {
+    if (!payload || payload.kind !== 'fittings-screenshot-v1') return false;
+    var encoded = '';
+    try { encoded = JSON.stringify(payload); } catch (err) { return false; }
+    if (encoded.length > 512 * 1024) return false;
+    if (!Array.isArray(payload.characters) || payload.characters.length > 50) return false;
+    if (!Array.isArray(payload.collections) || payload.collections.length > 205) return false;
+    if (!Array.isArray(payload.entries)
+        || payload.entries.length < 21 || payload.entries.length > 100) return false;
+    if (!payload.details || Object.keys(payload.details).length > 100) return false;
+    if (!payload.mixed_preflight
+        || !Array.isArray(payload.mixed_preflight.pairs)
+        || payload.mixed_preflight.pairs.length > 200) return false;
+    if (!payload.copy_result || !Array.isArray(payload.copy_result.results)
+        || payload.copy_result.results.length > 200) return false;
+    return true;
+  }
+
+  function screenshotEntries() {
+    return JSON.parse(JSON.stringify(screenshotFixture.entries));
+  }
+
+  function screenshotWorkspace(wanted) {
+    var entries = screenshotEntries();
+    if (wanted.collection_id === 'unfiled') {
+      entries = entries.filter(function (entry) { return entry.is_unfiled; });
+    } else if (wanted.collection_id === 'superseded') {
+      entries = entries.filter(function (entry) { return !!entry.superseded_by; });
+    } else if (wanted.collection_id !== 'all') {
+      entries = entries.filter(function (entry) {
+        return entry.collection_ids.indexOf(wanted.collection_id) !== -1;
+      });
+    }
+    if (wanted.ship_type_id) {
+      entries = entries.filter(function (entry) {
+        return entry.ship_type_id === wanted.ship_type_id;
+      });
+    }
+    var needle = (wanted.search || '').trim().toLowerCase();
+    if (needle) {
+      entries = entries.filter(function (entry) {
+        return entry.name.toLowerCase().indexOf(needle) !== -1
+          || entry.ship_name.toLowerCase().indexOf(needle) !== -1;
+      });
+    }
+    entries.sort(function (left, right) {
+      return left.name.toLowerCase().localeCompare(right.name.toLowerCase())
+        || left.id.localeCompare(right.id);
+    });
+    var ships = {};
+    screenshotEntries().forEach(function (entry) {
+      ships[entry.ship_type_id] = entry.ship_name;
+    });
+    return {
+      available: true,
+      warnings: [],
+      collections: JSON.parse(JSON.stringify(screenshotFixture.collections)),
+      characters: JSON.parse(JSON.stringify(screenshotFixture.characters)),
+      ships: Object.keys(ships).map(function (id) {
+        return { type_id: parseInt(id, 10), name: ships[id] };
+      }),
+      rows: JSON.parse(JSON.stringify(entries)),
+      total: entries.length,
+      page: 1,
+      page_size: 100,
+      filters: currentFilters(),
+      auth_configured: true,
+      auth_in_progress: false,
+      refreshing: false
+    };
+  }
+
+  function screenshotDetail(id) {
+    var value = screenshotFixture.details[id];
+    return value ? JSON.parse(JSON.stringify(value)) : null;
+  }
+
+  function screenshotPreflight(entryIds) {
+    if (entryIds.length > 20) {
+      return {
+        accepted: false,
+        ticket_id: '',
+        created_utc: '',
+        write_count: 0,
+        counts: { ready: entryIds.length, present: 0, conflict: 0, unavailable: 0 },
+        requires_resolution: false,
+        pairs: [],
+        error: 'Split this copy into batches of 20 fittings or fewer.'
+      };
+    }
+    return JSON.parse(JSON.stringify(screenshotFixture.mixed_preflight));
+  }
+
+  function renderScreenshotState() {
+    filters = { collection_id: 'all', search: '', ship_type_id: null, page: 1 };
+    expandedId = '';
+    detail = null;
+    selected = {};
+    progress = null;
+    copyOverlayOpen = false;
+    copyPhase = 'targets';
+    copyTargets = {};
+    copyPreflight = null;
+    alternateNames = {};
+    refreshInFlight = false;
+    charactersOverlayOpen = false;
+    confirmingForgetId = 0;
+    WM.el('fittings-search').value = '';
+    WM.el('fittings-copy-overlay').hidden = true;
+    WM.el('fittings-characters-overlay').hidden = true;
+    render(screenshotWorkspace(currentFilters()));
+  }
+
   function requestState() {
+    if (screenshotFixture) {
+      render(screenshotWorkspace(currentFilters()));
+      return;
+    }
     WM.send('fittings_state', currentFilters()).then(function (payload) {
+      // A live read started before CDP injection must not repaint over the
+      // deterministic screenshot state when its promise resolves later.
+      if (screenshotFixture) return;
       if (!payload) { asked = false; return; }
       render(payload);
     });
@@ -113,6 +237,17 @@
     if (charactersOverlayOpen) renderCharactersOverlay();
   });
 
+  // Tooling-only semantic state injection, following Previews'
+  // onPreviewHotkeys screenshot precedent. No Python producer exists and no
+  // user control calls it. The payload is owned by dev.js, bounded here at
+  // the production-page boundary, and used only to answer read paths locally;
+  // durable and remote writers are never replaced or invoked.
+  WM.handle('onFittingsScreenshotState', function (payload) {
+    if (WM.current_route !== 'fittings' || !validScreenshotFixture(payload)) return;
+    screenshotFixture = JSON.parse(JSON.stringify(payload));
+    renderScreenshotState();
+  });
+
   document.addEventListener('wm:route', function (event) {
     if (event.detail !== 'fittings') {
       // Cleanup for the one thing this route arms outside its own markup:
@@ -120,6 +255,7 @@
       // floats above the route and must not still be open on return to a
       // completely different screen.
       if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
+      screenshotFixture = null;
       closeCharactersOverlay();
       if (copyPhase === 'progress') WM.send('fittings_cancel_copy');
       closeCopyOverlay(true);
@@ -427,7 +563,9 @@
   function requestDetail(id) {
     detailSeq += 1;
     var token = detailSeq;
-    WM.send('fittings_detail', id).then(function (payload) {
+    var pending = screenshotFixture
+      ? Promise.resolve(screenshotDetail(id)) : WM.send('fittings_detail', id);
+    pending.then(function (payload) {
       // A plan-switch-style guard: the row may have collapsed, or another
       // row may have been opened, while this reply was in flight.
       if (token !== detailSeq || expandedId !== id) return;
@@ -775,22 +913,25 @@
     }
     WM.el('fittings-copy-review').disabled = true;
     WM.el('fittings-copy-status').textContent = 'Checking current fittings\u2026';
-    WM.send('fittings_preflight_copy', visibleSelectedIds(), selectedTargetIds(), choices)
-      .then(function (payload) {
-        if (!copyOverlayOpen) return;
-        if (!payload || !payload.accepted) {
-          var rejection = payload && payload.error
-            || 'The copy preflight could not be checked.';
-          if (copyPhase === 'targets') renderCopyTargets();
-          else if (copyPhase === 'preflight' && copyPreflight) renderCopyPreflight();
-          WM.el('fittings-copy-status').textContent = rejection;
-          return;
-        }
-        copyPreflight = payload;
-        WM.el('fittings-copy-status').textContent = '';
-        copyPhase = 'preflight';
-        renderCopyPreflight();
-      });
+    var entryIds = visibleSelectedIds();
+    var pending = screenshotFixture
+      ? Promise.resolve(screenshotPreflight(entryIds))
+      : WM.send('fittings_preflight_copy', entryIds, selectedTargetIds(), choices);
+    pending.then(function (payload) {
+      if (!copyOverlayOpen) return;
+      if (!payload || !payload.accepted) {
+        var rejection = payload && payload.error
+          || 'The copy preflight could not be checked.';
+        if (copyPhase === 'targets') renderCopyTargets();
+        else if (copyPhase === 'preflight' && copyPreflight) renderCopyPreflight();
+        WM.el('fittings-copy-status').textContent = rejection;
+        return;
+      }
+      copyPreflight = payload;
+      WM.el('fittings-copy-status').textContent = '';
+      copyPhase = 'preflight';
+      renderCopyPreflight();
+    });
   }
 
   function preflightSummary(payload) {

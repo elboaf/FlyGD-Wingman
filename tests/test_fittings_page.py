@@ -170,13 +170,51 @@ def test_the_pager_can_actually_hide():
     )
 
 
+def test_screenshot_state_handler_is_allowlisted_bounded_and_read_only():
+    assert "'onFittingsScreenshotState'" in APP_JS
+    assert "WM.handle('onFittingsScreenshotState'" in FITTINGS_JS
+    api_source = (WEB.parent / "ui" / "api.py").read_text(encoding="utf-8")
+    assert '_push("onFittingsScreenshotState"' not in api_source
+    handler = FITTINGS_JS[FITTINGS_JS.index("WM.handle('onFittingsScreenshotState'") :]
+    handler = handler[: handler.index("document.addEventListener('wm:route'")]
+    assert "validScreenshotFixture(payload)" in handler
+    validator = FITTINGS_JS[FITTINGS_JS.index("function validScreenshotFixture") :]
+    validator = validator[: validator.index("function screenshotEntries")]
+    assert "fittings-screenshot-v1" in validator
+    assert "JSON.stringify(payload)" in validator
+    assert "512 * 1024" in validator
+    assert "renderScreenshotState" in handler
+    for writer in (
+        "fittings_start_copy",
+        "fittings_refresh",
+        "fittings_enable_character",
+        "fittings_forget_character",
+        "fittings_update_metadata",
+        "fittings_set_membership",
+        "fittings_set_supersession",
+        "fittings_delete_entry",
+    ):
+        assert writer not in handler
+
+
+def test_screenshot_mode_intercepts_reads_and_is_cleared_on_route_leave():
+    assert "if (screenshotFixture)" in FITTINGS_JS
+    assert "screenshotWorkspace(currentFilters())" in FITTINGS_JS
+    assert "screenshotDetail(id)" in FITTINGS_JS
+    assert "screenshotPreflight(" in FITTINGS_JS
+    leave = FITTINGS_JS[FITTINGS_JS.index("document.addEventListener('wm:route'") :]
+    leave = leave[: leave.index("// ---- rail")]
+    assert "screenshotFixture = null;" in leave
+
+
 def test_copy_selection_is_pruned_to_the_current_rendered_page():
     """Deleted, filtered-out, and other-page IDs must neither inflate the
     accent label nor cross into preflight."""
     assert "function pruneSelection" in FITTINGS_JS
     assert re.search(r"pruneSelection\(payload\.rows \|\| \[\]\);", FITTINGS_JS)
     assert "function visibleSelectedIds" in FITTINGS_JS
-    assert re.search(r"fittings_preflight_copy',\s*visibleSelectedIds\(\)", FITTINGS_JS)
+    assert "var entryIds = visibleSelectedIds();" in FITTINGS_JS
+    assert re.search(r"fittings_preflight_copy',\s*entryIds", FITTINGS_JS)
 
 
 def test_filter_collection_and_page_changes_clear_selection_before_refetch():
