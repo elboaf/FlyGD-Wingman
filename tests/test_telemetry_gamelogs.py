@@ -47,7 +47,7 @@ OUTGOING_DAMAGE_LINE = (
 
 SCRAMBLE_LINE = (
     "[ 2026.08.25 11:30:05 ] (combat) <color=0xffffffff>"
-    "<b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> "
+    "<b>Warp scramble attempt</b> <color=0x77ffffff><font size=10>from</font> "
     "<color=0xffffffff><b><color=0xffffffff><fontsize=12>Carol Vex [BURN]</color>"
     "<color=0xfff0f000> Claw</color><color=0xffffffff></b> "
     "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
@@ -1009,7 +1009,7 @@ class TestCombatFactParsing:
         tackle = [
             e
             for e in received
-            if isinstance(e, CombatFact) and e.kind == "incoming_tackle"
+            if isinstance(e, CombatFact) and e.kind == "incoming_scram"
         ]
         assert len(tackle) == 1
 
@@ -1031,7 +1031,8 @@ class TestCombatFactParsing:
         assert [
             e
             for e in received
-            if isinstance(e, CombatFact) and e.kind == "incoming_tackle"
+            if isinstance(e, CombatFact)
+            and e.kind in {"incoming_scram", "incoming_point"}
         ] == []
 
     def test_undecodable_bytes(self, tmp_path):

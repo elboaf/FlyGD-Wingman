@@ -72,12 +72,31 @@ def _damage(character, amount, occurred_at, *, source_generation=1, source_id=No
 
 
 def _tackle(character, occurred_at, *, source_generation=1, source_id=None):
+    return _ewar(
+        character,
+        "incoming_scram",
+        occurred_at,
+        source_generation=source_generation,
+        source_id=source_id,
+    )
+
+
+def _ewar(
+    character,
+    kind,
+    occurred_at,
+    *,
+    amount=None,
+    source_generation=1,
+    source_id=None,
+):
     return CombatFact(
         character=character,
         source_generation=source_generation,
         source_id=source_id if source_id is not None else _source_id(),
         occurred_at=occurred_at,
-        kind="incoming_tackle",
+        kind=kind,
+        amount=amount,
     )
 
 
@@ -415,9 +434,9 @@ class TestFactSequencing:
         row = _row(metrics.snapshot(4, HEALTH), "Alice")
         assert row.dps == 10  # not 20
 
-    def test_out_of_order_fact_does_not_roll_back_tackle_deadline(self):
+    def test_out_of_order_fact_does_not_roll_back_ewar_activity(self):
         metrics, _, mono_box = self._bound(_metrics(mono=100.0))
-        # Sequence 5 accepted first: 8s remaining -> deadline at mono 108.0.
+        # Sequence 5 is accepted first with a full activity window.
         metrics.consume(_env(5, _tackle("Alice", NOW)))
         assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (TACKLE_TAG,)
 
@@ -426,12 +445,12 @@ class TestFactSequencing:
         # sequence (4) is newer than the lifecycle bind (2), it is not newer
         # than the last ACCEPTED fact (5) and must be rejected -- it must
         # not roll the deadline backward to its own, shorter, remainder.
-        stale_occurred_at = NOW - datetime.timedelta(seconds=7)  # ~1s if applied
+        stale_occurred_at = NOW - datetime.timedelta(seconds=29)  # ~1s if applied
         metrics.consume(_env(4, _tackle("Alice", stale_occurred_at)))
 
-        # Past when the (rejected) stale fact's own deadline would have
-        # expired, but well before the real one at mono 108.0.
-        mono_box[0] = 100.0 + 7.5
+        # Past when the rejected stale fact would have expired, but well
+        # before the accepted activity window ends at mono 130.0.
+        mono_box[0] = 101.5
         assert _row(metrics.snapshot(7, HEALTH), "Alice").ewar == (TACKLE_TAG,)
 
     def test_rejected_future_fact_does_not_consume_sequence(self):
@@ -467,59 +486,52 @@ class TestTackle:
 
     def test_remaining_lifetime_from_occurred_at(self):
         metrics, _, mono_box = self._bound(_metrics(mono=100.0))
-        occurred_at = NOW - datetime.timedelta(seconds=3)  # 5s remaining
+        occurred_at = NOW - datetime.timedelta(seconds=3)  # 27s remaining
         metrics.consume(_env(3, _tackle("Alice", occurred_at)))
         row = _row(metrics.snapshot(4, HEALTH), "Alice")
         assert row.ewar == (TACKLE_TAG,)
-        mono_box[0] = 100.0 + 4.999
+        mono_box[0] = 100.0 + 26.999
         assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == (TACKLE_TAG,)
-        mono_box[0] = 100.0 + 5.001
+        mono_box[0] = 100.0 + 27.001
         assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ()
 
     def test_non_positive_remainder_ignored(self):
         metrics, _, _ = self._bound(_metrics(mono=100.0))
-        occurred_at = NOW - datetime.timedelta(seconds=8, milliseconds=1)
+        occurred_at = NOW - datetime.timedelta(seconds=30, milliseconds=1)
         metrics.consume(_env(3, _tackle("Alice", occurred_at)))
         row = _row(metrics.snapshot(4, HEALTH), "Alice")
         assert row.ewar == ()
 
-    def test_future_event_never_exceeds_eight_seconds(self):
+    def test_future_event_never_exceeds_thirty_seconds(self):
         metrics, _, mono_box = self._bound(_metrics(mono=100.0))
-        occurred_at = NOW + datetime.timedelta(seconds=3)  # remaining would be 11s
+        occurred_at = NOW + datetime.timedelta(seconds=3)
         metrics.consume(_env(3, _tackle("Alice", occurred_at)))
-        mono_box[0] = 100.0 + 7.999
+        mono_box[0] = 100.0 + 29.999
         assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == (TACKLE_TAG,)
-        mono_box[0] = 100.0 + 8.001
+        mono_box[0] = 100.0 + 30.001
         assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
 
     def test_accepted_refresh_moves_the_deadline(self):
         metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
-        metrics.consume(_env(3, _tackle("Alice", NOW)))  # original deadline: mono 108.0
-        mono_box[0] = 100.0 + 6.0
+        metrics.consume(_env(3, _tackle("Alice", NOW)))
+        mono_box[0] = 120.0
         assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == (TACKLE_TAG,)
 
-        # A newer fact refreshes the deadline from the new "now".
-        utc_box[0] = NOW + datetime.timedelta(seconds=6)
-        metrics.consume(_env(5, _tackle("Alice", utc_box[0])))  # refreshed: mono 114.0
+        utc_box[0] = NOW + datetime.timedelta(seconds=20)
+        metrics.consume(_env(5, _tackle("Alice", utc_box[0])))
 
-        # Still present just PAST the ORIGINAL (un-refreshed) deadline --
-        # proves the refresh actually moved it forward rather than leaving
-        # it where it was.
-        mono_box[0] = 100.0 + 8.5
+        mono_box[0] = 130.001
         assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (TACKLE_TAG,)
-
-        # Present just before the REFRESHED deadline...
-        mono_box[0] = 100.0 + 6.0 + 7.999
+        mono_box[0] = 149.999
         assert _row(metrics.snapshot(7, HEALTH), "Alice").ewar == (TACKLE_TAG,)
-        # ...and expired just after it.
-        mono_box[0] = 100.0 + 6.0 + 8.001
+        mono_box[0] = 150.001
         assert _row(metrics.snapshot(8, HEALTH), "Alice").ewar == ()
 
     def test_expiry_without_another_fact(self):
         metrics, _, mono_box = self._bound(_metrics(mono=100.0))
         metrics.consume(_env(3, _tackle("Alice", NOW)))
         assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == (TACKLE_TAG,)
-        mono_box[0] = 100.0 + 8.001
+        mono_box[0] = 130.001
         assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
 
     def test_fact_for_unbound_or_wrong_source_is_ignored(self):
@@ -539,6 +551,122 @@ class TestTackle:
         snap = metrics.snapshot(6, HEALTH)
         assert snap.metric_error is None
         assert _row(snap, "Alice").ewar == (TACKLE_TAG,)
+
+
+class TestSpecificEwarAndActivity:
+    def _bound(self, metrics_and_boxes):
+        metrics, utc_box, mono_box = metrics_and_boxes
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        return metrics, utc_box, mono_box
+
+    def test_scram_point_and_neut_are_distinct_and_can_coexist(self):
+        metrics, _, _ = self._bound(_metrics(mono=100.0))
+
+        metrics.consume(_env(3, _ewar("Alice", "incoming_point", NOW)))
+        metrics.consume(_env(4, _ewar("Alice", "incoming_scram", NOW)))
+        metrics.consume(_env(5, _ewar("Alice", "incoming_neut", NOW, amount=0)))
+
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (
+            "SCRAM",
+            "POINT",
+            "NEUT",
+        )
+
+    def test_ewar_clears_after_thirty_seconds_without_combat_activity(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_point", NOW)))
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=29, milliseconds=999)
+        mono_box[0] = 129.999
+        assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == ("POINT",)
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=30)
+        mono_box[0] = 130.0
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
+
+    def test_outgoing_damage_refreshes_observed_ewar_activity(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_scram", NOW)))
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=20)
+        mono_box[0] = 120.0
+        metrics.consume(_env(4, _damage("Alice", 100, utc_box[0])))
+
+        mono_box[0] = 149.999
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ("SCRAM",)
+        mono_box[0] = 150.0
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ()
+
+    def test_delayed_ewar_uses_event_time_not_ingestion_time(self):
+        metrics, _, mono_box = self._bound(_metrics(mono=100.0))
+        occurred_at = NOW - datetime.timedelta(seconds=5)
+        metrics.consume(_env(3, _ewar("Alice", "incoming_neut", occurred_at)))
+
+        mono_box[0] = 124.999
+        assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == ("NEUT",)
+        mono_box[0] = 125.0
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
+
+    def test_damage_outside_dps_window_still_refreshes_combat_activity(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_point", NOW)))
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=20)
+        mono_box[0] = 120.0
+        metrics.consume(
+            _env(
+                4,
+                _damage(
+                    "Alice",
+                    100,
+                    NOW + datetime.timedelta(seconds=5),
+                ),
+            )
+        )
+
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").dps == 0
+        mono_box[0] = 134.999
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ("POINT",)
+
+    def test_delayed_fact_does_not_shorten_newer_combat_activity(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_scram", NOW)))
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=20)
+        mono_box[0] = 120.0
+        metrics.consume(_env(4, _damage("Alice", 100, utc_box[0])))
+        metrics.consume(
+            _env(
+                5,
+                _ewar(
+                    "Alice",
+                    "incoming_neut",
+                    NOW + datetime.timedelta(seconds=5),
+                ),
+            )
+        )
+
+        mono_box[0] = 149.999
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (
+            "SCRAM",
+            "NEUT",
+        )
+
+    def test_ewar_older_than_activity_window_is_ignored(self):
+        metrics, _, _ = self._bound(_metrics(mono=100.0))
+        metrics.consume(
+            _env(
+                3,
+                _ewar(
+                    "Alice",
+                    "incoming_neut",
+                    NOW - datetime.timedelta(seconds=30),
+                ),
+            )
+        )
+
+        assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == ()
 
 
 # ---------------------------------------------------------------------------

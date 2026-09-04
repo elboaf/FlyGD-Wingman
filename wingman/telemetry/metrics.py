@@ -11,7 +11,7 @@ Per-character join
 -------------------
 State is keyed by character name and lives only for characters currently
 named in the latest accepted roster snapshot. A row enters *observed* state
-(a real, decaying DPS number; a live tackle tag) only once its current
+(a real, decaying DPS number; live observed EWAR tags) only once its current
 client session has an ACTIVE, sequence-verified log source bound to it.
 Until then the row reports ``NO LOG`` and a ``dps`` of ``None`` -- a
 missing measurement, never a suppressed zero.
@@ -27,7 +27,7 @@ cross-session envelope from rolling this join backward:
   that session's accumulated metrics" per the design.
 * A changed ``ClientSessionId`` for the same character key -- a relog, a
   HWND/PID change, a generic-title round trip -- replaces the character's
-  state outright (fresh deque, fresh tackle deadline, unbound). The
+  state outright (fresh deque, fresh EWAR activity, unbound). The
   replacement's ``session_first_roster_seq`` is the sequence of the roster
   envelope that introduced it, and no ``SourceLifecycle`` at or before that
   sequence may bind: the coordinator's fresh ``request_source`` publication
@@ -40,11 +40,11 @@ cross-session envelope from rolling this join backward:
   ``SourceLifecycle`` sequence already applied to that character, is
   dropped as stale. A newly active lifecycle whose generation or source
   identity differs from what is currently bound clears the damage deque and
-  the tackle deadline before adopting the new source -- old combat cannot
+  EWAR activity before adopting the new source -- old combat cannot
   leak across a truncation/relog/rotation boundary. A retiring
   (``active=False``) lifecycle fully clears the row: bound source
-  generation/identity, the damage deque, the tackle deadline, and the
-  per-source fact-ordering floor described below. This is deliberate and
+  generation/identity, the damage deque, EWAR activity, and the per-source
+  fact-ordering floor described below. This is deliberate and
   not merely cosmetic -- without it, a later active lifecycle that happens
   to reuse the SAME retired ``SourceId``/generation (a legitimate
   ``request_source`` republish, not a bug) would see an unchanged
@@ -65,7 +65,7 @@ lifecycle-sequence check alone cannot provide: two facts belonging to the
 SAME still-current source can themselves arrive out of order or
 duplicated, and only a per-source fact-ordering floor stops a duplicate
 from double-counting damage or a stale-but-still-"newer-than-the-bind"
-fact from rolling a tackle deadline backward. Only a fact that is actually
+fact from rolling observed EWAR activity backward. Only a fact that is actually
 accepted under the timestamp/horizon rules below advances
 ``last_fact_sequence`` -- a fact rejected for being too far in the future
 does NOT consume its sequence number, so a differently-timestamped
@@ -82,14 +82,14 @@ denominator is fixed; quiet time inside the window is not skipped. Two
 independent horizon checks run at ingestion, using the injected UTC clock
 sampled once per fact:
 
-* older than ten seconds (``occurred_at <= now - 10s``) is dropped silently
-  -- an ordinary, expected outcome of catching up on a batch of lines, not
-  a diagnostic.
+* older than ten seconds (``occurred_at <= now - 10s``) does not enter the
+  DPS deque. If it remains inside the 30-second combat-activity window, it
+  can still keep already-observed EWAR visible without replaying old damage.
 * more than two seconds in the future is dropped AND recorded as
   ``FleetSnapshot.metric_error`` -- one-second log-timestamp precision and
   polling boundaries do not explain a two-second-plus skew. Up to two
   seconds is instead clamped to ``now``. The next accepted metric fact of
-  EITHER kind -- outgoing damage or incoming tackle, any character --
+  EITHER kind -- outgoing damage or incoming EWAR, any character --
   clears the transient diagnostic, matching "a later accepted timestamp
   clears that transient metric diagnostic".
 
@@ -97,20 +97,21 @@ The deque is re-pruned to the window on every ``consume()`` damage
 ingestion AND on every ``snapshot()`` call, which is what produces one-second
 idle decay to zero without any new lines arriving.
 
-Incoming tackle
----------------
-``remaining = occurred_at + 8s - utc_now`` at ingestion. A non-positive
-remainder is ignored outright (a genuinely stale event, not a fresh grant).
-A positive remainder is capped at eight seconds -- covers a future-skewed
-``occurred_at`` producing an inflated remainder -- and converted to
-``monotonic_now + remaining``, so expiry is checked purely against the
-injected monotonic clock at ``snapshot()`` time with no further fact
-required. A later accepted tackle fact for the same bound source simply
-overwrites the deadline (a refresh).
+Incoming EWAR activity
+----------------------
+Verified tackle lines preserve whether EVE reported a warp scramble or warp
+disruption attempt, and verified incoming capacitor-neutralization lines add
+a separate ``NEUT`` tag. EVE does not provide a reliable incoming-effect-ended
+line, so observed EWAR stays visible while that character remains active in
+combat. Each accepted scram, point, neut, or outgoing-damage fact refreshes a
+30-second character activity deadline from event time. All observed EWAR tags
+clear together when that deadline expires.
 
-JAM is deliberately absent: it is release-gated on a verified fixture this
-task does not add (see task brief; do not add dormant JAM constants,
-branches, or tests here).
+A non-positive event-time remainder is ignored. A positive remainder is capped
+at 30 seconds and converted to a monotonic deadline, so delayed reads cannot
+grant a fresh full window. An older delayed fact may add its tag but cannot
+shorten a later activity deadline. Session/source changes clear the tags
+immediately.
 """
 
 from __future__ import annotations
@@ -140,11 +141,21 @@ UTC = datetime.UTC
 DPS_WINDOW = datetime.timedelta(seconds=10)
 # Tolerates one-second log-timestamp precision and polling boundaries.
 FUTURE_CLAMP = datetime.timedelta(seconds=2)
-# Warp scramble/disruption's event-time lifetime.
-TACKLE_LIFETIME = datetime.timedelta(seconds=8)
+# EVE reports effect attempts but no reliable incoming-effect-ended event.
+EWAR_ACTIVITY_WINDOW = datetime.timedelta(seconds=30)
 
 NO_LOG = "NO LOG"
-TACKLE_TAG = "SCRAM/POINT"
+SCRAM_TAG = "SCRAM"
+POINT_TAG = "POINT"
+NEUT_TAG = "NEUT"
+# Internal compatibility name for callers/tests that treated tackle as one kind.
+TACKLE_TAG = SCRAM_TAG
+_EWAR_TAGS = {
+    "incoming_scram": SCRAM_TAG,
+    "incoming_point": POINT_TAG,
+    "incoming_neut": NEUT_TAG,
+}
+_EWAR_ORDER = (SCRAM_TAG, POINT_TAG, NEUT_TAG)
 
 _ROUND_UNIT = Decimal(1)
 _DPS_DIVISOR = Decimal(10)
@@ -193,7 +204,8 @@ class _CharacterState:
     # tackle deadline backward.
     last_fact_sequence: int | None = None
     damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
-    tackle_deadline: float | None = None
+    ewar: set[str] = field(default_factory=set)
+    activity_deadline: float | None = None
 
 
 class FleetMetrics:
@@ -298,7 +310,8 @@ class FleetMetrics:
             state.source_id = None
             state.last_fact_sequence = None
             state.damage.clear()
-            state.tackle_deadline = None
+            state.ewar.clear()
+            state.activity_deadline = None
             return
 
         changed = (
@@ -307,7 +320,8 @@ class FleetMetrics:
         )
         if changed:
             state.damage.clear()
-            state.tackle_deadline = None
+            state.ewar.clear()
+            state.activity_deadline = None
         state.source_generation = lifecycle.generation
         state.source_id = lifecycle.source_id
         state.bound = True
@@ -340,8 +354,8 @@ class FleetMetrics:
         accepted = False
         if fact.kind == "outgoing_damage":
             accepted = self._ingest_damage(state, fact)
-        elif fact.kind == "incoming_tackle":
-            accepted = self._ingest_tackle(state, fact)
+        elif fact.kind in _EWAR_TAGS:
+            accepted = self._ingest_ewar(state, fact)
 
         if accepted:
             # Only an actually-accepted fact advances the floor: a fact
@@ -356,8 +370,6 @@ class FleetMetrics:
 
         now = self._utc_now()
         _prune_damage(state, now)
-        if fact.occurred_at <= now - DPS_WINDOW:
-            return False  # Ordinary catch-up on old lines: not a diagnostic.
 
         occurred_at = fact.occurred_at
         if occurred_at > now:
@@ -369,19 +381,38 @@ class FleetMetrics:
                 return False
             occurred_at = now  # Tolerate log/poll precision.
 
+        active = self._refresh_activity(state, occurred_at)
+        if occurred_at <= now - DPS_WINDOW:
+            # Too old for DPS can still be recent combat activity. Accepting
+            # it preserves the 30-second EWAR observation without replaying
+            # damage into the shorter ten-second calculation.
+            if active:
+                self._metric_error = None
+            return active
+
         state.damage.append((occurred_at, fact.amount))
         self._metric_error = None  # A later accepted timestamp clears it.
         return True
 
-    def _ingest_tackle(self, state: _CharacterState, fact: CombatFact) -> bool:
+    def _ingest_ewar(self, state: _CharacterState, fact: CombatFact) -> bool:
         if fact.occurred_at is None:
             return False
-        remaining = fact.occurred_at + TACKLE_LIFETIME - self._utc_now()
-        if remaining <= datetime.timedelta(0):
-            return False  # A genuinely stale event grants no fresh lifetime.
-        remaining = min(remaining, TACKLE_LIFETIME)
-        state.tackle_deadline = self._clock() + remaining.total_seconds()
+        if not self._refresh_activity(state, fact.occurred_at):
+            return False
+        state.ewar.add(_EWAR_TAGS[fact.kind])
         self._metric_error = None  # A later accepted metric fact clears it too.
+        return True
+
+    def _refresh_activity(
+        self, state: _CharacterState, occurred_at: datetime.datetime
+    ) -> bool:
+        remaining = occurred_at + EWAR_ACTIVITY_WINDOW - self._utc_now()
+        if remaining <= datetime.timedelta(0):
+            return False
+        remaining = min(remaining, EWAR_ACTIVITY_WINDOW)
+        candidate = self._clock() + remaining.total_seconds()
+        if state.activity_deadline is None or candidate > state.activity_deadline:
+            state.activity_deadline = candidate
         return True
 
     # ------------------------------------------------------------------
@@ -413,9 +444,10 @@ class FleetMetrics:
             total = sum(amount for _, amount in state.damage)
             dps = _round_half_up(total)
 
-            ewar: tuple[str, ...] = ()
-            if state.tackle_deadline is not None and mono < state.tackle_deadline:
-                ewar = (TACKLE_TAG,)
+            if state.activity_deadline is not None and mono >= state.activity_deadline:
+                state.ewar.clear()
+                state.activity_deadline = None
+            ewar = tuple(tag for tag in _EWAR_ORDER if tag in state.ewar)
 
             rows.append(
                 FleetRow(character=character, dps=dps, ewar=ewar, log_status=None)

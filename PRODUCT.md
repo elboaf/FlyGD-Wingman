@@ -168,11 +168,14 @@ is watching and which characters it can see, in one sentence, on purpose.
 
 The Fleet combat bar is a display-only companion to client previews: one
 stable row per running, logged-in client, with recent outgoing DPS and
-incoming tackle read from EVE's gamelogs. It belongs under Settings ›
-Previews because it is another floating desktop window, but its runtime is
-independent — turning previews or alerts off must not stop it. A missing log
-is shown as missing data, never as a fabricated zero, and the bar never
-moves an EVE client or sends input to one.
+incoming scram, point, and energy neutralization read from EVE's gamelogs.
+It belongs under Settings › Previews because it is another floating desktop
+window, but its runtime is independent: turning previews or alerts off must
+not stop it. Because the log proves effect starts but has no dependable
+incoming-effect-ended event, observed EWAR clears after 30 seconds without
+that character producing outgoing damage or receiving another tracked EWAR
+event. A missing log is shown as missing data, never as a fabricated zero,
+and the bar never moves an EVE client or sends input to one.
 
 
 ## What it must not become

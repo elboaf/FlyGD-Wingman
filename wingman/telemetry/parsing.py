@@ -85,6 +85,14 @@ _AMOUNT_RE = re.compile(
 _OUTGOING_TEXT_RE = re.compile(
     r"^\(combat\)\s+(?P<amount>[\d,]+)\s+to\s+(?P<rest>.+)$", re.IGNORECASE
 )
+# Incoming and outgoing capacitor effects use the same words; their colour is
+# the only reliable direction marker in the verified gamelog corpus.
+_INCOMING_NEUT_RE = re.compile(
+    r"\(combat\)\s*<color=0xffe57f7f><b>(?P<amount>[\d,]+)\s+GJ</b>"
+    r".*?<font[^>]*>\s*energy neutralized\s*</font>\s*"
+    r"<b>(?P<source>.+?)</b>",
+    re.IGNORECASE,
+)
 
 
 def strip_markup(text: str) -> str:
@@ -195,7 +203,16 @@ def parse_line(line: str, character: str) -> ParsedLine:
     facts: list[ParsedFact] = []
 
     if "(combat)" in lower:
-        if _is_incoming_damage(lower):
+        neut = _INCOMING_NEUT_RE.search(line)
+        if neut:
+            facts.append(
+                ParsedFact(
+                    kind="incoming_neut",
+                    amount=int(neut.group("amount").replace(",", "")),
+                    source=strip_markup(neut.group("source")),
+                )
+            )
+        elif _is_incoming_damage(lower):
             facts.append(
                 ParsedFact(
                     kind="incoming_damage",
@@ -216,7 +233,11 @@ def parse_line(line: str, character: str) -> ParsedLine:
                 if _target_is_character(target, character):
                     facts.append(
                         ParsedFact(
-                            kind="incoming_tackle",
+                            kind=(
+                                "incoming_scram"
+                                if "warp scramble attempt" in lower
+                                else "incoming_point"
+                            ),
                             source=_extract_source(line),
                             target=target,
                         )

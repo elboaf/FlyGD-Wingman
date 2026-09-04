@@ -2928,11 +2928,13 @@ independent of both preview thumbnails and alert preferences.
       row. Expected: the value falls as events leave the fixed 10-second window
       and reaches `0` without another combat line arriving; it never divides by
       only the active portion of the window.
-- [ ] **Incoming tackle is the only EWAR shown in v1.** Have another ship point
-      or scram a displayed character. Expected: `SCRAM/POINT` appears under
-      `INCOMING` for up to eight seconds from the EVE event timestamp, refreshes
-      on another tackle event, and expires without another log line. JAM and
-      other effects never appear.
+- [ ] **Incoming EWAR remains distinct during combat activity.** Have another
+      ship point, scram, and neut a displayed character. Expected: distinct
+      `POINT`, `SCRAM`, and `NEUT` labels appear under `INCOMING`, including in
+      combination. Another tracked EWAR event or outgoing damage from that
+      character refreshes the shared activity window. All labels clear after
+      30 seconds without that activity; relogging or replacing the active log
+      source clears them immediately. Outgoing neuts and nos never appear.
 - [ ] **Reader degradation is explicit and non-destructive.** Temporarily make
       the Gamelogs folder unreadable or pause its updates. Expected: the header
       changes to `STALE` or `ERROR` and retains the last good rows. Recovery
