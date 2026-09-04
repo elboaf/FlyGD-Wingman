@@ -408,6 +408,15 @@ rollout:
 7. **Policy gate:** obtain a current authoritative CCP position on this specific
    real-time log-derived sharing use before any public production release.
 
+   **Status: unverified, by explicit direction.** The user directed the
+   project not to seek a new CCP ruling for this tracer, so no inquiry has
+   been sent and none is planned as part of this work. Passing the ESI
+   feasibility, device, safety, integration, and capacity proofs above is
+   technical validation only; it does not establish CCP policy permission
+   and does not change this gate's status. Unverified CCP-policy status
+   blocks public production release; it does not block the isolated,
+   non-public tracer implementation work in this plan.
+
 The design becomes eligible for a production implementation plan only after the
 ESI feasibility, device proof, safety proof, and policy gate have documented
 results.
