@@ -1644,6 +1644,7 @@ class SkillsController:
             first_reconciliation = not self._reconciled_once
             self._reconciled_once = True
             existing = {character.character_id for character in self._state.characters}
+            removed_ids = existing - wanted_ids
             added_rows = [
                 state_mod.Character(character_id=character.character_id)
                 for character in characters
@@ -1667,7 +1668,7 @@ class SkillsController:
             changed = candidate != self._state
             saved = True if not changed else self._publish_locked(candidate)
             additions_applied = False
-            if not saved and added_rows:
+            if not saved and added_rows and not removed_ids:
                 for character in added_rows:
                     self._state.upsert(character)
                 additions_applied = True
@@ -1689,10 +1690,13 @@ class SkillsController:
                     self._load_warnings.insert(0, warning)
             else:
                 self._alert("warning", "Skills roster not saved", warning)
-        if not first_reconciliation:
+        if not first_reconciliation and (saved or additions_applied):
             # Preserve the existing sign-in behavior for both new characters
             # and reauthentication: every successful consent flow refreshes
             # Skills instead of leaving the row stale until another click.
+            # A failed reconcile that includes removals must not publish a UI
+            # that hides unsaved cleanup evidence, so only durable updates and
+            # additions-only in-memory rows are eligible for immediate refresh.
             self.refresh_characters()
         return verification
 

@@ -482,6 +482,80 @@ def test_failed_addition_reconciliation_keeps_the_new_row_live_for_refresh(
     ]
 
 
+def test_failed_mixed_reconciliation_defers_both_removal_and_addition_until_retry(
+    tmp_path, monkeypatch
+):
+    authority = FakeAuthority(
+        [
+            AuthorityCharacter(
+                character_id=42,
+                character_name="Old Pilot",
+                owner_hash="old-owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ]
+    )
+    esi = FakeEsi()
+    controller, pushed, alerts = build(
+        tmp_path,
+        characters=[with_snapshot(character_id=42)],
+        authority=authority,
+        client=esi,
+        spawn=DirectSpawn(),
+    )
+    authority._characters = {
+        95: AuthorityCharacter(
+            character_id=95,
+            character_name="New Pilot",
+            owner_hash="new-owner",
+            scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+            authenticated_utc=T0,
+            needs_reauth=False,
+            generation=0,
+        )
+    }
+    original_save = state_mod.save
+    calls = 0
+
+    def fail_once(state, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk")
+        original_save(state, path)
+
+    monkeypatch.setattr(state_mod, "save", fail_once)
+
+    verification = controller.reconcile_characters(authority.characters)
+
+    assert verification.blocked_character_ids == frozenset({42})
+    assert controller._state.find(42) is not None
+    assert controller._state.find(95) is None
+    assert pushed == []
+    assert authority.lifecycle_calls == []
+    assert esi.calls == []
+    assert alerts == [
+        (
+            "warning",
+            "Skills roster not saved",
+            "Shared EVE characters are available for this session, but the "
+            "Skills roster reconciliation could not be saved.",
+        )
+    ]
+
+    controller.reconcile_characters(authority.characters)
+
+    assert controller._state.find(42) is None
+    assert controller._state.find(95) is not None
+    assert authority.lifecycle_calls == [(95, eveauth_application.SKILLS)]
+    assert any(handler == "onSkills" for handler, _payload in pushed)
+    skill_pushes = [payload for handler, payload in pushed if handler == "onSkills"]
+    assert skill_pushes[-1]["characters"][0]["character_id"] == 95
+
+
 def test_the_state_lock_is_re_entrant(tmp_path):
     """A plain Lock would deadlock, not raise.
 
