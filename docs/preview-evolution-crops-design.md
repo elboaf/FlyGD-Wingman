@@ -9,20 +9,27 @@
 ## Phase 0 probe result
 
 Full results, thresholds, and observed values are in
-`docs/preview-crop-prototype-results.md`. That document's decision remains
-**INCOMPLETE — no production cap selected.** Stages 1, 2, and 4
-functionally created crops across two- and five-named-client sessions, and
-stage 8 has since run in a ten-named-client session where the user reported
-responsive click/move/resize behavior and a clean close. Stages 4 and 8
-each have a real automated 60-second CPU/working-set sample within
-threshold, and stage 8 additionally has an informal 10-sample (not
-60-second) GPU-median comparison within threshold. That is still not a
-pass: quantitative expected-vs-observed source-edge correctness, activation
-and drag latency, mixed-DPI (125%/150%/200%) coverage, a continuous
-60-second GPU sample, numeric HWND counts, and full lifecycle variants
-remain unmeasured for every stage, so no stage can be scored against every
-committed criterion. Phase 1 production work must not begin until the
-remaining Phase 0 gates are exercised or this scope is explicitly revised.
+`docs/preview-crop-prototype-results.md`. Phase 0 concluded with the user
+approving a scope revision: **GO — Phase 1 experimental cap: 8 live
+crops.** This is a provisional cap approved for Phase 1
+prototype-to-production implementation planning, not a production-release
+approval. It rests on stages 1, 2, 4, and 8 all functionally creating and
+controlling crops; stage 8 remaining responsive by user report when
+clicking, moving, and resizing crops; the stage-4 and stage-8 60-second
+automated CPU/working-set samples each falling within their committed
+thresholds; a short 10-sample DWM GPU comparison at stage 8 falling within
+its committed threshold as sampled; probe processes cleaning up after
+every session; and one live keyboard-focus defect being found, fixed, and
+reverified.
+
+Quantitative expected-vs-observed source-edge accuracy, activation
+latency, drag p95/max, a continuous 60-second GPU sample, numeric HWND/DWM
+accounting, the full minimize/occlusion/alert/logout/rebinding lifecycle
+matrix, and mixed-DPI (125%/150%/200%) and explicit negative-monitor
+picker coverage remain unmeasured. These are now mandatory **pre-release**
+blockers: the provisional 8-crop cap may be lowered, or the crop feature
+blocked entirely, if any of them fail when exercised. Phase 1 planning and
+implementation may proceed under this provisional cap.
 
 ## Intended outcome
 

@@ -56,6 +56,34 @@ greatest **fully run and passing** stage below it. If the 1-crop stage itself
 fails, the result is a no-go — there is no cap, and production work does not
 start from this probe.
 
+### Scope revision — provisional experimental cap (approved)
+
+After reviewing the observed evidence recorded below — stages 1, 2, 4, and
+8 all functionally created and controlled crops; stage 8 remained
+responsive by user report when clicking, moving, and resizing crops; the
+stage-4 and stage-8 60-second automated CPU/working-set samples were each
+individually within their committed thresholds; the short sampled DWM GPU
+comparison at stage 8 was within its committed threshold as sampled; probe
+processes cleaned up after every session; and one live keyboard-focus
+defect was found, fixed, and reverified — the user approved revising
+Phase 0's exit criteria.
+
+Rather than requiring every one of the eight pass criteria and the cap
+rule above to be fully measured before Phase 1 may begin, the user approved
+letting Phase 1 begin with a **provisional, experimental cap of 8 live
+crops**, on the explicit condition that this is not a production-release
+approval. The quantitative criteria that remain unmeasured (listed in full
+in the Decision section below) become mandatory **pre-release** blockers
+instead of Phase-0-entry blockers: Phase 1 prototype-to-production
+implementation planning may proceed under the provisional cap, but the
+feature must not ship, and the cap may be lowered or the feature blocked
+entirely, if those remaining gates fail when exercised. This revision does
+not retroactively mark any unmeasured criterion as passed, and it does not
+change any observed value recorded elsewhere in this document; the
+original eight criteria and cap rule remain the complete gate for a full
+production pass — they are now pre-release gates rather than Phase-0-exit
+gates.
+
 ## Automated gates (Linux, current branch)
 
 Rerun per Task 8 Step 1 at commit `402db94` (current branch head, one commit
@@ -358,45 +386,64 @@ loop.
 | 4 crops | Yes (user confirmed crop creation and function worked, five named clients available; automated 60-second CPU/working-set sample recorded) | Cannot be determined | CPU (+0.0021701389 pp) and working-set (+0.18359375 MiB) deltas are individually within their thresholds, but GPU, activation/drag latency, DPI-scale correctness, HWND-count, and full lifecycle criteria remain unmeasured for this stage. |
 | 8 crops | Yes (user reported responsive clicking/moving/resizing then a clean close; ten named clients available; automated 60-second CPU/working-set sample and a 10-sample GPU comparison recorded) | Cannot be determined | CPU (+0.17578125 pp) and working-set (+3.953125 MiB) deltas are individually within their thresholds, and the 10-sample GPU median delta (0 pp) is within threshold but is not a formal 60-second pass; expected-vs-observed correctness, activation/drag latency, DPI-scale correctness, numeric HWND counts, and full lifecycle criteria remain unmeasured for this stage. |
 
-**Resulting production live-crop cap:** INCOMPLETE — no production cap
-selected. Stages 1, 2, 4, and now 8 have all run and functionally created
-crops. Stages 4 and 8 additionally have real automated 60-second
-CPU/working-set samples whose deltas sit within their individual
+**Resulting production live-crop cap under the original eight-criterion
+gate:** Still not determined by measurement alone — no stage has had every
+applicable criterion measured and passed. Stages 1, 2, 4, and 8 all ran and
+functionally created crops; stages 4 and 8 additionally have real automated
+60-second CPU/working-set samples whose deltas sit within their individual
 thresholds, and stage 8 has an informal 10-sample GPU-median comparison
-also within threshold. None of this sets a cap: expected-vs-observed
-source-edge correctness, activation latency, drag p95/max, mixed-DPI
-(125%/150%/200%) coverage, a continuous 60-second GPU sample, numeric HWND
-counts, and full lifecycle variants remain unmeasured for every stage, so
-no stage can be scored as passing or failing under the complete cap rule.
+also within threshold. Expected-vs-observed source-edge correctness,
+activation latency, drag p95/max, mixed-DPI (125%/150%/200%) coverage, a
+continuous 60-second GPU sample, numeric HWND counts, and full lifecycle
+variants remain unmeasured for every stage, so no stage can be scored as
+passing or failing under the complete cap rule.
+
+See the "Scope revision" note above and the Decision below: the user has
+separately approved a **provisional, experimental cap of 8 live crops** for
+Phase 1 planning purposes, subject to the pre-release blockers listed in
+the Decision section. That approval is a scope-revision decision, not a
+claim that stage 8 (or any stage) satisfied every criterion above.
 
 ## Decision
 
-**INCOMPLETE — no production cap selected.** Stages 1 and 2 ran with two
-named EVE clients (Amelio Pellion and Isiga Ichinumi) and, after fixing a
-picker focus defect (commit `402db94`), functionally created crops as
-confirmed by the user. Stage 4 later ran with five named clients (Gustav
-Oswaldo, Guarzo Opper, Amelio Pellion, Umochi Tawate, and Astrella
-Esubria) and functioned correctly per the user, with a real automated
-60-second CPU/working-set sample (CPU +0.0021701389 pp, working set
-+0.18359375 MiB) within threshold. Stage 8 then ran with ten named clients
-(Gustav Oswaldo, Guarzo Estuven, Guarzo Opper, Guarzo Togenada, Amelio
-Pellion, Umochi Tawate, Astrella Esubria, Sapphire Orewhisper, Suartad
-Arsten, and Isiga Ichinumi); the user reported stage 8 felt responsive when
-clicking, moving, and resizing crops, then closed it cleanly
-(`REMAINING_PROBE_PROCESSES=0`). Stage 8's automated 60-second sample shows
-CPU +0.17578125 pp and working set +3.953125 MiB, both within their
-thresholds, and a 10-sample (not 60-second) DWM GPU-engine comparison shows
-a 0-percentage-point median delta, also within threshold as sampled. None
-of this permits a GO decision: quantitative expected-vs-observed source-edge
-correctness at any DPI scale, activation latency, drag p95/max, an explicit
-negative-monitor picker exercise, numeric HWND counts (process handle
-counts are recorded but are not HWND counts), and full lifecycle variants
-(logout, character-select, rebinding, minimize/restore, cancellation) remain
-incomplete across every stage, and a stage must pass every applicable
-criterion — not just CPU and memory — to set the cap. Real EVE client
-geometry/maximized-state was not explicitly compared before and after any
-session. **Phase 1 must not begin until the remaining gates —
-125%/150%/200% DPI scales, explicit negative-monitor picker mapping,
-measured click latency and drag p95/max, a continuous 60-second GPU sample,
-numeric HWND counts, and full lifecycle variants — are exercised, or this
-scope is explicitly revised.**
+**GO — Phase 1 experimental cap: 8 live crops.** This is a provisional,
+experimental cap for Phase 1 planning and implementation, **not a
+production-release approval**. The user reviewed the observed evidence in
+this document and approved this scope revision on the basis that: stages
+1, 2, 4, and 8 all functionally created and controlled crops; stage 8
+remained responsive by user report when clicking, moving, and resizing
+crops; the stage-4 and stage-8 60-second automated CPU/working-set samples
+were each individually within their committed thresholds (stage 4: CPU
++0.0021701389 pp, working set +0.18359375 MiB; stage 8: CPU +0.17578125
+pp, working set +3.953125 MiB); the short 10-sample DWM GPU comparison at
+stage 8 was within its committed threshold as sampled (0 percentage-point
+median delta); probe processes cleaned up after every session; and one
+live keyboard-focus defect (Enter not reaching the picker) was found,
+fixed in commit `402db94`, and reverified by the user.
+
+**This decision does not claim that any unmeasured criterion passed.** The
+following remain mandatory pre-release blockers and must be exercised
+before a production release, not merely before Phase 1 planning begins:
+
+- Quantitative expected-vs-observed source-edge accuracy (criterion 1),
+  including at 125%, 150%, and 200% display scaling and an explicit
+  negative-coordinate-monitor picker exercise.
+- Activation latency (criterion 2) — measured, not user-reported.
+- Drag responsiveness p95/max inter-event gap (criterion 3) — measured,
+  not user-reported.
+- A continuous 60-second GPU sample (criterion 5) — the existing GPU
+  evidence is a 10-discrete-sample comparison, not the committed window.
+- Numeric HWND/DWM accounting (criterion 7) — process handle counts were
+  recorded but are not HWND counts, and no formal HWND-before/after or
+  DWM-relationship check has been performed.
+- The full lifecycle matrix (criterion 8): minimize/restore,
+  partial/full occlusion, alert-pulse-while-dragging, logout to character
+  select, character-select cold start, same-character HWND rebinding, and
+  picker cancel/client-loss cancellation.
+
+**The provisional 8-crop cap may be lowered, or the crop feature blocked
+entirely, if any of the above fail when exercised.** Phase 1 implementation
+planning and prototype-to-production work may proceed under this
+provisional cap, but no production release may ship until every criterion
+above is measured and passes, or the scope is again explicitly revised
+with the user's approval.
