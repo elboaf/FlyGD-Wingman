@@ -529,7 +529,6 @@ def test_host_command_messages_are_distinct():
     """
     commands = {
         host.win32.WM_APP_SHUTDOWN,
-        host.win32.WM_APP_SWEEP_NOW,
         host.win32.WM_APP_REBIND,
         host.win32.WM_APP_ALERT,
         host.win32.WM_APP_RESTYLE,
@@ -539,7 +538,7 @@ def test_host_command_messages_are_distinct():
         host.win32.WM_APP_APPLY_LAYOUTS,
         host.win32.WM_APP_ROSTER,
     }
-    assert len(commands) == 10
+    assert len(commands) == 9
     assert all(c >= host.win32.WM_APP for c in commands)
     # Contiguous from WM_APP+1, so a new command is added by extending the
     # run rather than by picking a free-looking offset -- which is how two
@@ -5048,10 +5047,8 @@ def test_a_roster_from_before_the_window_existed_is_applied_at_startup(monkeypat
     useful if something eventually drains it.
 
     Nothing posted a signal for it -- there was no window to post to -- so
-    without an explicit drain in _run the previews would show whatever the
-    startup sweep's own direct discovery found, until the next shared scan
-    happened to publish again. Drained AFTER the compatibility sweep, or the
-    older self-discovered roster would be the one applied last.
+    without an explicit drain in _run the previews would stay empty until
+    the next shared scan happened to publish again.
 
     Drives the real _run() body, with only the two calls that need a genuine
     Win32 window station stubbed out.
@@ -5063,10 +5060,6 @@ def test_a_roster_from_before_the_window_existed_is_applied_at_startup(monkeypat
     monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(_StartupUser32()))
     monkeypatch.setattr(h, "_create_host_window", lambda libs: 0x99)
     monkeypatch.setattr(h, "_install_hook", lambda libs: None)
-    monkeypatch.setattr(
-        host.discovery, "list_clients", lambda: [_FakeClient("Legacy", hwnd=0x9999)]
-    )
-
     h.apply_roster(_roster(7, ("Alice", 0x1111)))
     assert created == [], "nothing may be reconciled before the pump exists"
 
@@ -5074,8 +5067,7 @@ def test_a_roster_from_before_the_window_existed_is_applied_at_startup(monkeypat
 
     assert h._ready.is_set()
     assert created.count("Alice") == 1
-    # The startup sweep ran first and found a different roster; the shared
-    # snapshot is what survives, so ordering is proven rather than assumed.
+    # Only the shared snapshot reaches runtime reconciliation.
     assert sorted(h._clients) == ["Alice"]
     assert sorted(h._windows) == ["Alice"]
     assert h._last_roster_generation == 7
@@ -5132,8 +5124,6 @@ def test_a_failed_startup_roster_does_not_kill_the_preview_thread(monkeypatch):
     reconcile = h._reconcile_roster
 
     def flaky(libs, snapshot):
-        # The compatibility startup sweep reaches here too, with the legacy
-        # generation; only the shared snapshot is made to fail.
         if snapshot.generation != 7:
             reconcile(libs, snapshot)
             return
@@ -5145,7 +5135,6 @@ def test_a_failed_startup_roster_does_not_kill_the_preview_thread(monkeypatch):
     monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(user32))
     monkeypatch.setattr(h, "_create_host_window", lambda libs: 0x99)
     monkeypatch.setattr(h, "_install_hook", lambda libs: None)
-    monkeypatch.setattr(host.discovery, "list_clients", list)
     monkeypatch.setattr(h, "_reconcile_roster", flaky)
 
     h.apply_roster(_roster(7, ("Alice", 0x1111)))
@@ -5154,10 +5143,10 @@ def test_a_failed_startup_roster_does_not_kill_the_preview_thread(monkeypatch):
 
     assert seen == [7]
     assert created == []
-    # Startup carried on rather than unwinding: the sweep timer was armed
-    # and _ready was set, both of which come after the failed drain.
+    # Startup carried on rather than unwinding: readiness is set and no
+    # superseded direct-discovery timer is armed.
     assert h._ready.is_set()
-    assert [name for name, _args in user32.seen].count("SetTimer") == 1
+    assert [name for name, _args in user32.seen].count("SetTimer") == 0
     # Retryable: still pending, and the generation was never spent.
     assert h._pending_roster.generation == 7
     assert h._last_roster_generation == 0

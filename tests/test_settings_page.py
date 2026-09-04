@@ -181,7 +181,7 @@ def test_each_folder_cost_sentence_is_written_once_and_sits_under_its_field():
     describes. So this now pins both: each note is in the same card as its
     own input, and the two costs are different sentences because the two
     folders do different things -- one starts a watcher, the other makes
-    AlertService re-read (ui/api.py's set_folder branches on exactly that).
+    shared telemetry re-read (ui/api.py's set_folder branches on exactly that).
 
     Compared on words, since the markup wraps and indents and the JS is
     split across string concatenations.

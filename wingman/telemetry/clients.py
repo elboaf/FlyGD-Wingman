@@ -79,9 +79,8 @@ from .model import ClientSessionId, RosterClient, RosterSnapshot
 
 logger = logging.getLogger(__name__)
 
-# Matches preview.host.SWEEP_MS: the shared service must not scan slower
-# than Preview's existing cadence, since Preview becomes a consumer of it
-# rather than reconciling windows itself.
+# Preserve Preview's measured 700ms discovery cadence. The host no longer
+# owns a timer; this service is the sole process enumerator.
 SCAN_INTERVAL_S = 0.7
 
 _SessionKey = tuple[int, int, str]

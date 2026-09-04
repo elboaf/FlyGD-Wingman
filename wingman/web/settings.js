@@ -23,10 +23,9 @@
   // The gamelogs folder's own cost, and it is a DIFFERENT one -- which is
   // why round 5's E2 was a defect rather than a wording problem. The two
   // fields shared one note stating the sentence above, so repointing the
-  // gamelogs path explained the recording watcher. This folder drives no
-  // watcher: ui/api.py's set_folder calls AlertService.reconcile() on the
-  // gamelogs branch, so the change takes effect on the spot rather than
-  // costing anything.
+  // gamelogs path explained the recording watcher. This folder drives the
+  // shared telemetry reader: ui/api.py reconciles it on the gamelogs branch,
+  // so the change takes effect on the spot rather than costing anything.
   var GAMELOG_COST = 'Alerts read this folder. Changing it re-checks it '
                    + 'straight away.';
 

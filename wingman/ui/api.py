@@ -393,7 +393,6 @@ class Api:
         timer=threading.Timer,
         preview_host=None,
         skills=None,
-        alerts=None,
         telemetry=None,
     ):
         self._state = state
@@ -454,15 +453,9 @@ class Api:
         # without probing for a capability first.
         self._skills = skills
 
-        # None off the happy path -- pre-Windows-check, off Linux in tests,
-        # and when the gamelogs feature is otherwise unavailable. Every
-        # call site below tolerates its absence: reconcile() is the only
-        # method ever invoked on it, and every one of the alert bridge
-        # methods below guards on it first.
-        self._alerts = alerts
-        # Shared client/log infrastructure in production. ``_alerts`` stays
-        # as the legacy AlertService seam for focused tests and compatibility;
-        # all lifecycle call sites prefer telemetry when it is present.
+        # Shared client/log infrastructure. None off Windows, in most tests,
+        # or when optional construction failed; every call site degrades to
+        # an inert preview/alert/fleet state.
         self._telemetry = telemetry
 
         self._rows = rows if rows is not None else RowSnapshot()
@@ -3005,8 +2998,8 @@ class Api:
                 return self._field_refused("That folder does not exist.")
             result = self._write_setting("gamelogs_dir", text or None)
             # This IS the watcher this branch's docstring says it drives
-            # none of: AlertService reads gamelogs_dir through the same
-            # `folder` callable reconcile() re-evaluates, so a repointed
+            # none of: shared telemetry reads gamelogs_dir through the same
+            # folder callable reconcile() re-evaluates, so a repointed
             # or newly-set folder is exactly the case that used to persist
             # while nothing ever polled it.
             self._reconcile_eve_runtime()
@@ -3114,9 +3107,8 @@ class Api:
 
     def _reconcile_eve_runtime(self) -> None:
         """Reconcile the shared runtime, falling back to legacy Alerts."""
-        runtime = self._telemetry if self._telemetry is not None else self._alerts
-        if runtime is not None:
-            runtime.reconcile()
+        if self._telemetry is not None:
+            self._telemetry.reconcile()
 
     def start_previews_if_enabled(self) -> None:
         """Start the preview thread only if the user asked for it.
@@ -3193,13 +3185,9 @@ class Api:
                 self._preview_host.stop()
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        runtime = self._telemetry if self._telemetry is not None else self._alerts
-        if runtime is not None:
+        if self._telemetry is not None:
             try:
-                if self._telemetry is not None:
-                    runtime.stop()
-                else:
-                    runtime.reconcile()
+                self._telemetry.stop()
             except Exception:
                 logger.exception("EVE telemetry runtime did not stop cleanly")
         unsubscribe = self._fleet_unsubscribe
@@ -4293,8 +4281,7 @@ class Api:
     def test_alert(self, event) -> dict:
         """Fire one alert manually on every currently previewed character,
         bypassing cooldowns entirely. Reaches the host directly rather
-        than through AlertService: the service owns the poll path, and
-        Test is not a poll.
+        than through AlertPolicy: Test is not a gamelog event.
 
         NEVER persistent, regardless of persist_until_selected -- always
         `persisted: False`, on every path including success, since
@@ -4304,8 +4291,8 @@ class Api:
         they alt-tabbed to that client by hand.
 
         The sound plays exactly once regardless of how many previews are
-        open, matching AlertService._handle's one-sound-per-dispatched-
-        event behaviour -- N previews must not mean N overlapping sounds.
+        open, matching AlertPolicy's one-sound-per-dispatched-event
+        behaviour -- N previews must not mean N overlapping sounds.
 
         With no live preview to ring -- previews off (no host at all) or
         a host present but no named EVE client -- the sound still plays
@@ -4369,8 +4356,8 @@ class Api:
         alerts = section.get("alerts", {})
         gamelogs = self._state.settings.get("gamelogs_dir")
         folder = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
-        # Same test as AlertService._wanted(): a folder that was valid and
-        # stopped being one (an unmounted drive, an unlinked OneDrive
+        # Same test as the coordinator's resolver: a folder that was valid
+        # and stopped being one (an unmounted drive, an unlinked OneDrive
         # folder, a settings.json carried from another machine) must show
         # the no-folder banner, not the healthy card, even though the
         # setting still holds a path.
@@ -4381,11 +4368,6 @@ class Api:
             running = health.state in {"running", "active", "stale", "error"}
             last_error = health.detail if health.state in {"stale", "error"} else None
             characters = list(self._telemetry.stream_characters())
-        elif self._alerts is not None:
-            health = self._alerts.health()
-            running = health.running
-            last_error = health.last_error
-            characters = list(health.characters)
         else:
             running, last_error, characters = False, None, []
         return {

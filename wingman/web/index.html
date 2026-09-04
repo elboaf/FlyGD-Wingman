@@ -480,8 +480,8 @@
         <!-- Round 3's B10 argued this heading down from a second-person
              sentence to the noun its rows hold, and that noun was
              "Recordings and gamelogs" while it held both. D2 split them --
-             the gamelogs field drives AlertService and not the watcher
-             (ui/api.py's set_folder branches on exactly that) -- so it
+             the gamelogs field drives shared telemetry and not the recording
+             watcher (ui/api.py's set_folder branches on exactly that) -- so it
              went to Alerts and this card is the recording folder alone.
              One row now, so the label names the input rather than
              distinguishing it from a second. -->
@@ -1348,8 +1348,8 @@
              structurally rather than by rewording: each field now sits in
              the section that uses it, under a note about itself.
 
-             This is the folder the alerts feature reads. ui/api.py's
-             set_folder calls AlertService.reconcile() on this branch and
+             This is the folder Alerts and Fleet Metrics read. ui/api.py's
+             set_folder reconciles shared telemetry on this branch and
              rebinds the recording watcher on the other, which is the same
              split this markup now makes. -->
         <h2>Gamelog folder</h2>

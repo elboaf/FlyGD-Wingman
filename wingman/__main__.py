@@ -545,56 +545,6 @@ def build_preview_host(state, api_box):
         return None
 
 
-def build_alert_service(state, host):
-    """The gamelog alert poller, or None where it has nowhere to render.
-
-    `host` is the PreviewHost build_preview_host just returned, or None.
-    Alerts dispatch through `host.raise_alert` -- a None host (off
-    Windows, or when preview construction itself failed) has no window to
-    ring, so there is nothing this subsystem could do; return None rather
-    than build a poller whose on_alert callback would be missing.
-
-    Constructed unconditionally otherwise, alerts-enabled or not: like
-    PreviewHost, reconcile() -- not construction -- is what starts its
-    thread, called from Api once previews decide their own live state.
-    """
-    if host is None:
-        return None
-    from .alerts.service import AlertService
-
-    def folder():
-        # None unless previews are actually running AND a Gamelogs folder
-        # resolves. AlertService._wanted() has no way to see preview state
-        # on its own, so this composition is the whole of "no previews, no
-        # polling thread" -- and it is why shutdown_previews's reconcile()
-        # call (api.py) tears this down too: host.stop() flips
-        # host.is_running false before that reconcile() runs.
-        #
-        # host.is_running, not the persisted preview.enabled setting: the
-        # two agree everywhere except the moment of shutdown, and it is
-        # exactly that moment reconcile() has to answer correctly.
-        if not host.is_running:
-            return None
-        gamelogs = state.settings.get("gamelogs_dir")
-        return Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
-
-    try:
-        return AlertService(
-            config=lambda: state.settings.get("preview", {}).get("alerts", {}),
-            folder=folder,
-            on_alert=host.raise_alert,
-            # What makes an alert on the client you are already looking at
-            # silent. Read live, never captured: the foreground changes
-            # constantly and the host is the only thing that knows.
-            focused=host.focused_character,
-        )
-    except Exception:
-        # Same posture as build_preview_host: alerts are secondary, and a
-        # failure to construct the poller must not stop Wingman launching.
-        logger.exception("Alert subsystem unavailable")
-        return None
-
-
 def build_alert_policy(state, host):
     """Alert decisions without a private file-reader thread."""
     if host is None:
@@ -763,11 +713,6 @@ def main() -> int:
     api = api_mod.Api(
         state,
         preview_host=preview_host,
-        # The legacy AlertService remains only as a focused-test adapter
-        # during this migration. Production never starts its private Tailer;
-        # a telemetry construction failure disables live alerts rather than
-        # creating a second reader with different replay semantics.
-        alerts=None,
         telemetry=telemetry,
     )
     api_box["api"] = api

@@ -1,7 +1,9 @@
 """Standalone Fleet Bar window, bridge lifecycle, and payload contract."""
 
+import inspect
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -240,9 +242,21 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     assert js.index("WM.handle('onFleetBarState'") < js.index("var host =")
 
 
-def test_main_wires_subscription_restore_and_shutdown_destruction():
-    import inspect
+def test_superseded_alert_poller_and_preview_timer_are_gone():
+    from wingman.alerts import service as alert_module
+    from wingman.preview import host as preview_host
+    from wingman.preview import win32 as preview_win32
 
+    alert_source = inspect.getsource(alert_module)
+    host_source = inspect.getsource(preview_host)
+    assert "class AlertService" not in alert_source
+    assert not (Path(__file__).parents[1] / "wingman/alerts/tailer.py").exists()
+    assert "SWEEP_TIMER_ID" not in host_source
+    assert "WM_APP_SWEEP_NOW" not in vars(preview_win32)
+    assert "self._sweep(" not in host_source
+
+
+def test_main_wires_subscription_restore_and_shutdown_destruction():
     from wingman import __main__ as main_mod
 
     source = inspect.getsource(main_mod.main)

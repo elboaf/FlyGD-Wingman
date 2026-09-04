@@ -706,23 +706,23 @@
 
   // The first setInterval in the page, so it is worth saying why.
   //
-  // get_alert_state is deliberately a READ, not a push -- the tailer can
-  // start before the webview exists, so a health change discovered at
+  // get_alert_state is deliberately a READ, not a push -- shared telemetry
+  // can start before the webview exists, so a health change discovered at
   // launch would be pushed into a window that is not there. That is still
   // right. What it left was a card that reads its state exactly three
   // times: on section entry, on a previews toggle, and immediately after
   // the alerts switch.
   //
   // That last one is the bug this fixes, and it was reported from a real
-  // session: enabling alerts refreshes AT ONCE, while AlertService has
-  // only just been reconciled and its tailer's first rescan is up to
-  // POLL_INTERVAL_S away. So the card read `running: true, characters:
+  // session: enabling alerts refreshes AT ONCE, while shared telemetry has
+  // only just been reconciled and its first rescan is up to one poll away.
+  // So the card read `running: true, characters:
   // []`, rendered "no characters online yet", and nothing ever read
   // again -- five characters online and the card saying none, for as long
   // as you left it open.
   //
   // The same gap hid the failure the health line exists to catch: a
-  // tailer that dies at minute 40 of a sit kept reading as healthy,
+  // reader that dies at minute 40 of a sit kept reading as healthy,
   // because nothing asked again.
   //
   // Only while the section is showing. Nothing needs to be current when

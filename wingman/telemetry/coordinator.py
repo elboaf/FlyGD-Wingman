@@ -124,12 +124,7 @@ class _FleetMode(NamedTuple):
 
 
 class AlertEvent(NamedTuple):
-    """What AlertPolicy.handle() reads off each event.
-
-    Structurally identical to ``alerts.tailer.Event`` and deliberately not
-    imported from it: the Tailer is the module this feature replaces, and
-    nothing new should acquire a dependency on it.
-    """
+    """Minimal event shape consumed by the thread-free AlertPolicy."""
 
     character: str
     event: str

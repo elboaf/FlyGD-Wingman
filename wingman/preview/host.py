@@ -34,8 +34,6 @@ from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
 
-SWEEP_MS = 700  # TriffView uses the same interval
-SWEEP_TIMER_ID = 1
 ACTIVATE_RETRY_TIMER_ID = 3
 # A 20ms timer keeps each pump turn short. Twenty-five retries provide about
 # 500ms for ShowWindowAsync restoration without blocking hotkeys or retaining
@@ -563,11 +561,9 @@ class PreviewHost:
             self._request_discovery = callback
 
     def request_sweep(self) -> None:
-        """Ask shared discovery, or the compatibility timer, for a sweep."""
+        """Ask the sole shared discovery service for an immediate scan."""
         if self._request_discovery is not None:
             self._request_discovery()
-            return
-        self._post(win32.WM_APP_SWEEP_NOW)
 
     def apply_roster(self, snapshot: RosterSnapshot) -> None:
         """Hand the newest shared roster to the pump. Safe from any thread.
@@ -848,14 +844,11 @@ class PreviewHost:
             )
             return
 
-        if self._request_discovery is None:
-            self._sweep(libs)
-        else:
-            # Shared discovery owns enumeration cadence. Request its first
-            # snapshot only after the pump HWND exists, so apply_roster can
-            # post a signal rather than relying solely on the pending slot.
-            self._request_discovery()
-        # After the optional legacy startup sweep, never before it. apply_roster is
+        # Shared discovery owns enumeration cadence. Request its first
+        # snapshot only after the pump HWND exists, so apply_roster can post
+        # a signal rather than relying solely on the pending slot.
+        self.request_sweep()
+        # apply_roster is
         # safe from any thread and start() returns before this window
         # exists, so a snapshot published in that gap was retained with no
         # PostMessageW to carry it -- nothing else would ever drain it, and
@@ -883,10 +876,6 @@ class PreviewHost:
         with self._lock:
             initial = dict(self._desired_hotkeys)
         self._apply_hotkeys(libs, initial)
-        if self._request_discovery is None:
-            libs.user32.SetTimer(
-                self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID), SWEEP_MS, None
-            )
         self._ready.set()
         self._apply_alerts(libs, self._drain_alerts())
 
@@ -946,14 +935,8 @@ class PreviewHost:
         if msg == win32.WM_TIMER and wparam == ACTIVATE_RETRY_TIMER_ID:
             self._retry_pending_activation(libs)
             return 0
-        if msg == win32.WM_TIMER and wparam == SWEEP_TIMER_ID:
-            self._sweep(libs)
-            return 0
         if msg == win32.WM_TIMER and wparam == ALERT_TIMER_ID:
             self._tick_alerts(libs)
-            return 0
-        if msg == win32.WM_APP_SWEEP_NOW:
-            self._sweep(libs)
             return 0
         if msg == win32.WM_APP_ROSTER:
             self._apply_pending_roster(libs)
@@ -1017,23 +1000,15 @@ class PreviewHost:
         )
         if not self._hook:
             logger.warning(
-                "SetWinEventHook failed; previews will only refresh on the %dms sweep",
-                SWEEP_MS,
+                "SetWinEventHook failed; selection will follow periodic shared scans"
             )
 
     def _sweep(self, libs) -> None:
-        """Discover directly, then reconcile: the pre-coordinator path.
+        """Legacy reconciliation test seam; production never calls it.
 
-        A compatibility wrapper for as long as this host still owns a 700ms
-        timer and a hook that both call it. It adapts its raw records into
-        the same immutable snapshot the shared roster arrives as, so there
-        is exactly one reconciliation while the migration is half done.
-
-        It calls reconciliation DIRECTLY rather than going through
-        _apply_pending_roster: that gate is about ordering snapshots from a
-        producer, and this path has no producer and publishes nothing. Going
-        through it would burn a generation number and make the first real
-        shared snapshot look stale.
+        Historical host tests exercise raw discovery edge cases through this
+        adapter. Runtime enumeration belongs solely to ClientDiscovery, and
+        no timer, message handler, hook, or API call reaches this method.
         """
         self._reconcile_roster(libs, _legacy_snapshot(discovery.list_clients()))
 
@@ -2567,7 +2542,7 @@ class PreviewHost:
         # And the two selection keys would otherwise survive a stop/start:
         # _selected_key is sticky by design now, so without this the ring
         # would come back on a character from the previous session before
-        # the first sweep has confirmed it is even running.
+        # shared discovery has confirmed it is even running.
         with self._lock:
             self._pending_alerts = []
             # And the roster that arrived with it: apply_roster is safe from
@@ -2591,7 +2566,6 @@ class PreviewHost:
             win.close()  # 2. thumbnails + windows
         self._windows.clear()
         if self._hwnd:
-            libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID))
             if self._alert_timer:
                 libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
                 self._alert_timer = False

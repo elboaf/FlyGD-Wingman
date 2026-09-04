@@ -742,14 +742,14 @@ class PreviewWindow:
             # DERIVED here, and only here. The spec carries how many
             # flashes the event gets and how fast each one is; the
             # duration is their product. Both paths that raise an alert --
-            # the poll thread through PreviewHost._apply_alerts, and
+            # shared telemetry through PreviewHost._apply_alerts, and
             # api.test_alert -- arrive at this method, so deriving at this
             # one site is what keeps the stored pair the only source of
             # truth for how long a ring pulses.
             duration_ms=alerts_state.duration_for(spec.get("flash_rate"), pulses),
             pulses=pulses,
             # Global, not per-event: persist_until_selected lives beside
-            # `events` in the alerts section, and AlertService merges it
+            # `events` in the alerts section, and AlertPolicy merges it
             # into the spec it dispatches so this stays one dict.
             persist=bool(spec.get("persist_until_selected")),
             # `focused`, NOT `selected`: the ring is sticky and survives a
