@@ -15,6 +15,7 @@ from . import jwt as jwt_mod
 from . import loopback as loopback_mod
 from . import sso as sso_mod
 from . import state as state_mod
+from .cleanup import CleanupVerification
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,13 @@ class CharacterParticipant(Protocol):
 
     def prepare_forget(self, character_id: int) -> MutationResult: ...
 
-    def authority_removed(self, character_id: int) -> None: ...
+    def authority_removed(self, character_id: int) -> MutationResult: ...
 
     def grant_invalidated(self, character_id: int) -> None: ...
 
     def reconcile_characters(
         self, characters: tuple[AuthorityCharacter, ...]
-    ) -> None: ...
+    ) -> CleanupVerification: ...
 
 
 def _utcnow() -> datetime:
@@ -146,7 +147,17 @@ class AuthorityController:
         }
         self._lifecycle_gates: dict[int, threading.RLock] = {}
         self._lifecycle_gates_lock = threading.Lock()
-        self._participants: list[CharacterParticipant] = []
+        self._participants: dict[str, CharacterParticipant | None] = {
+            application.SKILLS: None,
+            application.FITTINGS: None,
+        }
+        self._cleanup_verification = {
+            name: CleanupVerification(
+                False,
+                error=f"{name.title()} cleanup is unavailable.",
+            )
+            for name in self._participants
+        }
 
         self._auth_latch = threading.Lock()
         self._auth_cancelled = threading.Event()
@@ -451,9 +462,9 @@ class AuthorityController:
             return MutationResult(False, False, "Unknown EVE character.")
         gate = self._lifecycle_gate(wanted)
         with gate:
-            participants = self._participant_snapshot()
+            participants = self._participant_slots_snapshot()
             refusals = []
-            for participant in participants:
+            for _capability, participant in participants:
                 try:
                     prepared = participant.prepare_forget(wanted)
                 except Exception as exc:
@@ -498,29 +509,53 @@ class AuthorityController:
                     self._generations[wanted] = self._generations.get(wanted, 0) + 1
 
             cleanup_errors = []
-            for participant in participants:
+            for capability, participant in participants:
                 try:
-                    participant.authority_removed(wanted)
-                except Exception as exc:
+                    result = participant.authority_removed(wanted)
+                except Exception:
                     logger.warning("EVE participant cleanup failed", exc_info=True)
-                    cleanup_errors.append(str(exc))
+                    verification = self._cleanup_unavailable(capability)
+                    verification = CleanupVerification(
+                        False,
+                        frozenset({*verification.blocked_character_ids, wanted}),
+                        verification.error,
+                    )
+                    self._store_cleanup_verification(capability, verification)
+                    cleanup_errors.append(verification.error)
+                    continue
+                self._store_cleanup_verification(
+                    capability,
+                    self._cleanup_verification_for_removal(
+                        capability,
+                        wanted,
+                        result,
+                    ),
+                )
+                if not result.applied or not result.persisted:
+                    cleanup_errors.append(
+                        result.error or "A feature cleanup is incomplete."
+                    )
             self._changed_safely()
             if cleanup_errors:
-                return MutationResult(
-                    True,
-                    True,
-                    "The character was forgotten, but feature cleanup is incomplete.",
-                )
+                return MutationResult(True, False, cleanup_errors[0])
             return MutationResult(True, True, "")
 
-    def register_participant(self, participant: CharacterParticipant) -> None:
-        """Register a feature owner and immediately reconcile its derived roster."""
+    def register_participant(
+        self, capability: str, participant: CharacterParticipant
+    ) -> CleanupVerification:
+        """Register one named feature owner and reconcile its derived roster."""
+        self._capability_scopes(capability)
         with self._lock:
-            if any(existing is participant for existing in self._participants):
-                return
-            self._participants.append(participant)
+            existing = self._participants.get(capability)
+            if existing is not None:
+                raise ValueError(
+                    f"EVE capability {capability!r} is already registered."
+                )
+            self._participants[capability] = participant
             roster = tuple(self._snapshot(row) for row in self._state.characters)
-        participant.reconcile_characters(roster)
+        self._reconcile_participant(capability, participant, roster)
+        with self._lock:
+            return self._aggregate_cleanup_verification_locked()
 
     def shutdown(self) -> None:
         """Stop accepting token work and cancel a pending browser authorization."""
@@ -710,14 +745,23 @@ class AuthorityController:
                     "Character ownership changed; re-authenticate the character.",
                 )
                 return False
-            if current is None and len(self.characters) >= state_mod.MAX_CHARACTERS:
-                self._alert(
-                    "warning",
-                    "Too many characters",
-                    f"Wingman stores at most {state_mod.MAX_CHARACTERS} characters. "
-                    "Forget one before adding another.",
-                )
-                return False
+            if current is None:
+                verified = self._verify_unknown_character(character_id)
+                if not verified.applied:
+                    self._alert(
+                        "warning",
+                        "Sign-in not completed",
+                        verified.error or "Reconcile first.",
+                    )
+                    return False
+                if len(self.characters) >= state_mod.MAX_CHARACTERS:
+                    self._alert(
+                        "warning",
+                        "Too many characters",
+                        f"Wingman stores at most {state_mod.MAX_CHARACTERS} characters. "
+                        "Forget one before adding another.",
+                    )
+                    return False
 
             try:
                 blob = self._wrap_token(token_set.refresh_token)
@@ -767,18 +811,15 @@ class AuthorityController:
                 )
                 return False
 
-            participants = self._participant_snapshot()
+            participants = self._participant_slots_snapshot()
             if owner_changed:
                 self._notify_participants(
-                    participants, "grant_invalidated", character_id
+                    tuple(participant for _capability, participant in participants),
+                    "grant_invalidated",
+                    character_id,
                 )
-            for participant in participants:
-                try:
-                    participant.reconcile_characters(roster)
-                except Exception:
-                    logger.warning(
-                        "EVE participant reconciliation failed", exc_info=True
-                    )
+            for capability, participant in participants:
+                self._reconcile_participant(capability, participant, roster)
             self._changed_safely()
             return True
 
@@ -826,7 +867,118 @@ class AuthorityController:
 
     def _participant_snapshot(self) -> tuple[CharacterParticipant, ...]:
         with self._lock:
-            return tuple(self._participants)
+            return tuple(
+                participant
+                for participant in self._participants.values()
+                if participant is not None
+            )
+
+    def _participant_slots_snapshot(
+        self,
+    ) -> tuple[tuple[str, CharacterParticipant], ...]:
+        with self._lock:
+            return tuple(
+                (capability, participant)
+                for capability, participant in self._participants.items()
+                if participant is not None
+            )
+
+    def _cleanup_unavailable(self, capability: str) -> CleanupVerification:
+        return CleanupVerification(
+            False,
+            error=f"{capability.title()} cleanup is unavailable.",
+        )
+
+    def _store_cleanup_verification(
+        self, capability: str, verification: CleanupVerification
+    ) -> None:
+        with self._lock:
+            self._cleanup_verification[capability] = verification
+
+    def _aggregate_cleanup_verification_locked(self) -> CleanupVerification:
+        blocked_ids: set[int] = set()
+        for capability in application.FULL_AUTH_CAPABILITIES:
+            verification = self._cleanup_verification[capability]
+            blocked_ids.update(verification.blocked_character_ids)
+            if not verification.verified:
+                return CleanupVerification(
+                    False,
+                    frozenset(blocked_ids),
+                    verification.error or self._cleanup_unavailable(capability).error,
+                )
+        return CleanupVerification(True, frozenset(blocked_ids), "")
+
+    def _cleanup_verification_for_removal(
+        self,
+        capability: str,
+        character_id: int,
+        result: MutationResult,
+    ) -> CleanupVerification:
+        with self._lock:
+            previous = self._cleanup_verification[capability]
+        blocked_ids = set(previous.blocked_character_ids)
+        if result.applied and result.persisted:
+            blocked_ids.discard(character_id)
+            return CleanupVerification(True, frozenset(blocked_ids), "")
+        blocked_ids.add(character_id)
+        if result.applied:
+            return CleanupVerification(
+                True,
+                frozenset(blocked_ids),
+                result.error or "A feature cleanup is incomplete.",
+            )
+        return CleanupVerification(
+            False,
+            frozenset(blocked_ids),
+            result.error or self._cleanup_unavailable(capability).error,
+        )
+
+    def _reconcile_participant(
+        self,
+        capability: str,
+        participant: CharacterParticipant,
+        roster: tuple[AuthorityCharacter, ...],
+    ) -> CleanupVerification:
+        try:
+            verification = participant.reconcile_characters(roster)
+        except Exception:
+            logger.warning("EVE participant reconciliation failed", exc_info=True)
+            verification = self._cleanup_unavailable(capability)
+        if not isinstance(verification, CleanupVerification):
+            verification = self._cleanup_unavailable(capability)
+        self._store_cleanup_verification(capability, verification)
+        return verification
+
+    def _verify_unknown_character(self, character_id: int) -> MutationResult:
+        wanted = self._coerce_character_id(character_id)
+        if wanted is None:
+            return MutationResult(False, False, "Unknown EVE character.")
+        gate = self._lifecycle_gate(wanted)
+        with gate:
+            with self._lock:
+                roster = tuple(self._snapshot(row) for row in self._state.characters)
+                participants = tuple(
+                    (capability, participant)
+                    for capability, participant in self._participants.items()
+                    if participant is not None
+                    and (
+                        not self._cleanup_verification[capability].verified
+                        or self._cleanup_verification[capability].blocked_character_ids
+                    )
+                )
+            for capability, participant in participants:
+                self._reconcile_participant(capability, participant, roster)
+            with self._lock:
+                verification = self._aggregate_cleanup_verification_locked()
+            if not verification.verified:
+                return MutationResult(
+                    False,
+                    False,
+                    verification.error or "Reconcile first.",
+                )
+            if wanted in verification.blocked_character_ids:
+                return MutationResult(False, False, "Reconcile first.")
+            return MutationResult(True, True, "")
 
     @staticmethod
     def _notify_participants(participants, hook: str, character_id: int) -> None:

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from wingman.eveauth import application
+from wingman.eveauth import CleanupVerification, application
 from wingman.eveauth import jwt as jwt_mod
 from wingman.eveauth import loopback as loopback_mod
 from wingman.eveauth import sso as sso_mod
@@ -82,8 +82,28 @@ class FakeListener:
 
 
 class Participant:
-    def __init__(self, *, prepare=None, order=None, authority=None):
-        self.prepare = prepare or MutationResult(True, True, "")
+    def __init__(
+        self,
+        *,
+        prepare=None,
+        cleanup=None,
+        verification=None,
+        reconcile_error=None,
+        order=None,
+        authority=None,
+    ):
+        self.prepare = (
+            prepare if prepare is not None else MutationResult(True, True, "")
+        )
+        self.cleanup = (
+            cleanup if cleanup is not None else MutationResult(True, True, "")
+        )
+        self.verification = (
+            verification
+            if verification is not None
+            else CleanupVerification(True, frozenset())
+        )
+        self.reconcile_error = reconcile_error
         self.order = order
         self.authority = authority
         self.prepared = []
@@ -110,6 +130,10 @@ class Participant:
         self.removed.append(character_id)
         if self.order is not None:
             self.order.append("cleanup")
+        with self.feature_lock:
+            if isinstance(self.cleanup, Exception):
+                raise self.cleanup
+            return self.cleanup
 
     def grant_invalidated(self, character_id):
         self.invalidated.append(character_id)
@@ -118,6 +142,9 @@ class Participant:
         self.reconciled.append(
             tuple(character.character_id for character in characters)
         )
+        if self.reconcile_error is not None:
+            raise self.reconcile_error
+        return self.verification
 
 
 def stored_character(
@@ -248,16 +275,14 @@ def test_forget_waits_for_an_active_lifecycle_lease(tmp_path):
 
 def test_every_prepare_runs_and_a_refusal_prevents_authority_removal(tmp_path):
     authority, _, _, _ = build(tmp_path)
-    refusing = Participant(
-        prepare=MutationResult(False, True, "Reconcile unknown writes first.")
-    )
+    refusing = Participant(prepare=MutationResult(False, True, "Reconcile first."))
     ready = Participant()
-    authority.register_participant(refusing)
-    authority.register_participant(ready)
+    authority.register_participant(application.SKILLS, refusing)
+    authority.register_participant(application.FITTINGS, ready)
 
     result = authority.forget(42)
 
-    assert result == MutationResult(False, False, "Reconcile unknown writes first.")
+    assert result == MutationResult(False, False, "Reconcile first.")
     assert authority.character(42) is not None
     assert refusing.prepared == ready.prepared == [42]
     assert refusing.removed == ready.removed == []
@@ -269,7 +294,7 @@ def test_authority_save_failure_causes_no_participant_cleanup(tmp_path):
 
     authority, _, _, _ = build(tmp_path, saver=refuse_save)
     participant = Participant()
-    authority.register_participant(participant)
+    authority.register_participant(application.SKILLS, participant)
 
     result = authority.forget(42)
 
@@ -289,7 +314,7 @@ def test_participant_cleanup_follows_persisted_authority_removal(tmp_path):
 
     authority, _, _, _ = build(tmp_path, saver=recording_save)
     participant = Participant(order=order)
-    authority.register_participant(participant)
+    authority.register_participant(application.SKILLS, participant)
 
     result = authority.forget(42)
 
@@ -298,10 +323,28 @@ def test_participant_cleanup_follows_persisted_authority_removal(tmp_path):
     assert participant.removed == [42]
 
 
+def test_forget_reports_partial_cleanup_when_a_participant_cannot_save(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+    partial = Participant(
+        cleanup=MutationResult(True, False, "Could not save Skills cleanup.")
+    )
+    complete = Participant()
+    authority.register_participant(application.SKILLS, partial)
+    authority.register_participant(application.FITTINGS, complete)
+
+    result = authority.forget(42)
+
+    assert result.applied is True
+    assert result.persisted is False
+    assert "cleanup" in result.error.lower()
+    assert authority.character(42) is None
+    assert partial.removed == complete.removed == [42]
+
+
 def test_forget_retries_cleanup_when_authority_was_already_removed(tmp_path):
     authority, _, _, _ = build(tmp_path)
     participant = Participant()
-    authority.register_participant(participant)
+    authority.register_participant(application.SKILLS, participant)
     authority.forget(42)
     participant.removed.clear()
 
@@ -314,7 +357,7 @@ def test_forget_retries_cleanup_when_authority_was_already_removed(tmp_path):
 def test_participant_hooks_run_lifecycle_then_feature_without_authority_lock(tmp_path):
     authority, _, _, _ = build(tmp_path)
     participant = Participant(authority=authority)
-    authority.register_participant(participant)
+    authority.register_participant(application.SKILLS, participant)
 
     authority.forget(42)
 
@@ -327,9 +370,88 @@ def test_register_participant_reconciles_against_immutable_roster(tmp_path):
     )
     participant = Participant()
 
-    authority.register_participant(participant)
+    authority.register_participant(application.SKILLS, participant)
 
     assert participant.reconciled == [(42, 43)]
+
+
+def test_register_participant_refuses_an_unknown_slot(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+
+    with pytest.raises(ValueError, match="Unknown EVE capability"):
+        authority.register_participant("bookmarks", Participant())
+
+
+def test_register_participant_refuses_a_duplicate_slot(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+    authority.register_participant(application.SKILLS, Participant())
+
+    with pytest.raises(ValueError, match="already registered"):
+        authority.register_participant(application.SKILLS, Participant())
+
+
+def test_register_participant_turns_reconcile_exceptions_into_unverified_cleanup(
+    tmp_path,
+):
+    authority, _, _, _ = build(tmp_path)
+    authority.register_participant(application.FITTINGS, Participant())
+
+    verification = authority.register_participant(
+        application.SKILLS,
+        Participant(reconcile_error=OSError("disk")),
+    )
+
+    assert verification == CleanupVerification(
+        False,
+        frozenset(),
+        "Skills cleanup is unavailable.",
+    )
+    assert authority._verify_unknown_character(77) == MutationResult(
+        False,
+        False,
+        "Skills cleanup is unavailable.",
+    )
+
+
+def test_register_participant_verifies_only_after_both_named_slots_are_clean(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+
+    first = authority.register_participant(application.SKILLS, Participant())
+    second = authority.register_participant(application.FITTINGS, Participant())
+
+    assert first == CleanupVerification(
+        False,
+        frozenset(),
+        "Fittings cleanup is unavailable.",
+    )
+    assert second == CleanupVerification(True, frozenset(), "")
+
+
+def test_unknown_id_is_blocked_while_a_required_slot_is_unverified(tmp_path):
+    authority, _alerts, _launched, _listener = build(tmp_path)
+    clean_skills = Participant(verification=CleanupVerification(True, frozenset()))
+    authority.register_participant(application.SKILLS, clean_skills)
+
+    assert authority._verify_unknown_character(77) == MutationResult(
+        False,
+        False,
+        "Fittings cleanup is unavailable.",
+    )
+
+
+def test_an_exact_cleanup_block_does_not_block_an_unrelated_id(tmp_path):
+    authority, _alerts, _launched, _listener = build(tmp_path)
+    authority.register_participant(
+        application.SKILLS,
+        Participant(verification=CleanupVerification(True, frozenset({42}))),
+    )
+    authority.register_participant(
+        application.FITTINGS,
+        Participant(verification=CleanupVerification(True, frozenset())),
+    )
+
+    assert authority._verify_unknown_character(42).applied is False
+    assert authority._verify_unknown_character(77).applied is True
 
 
 def test_definitive_grant_invalidation_notifies_every_participant(tmp_path):
@@ -341,7 +463,7 @@ def test_definitive_grant_invalidation_notifies_every_participant(tmp_path):
 
     authority, _, _, _ = build(tmp_path, sso=RefusingSso())
     participant = Participant()
-    authority.register_participant(participant)
+    authority.register_participant(application.SKILLS, participant)
 
     authority.access_token(42, application.SKILLS)
 
@@ -513,6 +635,8 @@ def test_authenticate_skills_requests_only_skills_and_adds_returned_character(tm
         sso=fake_sso,
         returned_identity=returned,
     )
+    authority.register_participant(application.SKILLS, Participant())
+    authority.register_participant(application.FITTINGS, Participant())
 
     result = authority.authenticate_skills()
 
@@ -525,6 +649,8 @@ def test_authenticate_skills_requests_only_skills_and_adds_returned_character(tm
 
 def test_forget_generation_rejects_late_work_even_after_same_id_is_added(tmp_path):
     authority, _, _, _ = build(tmp_path)
+    authority.register_participant(application.SKILLS, Participant())
+    authority.register_participant(application.FITTINGS, Participant())
     original_generation = authority.character(42).generation
     authority.forget(42)
 

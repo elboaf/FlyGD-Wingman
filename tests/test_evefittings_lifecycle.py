@@ -136,7 +136,7 @@ def _fittings(
         progress=progress or (lambda _payload: None),
         save_state=save_state,
     )
-    authority.register_participant(controller)
+    authority.register_participant(application.FITTINGS, controller)
     return controller
 
 
@@ -485,7 +485,7 @@ def test_startup_converts_in_flight_to_unknown_before_forget_preflight(tmp_path)
         client=SuccessClient(),
         now=lambda: NOW,
     )
-    authority.register_participant(fittings)
+    authority.register_participant(application.FITTINGS, fittings)
 
     assert fittings.state.intents[0].status == "unknown"
     assert fittings.prepare_forget(CHARACTER_ID).applied is False

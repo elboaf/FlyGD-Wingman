@@ -122,7 +122,8 @@ class FakeAuthority:
             self._participant.authority_removed(character_id)
         return MutationResult(True, True, "")
 
-    def register_participant(self, participant):
+    def register_participant(self, capability, participant):
+        assert capability == eveauth_application.SKILLS
         self._participant = participant
         participant.reconcile_characters(self.characters)
 
@@ -248,7 +249,7 @@ def build(
         now=now,
         **kwargs,
     )
-    authority.register_participant(controller)
+    authority.register_participant(eveauth_application.SKILLS, controller)
     pushed.clear()  # Registration reconciliation is startup, not a page event.
     return controller, pushed, alerts
 
@@ -2164,6 +2165,29 @@ def build_auth(
         validate_token=validate_token or (lambda *a, **k: IDENTITY),
         spawn=kwargs.pop("spawn", DirectSpawn()),
         **kwargs,
+    )
+
+    class CleanFittingsParticipant:
+        def prepare_forget(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def authority_removed(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def grant_invalidated(self, character_id):
+            del character_id
+
+        def reconcile_characters(self, characters):
+            del characters
+            from wingman.eveauth import CleanupVerification
+
+            return CleanupVerification(True, frozenset())
+
+    controller._authority.register_participant(
+        eveauth_application.FITTINGS,
+        CleanFittingsParticipant(),
     )
     return controller, pushed, alerts, events, launched
 

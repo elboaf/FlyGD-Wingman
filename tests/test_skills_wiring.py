@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from wingman import __main__ as main_mod
+from wingman.eveauth import application
+from wingman.eveauth.controller import MutationResult
 from wingman.eveauth.migration import MigrationResult
 from wingman.eveauth.state import AuthorityState
 
@@ -127,9 +129,9 @@ def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch)
         _authority_warnings=[],
     )
 
-    def register(participant):
+    def register(capability, participant):
         assert api._skills is None and api._fittings is None
-        order.append(("register", participant))
+        order.append(("register", capability, participant))
 
     authority = SimpleNamespace(register_participant=register)
 
@@ -165,10 +167,53 @@ def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch)
     assert order[1][0] == "authority"
     assert order[2][0] == "skills"
     assert order[3][0] == "fittings"
-    assert order[4] == ("register", skills)
-    assert order[5] == ("register", fittings)
+    assert order[4] == ("register", application.SKILLS, skills)
+    assert order[5] == ("register", application.FITTINGS, fittings)
     assert api._authority is authority and api._skills is skills
     assert api._fittings is fittings
+
+
+def test_missing_skills_controller_leaves_unknown_ids_blocked(monkeypatch, tmp_path):
+    monkeypatch.setattr(main_mod.paths, "state_dir", lambda: tmp_path)
+    from tests.test_api import make_api
+
+    class CleanFittingsParticipant:
+        def prepare_forget(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def authority_removed(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def grant_invalidated(self, character_id):
+            del character_id
+
+        def reconcile_characters(self, characters):
+            del characters
+            from wingman.eveauth import CleanupVerification
+
+            return CleanupVerification(True, frozenset())
+
+    monkeypatch.setattr(
+        main_mod, "build_skills_controller", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "build_fittings_controller",
+        lambda *_args, **_kwargs: CleanFittingsParticipant(),
+    )
+
+    api = make_api(tmp_path)
+    authority, skills = main_mod.wire_eve_controllers(api)
+
+    assert authority is not None
+    assert skills is None
+    assert authority._verify_unknown_character(77) == MutationResult(
+        False,
+        False,
+        "Skills cleanup is unavailable.",
+    )
 
 
 def test_failed_migration_builds_no_empty_authority_and_surfaces_error(monkeypatch):
