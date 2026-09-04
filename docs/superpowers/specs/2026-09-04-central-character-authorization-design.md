@@ -6,7 +6,7 @@
 
 ## Summary
 
-Move EVE character authorization into a canonical **Settings › Characters** section. Every authorization requests all EVE scopes Wingman currently supports, so a character signs in once for Skills and Fittings rather than once per feature.
+Move EVE character authorization into a canonical **Settings › Characters** section. Every authorization requests the complete Skills-and-Fittings scope set, so a character signs in once for both current EVE capabilities rather than once per feature.
 
 The EVE SSO page decides which character is authorized. Wingman does not ask the user to select a local character row before opening a generic EVE login that cannot carry that choice. The validated character ID returned by EVE determines whether Wingman adds a new character or replaces an existing character's grant.
 
@@ -43,34 +43,34 @@ Skills remains a destination because users work there to compare characters agai
 
 ### One full authorization action
 
-Settings › Characters provides one **Authenticate character…** action. It starts generic EVE SSO authorization with the union of all scopes in `eveauth.application.CAPABILITY_SCOPES`. With the current product this is:
+Settings › Characters provides one **Authenticate character…** action. It starts generic EVE SSO authorization for an explicit `FULL_AUTH_CAPABILITIES` tuple containing exactly `SKILLS` and `FITTINGS`. The requested scopes are derived by taking the union of those two capabilities' declarations:
 
 - `esi-skills.read_skills.v1`;
 - `esi-skills.read_skillqueue.v1`;
 - `esi-fittings.read_fittings.v1`; and
 - `esi-fittings.write_fittings.v1`.
 
-The scope union is derived from the capability declaration. It is not repeated as another hand-maintained constant.
+The four scope strings are not retyped in authorization logic, but the two product capabilities included in full authorization are explicit. Adding an unrelated future capability to `CAPABILITY_SCOPES` must not silently widen EVE consent.
 
-Every new authorization and reauthorization uses this complete set. The UI does not offer a Skills-only or Fittings-only choice.
+Every new authorization and reauthorization uses this complete Skills-and-Fittings set. The UI does not offer a Skills-only or Fittings-only choice.
 
 ### Returned identity decides the row
 
 Wingman opens a generic EVE SSO page without first selecting a local character. After the callback:
 
 1. The access token is validated using the existing issuer, audience, signature, expiry, scope, subject, and owner checks.
-2. If the returned character ID is unknown, Wingman adds it to shared authority.
-3. If the returned character ID already exists, Wingman replaces that character's grant and clears its reauthentication state.
-4. If an existing character's owner identity changed, Wingman keeps the current security behavior: the old grant and character-specific derived state are invalidated before the replacement is reconciled.
+2. If the returned character ID is unknown and no incomplete cleanup blocks that ID, Wingman adds it to shared authority.
+3. If the returned character ID already exists with the same owner identity, Wingman replaces that character's grant and clears its reauthentication state.
+4. If the returned character ID exists with a different owner identity, Wingman refuses the replacement and instructs the user to forget the existing character first. The previous authority and derived state remain unchanged.
 5. Authority persistence completes before feature controllers reconcile the resulting roster.
 
-There is no wrong-character callback for this flow because Wingman made no row-specific promise before opening EVE. The exact-character capability-upgrade behavior in the previous Fittings design is retired along with the per-character upgrade action.
+There is no wrong-character callback for this flow because Wingman made no row-specific promise before opening EVE. The exact-character capability-upgrade behavior in the previous Fittings design is retired along with the per-character upgrade action. Owner replacement is deliberately not folded into generic reauthorization: it crosses a security boundary and uses the explicit global-forget cleanup path first.
 
 ### Existing partial grants
 
 Existing Skills-only grants remain valid for Skills. They are not revoked or migrated merely because new authorizations request the full scope set.
 
-Settings shows their actual state, for example **Skills: Ready** and **Fittings: Sign in**. To upgrade one, the user chooses **Authenticate character…** and selects that character in EVE. The returned character ID matches and replaces the existing grant with the complete scope set.
+Settings shows their recorded authorization state, for example **Skills: Authorized** and **Fittings: Sign in**. To upgrade one, the user chooses **Authenticate character…** and selects that character in EVE. The returned character ID matches and replaces the existing grant with the complete scope set.
 
 This is the only upgrade path. There is no per-row **Enable fittings** action.
 
@@ -84,9 +84,14 @@ Authorization remains globally single-flight because it uses one fixed loopback 
 - cancellation stops the listener and prevents any later exchange result from committing; and
 - timeout or refusal leaves authority state unchanged and produces a bounded actionable message.
 
-Cancellation is checked after the callback wait and again immediately before commit. A token exchange already in progress may finish at the network layer, but its result is discarded after cancellation and cannot replace authority.
+Each authorization attempt has an immutable attempt ID and a cancellation generation guarded by the authority's authorization-state lock. Commit has one linearization point under that same lock, after token validation and after acquiring the returned character's lifecycle gate, immediately before authority persistence:
 
-The browser wait remains outside character lifecycle gates. Authorization commit reacquires the returned character's gate and retains generation checks so a stale callback cannot resurrect forgotten authority.
+- if Cancel increments the cancellation generation first, that attempt cannot persist or reconcile, even if token exchange later returns;
+- if commit passes the linearization point first, persistence completes and Cancel reports that the attempt already finished rather than claiming it was cancelled.
+
+A token exchange already in progress may finish at the network layer, but its result is discarded when cancellation won the linearization race. Tests control the worker at exchange, validation, lifecycle-gate, and pre-save boundaries rather than relying on timing.
+
+The browser wait and token exchange remain outside character lifecycle gates. Authorization commit reacquires the returned character's gate and retains character generation checks so a stale callback cannot resurrect forgotten authority.
 
 ### Persistence and token safety
 
@@ -129,7 +134,7 @@ It contains only display-safe data:
 - bounded authority warnings;
 - for each character: ID, display name, authenticated time, Skills capability status, Fittings capability status, reauthentication state, and bounded persistence error.
 
-Starting a new attempt clears the prior terminal notice. A successful attempt also leaves no stale failure notice. Cancellation returns to idle without being presented as an error. Refusal, timeout, exchange failure, validation failure, and persistence failure set the bounded terminal notice and publish the same semantic authority-change event used for roster changes. This is runtime UI state, not persisted account state.
+Starting a new attempt clears the prior terminal notice and transitions activity to `waiting`. Completion transitions activity and notice together: success returns to `idle` with no stale notice; cancellation returns to `idle` without an error; refusal, timeout, exchange failure, validation failure, owner mismatch, blocked re-add, and persistence failure return to `idle` with a bounded terminal notice. Each transition publishes the same semantic authority-change event used for roster changes. This is runtime UI state, not persisted account state.
 
 It does not contain refresh tokens, access tokens, owner hashes, raw JWT claims, or a second persisted copy of granted scopes.
 
@@ -145,15 +150,21 @@ The shared bridge exposes actions for:
 
 The synchronous authorization-start result reports only whether the worker and listener flow were accepted. It does not claim that a later grant was persisted. Terminal browser-flow outcomes arrive through the authority activity/notice state above.
 
-Global forget preserves `{applied, persisted, error}` so Settings can distinguish refusal, partial cleanup, persistence failure, and success according to `DESIGN.md`.
+Global forget preserves `{applied, persisted, error}` so Settings can distinguish refusal, partial cleanup, persistence failure, and success according to `DESIGN.md`. Participant cleanup hooks become result-bearing rather than swallowing their own persistence failures:
 
-The old page-facing targeted capability-upgrade method is removed after its callers are removed. Internal capability checks and declarations remain because Skills and Fittings still require them when obtaining access tokens.
+- `applied=False` means preflight refused removal and authority remains;
+- `applied=True, persisted=True` means authority removal and every participant cleanup persisted;
+- `applied=True, persisted=False` means authority removal persisted but at least one participant cleanup did not.
+
+An incomplete cleanup blocks re-adding that character ID. The current process retains the blocked ID. On startup, result-bearing participant reconciliation rebuilds the block from orphan Skills or Fittings rows that could not be pruned from their durable documents. Before committing authorization for an otherwise unknown ID, authority retries or verifies orphan cleanup; it accepts the character only after every participant confirms that no prior-owner character state remains. The persisted orphan rows are the durable evidence, so no credential or owner hash is copied into Settings.
+
+The old page-facing targeted capability-upgrade methods and `AuthorityController.enable_capability` are removed after their callers are removed. The generic Skills-only authentication delegate is replaced by full authorization. Internal capability checks and declarations remain because Skills and Fittings still require them when obtaining access tokens.
 
 ### Semantic updates
 
-A successful authority mutation publishes one semantic authority-change event. Settings responds by re-reading the shared character state. Skills and Fittings reconcile from authority through their controller interfaces rather than consuming a Settings payload.
+Every observable authority transition publishes the same semantic authority-change event: authorization starts, terminal outcome becomes available, a grant commits, forget completes or partially completes, and token health changes. Activity, notice, and roster mutation are updated under authority locks before the event, so a re-read cannot observe a terminal notice paired with stale activity.
 
-The event does not push credentials, a whole character document, or screen-specific widgets. A Settings section entered after a completed off-screen change also performs a fresh read through the normal section-enter contract.
+Settings responds by re-reading the shared character state. Skills and Fittings reconcile from authority through their controller interfaces rather than consuming a Settings payload. The event does not push credentials, a whole character document, or screen-specific widgets. A Settings section entered after a completed off-screen change also performs a fresh read through the normal section-enter contract.
 
 ## Settings › Characters
 
@@ -161,9 +172,8 @@ The event does not push credentials, a whole character document, or screen-speci
 
 Add an EVE-gated **Characters** entry to the Settings rail. The section uses the established Settings surface and tokens, with a compact roster sized for the authority limit of 50 characters.
 
-The header contains:
+The section's first surface is headed **EVE authorization**, avoiding a card heading that merely repeats the **Characters** rail entry. Its header contains:
 
-- **Characters**;
 - the derived authority-roster count, including partial and reauthentication-required rows; and
 - **Authenticate character…**.
 
@@ -179,10 +189,10 @@ The roster scrolls within the available section height. It does not render each 
 
 Capability cells use concise text plus existing semantic tokens:
 
-- **Ready**: local authority has an encrypted or live refresh token, does not require reauthentication, and records every scope required by the capability;
-- **Sign in**: the row requires reauthentication, has no usable stored token, or lacks one or more required scopes.
+- **Authorized**: local authority records a refresh-token blob or live memory token, does not require reauthentication, and records every scope required by the capability;
+- **Sign in**: the row requires reauthentication, has no recorded token, or lacks one or more required scopes.
 
-**Ready** means locally eligible. It is not proof that EVE has not revoked the refresh token since Wingman last used it; definitive revocation is discovered on the next token refresh and then changes the row to **Sign in**. A completely unavailable authority is a section-level error rather than a fabricated per-row state.
+**Authorized** describes Wingman's recorded grant, not proof that EVE has not revoked it or that DPAPI decryption has been exercised during this read. Definitive revocation is discovered on token refresh. A refresh-token decryption failure transitions the authority row to reauthentication-required, persists that transition when possible, emits the authority event, and changes both capability cells to **Sign in** instead of leaving a permanently unusable row marked **Authorized**. A completely unavailable authority is a section-level error rather than a fabricated per-row state.
 
 The row carries one bounded persistence or authority error when present. The screen does not duplicate feature snapshot freshness. Skills and Fittings remain responsible for showing whether their own remote data is current.
 
@@ -198,8 +208,9 @@ Forget remains global. Confirmation states that Wingman removes the stored EVE a
 
 - The filter has a programmatic label.
 - Column headings identify capability state.
-- Overflow buttons have row-specific accessible names.
-- Menus are keyboard reachable, close on Escape and outside interaction, restore focus to their trigger, and never use browser-native dialogs.
+- Overflow buttons have row-specific accessible names, `aria-haspopup="menu"`, and synchronized `aria-expanded`.
+- The menu has an accessible label tied to its character, uses menu/menuitem semantics, supports Arrow Up, Arrow Down, Home, End, Enter, and Space, closes on Escape and outside interaction, and restores focus to its trigger.
+- Forget confirmation uses Wingman's app-owned dialog and never a browser-native dialog.
 - Empty, unavailable, and no-filter-results states name the next usable control.
 - Authorization and mutation messages use mounted or correctly exposed live regions according to the existing page conventions.
 
@@ -261,7 +272,8 @@ This is a focused geometry correction requested alongside the authorization rede
 - A failed new-grant persistence leaves the previous durable grant active and reports that the sign-in was not saved.
 - A live rotated token that cannot be saved retains the existing in-memory persistence-risk warning.
 - A forgotten or generation-changed character cannot be resurrected by a late callback.
-- Participant cleanup failure after durable forget is reported as partial completion.
+- Participant cleanup failure after durable forget is reported as `applied=True, persisted=False`; the character ID remains blocked from re-add until result-bearing reconciliation confirms cleanup.
+- An ownership mismatch is refused in place and directs the user through global forget before reauthorization.
 - Unresolved Fittings write intents continue to block forget.
 - Authority load or migration warnings remain visible and actionable; the Settings section does not manufacture an empty healthy roster from an unavailable authority.
 
@@ -271,41 +283,44 @@ Errors are bounded, sanitized, and contain no token or raw claim material.
 
 Existing authority and feature documents remain valid. Existing Skills-only grants continue to serve Skills. Users upgrade them through one generic full authorization round trip per character when they want Fittings or need to reauthenticate.
 
-The previous Fittings design's exact-row capability-upgrade requirement is superseded by this design. Its security goals remain, but the UI no longer promises a row-specific flow that EVE cannot present. The generic returned identity is accepted only after full validation and is reconciled by character ID.
+The previous Fittings design's exact-row capability-upgrade requirement is superseded by this design. Its security goals remain, but the UI no longer promises a row-specific flow that EVE cannot present. The generic returned identity is accepted only after full validation and is reconciled by character ID. A changed owner is refused until global cleanup completes.
 
-The registered EVE application must permit every scope in the derived complete scope set. If deployment configuration does not permit those scopes, the release must not present full authorization as available.
+The registered EVE application must permit every scope in the explicit Skills-and-Fittings full authorization set. If deployment configuration does not permit those scopes, the release must not present full authorization as available.
 
 ## Testing
 
 ### Authority and API
 
-- The full authorization scope set is derived from all declared capabilities.
+- The full authorization capability set is exactly Skills and Fittings; adding a future capability does not widen it implicitly, and the derived scope union is exactly the four named scopes.
 - New-character authorization stores a full grant.
-- Authorizing an existing character replaces its grant and clears reauthentication state.
+- Authorizing an existing same-owner character replaces its grant and clears reauthentication state.
 - An existing Skills-only grant continues to serve Skills before upgrade and serves both capabilities after full authorization.
-- Owner change, lifecycle generation change, cancellation, timeout, validation failure, persistence failure, and single-flight refusal preserve their documented behavior.
-- Cancellation after callback receipt but before commit discards the exchange result.
+- An existing different-owner character is refused unchanged and instructed to complete global forget first.
+- Lifecycle generation change, cancellation, timeout, validation failure, persistence failure, and single-flight refusal preserve their documented behavior.
+- Cancellation wins or loses at the specified linearization point; controlled tests pause during exchange, after validation, after lifecycle-gate acquisition, and immediately before save.
+- Refresh-token decryption failure transitions the row to reauthentication-required.
 - The shared payload contains display-safe fields and no credentials, owner hashes, or raw claims.
 - Authorization activity and terminal failures update through bounded in-memory state without claiming synchronous completion.
-- Global forget retains the three-way Settings result contract.
-- Semantic authority changes refresh Settings and reconcile feature controllers.
+- Global forget aggregates result-bearing participant cleanup, reports partial persistence accurately, and blocks same-ID re-add until in-session or startup reconciliation succeeds.
+- Semantic authority events cover activity and terminal outcomes as well as roster changes, with atomic payload state.
 
 ### Web contracts
 
 - Settings rail and section declarations remain one-to-one.
 - Characters is hidden by the EVE-tools gate and obeys section enter/leave behavior.
 - Skills and Fittings link to Settings › Characters.
-- Removed per-character authorization actions and the Fittings Characters overlay do not remain as dead markup, handlers, or bridge methods.
-- The roster filter, overflow menu, confirmation, focus restoration, Escape behavior, live regions, hidden overrides, and focus-visible treatment follow page conventions.
+- Removed per-character authorization actions and the Fittings Characters overlay do not remain as dead markup, handlers, controller methods, or bridge methods.
+- README, smoke checks, controller errors, comments, tests, and dev APIs use the centralized full-authorization model and contain no stale **Enable fittings** or row-level reauthentication instructions.
+- The roster filter, overflow menu, menu ARIA state and keyboard movement, confirmation, focus restoration, Escape behavior, live regions, hidden overrides, and focus-visible treatment follow page conventions.
 - The bridge allowlist, literal Python pushes, and page handlers agree.
-- Dev fixtures are generated only in `dev.js` and represent full, partial, reauthentication, warning, empty, and authorization-in-progress states.
+- Dev fixtures are generated only in `dev.js` and represent full, partial, reauthentication, warning, empty, authorization-in-progress, partial-cleanup, and maximum-50-character states.
 
 ### Layout and manual verification
 
 - Lexical tests pin shared two-pane geometry for Skills and Fittings and far-edge primary-action alignment.
 - Screenshot tooling captures Settings › Characters and the repaired Fittings route.
-- At the 840x625 floor, the Settings roster remains usable and the Fittings rail, gap, heading, filters, empty state, pager, and copy action remain visible without overflow.
-- A Windows/WebView2 smoke pass covers keyboard and pointer navigation, filtering, the overflow menu, forget confirmation and refusal, authorization start/cancel/success/failure, new and existing returned characters, partial-grant upgrade, route handoff, and supported display scaling.
+- At the 840x625 floor, a 50-character Settings roster remains usable, including an open overflow menu on the last visible row; the Fittings rail, gap, heading, filters, empty state, pager, and copy action remain visible without overflow.
+- A Windows/WebView2 smoke pass covers keyboard and pointer navigation, filtering, complete menu keyboard operation, forget confirmation/refusal/partial cleanup, blocked re-add, authorization start/cancel/success/failure, new and existing returned characters, owner mismatch, partial-grant upgrade, route handoff, and supported display scaling.
 
 `docs/smoke-checklist.md` is updated as part of the change. Browser or lexical tests do not substitute for the Windows/WebView2 pass.
 
