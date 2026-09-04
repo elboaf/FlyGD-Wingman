@@ -44,3 +44,28 @@ def test_the_capability_scope_registry_has_exactly_the_two_known_capabilities():
 
 def test_skills_and_fittings_are_distinct_capability_names():
     assert application.SKILLS != application.FITTINGS
+
+
+def test_full_authorization_names_exactly_the_current_product_capabilities():
+    assert application.FULL_AUTH_CAPABILITIES == (
+        application.SKILLS,
+        application.FITTINGS,
+    )
+
+
+def test_full_authorization_scopes_are_derived_from_the_explicit_capabilities():
+    expected = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
+    assert application.FULL_AUTH_SCOPES == expected
+    assert application.FULL_AUTH_SCOPES == frozenset(
+        {
+            "esi-skills.read_skills.v1",
+            "esi-skills.read_skillqueue.v1",
+            "esi-fittings.read_fittings.v1",
+            "esi-fittings.write_fittings.v1",
+        }
+    )
+
+
+def test_a_future_capability_does_not_widen_full_authorization(monkeypatch):
+    monkeypatch.setitem(application.CAPABILITY_SCOPES, "future", frozenset({"future.scope"}))
+    assert "future.scope" not in application.FULL_AUTH_SCOPES

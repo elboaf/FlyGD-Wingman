@@ -17,7 +17,7 @@ this package's public names for backward compatibility; new code should
 import from here directly.
 """
 
-from .application import FITTINGS, SKILLS
+from .application import FITTINGS, SKILLS, FULL_AUTH_CAPABILITIES, FULL_AUTH_SCOPES
 from .controller import (
     AccessTokenResult,
     AuthorityCharacter,
@@ -30,6 +30,8 @@ from .controller import (
 __all__ = [
     "FITTINGS",
     "SKILLS",
+    "FULL_AUTH_CAPABILITIES",
+    "FULL_AUTH_SCOPES",
     "AccessTokenResult",
     "AuthorityCharacter",
     "AuthorityController",

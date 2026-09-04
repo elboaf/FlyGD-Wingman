@@ -93,6 +93,16 @@ CAPABILITY_SCOPES = {
     FITTINGS: FITTINGS_SCOPES,
 }
 
+# The product-decision: the explicit named capabilities that together
+# constitute a "full authorization" for a character within this app.
+# This is intentionally explicit rather than computed from the dict so
+# a future unrelated CAPABILITY_SCOPES entry cannot silently widen the
+# union used for the full-consent flow.
+FULL_AUTH_CAPABILITIES = (SKILLS, FITTINGS)
+FULL_AUTH_SCOPES = frozenset().union(
+    *(CAPABILITY_SCOPES[name] for name in FULL_AUTH_CAPABILITIES)
+)
+
 # CCP asks third-party clients to identify themselves. Matches the shape
 # discord.py:169-170 already sends, for the same reason: an anonymous
 # agent is what gets an application throttled without warning.
