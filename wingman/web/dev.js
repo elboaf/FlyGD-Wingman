@@ -17,7 +17,37 @@
   };
 
   var api = {};
-  var fleetBar = { enabled: true, x: null, y: null };
+  // The roster is deliberately derived below: visible follows hidden, as it
+  // does in Api.fleet_bar_settings(), so the harness cannot paint a state
+  // Python would never return. The three base rows show running-visible,
+  // running-hidden, and known-offline character states.
+  var fleetBar = {
+    enabled: true,
+    x: null,
+    y: null,
+    seen: ['Ariadne', 'Basilisk', 'Cairn'],
+    hidden: ['Basilisk'],
+    running: ['Ariadne', 'Basilisk'],
+    revision: 1
+  };
+
+  function fleetBarState() {
+    return {
+      enabled: fleetBar.enabled,
+      x: fleetBar.x,
+      y: fleetBar.y,
+      seen: fleetBar.seen.slice(),
+      hidden: fleetBar.hidden.slice(),
+      revision: fleetBar.revision,
+      characters: fleetBar.seen.map(function (name) {
+        return {
+          name: name,
+          running: fleetBar.running.indexOf(name) !== -1,
+          visible: fleetBar.hidden.indexOf(name) === -1
+        };
+      })
+    };
+  }
   ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
    // The Uploader's three quick actions. Doubled rather than added to
@@ -1399,7 +1429,7 @@
           sig_bar: { enabled: true, x: null, y: null },
           // Separate from previews.enabled on purpose: the approved runtime
           // contract allows this bar to stay live with previews off.
-          fleet_bar: fleetBar
+          fleet_bar: fleetBarState()
         }, patch || {}),
       // discord.describe()'s shape for the fake webhook stored above, not
       // a prose invention: it is host/api/webhooks/<id>… by construction,
@@ -1519,14 +1549,50 @@
 
   api.fleet_bar_settings = function () {
     console.log('DEV api.fleet_bar_settings()');
-    return Promise.resolve(fleetBar);
+    return Promise.resolve(fleetBarState());
   };
 
   api.toggle_fleet_bar = function (enabled) {
     console.log('DEV api.toggle_fleet_bar(', enabled, ')');
-    fleetBar.enabled = !!enabled;
-    if (window.onFleetBarState) { window.onFleetBarState(fleetBar); }
+    if (fleetBar.enabled !== !!enabled) {
+      fleetBar.enabled = !!enabled;
+      fleetBar.revision += 1;
+    }
+    if (window.onFleetBarState) { window.onFleetBarState(fleetBarState()); }
     return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  api.set_fleet_bar_character_visible = function (name, visible) {
+    var index = fleetBar.seen.indexOf(name);
+    var hiddenIndex = fleetBar.hidden.indexOf(name);
+    var state;
+    console.log('DEV api.set_fleet_bar_character_visible(', name, visible, ')');
+    if (index === -1 || typeof visible !== 'boolean') {
+      return Promise.resolve({
+        applied: false,
+        persisted: false,
+        error: 'Choose a character from the Fleet list.',
+        state: fleetBarState()
+      });
+    }
+    if (!visible && hiddenIndex === -1 && fleetBar.hidden.length >= 64) {
+      return Promise.resolve({
+        applied: false,
+        persisted: false,
+        error: 'Show a hidden character before hiding another.',
+        state: fleetBarState()
+      });
+    }
+    if (visible && hiddenIndex !== -1) {
+      fleetBar.hidden.splice(hiddenIndex, 1);
+      fleetBar.revision += 1;
+    } else if (!visible && hiddenIndex === -1) {
+      fleetBar.hidden.push(name);
+      fleetBar.revision += 1;
+    }
+    state = fleetBarState();
+    if (window.onFleetBarState) { window.onFleetBarState(state); }
+    return Promise.resolve({applied: true, persisted: true, error: null, state: state});
   };
 
   // A RETURN, not a push, because that is what the bridge does. The first

@@ -831,6 +831,35 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     assert js.index("WM.handle('onFleetBarState'") < js.index("var host =")
 
 
+def test_fleet_character_controls_use_the_dedicated_revisioned_state():
+    """A generic settings payload must not redraw Fleet's independent roster."""
+    from wingman.ui import window as window_mod
+
+    html = (window_mod._web_dir() / "index.html").read_text(encoding="utf-8")
+    js = (window_mod._web_dir() / "previews.js").read_text(encoding="utf-8")
+    fleet_iife_source = js[js.index("(function () {") : js.index("}());") + 5]
+
+    assert 'id="fleetbar-character-list"' in html
+    assert "set_fleet_bar_character_visible" in js
+    assert "data-fleet-character" in js
+    assert "Show " in js and " in Fleet Bar" in js
+    assert "lastRevision" in js
+    assert "document.activeElement" in js
+    assert "document.body" in js
+    assert "document.addEventListener('wm:settings'" not in fleet_iife_source
+
+
+def test_fleet_character_disclosure_has_explicit_closed_body_rule():
+    """The static details element keeps its native open state across renders."""
+    from wingman.ui import window as window_mod
+
+    html = (window_mod._web_dir() / "index.html").read_text(encoding="utf-8")
+    css = (window_mod._web_dir() / "style.css").read_text(encoding="utf-8")
+
+    assert 'id="fleetbar-characters"' in html
+    assert "fleet-characters:not([open])" in css
+
+
 def test_superseded_alert_poller_and_preview_timer_are_gone():
     from wingman.alerts import service as alert_module
     from wingman.preview import host as preview_host

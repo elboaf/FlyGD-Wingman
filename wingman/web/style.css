@@ -2612,6 +2612,42 @@ button.btn:disabled,
    :not([open]) rule restores the expected closed-panel behaviour without
    removing the flex layout that applies while the panel is open. */
 .preview-group-manager:not([open]) > .group-manager-body { display: none; }
+
+/* Fleet visibility stays in one native disclosure outside the toggle row.
+   The renderer moves keyed rows between the groups instead of replacing this
+   element, so the browser-owned open state survives every telemetry update. */
+.fleet-characters { padding: 6px 0 2px; }
+.fleet-characters > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-muted);
+  user-select: none;
+}
+.fleet-characters > summary:hover { color: var(--text); }
+.fleet-characters > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* The list uses an author display rule, so native closed-details hiding needs
+   explicit author rules for every body node. */
+.fleet-characters:not([open]) > .fleet-character-list,
+.fleet-characters:not([open]) > .fleet-character-empty,
+.fleet-characters:not([open]) > .field-msg { display: none; }
+.fleet-character-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+}
+.fleet-character-group {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: var(--fs-muted);
+}
+.fleet-character-row .check { min-height: 20px; }
+.fleet-character-name { color: var(--text); }
+.fleet-character-empty { margin: 6px 0 0; }
+
 .group-manager-body {
   display: flex;
   flex-direction: column;
