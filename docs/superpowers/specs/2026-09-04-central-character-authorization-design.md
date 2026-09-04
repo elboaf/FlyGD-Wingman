@@ -59,12 +59,13 @@ Every new authorization and reauthorization uses this complete Skills-and-Fittin
 Wingman opens a generic EVE SSO page without first selecting a local character. After the callback:
 
 1. The access token is validated using the existing issuer, audience, signature, expiry, scope, subject, and owner checks.
-2. If the returned character ID is unknown and no incomplete cleanup blocks that ID, Wingman adds it to shared authority.
-3. If the returned character ID already exists with the same owner identity, Wingman replaces that character's grant and clears its reauthentication state.
-4. If the returned character ID exists with a different owner identity, Wingman refuses the replacement and instructs the user to forget the existing character first. The previous authority and derived state remain unchanged.
-5. Authority persistence completes before feature controllers reconcile the resulting roster.
+2. If the returned character ID is unknown, both required feature-cleanup slots must confirm that no orphan state blocks that ID before Wingman adds it to shared authority.
+3. If the returned character ID already exists and both stored and returned owner hashes are present and equal, Wingman replaces that character's grant and clears its reauthentication state.
+4. If the returned character ID exists and both owner hashes are present but differ, Wingman refuses the replacement and instructs the user to forget the existing character first. The previous authority and derived state remain unchanged.
+5. If either owner hash is absent, Wingman preserves compatibility by matching the validated character ID. It retains the existing non-empty owner hash or establishes the returned non-empty hash; it never replaces a known hash with an empty one. This has weaker transfer detection than two known hashes and is an explicit compatibility tradeoff for migrated and defensively parsed grants.
+6. Authority persistence completes before feature controllers reconcile the resulting roster.
 
-There is no wrong-character callback for this flow because Wingman made no row-specific promise before opening EVE. The exact-character capability-upgrade behavior in the previous Fittings design is retired along with the per-character upgrade action. Owner replacement is deliberately not folded into generic reauthorization: it crosses a security boundary and uses the explicit global-forget cleanup path first.
+There is no wrong-character callback for this flow because Wingman made no row-specific promise before opening EVE. The exact-character capability-upgrade behavior in the previous Fittings design is retired along with the per-character upgrade action. A proven owner replacement is deliberately not folded into generic reauthorization: it crosses a security boundary and uses the explicit global-forget cleanup path first.
 
 ### Existing partial grants
 
@@ -156,7 +157,11 @@ Global forget preserves `{applied, persisted, error}` so Settings can distinguis
 - `applied=True, persisted=True` means authority removal and every participant cleanup persisted;
 - `applied=True, persisted=False` means authority removal persisted but at least one participant cleanup did not.
 
-An incomplete cleanup blocks re-adding that character ID. The current process retains the blocked ID. On startup, result-bearing participant reconciliation rebuilds the block from orphan Skills or Fittings rows that could not be pruned from their durable documents. Before committing authorization for an otherwise unknown ID, authority retries or verifies orphan cleanup; it accepts the character only after every participant confirms that no prior-owner character state remains. The persisted orphan rows are the durable evidence, so no credential or owner hash is copied into Settings.
+An incomplete cleanup blocks re-adding that character ID. The current process retains the blocked ID. On startup, result-bearing participant reconciliation rebuilds the block from orphan Skills or Fittings rows that could not be pruned from their durable documents.
+
+Skills and Fittings are required cleanup-verification slots independent of whether their controllers constructed successfully. Normal controllers fill those slots with result-bearing reconciliation. A controller build failure, unreadable or unrecovered feature document, or missing slot implementation reports **unverified**, never clean. Before committing authorization for an otherwise unknown ID, authority retries or verifies orphan cleanup and accepts the character only after both required slots explicitly confirm that no prior-owner state remains for that ID. If either required slot is unavailable and cannot inspect its document, every unknown returned ID is blocked because Wingman cannot distinguish a new character from a previously forgotten one. Existing same-character reauthorization may proceed under the owner rules above because it does not cross from absent authority back into a potentially stale identity.
+
+The persisted orphan rows are the durable evidence from which startup reconstructs exact blocked IDs when feature documents are readable. Unavailability is a separate fail-closed condition, so no credential, owner hash, or duplicate block list is copied into Settings.
 
 The old page-facing targeted capability-upgrade methods and `AuthorityController.enable_capability` are removed after their callers are removed. The generic Skills-only authentication delegate is replaced by full authorization. Internal capability checks and declarations remain because Skills and Fittings still require them when obtaining access tokens.
 
@@ -295,13 +300,16 @@ The registered EVE application must permit every scope in the explicit Skills-an
 - New-character authorization stores a full grant.
 - Authorizing an existing same-owner character replaces its grant and clears reauthentication state.
 - An existing Skills-only grant continues to serve Skills before upgrade and serves both capabilities after full authorization.
-- An existing different-owner character is refused unchanged and instructed to complete global forget first.
+- An existing character with two present, unequal owner hashes is refused unchanged and instructed to complete global forget first.
+- Stored-blank, returned-blank, and both-blank owner-hash cases accept the validated character-ID match and preserve or establish any non-empty hash.
 - Lifecycle generation change, cancellation, timeout, validation failure, persistence failure, and single-flight refusal preserve their documented behavior.
 - Cancellation wins or loses at the specified linearization point; controlled tests pause during exchange, after validation, after lifecycle-gate acquisition, and immediately before save.
 - Refresh-token decryption failure transitions the row to reauthentication-required.
 - The shared payload contains display-safe fields and no credentials, owner hashes, or raw claims.
 - Authorization activity and terminal failures update through bounded in-memory state without claiming synchronous completion.
 - Global forget aggregates result-bearing participant cleanup, reports partial persistence accurately, and blocks same-ID re-add until in-session or startup reconciliation succeeds.
+- Required Skills and Fittings cleanup slots report exact blocked IDs when readable; controller construction failure, unreadable state, and unavailable slots are unverified and block every unknown-ID authorization commit.
+- A partial Forget followed by restart cannot re-add the ID while either feature cleanup remains failed or unverified.
 - Semantic authority events cover activity and terminal outcomes as well as roster changes, with atomic payload state.
 
 ### Web contracts
@@ -320,7 +328,7 @@ The registered EVE application must permit every scope in the explicit Skills-an
 - Lexical tests pin shared two-pane geometry for Skills and Fittings and far-edge primary-action alignment.
 - Screenshot tooling captures Settings › Characters and the repaired Fittings route.
 - At the 840x625 floor, a 50-character Settings roster remains usable, including an open overflow menu on the last visible row; the Fittings rail, gap, heading, filters, empty state, pager, and copy action remain visible without overflow.
-- A Windows/WebView2 smoke pass covers keyboard and pointer navigation, filtering, complete menu keyboard operation, forget confirmation/refusal/partial cleanup, blocked re-add, authorization start/cancel/success/failure, new and existing returned characters, owner mismatch, partial-grant upgrade, route handoff, and supported display scaling.
+- A Windows/WebView2 smoke pass covers keyboard and pointer navigation, filtering, complete menu keyboard operation, forget confirmation/refusal/partial cleanup, blocked re-add, authorization start/cancel/success/failure, new and existing returned characters, known owner mismatch, missing-owner compatibility, partial-grant upgrade, route handoff, and supported display scaling.
 
 `docs/smoke-checklist.md` is updated as part of the change. Browser or lexical tests do not substitute for the Windows/WebView2 pass.
 
