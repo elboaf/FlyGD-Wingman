@@ -149,11 +149,23 @@ Transport revisions order UI deliveries, but they cannot by themselves prove
 that a late callback belongs to the current Fleet activation. The coordinator
 therefore adds a monotonic `activation_generation` to `FleetSnapshot`.
 
-`TelemetryCoordinator` increments the requested generation on every Fleet mode
-transition and queues that generation with `_FleetMode`. The dispatcher stamps
-every snapshot with the generation it actually activated. `reconcile()` returns
-the currently requested Fleet generation (existing callers may ignore the
-return).
+`TelemetryCoordinator` increments and records the requested generation on every
+Fleet mode transition and queues that generation with `_FleetMode`. This
+reservation happens immediately after reconciliation reads its predicates and
+**before** fallible dispatcher, discovery, or stream startup. The dispatcher
+stamps every snapshot with the generation it actually activated.
+
+`reconcile()` always returns the currently requested Fleet generation (existing
+callers may ignore the return), including when infrastructure could not start.
+Known worker-start failures are contained and logged rather than raised; the
+reserved mode transition remains queued for the next successful dispatcher
+start. A thread-safe `requested_fleet_generation()` accessor provides the same
+value defensively if an unexpected reconciliation exception reaches `Api`.
+Consequently, persisted `fleet_bar.enabled`, the generation `Api` accepts, and
+a delayed activation all continue to describe the same requested mode. The
+Fleet window can remain truthfully in WAITING until a later reconciliation
+starts the worker; acceptance never depends on an unrelated caller noticing
+that it should be reopened.
 
 Generation handoff in `Api` is explicitly closed to callbacks. Before changing
 the Fleet setting or calling reconciliation, the toggle path acquires the Fleet
@@ -170,7 +182,10 @@ If the enabled-setting transaction fails before reconciliation, the toggle is
 refused and the saved accepted generation/snapshot/signature are restored under
 the presentation lock before callbacks are accepted again. The previous
 coordinator mode never changed, so restoring that complete prior acceptance
-state is the truthful rollback. A `try/finally`-shaped handoff guarantees that
+state is the truthful rollback. If an unexpected exception escapes after the
+setting persists, the `finally` path installs
+`requested_fleet_generation()` and leaves the bar in WAITING rather than
+restoring a retired generation. A `try/finally`-shaped handoff guarantees that
 no exception path can leave the rejecting sentinel installed permanently.
 
 Startup uses the same handoff rather than treating it as a toggle-only rule:
@@ -197,10 +212,15 @@ shown to users.
 `Api._receive_fleet_snapshot()` remains the coordinator's Fleet subscriber. It
 compares the snapshot's running-name set with the prior snapshot before doing
 any persistence or main-page work. On a semantic roster transition, it builds
-a deterministic candidate `seen` list: all current names as the newest sorted
-tier, followed by previously remembered non-current names in their existing
-order. It writes only when that final candidate differs from persisted state.
-Metric-only publications therefore do not touch settings or the main page.
+a deterministic candidate `seen` list in three deduplicated tiers: all current
+names sorted case-insensitively,
+then session-pending names in first-observed order, then persisted non-current
+names in their existing order. It writes only when that final candidate differs
+from persisted state. Pending entries are cleared only after a successful save
+that includes them. If Alice's write fails and she goes offline before Bob
+appears, Bob's transition therefore retries `Bob, Alice, ...` rather than
+forgetting Alice. Metric-only publications do not touch settings or the main
+page.
 
 Remembering names is independent of Preview runtime state. This is necessary
 because Fleet-only mode deliberately runs discovery while previews and the
@@ -247,13 +267,27 @@ receipt pushes this event only when the semantic roster signature changes
 Fleet, mutating visibility, and transitioning into or out of unknown runtime
 state also push it.
 
+The Fleet controls stop rendering from the generic `wm:settings` event. That
+payload contains only the persisted section, with neither derived characters
+nor a presentation revision, and can resolve after newer Fleet state. The
+revisioned `fleet_bar_settings()` response is the Fleet module's sole initial
+hydration path; `onFleetBarState` is its sole push path. Both pass through the
+same revision guard. Generic Settings code may still read
+`fleet_bar.enabled` to enforce EVE-tool visibility, but it does not hand that
+raw section to the Fleet renderer.
+
 ### Visibility mutation
 
 A dedicated bridge method accepts `(name, visible)` and returns Wingman's
-standard result plus authoritative Fleet state. It validates the name, enforces
-the hidden-name limit, then adds or removes it from `fleet_bar.hidden` in one
-settings transaction. An unchanged request is a successful no-op and performs
-no file write.
+standard result plus authoritative Fleet state. Name validation against the
+current/persisted/pending roster can occur before the write, but the hidden-list
+read, duplicate/no-op decision, 64-name limit check, and add/remove mutation all
+occur against the live Fleet section **inside one `settings.update()`
+transaction**. The transaction returns the normalized authoritative section
+that was actually saved. Two different rows may submit concurrently, so only
+this complete read-modify-write lock, not per-row page gating, prevents a lost
+choice or a 65th name being normalized away after reported success. An
+unchanged request is a successful no-op and performs no file write.
 
 For this endpoint, a persistence failure is a refusal: `settings.update()`
 rolls the live dictionary back when its save raises, so the visibility effect
@@ -288,13 +322,20 @@ prevents an older snapshot push from repainting a just-hidden row and prevents
 overlapping requests from restoring stale checkbox state. No operation mutates
 a `FleetSnapshot` or a `FleetRow`.
 
-Each row allows at most one visibility request in flight. Its checkbox is
-disabled until that response settles. Roster reconciliation is keyed by
-character name and updates existing controls in place where possible. If a
-running/offline transition must move the focused row between groups, focus is
-restored to that character's recreated checkbox. Background state must not
-collapse the disclosure, detach an unchanged focused control, or repeat a live
-status announcement for an unchanged semantic roster.
+Each row allows at most one visibility request in flight. Before disabling its
+checkbox, the page records the character, request token, and whether that input
+held focus. The checkbox is re-enabled when the request reaches any terminal
+path: success, refusal, bridge failure, or a response rejected as stale. Focus
+is restored to that character's current checkbox only when the recorded input
+had focus and focus has since fallen to `body`; a user who deliberately moved
+to another control is never pulled back.
+
+Roster reconciliation is keyed by character name and updates existing controls
+in place where possible. The same guarded focus restoration applies when a
+running/offline transition must recreate or move the focused row between
+groups. Background state must not collapse the disclosure, detach an unchanged
+focused control, or repeat a live status announcement for an unchanged semantic
+roster.
 
 ### Display filtering
 
@@ -381,11 +422,16 @@ No new package or runtime dependency is required.
 - Snapshot receipt promotes the current roster as one deterministic recency
   tier, remembers newly observed names, and does not write or log for an
   unchanged roster on every publication.
-- A failed background roster write retains session-pending names and retries on
-  a later semantic roster transition rather than every metric tick.
+- A failed background roster write retains session-pending names, folds them
+  between the next current and persisted tiers, clears them only after success,
+  and retries on a later semantic roster transition rather than every metric
+  tick.
 - Hidden names remain in the derived Settings roster after `seen` eviction.
 - Running names precede offline names; each group sorts case-insensitively.
 - Invalid and unknown visibility mutations and the 65th hide are refused.
+- Concurrent hides of different rows at the limit serialize the live
+  read/check/mutation transaction: no choice is lost and no success is returned
+  for a name that normalization discards.
 - Applied, no-op, and persistence-failure/refused outcomes obey the Settings
   transaction contract.
 - Interleaved snapshot and visibility publications carry monotonic revisions;
@@ -396,6 +442,10 @@ No new package or runtime dependency is required.
 - Persisted-enabled startup installs its accepted generation before sampling
   the coordinator's latest snapshot; callbacks arriving before that are
   rejected and recovered from the latest-value read or next publication.
+- Dispatcher-start refusal still returns a pre-reserved generation; a later
+  unrelated reconciliation can activate that generation without leaving API
+  acceptance closed. An unexpected post-persistence reconciliation exception
+  installs the coordinator's requested generation and leaves the bar WAITING.
 - A forced Fleet-toggle settings-write failure restores the prior accepted
   generation, snapshot, and roster signature rather than leaving callback
   acceptance closed.
@@ -415,8 +465,10 @@ are therefore limited to lexical contracts and Python payload behavior:
 - Generated-checkbox source uses `.check` / `.box` and assigns row-specific
   accessible names.
 - Source includes the no-commit-before-hydration guard, revision rejection,
-  per-row pending gate, keyed focus-restoration path, and closed-`details` CSS
-  override.
+  per-row pending gate, guarded focus restoration for every terminal response,
+  and closed-`details` CSS override.
+- Fleet rendering has no generic `wm:settings` listener; both dedicated initial
+  hydration and pushed state use the revisioned renderer.
 - Python payload tests cover running, offline, unknown, hidden, duplicate-free,
   and no-known-character data shapes.
 - Python payload plus lexical source checks cover the no-clients/all-hidden
@@ -438,9 +490,10 @@ are therefore limited to lexical contracts and Python payload behavior:
   characters rather than falsely labelling them Offline, then enable it.
 - Restart Wingman and verify hidden choices and offline restoration controls
   persist.
-- Navigate the disclosure entirely by keyboard. Verify focus survives a commit
-  and a running/offline row move, the disclosure stays open, and rapid repeated
-  activation cannot resolve out of order.
+- Navigate the disclosure entirely by keyboard. Verify focus survives success,
+  refusal, bridge failure, stale response, and a running/offline row move; the
+  disclosure stays open, deliberate focus movement is not stolen, and rapid
+  repeated activation cannot resolve out of order.
 - Simulate or instrument visibility persistence failure and verify the box
   reverts with one inline error rather than claiming a session-only change.
 - Exercise the 64-name hidden limit and verify the next hide is refused without
@@ -476,11 +529,11 @@ configuration remains in Settings.
    characters are hidden.` and remains draggable.
 6. The one-second snapshot cadence does not cause repeated settings writes,
    main-page pushes, or repeated failure logs for an unchanged roster.
-7. Older concurrent snapshot or mutation results cannot repaint newer Fleet
-   rows or Settings checkboxes, and callbacks from a retired Fleet activation
-   cannot be assigned a new presentation revision.
-8. A failed visibility save or a 65th hide is refused without changing or
-   evicting an existing persistent choice.
+7. Older concurrent snapshot, generic Settings hydration, or mutation results
+   cannot repaint newer Fleet rows or Settings checkboxes, and callbacks from a
+   retired Fleet activation cannot be assigned a new presentation revision.
+8. A failed visibility save, concurrent hide at the limit, or a 65th hide is
+   refused without changing, losing, or evicting an existing persistent choice.
 9. Malformed persisted names and invalid bridge requests cannot corrupt the
    Fleet settings shape.
 10. Automated checks pass and the Windows smoke checklist records the
