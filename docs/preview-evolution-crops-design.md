@@ -9,15 +9,17 @@
 ## Phase 0 probe result
 
 Full results, thresholds, and observed values are in
-`docs/preview-crop-prototype-results.md`. That document's decision:
+`docs/preview-crop-prototype-results.md`. That document's decision remains
 **INCOMPLETE — no production cap selected.** Stages 1 and 2 functionally
 created crops on a two-named-client machine after fixing a picker focus
-defect, but none of the eight committed pass criteria (correctness across
-DPI scales, activation latency, drag responsiveness, 60-second CPU/GPU,
-working-set growth, resource/HWND behavior, and full lifecycle) were
-measured against their thresholds, and stages 4/8 were not exercised for
-lack of clients. Phase 1 production work must not begin until the
-remaining Phase 0 gates are exercised or this scope is explicitly revised.
+defect, and a later five-named-client session additionally ran stage 4,
+which functioned correctly and now has a real automated 60-second
+CPU/working-set sample whose deltas sit within their individual
+thresholds. That is still not a pass: GPU utilization, activation and drag
+latency, mixed-DPI (125%/150%/200%) correctness, and stage 8 remain
+entirely unmeasured, so no stage can be scored against every committed
+criterion. Phase 1 production work must not begin until the remaining
+Phase 0 gates are exercised or this scope is explicitly revised.
 
 ## Intended outcome
 

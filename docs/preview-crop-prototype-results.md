@@ -83,14 +83,38 @@ test added in `402db94`, not a flake.
   the fix, the user confirmed selection → Enter → crop appeared as
   expected.
 - The user confirmed stage 1 (1 crop) and stage 2 (2 crops) crop
-  functionality worked. Stages 4 and 8 were not exercised because only two
-  named clients were running (each stage requires that many distinct named
-  clients).
+  functionality worked in this session, with only two named clients
+  running. Stage 4 was later exercised in a second session (see below);
+  stage 8 has still not been exercised in any session.
 - All probe processes exited and no probe process remained after closure.
 - The following were not fully evidenced in this run: 125%/150%/200% DPI
   scales, explicit negative-monitor picker mapping, measured click latency
-  and drag p95, the required 60-second CPU/GPU sample, the 4-crop and
-  8-crop stages, and minimize/occlusion/alert-pulse details.
+  and drag p95, and minimize/occlusion/alert-pulse details.
+
+### Session 2 — stage 4 evidence
+
+- A later session had five named EVE clients available: Gustav Oswaldo,
+  Guarzo Opper, Amelio Pellion, Umochi Tawate, and Astrella Esubria. Only
+  Amelio Pellion's resolution (1920x1080, confirmed in session 1) is known;
+  the other four clients' resolutions were not measured in this session and
+  are not claimed here.
+- With five clients available, the user advanced the load harness through
+  stages 1, 2, and 4, and reported that stage 4 (4 simultaneous crops)
+  functioned correctly.
+- Stage 8 was not run: only five named clients were available, one short of
+  the eight distinct named clients stage 8 requires.
+- An automated 60-second process sample was taken at stage 4, and a
+  matching automated 60-second baseline sample (primary previews only, no
+  crops) was taken later in the same session. See "Stage 4 automated
+  60-second process sample" under the performance table for the exact
+  figures and derived deltas.
+- Both automated measurement probe processes (the stage-4 sample and the
+  matching baseline sample) exited cleanly; no probe process remained after
+  either.
+- GPU utilization remains unavailable for this session. The automated
+  sample's process `HandleCount` is a per-process kernel-handle count, not a
+  count of Win32 HWNDs, and does not by itself satisfy the pass criteria's
+  HWND-count resource check.
 
 ## Machine and environment facts
 
@@ -113,7 +137,7 @@ machine/monitor/build combination used across the whole probe.
 
 | Scale | Client resolution(s) tested | Notes |
 | --- | --- | --- |
-| 100% | 1920x1080 (both named clients: Amelio Pellion, Isiga Ichinumi) | Only scale available on this machine; all three monitors report 100% (96 DPI). |
+| 100% | 1920x1080 confirmed for Amelio Pellion; other named clients (Isiga Ichinumi, Gustav Oswaldo, Guarzo Opper, Umochi Tawate, Astrella Esubria) not measured | Only scale available on this machine; all three monitors report 100% (96 DPI). A later session ran with five named clients (Gustav Oswaldo, Guarzo Opper, Amelio Pellion, Umochi Tawate, Astrella Esubria) to reach stage 4; only Amelio Pellion's resolution is confirmed. |
 | 125% | not exercised | No 125% display available on this machine. |
 | 150% | not exercised | No 150% display available on this machine. |
 | 200% | not exercised | No 200% display available on this machine. |
@@ -141,23 +165,53 @@ permits).
 
 | Metric | Baseline | Stage 1 (1 crop) | Stage 2 (2 crops) | Stage 4 (4 crops) | Stage 8 (8 crops) |
 | --- | --- | --- | --- | --- | --- |
-| Running clients | 2 (Amelio Pellion, Isiga Ichinumi) | 2 | 2 | N/A — stage skipped, insufficient clients (2 available, 4 required) | N/A — stage skipped, insufficient clients (2 available, 8 required) |
-| Crop-click p50 latency (ms) | N/A | not measured | not measured | N/A — stage skipped | N/A — stage skipped |
-| Crop-click p95 latency (ms) | N/A | not measured | not measured | N/A — stage skipped | N/A — stage skipped |
+| Running clients | 2 (Amelio Pellion, Isiga Ichinumi); 5 (Gustav Oswaldo, Guarzo Opper, Amelio Pellion, Umochi Tawate, Astrella Esubria) in the later stage-4 session | 2 | 2 | 5 (Gustav Oswaldo, Guarzo Opper, Amelio Pellion, Umochi Tawate, Astrella Esubria) | N/A — stage skipped, insufficient clients (5 available, 8 required) |
+| Crop-click p50 latency (ms) | N/A | not measured | not measured | not measured | N/A — stage skipped |
+| Crop-click p95 latency (ms) | N/A | not measured | not measured | not measured | N/A — stage skipped |
 | Primary-preview activation p95 baseline (ms) | not measured | — | — | — | — |
-| Drag p95 worst inter-event gap (ms) | not measured | not measured | not measured | N/A — stage skipped | N/A — stage skipped |
-| Drag max inter-event gap (ms) | not measured | not measured | not measured | N/A — stage skipped | N/A — stage skipped |
-| Primary-preview drag p95 (ms), crop stage active | N/A | not measured | not measured | N/A — stage skipped | N/A — stage skipped |
-| Wingman+DWM CPU median, 60s idle (%) | not measured at 60s (see 10s indicative sample below) | not measured at 60s (see 10s indicative sample below) | not measured at 60s (see 10s indicative sample below) | N/A — stage skipped | N/A — stage skipped |
-| DWM GPU engine utilization median, 60s idle (%) | not available (no GPU sample obtained) | not available (no GPU sample obtained) | not available (no GPU sample obtained) | N/A — stage skipped | N/A — stage skipped |
-| Wingman working set after 60s settle (MiB) | not measured at 60s (see 10s indicative sample below) | not measured at 60s (see 10s indicative sample below) | not measured at 60s (see 10s indicative sample below) | N/A — stage skipped | N/A — stage skipped |
-| Working-set increase over baseline (MiB) | — | not computable from 60s data | not computable from 60s data | N/A — stage skipped | N/A — stage skipped |
+| Drag p95 worst inter-event gap (ms) | not measured | not measured | not measured | not measured | N/A — stage skipped |
+| Drag max inter-event gap (ms) | not measured | not measured | not measured | not measured | N/A — stage skipped |
+| Primary-preview drag p95 (ms), crop stage active | N/A | not measured | not measured | not measured | N/A — stage skipped |
+| Wingman+DWM CPU median, 60s idle (%) | Probe process CPU 0.0065104167%; DWM CPU rounded to 0% (automated 60-second sample from the stage-4 session; see note below). Earlier 10-second indicative sample also recorded below. | not measured at 60s (see 10s indicative sample below) | not measured at 60s (see 10s indicative sample below) | Probe process CPU 0.0086805556%; DWM CPU rounded to 0% (automated 60-second sample; see note below) | N/A — stage skipped |
+| DWM GPU engine utilization median, 60s idle (%) | not available (no GPU sample obtained) | not available (no GPU sample obtained) | not available (no GPU sample obtained) | not available (no GPU sample obtained) | N/A — stage skipped |
+| Wingman working set after 60s settle (MiB) | 40.98046875 MiB (automated 60-second sample from the stage-4 session; see note below). Earlier 10-second indicative sample also recorded below. | not measured at 60s (see 10s indicative sample below) | not measured at 60s (see 10s indicative sample below) | 41.1640625 MiB (automated 60-second sample; see note below) | N/A — stage skipped |
+| Working-set increase over baseline (MiB) | — | not computable from 60s data | not computable from 60s data | +0.18359375 MiB (within the 24 MiB threshold; see note below) | N/A — stage skipped |
 | Working-set threshold (`8 + 4×crops` MiB) | — | 12 | 16 | 24 | 40 |
-| Prototype crop HWND count | 0 | not counted numerically | not counted numerically | N/A — stage skipped | N/A — stage skipped |
-| HWND count after closing stage | — | not counted numerically (qualitative only: all probe processes exited and no probe process remained after closure) | not counted numerically (qualitative only: all probe processes exited and no probe process remained after closure) | N/A — stage skipped | N/A — stage skipped |
-| DWM HRESULT warnings observed | not inspected/recorded | not inspected/recorded | not inspected/recorded | N/A — stage skipped | N/A — stage skipped |
-| Repeated warning every ~700ms sweep? | not recorded | not recorded | not recorded | N/A — stage skipped | N/A — stage skipped |
-| Pass/fail | N/A | insufficient evidence — cannot be scored against the committed pass criteria | insufficient evidence — cannot be scored against the committed pass criteria | N/A — stage skipped | N/A — stage skipped |
+| Prototype crop HWND count | 0 | not counted numerically | not counted numerically | not counted numerically as HWNDs (process handle count 195 recorded — see note below; not equivalent to an HWND count) | N/A — stage skipped |
+| HWND count after closing stage | — | not counted numerically (qualitative only: all probe processes exited and no probe process remained after closure) | not counted numerically (qualitative only: all probe processes exited and no probe process remained after closure) | not counted numerically (qualitative only: both automated measurement probe processes exited cleanly, none remained) | N/A — stage skipped |
+| DWM HRESULT warnings observed | not inspected/recorded | not inspected/recorded | not inspected/recorded | not inspected/recorded | N/A — stage skipped |
+| Repeated warning every ~700ms sweep? | not recorded | not recorded | not recorded | not recorded | N/A — stage skipped |
+| Pass/fail | N/A | insufficient evidence — cannot be scored against the committed pass criteria | insufficient evidence — cannot be scored against the committed pass criteria | insufficient evidence — CPU and working-set deltas fall within their individual thresholds, but GPU, activation/drag latency, DPI-scale correctness, HWND-count, and full lifecycle criteria remain unmeasured for this stage, so it cannot be scored as a pass | N/A — stage skipped |
+
+### Stage 4 automated 60-second process sample
+
+A real 60-second automated sample of the measurement probe process was
+taken during stage 4 (four simultaneous crops, five named clients running),
+alongside a matching 60-second automated baseline sample (primary previews
+only, no crops) taken later in the same session:
+
+| Metric | Baseline (60s) | Stage 4 (60s) | Delta |
+| --- | --- | --- | --- |
+| Probe process CPU | 0.0065104167% | 0.0086805556% | +0.0021701389 percentage points |
+| DWM CPU | rounded 0% | rounded 0% | rounded 0% |
+| Process working set (median/max) | 40.98046875 MiB | 41.1640625 MiB | +0.18359375 MiB |
+| Process handles (median/max) | 195 | 195 | 0 |
+
+These are real 60-second samples of the automated measurement probe
+process, not the installed production Wingman application; "probe process
+CPU" stands in for criterion 4's "Wingman CPU" term only as an
+approximation, and it was not explicitly confirmed that either sample
+window was otherwise idle. GPU utilization was unavailable for both
+samples. `HandleCount` is a per-process kernel handle count, not a Win32
+HWND count, and does not by itself satisfy criterion 7's HWND-count check.
+
+**This is still not a stage-4 pass.** Even though the measured CPU
+(+0.0021701389 percentage points) and working-set (+0.18359375 MiB) deltas
+are each individually within their respective thresholds (2.0 percentage
+points and 24 MiB for four crops), criteria 1 (correctness/DPI scaling), 2
+(activation latency), 3 (drag responsiveness), 5 (GPU), 7 (HWND count), and
+8 (lifecycle) remain unmeasured for stage 4, and a stage must pass every
+applicable criterion to count.
 
 ### Indicative 10-second samples (informational only — NOT the required 60-second gate)
 
@@ -188,7 +242,7 @@ context, not as evidence of a pass.
 | Minimize/restore source client | not exercised | N/A — not exercised |
 | Picker cancel | not exercised | N/A — not exercised |
 | Client-loss cancellation | not exercised | N/A — not exercised |
-| Full shutdown / teardown | All probe processes exited and no probe process remained after closure (process-level observation only; no HWND-count or DWM-relationship check was recorded) | insufficient evidence for a full pass — process exit confirmed, remaining sub-checks not recorded |
+| Full shutdown / teardown | All probe processes exited and no probe process remained after closure (process-level observation only; no HWND-count or DWM-relationship check was recorded). Reconfirmed in the later stage-4 session: both automated measurement probe processes (stage-4 sample and matching baseline sample) exited cleanly with none remaining. | insufficient evidence for a full pass — process exit confirmed twice, remaining sub-checks (HWND count, DWM relationship) not recorded |
 
 ## Minimized-client crop content
 
@@ -207,31 +261,36 @@ loop.
 | --- | --- | --- | --- |
 | 1 crop | Yes (user confirmed crop creation worked) | Cannot be determined | Functional confirmation only; correctness/activation/drag/CPU/GPU/memory/resources criteria were not measured against the committed thresholds. |
 | 2 crops | Yes (user confirmed crop creation worked) | Cannot be determined | Same limitation as stage 1. |
-| 4 crops | No | N/A — stage skipped | Only two named clients were running; four distinct named clients are required. |
-| 8 crops | No | N/A — stage skipped | Only two named clients were running; eight distinct named clients are required. |
+| 4 crops | Yes (user confirmed crop creation and function worked, five named clients available; automated 60-second CPU/working-set sample recorded) | Cannot be determined | CPU (+0.0021701389 pp) and working-set (+0.18359375 MiB) deltas are individually within their thresholds, but GPU, activation/drag latency, DPI-scale correctness, HWND-count, and full lifecycle criteria remain unmeasured for this stage. |
+| 8 crops | No | N/A — stage skipped | Only five named clients were available (Gustav Oswaldo, Guarzo Opper, Amelio Pellion, Umochi Tawate, Astrella Esubria); eight distinct named clients are required. |
 
 **Resulting production live-crop cap:** INCOMPLETE — no production cap
-selected. Stages 1 and 2 ran and functionally created crops, but none of
-the eight committed pass criteria were measured against their thresholds
-for any stage, so no stage can be scored as passing or failing under the
-cap rule.
+selected. Stages 1, 2, and 4 ran and functionally created crops, and stage
+4 additionally has a real automated 60-second CPU/working-set sample whose
+deltas sit within their individual thresholds, but GPU, activation/drag
+latency, mixed-DPI (125%/150%/200%) correctness, and stage 8 remain
+unmeasured for every stage, so no stage can be scored as passing or
+failing under the complete cap rule.
 
 ## Decision
 
-**INCOMPLETE — no production cap selected.** Two named EVE clients (Amelio
-Pellion and Isiga Ichinumi) were available, so stages 1 and 2 were run and,
-after fixing a picker focus defect (commit `402db94`), functionally created
-crops as confirmed by the user. Stages 4 and 8 were not exercised because
-only two named clients were running. None of the eight committed pass
-criteria — correctness at multiple DPI scales, activation latency, drag
-responsiveness, 60-second CPU, 60-second GPU, working-set growth over a
-60-second settle, HWND/DWM-warning resource behavior, and full lifecycle —
-were measured against their thresholds during this run; only indicative
-10-second CPU/memory/handle samples exist, and those are explicitly
-insufficient for the gate. Real EVE client geometry/maximized-state was not
-explicitly compared before and after the run. **Phase 1 must not begin
-until the remaining gates — 125%/150%/200% DPI scales, explicit
-negative-monitor picker mapping, measured click latency and drag p95, the
-60-second CPU/GPU sample, the 4-crop and 8-crop stages, and
-minimize/occlusion/alert-pulse behavior — are exercised, or this scope is
-explicitly revised.**
+**INCOMPLETE — no production cap selected.** Stages 1 and 2 ran with two
+named EVE clients (Amelio Pellion and Isiga Ichinumi) and, after fixing a
+picker focus defect (commit `402db94`), functionally created crops as
+confirmed by the user. In a later session with five named clients (Gustav
+Oswaldo, Guarzo Opper, Amelio Pellion, Umochi Tawate, and Astrella
+Esubria), stage 4 also functioned correctly per the user, and a real
+automated 60-second sample now exists for stage 4's CPU and working-set
+behavior against a matching 60-second baseline: CPU +0.0021701389
+percentage points and working set +0.18359375 MiB, both individually
+within their committed thresholds. Stage 8 was not run because only five
+named clients were available (eight are required). This evidence still
+does not permit a GO decision: GPU utilization, activation and drag
+latency, mixed-DPI (125%/150%/200%) correctness, and stage 8 remain
+entirely unmeasured across every stage, and a stage must pass every
+applicable criterion — not just CPU and memory — to set the cap. Real EVE
+client geometry/maximized-state was not explicitly compared before and
+after either session. **Phase 1 must not begin until the remaining gates —
+125%/150%/200% DPI scales, explicit negative-monitor picker mapping,
+measured click latency and drag p95, GPU utilization, and the 8-crop
+stage — are exercised, or this scope is explicitly revised.**
