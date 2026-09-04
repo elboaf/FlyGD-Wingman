@@ -604,6 +604,16 @@ class Api:
         # stay private or pywebview recursively walks its WinForms native.
         self._fleetbar_window = None
         self._fleetbar_ready = False
+        # LOCK ORDER: shutdown_lock -> _fleetbar_lifecycle_lock ->
+        # _fleet_presentation_lock. The settings save lock and this lock are
+        # never nested, and evaluate_js is never called while this lock is
+        # held. A dispatcher callback may otherwise race a mode transition
+        # and restore rows from the retired telemetry activation.
+        self._fleet_presentation_lock = threading.Lock()
+        self._fleet_expected_generation = None  # rejecting sentinel
+        self._fleet_presentation_revision = 0
+        self._fleet_roster_signature = None
+        self._fleet_pending_seen = []
         self._fleet_snapshot = None
         self._fleet_unsubscribe = None
         # pywebview serves bridge calls concurrently. Window construction,
@@ -3776,7 +3786,8 @@ class Api:
 
     def fleet_bar_snapshot(self) -> dict:
         """Current complete display payload, also used by the bar at boot."""
-        snapshot = self._fleet_snapshot
+        with self._fleet_presentation_lock:
+            snapshot = self._fleet_snapshot
         if snapshot is None:
             return {
                 "rows": [],
@@ -3800,8 +3811,79 @@ class Api:
 
     def _receive_fleet_snapshot(self, snapshot) -> None:
         """Coordinator subscriber; safe on its dispatcher thread."""
-        self._fleet_snapshot = snapshot
+        with self._fleet_presentation_lock:
+            if (
+                snapshot.activation_generation == 0
+                or snapshot.activation_generation != self._fleet_expected_generation
+            ):
+                return
+            self._fleet_snapshot = snapshot
+            self._fleet_presentation_revision += 1
+            self._fleet_roster_signature = tuple(row.character for row in snapshot.rows)
+        # pywebview can synchronously enter page code, so the presentation
+        # lock protects state only and is deliberately released before JS.
         self._push_fleet_snapshot()
+
+    def _close_fleet_presentation(self):
+        """Reject callbacks and retain enough state to undo an unsaved toggle."""
+        with self._fleet_presentation_lock:
+            accepted = (
+                self._fleet_expected_generation,
+                self._fleet_snapshot,
+                self._fleet_roster_signature,
+                self._fleet_pending_seen,
+                self._fleet_presentation_revision,
+            )
+            self._fleet_expected_generation = None
+            self._fleet_snapshot = None
+            self._fleet_roster_signature = None
+            self._fleet_pending_seen = []
+            self._fleet_presentation_revision += 1
+        return accepted
+
+    def _restore_fleet_presentation(self, accepted) -> None:
+        """Restore a closed acceptance after its settings write was refused."""
+        with self._fleet_presentation_lock:
+            (
+                self._fleet_expected_generation,
+                self._fleet_snapshot,
+                self._fleet_roster_signature,
+                self._fleet_pending_seen,
+                self._fleet_presentation_revision,
+            ) = accepted
+
+    def _install_fleet_generation(self, generation: int | None) -> None:
+        """Open acceptance for one coordinator reservation, still on WAITING."""
+        with self._fleet_presentation_lock:
+            self._fleet_expected_generation = generation
+            self._fleet_snapshot = None
+            self._fleet_roster_signature = None
+            self._fleet_pending_seen = []
+            self._fleet_presentation_revision += 1
+
+    def _reconcile_fleet_generation(self, *, transition: bool) -> int | None:
+        """Reconcile Fleet without allowing a retired callback through the handoff."""
+        if self._telemetry is None:
+            return None
+        if transition:
+            # Startup enters through here too. A caller that must persist a
+            # transition closes first so it can restore this acceptance on a
+            # write failure; this second close keeps direct callers safe.
+            self._close_fleet_presentation()
+        failed = False
+        try:
+            generation = self._reconcile_eve_runtime()
+        except Exception:
+            # The setting is already durable. Preserve that choice, reserve
+            # the coordinator's requested generation, and leave the bar in
+            # WAITING instead of reviving an older accepted snapshot.
+            failed = True
+            logger.exception("Fleet telemetry reconciliation failed")
+            generation = self._telemetry.requested_fleet_generation()
+        self._install_fleet_generation(generation)
+        if not failed and self.fleet_bar_settings().get("enabled"):
+            self._receive_fleet_snapshot(self._telemetry.snapshot())
+        return generation
 
     def toggle_fleet_bar(self, on) -> dict:
         """Serialize the persisted/runtime/window transition."""
@@ -3814,13 +3896,26 @@ class Api:
         from wingman.ui import fleetbar
 
         previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
+        accepted = None
         if on != previous:
-            # A snapshot belongs to one enabled generation. Re-enabling
-            # opens on WAITING until the coordinator publishes fresh state,
-            # never on rows cached before the disabled interval.
-            self._fleet_snapshot = None
-        settings_mod.update_section(self._state.settings, "fleet_bar", {"enabled": on})
-        self._reconcile_eve_runtime()
+            # Close before persistence. The dispatcher can call back while
+            # settings saves, but it sees the rejecting sentinel rather than
+            # the prior activation. This never nests save and presentation
+            # locks: _close_fleet_presentation() returns before update_section.
+            accepted = self._close_fleet_presentation()
+        try:
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"enabled": on}
+            )
+        except OSError:
+            logger.exception("Could not persist the Fleet Bar setting")
+            if accepted is not None:
+                self._restore_fleet_presentation(accepted)
+            return self._field_refused("Could not save the Fleet Bar setting.")
+        if on != previous:
+            self._reconcile_fleet_generation(transition=True)
+        else:
+            self._reconcile_eve_runtime()
         bar = self._fleetbar_window
         try:
             if on:
@@ -3846,13 +3941,14 @@ class Api:
                     except Exception:
                         logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
                 # A display feature that did not display is not enabled.
-                # Roll the runtime choice back so both controls stay honest
-                # and a later click retries construction from a clean state.
+                # Close before the rollback write for the same reason as an
+                # ordinary toggle: callbacks during persistence must not
+                # repaint this just-failed activation with old rows.
+                self._close_fleet_presentation()
                 settings_mod.update_section(
                     self._state.settings, "fleet_bar", {"enabled": False}
                 )
-                self._fleet_snapshot = None
-                self._reconcile_eve_runtime()
+                self._reconcile_fleet_generation(transition=False)
                 self._push_fleet_bar_state()
                 return self._field_refused("The Fleet Bar could not be opened.")
         self._push_fleet_bar_state()
@@ -4070,10 +4166,11 @@ class Api:
 
     # ---- EVE client previews ------------------------------------------
 
-    def _reconcile_eve_runtime(self) -> None:
+    def _reconcile_eve_runtime(self) -> int | None:
         """Bring the sole shared EVE telemetry runtime in line with settings."""
         if self._telemetry is not None:
-            self._telemetry.reconcile()
+            return self._telemetry.reconcile()
+        return None
 
     def start_previews_if_enabled(self) -> None:
         """Start Preview if enabled, then reconcile all shared EVE telemetry.
@@ -4082,7 +4179,7 @@ class Api:
         Preview stays off. The preview pump and foreground hook remain lazy.
         """
         if self._preview_host is None:
-            self._reconcile_eve_runtime()
+            self._start_fleet_telemetry_if_enabled()
             return
         section = self._state.settings.get("preview", {})
         # Pushed before start(): the first registration pass runs inside
@@ -4093,7 +4190,14 @@ class Api:
             self._preview_host.start()
         # After host start(), so Preview roster delivery has a live pump.
         # Telemetry predicates read persisted settings directly.
-        self._reconcile_eve_runtime()
+        self._start_fleet_telemetry_if_enabled()
+
+    def _start_fleet_telemetry_if_enabled(self) -> None:
+        """Reserve and sample Fleet only when its persisted mode is enabled."""
+        if self.fleet_bar_settings().get("enabled"):
+            self._reconcile_fleet_generation(transition=True)
+        else:
+            self._reconcile_eve_runtime()
 
     def set_preview_enabled(self, enabled: bool) -> None:
         """Toggle previews and persist the choice.

@@ -41,9 +41,23 @@ class FleetWindow(FakeWindow):
 class FakeTelemetry:
     def __init__(self):
         self.reconciled = 0
+        self.generation = 0
+        self.latest = FleetSnapshot(
+            rows=(),
+            stream_health=StreamHealth(state="stopped"),
+            activation_generation=0,
+        )
 
     def reconcile(self):
         self.reconciled += 1
+        self.generation += 1
+        return self.generation
+
+    def requested_fleet_generation(self):
+        return self.generation
+
+    def snapshot(self):
+        return self.latest
 
     def stop(self):
         pass
@@ -84,6 +98,105 @@ def api(tmp_path):
 def _fleet_scripts(window):
     scripts = getattr(window, "calls", getattr(window, "evaluated", []))
     return [call for call in scripts if "onFleetSnapshot" in call]
+
+
+def test_snapshot_from_retired_activation_is_rejected(api):
+    """A late dispatcher callback must not repopulate a retired generation."""
+    api._fleet_expected_generation = 2
+    stale = FleetSnapshot(
+        rows=(FleetRow("Old Session", 99),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+
+    api._receive_fleet_snapshot(stale)
+
+    assert api._fleet_snapshot is None
+
+
+def test_callback_during_toggle_handoff_cannot_restore_old_snapshot(api):
+    """Closing acceptance precedes the reconcile callback without sleep races."""
+    stale = FleetSnapshot(
+        rows=(FleetRow("Old Session", 99),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+    callback_finished = threading.Event()
+    api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
+    api._fleet_expected_generation = 1
+    api._telemetry.generation = 1
+
+    def reconcile():
+        callback = threading.Thread(
+            target=lambda: (api._receive_fleet_snapshot(stale), callback_finished.set())
+        )
+        callback.start()
+        assert callback_finished.wait(5)
+        callback.join(5)
+        api._telemetry.generation = 2
+        return 2
+
+    api._telemetry.reconcile = reconcile
+    api.toggle_fleet_bar(False)
+
+    assert api._fleet_expected_generation == 2
+    assert api._fleet_snapshot is None
+
+
+def test_failed_toggle_persistence_restores_prior_acceptance(api, monkeypatch):
+    """A failed settings save restores the generation and accepted display state."""
+    from wingman.ui import api as api_mod
+
+    prior = FleetSnapshot(
+        rows=(FleetRow("Alice", 10),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+    api._fleet_expected_generation = 1
+    api._fleet_snapshot = prior
+    api._fleet_roster_signature = ("Alice",)
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", fail_save)
+    result = api.toggle_fleet_bar(True)
+
+    assert result["applied"] is False
+    assert api._fleet_expected_generation == 1
+    assert api._fleet_snapshot is prior
+    assert api._fleet_roster_signature == ("Alice",)
+
+
+def test_persisted_enabled_startup_installs_generation_before_latest_snapshot(api):
+    """Startup samples the coordinator only after reserving Fleet's generation."""
+    latest = FleetSnapshot(
+        rows=(FleetRow("Alice", 10),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+    api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
+    api._telemetry.latest = latest
+
+    api.start_previews_if_enabled()
+
+    assert api._fleet_expected_generation == 1
+    assert api._fleet_snapshot is latest
+
+
+def test_unexpected_reconcile_error_uses_requested_generation(api):
+    """After a persisted enable, infrastructure failure leaves Fleet waiting."""
+    api._telemetry.generation = 2
+
+    def fail_reconcile():
+        raise RuntimeError("unexpected")
+
+    api._telemetry.reconcile = fail_reconcile
+    result = api.toggle_fleet_bar(True)
+
+    assert result["applied"] is True
+    assert api._fleet_expected_generation == 2
+    assert api._fleet_snapshot is None
 
 
 def test_toggle_persists_reconciles_and_creates_the_window(tmp_path, monkeypatch):
@@ -170,14 +283,32 @@ def test_toggle_pushes_one_authoritative_state_to_main_page(api):
 
 
 def test_failed_first_show_rolls_back_enabled_state(tmp_path, monkeypatch):
+    from wingman.ui import api as api_mod
     from wingman.ui import fleetbar
 
     telemetry = FakeTelemetry()
     api = make_api(tmp_path, telemetry=telemetry)
+    stale = FleetSnapshot(
+        rows=(FleetRow("Old Session", 99),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+    accepted_during_rollback = []
+    original_save = api_mod.settings_mod._save_locked
+    saves = 0
+
+    def save_with_late_callback(*args, **kwargs):
+        nonlocal saves
+        saves += 1
+        if saves == 2:
+            api._receive_fleet_snapshot(stale)
+            accepted_during_rollback.append(api._fleet_snapshot)
+        return original_save(*args, **kwargs)
 
     def fail_create(_api, hidden=True):
         raise RuntimeError("WebView unavailable")
 
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", save_with_late_callback)
     monkeypatch.setattr(fleetbar, "create", fail_create)
 
     result = api.toggle_fleet_bar(True)
@@ -185,13 +316,17 @@ def test_failed_first_show_rolls_back_enabled_state(tmp_path, monkeypatch):
     assert result["applied"] is False
     assert api._state.settings["fleet_bar"]["enabled"] is False
     assert telemetry.reconciled == 2
+    assert accepted_during_rollback == [None]
 
 
 def test_reenable_does_not_flash_previous_generation_rows(api):
+    api._fleet_expected_generation = 1
+    api._telemetry.generation = 1
     api._receive_fleet_snapshot(
         FleetSnapshot(
             rows=(FleetRow("Old Session", 99),),
             stream_health=StreamHealth(state="active"),
+            activation_generation=1,
         )
     )
 
@@ -228,6 +363,7 @@ def test_toggle_off_hides_existing_window_and_reconciles(api):
 
 
 def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
+    api._fleet_expected_generation = 1
     snapshot = FleetSnapshot(
         rows=(
             FleetRow("Alice", 43, ("SCRAM/POINT",)),
@@ -235,6 +371,7 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
         ),
         stream_health=StreamHealth(state="stale", detail="3.2s since poll"),
         metric_error="clock skew",
+        activation_generation=1,
     )
 
     api._receive_fleet_snapshot(snapshot)
@@ -262,9 +399,11 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
 
 
 def test_snapshot_push_targets_only_the_fleet_window(api):
+    api._fleet_expected_generation = 1
     snapshot = FleetSnapshot(
         rows=(FleetRow("Alice", 10),),
         stream_health=StreamHealth(state="active"),
+        activation_generation=1,
     )
 
     api._receive_fleet_snapshot(snapshot)
