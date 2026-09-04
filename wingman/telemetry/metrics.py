@@ -200,8 +200,8 @@ class _CharacterState:
     bound: bool = False
     # Per-bind fact-ordering floor: reset to None on every lifecycle bind
     # (see _consume_source) so a duplicate or out-of-order fact for the
-    # SAME still-current source cannot double-count damage or roll a
-    # tackle deadline backward.
+    # SAME still-current source cannot double-count damage or roll EWAR
+    # activity backward.
     last_fact_sequence: int | None = None
     damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
     ewar: set[str] = field(default_factory=set)
@@ -304,7 +304,7 @@ class FleetMetrics:
             # request_source republish) must not see an unchanged
             # source_generation/source_id and skip the "changed source"
             # clear below -- that would resurrect this retired source's old
-            # damage/tackle as if they belonged to the fresh bind.
+            # damage/EWAR as if they belonged to the fresh bind.
             state.bound = False
             state.source_generation = None
             state.source_id = None
@@ -406,11 +406,19 @@ class FleetMetrics:
     def _refresh_activity(
         self, state: _CharacterState, occurred_at: datetime.datetime
     ) -> bool:
+        mono = self._clock()
+        if state.activity_deadline is not None and mono >= state.activity_deadline:
+            # Expiry must be observed at ingestion too. Otherwise a new fight
+            # arriving between snapshots extends the old deadline and revives
+            # stale EWAR tags from the previous fight.
+            state.ewar.clear()
+            state.activity_deadline = None
+
         remaining = occurred_at + EWAR_ACTIVITY_WINDOW - self._utc_now()
         if remaining <= datetime.timedelta(0):
             return False
         remaining = min(remaining, EWAR_ACTIVITY_WINDOW)
-        candidate = self._clock() + remaining.total_seconds()
+        candidate = mono + remaining.total_seconds()
         if state.activity_deadline is None or candidate > state.activity_deadline:
             state.activity_deadline = candidate
         return True

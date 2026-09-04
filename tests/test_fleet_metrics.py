@@ -653,6 +653,27 @@ class TestSpecificEwarAndActivity:
             "NEUT",
         )
 
+    def test_new_combat_after_unobserved_expiry_does_not_resurrect_old_ewar(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_scram", NOW)))
+
+        # No snapshot observes the 30-second expiry before a later fight starts.
+        utc_box[0] = NOW + datetime.timedelta(seconds=40)
+        mono_box[0] = 140.0
+        metrics.consume(_env(4, _damage("Alice", 100, utc_box[0])))
+
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
+
+    def test_new_ewar_after_unobserved_expiry_keeps_only_the_new_kind(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_point", NOW)))
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=40)
+        mono_box[0] = 140.0
+        metrics.consume(_env(4, _ewar("Alice", "incoming_neut", utc_box[0])))
+
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ("NEUT",)
+
     def test_ewar_older_than_activity_window_is_ignored(self):
         metrics, _, _ = self._bound(_metrics(mono=100.0))
         metrics.consume(
