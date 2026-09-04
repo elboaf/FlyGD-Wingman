@@ -23,6 +23,19 @@ combat telemetry. It stores only current sparse rows with short expiry.
 The first transport is signed HTTP snapshot publication and polling, not
 WebSockets, SSE, peer-to-peer transport, or a persistent room system.
 
+## Product boundary prerequisite
+
+Wingman's current product constraint says "No telemetry. No account except"
+Google uploads and the user's Discord webhook. This feature is a deliberate,
+narrow exception: it adds an optional authGD device identity and transmits
+combat-log-derived display metrics to currently verified fleet members.
+
+Before a production implementation plan or release, `PRODUCT.md` must be
+explicitly amended to authorize that exception and retain its limits: default
+off, explicit pairing/consent, authenticated Member-only recipients, no raw
+combat logs/history, and no gameplay automation. This specification does not
+silently override the current product boundary.
+
 ## Goals
 
 - Show authorized fleet members current per-character outgoing DPS and incoming
@@ -103,9 +116,16 @@ Fleet Read authorization; no account's ESI grant authorizes a different
 account to read or join the shared feed.
 
 If an account can establish eligibility for more than one current fleet through
-its linked Fleet Read characters, authGD evaluates each character against its
-verified fleet rather than assuming all alts share one fleet. The service
-returns only data for fleets the requester is currently entitled to view.
+its linked Fleet Read characters, authGD evaluates every published character
+against its verified fleet rather than assuming all alts share one fleet. A
+character has at most one current server-derived fleet: authGD atomically moves
+that character's current row to the new fleet when its verification changes.
+
+The read endpoint returns a flat union of rows the requester is entitled to
+view. Wingman does not route or authorize by fleet ID; authGD has already
+filtered the rows, and an EVE character cannot simultaneously appear in two
+current fleet groups. The response therefore need not disclose a fleet ID or
+render a group boundary.
 
 ### ESI validation boundary
 
@@ -159,9 +179,12 @@ Wingman derives a sparse remote projection from its latest completed local
 - Include a row only when `dps > 0` or current EWAR is non-empty.
 - Include `0 dps` when current `SCRAM/POINT` is active.
 - Omit quiet, no-log, unknown, and non-local characters.
-- Send an empty authoritative row list when the last active row ends. This
-  withdraws every active row owned by the device; it does not mean the device
-  disconnected.
+- Treat every accepted publication as an atomic replacement of the publishing
+  device's complete sparse projection. A row omitted from a non-empty later
+  publication is withdrawn immediately, just as an empty publication withdraws
+  every row owned by that device.
+- Send an empty authoritative row list when the last active row ends. It is a
+  normal withdrawal, not a disconnected-device signal.
 
 Protocol v1 is conceptually:
 
@@ -182,16 +205,25 @@ telemetry payload fields. The wire contract accepts only the documented
 properties, bounded integers, an allowlisted EWAR value, and a bounded row and
 body size.
 
-Character IDs come from the paired authGD account's linked-character mapping.
-Wingman must not resolve arbitrary character names or submit a publisher-supplied
-name. authGD owns the ID-to-name rendering value.
+Character IDs come from an authenticated device catalogue returned by authGD.
+The catalogue contains only the paired account's linked `{character_id,
+character_name}` entries plus a revision. Wingman matches a locally discovered
+title-derived name to exactly one catalogue entry using its documented
+case-insensitive normalization; it publishes nothing for no match or an
+ambiguous match. A catalogue revision change, removed link, or name mismatch
+forces a refresh and leaves the character unshared until an exact match is
+restored. Wingman must not resolve arbitrary names or submit a publisher-supplied
+name. authGD owns the ID-to-name rendering value and independently rechecks the
+link before accepting every row.
 
 ### Relay and read model
 
-authGD validates the whole publication before updating it. Accepted state is
-one current row per `(fleet_id, character_id)`, tagged with owning device,
-server receive time, expiry, and revision. It does not retain a sequence of
-facts or snapshots.
+authGD validates the whole publication before atomically replacing that
+device's sparse projection. Accepted state is one current row per
+`character_id`, tagged with its server-derived current fleet, owning device,
+server receive time, expiry, and revision. A row moved to another verified
+fleet replaces its prior group membership in the same transaction. authGD does
+not retain a sequence of facts or snapshots.
 
 Readers use authenticated HTTP polling, initially at a bounded one-second
 cadence with conditional responses where useful. authGD filters response rows
@@ -220,16 +252,19 @@ keeps remote rows separate from local facts and source lifecycles.
 
 ### Publisher leases
 
-AuthGD grants exactly one renewable publisher lease for each
-`(fleet_id, character_id)`. The lease belongs to one authenticated device
-session. A competing device is refused while that lease is live; it never wins
-because it happened to reconnect last. An expired lease can be acquired only
-through normal authenticated publication and current ESI eligibility checks.
+AuthGD grants exactly one renewable publisher lease for each `character_id`.
+The current server-derived fleet is lease metadata, not part of its identity, so
+a fleet transition cannot leave two live rows for one character. The lease
+belongs to one authenticated device session. A competing device is refused
+while that lease is live; it never wins because it happened to reconnect last.
+An expired lease can be acquired only through normal authenticated publication
+and current ESI eligibility checks.
 
 ## Staleness and failure behavior
 
-- A valid sparse-empty publication removes the affected device's active rows
-  immediately.
+- Every accepted snapshot immediately removes that device's previously active
+  rows that are absent from it. A sparse-empty publication therefore removes all
+  of that device's active rows immediately.
 - If a publisher stops without withdrawal, authGD labels its rows `stale` after
   three seconds from server receipt and hard-removes them at ten seconds.
 - EWAR is only a current local snapshot field. Neither event timestamps nor an
@@ -320,6 +355,8 @@ latency or load justifies it.
   major. Removal or changed meaning requires a new major.
 - authGD migrations are generated and reviewed through its established Drizzle
   workflow; no existing EVE token or browser-session semantics are repurposed.
+- The required Wingman `PRODUCT.md` exception is reviewed and accepted before a
+  production implementation plan or release.
 
 ## Alternatives considered
 
@@ -355,8 +392,10 @@ rollout:
 2. **Device proof:** pair a generated test device key to a test Member account;
    prove no browser cookie or EVE token reaches Wingman.
 3. **Relay proof:** exercise signed publication/read with two simulated Members,
-   matching and non-matching fleets, linked and unlinked character IDs, and a
-   sparse-empty withdrawal.
+   matching and non-matching fleets, linked and unlinked character IDs, a
+   partial omission from a non-empty replacement, and a sparse-empty withdrawal.
+   Prove that an eligible multi-fleet reader receives only authGD's filtered
+   union, never a client-routed or duplicate character row.
 4. **Safety proof:** verify lease conflict refusal, revision replay refusal,
    signature rejection, membership/Fleet Read/device revocation, rate limits,
    stale-at-three-second behavior, and deletion at ten seconds.
