@@ -55,6 +55,7 @@ SCREENS = (
     Screen(
         "settings-uploading", "Settings - Uploading", "settings", "uploading", False
     ),
+    Screen("settings-characters", "Settings - Characters", "settings", "characters", True),
     Screen("settings-bookmarks", "Settings - Bookmarks", "settings", "bookmarks", True),
     Screen("settings-previews", "Settings - Previews", "settings", "previews", True),
     Screen(

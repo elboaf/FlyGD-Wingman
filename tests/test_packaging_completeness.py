@@ -588,12 +588,12 @@ def test_the_build_verifies_every_eve_capability_controller_is_importable():
     assert "from wingman.eveskills.controller import SkillsController" in action
 
 
-def test_the_build_verifies_fittings_js_is_bundled():
+def test_the_build_verifies_fittings_and_characters_js_are_bundled():
     """Same silent-`datas`-failure shape as the other named web assets:
     the action already lists every script the page loads by name so a
     wrong path in uploader.spec cannot ship a build missing one of them
-    silently. `fittings.js` must be on that list alongside the scripts
-    that were there before the Fittings route existed.
+    silently. `fittings.js` and `characters.js` must be on that list
+    alongside the scripts that were there before those sections existed.
     """
     action = (
         ROOT / ".github" / "actions" / "build-installer" / "action.yml"
@@ -604,6 +604,11 @@ def test_the_build_verifies_fittings_js_is_bundled():
         "the action's bundled-web-assets check does not name fittings.js -- "
         "a missing datas entry for it would ship a build with a blank "
         "Fittings route and no CI signal at all"
+    )
+    assert "characters.js" in web_check, (
+        "the action's bundled-web-assets check does not name characters.js -- "
+        "a missing datas entry for it would ship a build with an inert "
+        "Characters Settings section and no CI signal at all"
     )
     for name in ("index.html", "style.css", "app.js", "skills.js"):
         assert name in web_check, name

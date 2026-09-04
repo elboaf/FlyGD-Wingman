@@ -225,7 +225,7 @@
     document.dispatchEvent(new CustomEvent('wm:section', { detail: name }));
   };
 
-  WM.section = function (name) {
+  function selectSection(name) {
     WM.current_section = name;
     Array.prototype.forEach.call(
       document.querySelectorAll('.settings-pane > .settings'),
@@ -236,7 +236,20 @@
       document.querySelectorAll('.rail-item'), function (btn) {
         btn.classList.toggle('active', btn.dataset.section === name);
       });
+  }
+
+  WM.section = function (name) {
+    selectSection(name);
     WM.notify_section(name);
+  };
+
+  WM.openSettingsSection = function (name) {
+    if (WM.current_route === 'settings') {
+      WM.section(name);
+      return;
+    }
+    selectSection(name);
+    WM.route('settings');
   };
 
   Array.prototype.forEach.call(
@@ -260,14 +273,13 @@
   // them and there is no way back.
   WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
                    'accountidentity', 'backups'];
-  // Alerts joined this list in round 5 (D1) when it stopped being a card
-  // inside Previews and became a section. It is EVE-gated for the same
-  // reason the other two are: it reads the EVE gamelogs folder and draws
-  // on a preview window, so with the gate off it configures nothing that
-  // can happen. This is also what takes the rail to TWO entries in that
-  // mode -- five, less these three -- which is the whole of E1's argument
-  // that the merge axis is the product's own independence claim.
-  WM.EVE_SECTIONS = ['bookmarks', 'previews', 'alerts'];
+  // Alerts and Characters are EVE-gated for the same reason Bookmarks and
+  // Previews are: with the gate off they configure nothing that can happen
+  // without an EVE install or an authenticated EVE account. This is also
+  // what takes the rail to TWO entries in that mode -- six, less these four
+  // -- which is the whole of E1's argument that the merge axis is the
+  // product's own independence claim.
+  WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'alerts'];
 
   WM.apply_eve_gate = function (shown, fleetEnabled) {
     WM.eve_shown = shown !== false;

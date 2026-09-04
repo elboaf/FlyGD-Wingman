@@ -2222,6 +2222,18 @@ button.btn:disabled,
    the stacked label treatment anyway, like every other settings row on the
    route. They did not until round 3's B1; the #eve-binds block below
    carries the reasoning and the measurements for both lists. */
+#section-characters { min-height: 100%; }
+#section-characters > .card {
+  display: flex; flex: 1; min-height: 0; flex-direction: column;
+}
+#characters-roster {
+  display: flex; flex: 1; min-height: 0; flex-direction: column;
+  gap: 8px; overflow-y: auto; scrollbar-gutter: stable;
+}
+#characters-roster:has(> #characters-empty:not([hidden])) {
+  justify-content: center;
+}
+
 /* ABOUT is the one card on this route that states facts BEFORE it offers a
    control -- every other card leads with the control and explains it
    underneath. Without this the licence line and the login switch touch,

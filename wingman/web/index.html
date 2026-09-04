@@ -347,7 +347,7 @@
   </div>
 
   <div class="route" id="route-settings">
-    <!-- A rail, not one long column, and FIVE groups rather than the seven
+    <!-- A rail, not one long column, and SIX groups rather than the seven
          this screen carried until round 5's E1. Seven entries gave equal
          weight to five holding ten controls between them and two holding
          about seventy.
@@ -382,6 +382,7 @@
            product off, which is a legitimate control and a poor first
            impression of the app's configuration surface. -->
       <button class="rail-item active" data-section="uploading">Uploading</button>
+      <button class="rail-item" data-section="characters">Characters</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
       <!-- Its own entry since round 5's D1. It was a card at the bottom of
@@ -392,9 +393,10 @@
            sat below ~70 controls, and the folder the feature actually
            reads was three rail entries away, under Folders. -->
       <button class="rail-item" data-section="alerts">Alerts</button>
-      <!-- Last, and directly under the three entries it removes: unticking
-           the switch inside hides Bookmarks, Previews and Alerts (app.js's
-           EVE_SECTIONS) and lands you here, so the rail loses its tail
+      <!-- Last, and directly under the EVE-only entries it removes:
+           unticking the switch inside hides Characters, Bookmarks,
+           Previews and Alerts (app.js's EVE_SECTIONS) and lands you here,
+           so the rail loses its tail
            rather than a hole in its middle. It is also where a rail item
            visited once, probably never, belongs -- the landing is the
            entry above the fold, not this one. The panes below are kept in
@@ -559,6 +561,36 @@
         </div>
         <p class="sub-hint" id="webhook-status">not configured</p>
         <p class="field-msg" id="msg-discord" hidden></p>
+      </section>
+
+    </div>
+
+    <div class="settings" id="section-characters">
+
+      <section class="card">
+        <h2>EVE authorization</h2>
+        <p class="hint" id="characters-count">0 characters</p>
+        <div class="row">
+          <span class="lab">Account</span>
+          <button class="btn" id="characters-authenticate" disabled>Authenticate account</button>
+          <button class="btn" id="characters-cancel" hidden disabled>Cancel</button>
+          <details class="bk-menu" id="characters-menu" hidden>
+            <summary>More</summary>
+            <button id="characters-menu-forget" type="button" disabled>Forget character</button>
+          </details>
+        </div>
+        <p class="hint" id="characters-activity">Authorize an EVE account to let Wingman read its character roster.</p>
+        <p class="field-msg" id="characters-notice" role="status" hidden></p>
+        <div class="row">
+          <label class="lab" for="characters-filter">Filter roster</label>
+          <input class="field" id="characters-filter" type="text"
+                 spellcheck="false" autocomplete="off" disabled>
+          <button class="linkbtn" id="characters-filter-clear" hidden disabled>Clear filter</button>
+        </div>
+        <p class="hint" id="characters-live" role="status" aria-live="polite"></p>
+        <div id="characters-roster" role="list" aria-label="Authorized characters">
+          <div class="empty" id="characters-empty">No authorized characters yet.</div>
+        </div>
       </section>
 
     </div>
@@ -2345,6 +2377,7 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="characters.js"></script>
   <script src="bookmarks.js"></script>
   <script src="previews.js"></script>
   <script src="alerts.js"></script>

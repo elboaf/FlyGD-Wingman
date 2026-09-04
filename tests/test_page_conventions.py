@@ -693,6 +693,20 @@ def test_settings_does_not_land_on_the_switch_that_removes_the_product():
     assert declared[0] != "general"
 
 
+def test_settings_section_scripts_load_after_app_js():
+    """Section modules reach through the WM bootstrap app.js defines.
+
+    A section script loaded before app.js sees no WM to register against and
+    dies during parse-time setup; in this stack that means a blank inert
+    screen rather than a visible failure. Task 7's Characters shell is the
+    new case and the page order is the only place that guarantees it.
+    """
+    scripts = re.findall(r'<script src="([^"]+)"></script>', HTML)
+    assert "app.js" in scripts
+    assert "characters.js" in scripts
+    assert scripts.index("app.js") < scripts.index("characters.js")
+
+
 def test_opening_a_dialog_disarms_an_armed_keybind_capture():
     """A module that captures keystrokes must disarm before raising an
     in-page dialog.
