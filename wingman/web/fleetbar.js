@@ -7,6 +7,7 @@
     window.addEventListener('pywebviewready', function () { resolve(); },
                             { once: true });
   });
+  var lastRevision = -1;
 
   function send(method) {
     var args = Array.prototype.slice.call(arguments, 1);
@@ -64,7 +65,13 @@
 
   function render(payload) {
     payload = payload || {};
+    var revision = Number(payload.revision);
+    if (isFinite(revision) && revision < lastRevision) {
+      return Promise.resolve(null);
+    }
+    if (isFinite(revision)) lastRevision = revision;
     var rows = Array.isArray(payload.rows) ? payload.rows : [];
+    var runningCount = Number(payload.running_count) || 0;
     var health = payload.stream_health || { state: 'stopped', detail: null };
     var rowsNode = document.getElementById('fleet-rows');
     var empty = document.getElementById('fleet-empty');
@@ -90,6 +97,9 @@
     });
 
     empty.hidden = rows.length !== 0;
+    empty.textContent = runningCount > 0
+      ? 'All running characters are hidden.'
+      : 'Waiting for EVE clients\u2026';
     healthNode.textContent = healthLabel(health);
     healthNode.classList.toggle('warn', health.state === 'stale' ||
       health.state === 'missing_folder');

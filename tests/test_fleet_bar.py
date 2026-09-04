@@ -407,6 +407,19 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
     }
 
 
+def test_fleet_page_source_rejects_stale_revision_and_all_hidden_copy():
+    from wingman.ui import window as window_mod
+
+    html = (window_mod._web_dir() / "fleetbar.html").read_text(encoding="utf-8")
+    js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
+
+    assert "running_count" in js
+    assert "lastRevision" in js
+    assert "All running characters are hidden." in js
+    assert js.index("All running characters are hidden.") < js.index("return fit();")
+    assert "Waiting for EVE clients" in html
+
+
 def test_fleet_settings_groups_running_offline_and_hidden(api):
     api._state.settings["fleet_bar"].update(
         seen=["Bravo", "Alice", "Offline"], hidden=["Bravo"]
@@ -672,6 +685,7 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
 
     assert hidden["rows"] == []
     assert hidden["running_count"] == 1
+    assert hidden["revision"] < restored["revision"]
     assert restored["rows"] == [
         {"character": "Alice", "dps": 43, "ewar": ["SCRAM"], "log_status": None}
     ]
