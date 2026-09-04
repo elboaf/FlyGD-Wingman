@@ -342,6 +342,11 @@ class GameLogStream:
             self._enqueue([event])
         self._drain_queue()
 
+    def characters(self) -> tuple[str, ...]:
+        """Characters with an active selected log source."""
+        with self._lock:
+            return tuple(sorted(self._tracked, key=str.casefold))
+
     def health(self) -> StreamHealth:
         with self._lock:
             if not self._started:

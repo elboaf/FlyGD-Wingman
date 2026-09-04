@@ -394,6 +394,7 @@ class Api:
         preview_host=None,
         skills=None,
         alerts=None,
+        telemetry=None,
     ):
         self._state = state
         self._window = None  # assigned by ui.window.create()
@@ -454,6 +455,10 @@ class Api:
         # method ever invoked on it, and every one of the alert bridge
         # methods below guards on it first.
         self._alerts = alerts
+        # Shared client/log infrastructure in production. ``_alerts`` stays
+        # as the legacy AlertService seam for focused tests and compatibility;
+        # all lifecycle call sites prefer telemetry when it is present.
+        self._telemetry = telemetry
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -2883,8 +2888,7 @@ class Api:
             # `folder` callable reconcile() re-evaluates, so a repointed
             # or newly-set folder is exactly the case that used to persist
             # while nothing ever polled it.
-            if self._alerts is not None:
-                self._alerts.reconcile()
+            self._reconcile_eve_runtime()
             return result
 
         text = str(path or "").strip()
@@ -2987,6 +2991,12 @@ class Api:
 
     # ---- EVE client previews ------------------------------------------
 
+    def _reconcile_eve_runtime(self) -> None:
+        """Reconcile the shared runtime, falling back to legacy Alerts."""
+        runtime = self._telemetry if self._telemetry is not None else self._alerts
+        if runtime is not None:
+            runtime.reconcile()
+
     def start_previews_if_enabled(self) -> None:
         """Start the preview thread only if the user asked for it.
 
@@ -2995,8 +3005,7 @@ class Api:
         previews EVE clients should pay none of it.
         """
         if self._preview_host is None:
-            if self._alerts is not None:
-                self._alerts.reconcile()
+            self._reconcile_eve_runtime()
             return
         section = self._state.settings.get("preview", {})
         # Pushed before start(): the first registration pass runs inside
@@ -3005,12 +3014,10 @@ class Api:
         self._preview_host.set_hotkeys(section.get("hotkeys") or {})
         if section.get("enabled"):
             self._preview_host.start()
-        if self._alerts is not None:
-            # After start(), not before: the folder callable __main__ wires
-            # up gates on the host's live is_running, and reconciling
-            # before start() would evaluate it against the pre-launch
-            # state.
-            self._alerts.reconcile()
+        # After host start(), so Preview roster delivery has a live pump.
+        # Telemetry predicates read persisted settings directly; the legacy
+        # fallback still relies on the host's live state.
+        self._reconcile_eve_runtime()
 
     def set_preview_enabled(self, enabled: bool) -> None:
         """Toggle previews and persist the choice.
@@ -3046,11 +3053,7 @@ class Api:
                 self._preview_host.start()
             else:
                 self._preview_host.stop()
-        if self._alerts is not None:
-            # Alerts gate on preview.enabled through the `folder` callable
-            # (decision: no previews, no polling thread), so a toggle here
-            # is one of the five places that answer can change.
-            self._alerts.reconcile()
+        self._reconcile_eve_runtime()
         # Truthy on success: WM.send resolves to null on a bridge failure
         # and cannot otherwise distinguish that from a method that simply
         # returned None (settings.js:181 documents the same trap).
@@ -3069,17 +3072,15 @@ class Api:
                 self._preview_host.stop()
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        if self._alerts is not None:
-            # reconcile(), not a direct stop(): the folder callable
-            # __main__ wires up gates on the host's live is_running, which
-            # preview_host.stop() above has already flipped false, so this
-            # is the same "no previews, no polling thread" answer every
-            # other call site relies on -- run after the host teardown,
-            # not before, or it would see the pre-shutdown state.
+        runtime = self._telemetry if self._telemetry is not None else self._alerts
+        if runtime is not None:
             try:
-                self._alerts.reconcile()
+                if self._telemetry is not None:
+                    runtime.stop()
+                else:
+                    runtime.reconcile()
             except Exception:
-                logger.exception("Alert service did not stop cleanly")
+                logger.exception("EVE telemetry runtime did not stop cleanly")
 
     def capture_preview_bind(self, parts) -> dict:
         return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
@@ -4106,13 +4107,7 @@ class Api:
     def set_alert_enabled(self, enabled) -> dict:
         """Turn the gamelog alert poller on or off."""
         result = self._write_alert_setting(("enabled",), bool(enabled))
-        if self._alerts is not None:
-            # One of the five places reconcile() must run from: alerts
-            # gate on this flag (composed with the preview/folder state in
-            # the `folder` callable __main__ wires up), so this toggle is
-            # exactly the case that can change AlertService._wanted()'s
-            # answer.
-            self._alerts.reconcile()
+        self._reconcile_eve_runtime()
         return result
 
     def set_alert_pve_filter(self, enabled) -> dict:
@@ -4253,7 +4248,12 @@ class Api:
         # setting still holds a path.
         if folder is not None and not folder.is_dir():
             folder = None
-        if self._alerts is not None:
+        if self._telemetry is not None:
+            health = self._telemetry.stream_health()
+            running = health.state in {"running", "active", "stale", "error"}
+            last_error = health.detail if health.state in {"stale", "error"} else None
+            characters = list(self._telemetry.stream_characters())
+        elif self._alerts is not None:
             health = self._alerts.health()
             running = health.running
             last_error = health.last_error

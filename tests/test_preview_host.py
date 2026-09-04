@@ -548,6 +548,18 @@ def test_host_command_messages_are_distinct():
     assert commands == {host.win32.WM_APP + n for n in range(1, len(commands) + 1)}
 
 
+def test_request_sweep_delegates_to_shared_discovery_when_injected():
+    requested = []
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        request_discovery=lambda: requested.append(True),
+    )
+
+    h.request_sweep()
+
+    assert requested == [True]
+
+
 def test_raise_alert_queues_without_a_window():
     """The service can raise before the pump exists: start() returns
     immediately and _hwnd is created later on the preview thread
@@ -5073,6 +5085,32 @@ def test_a_roster_from_before_the_window_existed_is_applied_at_startup(monkeypat
     assert h._pending_roster is None
     h._host_proc(0x99, host.win32.WM_APP_ROSTER, 0, 0)
     assert created.count("Alice") == 1
+
+
+def test_shared_discovery_mode_arms_no_sweep_timer_or_direct_enumeration(
+    monkeypatch,
+):
+    created = []
+    h = _pump_host(monkeypatch, created)
+    h._hwnd = None
+    requested = []
+    h.set_discovery_request(lambda: requested.append(True))
+    user32 = _StartupUser32()
+
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(user32))
+    monkeypatch.setattr(h, "_create_host_window", lambda libs: 0x99)
+    monkeypatch.setattr(h, "_install_hook", lambda libs: None)
+    monkeypatch.setattr(
+        host.discovery,
+        "list_clients",
+        lambda: (_ for _ in ()).throw(AssertionError("direct discovery ran")),
+    )
+
+    h._run()
+
+    assert requested == [True]
+    assert [name for name, _args in user32.seen].count("SetTimer") == 0
+    assert h._ready.is_set()
 
 
 def test_a_failed_startup_roster_does_not_kill_the_preview_thread(monkeypatch):

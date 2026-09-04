@@ -273,8 +273,14 @@ class PreviewHost:
         clear_layouts=None,
         replace_layout=None,
         hide_on_lost_focus=None,
+        request_discovery=None,
     ):
         self._on_layout_changed = on_layout_changed
+        # None preserves the legacy self-discovery timer for isolated tests
+        # and compatibility callers. Production injects the shared
+        # coordinator request, so this host only reconciles roster snapshots
+        # posted onto its pump.
+        self._request_discovery = request_discovery
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
         # before quitting is simply lost.
@@ -549,8 +555,18 @@ class PreviewHost:
             # A page refresh is secondary to keeping the preview pump alive.
             logger.exception("on_layouts_changed callback raised")
 
+    def set_discovery_request(self, callback) -> None:
+        """Switch from compatibility sweeps to shared discovery before start."""
+        with self._lock:
+            if self._thread is not None:
+                raise RuntimeError("discovery request must be set before preview start")
+            self._request_discovery = callback
+
     def request_sweep(self) -> None:
-        """Ask for an immediate sweep. Safe from any thread."""
+        """Ask shared discovery, or the compatibility timer, for a sweep."""
+        if self._request_discovery is not None:
+            self._request_discovery()
+            return
         self._post(win32.WM_APP_SWEEP_NOW)
 
     def apply_roster(self, snapshot: RosterSnapshot) -> None:
@@ -832,8 +848,14 @@ class PreviewHost:
             )
             return
 
-        self._sweep(libs)
-        # After the legacy startup sweep, never before it. apply_roster is
+        if self._request_discovery is None:
+            self._sweep(libs)
+        else:
+            # Shared discovery owns enumeration cadence. Request its first
+            # snapshot only after the pump HWND exists, so apply_roster can
+            # post a signal rather than relying solely on the pending slot.
+            self._request_discovery()
+        # After the optional legacy startup sweep, never before it. apply_roster is
         # safe from any thread and start() returns before this window
         # exists, so a snapshot published in that gap was retained with no
         # PostMessageW to carry it -- nothing else would ever drain it, and
@@ -861,9 +883,10 @@ class PreviewHost:
         with self._lock:
             initial = dict(self._desired_hotkeys)
         self._apply_hotkeys(libs, initial)
-        libs.user32.SetTimer(
-            self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID), SWEEP_MS, None
-        )
+        if self._request_discovery is None:
+            libs.user32.SetTimer(
+                self._hwnd, ctypes.c_void_p(SWEEP_TIMER_ID), SWEEP_MS, None
+            )
         self._ready.set()
         self._apply_alerts(libs, self._drain_alerts())
 

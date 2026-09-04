@@ -595,6 +595,60 @@ def build_alert_service(state, host):
         return None
 
 
+def build_alert_policy(state, host):
+    """Alert decisions without a private file-reader thread."""
+    if host is None:
+        return None
+    try:
+        from .alerts.service import AlertPolicy, play_sound
+
+        return AlertPolicy(
+            config=lambda: state.settings.get("preview", {}).get("alerts", {}),
+            sound=play_sound,
+            focused=host.focused_character,
+            on_alert=host.raise_alert,
+        )
+    except Exception:
+        logger.exception("Alert policy unavailable")
+        return None
+
+
+def build_telemetry(state, host, alert_policy):
+    """Shared EVE discovery/gamelog runtime, or None off Windows."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from .telemetry.clients import ClientDiscovery
+        from .telemetry.coordinator import TelemetryCoordinator
+        from .telemetry.gamelogs import GameLogStream
+        from .telemetry.metrics import FleetMetrics
+
+        def gamelogs_folder():
+            configured = state.settings.get("gamelogs_dir")
+            return Path(configured) if configured else combatlog.find_gamelogs_dir()
+
+        return TelemetryCoordinator(
+            preview_enabled=lambda: bool(
+                state.settings.get("preview", {}).get("enabled")
+            ),
+            fleet_enabled=lambda: bool(
+                state.settings.get("fleet_bar", {}).get("enabled")
+            ),
+            alerts_enabled=lambda: bool(
+                state.settings.get("preview", {}).get("alerts", {}).get("enabled")
+            ),
+            gamelogs_folder=gamelogs_folder,
+            discovery=ClientDiscovery(),
+            stream=GameLogStream(),
+            metrics=FleetMetrics(),
+            preview_host=host,
+            alert_policy=alert_policy,
+        )
+    except Exception:
+        logger.exception("Shared EVE telemetry unavailable")
+        return None
+
+
 def build_skills_controller(api):
     """The EVE skills controller, or None where it cannot be built.
 
@@ -702,10 +756,19 @@ def main() -> int:
 
     api_box = {}
     preview_host = build_preview_host(state, api_box)
+    alert_policy = build_alert_policy(state, preview_host)
+    telemetry = build_telemetry(state, preview_host, alert_policy)
+    if telemetry is not None and preview_host is not None:
+        preview_host.set_discovery_request(telemetry.request_discovery)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
-        alerts=build_alert_service(state, preview_host),
+        # The legacy AlertService remains only as a focused-test adapter
+        # during this migration. Production never starts its private Tailer;
+        # a telemetry construction failure disables live alerts rather than
+        # creating a second reader with different replay semantics.
+        alerts=None,
+        telemetry=telemetry,
     )
     api_box["api"] = api
     # After construction, not through the constructor: the controller needs

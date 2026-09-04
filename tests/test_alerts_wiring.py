@@ -11,6 +11,7 @@ import re
 
 from tests.test_api import make_api
 from wingman.alerts import service as alert_service
+from wingman.telemetry.model import StreamHealth
 
 
 class FakeAlerts:
@@ -32,6 +33,26 @@ class FakeAlerts:
 
     def health(self):
         return self._health
+
+
+class FakeTelemetry:
+    def __init__(self, health=None, characters=()):
+        self.reconciled = 0
+        self.stopped = 0
+        self._health = health or StreamHealth(state="stopped")
+        self._characters = tuple(characters)
+
+    def reconcile(self):
+        self.reconciled += 1
+
+    def stop(self):
+        self.stopped += 1
+
+    def stream_health(self):
+        return self._health
+
+    def stream_characters(self):
+        return self._characters
 
 
 class FakePreviewHost:
@@ -107,6 +128,44 @@ def _alerts_section(**over):
 
 
 # ---- reconcile() fires from all five places --------------------------------
+
+
+def test_shared_telemetry_reconciles_for_folder_alert_and_preview_changes(tmp_path):
+    telemetry = FakeTelemetry()
+    host = FakePreviewHost()
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=host)
+    api._state.settings["preview"] = {"enabled": False, "alerts": _alerts_section()}
+
+    assert api.set_folder("gamelogs", str(tmp_path))["applied"]
+    assert api.set_alert_enabled(False)["applied"]
+    api.set_preview_enabled(True)
+
+    assert telemetry.reconciled == 3
+
+
+def test_shared_telemetry_health_drives_alert_state(tmp_path):
+    telemetry = FakeTelemetry(
+        StreamHealth(state="error", detail="source read failed"),
+        characters=("Alice", "Bob"),
+    )
+    api = make_api(tmp_path, telemetry=telemetry)
+    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
+    api._state.settings["gamelogs_dir"] = str(tmp_path)
+
+    state = api.get_alert_state()
+
+    assert state["running"] is True
+    assert state["last_error"] == "source read failed"
+    assert state["characters"] == ["Alice", "Bob"]
+
+
+def test_shutdown_stops_shared_telemetry_once(tmp_path):
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
+
+    api.shutdown_previews()
+
+    assert telemetry.stopped == 1
 
 
 def test_changing_the_gamelogs_folder_repoints_the_tailer(tmp_path):
@@ -259,6 +318,33 @@ def test_alert_config_tolerates_a_settings_document_with_no_preview_key(tmp_path
     assert service is not None
     assert service._config() == {}
     assert service.health().running is False
+
+
+def test_build_telemetry_reads_runtime_settings_live(monkeypatch, tmp_path):
+    from wingman import __main__ as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"enabled": False, "alerts": {"enabled": False}}
+    api._state.settings["fleet_bar"] = {"enabled": False}
+    runtime = main_mod.build_telemetry(api._state, None, None)
+
+    assert runtime is not None
+    assert runtime._wants_discovery() is False
+    api._state.settings["fleet_bar"]["enabled"] = True
+    assert runtime._wants_discovery() is True
+    runtime.stop()
+
+
+def test_build_alert_policy_has_no_private_tailer(tmp_path):
+    from wingman.__main__ import build_alert_policy
+
+    host = FakePreviewHost()
+    api = make_api(tmp_path)
+    policy = build_alert_policy(api._state, host)
+
+    assert isinstance(policy, alert_service.AlertPolicy)
+    assert not hasattr(policy, "_tailer")
 
 
 # ---- a test alert is never persistent --------------------------------------

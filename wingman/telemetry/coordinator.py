@@ -448,6 +448,18 @@ class TelemetryCoordinator:
 
         return _unsub
 
+    def stream_health(self) -> StreamHealth:
+        """Current shared reader health for the existing Alerts card."""
+        return self._health()
+
+    def stream_characters(self) -> tuple[str, ...]:
+        """Characters with active log sources, or none if unavailable."""
+        try:
+            return self._stream.characters()
+        except Exception:
+            logger.exception("Could not read gamelog stream characters")
+            return ()
+
     def snapshot(self) -> FleetSnapshot:
         """The most recently published snapshot, or an empty one.
 

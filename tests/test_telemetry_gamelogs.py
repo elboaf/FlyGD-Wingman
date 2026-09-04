@@ -766,6 +766,17 @@ class TestHealth:
 
 
 class TestInterface:
+    def test_characters_reports_active_sources_in_stable_order(self, tmp_path):
+        stream = _stream()
+        _collect(stream)
+        stream.start(tmp_path)
+        _log(tmp_path, "bravo", stem="20260825_113000_100")
+        _log(tmp_path, "Alice", stem="20260825_113100_200")
+        stream.scan_once(NOW)
+
+        assert stream.characters() == ("Alice", "bravo")
+        stream.stop()
+
     def test_unsubscribe(self, tmp_path):
         stream = _stream()
         received = []
