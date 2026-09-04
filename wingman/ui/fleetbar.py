@@ -7,7 +7,6 @@ than attaching Python window-event handlers that can deadlock WinForms.
 """
 
 import logging
-import threading
 
 from wingman.ui import window as window_mod
 
@@ -53,26 +52,19 @@ def create(api, hidden: bool = True):
 
 
 def restore(api) -> None:
-    """Restore the bar after the main WebView2 window is shown."""
-    section = api._state.settings.get("fleet_bar") or {}
-    if not section.get("enabled") or api._fleetbar_window is not None:
-        return
-    try:
-        bar = create(api, hidden=True)
-    except Exception:
-        logger.exception("Fleet Bar window could not be created")
-        # Enabled means visible for this display-only feature. Keep persisted
-        # state and both main-page controls honest, and let the next click
-        # retry the same construction path.
-        api.toggle_fleet_bar(False)
-        return
-
-    def reveal() -> None:
+    """Create hidden; the page reveals itself after its first render and fit."""
+    failed = False
+    with api._fleetbar_lock:
+        section = api._state.settings.get("fleet_bar") or {}
+        if not section.get("enabled") or api._fleetbar_window is not None:
+            return
         try:
-            bar.show()
-            api._push_fleet_snapshot()
+            api._fleetbar_ready = False
+            create(api, hidden=True)
         except Exception:
-            logger.exception("Fleet Bar window could not be shown")
-            api.toggle_fleet_bar(False)
-
-    threading.Timer(0.3, reveal).start()
+            logger.exception("Fleet Bar window could not be created")
+            failed = True
+    if failed:
+        # Enabled means visible for this display-only feature. Keep persisted
+        # state and both controls honest; the next click retries construction.
+        api.toggle_fleet_bar(False)

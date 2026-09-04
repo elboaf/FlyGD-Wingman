@@ -3,6 +3,7 @@
 import inspect
 import json
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ class FleetWindow(FakeWindow):
         super().__init__()
         self.hidden = False
         self.resized = []
+        self.moved = []
         self.width = 0
         self.height = 0
 
@@ -31,6 +33,9 @@ class FleetWindow(FakeWindow):
         self.resized.append((width, height))
         self.width = width
         self.height = height
+
+    def move(self, x, y):
+        self.moved.append((x, y))
 
 
 class FakeTelemetry:
@@ -49,6 +54,7 @@ def api(tmp_path):
     telemetry = FakeTelemetry()
     built = make_api(tmp_path, telemetry=telemetry)
     built._fleetbar_window = FleetWindow()
+    built._fleetbar_ready = True
     return built
 
 
@@ -68,6 +74,7 @@ def test_toggle_persists_reconciles_and_creates_the_window(tmp_path, monkeypatch
     def fake_create(inner, hidden=True):
         created.append(hidden)
         inner._fleetbar_window = FleetWindow()
+        inner._fleetbar_window.hidden = hidden
         return inner._fleetbar_window
 
     monkeypatch.setattr(fleetbar, "create", fake_create)
@@ -77,8 +84,40 @@ def test_toggle_persists_reconciles_and_creates_the_window(tmp_path, monkeypatch
     assert result["applied"] is True
     assert api._state.settings["fleet_bar"]["enabled"] is True
     assert telemetry.reconciled == 1
-    assert created == [False]
-    assert _fleet_scripts(api._fleetbar_window)
+    assert created == [True]
+    assert api._fleetbar_window.hidden is True
+    api.fleet_bar_ready()
+    assert api._fleetbar_window.hidden is False
+
+
+def test_concurrent_enable_requests_create_only_one_window(tmp_path, monkeypatch):
+    from wingman.ui import fleetbar
+
+    api = make_api(tmp_path, telemetry=FakeTelemetry())
+    entered = threading.Event()
+    release = threading.Event()
+    created = []
+
+    def blocking_create(inner, hidden=True):
+        created.append(hidden)
+        entered.set()
+        assert release.wait(5)
+        inner._fleetbar_window = FleetWindow()
+        return inner._fleetbar_window
+
+    monkeypatch.setattr(fleetbar, "create", blocking_create)
+    first = threading.Thread(target=lambda: api.toggle_fleet_bar(True))
+    second = threading.Thread(target=lambda: api.toggle_fleet_bar(True))
+    first.start()
+    assert entered.wait(5)
+    second.start()
+    assert created == [True]
+    release.set()
+    first.join(5)
+    second.join(5)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert created == [True]
 
 
 def test_toggle_pushes_one_authoritative_state_to_main_page(api):
@@ -207,7 +246,7 @@ def test_failed_restore_rolls_back_enabled_state(api, monkeypatch):
     assert api._state.settings["fleet_bar"]["enabled"] is False
 
 
-def test_restore_creates_hidden_then_reveals_with_current_snapshot(api, monkeypatch):
+def test_restore_creates_once_and_page_ready_reveals(api, monkeypatch):
     from wingman.ui import fleetbar
 
     api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
@@ -220,22 +259,14 @@ def test_restore_creates_hidden_then_reveals_with_current_snapshot(api, monkeypa
         inner._fleetbar_window.hidden = hidden
         return inner._fleetbar_window
 
-    class ImmediateTimer:
-        def __init__(self, _delay, callback):
-            self._callback = callback
-
-        def start(self):
-            self._callback()
-
     monkeypatch.setattr(fleetbar, "create", fake_create)
-    monkeypatch.setattr(fleetbar.threading, "Timer", ImmediateTimer)
 
     fleetbar.restore(api)
     fleetbar.restore(api)
+    api.fleet_bar_ready()
 
     assert created == [True]
     assert api._fleetbar_window.hidden is False
-    assert _fleet_scripts(api._fleetbar_window)
 
 
 def test_save_position_and_fit_ignore_invalid_values(api):
@@ -245,7 +276,11 @@ def test_save_position_and_fit_ignore_invalid_values(api):
 
     api.fit_fleet_bar(380, 112)
     api.fit_fleet_bar(0, "bad")
+    api.move_fleet_bar(30, 45)
     assert api._fleetbar_window.resized == [(380, 112)]
+    assert api._fleetbar_window.moved == [(30, 45)]
+    assert api._state.settings["fleet_bar"]["x"] == 30
+    assert api._state.settings["fleet_bar"]["y"] == 45
 
 
 def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monkeypatch):
@@ -324,4 +359,7 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     assert "Waiting for EVE clients" in html
     assert "flex: none" in html  # overrides title-bar drag-region geometry
     assert "shell.offsetHeight" in js  # content can shrink with the roster
+    assert "fleet_bar_ready" in js  # hidden until initial render and fit complete
+    assert "screen.availLeft" in js and "move_fleet_bar" in js
+    assert "unavailable ? row.log_status" in js  # NO LOG belongs under EWAR
     assert "SCRAM/POINT" not in js  # rendered from telemetry, never guessed here

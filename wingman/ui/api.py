@@ -404,8 +404,13 @@ class Api:
         # Independent display-only Fleet window. Like the sig bar this must
         # stay private or pywebview recursively walks its WinForms native.
         self._fleetbar_window = None
+        self._fleetbar_ready = False
         self._fleet_snapshot = None
         self._fleet_unsubscribe = None
+        # pywebview serves bridge calls concurrently. Window construction,
+        # show/hide, and the page-ready reveal must have one owner or two
+        # rapid enables can orphan an untracked topmost WebView.
+        self._fleetbar_lock = threading.Lock()
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -2915,10 +2920,13 @@ class Api:
         self._push_fleet_snapshot()
 
     def toggle_fleet_bar(self, on) -> dict:
-        """Persist, reconcile, and show or hide the independent Fleet Bar."""
+        """Serialize the persisted/runtime/window transition."""
+        with self._fleetbar_lock:
+            return self._toggle_fleet_bar(bool(on))
+
+    def _toggle_fleet_bar(self, on: bool) -> dict:
         from wingman.ui import fleetbar
 
-        on = bool(on)
         previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
         if on != previous:
             # A snapshot belongs to one enabled generation. Re-enabling
@@ -2931,10 +2939,13 @@ class Api:
         try:
             if on:
                 if bar is None:
-                    fleetbar.create(self, hidden=False)
-                else:
+                    # The page reveals itself through fleet_bar_ready only
+                    # after its first snapshot has rendered and fitted.
+                    self._fleetbar_ready = False
+                    fleetbar.create(self, hidden=True)
+                elif self._fleetbar_ready:
                     bar.show()
-                self._push_fleet_snapshot()
+                    self._push_fleet_snapshot()
             elif bar is not None:
                 bar.hide()
         except Exception:
@@ -2942,6 +2953,7 @@ class Api:
             if on:
                 failed = self._fleetbar_window
                 self._fleetbar_window = None
+                self._fleetbar_ready = False
                 if failed is not None:
                     try:
                         failed.destroy()
@@ -2960,10 +2972,39 @@ class Api:
         self._push_fleet_bar_state()
         return self._field_ok()
 
+    def fleet_bar_ready(self) -> None:
+        """Reveal the current enabled page after its first successful fit."""
+        with self._fleetbar_lock:
+            bar = self._fleetbar_window
+            if bar is None or not self.fleet_bar_settings().get("enabled"):
+                return
+            try:
+                bar.show()
+                self._fleetbar_ready = True
+            except Exception:
+                logger.exception("Fleet Bar window could not be revealed")
+                self._toggle_fleet_bar(False)
+
     def save_fleet_bar_pos(self, x, y) -> None:
         try:
             x, y = int(x), int(y)
         except (TypeError, ValueError):
+            return
+        settings_mod.update_section(self._state.settings, "fleet_bar", {"x": x, "y": y})
+
+    def move_fleet_bar(self, x, y) -> None:
+        """Keep dynamic growth inside the current browser-reported work area."""
+        bar = self._fleetbar_window
+        if bar is None:
+            return
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            return
+        try:
+            bar.move(x, y)
+        except Exception:
+            logger.debug("Fleet Bar visibility move failed", exc_info=True)
             return
         settings_mod.update_section(self._state.settings, "fleet_bar", {"x": x, "y": y})
 

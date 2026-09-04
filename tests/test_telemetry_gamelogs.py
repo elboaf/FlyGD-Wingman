@@ -257,8 +257,15 @@ class TestSourceLifecycleAndOrdering:
         assert lcs[0].active is False and lcs[0].generation == orig_gen
         assert lcs[1].active is True and lcs[1].generation > orig_gen
         assert received.index(lcs[0]) < received.index(lcs[1])
-        for f in [e for e in received if isinstance(e, CombatFact)]:
-            assert f.source_generation == lcs[1].generation
+        # Rewritten contents predate this new cursor generation and must not
+        # replay alerts. Only bytes appended after the baseline are live.
+        assert [e for e in received if isinstance(e, CombatFact)] == []
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(OUTGOING_DAMAGE_LINE)
+        stream.scan_once(NOW)
+        facts = [e for e in received if isinstance(e, CombatFact)]
+        assert len(facts) == 1
+        assert facts[0].source_generation == lcs[1].generation
         stream.stop()
 
     def test_retirement_before_replacement(self, tmp_path):

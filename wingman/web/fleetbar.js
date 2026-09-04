@@ -23,8 +23,24 @@
 
   function fit() {
     var shell = document.querySelector('.fleet-shell');
-    if (!shell) return;
-    send('fit_fleet_bar', shell.offsetWidth, shell.offsetHeight);
+    if (!shell) return Promise.resolve(null);
+    var width = shell.offsetWidth;
+    var height = shell.offsetHeight;
+    return send('fit_fleet_bar', width, height).then(function () {
+      // Screen coordinates and available bounds are CSS/logical pixels, the
+      // same units pywebview accepts. Keep roster growth on the current
+      // monitor and recover coordinates left on a disconnected display.
+      var left = (typeof screen.availLeft === 'number') ? screen.availLeft : 0;
+      var top = (typeof screen.availTop === 'number') ? screen.availTop : 0;
+      var right = left + screen.availWidth;
+      var bottom = top + screen.availHeight;
+      var x = Math.max(left, Math.min(window.screenX, right - width));
+      var y = Math.max(top, Math.min(window.screenY, bottom - height));
+      if (x !== window.screenX || y !== window.screenY) {
+        return send('move_fleet_bar', x, y);
+      }
+      return null;
+    });
   }
 
   function cell(className, text, role) {
@@ -58,14 +74,17 @@
     rows.forEach(function (row) {
       var line = document.createElement('div');
       var hasDps = typeof row.dps === 'number';
-      var ewar = Array.isArray(row.ewar) && row.ewar.length
-        ? row.ewar.join(' \u00b7 ') : '\u2014';
+      var unavailable = !hasDps && !!row.log_status;
+      var ewar = unavailable ? row.log_status
+        : (Array.isArray(row.ewar) && row.ewar.length
+          ? row.ewar.join(' \u00b7 ') : '\u2014');
       line.className = 'fleet-grid fleet-row';
       line.setAttribute('role', 'row');
       line.appendChild(cell('fleet-character', row.character || '\u2014'));
       line.appendChild(cell('fleet-dps' + (hasDps ? ' live' : ''),
-                            hasDps ? String(row.dps) : (row.log_status || 'WAITING')));
-      line.appendChild(cell('fleet-ewar' + (ewar !== '\u2014' ? ' active' : ''), ewar));
+                            hasDps ? String(row.dps) : '\u2014'));
+      line.appendChild(cell('fleet-ewar' +
+        (!unavailable && ewar !== '\u2014' ? ' active' : ''), ewar));
       rowsNode.appendChild(line);
     });
 
@@ -80,7 +99,7 @@
     note.hidden = !detail;
     note.textContent = detail || '';
     note.classList.toggle('err', Boolean(payload.metric_error) || health.state === 'error');
-    fit();
+    return fit();
   }
 
   window.onFleetSnapshot = render;
@@ -89,10 +108,12 @@
     send('save_fleet_bar_pos', window.screenX, window.screenY);
   });
 
-  send('fleet_bar_snapshot').then(function (payload) {
-    if (payload) render(payload);
+  var fontsReady = (document.fonts && document.fonts.ready)
+    ? document.fonts.ready : Promise.resolve();
+  Promise.all([send('fleet_bar_snapshot'), fontsReady]).then(function (values) {
+    return render(values[0] || {});
+  }).then(function () {
+    return send('fleet_bar_ready');
   });
-  fit();
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
   setTimeout(fit, 500);
 })();

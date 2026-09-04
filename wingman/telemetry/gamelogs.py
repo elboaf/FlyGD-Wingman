@@ -674,7 +674,10 @@ class GameLogStream:
                 new_gen = self._next_generation
                 self._next_generation += 1
                 tracked.generation = new_gen
-            tracked.position = 0
+            # A truncation/rewrite starts a fresh source generation, but its
+            # existing contents are a baseline, not new events. Reading from
+            # zero would replay historical alerts; only later appends count.
+            tracked.position = size
             tracked.partial = ""
             events.append(
                 SourceLifecycle(
