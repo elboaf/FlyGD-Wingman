@@ -172,12 +172,26 @@ class PrototypeCropWindow:
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is None:
             # Nothing DWM-side exists yet: destroy the HWND directly.
+            # Thumbnail.register() already logged the raw DWM failure; this
+            # adds the context that only the crop knows -- which client and
+            # that the window is being torn down as a result.
+            logger.warning(
+                "Thumbnail registration failed for crop %s; destroying window",
+                client.stable_key,
+            )
             _CROPS.pop(int(self.hwnd), None)
             libs.user32.DestroyWindow(self.hwnd)
             self.hwnd = None
             return None
         hr = self._thumb.update(Rect(0, 0, rect.w, rect.h), source_rect=source_rect)
         if hr:
+            # Same reasoning: Thumbnail.update() already logged the hr and
+            # the raw rects, so this adds only the crop-level context.
+            logger.warning(
+                "Initial thumbnail update failed for crop %s (hr=0x%08x); tearing down",
+                client.stable_key,
+                hr & 0xFFFFFFFF,
+            )
             self._thumb.close()  # DWM first
             self._thumb = None
             _CROPS.pop(int(self.hwnd), None)
@@ -269,6 +283,17 @@ class PrototypeCropWindow:
                 if msg == win32.WM_LBUTTONDOWN:
                     self._on_activate(self.client)
                 return 0
+            if self._mode is not None:
+                # A second button arriving while a gesture is already
+                # armed. The reduced grammar has no chord (unlike
+                # PreviewWindow's resize-all): the primary preview's own
+                # chord support is exactly the complexity being left out
+                # here, per the design doc's first-version exclusions.
+                # Ignored rather than reclassified -- accepting it would
+                # silently overwrite an in-flight resize with a fresh
+                # "pending_left", and the button that started the resize
+                # would then release into a switch it never asked for.
+                return 0
             self._mode = "pending_left" if msg == win32.WM_LBUTTONDOWN else "resize"
             self._start_rect = self.rect
             self._start = _cursor_pos(self._libs)
@@ -333,8 +358,11 @@ class PrototypeCropWindow:
                     p["gap"] * 1000,
                 )
                 self._perf = None
-            if self._mode == "pending_left":
-                # The click that never dragged.
+            if self._mode == "pending_left" and msg == win32.WM_LBUTTONUP:
+                # The click that never dragged. Gated on the matching
+                # button: a right-release arriving on a still-pending left
+                # click (the second button was ignored above, not
+                # reclassified) must clear the gesture without activating.
                 self._on_activate(self.client)
                 self._mode = None
                 return 0
@@ -345,5 +373,16 @@ class PrototypeCropWindow:
             if self._thumb is not None:
                 self._thumb.close()
                 self._thumb = None
+            if self.hwnd is not None:
+                # Registry and handle cleared here too -- not only in
+                # close() -- in case WM_DESTROY reaches this instance
+                # through some route other than our own close(), such as
+                # the OS destroying an owner. DestroyWindow is deliberately
+                # NOT called from here: this handler runs *because*
+                # DestroyWindow already happened (or is happening), and
+                # calling it again would be the double-destroy this guards
+                # against.
+                _CROPS.pop(int(self.hwnd), None)
+                self.hwnd = None
             return 0
         return None
