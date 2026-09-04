@@ -71,7 +71,7 @@ class FakeUser32:
     """Just enough Win32 for creation and the reduced gesture grammar,
     with the cursor and the queued-message state under test control."""
 
-    def __init__(self, events):
+    def __init__(self, events, teardown_order=None):
         self.events = events
         self.shows = []
         self.positions = []
@@ -82,15 +82,51 @@ class FakeUser32:
         # PrototypeCropPicker at creation and again on confirm. None
         # simulates a client that has vanished (GetClientRect failing).
         self.client_rect = (0, 0, 1280, 720)
+        # Every CreateWindowExW call, in order, with the arguments that
+        # matter for asserting native facts (ex_style, class, owner/parent)
+        # -- not just that a window was created, but that it was created
+        # with the exact style bits the brief specifies.
+        self.created = []
+        # Shared with FakeDwm (see FakeLibs) so a single ordered log can
+        # prove overlay-destroy / DWM-unregister / picker-destroy ordering
+        # across BOTH fakes -- a bare "destroy-window" string in self.events
+        # cannot say WHICH hwnd, and there are two DestroyWindow calls per
+        # picker teardown.
+        self.teardown_order = teardown_order if teardown_order is not None else []
 
-    def CreateWindowExW(self, *args, **kwargs):
+    def CreateWindowExW(
+        self,
+        ex_style,
+        class_name,
+        window_name,
+        style,
+        x,
+        y,
+        w,
+        h,
+        parent,
+        menu,
+        hinstance,
+        lparam,
+    ):
         self.events.append("create-window")
         hwnd = self._next_hwnd
         self._next_hwnd += 1
+        self.created.append(
+            {
+                "hwnd": hwnd,
+                "ex_style": ex_style,
+                "class_name": class_name,
+                "style": style,
+                "rect": (x, y, w, h),
+                "parent": parent,
+            }
+        )
         return hwnd
 
     def DestroyWindow(self, hwnd):
         self.events.append("destroy-window")
+        self.teardown_order.append(("destroy-window", int(hwnd)))
         return True
 
     def ShowWindow(self, hwnd, cmd):
@@ -127,7 +163,9 @@ class FakeUser32:
 
 
 class FakeDwm:
-    def __init__(self, events, register_hr=0, update_hr=0, crops=None):
+    def __init__(
+        self, events, register_hr=0, update_hr=0, crops=None, teardown_order=None
+    ):
         self.events = events
         self.updates = []
         self.register_hr = register_hr
@@ -139,6 +177,8 @@ class FakeDwm:
         # instance windows._dispatch needs to find it.
         self._crops = crops
         self.registry_present_at_register = None
+        # Shared with FakeUser32 -- see its own teardown_order comment.
+        self.teardown_order = teardown_order if teardown_order is not None else []
 
     def DwmRegisterThumbnail(self, dest, src, out):
         if self._crops is not None:
@@ -150,6 +190,7 @@ class FakeDwm:
 
     def DwmUnregisterThumbnail(self, handle):
         self.events.append("unregister")
+        self.teardown_order.append(("unregister",))
         return 0
 
     def DwmUpdateThumbnailProperties(self, handle, props):
@@ -166,9 +207,15 @@ class FakeKernel32:
 class FakeLibs:
     def __init__(self, register_hr=0, update_hr=0, crops=None):
         self.events = []
-        self.user32 = FakeUser32(self.events)
+        # Shared across both fakes -- see FakeUser32.teardown_order.
+        self.teardown_order = []
+        self.user32 = FakeUser32(self.events, teardown_order=self.teardown_order)
         self.dwmapi = FakeDwm(
-            self.events, register_hr=register_hr, update_hr=update_hr, crops=crops
+            self.events,
+            register_hr=register_hr,
+            update_hr=update_hr,
+            crops=crops,
+            teardown_order=self.teardown_order,
         )
         self.kernel32 = FakeKernel32()
 
@@ -530,13 +577,50 @@ def test_picker_registration_failure_closes_overlay_and_picker():
     assert libs.events[-2:] == ["destroy-window", "destroy-window"]
 
 
+def test_picker_registration_failure_destroys_overlay_before_hwnd_without_unregister():
+    """HWND-level version of the test above: no DWM relationship exists
+    yet when registration itself fails, so there is no unregister call at
+    all -- only the overlay HWND, then the picker HWND."""
+    libs = FakeLibs(register_hr=0x80004005)
+    picker = windows.PrototypeCropPicker.create(
+        libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
+    )
+    assert picker is None
+    picker_hwnd, overlay_hwnd = (c["hwnd"] for c in libs.user32.created)
+    assert libs.teardown_order == [
+        ("destroy-window", overlay_hwnd),
+        ("destroy-window", picker_hwnd),
+    ]
+
+
 def test_picker_initial_update_failure_closes_overlay_dwm_and_picker():
+    """This failure path used to close DWM before the overlay -- backwards
+    from the brief's overlay-then-DWM-then-HWND order -- because create()
+    duplicated _close_resources's teardown by hand instead of calling it.
+    Fixed by routing every failure branch through _close_resources()."""
     libs = FakeLibs(update_hr=0x80004005)
     picker = windows.PrototypeCropPicker.create(
         libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
     )
     assert picker is None
-    assert libs.events[-3:] == ["unregister", "destroy-window", "destroy-window"]
+    assert libs.events[-3:] == ["destroy-window", "unregister", "destroy-window"]
+
+
+def test_picker_initial_update_failure_destroys_overlay_before_dwm_before_hwnd():
+    """HWND-level version: proves the ORDER by hwnd/handle identity, not
+    just by matching string labels -- overlay destroyed, THEN the DWM
+    relationship unregistered, THEN the picker HWND destroyed."""
+    libs = FakeLibs(update_hr=0x80004005)
+    picker = windows.PrototypeCropPicker.create(
+        libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
+    )
+    assert picker is None
+    picker_hwnd, overlay_hwnd = (c["hwnd"] for c in libs.user32.created)
+    assert libs.teardown_order == [
+        ("destroy-window", overlay_hwnd),
+        ("unregister",),
+        ("destroy-window", picker_hwnd),
+    ]
 
 
 def test_picker_creation_orders_hwnds_registry_overlay_register_update_show():
@@ -560,6 +644,62 @@ def test_picker_creation_is_silent(caplog):
     assert caplog.records == []
 
 
+def test_picker_creation_native_facts_match_the_brief():
+    """Pins the exact style/owner/rect/show facts the brief specifies,
+    not just that the right NUMBER of calls happened -- a picker with the
+    wrong ex_style or the wrong overlay owner would still pass the ordering
+    test above."""
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(libs=libs)
+
+    picker_call, overlay_call = libs.user32.created
+
+    # The picker itself is the DWM destination: an ordinary topmost tool
+    # popup, WITHOUT WS_EX_NOACTIVATE -- Enter/Escape must reach its
+    # WndProc once clicked.
+    assert picker_call["hwnd"] == picker.hwnd
+    assert picker_call["ex_style"] == win32.WS_EX_TOOLWINDOW | win32.WS_EX_TOPMOST
+    assert picker_call["ex_style"] & win32.WS_EX_NOACTIVATE == 0
+    assert picker_call["parent"] is None
+
+    # The overlay is owned by the picker, layered, transparent to hit
+    # testing, and itself WS_EX_NOACTIVATE (it must never take focus).
+    assert overlay_call["hwnd"] == picker._overlay_hwnd
+    assert overlay_call["ex_style"] == (
+        win32.WS_EX_LAYERED
+        | win32.WS_EX_TRANSPARENT
+        | win32.WS_EX_TOOLWINDOW
+        | win32.WS_EX_NOACTIVATE
+    )
+    assert overlay_call["parent"] == picker.hwnd
+
+    # Both windows are shown with SW_SHOWNOACTIVATE -- overlay first, then
+    # the picker itself.
+    assert libs.user32.shows == [
+        (picker._overlay_hwnd, win32.SW_SHOWNOACTIVATE),
+        (picker.hwnd, win32.SW_SHOWNOACTIVATE),
+    ]
+
+    # The DWM destination is the picker's own FULL client rect, and the
+    # source is the client's FULL area -- not any particular crop's
+    # source_rect, since the user is choosing a sub-region of the whole
+    # thing.
+    props = libs.dwmapi.updates[-1]
+    assert (
+        props.rcDestination.left,
+        props.rcDestination.top,
+        props.rcDestination.right,
+        props.rcDestination.bottom,
+    ) == (0, 0, picker.rect.w, picker.rect.h)
+    assert (
+        props.rcSource.left,
+        props.rcSource.top,
+        props.rcSource.right,
+        props.rcSource.bottom,
+    ) == (0, 0, 1280, 720)
+
+
 def test_picker_rect_is_sized_by_fit_within_and_centered_with_margin():
     libs = FakeLibs()
     libs.user32.client_rect = (0, 0, 2560, 1440)
@@ -572,11 +712,32 @@ def test_picker_rect_is_sized_by_fit_within_and_centered_with_margin():
     assert (picker.rect.x, picker.rect.y) == (360, 202)
 
 
-def test_picker_rect_pins_to_monitor_origin_when_margin_cannot_fit():
+def test_picker_rect_pins_only_the_oversized_dimension_to_monitor_origin():
+    """A picker oversize in width but comfortably margined in height must
+    have only its width pinned to the monitor's origin -- the height axis
+    still centers normally, independent of the other."""
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)  # -> picker 1200x675
+    picker, libs = make_picker(libs=libs, monitor=Rect(0, 0, 1000, 2000))
+    assert picker.rect.x == 0  # oversize (1200 > 1000): pinned
+    assert picker.rect.y == (2000 - 675) // 2  # fits with margin: centered
+
+
+def test_picker_rect_pins_to_origin_on_both_axes_when_oversize_on_both():
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)  # -> picker 1200x675
+    picker, libs = make_picker(libs=libs, monitor=Rect(0, 0, 600, 400))
+    assert (picker.rect.x, picker.rect.y) == (0, 0)
+
+
+def test_picker_rect_centers_without_margin_when_the_margin_cannot_fit_but_the_picker_does():
+    """The picker (1200x675) fits inside a 1220x700 monitor, but not with
+    the full 40px margin on every side -- it must still be centered, not
+    collapsed to the origin the way an actually-oversize picker is."""
     libs = FakeLibs()
     libs.user32.client_rect = (0, 0, 1280, 720)
-    picker, libs = make_picker(libs=libs, monitor=Rect(0, 0, 1000, 700))
-    assert (picker.rect.x, picker.rect.y) == (0, 0)
+    picker, libs = make_picker(libs=libs, monitor=Rect(0, 0, 1220, 700))
+    assert (picker.rect.x, picker.rect.y) == (10, 12)
 
 
 def test_picker_rect_centers_correctly_on_a_negative_origin_monitor():
@@ -603,6 +764,35 @@ def test_picker_drag_builds_sorted_selection_and_pushes_overlay(monkeypatch):
     assert pushes[-1][0] == picker._overlay_hwnd
     assert pushes[-1][1] == (picker.rect.w, picker.rect.h)
     assert pushes[-1][2:] == (picker.rect.x, picker.rect.y)
+
+
+def test_picker_drag_coalesces_queued_mouse_moves_to_the_newest_position(monkeypatch):
+    """A fast drag queues WM_MOUSEMOVE far faster than a render+push can
+    keep up (see window.coalesce_moves's own docstring). This one
+    WM_MOUSEMOVE dispatch must drain the two queued behind it and render
+    only the LAST position -- not the one it was itself called with, and
+    not once per queued message."""
+    pushes = []
+    monkeypatch.setattr(
+        windows.layered, "push", lambda libs, hwnd, img, x, y: pushes.append(1)
+    )
+    picker, libs = make_picker()
+    picker._on_message(win32.WM_LBUTTONDOWN, 1, _pack_lparam(0, 0))
+
+    queued = [_pack_lparam(50, 40), _pack_lparam(150, 120)]
+
+    def fake_peek(msg_ptr, hwnd, lo, hi, flags):
+        if not queued:
+            return False
+        msg_ptr._obj.lParam = queued.pop(0)
+        return True
+
+    libs.user32.PeekMessageW = fake_peek
+
+    picker._on_message(win32.WM_MOUSEMOVE, 1, _pack_lparam(10, 10))
+
+    assert picker.selection == Rect(0, 0, 150, 120)  # the LAST queued position
+    assert len(pushes) == 1  # one dispatch, one render -- not one per queued move
 
 
 def test_picker_mouse_move_without_a_prior_press_is_ignored(monkeypatch):
@@ -653,6 +843,24 @@ def test_picker_enter_with_a_valid_selection_confirms_once():
     assert picker.hwnd is None
     assert picker._overlay_hwnd is None
     assert picker._thumb is None
+
+
+def test_picker_confirm_destroys_overlay_before_dwm_before_hwnd():
+    """HWND-level teardown-order proof on the SUCCESS path, matching the
+    two failure-path versions above."""
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(libs=libs)
+    overlay_hwnd, picker_hwnd = picker._overlay_hwnd, picker.hwnd
+    picker.selection = Rect(0, 0, picker.rect.w, picker.rect.h)
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    assert libs.teardown_order == [
+        ("destroy-window", overlay_hwnd),
+        ("unregister",),
+        ("destroy-window", picker_hwnd),
+    ]
 
 
 def test_picker_enter_maps_a_partial_selection_the_same_way_the_model_does():
@@ -725,6 +933,19 @@ def test_picker_escape_cancels_exactly_once():
     assert picker._overlay_hwnd is None
 
 
+def test_picker_escape_destroys_overlay_before_dwm_before_hwnd():
+    picker, libs = make_picker()
+    overlay_hwnd, picker_hwnd = picker._overlay_hwnd, picker.hwnd
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_ESCAPE, 0)
+
+    assert libs.teardown_order == [
+        ("destroy-window", overlay_hwnd),
+        ("unregister",),
+        ("destroy-window", picker_hwnd),
+    ]
+
+
 def test_picker_close_cancels_exactly_once():
     cancelled = []
     picker, _libs = make_picker(on_cancel=cancelled.append)
@@ -734,6 +955,47 @@ def test_picker_close_cancels_exactly_once():
 
     assert cancelled == ["cancelled"]
     assert picker.hwnd is None
+
+
+def test_picker_cancel_is_a_public_host_facing_dismissal_seam():
+    """Task 5's host needs a way to end a picker (e.g. superseding one
+    with another) without reaching into private confirm/cancel machinery.
+    cancel() is that seam."""
+    cancelled = []
+    picker, _libs = make_picker(on_cancel=cancelled.append)
+
+    picker.cancel("superseded")
+
+    assert cancelled == ["superseded"]
+    assert picker.hwnd is None
+    assert picker._overlay_hwnd is None
+
+
+def test_picker_cancel_defaults_to_host_cancelled():
+    cancelled = []
+    picker, _libs = make_picker(on_cancel=cancelled.append)
+
+    picker.cancel()
+
+    assert cancelled == ["host-cancelled"]
+
+
+def test_picker_cancel_after_confirm_does_not_double_fire():
+    confirmed, cancelled = [], []
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(
+        libs=libs,
+        on_confirm=lambda c, r: confirmed.append((c, r)),
+        on_cancel=cancelled.append,
+    )
+    picker.selection = Rect(0, 0, picker.rect.w, picker.rect.h)
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    picker.cancel("superseded")
+
+    assert len(confirmed) == 1
+    assert cancelled == []
 
 
 def test_picker_escape_after_confirm_does_not_double_fire():

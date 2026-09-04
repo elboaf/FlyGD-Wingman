@@ -507,20 +507,43 @@ def _client_point(lparam):
     return (x - 0x10000 if x > 0x7FFF else x, y - 0x10000 if y > 0x7FFF else y)
 
 
+def _center_axis(origin, extent, size, margin):
+    """Center *size* within one axis of the monitor ([origin, origin +
+    extent)), keeping *margin* clear on each side where the picker's own
+    size still leaves room for it.
+
+    Two distinct "does not fit" cases, handled differently:
+
+    - The MARGIN does not fit but the picker itself does (extent is
+      between size and size + 2*margin): center without margin rather than
+      collapsing to the origin. A picker that is merely a little too big
+      for its usual clearance still deserves to be centered.
+    - The PICKER itself is larger than the monitor's extent: there is no
+      position that avoids running off an edge, so pin to the origin --
+      the same tradeoff geometry.clamp_to_monitors makes for previews,
+      scoped here to one already-chosen monitor rather than a search
+      across several.
+
+    The two are independent per axis: a picker that is oversize in width
+    but comfortably margined in height must not have its height pinned to
+    the origin too.
+    """
+    if size > extent:
+        return origin
+    center = origin + (extent - size) // 2
+    min_pos, max_pos = origin + margin, origin + extent - margin - size
+    if max_pos < min_pos:
+        return center
+    return min(max(center, min_pos), max_pos)
+
+
 def _center_in_monitor(monitor, size, margin):
-    """Center *size* inside *monitor*, keeping at least *margin* clear on
-    each edge the monitor can afford it on. A picker that does not fit even
-    without margin is pinned to the monitor's origin rather than left
-    hanging partly off-screen -- the same tradeoff geometry.clamp_to_monitors
-    makes for previews, scoped here to one already-chosen monitor rather
-    than a search across several."""
+    """Center *size* inside *monitor*, axis by axis -- see _center_axis for
+    the margin-fits/margin-does-not-fit/oversize cases each axis handles
+    independently of the other."""
     w, h = size
-    x = monitor.x + (monitor.w - w) // 2
-    min_x, max_x = monitor.x + margin, monitor.right - margin - w
-    x = monitor.x if max_x < min_x else min(max(x, min_x), max_x)
-    y = monitor.y + (monitor.h - h) // 2
-    min_y, max_y = monitor.y + margin, monitor.bottom - margin - h
-    y = monitor.y if max_y < min_y else min(max(y, min_y), max_y)
+    x = _center_axis(monitor.x, monitor.w, w, margin)
+    y = _center_axis(monitor.y, monitor.h, h, margin)
     return Rect(x, y, w, h)
 
 
@@ -578,9 +601,16 @@ class PrototypeCropPicker:
         degenerate GetClientRect returns None before any HWND exists, so
         there is nothing to leak -- then the picker HWND, then its
         registry entry, then the overlay HWND, then DWM registration, then
-        its first update. Any failure from the overlay onward tears down
-        in overlay-then-DWM-then-HWND order, the same order close()
-        (_close_resources) uses.
+        its first update.
+
+        Every failure branch below, from the overlay onward, tears down
+        through _close_resources() rather than repeating its own copy of
+        the teardown -- that is what makes overlay-then-DWM-then-HWND the
+        single order this class ever produces, on both a normal close and
+        every partial-failure path, instead of a hand-duplicated one that
+        could quietly drift from it (as the update-failure branch once
+        did: it used to close DWM before the overlay, backwards from the
+        order specified here).
         """
         import ctypes
 
@@ -641,9 +671,8 @@ class PrototypeCropPicker:
                 "Overlay window failed for crop picker %s; destroying picker",
                 client.stable_key,
             )
-            _PICKERS.pop(int(self.hwnd), None)
-            libs.user32.DestroyWindow(self.hwnd)
-            self.hwnd = None
+            self._overlay_hwnd = None
+            self._close_resources()
             return None
         # Same reasoning as PreviewWindow._ensure_label_overlay: WS_POPUP
         # alone creates the window hidden, and layered.push (mapped to
@@ -656,11 +685,7 @@ class PrototypeCropPicker:
                 "Thumbnail registration failed for crop picker %s; destroying window",
                 client.stable_key,
             )
-            libs.user32.DestroyWindow(self._overlay_hwnd)
-            self._overlay_hwnd = None
-            _PICKERS.pop(int(self.hwnd), None)
-            libs.user32.DestroyWindow(self.hwnd)
-            self.hwnd = None
+            self._close_resources()
             return None
         # The picker mirrors the client's WHOLE area at its own enlarged
         # size -- the user selects a sub-region of THAT, so the DWM source
@@ -676,13 +701,7 @@ class PrototypeCropPicker:
                 client.stable_key,
                 hr & 0xFFFFFFFF,
             )
-            self._thumb.close()
-            self._thumb = None
-            libs.user32.DestroyWindow(self._overlay_hwnd)
-            self._overlay_hwnd = None
-            _PICKERS.pop(int(self.hwnd), None)
-            libs.user32.DestroyWindow(self.hwnd)
-            self.hwnd = None
+            self._close_resources()
             return None
 
         libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
@@ -735,11 +754,22 @@ class PrototypeCropPicker:
         self._close_resources()
         self._on_cancel(reason)
 
+    def cancel(self, reason="host-cancelled") -> None:
+        """Public, host-facing dismissal seam. A host (Task 5's
+        reconciliation loop, e.g. superseding one picker with another)
+        ends this picker through here rather than reaching into the
+        private _finish_cancel/_confirm machinery directly. Shares the
+        same _completed guard as Escape/WM_CLOSE, so it is a no-op if the
+        picker has already confirmed or cancelled."""
+        self._finish_cancel(reason)
+
     # -- teardown --------------------------------------------------------
     def _close_resources(self):
         """Overlay, then DWM, then the picker HWND -- the order the brief
-        specifies, and the reverse of create()'s success-path ordering
-        above."""
+        specifies. Every failure branch in create() routes through this
+        one method rather than re-typing the sequence, so there is exactly
+        one teardown order for this class, not a copy per call site that
+        could quietly disagree with it."""
         if self._overlay_hwnd is not None:
             self._libs.user32.DestroyWindow(self._overlay_hwnd)
             self._overlay_hwnd = None
@@ -762,6 +792,14 @@ class PrototypeCropPicker:
             self._libs.user32.SetCapture(self.hwnd)
             return 0
         if msg == win32.WM_MOUSEMOVE and self._dragging:
+            # Same reasoning as PrototypeCropWindow/window.py's own drag
+            # handlers: a fast drag queues WM_MOUSEMOVE far faster than a
+            # render+push can keep up, and rendering/blitting every queued
+            # one is what makes a drag stutter and lag the cursor. Only the
+            # newest queued position can be correct, so drain the backlog
+            # and decode THAT lParam, not the one this particular dispatch
+            # was called with.
+            lparam = coalesce_moves(self._libs.user32.PeekMessageW, self.hwnd, lparam)
             self._update_selection(_client_point(lparam))
             return 0
         if msg == win32.WM_LBUTTONUP and self._dragging:
