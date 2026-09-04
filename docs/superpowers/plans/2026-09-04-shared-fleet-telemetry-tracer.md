@@ -579,8 +579,9 @@ probe materializes it only after Task 2’s observed behavior is accepted.
   Cover pending → approved → exactly-once completed; expired/consumed requests;
   non-Member approval; invalid completion proof; 30-minute device-session
   expiry; catalogue includes only the approving account’s linked characters;
-  and device revocation deletes sessions. Assert only pairing approval and
-  revocation invoke audit logging.
+  device-key base64/base64url spellings canonicalize to one identity; a revoked
+  key cannot pair again; and device revocation deletes sessions. Assert only
+  pairing approval and revocation invoke audit logging.
 
 - [ ] **Step 2: Run pairing tests red**
 
@@ -590,6 +591,10 @@ probe materializes it only after Task 2’s observed behavior is accepted.
 
 - [ ] **Step 3: Implement one-time pairing and hashed session issue**
 
+  Parse every candidate SPKI with Task 3's `decodeDevicePublicKeyB64()` and
+  persist only its `canonicalDevicePublicKeyB64()` form before every pairing or
+  device lookup/insert. A key found on a soft-revoked device returns a stable
+  refusal; the caller must create a new key pair rather than reactivate it.
   Hash opaque pairing challenge and device-session values with SHA-256, as the
   existing browser-session service does. Browser approval requires a current
   authGD account and `tier === "member"` but intentionally ignores cryo. The
