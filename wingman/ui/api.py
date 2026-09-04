@@ -103,6 +103,12 @@ EVE_CONFIRM_TIMEOUT_S = 300.0
 # and click, short enough that a wedged page does not make Quit look broken.
 QUIT_CONFIRM_TIMEOUT_S = 60.0
 
+# The sig bar's focus-gate cadence. Sub-second like the preview sweep, so
+# alt-tabbing between clients flips the bar about as fast as the previews
+# flip their focus rings. Each tick is one GetForegroundWindow read plus a
+# settings lookup; a native ShowWindow only happens on a real transition.
+SIG_BAR_FOCUS_POLL_S = 0.7
+
 # set_alert_event's writable fields. Kept as a set to check against rather
 # than duplicated per-field range checks -- settings.validated_alerts owns
 # the ranges (cooldown_s/pulses clamping, color/sound/flash_rate
@@ -621,6 +627,11 @@ class Api:
         # gate; updater handoff marks quitting before it requests teardown.
         self._sigbar_lifecycle_lock = threading.RLock()
         self._sigbar_quitting = False
+        # The focus-gate timer (see _schedule_sig_bar_focus_poll): one
+        # chained threading.Timer while the bar is enabled, None while not.
+        # Guarded by _sigbar_lifecycle_lock so arm/disarm never interleaves
+        # with a toggle or shutdown mid-decision.
+        self._sigbar_focus_timer = None
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -3651,6 +3662,12 @@ class Api:
             # reads as broken. The page pulls nothing at load, so this push
             # is its content.
             self._push_eve_status()
+        # Arm (on) or disarm (off) the focus gate, then apply it once so an
+        # enable while a non-allowed client holds the foreground hides the
+        # freshly revealed bar immediately instead of one tick later.
+        self._schedule_sig_bar_focus_poll()
+        if on:
+            self._apply_sig_bar_focus_gate()
         logger.info(
             "Sig bar toggle done: enabled=%s, visible=%s.",
             self._state.settings["sig_bar"]["enabled"],
@@ -3658,6 +3675,96 @@ class Api:
         )
         self._push_sig_bar_state()
         return self._field_ok()
+
+    def _sig_bar_focus_allows(self) -> bool:
+        """Whether the foreground may currently show the sig bar.
+
+        The rule the feature ships with: `sig_bar.enabled` is the master
+        toggle, and the eve_bookmarks window checkboxes are the per-client
+        allowlist -- the bar shows only while an EVE client whose checkbox
+        is checked holds the foreground. An EMPTY map means the user never
+        scoped anything, and the gate is inert (always allowed): hiding a
+        long-shipping bar from everyone who has never opened that tab
+        would be a silent regression dressed as a feature.
+
+        Identity is the full `EVE - <name>` title, exactly the key the
+        bookmarks tab persists -- no name stripping here, or a client at
+        character-select (whose title is not yet an engine title) would
+        drift from the checkbox that names it.
+        """
+        windows = (self._state.settings.get("eve_bookmarks") or {}).get("windows")
+        if not windows:
+            return True
+        title = evewindows.focused_eve_title()
+        return bool(title and windows.get(title))
+
+    def _apply_sig_bar_focus_gate(self) -> None:
+        """Show/hide the live bar to match the focus rule, if it differs.
+
+        Runs on the focus timer's thread and after every toggle; both are
+        off the UI thread, and reveal_bar/hide_bar are plain ShowWindow
+        calls that pump nothing (ui/sigbar.py's native-show note). The
+        lifecycle lock keeps a toggle or a shutdown from interleaving with
+        the decision -- a gate that re-shows a bar the user just toggled
+        off, or reveals one quitting is destroying.
+        """
+        from wingman.ui import sigbar
+
+        if not (self._state.settings.get("sig_bar") or {}).get("enabled"):
+            return
+        with self._sigbar_lifecycle_lock:
+            if self._sigbar_quitting:
+                return
+            bar = self._sigbar_window
+            if not sigbar.is_alive(bar):
+                return
+            allowed = self._sig_bar_focus_allows()
+            if allowed and not sigbar.is_visible(bar):
+                sigbar.reveal_bar(bar)
+            elif not allowed and sigbar.is_visible(bar):
+                sigbar.hide_bar(bar)
+
+    def _schedule_sig_bar_focus_poll(self) -> None:
+        """(Re)arm the chained focus-gate timer, or disarm it.
+
+        Called after every toggle, at launch restore, and at shutdown: the
+        timer exists exactly while the bar is enabled and the process is
+        not quitting. Chained threading.Timers rather than one loop
+        thread, matching sigbar.restore's timer idiom: each tick is
+        self-scheduling, so disarm is always just `cancel()`.
+
+        RLock note: the tick re-enters this method, and the lock is an
+        RLock by design (toggle_sig_bar holds the boundary while
+        sigbar.create enforces it independently), so the re-entry is safe.
+        """
+        with self._sigbar_lifecycle_lock:
+            if self._sigbar_focus_timer is not None:
+                self._sigbar_focus_timer.cancel()
+                self._sigbar_focus_timer = None
+            enabled = bool((self._state.settings.get("sig_bar") or {}).get("enabled"))
+            if self._sigbar_quitting or not enabled:
+                return
+            timer = threading.Timer(SIG_BAR_FOCUS_POLL_S, self._sig_bar_focus_tick)
+            # Daemon, unlike sigbar.restore's one-shot: this chain lives
+            # for the session and re-arms itself, and a test (or a
+            # shutdown path that somehow skips the disarm) must never park
+            # interpreter exit on the next tick.
+            timer.daemon = True
+            self._sigbar_focus_timer = timer
+        timer.start()
+
+    def _sig_bar_focus_tick(self) -> None:
+        """One focus-gate cadence: re-arm first, then decide.
+
+        Re-arming before the gate runs keeps one exception in the gate
+        from killing the chain for the rest of the session -- the next
+        tick still fires, and the log carries the failure.
+        """
+        self._schedule_sig_bar_focus_poll()
+        try:
+            self._apply_sig_bar_focus_gate()
+        except Exception:
+            logger.exception("sig bar focus gate failed")
 
     @staticmethod
     def _sig_bar_alive(bar) -> bool:

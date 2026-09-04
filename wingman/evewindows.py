@@ -143,6 +143,52 @@ def _enumerate_titles() -> list:
     return [title for _hwnd, title in _enumerate_windows()]
 
 
+def focused_eve_title():
+    """The focused window's title when it is an EVE client, else None.
+
+    For the sig bar's focus gate (ui/api.py): the bar follows the
+    foreground, and the foreground only counts when it IS a client. One
+    window read -- no enumeration -- so the gate can run on a sub-second
+    cadence cheaply. The title is the same full-`EVE - <name>` identity
+    the bookmarks checkbox persists (settings key `eve_bookmarks.windows`),
+    so the comparison against that map needs no re-derivation here.
+
+    None off Windows and on any failure: the gate treats None as "not an
+    EVE client", which hides the bar -- correct for a real non-client
+    foreground, and the conservative answer when the read itself failed.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        # Declared for the truncation reason _enumerate documents: an
+        # undeclared HWND return marshals as a 32-bit C int and silently
+        # mangles a 64-bit handle.
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetWindowTextW.restype = ctypes.c_int
+
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return None
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        title = buffer.value
+        return title if bookmarks.is_engine_window_title(title) else None
+    except Exception:
+        logger.exception("Could not read the foreground window title.")
+        return None
+
+
 def list_eve_windows(enumerator=None) -> list:
     """Sorted, de-duplicated EVE window titles. Empty off Windows."""
     if sys.platform != "win32":
