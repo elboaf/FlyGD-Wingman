@@ -53,7 +53,7 @@
                  'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',
-                 'onPreviewBindCaptured',
+                 'onPreviewBindCaptured', 'onEveAuthorityChanged',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
@@ -337,6 +337,10 @@
     document.dispatchEvent(new CustomEvent('wm:update-status', {detail: payload}));
   }
   WM.handle('onUpdateStatus', renderUpdateBadge);
+  WM.handle('onEveAuthorityChanged', function (payload) {
+    document.dispatchEvent(new CustomEvent('wm:eve-authority',
+      {detail: payload}));
+  });
 
   WM.el('btn-minimize').addEventListener('click', function () {
     WM.send('minimize');

@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.test_eveauth_lifecycle import DeferredSpawn
+from tests.test_eveauth_lifecycle import build as build_lifecycle
 from wingman import eveauth
 from wingman.eveauth import application
 from wingman.eveauth import jwt as jwt_mod
@@ -68,6 +70,7 @@ def identity(
 def persistent_character(
     character_id=42,
     *,
+    name="Aiga Otsolen",
     owner_hash="owner-42",
     scopes=application.SKILLS_SCOPES,
     needs_reauth=False,
@@ -75,7 +78,7 @@ def persistent_character(
 ):
     return state_mod.AuthorityCharacter(
         character_id=character_id,
-        character_name="Aiga Otsolen",
+        character_name=name,
         owner_hash=owner_hash,
         scopes=tuple(sorted(scopes)),
         authenticated_utc=T0,
@@ -381,6 +384,137 @@ def test_stored_token_decryption_failure_invalidates_the_grant(tmp_path):
     assert authority._state.characters[0].refresh_token_blob == ""
     assert persisted.characters[0].needs_reauth is True
     assert persisted.characters[0].refresh_token_blob == ""
+
+
+def test_unavailable_authority_raises_with_the_loader_warning(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        state_mod,
+        "load_authority",
+        lambda path: (None, ("Recovered evidence was retained.",)),
+    )
+
+    with pytest.raises(OSError, match=r"Recovered evidence was retained\."):
+        AuthorityController(state_path=tmp_path / "eve_authority.json")
+
+
+def test_management_state_sorts_by_casefolded_name_then_id(tmp_path):
+    full = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
+    authority, _, _ = build_authority(
+        tmp_path,
+        characters=[
+            persistent_character(7, name="zoe", scopes=full),
+            persistent_character(4, name="Aiga", token="", needs_reauth=True),
+            persistent_character(2, name="aiga"),
+        ],
+    )
+
+    payload = authority.management_state()
+
+    assert [row["character_id"] for row in payload["characters"]] == [2, 4, 7]
+
+
+def test_management_state_bounds_messages_and_uses_display_capability_values(tmp_path):
+    full = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
+    authority, _, _ = build_authority(
+        tmp_path,
+        characters=[
+            persistent_character(7, name="Full", scopes=full),
+            persistent_character(4, name="Needs Reauth", needs_reauth=True),
+            persistent_character(2, name="Skills Only"),
+        ],
+    )
+    with authority._lock:
+        authority._authorization_notice = "n" * 900
+        authority._persistence_errors[4] = "e" * 900
+
+    payload = authority.management_state()
+
+    assert payload["authorization_activity"] == "idle"
+    assert len(payload["authorization_notice"]) == 500
+    assert payload["characters"] == [
+        {
+            "character_id": 7,
+            "character_name": "Full",
+            "authenticated_utc": T0.isoformat(),
+            "skills": "authorized",
+            "fittings": "authorized",
+            "needs_reauth": False,
+            "persistence_error": "",
+        },
+        {
+            "character_id": 4,
+            "character_name": "Needs Reauth",
+            "authenticated_utc": T0.isoformat(),
+            "skills": "sign_in",
+            "fittings": "sign_in",
+            "needs_reauth": True,
+            "persistence_error": "e" * 500,
+        },
+        {
+            "character_id": 2,
+            "character_name": "Skills Only",
+            "authenticated_utc": T0.isoformat(),
+            "skills": "authorized",
+            "fittings": "sign_in",
+            "needs_reauth": False,
+            "persistence_error": "",
+        },
+    ]
+    assert {row["skills"] for row in payload["characters"]} | {
+        row["fittings"] for row in payload["characters"]
+    } == {
+        "authorized",
+        "sign_in",
+    }
+
+
+@pytest.mark.parametrize("character_id", [None, True, 0, -1, "abc"])
+def test_forget_rejects_invalid_character_ids(tmp_path, character_id):
+    authority, _, _ = build_authority(tmp_path)
+
+    assert authority.forget(character_id) == MutationResult(
+        False, False, "Unknown EVE character."
+    )
+
+
+def test_management_state_exposes_authorization_start_acceptance(tmp_path):
+    authority, _alerts, _launched, _listener = build_lifecycle(
+        tmp_path, spawn=DeferredSpawn()
+    )
+
+    result = authority.start_full_authorization()
+
+    assert result == AuthorizationCommandResult(True, "")
+    assert authority.management_state()["authorization_activity"] == "waiting"
+
+
+def test_management_state_exposes_cancellation_winning(tmp_path):
+    authority, _alerts, _launched, _listener = build_lifecycle(
+        tmp_path, spawn=DeferredSpawn()
+    )
+    authority.start_full_authorization()
+
+    result = authority.cancel_authorization()
+
+    assert result == AuthorizationCommandResult(True, "")
+    payload = authority.management_state()
+    assert payload["authorization_activity"] == "idle"
+    assert payload["authorization_notice"] == ""
+
+
+def test_management_state_exposes_cancellation_losing(tmp_path):
+    authority, _alerts, _launched, _listener = build_lifecycle(tmp_path)
+    authority.start_full_authorization()
+
+    result = authority.cancel_authorization()
+
+    assert result == AuthorizationCommandResult(
+        False, "The EVE sign-in already finished."
+    )
+    payload = authority.management_state()
+    assert payload["authorization_activity"] == "idle"
+    assert payload["characters"][0]["skills"] == "authorized"
+    assert payload["characters"][0]["fittings"] == "authorized"
 
 
 def test_endpoint_status_has_no_authority_mutation_contract(tmp_path):

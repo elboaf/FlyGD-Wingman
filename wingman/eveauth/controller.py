@@ -104,6 +104,12 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _iso_utc(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return value.astimezone(UTC).isoformat()
+
+
 def _owner_matches(stored: str, returned: str) -> bool:
     return not stored or not returned or stored == returned
 
@@ -220,6 +226,43 @@ class AuthorityController:
     def authorization_notice(self) -> str:
         with self._lock:
             return self._authorization_notice
+
+    def management_state(self) -> dict:
+        """A display-safe authority snapshot from one lock-consistent read."""
+        with self._lock:
+            rows = sorted(
+                self._state.characters,
+                key=lambda row: (row.character_name.casefold(), row.character_id),
+            )
+            characters = []
+            for row in rows:
+                has_token = bool(
+                    row.refresh_token_blob or self._refresh_tokens.get(row.character_id)
+                )
+                characters.append(
+                    {
+                        "character_id": row.character_id,
+                        "character_name": row.character_name,
+                        "authenticated_utc": _iso_utc(row.authenticated_utc),
+                        "skills": self._management_capability_locked(
+                            row, application.SKILLS, has_token
+                        ),
+                        "fittings": self._management_capability_locked(
+                            row, application.FITTINGS, has_token
+                        ),
+                        "needs_reauth": row.needs_reauth,
+                        "persistence_error": self._bounded_notice(
+                            self._persistence_errors.get(row.character_id, "")
+                        ),
+                    }
+                )
+            return {
+                "authorization_activity": self._authorization_activity,
+                "authorization_notice": self._bounded_notice(
+                    self._authorization_notice
+                ),
+                "characters": characters,
+            }
 
     def character(self, character_id: int) -> AuthorityCharacter | None:
         wanted = self._coerce_character_id(character_id)
@@ -1125,6 +1168,19 @@ class AuthorityController:
             if self._key_source is None:
                 self._key_source = jwt_mod.SigningKeySource()
             return self._key_source
+
+    def _management_capability_locked(
+        self,
+        row: state_mod.AuthorityCharacter,
+        capability: str,
+        has_token: bool,
+    ) -> str:
+        required = self._capability_scopes(capability)
+        if row.needs_reauth or not has_token:
+            return "sign_in"
+        if required.issubset(row.scopes):
+            return "authorized"
+        return "sign_in"
 
     @staticmethod
     def _coerce_character_id(value) -> int | None:

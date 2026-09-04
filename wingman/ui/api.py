@@ -198,6 +198,20 @@ def _with_fetch_labels(payload: dict) -> dict:
     return out
 
 
+def _empty_eve_characters_state(warnings=None) -> dict:
+    """The shared character-management answer when no authority exists."""
+    return {
+        "available": False,
+        "auth_configured": eveauth_application.is_configured(),
+        "authorization_activity": "idle",
+        "authorization_notice": "",
+        "characters": [],
+        "warnings": list(
+            warnings or ["The shared EVE character authority is unavailable."]
+        ),
+    }
+
+
 def _empty_skills_state(warnings=None) -> dict:
     """The state payload when there is no controller at all.
 
@@ -7684,6 +7698,50 @@ class Api:
             self._eve_mutation.release()
             self._eve_done(ok)
 
+    # ---- Shared EVE characters ---
+
+    def eve_characters_state(self) -> dict:
+        """The display-safe shared authority snapshot for management UI."""
+        if self._authority is None:
+            return _empty_eve_characters_state(self._authority_warnings)
+        payload = dict(self._authority.management_state())
+        payload["available"] = True
+        payload["auth_configured"] = eveauth_application.is_configured()
+        payload["warnings"] = list(self._authority_warnings)
+        return payload
+
+    def eve_characters_authenticate(self) -> dict:
+        if self._authority is None:
+            return {
+                "accepted": False,
+                "error": "The shared EVE character authority is unavailable.",
+            }
+        result = self._authority.start_full_authorization()
+        return {"accepted": result.accepted, "error": result.error}
+
+    def eve_characters_cancel_auth(self) -> dict:
+        if self._authority is None:
+            return {
+                "accepted": False,
+                "error": "The shared EVE character authority is unavailable.",
+            }
+        result = self._authority.cancel_authorization()
+        return {"accepted": result.accepted, "error": result.error}
+
+    def eve_characters_forget(self, character_id) -> dict:
+        if self._authority is None:
+            return {
+                "applied": False,
+                "persisted": False,
+                "error": "The shared EVE character authority is unavailable.",
+            }
+        result = self._authority.forget(character_id)
+        return {
+            "applied": result.applied,
+            "persisted": result.persisted,
+            "error": result.error,
+        }
+
     # ---- EVE skills ---
 
     def skills_state(self) -> dict:
@@ -7995,7 +8053,8 @@ class Api:
         return text
 
     def _eve_authority_changed(self) -> None:
-        """Publish shared auth state only after a Skills controller exists."""
+        """Publish the shared authority event and temporary Skills compat push."""
+        self._push("onEveAuthorityChanged", {})
         if self._skills is not None:
             self._skills._push_state(force=True)
 

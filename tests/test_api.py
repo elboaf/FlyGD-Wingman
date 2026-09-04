@@ -114,6 +114,25 @@ def test_push_survives_a_dead_window(tmp_path):
     )
 
 
+class RecordingSkills:
+    def __init__(self):
+        self.calls = []
+
+    def _push_state(self, *, force=False):
+        self.calls.append(force)
+
+
+def test_eve_authority_change_pushes_the_shared_event_and_keeps_skills_compat(tmp_path):
+    window = FakeWindow()
+    skills = RecordingSkills()
+    api = make_api(tmp_path, window=window, skills=skills)
+
+    api._eve_authority_changed()
+
+    assert pushes(window) == [("onEveAuthorityChanged", {})]
+    assert skills.calls == [True]
+
+
 def test_close_hides_rather_than_destroying(tmp_path):
     """REGRESSION GUARD. This is a tray app: the Tk window bound
     WM_DELETE_WINDOW to hide(), and destroying here would return from

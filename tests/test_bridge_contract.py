@@ -161,6 +161,16 @@ def test_update_status_handler_is_allowlisted_and_registered_literally():
     assert "WM.handle('onUpdateStatus', renderUpdateBadge);" in source
 
 
+def test_eve_authority_change_handler_is_allowlisted_and_fanned_out_literally():
+    app_js = (WEB / "app.js").read_text(encoding="utf-8")
+    api_source = API.read_text(encoding="utf-8")
+
+    assert 'self._push("onEveAuthorityChanged", {})' in api_source
+    assert "onEveAuthorityChanged" in allowlist()
+    assert registered_names().get("onEveAuthorityChanged") == ["app.js"]
+    assert "new CustomEvent('wm:eve-authority'" in app_js
+
+
 def test_startup_update_read_cannot_overwrite_a_newer_push():
     """A startup read is only authoritative until the first badge render.
 
