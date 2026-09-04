@@ -6,6 +6,19 @@
 **Reference reviewed:** CJKondur/EVE-MultiPreview at
 `2e35b325ae2ee44abf7816e6babc004048b3e76c` (`v2.3.29`)
 
+## Phase 0 probe result
+
+Full results, thresholds, and observed values are in
+`docs/preview-crop-prototype-results.md`. That document's decision:
+**INCOMPLETE — no production cap selected.** Stages 1 and 2 functionally
+created crops on a two-named-client machine after fixing a picker focus
+defect, but none of the eight committed pass criteria (correctness across
+DPI scales, activation latency, drag responsiveness, 60-second CPU/GPU,
+working-set growth, resource/HWND behavior, and full lifecycle) were
+measured against their thresholds, and stages 4/8 were not exercised for
+lack of clients. Phase 1 production work must not begin until the
+remaining Phase 0 gates are exercised or this scope is explicitly revised.
+
 ## Intended outcome
 
 Evolve Wingman's EVE client previews through independent, reviewable slices.
