@@ -114,6 +114,7 @@ _ALERT_EVENTS = {
 # Wakes a dispatcher blocked on an empty queue so stop() does not have to
 # wait out a whole publication interval.
 _WAKE = object()
+_FLEET_REFRESH = object()
 
 
 class _FleetMode(NamedTuple):
@@ -383,6 +384,7 @@ class TelemetryCoordinator:
         with self._lock:
             current = self._stream_folder
             unsub = self._stream_unsub
+        refresh_fleet = False
 
         # A missing subscription denotes a timed-out detached generation.
         # A folder move uses the same stop-before-start path.
@@ -396,15 +398,24 @@ class TelemetryCoordinator:
             with self._lock:
                 self._stream_folder = None
             current = None
+            refresh_fleet = self._flag(self._fleet_enabled)
 
         if folder is not None and current is None:
             unsub = self._stream.subscribe(self._on_stream_event)
             if not self._completed(self._stream.start(folder)):
                 unsub()
+                if refresh_fleet:
+                    self._queue.put(_FLEET_REFRESH)
                 return
             with self._lock:
                 self._stream_folder = folder
                 self._stream_unsub = unsub
+
+        if refresh_fleet:
+            # Ordered with source callbacks from the new generation. The
+            # dispatcher resets old bindings, re-primes the current roster,
+            # and asks the now-current stream to restate each source.
+            self._queue.put(_FLEET_REFRESH)
 
     def _request_fleet_mode(self, enabled: bool) -> None:
         """Order a Fleet consumer transition with producer payloads."""
@@ -648,6 +659,10 @@ class TelemetryCoordinator:
         if isinstance(payload, _FleetMode):
             self._apply_fleet_mode(payload.enabled)
             return
+        if payload is _FLEET_REFRESH:
+            if self._fleet_active:
+                self._reset_fleet_state(prime=True)
+            return
 
         self._sequence += 1
         envelope = TelemetryEnvelope(sequence=self._sequence, payload=payload)
@@ -696,12 +711,16 @@ class TelemetryCoordinator:
         if enabled == self._fleet_active:
             return
         self._fleet_active = enabled
+        self._reset_fleet_state(prime=enabled)
+
+    def _reset_fleet_state(self, *, prime: bool) -> None:
+        """Clear old bindings; optionally seed from current discovery."""
         self._metrics.reset()
         self._sessions = {}
         self._fleet_roster_generation = None
         with self._lock:
             self._latest = None
-        if not enabled:
+        if not prime:
             return
         try:
             snapshot = self._discovery.snapshot()

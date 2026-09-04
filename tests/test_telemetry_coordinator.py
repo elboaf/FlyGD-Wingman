@@ -26,6 +26,7 @@ from wingman.telemetry.metrics import NO_LOG, FleetMetrics
 from wingman.telemetry.model import (
     ClientSessionId,
     CombatFact,
+    FleetRow,
     FleetSnapshot,
     RosterClient,
     RosterSnapshot,
@@ -376,12 +377,18 @@ class TestRuntimePredicates:
         h = _harness(tmp_path, fleet=True, folder=folder)
         h.coordinator.reconcile()
         assert len(h.stream.starts) == 1
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        initial_resets = h.metrics.resets
 
         folder.rmdir()
         h.coordinator.reconcile()
+        h.pump()
 
         assert h.stream.stops == 1
         assert h.stream.subscribers == []
+        assert h.metrics.resets == initial_resets + 1
+        assert h.coordinator.snapshot().stream_health.state == "missing_folder"
 
     def test_settings_are_read_live_not_captured(self, tmp_path):
         h = _harness(tmp_path, preview=False, fleet=False, alerts=False)
@@ -535,6 +542,28 @@ class TestSequencing:
         h.pump()
 
         assert h.stream.requested == []
+
+    def test_degraded_stream_health_keeps_last_good_rows_and_recovers(self, tmp_path):
+        rows = (FleetRow(character="Alice", dps=24),)
+        h = _harness(tmp_path, fleet=True, metrics=RecordingMetrics(rows))
+        h.subscribe()
+        h.coordinator.reconcile()
+        h.pump()
+
+        h.stream._health = StreamHealth(state="stale", detail="3.2s since poll")
+        h.pump()
+        assert h.snapshots[-1].rows == rows
+        assert h.snapshots[-1].stream_health.state == "stale"
+
+        h.stream._health = StreamHealth(state="error", detail="read failed")
+        h.pump()
+        assert h.snapshots[-1].rows == rows
+        assert h.snapshots[-1].stream_health.state == "error"
+
+        h.stream._health = StreamHealth(state="active")
+        h.pump()
+        assert h.snapshots[-1].rows == rows
+        assert h.snapshots[-1].stream_health == StreamHealth(state="active")
 
     def test_metrics_are_fed_before_the_snapshot_is_published(self, tmp_path):
         h = _harness(tmp_path, fleet=True)
@@ -850,17 +879,24 @@ class TestLifecycle:
 
         assert h.stream.requested == ["Alice", "Alice"]
 
-    def test_a_changed_folder_restarts_the_stream(self, tmp_path):
+    def test_a_changed_folder_restarts_and_rebinds_fleet_sources(self, tmp_path):
         second = tmp_path / "other"
         second.mkdir()
         h = _harness(tmp_path, fleet=True)
         h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        assert h.stream.requested == ["Alice"]
+        initial_resets = h.metrics.resets
 
         h.folder = second
         h.coordinator.reconcile()
+        h.pump()
 
         assert h.stream.stops == 1
         assert h.stream.starts == [tmp_path, second]
+        assert h.metrics.resets == initial_resets + 1
+        assert h.stream.requested == ["Alice", "Alice"]
 
     def test_request_discovery_forwards_only_while_running(self, tmp_path):
         h = _harness(tmp_path, preview=False, fleet=False)

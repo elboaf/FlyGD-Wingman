@@ -260,6 +260,15 @@ class GameLogStream:
                 if self._worker is not None and self._worker.is_alive():
                     return False
                 self._folder = Path(folder)
+                # A stopped interval is intentionally unobserved. Reusing
+                # old cursors would backfill facts generated while Fleet was
+                # disabled; reusing the old roster would also leak sources
+                # from a folder that has just been replaced. The first scan
+                # of every worker generation baselines current files at EOF.
+                self._tracked.clear()
+                self._seen_first_scan = False
+                self._known_paths.clear()
+                self._retired_source_ids.clear()
                 self._started = True
                 self._started_mono = self._clock()
                 self._last_error = None

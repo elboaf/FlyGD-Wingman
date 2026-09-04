@@ -766,6 +766,60 @@ class TestHealth:
 
 
 class TestInterface:
+    def test_fresh_start_clears_previous_runtime_diagnostics(self, tmp_path):
+        def unreadable(_path):
+            raise PermissionError("denied")
+
+        _log(tmp_path, "Alice")
+        stream = _stream(_read_header=unreadable)
+        _collect(stream)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        assert stream.health().state == "error"
+        stream.stop()
+
+        stream.start(tmp_path)
+
+        assert stream.health().state == "running"
+        stream.stop()
+
+    def test_restart_rebaselines_instead_of_backfilling_stopped_time(self, tmp_path):
+        path = _log(tmp_path, "Alice")
+        stream = _stream()
+        received = _collect(stream)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        received.clear()
+        stream.stop()
+
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(OUTGOING_DAMAGE_LINE)
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+
+        assert not [event for event in received if isinstance(event, CombatFact)]
+        stream.stop()
+
+    def test_restart_on_another_folder_drops_old_source_roster(self, tmp_path):
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        _log(first, "Alice")
+        _log(second, "Bravo")
+        stream = _stream()
+        _collect(stream)
+
+        stream.start(first)
+        stream.scan_once(NOW)
+        assert stream.characters() == ("Alice",)
+        stream.stop()
+        stream.start(second)
+        stream.scan_once(NOW)
+
+        assert stream.characters() == ("Bravo",)
+        stream.stop()
+
     def test_characters_reports_active_sources_in_stable_order(self, tmp_path):
         stream = _stream()
         _collect(stream)
