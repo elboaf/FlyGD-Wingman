@@ -41,6 +41,20 @@ def test_invalid_timestamp_does_not_discard_alert_body_fact():
     assert [fact.kind for fact in parsed.facts] == ["incoming_miss"]
 
 
+def test_outgoing_plain_amount_falls_back_to_stripped_text_capture():
+    line = (
+        "[ 2025.11.14 01:15:33 ] (combat) <color=0xff00ffff>1,299 "
+        "<color=0x77ffffff><font size=10>to</font> "
+        "<b>Target Ship</b><font size=10> - Missile - Hits</font>"
+    )
+
+    parsed = parsing.parse_line(line, "Alice")
+
+    assert len(parsed.facts) == 1
+    assert parsed.facts[0].kind == "outgoing_damage"
+    assert parsed.facts[0].amount == 1299
+
+
 @pytest.mark.parametrize(
     ("name", "expected_at", "amount", "target", "source"),
     [

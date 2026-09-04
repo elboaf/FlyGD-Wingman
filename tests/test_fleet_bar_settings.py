@@ -6,6 +6,8 @@ sig_bar and preview.  The tests here match that posture and mirror the
 style of tests/test_settings.py's sig_bar coverage.
 """
 
+import json
+
 from wingman import settings
 
 
@@ -34,8 +36,6 @@ def test_save_normalises_malformed_fleet_bar_in_the_file(tmp_path):
     _save_locked must guarantee the persisted fleet_bar shape itself.
     A caller passing booleans as coordinates or missing keys must not
     corrupt the stored document."""
-    import json
-
     p = tmp_path / "s.json"
     settings.save(
         {
@@ -51,8 +51,6 @@ def test_save_normalises_malformed_fleet_bar_in_the_file(tmp_path):
 def test_save_normalises_partial_fleet_bar_in_the_file(tmp_path):
     """A partial section (missing x/y) written via save() must be stored
     with the full normalized shape, not the partial dict."""
-    import json
-
     p = tmp_path / "s.json"
     settings.save(
         {**settings._fresh_defaults(), "fleet_bar": {"enabled": True}},

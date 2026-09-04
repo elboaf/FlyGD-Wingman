@@ -800,8 +800,16 @@ def main() -> int:
         def _restore_floating_bars(api=api):
             from .ui import fleetbar, sigbar
 
-            sigbar.restore(api)
-            fleetbar.restore(api)
+            for restore, label in (
+                (sigbar.restore, "Sig bar"),
+                (fleetbar.restore, "Fleet Bar"),
+            ):
+                try:
+                    restore(api)
+                except Exception:
+                    # Auxiliary chrome is independent: one broken WebView
+                    # must not prevent the other from restoring.
+                    logger.exception("%s restore failed", label)
 
         shown.shown += _restore_floating_bars
 

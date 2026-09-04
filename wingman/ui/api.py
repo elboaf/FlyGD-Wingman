@@ -2976,11 +2976,18 @@ class Api:
         """Reveal the current enabled page after its first successful fit."""
         with self._fleetbar_lock:
             bar = self._fleetbar_window
-            if bar is None or not self.fleet_bar_settings().get("enabled"):
+            if bar is None:
+                return
+            # Readiness belongs to this page instance, not to today's toggle
+            # state. If the user disabled it during boot, a later re-enable
+            # can show the already-fitted page without waiting for an event
+            # the page emits only once.
+            self._fleetbar_ready = True
+            if not self.fleet_bar_settings().get("enabled"):
                 return
             try:
                 bar.show()
-                self._fleetbar_ready = True
+                self._push_fleet_snapshot()
             except Exception:
                 logger.exception("Fleet Bar window could not be revealed")
                 self._toggle_fleet_bar(False)

@@ -171,7 +171,12 @@ def test_list_clients_is_the_clients_of_enumerate_clients():
     def boom():
         raise OSError("no window station")
 
-    assert discovery.list_clients(enumerator=lambda: WINDOWS) == list(
-        discovery.enumerate_clients(enumerator=lambda: WINDOWS).clients
+    listed = discovery.list_clients(
+        enumerator=lambda: WINDOWS, pids=PIDS.get, image_name=IMAGES.get
     )
+    enumerated = discovery.enumerate_clients(
+        enumerator=lambda: WINDOWS, pids=PIDS.get, image_name=IMAGES.get
+    )
+    assert listed == list(enumerated.clients)
+    assert [client.character for client in listed] == ["Pilot One", "Pilot Two"]
     assert discovery.list_clients(enumerator=boom) == []

@@ -36,7 +36,8 @@
       var bottom = top + screen.availHeight;
       var x = Math.max(left, Math.min(window.screenX, right - width));
       var y = Math.max(top, Math.min(window.screenY, bottom - height));
-      if (x !== window.screenX || y !== window.screenY) {
+      if (Math.abs(x - window.screenX) > 1 ||
+          Math.abs(y - window.screenY) > 1) {
         return send('move_fleet_bar', x, y);
       }
       return null;
@@ -82,7 +83,7 @@
       line.setAttribute('role', 'row');
       line.appendChild(cell('fleet-character', row.character || '\u2014'));
       line.appendChild(cell('fleet-dps' + (hasDps ? ' live' : ''),
-                            hasDps ? String(row.dps) : '\u2014'));
+                            hasDps ? String(row.dps) + ' dps' : '\u2014'));
       line.appendChild(cell('fleet-ewar' +
         (!unavailable && ewar !== '\u2014' ? ' active' : ''), ewar));
       rowsNode.appendChild(line);

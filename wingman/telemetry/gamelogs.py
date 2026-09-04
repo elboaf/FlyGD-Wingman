@@ -364,36 +364,42 @@ class GameLogStream:
             return tuple(sorted(self._tracked, key=str.casefold))
 
     def health(self) -> StreamHealth:
+        # Snapshot mutable state under the lock, then release it before the
+        # filesystem probe. A disconnected/network folder must not block
+        # source requests, stop(), or the worker's own state updates.
         with self._lock:
             if not self._started:
                 return StreamHealth(state="stopped")
-            if self._folder is not None and not self._folder.exists():
-                return StreamHealth(state="missing_folder", detail=str(self._folder))
-            if self._last_error:
-                return StreamHealth(state="error", detail=self._last_error)
-            if self._scan_errors:
-                return StreamHealth(
-                    state="error",
-                    detail=f"{len(self._scan_errors)} scan error(s)",
-                )
-            if self._poll_errors:
-                return StreamHealth(
-                    state="error",
-                    detail=f"{len(self._poll_errors)} source error(s)",
-                )
-            # Stale: check against last successful poll or start time.
+            folder = self._folder
+            last_error = self._last_error
+            scan_error_count = len(self._scan_errors)
+            poll_error_count = len(self._poll_errors)
             ref = self._last_successful_poll_mono
-            if ref is None:
-                ref = self._started_mono
-            if ref is not None:
-                age = self._clock() - ref
-                if age > _STALE_POLLS * POLL_INTERVAL_S:
-                    return StreamHealth(state="stale", detail=f"{age:.1f}s since poll")
-            if self._tracked:
-                return StreamHealth(
-                    state="active", detail=f"{len(self._tracked)} character(s)"
-                )
-            return StreamHealth(state="running")
+            started_mono = self._started_mono
+            tracked_count = len(self._tracked)
+
+        if folder is not None and not folder.exists():
+            return StreamHealth(state="missing_folder", detail=str(folder))
+        if last_error:
+            return StreamHealth(state="error", detail=last_error)
+        if scan_error_count:
+            return StreamHealth(
+                state="error", detail=f"{scan_error_count} scan error(s)"
+            )
+        if poll_error_count:
+            return StreamHealth(
+                state="error", detail=f"{poll_error_count} source error(s)"
+            )
+        # Stale: check against last successful poll or start time.
+        if ref is None:
+            ref = started_mono
+        if ref is not None:
+            age = self._clock() - ref
+            if age > _STALE_POLLS * POLL_INTERVAL_S:
+                return StreamHealth(state="stale", detail=f"{age:.1f}s since poll")
+        if tracked_count:
+            return StreamHealth(state="active", detail=f"{tracked_count} character(s)")
+        return StreamHealth(state="running")
 
     # ------------------------------------------------------------------
     # Dispatch queue

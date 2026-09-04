@@ -10,6 +10,8 @@ import os
 import threading
 import time
 
+import pytest
+
 from wingman.telemetry.gamelogs import (
     MAX_AGE,
     POLL_INTERVAL_S,
@@ -73,6 +75,13 @@ def _collect(stream):
     received = []
     stream.subscribe(lambda event: received.append(event))
     return received
+
+
+def _symlink_or_skip(path, target):
+    try:
+        path.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
 
 
 class _AttemptSignallingLock:
@@ -441,7 +450,7 @@ class TestReplayPrevention:
         )
         data = alice.read_bytes()
         alice.unlink()
-        alice.symlink_to(tmp_path / "broken")
+        _symlink_or_skip(alice, tmp_path / "broken")
         stream.scan_once(NOW)
         assert [
             e
@@ -651,7 +660,7 @@ class TestHealth:
         stream.start(folder)
         stream.scan_once(NOW)
         broken = folder / "20260825_110000_bad.txt"
-        broken.symlink_to(folder / "gone")
+        _symlink_or_skip(broken, folder / "gone")
         stream.scan_once(NOW)
         assert stream.health().state == "error"
         broken.unlink()

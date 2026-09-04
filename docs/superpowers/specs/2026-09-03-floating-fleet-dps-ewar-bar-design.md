@@ -48,13 +48,13 @@ Each row has three aligned columns:
 2. Whole-number outgoing DPS followed by `dps`
 3. Incoming EWAR state
 
-Character names truncate with an ellipsis. DPS uses tabular monospace figures. Healthy rows with no current EWAR show an em-dash in the EWAR column. Live tackle shows one compact `SCRAM/POINT` tag. A verified successful ECM event shows `JAM`.
+Character names truncate with an ellipsis. DPS uses tabular monospace figures. Healthy rows with no current EWAR show an em-dash in the EWAR column. Live tackle shows one compact `SCRAM/POINT` tag. `JAM` is permitted only when a verified successful-ECM fixture exists; no such fixture ships in v1, so v1 omits it.
 
 The full surface is a drag region. The bar is display-only: it does not activate clients, clear effects, or expose row actions. Text selection is disabled so dragging remains predictable.
 
-The page measures its laid-out dimensions and asks Python to fit the native window, following the signature bar's safe resize pattern. Python obtains the nearest monitor with `MonitorFromRect` and its physical work area with `GetMonitorInfoW.rcWork`, then converts that rectangle to the logical units pywebview uses with the process's system scale.
+The page measures its laid-out dimensions and asks Python to fit the native window, following the signature bar's safe resize pattern. Before the hidden first reveal and after each roster change, it reads Chromium's current-screen `availLeft`, `availTop`, `availWidth`, and `availHeight` values. Those are already CSS/logical pixels, matching pywebview's move/resize units.
 
-On every fit, Wingman derives horizontal and vertical anchors from whichever work-area edges are nearest to the window's pre-fit rectangle. It preserves those edge distances while applying the new dimensions, then clamps the complete rectangle inside the work area. Deriving the anchor again from persisted `x` and `y` on restore avoids another persisted setting. If content ever exceeds a work area, the window is capped to that work area, placed at its top-left, and the page permits vertical wheel scrolling as a defensive fallback; the supported one-to-ten-client layout must fit without scrolling at the smallest work area covered by the smoke pass. After monitor removal, the nearest remaining work area is selected and at least a 32 by 32 logical-pixel drag region remains visible even if native geometry prevents a full clamp.
+After fitting, the page clamps the window's current logical position inside that work area and asks Python to move and persist it only when a coordinate differs by more than one pixel. This keeps downward roster growth visible, preserves valid placement on the current monitor, and recovers coordinates mapped to a disconnected display. The supported one-to-ten-client layout fits without scrolling at every work area covered by the smoke pass.
 
 ### Empty and degraded states
 

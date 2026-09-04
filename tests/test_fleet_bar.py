@@ -164,6 +164,19 @@ def test_reenable_does_not_flash_previous_generation_rows(api):
     assert payload["rows"] == []
 
 
+def test_page_readiness_survives_disable_during_boot(api):
+    api._state.settings.setdefault("fleet_bar", {})["enabled"] = False
+    api._fleetbar_window.hidden = True
+    api._fleetbar_ready = False
+
+    api.fleet_bar_ready()
+    assert api._fleetbar_ready is True
+    assert api._fleetbar_window.hidden is True
+
+    api.toggle_fleet_bar(True)
+    assert api._fleetbar_window.hidden is False
+
+
 def test_toggle_off_hides_existing_window_and_reconciles(api):
     api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
 
@@ -318,6 +331,7 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     assert 'id="fleetbar-enabled"' in html
     assert 'id="btn-fleetbar"' in html
     assert "WM.handle('onFleetBarState'" in js
+    assert "check.checked = lastGood" in js
     assert "'onFleetBarState'" in app
     assert js.count("toggle_fleet_bar") == 2
     assert js.index("WM.handle('onFleetBarState'") < js.index("var host =")
@@ -342,7 +356,7 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
 
     source = inspect.getsource(main_mod.main)
     assert "telemetry.subscribe_fleet" in source
-    assert "fleetbar.restore(api)" in source
+    assert "fleetbar.restore" in source
     assert '("_fleetbar_window", "Fleet Bar")' in source
 
 

@@ -2784,9 +2784,11 @@ independent of both preview thumbnails and alert preferences.
       and resets source bindings instead of carrying old DPS into a new folder.
 - [ ] **Drag, pinning, and persistence.** Drag from the name, number, header,
       and empty-state surfaces. Expected: every pixel moves the bar, no text is
-      interactive, and it remains above both EVE and other applications. Quit
-      and relaunch at 100% and 150% scaling; it restores at the saved logical
-      position with no clipping or white first-frame flash.
+      interactive, and it remains above both EVE and other applications. At
+      100%, 125%, 150%, and 200% scaling, add/remove rows near every work-area
+      edge and confirm fit/clamp never clips the bar. Quit and relaunch at each
+      scale; it restores at the saved logical position with no clipping or
+      white first-frame flash.
 - [ ] **Shutdown leaves one clean generation.** Toggle Fleet, Previews, and
       Alerts through several combinations, then quit. Expected: no duplicate
       discovery/gamelog/dispatcher threads ever appear, and Wingman leaves Task

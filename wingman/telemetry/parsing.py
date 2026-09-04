@@ -282,7 +282,12 @@ def _extract_outgoing_damage(line: str) -> tuple[int | None, str, str] | None:
     if " - " not in remainder:
         return None
     source, _outcome = remainder.rsplit(" - ", 1)
-    return _extract_amount(line), target.strip(), source.strip()
+    amount = _extract_amount(line)
+    if amount is None:
+        # Plain-text or tag-shape variants still carried the amount through
+        # the markup-stripped expression that established this as outgoing.
+        amount = int(match.group("amount").replace(",", ""))
+    return amount, target.strip(), source.strip()
 
 
 def _is_incoming_damage(lower: str) -> bool:

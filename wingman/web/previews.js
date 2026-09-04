@@ -21,6 +21,10 @@
 
   function failed() {
     render({enabled: lastGood});
+    // render preserves a focused checkbox so a background state push cannot
+    // move the control under the pointer. This is the refusal path: the
+    // user's uncommitted value must be reverted even while it holds focus.
+    if (check) { check.checked = lastGood; }
     if (status) { status.textContent = 'Could not change the Fleet Bar.'; }
   }
 
