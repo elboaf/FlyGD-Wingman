@@ -121,6 +121,16 @@ overflows (every edge above sits inside the 840/839 titlebar client
 width), the close button's right edge (834/833) stays inside it, and the
 drag region is still more than 3.5x its 105px floor.
 
+**Task 12 release-integration recheck.** After the full Fittings route, dev
+fixtures and screenshot staging were present, the exact dev page was loaded
+again from a cleared browser cache and exercised over CDP. The same 840/839
+measurements held: `scrollWidth == clientWidth`, drag widths 379.86/378.86,
+nav edges 405.86–672/404.86–671, and close edges 790–834/789–833. All four
+labels remained visible. This settles the browser-side route/chrome behavior
+for the completed screen, not only the Task 6 shell. It still does not turn a
+Chromium measurement into Windows/WebView2 evidence; the scaling pass below
+remains open.
+
 **This does not resolve the "Unresolved" question directly above, and is
 not offered as a substitute for it.** This file's own opening rule is that
 nothing renders this page except a real Windows machine; headless

@@ -314,7 +314,23 @@
       { character_id: 90000012, character_name: 'Cato Rune', status: 'enable',
         fetched_utc: '', error: '', stale: false },
       { character_id: 90000013, character_name: 'Dess Marlow',
-        status: 'reauthenticate', fetched_utc: '', error: '', stale: false }
+        status: 'reauthenticate', fetched_utc: '', error: '', stale: false },
+      // Three more enabled/fresh characters, added so a single copy batch
+      // can show more than one outcome at once -- Aria alone (the only
+      // enabled+fresh+not-stale character above) cannot demonstrate
+      // "partial" results, because copyEligible() requires all three of
+      // those and every other character above fails at least one. Task 12
+      // scenario characters, driven by fittings_start_copy below:
+      // Eryn is the plain success case, Fio is scripted to come back
+      // Unknown (ambiguous no-response), and Gio is scripted to trip the
+      // fitting-bucket throttle stop -- matching the design doc's "a
+      // fitting-bucket 429 also stops the whole batch" policy.
+      { character_id: 90000014, character_name: 'Eryn Voss', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000015, character_name: 'Fio Kest', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000016, character_name: 'Gio Renn', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false }
     ],
     collections: [
       { id: 'dev-alliance', name: 'Alliance' },
@@ -396,7 +412,34 @@
           { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Punisher - Mission Runner',
             first_seen_utc: '2026-08-10T00:00:00+00:00',
             last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
-        ] }
+        ] },
+      // A deliberately engineered name conflict: two different fits (a
+      // Merlin and a Rifter, so they can never canonically match) that
+      // share one preferred name. fit-conflict-existing is already on
+      // Eryn under that name; copying fit-conflict-source (no presence
+      // anywhere) to Eryn hits devCopyPair's conflict branch below,
+      // because Eryn already has a DIFFERENT entry's presence recorded
+      // under that same casefolded name.
+      { id: 'fit-conflict-existing', name: 'Fleet Doctrine Alpha', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Occupies the name the source fit also wants.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-15T00:00:00+00:00',
+        updated_utc: '2026-08-15T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 }],
+        aliases: [{ name: 'Fleet Doctrine Alpha', description: '' }],
+        presences: [
+          { character_id: 90000014, character_name: 'Eryn Voss', source_name: 'Fleet Doctrine Alpha',
+            first_seen_utc: '2026-08-15T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-4' }
+        ] },
+      { id: 'fit-conflict-source', name: 'Fleet Doctrine Alpha', ship_type_id: 587,
+        ship_name: 'Rifter', description: 'Wants a name Eryn already has on a different hull.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-09-02T00:00:00+00:00',
+        updated_utc: '2026-09-02T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2456, type_name: '150mm Light AutoCannon II', quantity: 3 }],
+        aliases: [{ name: 'Fleet Doctrine Alpha', description: '' }],
+        presences: [] }
     ]
   };
 
@@ -414,9 +457,23 @@
       fittings.entries.push({
         id: 'fit-gen-' + index, name: 'Generated Fit ' + label,
         ship_type_id: ship.id, ship_name: ship.name,
-        description: '', collection_ids: [], superseded_by: null, deployable: true,
+        // The very first generated row ("Generated Fit 001") is
+        // deliberately non-deployable, and deliberately the ONLY thing
+        // that differs from the rest of this loop. Task 12's copy-preflight
+        // and copy-limit screenshot stages need a non-deployable pair and
+        // a >20-write refusal respectively, both alongside curated fixtures
+        // that sort BEFORE this loop ("Fleet Doctrine Alpha" x2) -- and
+        // fittings_state() pages at 100, so anything sorting after this
+        // block (Impairor, Merlin, Punisher, Rifter, Unnamed above) lands
+        // on page 2 and cannot share a page, or a copy selection, with
+        // them. Reusing the first row of a block that is already on page 1
+        // avoids inventing a ninth curated fixture just to dodge paging.
+        description: index === 0 ? 'A rookie template; nothing to copy.' : '',
+        collection_ids: [], superseded_by: null, deployable: index !== 0,
         created_utc: '2026-09-01T00:00:00+00:00', updated_utc: '2026-09-01T00:00:00+00:00',
-        items: [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 1 }],
+        items: index === 0
+          ? [{ location: 'Invalid', type_id: 1, type_name: 'Rookie Fitting', quantity: 1 }]
+          : [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 1 }],
         aliases: [{ name: 'Generated Fit ' + label, description: '' }],
         presences: []
       });
@@ -667,9 +724,113 @@
     return Promise.resolve(!!entry);
   };
 
+  // Strict JSON so screenshot tooling can reuse the same deterministic copy
+  // outcomes without becoming a second source of fabricated product data.
+  // It names every terminal result category the Fittings page renders.
+  var DEV_FITTINGS_COPY_RESULT_FIXTURE = {
+    "status": "complete",
+    "operation_id": "dev-operation-results",
+    "write_count": 3,
+    "results": [
+      {
+        "entry_id": "fit-rifter-solo",
+        "character_id": 90000014,
+        "fitting_name": "Rifter - Solo PvP",
+        "character_name": "Eryn Voss",
+        "chosen_name": "Rifter - Solo PvP",
+        "status": "success",
+        "remote_fitting_id": 9101,
+        "error": "",
+        "attempted": true
+      },
+      {
+        "entry_id": "fit-merlin-fleet",
+        "character_id": 90000010,
+        "fitting_name": "Merlin - Fleet Doctrine",
+        "character_name": "Aria Voss",
+        "chosen_name": "Merlin - Fleet Doctrine",
+        "status": "present",
+        "error": "",
+        "attempted": false
+      },
+      {
+        "entry_id": "fit-conflict-source",
+        "character_id": 90000014,
+        "fitting_name": "Fleet Doctrine Alpha",
+        "character_name": "Eryn Voss",
+        "chosen_name": "Fleet Doctrine Alpha",
+        "status": "conflict_skipped",
+        "error": "",
+        "attempted": false
+      },
+      {
+        "entry_id": "fit-noncombat",
+        "character_id": 90000010,
+        "fitting_name": "Impairor - Rookie",
+        "character_name": "Aria Voss",
+        "chosen_name": "Impairor - Rookie",
+        "status": "unavailable",
+        "error": "This fitting has no safe deployment template.",
+        "attempted": false
+      },
+      {
+        "entry_id": "fit-stale-owner",
+        "character_id": 90000015,
+        "fitting_name": "Punisher - Mission Runner",
+        "character_name": "Fio Kest",
+        "chosen_name": "Punisher - Mission Runner",
+        "status": "unknown",
+        "error": "No response was received before the request timed out.",
+        "attempted": true
+      },
+      {
+        "entry_id": "fit-stale-owner",
+        "character_id": 90000016,
+        "fitting_name": "Punisher - Mission Runner",
+        "character_name": "Gio Renn",
+        "chosen_name": "Punisher - Mission Runner",
+        "status": "unattempted_throttle",
+        "error": "Stopped after a fitting-bucket throttle response on an earlier pair.",
+        "attempted": false
+      },
+      {
+        "entry_id": "fit-unresolved",
+        "character_id": 90000010,
+        "fitting_name": "Unnamed Import",
+        "character_name": "Aria Voss",
+        "chosen_name": "Unnamed Import",
+        "status": "cancelled",
+        "error": "",
+        "attempted": false
+      },
+      {
+        "entry_id": "fit-rifter-solo",
+        "character_id": 90000011,
+        "fitting_name": "Rifter - Solo PvP",
+        "character_name": "Bex Talon",
+        "chosen_name": "Rifter - Solo PvP",
+        "status": "failed",
+        "error": "ESI stopped the batch after a fitting-bucket 429 response.",
+        "attempted": true
+      }
+    ]
+  };
+
   var fitCopyTickets = {};
   var fitCopyTicketIndex = 0;
   var fitCopyCancelled = false;
+  // Set once a scripted throttle pair (see FIT_COPY_THROTTLE_CHARACTER
+  // below) has fired, so every pair still queued behind it in the same
+  // batch is also reported unattempted -- matching the design doc's "a
+  // fitting-bucket 429 also stops the whole batch" policy, rather than
+  // only the one pair that tripped it.
+  var fitCopyThrottled = false;
+  // Task 12 scenario characters: fixed IDs the harness scripts a specific
+  // non-success outcome for, so a hand reviewer can reach Unknown and
+  // throttle-stop without needing a real ESI failure. Both are otherwise
+  // ordinary eligible copy targets (see the characters array above).
+  var FIT_COPY_UNKNOWN_CHARACTER = 90000015; // Fio Kest
+  var FIT_COPY_THROTTLE_CHARACTER = 90000016; // Gio Renn
 
   function devCopyPair(entry, character, names) {
     var base = {
@@ -792,6 +953,7 @@
     if (!ticket) return Promise.resolve(false);
     delete fitCopyTickets[ticketId];
     fitCopyCancelled = false;
+    fitCopyThrottled = false;
     var results = [];
     var index = 0;
     var operationId = 'dev-operation-' + fitCopyTicketIndex;
@@ -805,7 +967,7 @@
               status: fitCopyCancelled ? 'cancelled' : 'complete',
               operation_id: operationId, results: results,
               write_count: results.filter(function (row) {
-                return row.status === 'success';
+                return row.attempted;
               }).length
             }
           });
@@ -815,9 +977,39 @@
       var pair = ticket.pairs[index++];
       var result = {};
       Object.keys(pair).forEach(function (key) { result[key] = pair[key]; });
+      result.attempted = false;
       if (pair.status === 'ready') {
-        result.status = fitCopyCancelled ? 'cancelled' : 'success';
-        if (result.status === 'success') result.remote_fitting_id = 9100 + index;
+        if (fitCopyThrottled) {
+          // The batch already stopped at an earlier pair in this same
+          // operation; everything still queued behind it is unattempted,
+          // not retried and not silently dropped.
+          result.status = 'unattempted_throttle';
+        } else if (fitCopyCancelled) {
+          result.status = 'cancelled';
+        } else if (pair.character_id === FIT_COPY_UNKNOWN_CHARACTER) {
+          result.attempted = true;
+          // Ambiguous transport failure: an HTTP response was never
+          // received, so the outcome is Unknown rather than Failed --
+          // the design doc's "timeout, no response, 408, or 5xx is
+          // Unknown unless ESI documents that the response guarantees
+          // non-creation." This pair is not retried until an
+          // authoritative refresh past the cache horizon reconciles it.
+          result.status = 'unknown';
+          result.error = 'No response was received before the request timed out.';
+        } else if (pair.character_id === FIT_COPY_THROTTLE_CHARACTER) {
+          // A fitting-bucket 429: this pair is itself unattempted, and it
+          // also stops the remainder of the batch (see fitCopyThrottled
+          // above), matching the design doc's conservative stop policy.
+          result.status = 'failed';
+          result.attempted = true;
+          result.error = 'The fitting write rate limit was reached; the '
+            + 'remaining batch was stopped.';
+          fitCopyThrottled = true;
+        } else {
+          result.status = 'success';
+          result.attempted = true;
+          result.remote_fitting_id = 9100 + index;
+        }
       } else if (pair.status === 'conflict' && pair.skipped) {
         result.status = 'conflict_skipped';
       }

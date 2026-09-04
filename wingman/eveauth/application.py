@@ -57,11 +57,11 @@ REDIRECT_URI = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}{REDIRECT_PATH}"
 # A bind failure is reported plainly instead.
 
 # Capability names, not scope strings -- the keys CAPABILITY_SCOPES is
-# indexed by, and the value every caller (Skills' controller today,
-# Fittings' controller in a later task) names explicitly when it asks
-# sso.authorize_url for a consent screen. Plain strings rather than an
-# enum: they never cross into JSON or the page, only into this lookup and
-# occasionally a log line, and an enum would add ceremony no caller needs.
+# indexed by, and the value every caller (Skills' controller and Fittings'
+# controller alike) names explicitly when it asks sso.authorize_url for a
+# consent screen. Plain strings rather than an enum: they never cross into
+# JSON or the page, only into this lookup and occasionally a log line, and
+# an enum would add ceremony no caller needs.
 SKILLS = "skills"
 FITTINGS = "fittings"
 

@@ -116,9 +116,12 @@ def eve_authority_file() -> Path:
 def eve_skills_file() -> Path:
     """Skills snapshots, queue, groups, plan selection, ETags, and errors.
 
-    Existing installs initially also have identities and credentials here.
-    The fail-closed authority migration splits those fields out before the
-    shared authority is wired into production.
+    An install upgrading from before the shared-authority split still has
+    identities and credentials in this same file on first launch; the
+    fail-closed migration in `eveauth.migration` splits those fields out
+    into `eve_authority_file()` and rewrites this document without them
+    before any controller is constructed (see `__main__.migrate_eve_authority`,
+    run unconditionally at startup, not gated behind a flag or a later task).
     """
     return state_dir() / "eve_skills.json"
 

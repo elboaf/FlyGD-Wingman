@@ -69,8 +69,10 @@ Three things, equally:
 - **Bookmark keybinds** — wormhole mapping and rolling, and the only
   feature that runs continuously in the background.
 
-Then, well behind: **Profiles and Skills**. Fleet-preparation work, done
-occasionally in a block and then not thought about for weeks.
+Then, well behind: **Profiles, Skills and Fittings**. Fleet-preparation
+work, done occasionally in a block and then not thought about for weeks.
+Fittings consolidates and curates Personal Fittings, then distributes selected
+fits through explicit additive copies; it is not background synchronization.
 
 None of the three outranks the others. A change that helps one at the
 clear expense of another needs a reason.
@@ -87,6 +89,7 @@ missing when the title bar filled up:
 | Bookmarks | primary | twice, ever | a Settings section |
 | Alerts | part of previews | twice, ever | a Settings section |
 | Skills | secondary | rarely | a destination |
+| Fittings | secondary | rarely | a destination |
 
 Two equally primary features are Settings sections and a secondary one is
 a destination. That is not an inconsistency, it is the actual rule:
@@ -109,7 +112,10 @@ Previews and Bookmarks are as important as uploading and are still
 configuration, because neither produces anything on its own screen — they
 configure keybinds that fire in EVE and windows that appear on the
 desktop. Skills is less important and is still a destination, because
-checking a roster against a doctrine is something you sit and do.
+checking a roster against a doctrine is something you sit and do. Fittings
+follows the same rule: consolidating, organizing and copying doctrine fits is a
+focused task with persistent output, not setup for something that happens on
+another screen.
 
 ### Alerts are part of previews, not a fourth primary
 

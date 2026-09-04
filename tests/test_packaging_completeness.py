@@ -137,3 +137,48 @@ def test_the_fightrecorder_fetcher_is_on_the_ci_allowlist():
         ROOT / ".github" / "actions" / "build-installer" / "action.yml"
     ).read_text(encoding="utf-8")
     assert "packaging/fetch_fightrecorder.py" in action
+
+
+def test_shared_eve_authority_and_fittings_are_explicit_packages():
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        declared = set(tomllib.load(handle)["tool"]["setuptools"]["packages"])
+    assert {"wingman.eveauth", "wingman.evefittings"} <= declared
+
+
+def test_the_build_verifies_every_eve_capability_controller_is_importable():
+    """Mirrors the existing SkillsController assertion below it in the
+    action, for the two packages the character-fittings feature added.
+
+    `wingman.eveauth` and `wingman.evefittings` are plain package imports
+    with no `hiddenimports` entry, exactly like `wingman.eveskills` --
+    PyInstaller does not fail the build over a missing one, and a broken
+    import would otherwise surface only once the affected route opens in
+    the frozen app, not here where the failure is actionable.
+    """
+    action = (
+        ROOT / ".github" / "actions" / "build-installer" / "action.yml"
+    ).read_text(encoding="utf-8")
+    assert "from wingman.eveauth.controller import AuthorityController" in action
+    assert "from wingman.evefittings.controller import FittingsController" in action
+    assert "from wingman.eveskills.controller import SkillsController" in action
+
+
+def test_the_build_verifies_fittings_js_is_bundled():
+    """Same silent-`datas`-failure shape as the other named web assets:
+    the action already lists every script the page loads by name so a
+    wrong path in uploader.spec cannot ship a build missing one of them
+    silently. `fittings.js` must be on that list alongside the scripts
+    that were there before the Fittings route existed.
+    """
+    action = (
+        ROOT / ".github" / "actions" / "build-installer" / "action.yml"
+    ).read_text(encoding="utf-8")
+    web_check = action[action.index('$web = "dist\\Wingman\\_internal\\web"') :]
+    web_check = web_check[: web_check.index("# The fonts fail QUIETLY")]
+    assert "fittings.js" in web_check, (
+        "the action's bundled-web-assets check does not name fittings.js -- "
+        "a missing datas entry for it would ship a build with a blank "
+        "Fittings route and no CI signal at all"
+    )
+    for name in ("index.html", "style.css", "app.js", "skills.js"):
+        assert name in web_check, name

@@ -983,28 +983,40 @@ def test_nothing_hides_itself_with_an_inline_display_style():
     Both halves are pinned: the attribute in markup, and the property in
     the modules, so a module cannot reintroduce it on an element that
     starts out correct.
+
+    Both checks are pattern-based rather than literal-substring, and the
+    module list is derived rather than hand-kept. The original form of
+    this test matched only the one exact spelling `style="display:none"`
+    (no space after the colon, that one value, double quotes) and a bare
+    `.style.display` substring, and named eleven modules by hand --
+    missing `fittings.js` outright and blind to `style="display: none"`,
+    single-quoted markup, a combined `style="color:red;display:none"`
+    attribute, bracket-notation (`el.style['display']`), and
+    `el.style.setProperty('display', ...)`, every one of which hides an
+    element exactly as invisibly to the [hidden] guard as the five this
+    test was written to catch.
     """
-    assert 'style="display:none"' not in HTML, (
-        "an element hides with an inline display style; use the `hidden` "
-        "attribute so test_every_hidden_element_can_actually_hide sees it"
+    inline_display = re.search(
+        r"""style\s*=\s*(['"])(?:(?!\1).)*?\bdisplay\s*:""", HTML, re.IGNORECASE
     )
-    for name in (
-        "alerts.js",
-        "previews.js",
-        "settings.js",
-        "bookmarks.js",
-        "skills.js",
-        "list.js",
-        "panel.js",
-        "app.js",
-        "firstrun.js",
-        "evesettings.js",
-        "formations.js",
-    ):
-        src = _strip_js_comments((WEB / name).read_text(encoding="utf-8"))
-        assert ".style.display" not in src, (
-            f"{name} hides an element by writing style.display; set "
-            f"`el.hidden` instead so the [hidden] guard covers it"
+    assert inline_display is None, (
+        "an element hides with an inline display style "
+        f"({inline_display.group(0)!r}); use the `hidden` attribute so "
+        "test_every_hidden_element_can_actually_hide sees it"
+    )
+    js_display_write = re.compile(
+        r"""\.style(?:\.display\b|\s*\[\s*['"]display['"]\s*\]|\s*\.\s*setProperty\s*\(\s*['"]display['"])""",
+        re.VERBOSE,
+    )
+    for path in sorted(WEB.glob("*.js")):
+        if path.name == "dev.js":
+            continue  # the one file allowed to fabricate/poke internal state
+        src = _strip_js_comments(path.read_text(encoding="utf-8"))
+        match = js_display_write.search(src)
+        assert match is None, (
+            f"{path.name} hides an element by writing style.display "
+            f"({match.group(0)!r}); set `el.hidden` instead so the "
+            f"[hidden] guard covers it"
         )
 
 

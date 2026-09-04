@@ -296,6 +296,23 @@ def migrate_legacy_skills(
             )
 
     try:
+        # This first stripped save is also the moment `eve_skills.json.bak`
+        # stops being the recovery copy skills_state.save()'s docstring
+        # describes and starts being a one-cycle liability instead:
+        # save() rotates whatever is CURRENTLY at legacy_path into `.bak`
+        # before writing the new content, and what is currently there,
+        # the first time this runs, is the pre-strip legacy document --
+        # credentials included. So immediately after migration completes,
+        # the primary is clean but `eve_skills.json.bak` still holds the
+        # old credential-bearing document, until the NEXT ordinary Skills
+        # save rotates a (by then already-stripped) primary into `.bak` in
+        # its place. This is a deliberate tradeoff, not an oversight: the
+        # alternative -- migration deleting or blanking `.bak` itself --
+        # would remove the one recovery copy a crash between this save and
+        # the next could still need, trading a bounded, one-cycle exposure
+        # for the loss of the corruption-recovery guarantee `.bak` exists
+        # to provide. Nothing here shortens that window on purpose; it
+        # closes at the pace of ordinary Skills activity, not on a timer.
         skills_saver(stripped, legacy_path)
     except (OSError, ValueError) as exc:
         return MigrationResult(

@@ -82,6 +82,15 @@ def test_the_scan_found_both_sides():
     assert "get_settings" in stubbed and "list_rows" in stubbed
 
 
+def _fittings_result_fixture() -> dict:
+    marker = "DEV_FITTINGS_COPY_RESULT_FIXTURE"
+    assert marker in DEV_JS
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    opening = raw.index("{")
+    closing = _matching_brace(raw, opening)
+    return json.loads(raw[opening : closing + 1])
+
+
 def test_fittings_preflight_double_rejects_empty_and_duplicate_name_rechecks():
     body = _fixture_body("api.fittings_preflight_copy = function")
 
@@ -89,6 +98,60 @@ def test_fittings_preflight_double_rejects_empty_and_duplicate_name_rechecks():
     assert "is already used on" in body
     assert re.search(r"accepted:\s*false", body)
     assert re.search(r"requires_resolution:\s*false", body)
+
+
+def test_every_fittings_bridge_method_has_a_dev_double():
+    called = _called()["fittings.js"]
+    assert called
+    assert called <= _stubbed(), sorted(called - _stubbed())
+
+
+def test_fittings_fixture_covers_library_import_and_access_scenarios():
+    """Pin the visual states Task 12 must exercise in the real browser."""
+    for token in (
+        "name: 'Alliance'",
+        "name: 'Unfiled'",
+        "name: 'Superseded'",
+        "superseded_by: 'fit-merlin-fleet'",
+        "discovered_batch_id: 'batch-3'",
+        "source_name: 'Merlin - Old Doctrine'",
+        "status: 'enable'",
+        "status: 'reauthenticate'",
+        "stale: true",
+        "location: 'Invalid'",
+        "deployable: false",
+    ):
+        assert token in DEV_JS, token
+    assert "for (var index = 0; index < 108; index += 1)" in DEV_JS
+    assert "fit-conflict-existing" in DEV_JS
+    assert "fit-conflict-source" in DEV_JS
+
+
+def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
+    fixture = _fittings_result_fixture()
+    statuses = [row["status"] for row in fixture["results"]]
+    assert set(statuses) == {
+        "success",
+        "present",
+        "conflict_skipped",
+        "unavailable",
+        "unknown",
+        "unattempted_throttle",
+        "cancelled",
+        "failed",
+    }
+    assert "counts.ready > 20" in DEV_JS
+    assert "Split this copy into batches of 20 fittings or fewer." in DEV_JS
+    assert "phase: 'progress'" in DEV_JS
+    assert "phase: 'complete'" in DEV_JS
+    assert fixture["write_count"] == sum(
+        bool(row["attempted"]) for row in fixture["results"]
+    )
+    assert "FIT_COPY_UNKNOWN_CHARACTER" in DEV_JS
+    assert "fitCopyThrottled" in DEV_JS
+    assert "return row.attempted;" in DEV_JS
+    assert any(status == "success" for status in statuses)
+    assert any(status != "success" for status in statuses)
 
 
 def test_every_bridge_method_the_page_calls_has_a_double():
