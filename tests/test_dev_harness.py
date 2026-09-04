@@ -302,6 +302,20 @@ def test_update_action_methods_have_dev_doubles():
     assert "api.install_update = function" in DEV_JS
 
 
+def test_dev_fleet_hidden_limit_scenario_is_reachable_and_pushes_state():
+    """The 64-hidden refusal is visible only if a console helper can seed it."""
+    marker = "fleetHiddenLimit: function ()"
+    assert marker in DEV_JS
+    body = DEV_JS[DEV_JS.index(marker) : DEV_JS.index("\n    },", DEV_JS.index(marker))]
+
+    assert "fleetBar.seen = ['Ariadne'];" in body
+    assert "for (index = 1; index <= 64; index += 1)" in body
+    assert "fleetBar.seen.push(name);" in body
+    assert "fleetBar.hidden.push(name);" in body
+    assert "fleetBar.revision += 1;" in body
+    assert "window.onFleetBarState(fleetBarState())" in body
+
+
 def test_dev_update_permissions_match_the_production_state_matrix():
     match = re.search(
         r"var DEV_UPDATE_PERMISSIONS = JSON\.parse\('(.*?)'\);",

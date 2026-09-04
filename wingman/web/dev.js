@@ -2100,6 +2100,24 @@
   }
 
   window.DEV = {
+    // `DEV.fleetHiddenLimit()` makes the backend's exact cap reachable from
+    // the browser console: Ariadne stays visible, the other 64 known names
+    // are hidden, and clicking Ariadne exercises the inline refusal/rollback.
+    // This remains a helper rather than a URL scenario because it is a
+    // mutation checkpoint entered after the Settings › Previews card is open.
+    fleetHiddenLimit: function () {
+      var index, name;
+      fleetBar.seen = ['Ariadne'];
+      fleetBar.hidden = [];
+      fleetBar.running = ['Ariadne'];
+      for (index = 1; index <= 64; index += 1) {
+        name = 'Hidden ' + index;
+        fleetBar.seen.push(name);
+        fleetBar.hidden.push(name);
+      }
+      fleetBar.revision += 1;
+      window.onFleetBarState(fleetBarState());
+    },
     // The same bounded fixture scripts/shoot_screens.py injects into the live
     // app. This manual driver keeps every field browser-consumed rather than
     // leaving a Python-only JSON island in dev.js.
