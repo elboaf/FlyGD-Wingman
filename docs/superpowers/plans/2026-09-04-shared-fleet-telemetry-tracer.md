@@ -277,7 +277,8 @@ type FleetInfo = { fleetId: number; fleetBossId: number };
 type FleetMember = { characterId: number };
 type FleetProbeResponse<T> = {
   status: number;
-  value: T | null;
+  // Constructed only after strict successful parsing; failures raise EsiError.
+  value: T;
   cacheControl: string | null;
   etag: string | null;
 };
