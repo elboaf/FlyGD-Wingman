@@ -11,7 +11,11 @@ from wingman.eveauth import jwt as jwt_mod
 from wingman.eveauth import loopback as loopback_mod
 from wingman.eveauth import sso as sso_mod
 from wingman.eveauth import state as state_mod
-from wingman.eveauth.controller import AuthorityController, MutationResult
+from wingman.eveauth.controller import (
+    AuthorityController,
+    AuthorizationCommandResult,
+    MutationResult,
+)
 
 T0 = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
 
@@ -35,11 +39,50 @@ class DeferredSpawn:
         self.targets.pop(0)()
 
 
+class Gate:
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def wait(self):
+        self.entered.set()
+        assert self.release.wait(timeout=2)
+
+    def open(self):
+        self.release.set()
+
+
+class ProbeGate:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __enter__(self):
+        if not self._lock._is_owned():
+            self.entered.set()
+            assert self.release.wait(timeout=2)
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+        return
+
+    def open(self):
+        self.release.set()
+
+    def _is_owned(self):
+        return self._lock._is_owned()
+
+
 class FakeAuthSso:
-    def __init__(self, token_set=None):
+    def __init__(self, token_set=None, *, exchange_gate=None, exchange_error=None):
         self.token_set = token_set or sso_mod.TokenSet(
             access_token="access-auth", refresh_token="refresh-auth", expires_in=1200
         )
+        self.exchange_gate = exchange_gate
+        self.exchange_error = exchange_error
         self.authorized_scopes = []
 
     def generate_pkce(self):
@@ -52,10 +95,18 @@ class FakeAuthSso:
 
     def exchange_code(self, code, verifier):
         assert (code, verifier) == ("code", "v" * 43)
+        if self.exchange_gate is not None:
+            self.exchange_gate.wait()
+        if self.exchange_error is not None:
+            raise self.exchange_error
         return self.token_set
 
     def refresh_token(self, token):
         return sso_mod.TokenSet("access-refresh", "", 1200)
+
+    def finish(self):
+        if self.exchange_gate is not None:
+            self.exchange_gate.open()
 
 
 class FakeListener:
@@ -147,11 +198,27 @@ class Participant:
         return self.verification
 
 
+def full_identity(
+    character_id=42,
+    *,
+    name="Aiga Otsolen",
+    owner_hash="owner-42",
+    scopes=application.FULL_AUTH_SCOPES,
+):
+    return jwt_mod.EveIdentity(
+        character_id=character_id,
+        name=name,
+        owner_hash=owner_hash,
+        scopes=frozenset(scopes),
+    )
+
+
 def stored_character(
     character_id=42,
     *,
     scopes=application.SKILLS_SCOPES,
     owner_hash="owner-42",
+    needs_reauth=False,
 ):
     return state_mod.AuthorityCharacter(
         character_id=character_id,
@@ -159,6 +226,7 @@ def stored_character(
         owner_hash=owner_hash,
         scopes=tuple(sorted(scopes)),
         authenticated_utc=T0,
+        needs_reauth=needs_reauth,
         refresh_token_blob=f"refresh-{character_id}",
     )
 
@@ -173,7 +241,10 @@ def build(
     saver=state_mod.save_authority,
     spawn=None,
     alert=None,
+    changed=None,
+    validator=None,
     wrapper=lambda token: token,
+    unwrapper=lambda blob: blob or None,
 ):
     authority_state = state_mod.AuthorityState(
         list(characters if characters is not None else [stored_character()])
@@ -187,25 +258,28 @@ def build(
         state_path=path,
         authority=authority_state,
         alert=alert or (lambda kind, title, body: alerts.append((kind, title, body))),
-        changed=lambda: None,
+        changed=changed or (lambda: None),
         now=lambda: T0,
         sso=sso or FakeAuthSso(),
-        validate_token=lambda token, **kwargs: (
-            returned_identity
-            or jwt_mod.EveIdentity(
-                character_id=42,
-                name="Aiga Otsolen",
-                owner_hash="owner-42",
-                scopes=frozenset(
-                    kwargs["required_scopes"] or application.SKILLS_SCOPES
-                ),
+        validate_token=validator
+        or (
+            lambda token, **kwargs: (
+                returned_identity
+                or jwt_mod.EveIdentity(
+                    character_id=42,
+                    name="Aiga Otsolen",
+                    owner_hash="owner-42",
+                    scopes=frozenset(
+                        kwargs["required_scopes"] or application.SKILLS_SCOPES
+                    ),
+                )
             )
         ),
         listener_factory=lambda **kwargs: listener,
         launch_browser=launched.append,
         spawn=spawn or InlineSpawn(),
         wrap_token=wrapper,
-        unwrap_token=lambda blob: blob or None,
+        unwrap_token=unwrapper,
         save_authority=saver,
     )
     return controller, alerts, launched, listener
@@ -511,52 +585,247 @@ def test_definitive_grant_invalidation_notifies_every_participant(tmp_path):
     assert participant.invalidated == [42]
 
 
-def test_enable_fittings_requests_union_for_the_exact_character(tmp_path):
-    requested = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
+def persisted_authority(tmp_path):
+    authority, warnings = state_mod.load_authority(tmp_path / "eve_authority.json")
+    assert warnings == ()
+    return authority
+
+
+def test_start_reports_acceptance_not_completion(tmp_path):
+    spawn = DeferredSpawn()
+    authority, _, _, _ = build(tmp_path, spawn=spawn)
+
+    result = authority.start_full_authorization()
+
+    assert result == AuthorizationCommandResult(True, "")
+    assert authority.authorization_activity == "waiting"
+
+
+def test_terminal_failure_is_bounded_runtime_state(tmp_path):
+    gate = Gate()
+    spawn = DeferredSpawn()
+    failing_sso = FakeAuthSso(
+        exchange_gate=gate,
+        exchange_error=sso_mod.OAuthError(400, "access_denied", "refused"),
+    )
+    authority, _alerts, _launched, _listener = build(
+        tmp_path,
+        sso=failing_sso,
+        spawn=spawn,
+    )
+
+    authority.start_full_authorization()
+    worker = threading.Thread(target=spawn.targets.pop(0))
+    worker.start()
+    assert gate.entered.wait(timeout=2)
+    failing_sso.finish()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice
+    assert len(authority.authorization_notice) <= 500
+
+
+def test_start_full_authorization_refuses_an_unconfigured_build(tmp_path, monkeypatch):
+    authority, alerts, _, _ = build(tmp_path, spawn=DeferredSpawn())
+    with authority._lock:
+        authority._authorization_notice = "Earlier failure."
+    monkeypatch.setattr(application, "is_configured", lambda: False)
+
+    result = authority.start_full_authorization()
+
+    assert result.accepted is False
+    assert "configured" in result.error.lower()
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice == "Earlier failure."
+    assert alerts == [
+        (
+            "warning",
+            "EVE sign-in is not configured",
+            "This build has no configured EVE application client id.",
+        )
+    ]
+
+
+def test_single_flight_refusal_leaves_waiting_state_until_cancelled(tmp_path):
+    spawn = DeferredSpawn()
+    authority, alerts, _, listener = build(tmp_path, spawn=spawn)
+
+    first = authority.start_full_authorization()
+    second = authority.start_full_authorization()
+
+    assert first == AuthorizationCommandResult(True, "")
+    assert second.accepted is False
+    assert "already" in second.error.lower()
+    assert authority.authorization_activity == "waiting"
+    assert authority.authorization_notice == ""
+    assert listener.cancelled is False
+    assert any("already" in title.lower() for _, title, _ in alerts)
+
+
+def test_new_start_clears_the_previous_notice(tmp_path):
+    authority, _alerts, _launched, _listener = build(tmp_path, spawn=DeferredSpawn())
+    with authority._lock:
+        authority._authorization_notice = "Earlier failure."
+
+    authority.start_full_authorization()
+
+    assert authority.authorization_notice == ""
+
+
+def test_success_clears_the_previous_notice(tmp_path):
+    authority, alerts, _launched, _listener = build(
+        tmp_path,
+        characters=[],
+        returned_identity=full_identity(
+            77, name="New Character", owner_hash="owner-77"
+        ),
+    )
+    authority.register_participant(application.SKILLS, Participant())
+    authority.register_participant(application.FITTINGS, Participant())
+    with authority._lock:
+        authority._authorization_notice = "Earlier failure."
+
+    result = authority.start_full_authorization()
+
+    assert result == AuthorizationCommandResult(True, "")
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice == ""
+    assert alerts == []
+
+
+def test_cancel_authorization_returns_idle_without_an_error_notice(tmp_path):
+    spawn = DeferredSpawn()
+    authority, _alerts, _launched, _listener = build(tmp_path, spawn=spawn)
+    authority.start_full_authorization()
+
+    result = authority.cancel_authorization()
+
+    assert result == AuthorizationCommandResult(True, "")
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice == ""
+
+
+def test_an_old_worker_cannot_clear_a_newer_attempt(tmp_path):
+    spawn = DeferredSpawn()
+    authority, _alerts, _launched, _listener = build(tmp_path, spawn=spawn)
+
+    first = authority.start_full_authorization()
+    cancelled = authority.cancel_authorization()
+    second = authority.start_full_authorization()
+    stale_worker = threading.Thread(target=spawn.targets.pop(0))
+    stale_worker.start()
+    stale_worker.join(timeout=2)
+
+    assert first.accepted is True
+    assert cancelled.accepted is True
+    assert second.accepted is True
+    assert not stale_worker.is_alive()
+    assert authority.authorization_activity == "waiting"
+    assert authority.authorization_notice == ""
+
+
+def test_start_full_authorization_requests_full_scopes_and_adds_returned_character(
+    tmp_path,
+):
     fake_sso = FakeAuthSso()
-    returned = jwt_mod.EveIdentity(
-        character_id=42,
-        name="Aiga Otsolen",
-        owner_hash="owner-42",
-        scopes=frozenset(requested),
-    )
     authority, alerts, launched, _ = build(
-        tmp_path, sso=fake_sso, returned_identity=returned
+        tmp_path,
+        characters=[],
+        sso=fake_sso,
+        returned_identity=full_identity(
+            77, name="New Character", owner_hash="owner-77"
+        ),
     )
+    authority.register_participant(application.SKILLS, Participant())
+    authority.register_participant(application.FITTINGS, Participant())
 
-    result = authority.enable_capability(42, application.FITTINGS)
+    result = authority.start_full_authorization()
 
-    assert result.applied is True
-    assert fake_sso.authorized_scopes == [frozenset(requested)]
-    assert authority.capability_status(42, application.FITTINGS) == "enabled"
+    assert result == AuthorizationCommandResult(True, "")
+    assert fake_sso.authorized_scopes == [application.FULL_AUTH_SCOPES]
+    assert authority.capability_status(77, application.SKILLS) == "enabled"
+    assert authority.capability_status(77, application.FITTINGS) == "enabled"
     assert launched == ["https://login.eveonline.com/authorize"]
     assert alerts == []
 
 
-def test_enable_capability_rejects_a_different_returned_character(tmp_path):
-    requested = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
-    returned = jwt_mod.EveIdentity(
-        character_id=99,
-        name="Wrong Character",
-        owner_hash="owner-99",
-        scopes=frozenset(requested),
+def test_existing_same_owner_full_authorization_replaces_the_grant_and_clears_reauth(
+    tmp_path,
+):
+    authority, _alerts, _launched, _listener = build(
+        tmp_path,
+        characters=[stored_character(needs_reauth=True)],
+        returned_identity=full_identity(42),
     )
-    authority, alerts, _, _ = build(tmp_path, returned_identity=returned)
 
-    authority.enable_capability(42, application.FITTINGS)
+    authority.start_full_authorization()
 
-    assert authority.capability_status(42, application.FITTINGS) == "enable"
-    assert any("different character" in body.lower() for _, _, body in alerts)
+    character = authority.character(42)
+    assert character.needs_reauth is False
+    assert character.scopes == tuple(sorted(application.FULL_AUTH_SCOPES))
 
 
-def test_late_capability_callback_cannot_resurrect_a_forgotten_character(tmp_path):
-    requested = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
-    returned = jwt_mod.EveIdentity(
-        character_id=42,
-        name="Aiga Otsolen",
-        owner_hash="owner-42",
-        scopes=frozenset(requested),
+def test_existing_character_with_a_different_owner_is_refused_unchanged(tmp_path):
+    authority, alerts, _launched, _listener = build(
+        tmp_path,
+        returned_identity=full_identity(42, owner_hash="new-owner"),
     )
+
+    result = authority.start_full_authorization()
+
+    assert result.accepted is True
+    assert authority.character(42).owner_hash == "owner-42"
+    assert authority.character(42).scopes == tuple(sorted(application.SKILLS_SCOPES))
+    assert "forget" in authority.authorization_notice.lower()
+    assert any("forget" in body.lower() for _, _, body in alerts)
+
+
+@pytest.mark.parametrize(
+    ("stored_owner", "returned_owner", "expected_owner"),
+    [("", "new-owner", "new-owner"), ("owner-42", "", "owner-42"), ("", "", "")],
+)
+def test_blank_owner_hashes_merge_compatibly(
+    tmp_path, stored_owner, returned_owner, expected_owner
+):
+    authority, _alerts, _launched, _listener = build(
+        tmp_path,
+        characters=[stored_character(owner_hash=stored_owner)],
+        returned_identity=full_identity(42, owner_hash=returned_owner),
+    )
+
+    authority.start_full_authorization()
+
+    assert authority.character(42).owner_hash == expected_owner
+    assert authority.capability_status(42, application.FITTINGS) == "enabled"
+
+
+def test_unknown_id_verification_blocks_full_authorization_commit(tmp_path):
+    authority, alerts, _launched, _listener = build(
+        tmp_path,
+        characters=[],
+        returned_identity=full_identity(
+            77, name="New Character", owner_hash="owner-77"
+        ),
+    )
+    authority.register_participant(
+        application.SKILLS,
+        Participant(verification=CleanupVerification(True, frozenset({77}))),
+    )
+    authority.register_participant(application.FITTINGS, Participant())
+
+    result = authority.start_full_authorization()
+
+    assert result.accepted is True
+    assert authority.character(77) is None
+    assert "reconcile" in authority.authorization_notice.lower()
+    assert any("reconcile" in body.lower() for _, _, body in alerts)
+
+
+def test_late_full_authorization_callback_cannot_resurrect_a_forgotten_character(
+    tmp_path,
+):
     authority = None
 
     def forget_during_wait():
@@ -567,15 +836,18 @@ def test_late_capability_callback_cannot_resurrect_a_forgotten_character(tmp_pat
     listener = FakeListener(on_wait=forget_during_wait)
     authority, alerts, _, _ = build(
         tmp_path,
-        returned_identity=returned,
+        returned_identity=full_identity(42),
         listener=listener,
         wrapper=lambda token: wrapped.append(token) or token,
     )
 
-    authority.enable_capability(42, application.FITTINGS)
+    authority.start_full_authorization()
 
     assert authority.character(42) is None
-    assert wrapped == [], "stale authorization must be rejected before token handling"
+    assert wrapped == ["refresh-auth"], (
+        "Task 5's commit boundary prepares wrapping before the final generation "
+        "recheck, so stale work may wrap but must not persist or resurrect the row"
+    )
     assert any("no longer" in body.lower() for _, _, body in alerts)
 
 
@@ -596,16 +868,11 @@ def test_browser_and_loopback_wait_hold_neither_authority_nor_lifecycle_lock(tmp
         observations.append((authority._lock._is_owned(), acquired.is_set()))
 
     listener = FakeListener(on_wait=inspect_locks)
-    requested = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
-    returned = jwt_mod.EveIdentity(
-        character_id=42,
-        name="Aiga Otsolen",
-        owner_hash="owner-42",
-        scopes=frozenset(requested),
+    authority, _, _, _ = build(
+        tmp_path, returned_identity=full_identity(42), listener=listener
     )
-    authority, _, _, _ = build(tmp_path, returned_identity=returned, listener=listener)
 
-    authority.enable_capability(42, application.FITTINGS)
+    authority.start_full_authorization()
 
     assert observations == [(False, True)]
 
@@ -621,71 +888,73 @@ def test_auth_failure_alerts_run_without_the_authority_document_lock(tmp_path):
     def refuse_save(path, authority_state):
         raise OSError("disk full")
 
-    requested = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
-    returned = jwt_mod.EveIdentity(
-        character_id=42,
-        name="Aiga Otsolen",
-        owner_hash="owner-42",
-        scopes=frozenset(requested),
-    )
     authority, _, _, _ = build(
         tmp_path,
-        returned_identity=returned,
+        returned_identity=full_identity(42),
         saver=refuse_save,
         alert=observe_alert,
     )
 
-    authority.enable_capability(42, application.FITTINGS)
+    authority.start_full_authorization()
 
     assert lock_observations == [False]
 
 
-def test_upgrade_save_failure_keeps_previous_skills_authority(tmp_path):
+def test_full_authorization_save_failure_keeps_the_previous_skills_grant(tmp_path):
     def refuse_save(path, authority_state):
         raise OSError("disk full")
 
-    requested = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
-    returned = jwt_mod.EveIdentity(
-        character_id=42,
-        name="Aiga Otsolen",
-        owner_hash="owner-42",
-        scopes=frozenset(requested),
-    )
     authority, alerts, _, _ = build(
-        tmp_path, returned_identity=returned, saver=refuse_save
+        tmp_path,
+        returned_identity=full_identity(42),
+        saver=refuse_save,
     )
 
-    authority.enable_capability(42, application.FITTINGS)
+    authority.start_full_authorization()
 
     assert authority.capability_status(42, application.SKILLS) == "enabled"
     assert authority.capability_status(42, application.FITTINGS) == "enable"
+    assert "not saved" in authority.authorization_notice.lower()
     assert any("not saved" in body.lower() for _, _, body in alerts)
 
 
-def test_authenticate_skills_requests_only_skills_and_adds_returned_character(tmp_path):
+def test_authenticate_skills_is_a_full_authorization_adapter(tmp_path):
     fake_sso = FakeAuthSso()
-    returned = jwt_mod.EveIdentity(
-        character_id=77,
-        name="New Character",
-        owner_hash="owner-77",
-        scopes=application.SKILLS_SCOPES,
-    )
-    authority, alerts, _, _ = build(
+    authority, _alerts, _launched, _listener = build(
         tmp_path,
         characters=[],
         sso=fake_sso,
-        returned_identity=returned,
+        returned_identity=full_identity(
+            77, name="New Character", owner_hash="owner-77"
+        ),
     )
     authority.register_participant(application.SKILLS, Participant())
     authority.register_participant(application.FITTINGS, Participant())
 
     result = authority.authenticate_skills()
 
-    assert result.applied is True
-    assert fake_sso.authorized_scopes == [application.SKILLS_SCOPES]
-    assert authority.capability_status(77, application.SKILLS) == "enabled"
-    assert authority.capability_status(77, application.FITTINGS) == "enable"
-    assert alerts == []
+    assert result == MutationResult(True, True, "")
+    assert fake_sso.authorized_scopes == [application.FULL_AUTH_SCOPES]
+    assert authority.capability_status(77, application.FITTINGS) == "enabled"
+
+
+def test_enable_capability_is_a_full_authorization_adapter(tmp_path):
+    fake_sso = FakeAuthSso()
+    authority, _alerts, _launched, _listener = build(
+        tmp_path,
+        sso=fake_sso,
+        returned_identity=full_identity(
+            77, name="New Character", owner_hash="owner-77"
+        ),
+    )
+    authority.register_participant(application.SKILLS, Participant())
+    authority.register_participant(application.FITTINGS, Participant())
+
+    result = authority.enable_capability(42, application.FITTINGS)
+
+    assert result == MutationResult(True, True, "")
+    assert fake_sso.authorized_scopes == [application.FULL_AUTH_SCOPES]
+    assert authority.capability_status(77, application.FITTINGS) == "enabled"
 
 
 def test_forget_generation_rejects_late_work_even_after_same_id_is_added(tmp_path):
@@ -695,33 +964,130 @@ def test_forget_generation_rejects_late_work_even_after_same_id_is_added(tmp_pat
     original_generation = authority.character(42).generation
     authority.forget(42)
 
-    returned = jwt_mod.EveIdentity(
-        character_id=42,
-        name="Aiga Otsolen",
-        owner_hash="owner-42",
-        scopes=application.SKILLS_SCOPES,
-    )
-    authority._validate_token = lambda token, **kwargs: returned
-    authority.authenticate_skills()
+    authority._validate_token = lambda token, **kwargs: full_identity(42)
+    authority.start_full_authorization()
 
     assert authority.character(42).generation == original_generation + 1
 
 
-def test_auth_is_globally_single_flight_and_cancel_reaches_listener(tmp_path):
+def test_cancel_authorization_reaches_a_listener_bound_later(tmp_path):
     spawn = DeferredSpawn()
     authority, alerts, _, listener = build(tmp_path, spawn=spawn)
 
-    first = authority.authenticate_skills()
-    second = authority.authenticate_skills()
-    authority.cancel_auth()
+    first = authority.start_full_authorization()
+    second = authority.start_full_authorization()
+    cancelled = authority.cancel_authorization()
 
-    assert first.applied is True
-    assert second.applied is False
+    assert first.accepted is True
+    assert second.accepted is False
+    assert cancelled.accepted is True
     assert "already" in second.error.lower()
     assert listener.cancelled is False, "listener is not bound until the worker starts"
     spawn.run_next()
     assert listener.cancelled is True, "an early cancellation must reach a later bind"
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice == ""
     assert any("already" in title.lower() for _, title, _ in alerts)
+
+
+@pytest.mark.parametrize(
+    "phase",
+    ("exchange", "validation", "lifecycle_gate", "pre_save"),
+)
+def test_cancel_authorization_wins_before_the_commit_linearization_point(
+    tmp_path, phase
+):
+    gate = Gate()
+    spawn = DeferredSpawn()
+    build_kwargs = {"spawn": spawn}
+
+    if phase == "exchange":
+        build_kwargs["sso"] = FakeAuthSso(exchange_gate=gate)
+    elif phase == "validation":
+
+        def validator(token, **kwargs):
+            del token, kwargs
+            gate.wait()
+            return full_identity(42)
+
+        build_kwargs["validator"] = validator
+    elif phase == "pre_save":
+
+        def wrapper(token):
+            gate.wait()
+            return token
+
+        build_kwargs["wrapper"] = wrapper
+
+    authority, _alerts, _launched, _listener = build(tmp_path, **build_kwargs)
+    if phase == "lifecycle_gate":
+        gate = ProbeGate()
+        authority._lifecycle_gates[42] = gate
+    original = persisted_authority(tmp_path)
+
+    authority.start_full_authorization()
+    worker = threading.Thread(target=spawn.targets.pop(0))
+    worker.start()
+    assert gate.entered.wait(timeout=2)
+
+    cancelled = authority.cancel_authorization()
+
+    assert cancelled == AuthorizationCommandResult(True, "")
+    assert persisted_authority(tmp_path) == original
+
+    gate.open()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice == ""
+
+
+def test_cancel_authorization_reports_commit_won_after_the_linearization_point(
+    tmp_path,
+):
+    spawn = DeferredSpawn()
+    save_entered = threading.Event()
+    release_save = threading.Event()
+    cancel_called = threading.Event()
+    cancel_finished = threading.Event()
+    cancel_result = {}
+
+    def block_inside_save(path, authority_state):
+        save_entered.set()
+        assert release_save.wait(timeout=2)
+        state_mod.save_authority(path, authority_state)
+
+    authority, _alerts, _launched, _listener = build(
+        tmp_path,
+        spawn=spawn,
+        saver=block_inside_save,
+    )
+
+    authority.start_full_authorization()
+    worker = threading.Thread(target=spawn.targets.pop(0))
+    worker.start()
+    assert save_entered.wait(timeout=2)
+
+    def cancel():
+        cancel_called.set()
+        cancel_result["result"] = authority.cancel_authorization()
+        cancel_finished.set()
+
+    canceller = threading.Thread(target=cancel)
+    canceller.start()
+    assert cancel_called.wait(timeout=2)
+    assert cancel_finished.is_set() is False
+
+    release_save.set()
+    worker.join(timeout=2)
+    canceller.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert not canceller.is_alive()
+    assert cancel_result["result"].accepted is False
+    assert authority.authorization_activity == "idle"
+    assert authority.authorization_notice == ""
+    assert authority.capability_status(42, application.FITTINGS) == "enabled"
 
 
 def test_shutdown_refuses_new_token_work(tmp_path):

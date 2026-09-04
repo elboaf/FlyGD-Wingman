@@ -2339,10 +2339,14 @@ def test_re_authentication_still_kicks_off_a_skills_refresh(tmp_path, monkeypatc
     ]
 
 
-def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
-    """A different account now owns this character. Its cached skills,
-    queue and etags describe someone else's training."""
-    controller, _, _, _, _ = build_auth(
+def test_an_ownership_change_refuses_the_full_auth_adapter_unchanged(
+    tmp_path, monkeypatch
+):
+    """Task 5's generic full-authorization flow no longer treats the old
+    row-specific sign-in as permission to replace a transferred identity.
+    Two present, unequal owner hashes now refuse unchanged and tell the
+    user to forget first, leaving the cached snapshot intact."""
+    controller, _, alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
         characters=[with_snapshot(attributes_etag='"old-attrs"')],
@@ -2364,21 +2368,21 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
-    assert found.active_levels == {}
-    assert found.trained_levels == {}
+    assert found.active_levels == {3327: 3}
+    assert found.trained_levels == {3327: 3}
     assert found.queue == ()
-    assert found.fetched_utc is None
-    assert found.skills_etag == ""
-    assert found.queue_etag == ""
-    assert found.skill_points == {}
-    assert found.skill_points_complete is False
-    assert found.attributes == {}
-    assert found.attributes_fetched_utc is None
+    assert found.fetched_utc == T0
+    assert found.skills_etag == '"old-s"'
+    assert found.queue_etag == '"old-q"'
+    assert found.skill_points == {3327: 1000}
+    assert found.skill_points_complete is True
+    assert found.attributes == ATTRIBUTES_BODY
+    assert found.attributes_fetched_utc == T0
     assert found.attributes_error == ""
-    assert found.attributes_etag == ""
-    assert found.error == (
-        "Character ownership changed; cached skill data was cleared."
-    )
+    assert found.attributes_etag == '"old-attrs"'
+    assert found.error == ""
+    assert controller._authority.character(95).owner_hash == "old-hash"
+    assert any("forget" in body.lower() for _, _, body in alerts)
 
 
 def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatch):

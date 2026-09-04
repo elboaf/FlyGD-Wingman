@@ -15,6 +15,7 @@ from wingman.eveauth import state as state_mod
 from wingman.eveauth.controller import (
     AccessTokenResult,
     AuthorityController,
+    AuthorizationCommandResult,
     LifecycleLease,
     MutationResult,
 )
@@ -91,6 +92,7 @@ def build_authority(
     validator=None,
     saver=state_mod.save_authority,
     wrapper=lambda token: token,
+    unwrapper=lambda blob: blob or None,
 ):
     authority_state = state_mod.AuthorityState(
         list(characters if characters is not None else [persistent_character()])
@@ -108,7 +110,7 @@ def build_authority(
         sso=fake_sso or FakeSso(),
         validate_token=validator or Validator(identity()),
         wrap_token=wrapper,
-        unwrap_token=lambda blob: blob or None,
+        unwrap_token=unwrapper,
         save_authority=saver,
     )
     return controller, alerts, changed
@@ -362,6 +364,25 @@ def test_concurrent_consumers_share_one_token_refresh(tmp_path):
     assert sso.refreshes == ["refresh-old"]
 
 
+def test_stored_token_decryption_failure_invalidates_the_grant(tmp_path):
+    authority, _, _ = build_authority(
+        tmp_path,
+        unwrapper=lambda blob: None,
+    )
+
+    result = authority.access_token(42, application.SKILLS)
+
+    persisted, warnings = state_mod.load_authority(tmp_path / "eve_authority.json")
+    assert warnings == ()
+    assert result.token is None
+    assert result.grant_invalidated is True
+    assert result.reason == "decryption_failed"
+    assert authority.character(42).needs_reauth is True
+    assert authority._state.characters[0].refresh_token_blob == ""
+    assert persisted.characters[0].needs_reauth is True
+    assert persisted.characters[0].refresh_token_blob == ""
+
+
 def test_endpoint_status_has_no_authority_mutation_contract(tmp_path):
     authority, _, _ = build_authority(tmp_path)
 
@@ -378,6 +399,7 @@ def test_endpoint_status_has_no_authority_mutation_contract(tmp_path):
 def test_eveauth_package_exports_the_shared_authority_contract():
     assert eveauth.AuthorityController is AuthorityController
     assert eveauth.AccessTokenResult is AccessTokenResult
+    assert eveauth.AuthorizationCommandResult is AuthorizationCommandResult
     assert eveauth.MutationResult is MutationResult
     assert eveauth.LifecycleLease is LifecycleLease
     assert eveauth.SKILLS == application.SKILLS
@@ -389,6 +411,7 @@ def test_controller_results_and_leases_are_immutable():
     assert legacy_result.reason == ""
     values = [
         legacy_result,
+        AuthorizationCommandResult(True, ""),
         MutationResult(True, True, ""),
         LifecycleLease(None, application.SKILLS, 0),
     ]

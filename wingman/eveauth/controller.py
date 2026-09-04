@@ -25,6 +25,7 @@ GRANT_PERSISTENCE_ERROR = "The EVE grant changed in memory but could not be save
 ACCESS_REASON_INVALID_GRANT = "invalid_grant"
 ACCESS_REASON_IDENTITY_MISMATCH = "identity_mismatch"
 ACCESS_REASON_OWNER_CHANGED = "owner_changed"
+ACCESS_REASON_DECRYPTION_FAILED = "decryption_failed"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,20 @@ class MutationResult:
 
 
 @dataclass(frozen=True)
+class AuthorizationCommandResult:
+    accepted: bool
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class _AuthorizationAttempt:
+    attempt_id: int
+    cancellation_generation: int
+    known_generations: tuple[tuple[int, int], ...]
+    cancelled: threading.Event
+
+
+@dataclass(frozen=True)
 class LifecycleLease:
     character: AuthorityCharacter | None
     capability: str
@@ -77,8 +92,24 @@ class CharacterParticipant(Protocol):
     ) -> CleanupVerification: ...
 
 
+class _AuthorizationFailure(Exception):
+    def __init__(self, title: str, body: str, *, finalized: bool = False) -> None:
+        super().__init__(body)
+        self.title = title
+        self.body = body
+        self.finalized = finalized
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _owner_matches(stored: str, returned: str) -> bool:
+    return not stored or not returned or stored == returned
+
+
+def _merged_owner(stored: str, returned: str) -> str:
+    return stored or returned
 
 
 def _noop_alert(kind: str, title: str, body: str) -> None:
@@ -160,9 +191,14 @@ class AuthorityController:
         }
 
         self._auth_latch = threading.Lock()
-        self._auth_cancelled = threading.Event()
         self._auth_in_progress = False
+        self._active_attempt: _AuthorizationAttempt | None = None
+        self._next_attempt_id = 1
+        self._cancellation_generation = 0
+        self._authorization_activity = "idle"
+        self._authorization_notice = ""
         self._listener = None
+        self._listener_attempt_id: int | None = None
         self._stopping = threading.Event()
 
     @property
@@ -174,6 +210,16 @@ class AuthorityController:
     def auth_in_progress(self) -> bool:
         with self._lock:
             return self._auth_in_progress
+
+    @property
+    def authorization_activity(self) -> str:
+        with self._lock:
+            return self._authorization_activity
+
+    @property
+    def authorization_notice(self) -> str:
+        with self._lock:
+            return self._authorization_notice
 
     def character(self, character_id: int) -> AuthorityCharacter | None:
         wanted = self._coerce_character_id(character_id)
@@ -256,10 +302,12 @@ class AuthorityController:
 
             refresh = memory_refresh or self._unwrap_token(refresh_blob)
             if refresh is None:
+                self._invalidate_grant(wanted)
                 return AccessTokenResult(
                     None,
-                    "The stored EVE authorisation could not be decrypted.",
-                    False,
+                    "Re-authenticate this EVE character.",
+                    True,
+                    ACCESS_REASON_DECRYPTION_FAILED,
                 )
 
             try:
@@ -299,11 +347,7 @@ class AuthorityController:
                     True,
                     ACCESS_REASON_IDENTITY_MISMATCH,
                 )
-            if (
-                stored_owner
-                and identity.owner_hash
-                and stored_owner != identity.owner_hash
-            ):
+            if not _owner_matches(stored_owner, identity.owner_hash):
                 self._invalidate_grant(wanted)
                 return AccessTokenResult(
                     None,
@@ -337,7 +381,7 @@ class AuthorityController:
                 updated = replace(
                     current,
                     character_name=identity.name,
-                    owner_hash=identity.owner_hash or current.owner_hash,
+                    owner_hash=_merged_owner(current.owner_hash, identity.owner_hash),
                     scopes=tuple(sorted(identity.scopes)),
                     needs_reauth=False,
                     refresh_token_blob=(
@@ -398,62 +442,97 @@ class AuthorityController:
             character = self._required_capability(wanted, capability)
             yield LifecycleLease(character, capability, character.generation)
 
-    def authenticate_skills(self) -> MutationResult:
-        """Start a generic Skills-only authorization on a worker."""
+    def start_full_authorization(self) -> AuthorizationCommandResult:
+        if self._stopping.is_set():
+            return AuthorizationCommandResult(
+                False,
+                "EVE authority is shutting down.",
+            )
+        if not application.is_configured():
+            error = "This build has no configured EVE application client id."
+            self._alert("warning", "EVE sign-in is not configured", error)
+            return AuthorizationCommandResult(False, error)
         with self._lock:
-            known_generations = {
-                row.character_id: self._generations.get(row.character_id, 0)
-                for row in self._state.characters
-            }
-        return self._start_auth(
-            scopes=application.SKILLS_SCOPES,
-            expected_character_id=None,
-            expected_generation=None,
-            known_generations=known_generations,
-        )
+            if self._active_attempt is not None:
+                error = "An EVE sign-in is already in progress."
+                attempt = None
+            else:
+                attempt = _AuthorizationAttempt(
+                    attempt_id=self._next_attempt_id,
+                    cancellation_generation=self._cancellation_generation,
+                    known_generations=tuple(
+                        (row.character_id, self._generations.get(row.character_id, 0))
+                        for row in self._state.characters
+                    ),
+                    cancelled=threading.Event(),
+                )
+                self._next_attempt_id += 1
+                self._active_attempt = attempt
+                self._auth_in_progress = True
+                self._authorization_activity = "waiting"
+                self._authorization_notice = ""
+                error = ""
+        if attempt is None:
+            self._alert("warning", "Sign-in already in progress", error)
+            return AuthorizationCommandResult(False, error)
+        self._changed_safely()
+        try:
+            worker = self._spawn(
+                target=lambda: self._auth_worker(
+                    attempt=attempt,
+                    scopes=application.FULL_AUTH_SCOPES,
+                ),
+                daemon=True,
+            )
+            worker.start()
+        except Exception as exc:
+            logger.warning("Could not start EVE authorization worker", exc_info=True)
+            error = f"Could not start EVE sign-in: {exc}"
+            self._finish_attempt(attempt, error)
+            self._alert("warning", "Sign-in failed", error)
+            return AuthorizationCommandResult(False, error)
+        return AuthorizationCommandResult(True, "")
+
+    def authenticate_skills(self) -> MutationResult:
+        """Compatibility adapter until shared Settings callers land."""
+        result = self.start_full_authorization()
+        return MutationResult(result.accepted, result.accepted, result.error)
 
     def enable_capability(self, character_id: int, capability: str) -> MutationResult:
-        """Reauthorize one exact row for its enabled capabilities plus *capability*."""
-        wanted = self._coerce_character_id(character_id)
-        if wanted is None:
-            return MutationResult(False, False, "Unknown EVE character.")
-        target_scopes = self._capability_scopes(capability)
-        gate = self._lifecycle_gate(wanted)
-        with gate:
-            character = self.character(wanted)
-            if character is None:
-                return MutationResult(False, False, "Unknown EVE character.")
-            if character.needs_reauth:
-                return MutationResult(
-                    False, False, "Re-authenticate this EVE character first."
+        """Compatibility adapter until shared Settings callers land."""
+        del character_id
+        self._capability_scopes(capability)
+        result = self.start_full_authorization()
+        return MutationResult(result.accepted, result.accepted, result.error)
+
+    def cancel_authorization(self) -> AuthorizationCommandResult:
+        with self._lock:
+            attempt = self._active_attempt
+            if attempt is None:
+                return AuthorizationCommandResult(
+                    False,
+                    "The EVE sign-in already finished.",
                 )
-            if target_scopes.issubset(character.scopes):
-                return MutationResult(True, True, "")
-            requested = set(target_scopes)
-            for enabled_scopes in application.CAPABILITY_SCOPES.values():
-                if enabled_scopes.issubset(character.scopes):
-                    requested.update(enabled_scopes)
-            generation = character.generation
-        # The five-minute browser wait starts only after the lifecycle gate is
-        # released. Commit reacquires it and rechecks this generation.
-        return self._start_auth(
-            scopes=frozenset(requested),
-            expected_character_id=wanted,
-            expected_generation=generation,
-            known_generations={},
-        )
+            attempt.cancelled.set()
+            self._cancellation_generation += 1
+            listener = None
+            if self._listener_attempt_id == attempt.attempt_id:
+                listener = self._listener
+                self._listener = None
+                self._listener_attempt_id = None
+            self._finalize_attempt_locked(attempt, "")
+        if listener is not None:
+            self._cancel_listener_safely(listener)
+        self._changed_safely()
+        return AuthorizationCommandResult(True, "")
 
     def cancel_auth(self) -> None:
-        """Cancel the current authorization, including before listener bind."""
-        self._auth_cancelled.set()
+        """Compatibility adapter until shared Settings callers land."""
+        self.cancel_authorization()
         with self._lock:
             listener = self._listener
-        if listener is None:
-            return
-        try:
-            listener.cancel()
-        except Exception:
-            logger.warning("Could not cancel EVE authorization", exc_info=True)
+        if listener is not None:
+            self._cancel_listener_safely(listener)
 
     def forget(self, character_id: int) -> MutationResult:
         """Persist authority removal before pruning any participant state."""
@@ -567,111 +646,76 @@ class AuthorityController:
         except Exception:
             logger.warning("EVE authority shutdown was not clean", exc_info=True)
 
-    def _start_auth(
-        self,
-        *,
-        scopes: frozenset[str],
-        expected_character_id: int | None,
-        expected_generation: int | None,
-        known_generations: dict[int, int],
-    ) -> MutationResult:
-        if self._stopping.is_set():
-            return MutationResult(False, False, "EVE authority is shutting down.")
-        if not application.is_configured():
-            error = "This build has no configured EVE application client id."
-            self._alert("warning", "EVE sign-in is not configured", error)
-            return MutationResult(False, False, error)
-        if not self._auth_latch.acquire(blocking=False):
-            error = "An EVE sign-in is already in progress."
-            self._alert("warning", "Sign-in already in progress", error)
-            return MutationResult(False, False, error)
-        self._auth_cancelled.clear()
-        with self._lock:
-            self._auth_in_progress = True
-        self._changed_safely()
-        try:
-            worker = self._spawn(
-                target=lambda: self._auth_worker(
-                    scopes=scopes,
-                    expected_character_id=expected_character_id,
-                    expected_generation=expected_generation,
-                    known_generations=known_generations,
-                ),
-                daemon=True,
-            )
-            worker.start()
-        except Exception as exc:
-            logger.warning("Could not start EVE authorization worker", exc_info=True)
-            with self._lock:
-                self._auth_in_progress = False
-            self._auth_latch.release()
-            self._changed_safely()
-            error = f"Could not start EVE sign-in: {exc}"
-            self._alert("warning", "Sign-in failed", error)
-            return MutationResult(False, False, error)
-        return MutationResult(True, True, "")
-
     def _auth_worker(
         self,
         *,
+        attempt: _AuthorizationAttempt,
         scopes: frozenset[str],
-        expected_character_id: int | None,
-        expected_generation: int | None,
-        known_generations: dict[int, int],
     ) -> None:
         try:
-            self._run_auth(
-                scopes=scopes,
-                expected_character_id=expected_character_id,
-                expected_generation=expected_generation,
-                known_generations=known_generations,
-            )
+            roster = self._run_auth(attempt=attempt, scopes=scopes)
         except loopback_mod.CallbackCancelled:
             logger.info("EVE authorization cancelled")
+            self._finish_attempt(attempt, "")
+            return
         except loopback_mod.CallbackTimeout:
-            self._alert(
-                "warning",
-                "Sign-in timed out",
-                "No response from EVE SSO within five minutes.",
-            )
+            body = "No response from EVE SSO within five minutes."
+            if self._finish_attempt(attempt, body):
+                self._alert("warning", "Sign-in timed out", body)
+            return
+        except _AuthorizationFailure as exc:
+            if exc.finalized or self._finish_attempt(attempt, exc.body):
+                if exc.finalized:
+                    self._changed_safely()
+                self._alert("warning", exc.title, exc.body)
+            return
         except sso_mod.OAuthError as exc:
-            self._alert("warning", "EVE refused the sign-in", str(exc))
+            body = str(exc)
+            if self._finish_attempt(attempt, body):
+                self._alert("warning", "EVE refused the sign-in", body)
+            return
         except jwt_mod.JwtError as exc:
-            self._alert("warning", "EVE returned a token we cannot trust", str(exc))
+            body = str(exc)
+            if self._finish_attempt(attempt, body):
+                self._alert("warning", "EVE returned a token we cannot trust", body)
+            return
         except Exception as exc:
             logger.warning("EVE authorization failed", exc_info=True)
-            self._alert("warning", "Sign-in failed", str(exc))
-        finally:
-            with self._lock:
-                self._auth_in_progress = False
-                self._listener = None
-            self._auth_latch.release()
-            self._changed_safely()
+            body = str(exc)
+            if self._finish_attempt(attempt, body):
+                self._alert("warning", "Sign-in failed", body)
+            return
+
+        participants = self._participant_slots_snapshot()
+        for capability, participant in participants:
+            self._reconcile_participant(capability, participant, roster)
+        self._changed_safely()
 
     def _run_auth(
         self,
         *,
+        attempt: _AuthorizationAttempt,
         scopes: frozenset[str],
-        expected_character_id: int | None,
-        expected_generation: int | None,
-        known_generations: dict[int, int],
-    ) -> bool:
+    ) -> tuple[AuthorityCharacter, ...]:
         pkce = self._sso.generate_pkce()
         with self._listener_factory(
             host=application.REDIRECT_HOST,
             port=application.REDIRECT_PORT,
             path=application.REDIRECT_PATH,
         ) as listener:
-            with self._lock:
-                self._listener = listener
-            if self._auth_cancelled.is_set():
-                listener.cancel()
+            if not self._bind_listener(attempt, listener):
+                self._cancel_listener_safely(listener)
                 raise loopback_mod.CallbackCancelled()
-            self._launch_browser(self._sso.authorize_url(pkce, scopes))
-            callback = listener.wait(pkce.state)
+            try:
+                if attempt.cancelled.is_set():
+                    self._cancel_listener_safely(listener)
+                    raise loopback_mod.CallbackCancelled()
+                self._launch_browser(self._sso.authorize_url(pkce, scopes))
+                callback = listener.wait(pkce.state)
+            finally:
+                self._clear_listener(attempt)
         if callback.error:
-            self._alert("warning", "EVE refused the sign-in", callback.error)
-            return False
+            raise _AuthorizationFailure("EVE refused the sign-in", callback.error)
         token_set = self._sso.exchange_code(callback.code, pkce.verifier)
         identity = self._validate_token(
             token_set.access_token,
@@ -679,105 +723,111 @@ class AuthorityController:
             required_scopes=scopes,
             key_source=self._keys(),
         )
-        if (
-            expected_character_id is not None
-            and identity.character_id != expected_character_id
-        ):
-            self._alert(
-                "warning",
-                "Sign-in not completed",
-                "EVE returned a different character than the selected row.",
-            )
-            return False
         return self._commit_authorization(
+            attempt=attempt,
             identity=identity,
             token_set=token_set,
-            expected_character_id=expected_character_id,
-            expected_generation=expected_generation,
-            known_generations=known_generations,
         )
 
     def _commit_authorization(
         self,
         *,
+        attempt: _AuthorizationAttempt,
         identity,
         token_set,
-        expected_character_id: int | None,
-        expected_generation: int | None,
-        known_generations: dict[int, int],
-    ) -> bool:
+    ) -> tuple[AuthorityCharacter, ...]:
         character_id = identity.character_id
+        known_generations = dict(attempt.known_generations)
         gate = self._lifecycle_gate(character_id)
         with gate:
-            with self._lock:
-                current = self._find_locked(character_id)
-                generation = self._generations.get(character_id, 0)
-                if expected_character_id is not None:
-                    stale = (
-                        current is None
-                        or character_id != expected_character_id
-                        or generation != expected_generation
-                    )
-                elif character_id in known_generations:
-                    stale = (
-                        current is None or generation != known_generations[character_id]
-                    )
-                else:
-                    stale = False
-                owner_changed = bool(
-                    current is not None
-                    and current.owner_hash
-                    and identity.owner_hash
-                    and current.owner_hash != identity.owner_hash
-                )
-
-            if stale:
-                self._alert(
-                    "warning",
-                    "Sign-in not completed",
-                    "The character was forgotten or is no longer at the authorisation generation that started this sign-in.",
-                )
-                return False
-            if owner_changed and expected_character_id is not None:
-                # An upgrade is not permission to replace a transferred identity.
-                self._invalidate_grant(character_id)
-                self._alert(
-                    "warning",
-                    "Sign-in not completed",
-                    "Character ownership changed; re-authenticate the character.",
-                )
-                return False
-            if current is None:
-                verified = self._verify_unknown_character(character_id)
-                if not verified.applied:
-                    self._alert(
-                        "warning",
-                        "Sign-in not completed",
-                        verified.error or "Reconcile first.",
-                    )
-                    return False
-                if len(self.characters) >= state_mod.MAX_CHARACTERS:
-                    self._alert(
-                        "warning",
-                        "Too many characters",
-                        f"Wingman stores at most {state_mod.MAX_CHARACTERS} characters. "
-                        "Forget one before adding another.",
-                    )
-                    return False
-
+            unknown_verification = None
+            if character_id not in known_generations:
+                unknown_verification = self._verify_unknown_character(character_id)
             try:
                 blob = self._wrap_token(token_set.refresh_token)
-            except Exception as exc:  # noqa: BLE001 - DPAPI providers vary by platform
-                self._alert("warning", "Could not save the sign-in", str(exc))
-                return False
+            except Exception as exc:
+                raise _AuthorizationFailure(
+                    "Could not save the sign-in", str(exc)
+                ) from exc
 
-            save_failed = False
             with self._lock:
+                if (
+                    self._active_attempt is not attempt
+                    or self._cancellation_generation != attempt.cancellation_generation
+                    or attempt.cancelled.is_set()
+                ):
+                    raise loopback_mod.CallbackCancelled()
+
+                current = self._find_locked(character_id)
+                generation = self._generations.get(character_id, 0)
+                if character_id in known_generations:
+                    if current is None or generation != known_generations[character_id]:
+                        body = (
+                            "The character was forgotten or is no longer at the "
+                            "authorisation generation that started this sign-in."
+                        )
+                        self._finalize_attempt_locked(attempt, body)
+                        raise _AuthorizationFailure(
+                            "Sign-in not completed",
+                            body,
+                            finalized=True,
+                        )
+                elif current is not None:
+                    body = (
+                        "The character was forgotten or is no longer at the "
+                        "authorisation generation that started this sign-in."
+                    )
+                    self._finalize_attempt_locked(attempt, body)
+                    raise _AuthorizationFailure(
+                        "Sign-in not completed",
+                        body,
+                        finalized=True,
+                    )
+
+                if current is None:
+                    if (
+                        unknown_verification is not None
+                        and not unknown_verification.applied
+                    ):
+                        body = unknown_verification.error or "Reconcile first."
+                        self._finalize_attempt_locked(attempt, body)
+                        raise _AuthorizationFailure(
+                            "Sign-in not completed",
+                            body,
+                            finalized=True,
+                        )
+                    if len(self._state.characters) >= state_mod.MAX_CHARACTERS:
+                        body = (
+                            f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
+                            "characters. Forget one before adding another."
+                        )
+                        self._finalize_attempt_locked(attempt, body)
+                        raise _AuthorizationFailure(
+                            "Too many characters",
+                            body,
+                            finalized=True,
+                        )
+
+                stored_owner = current.owner_hash if current is not None else ""
+                if current is not None and not _owner_matches(
+                    stored_owner,
+                    identity.owner_hash,
+                ):
+                    body = (
+                        "Character ownership changed. Forget the existing character "
+                        "before authenticating it again."
+                    )
+                    self._finalize_attempt_locked(attempt, body)
+                    raise _AuthorizationFailure(
+                        "Sign-in not completed",
+                        body,
+                        finalized=True,
+                    )
+
                 row = state_mod.AuthorityCharacter(
                     character_id=character_id,
                     character_name=identity.name,
-                    owner_hash=identity.owner_hash
-                    or (current.owner_hash if current is not None else ""),
+                    owner_hash=_merged_owner(stored_owner, identity.owner_hash),
                     scopes=tuple(sorted(identity.scopes)),
                     authenticated_utc=self._now(),
                     needs_reauth=False,
@@ -788,42 +838,79 @@ class AuthorityController:
                     self._save_authority(self._state_path, candidate)
                 except (OSError, ValueError):
                     logger.warning("Could not persist EVE authorization", exc_info=True)
-                    save_failed = True
-                else:
-                    self._state = candidate
-                    self._persistence_errors.pop(character_id, None)
-                    self._access_tokens[character_id] = (
-                        token_set.access_token,
-                        self._now()
-                        + timedelta(seconds=max(0, int(token_set.expires_in))),
+                    body = (
+                        "The sign-in was not saved and the previous authority remains "
+                        "in use."
                     )
-                    if owner_changed:
-                        self._generations[character_id] = generation + 1
-                    else:
-                        self._generations.setdefault(character_id, generation)
-                    roster = tuple(
-                        self._snapshot(row) for row in self._state.characters
+                    self._finalize_attempt_locked(attempt, body)
+                    raise _AuthorizationFailure(
+                        "Could not save the sign-in",
+                        body,
+                        finalized=True,
                     )
 
-            if save_failed:
-                self._alert(
-                    "warning",
-                    "Could not save the sign-in",
-                    "The sign-in was not saved and the previous authority remains in use.",
+                self._state = candidate
+                self._persistence_errors.pop(character_id, None)
+                self._refresh_tokens.pop(character_id, None)
+                self._access_tokens[character_id] = (
+                    token_set.access_token,
+                    self._now() + timedelta(seconds=max(0, int(token_set.expires_in))),
                 )
-                return False
+                self._generations.setdefault(character_id, generation)
+                roster = tuple(self._snapshot(row) for row in self._state.characters)
+                self._finalize_attempt_locked(attempt, "")
+        return roster
 
-            participants = self._participant_slots_snapshot()
-            if owner_changed:
-                self._notify_participants(
-                    tuple(participant for _capability, participant in participants),
-                    "grant_invalidated",
-                    character_id,
-                )
-            for capability, participant in participants:
-                self._reconcile_participant(capability, participant, roster)
+    def _finish_attempt(
+        self,
+        attempt: _AuthorizationAttempt,
+        notice: str,
+    ) -> bool:
+        with self._lock:
+            finished = self._finalize_attempt_locked(attempt, notice)
+        if finished:
             self._changed_safely()
+        return finished
+
+    def _finalize_attempt_locked(
+        self,
+        attempt: _AuthorizationAttempt,
+        notice: str,
+    ) -> bool:
+        if self._active_attempt is not attempt:
+            if self._listener_attempt_id == attempt.attempt_id:
+                self._listener = None
+                self._listener_attempt_id = None
+            return False
+        self._active_attempt = None
+        self._auth_in_progress = False
+        self._authorization_activity = "idle"
+        self._authorization_notice = self._bounded_notice(notice)
+        if self._listener_attempt_id == attempt.attempt_id:
+            self._listener = None
+            self._listener_attempt_id = None
+        return True
+
+    def _bind_listener(self, attempt: _AuthorizationAttempt, listener) -> bool:
+        with self._lock:
+            if self._active_attempt is not attempt:
+                return False
+            self._listener = listener
+            self._listener_attempt_id = attempt.attempt_id
             return True
+
+    def _clear_listener(self, attempt: _AuthorizationAttempt) -> None:
+        with self._lock:
+            if self._listener_attempt_id == attempt.attempt_id:
+                self._listener = None
+                self._listener_attempt_id = None
+
+    @staticmethod
+    def _cancel_listener_safely(listener) -> None:
+        try:
+            listener.cancel()
+        except Exception:
+            logger.warning("Could not cancel EVE authorization", exc_info=True)
 
     def _required_capability(
         self, character_id: int, capability: str
@@ -1067,6 +1154,12 @@ class AuthorityController:
             return application.CAPABILITY_SCOPES[capability]
         except (KeyError, TypeError) as exc:
             raise ValueError(f"Unknown EVE capability: {capability!r}.") from exc
+
+    @staticmethod
+    def _bounded_notice(message: str) -> str:
+        if len(message) <= 500:
+            return message
+        return message[:500]
 
     def _changed_safely(self) -> None:
         try:
