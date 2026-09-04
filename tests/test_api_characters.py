@@ -59,6 +59,28 @@ def test_character_state_has_a_safe_unavailable_fallback(tmp_path):
     }
 
 
+def test_character_state_with_a_healthy_authority_keeps_empty_warnings_empty(tmp_path):
+    authority = Mock()
+    authority.management_state.return_value = {
+        "authorization_activity": "idle",
+        "authorization_notice": "",
+        "characters": [],
+    }
+    api = make_api(tmp_path, authority=authority, authority_warnings=[])
+
+    assert api.eve_characters_state()["warnings"] == []
+
+
+def test_character_state_with_no_authority_and_no_startup_warnings_uses_unavailable_fallback(
+    tmp_path,
+):
+    api = make_api(tmp_path, authority_warnings=[])
+
+    assert api.eve_characters_state()["warnings"] == [
+        "The shared EVE character authority is unavailable."
+    ]
+
+
 def test_character_state_bounds_warning_count_and_text(tmp_path):
     authority = Mock()
     authority.management_state.return_value = {

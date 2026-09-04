@@ -211,22 +211,26 @@ def _bound_eve_characters_text(text: str) -> str:
 
 
 def _bound_eve_characters_warnings(warnings=None) -> list[str]:
-    raw = warnings or ["The shared EVE character authority is unavailable."]
+    if warnings is None:
+        return []
     return [
         _bound_eve_characters_text(warning)
-        for warning in raw[:EVE_CHARACTERS_MAX_WARNINGS]
+        for warning in warnings[:EVE_CHARACTERS_MAX_WARNINGS]
     ]
 
 
 def _empty_eve_characters_state(warnings=None) -> dict:
     """The shared character-management answer when no authority exists."""
+    raw_warnings = list(
+        warnings or ["The shared EVE character authority is unavailable."]
+    )
     return {
         "available": False,
         "auth_configured": eveauth_application.is_configured(),
         "authorization_activity": "idle",
         "authorization_notice": "",
         "characters": [],
-        "warnings": _bound_eve_characters_warnings(warnings),
+        "warnings": _bound_eve_characters_warnings(raw_warnings),
     }
 
 
