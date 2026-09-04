@@ -2867,6 +2867,13 @@ class Api:
 
     # ----- floating Fleet DPS/EWAR bar ---------------------------------
 
+    def fleet_bar_settings(self) -> dict:
+        """Copy of the persisted window state for both main-page toggles."""
+        return dict(self._state.settings.get("fleet_bar") or {})
+
+    def _push_fleet_bar_state(self) -> None:
+        self._push("onFleetBarState", self.fleet_bar_settings())
+
     def _fleet_payload(self, snapshot) -> dict:
         return {
             "rows": [
@@ -2940,6 +2947,7 @@ class Api:
             # The persisted runtime choice stands. A later toggle retries
             # display construction without losing telemetry state.
             logger.exception("Fleet Bar window toggle failed")
+        self._push_fleet_bar_state()
         return self._field_ok()
 
     def save_fleet_bar_pos(self, x, y) -> None:

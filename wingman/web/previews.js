@@ -1,3 +1,56 @@
+// Fleet Bar controls live here because both views belong to Previews: the
+// settings card and the status-strip shortcut. Register the pushed handler
+// before the much larger preview module below can fail during setup.
+(function () {
+  var button = WM.el('btn-fleetbar');
+  var check = WM.el('fleetbar-enabled');
+  var status = WM.el('fleetbar-enabled-status');
+  var lastGood = false;
+  var defaultStatus = status ? status.textContent : '';
+
+  function render(section) {
+    lastGood = !!(section && section.enabled);
+    WM.fleet_bar_on = lastGood;
+    if (button) {
+      button.classList.toggle('active', lastGood);
+      button.setAttribute('aria-pressed', lastGood ? 'true' : 'false');
+      button.hidden = WM.eve_shown === false && !lastGood;
+    }
+    if (check && check !== document.activeElement) { check.checked = lastGood; }
+  }
+
+  function failed() {
+    render({enabled: lastGood});
+    if (status) { status.textContent = 'Could not change the Fleet Bar.'; }
+  }
+
+  WM.handle('onFleetBarState', render);
+
+  if (button) {
+    button.addEventListener('click', function () {
+      WM.send('toggle_fleet_bar', !lastGood).then(function (res) {
+        if (!res || !res.applied) { failed(); }
+        else if (status) { status.textContent = defaultStatus; }
+      });
+    });
+  }
+  if (check) {
+    check.addEventListener('change', function () {
+      WM.send('toggle_fleet_bar', check.checked).then(function (res) {
+        if (!res || !res.applied) { failed(); }
+        else if (status) { status.textContent = defaultStatus; }
+      });
+    });
+  }
+
+  document.addEventListener('wm:settings', function (ev) {
+    render(((ev.detail || {}).settings || {}).fleet_bar || {});
+  });
+  WM.send('fleet_bar_settings').then(function (section) {
+    if (section) { render(section); }
+  });
+}());
+
 // Preview hotkeys. The row shape deliberately mirrors bookmarks.js: a
 // capture button, a Clear, and an Edit... escape hatch. That is not copied
 // for consistency -- capture reads event.code, which maps a physical key to

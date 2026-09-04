@@ -85,6 +85,15 @@ def test_toggle_persists_reconciles_and_creates_the_window(tmp_path, monkeypatch
     assert _fleet_scripts(api._fleetbar_window)
 
 
+def test_toggle_pushes_one_authoritative_state_to_main_page(api):
+    api.toggle_fleet_bar(True)
+
+    scripts = getattr(api._window, "evaluated", [])
+    state_pushes = [script for script in scripts if "onFleetBarState" in script]
+    assert len(state_pushes) == 1
+    assert api.fleet_bar_settings()["enabled"] is True
+
+
 def test_toggle_off_hides_existing_window_and_reconciles(api):
     api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
 
@@ -214,6 +223,21 @@ def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monke
     assert kwargs["hidden"] is True
     assert kwargs["min_size"] == (1, 1)
     assert calls["url"].endswith("fleetbar.html")
+
+
+def test_settings_and_status_strip_expose_the_same_fleet_toggle():
+    from wingman.ui import window as window_mod
+
+    html = (window_mod._web_dir() / "index.html").read_text(encoding="utf-8")
+    js = (window_mod._web_dir() / "previews.js").read_text(encoding="utf-8")
+    app = (window_mod._web_dir() / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="fleetbar-enabled"' in html
+    assert 'id="btn-fleetbar"' in html
+    assert "WM.handle('onFleetBarState'" in js
+    assert "'onFleetBarState'" in app
+    assert js.count("toggle_fleet_bar") == 2
+    assert js.index("WM.handle('onFleetBarState'") < js.index("var host =")
 
 
 def test_main_wires_subscription_restore_and_shutdown_destruction():

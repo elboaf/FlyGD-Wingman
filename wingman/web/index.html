@@ -986,6 +986,24 @@
       </section>
 
       <section class="card">
+        <h2>Fleet combat bar</h2>
+        <p class="hint">A separate always-on-top row for every running,
+          logged-in EVE client. It shows outgoing damage per second over the
+          last 10 seconds and incoming warp scramble or disruption. It works
+          whether client previews and alerts are on or off; a client without
+          an active gamelog says NO LOG instead of showing a guessed zero.</p>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
+            Show the floating Fleet DPS / EWAR bar
+          </label>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="fleetbar-enabled-status">Drag the bar anywhere
+            on screen; Wingman remembers where you leave it.</span></div>
+      </section>
+
+      <section class="card">
         <h2>Global keybinds</h2>
         <!-- THE precedence statement, and after round 5's C5 the only
              one. Round 3's R4 finding 4 put the same rule in the same
@@ -2009,6 +2027,13 @@
            segment, which is what it is. -->
       <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
               aria-pressed="false">&#8982;</button>
+      <!-- One quick toggle for the separate combat display. Text, not an
+           invented icon: DPS is the term the window and its column already
+           use, and this stays in the status strip rather than consuming the
+           title bar's scarce destination space. -->
+      <button class="winbtn" id="btn-fleetbar" title="Floating Fleet DPS / EWAR bar"
+              aria-label="Floating Fleet DPS / EWAR bar"
+              aria-pressed="false">DPS</button>
       <span class="evestat" id="evestat" hidden>
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>
