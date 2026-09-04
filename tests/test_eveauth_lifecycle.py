@@ -823,6 +823,39 @@ def test_unknown_id_verification_blocks_full_authorization_commit(tmp_path):
     assert any("reconcile" in body.lower() for _, _, body in alerts)
 
 
+def test_unknown_id_authorization_refuses_if_the_captured_roster_changes_before_save(
+    tmp_path,
+):
+    authority = None
+    skills = Participant(verification=CleanupVerification(True, frozenset({99})))
+
+    def forget_unrelated_after_cleanup_verification(token):
+        assert token == "refresh-auth"
+        assert skills.reconciled == [(42,)]
+        forgotten = authority.forget(42)
+        assert forgotten == MutationResult(True, True, "")
+        return token
+
+    authority, alerts, _launched, _listener = build(
+        tmp_path,
+        returned_identity=full_identity(
+            77, name="New Character", owner_hash="owner-77"
+        ),
+        wrapper=forget_unrelated_after_cleanup_verification,
+    )
+    authority.register_participant(application.SKILLS, skills)
+    authority.register_participant(application.FITTINGS, Participant())
+    skills.reconciled.clear()
+
+    result = authority.start_full_authorization()
+
+    assert result.accepted is True
+    assert authority.character(42) is None
+    assert authority.character(77) is None
+    assert persisted_authority(tmp_path).characters == []
+    assert any("generation" in body.lower() for _, _, body in alerts)
+
+
 def test_late_full_authorization_callback_cannot_resurrect_a_forgotten_character(
     tmp_path,
 ):
@@ -988,6 +1021,51 @@ def test_cancel_authorization_reaches_a_listener_bound_later(tmp_path):
     assert authority.authorization_activity == "idle"
     assert authority.authorization_notice == ""
     assert any("already" in title.lower() for _, title, _ in alerts)
+
+
+def test_stale_legacy_cancel_auth_cannot_cancel_a_newer_listener(tmp_path):
+    spawn = DeferredSpawn()
+    newer_listener_waiting = threading.Event()
+    release_newer_listener = threading.Event()
+    second_worker = None
+
+    def wait_with_newer_listener_bound():
+        newer_listener_waiting.set()
+        assert release_newer_listener.wait(timeout=2)
+
+    newer_listener = FakeListener(on_wait=wait_with_newer_listener_bound)
+    authority, _alerts, _launched, _listener = build(
+        tmp_path,
+        spawn=spawn,
+        listener=newer_listener,
+    )
+    original_cancel_authorization = authority.cancel_authorization
+
+    def cancel_then_restart():
+        nonlocal second_worker
+        result = original_cancel_authorization()
+        restarted = authority.start_full_authorization()
+        assert restarted == AuthorizationCommandResult(True, "")
+        spawn.targets.pop(0)
+        second_worker = threading.Thread(target=spawn.targets.pop(0))
+        second_worker.start()
+        assert newer_listener_waiting.wait(timeout=2)
+        return result
+
+    authority.cancel_authorization = cancel_then_restart
+    started = authority.start_full_authorization()
+
+    authority.cancel_auth()
+
+    try:
+        assert started == AuthorizationCommandResult(True, "")
+        assert newer_listener.cancelled is False
+    finally:
+        release_newer_listener.set()
+        second_worker.join(timeout=2)
+
+    assert not second_worker.is_alive()
+    assert authority.capability_status(42, application.FITTINGS) == "enabled"
 
 
 @pytest.mark.parametrize(

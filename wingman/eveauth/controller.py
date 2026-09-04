@@ -460,10 +460,7 @@ class AuthorityController:
                 attempt = _AuthorizationAttempt(
                     attempt_id=self._next_attempt_id,
                     cancellation_generation=self._cancellation_generation,
-                    known_generations=tuple(
-                        (row.character_id, self._generations.get(row.character_id, 0))
-                        for row in self._state.characters
-                    ),
+                    known_generations=self._generation_roster_locked(),
                     cancelled=threading.Event(),
                 )
                 self._next_attempt_id += 1
@@ -529,10 +526,6 @@ class AuthorityController:
     def cancel_auth(self) -> None:
         """Compatibility adapter until shared Settings callers land."""
         self.cancel_authorization()
-        with self._lock:
-            listener = self._listener
-        if listener is not None:
-            self._cancel_listener_safely(listener)
 
     def forget(self, character_id: int) -> MutationResult:
         """Persist authority removal before pruning any participant state."""
@@ -758,24 +751,11 @@ class AuthorityController:
                 ):
                     raise loopback_mod.CallbackCancelled()
 
-                current = self._find_locked(character_id)
-                generation = self._generations.get(character_id, 0)
-                if character_id in known_generations:
-                    if current is None or generation != known_generations[character_id]:
-                        body = (
-                            "The character was forgotten or is no longer at the "
-                            "authorisation generation that started this sign-in."
-                        )
-                        self._finalize_attempt_locked(attempt, body)
-                        raise _AuthorizationFailure(
-                            "Sign-in not completed",
-                            body,
-                            finalized=True,
-                        )
-                elif current is not None:
+                if self._generation_roster_locked() != attempt.known_generations:
                     body = (
-                        "The character was forgotten or is no longer at the "
-                        "authorisation generation that started this sign-in."
+                        "The character roster changed: a character was forgotten "
+                        "or is no longer at the authorisation generation that "
+                        "started this sign-in."
                     )
                     self._finalize_attempt_locked(attempt, body)
                     raise _AuthorizationFailure(
@@ -784,6 +764,8 @@ class AuthorityController:
                         finalized=True,
                     )
 
+                current = self._find_locked(character_id)
+                generation = self._generations.get(character_id, 0)
                 if current is None:
                     if (
                         unknown_verification is not None
@@ -1098,6 +1080,12 @@ class AuthorityController:
             needs_reauth=row.needs_reauth,
             generation=self._generations.get(row.character_id, 0),
             persistence_error=self._persistence_errors.get(row.character_id, ""),
+        )
+
+    def _generation_roster_locked(self) -> tuple[tuple[int, int], ...]:
+        return tuple(
+            (row.character_id, self._generations.get(row.character_id, 0))
+            for row in self._state.characters
         )
 
     def _find_locked(self, character_id: int) -> state_mod.AuthorityCharacter | None:
