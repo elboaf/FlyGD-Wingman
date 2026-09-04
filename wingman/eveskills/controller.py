@@ -1644,6 +1644,11 @@ class SkillsController:
             first_reconciliation = not self._reconciled_once
             self._reconciled_once = True
             existing = {character.character_id for character in self._state.characters}
+            added_rows = [
+                state_mod.Character(character_id=character.character_id)
+                for character in characters
+                if character.character_id not in existing
+            ]
             candidate = replace(
                 self._state,
                 characters=[
@@ -1652,11 +1657,7 @@ class SkillsController:
                         for character in self._state.characters
                         if character.character_id in wanted
                     ],
-                    *[
-                        state_mod.Character(character_id=character.character_id)
-                        for character in characters
-                        if character.character_id not in existing
-                    ],
+                    *added_rows,
                 ],
             )
             self._authority_owners = {
@@ -1665,11 +1666,16 @@ class SkillsController:
             }
             changed = candidate != self._state
             saved = True if not changed else self._publish_locked(candidate)
+            additions_applied = False
+            if not saved and added_rows:
+                for character in added_rows:
+                    self._state.upsert(character)
+                additions_applied = True
             verification = self._cleanup_verification_locked(
                 wanted_ids,
                 error="" if saved else MSG_CLEANUP_SAVE_FAILED,
             )
-        if changed and saved and not first_reconciliation:
+        if changed and (saved or additions_applied) and not first_reconciliation:
             self._push_state(force=True)
         if not saved:
             warning = (

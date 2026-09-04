@@ -433,6 +433,55 @@ def test_startup_reconciliation_save_warning_survives_until_route_read(
     )
 
 
+def test_failed_addition_reconciliation_keeps_the_new_row_live_for_refresh(
+    tmp_path, monkeypatch
+):
+    authority = FakeAuthority([])
+    esi = FakeEsi()
+    controller, _pushed, alerts = build(
+        tmp_path,
+        authority=authority,
+        client=esi,
+        spawn=DirectSpawn(),
+    )
+    authority._characters[95] = AuthorityCharacter(
+        character_id=95,
+        character_name="Aiga",
+        owner_hash="owner",
+        scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+        authenticated_utc=T0,
+        needs_reauth=False,
+        generation=0,
+    )
+    original_save = state_mod.save
+    calls = 0
+
+    def fail_once(state, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk")
+        original_save(state, path)
+
+    monkeypatch.setattr(state_mod, "save", fail_once)
+
+    controller.reconcile_characters(authority.characters)
+
+    character = controller._state.find(95)
+    assert character is not None
+    assert character.fetched_utc == T0
+    assert authority.lifecycle_calls == [(95, eveauth_application.SKILLS)]
+    assert any(call[0].endswith("/skills/") for call in esi.calls)
+    assert alerts == [
+        (
+            "warning",
+            "Skills roster not saved",
+            "Shared EVE characters are available for this session, but the "
+            "Skills roster reconciliation could not be saved.",
+        )
+    ]
+
+
 def test_the_state_lock_is_re_entrant(tmp_path):
     """A plain Lock would deadlock, not raise.
 
