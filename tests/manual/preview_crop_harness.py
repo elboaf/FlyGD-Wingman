@@ -352,7 +352,8 @@ class PrototypePreviewHost(PreviewHost):
 
     def _crop_geometry(self, libs, client, index, monitor):
         """(source_rect, destination_rect) for a crop about to be created,
-        or None when the client's size could not be read.
+        or None when the client's size could not be read or the
+        destination it implies is not a window.
 
         A retained interactive selection wins outright, including its
         destination: it is the user's own choice of both, and recomputing
@@ -363,16 +364,31 @@ class PrototypePreviewHost(PreviewHost):
         """
         retained = self._probe_sources.get(client.stable_key)
         if retained is not None:
-            return retained
-        size = self._client_size(libs, client)
-        if size is None:
+            plan = retained
+        else:
+            size = self._client_size(libs, client)
+            if size is None:
+                self._record_probe_failure(client, "client-size")
+                return None
+            source_rect = central_source(size)
+            plan = (
+                source_rect,
+                stack_from_bottom_right(
+                    index,
+                    monitor,
+                    fit_within((source_rect.w, source_rect.h), PROBE_SIZE_MAX),
+                ),
+            )
+        # A client small enough that its central half rounds to nothing --
+        # a 1x1 client area gives central_source 0x0, and fit_within
+        # reports (0, 0) for it rather than dividing by zero -- is a
+        # recorded client-size failure, not an HWND. Creating a zero-sized
+        # layered window would leave the probe holding a DWM relationship
+        # nothing can be seen through or measured from.
+        if plan[1].w <= 0 or plan[1].h <= 0:
             self._record_probe_failure(client, "client-size")
             return None
-        source_rect = central_source(size)
-        rect = stack_from_bottom_right(
-            index, monitor, fit_within((source_rect.w, source_rect.h), PROBE_SIZE_MAX)
-        )
-        return source_rect, rect
+        return plan
 
     def _client_size(self, libs, client):
         """The client's current client-area size, or None.
@@ -815,6 +831,15 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         args.handler(args)
+    except KeyboardInterrupt:
+        # Ctrl+C is a documented way to end a run (see the smoke
+        # checklist's teardown item), so it is an ordinary exit here and
+        # not a crash: the host is already stopped by _probe_host's
+        # finally, and a traceback would only make an operator wonder
+        # whether the probe tore down cleanly. 130 is the shell's own
+        # convention for SIGINT.
+        print("crop probe interrupted", file=sys.stderr)
+        return 130
     except (OSError, RuntimeError) as exc:
         # Every refusal in this file is one of these two, and the probe is
         # run from a console: one line is the whole report. Native detail

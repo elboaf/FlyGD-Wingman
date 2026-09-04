@@ -58,6 +58,26 @@ def test_fit_within_preserves_aspect_and_bounds():
     assert model.fit_within((2560, 1440), (1200, 800)) == (1200, 675)
 
 
+@pytest.mark.parametrize(
+    "source,maximum",
+    [
+        ((0, 0), (1200, 800)),
+        ((0, 720), (1200, 800)),
+        ((1280, 0), (1200, 800)),
+        ((-4, -4), (1200, 800)),
+        ((1280, 720), (0, 800)),
+        ((1280, 720), (1200, 0)),
+        ((1280, 720), (-1, -1)),
+    ],
+)
+def test_fit_within_reports_nothing_for_a_degenerate_source_or_maximum(source, maximum):
+    """A 1-pixel client's central half is 0x0, so this is reachable from a
+    live client rather than only from a hand-built tuple. (0, 0) is a size
+    no window can be created at, which is what the caller must act on --
+    a ZeroDivisionError on the preview pump thread would end the probe."""
+    assert model.fit_within(source, maximum) == (0, 0)
+
+
 def test_stack_starts_at_monitor_bottom_right_and_moves_up():
     monitor = Rect(-1920, 0, 1920, 1080)
     assert model.stack_from_bottom_right(0, monitor, (320, 180)) == Rect(

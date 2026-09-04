@@ -581,6 +581,23 @@ def test_an_unreadable_client_rect_is_a_recorded_failure_not_a_crash():
     assert [f["reason"] for f in host.probe_status()["failures"]] == ["client-size"]
 
 
+def test_a_client_too_small_to_crop_is_a_recorded_failure_not_a_window():
+    """A 1x1 client area has a 0x0 central half, so the staged destination
+    rounds to nothing. That is a recorded client-size failure like an
+    unreadable rect: a zero-sized layered window would be a DWM
+    relationship nothing can be seen through, and it must not be retried
+    on every sweep either."""
+    crop_factory = RecordingCropFactory()
+    host = make_host(crop_factory=crop_factory)
+    host.set_probe_count(1)
+    set_clients(host, NAMED)
+    libs = FakeLibs(client_rects={NAMED.hwnd: (0, 0, 1, 1)})
+    host._reconcile_probe(libs)
+    host._reconcile_probe(libs)
+    assert crop_factory.calls == []
+    assert [f["reason"] for f in host.probe_status()["failures"]] == ["client-size"]
+
+
 # --- activation, visibility and lock ---------------------------------------
 
 
@@ -993,6 +1010,29 @@ def test_an_oserror_from_the_host_is_reported_and_returns_one(monkeypatch, capsy
     assert result.code == 1
     assert host.stopped == 1
     assert "crop probe failure: RegisterClassW failed" in capsys.readouterr().err
+
+
+def test_ctrl_c_ends_the_run_at_130_with_no_traceback(monkeypatch, capsys):
+    """Ctrl+C is a documented way to end a probe run, so it is an ordinary
+    exit: the host still stops through the context manager's finally, the
+    operator gets one line rather than a traceback that looks like an
+    unclean teardown, and 130 is the shell's own SIGINT convention."""
+    host = FakeProbeHost()
+
+    def interrupt(*_args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupt)
+    monkeypatch.setattr(harness.sys, "platform", "win32")
+    monkeypatch.setattr(harness, "_acquire_single_instance", lambda: object())
+    monkeypatch.setattr(harness, "_set_dpi_awareness", lambda: None)
+    monkeypatch.setattr(harness, "PrototypePreviewHost", lambda **_kwargs: host)
+
+    assert harness.main(["pick", "--character", "Alice", OPT_IN]) == 130
+    assert host.stopped == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "crop probe interrupted"
+    assert "Traceback" not in captured.err
 
 
 # -- one host lifecycle -----------------------------------------------------

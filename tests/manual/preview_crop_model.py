@@ -83,10 +83,20 @@ def fit_within(source_size, maximum=(1200, 800)):
         maximum: (max_width, max_height).
 
     Returns:
-        tuple[int, int] scaled (width, height).
+        tuple[int, int] scaled (width, height), or (0, 0) when either the
+        source or the maximum has a nonpositive dimension.
+
+    A degenerate source is reported as (0, 0) rather than raising: the
+    caller derives it from a live client (central_source of a 1-pixel
+    client area is 0x0), and a ZeroDivisionError on the preview pump
+    thread would take the whole probe down. (0, 0) is a size no window
+    should be created at, which is exactly what the caller must decide.
     """
     src_w, src_h = source_size
     max_w, max_h = maximum
+
+    if src_w <= 0 or src_h <= 0 or max_w <= 0 or max_h <= 0:
+        return (0, 0)
 
     # Scale to fit height; if still too wide, scale to fit width.
     scale = min(max_w / src_w, max_h / src_h)

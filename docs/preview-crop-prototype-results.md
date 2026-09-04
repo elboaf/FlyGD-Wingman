@@ -440,6 +440,21 @@ before a production release, not merely before Phase 1 planning begins:
   partial/full occlusion, alert-pulse-while-dragging, logout to character
   select, character-select cold start, same-character HWND rebinding, and
   picker cancel/client-loss cancellation.
+- Stuck-capture behavior after a lost mouse capture (part of criterion 8's
+  lifecycle matrix, named separately because nothing in Phase 0 could
+  exercise it): neither prototype window handles `WM_CAPTURECHANGED`, so a
+  drag whose capture is taken away mid-gesture — a UAC prompt, Win+D, a lock
+  screen, or another window grabbing capture — may leave a crop or the
+  picker believing a drag is still in progress. The production gate is that
+  capture loss returns both to a clean idle state, with no phantom
+  move/resize following the pointer and no drag that has to be cleared by
+  clicking again.
+- Settings-dependent inherited behavior the Phase 0 CLI never wired, so no
+  probe run could have exercised it: locked-crop inertness under
+  `preview.locked` (the probe passes no `locked`/`lock_default` provider) and
+  hide-on-lost-focus lockstep with the primary previews (it passes no
+  `hide_on_lost_focus` provider). Both are listed as pre-release gates in
+  `docs/smoke-checklist.md`.
 
 **The provisional 8-crop cap may be lowered, or the crop feature blocked
 entirely, if any of the above fail when exercised.** Phase 1 implementation

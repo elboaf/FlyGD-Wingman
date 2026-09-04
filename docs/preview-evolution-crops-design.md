@@ -26,7 +26,12 @@ Quantitative expected-vs-observed source-edge accuracy, activation
 latency, drag p95/max, a continuous 60-second GPU sample, numeric HWND/DWM
 accounting, the full minimize/occlusion/alert/logout/rebinding lifecycle
 matrix, and mixed-DPI (125%/150%/200%) and explicit negative-monitor
-picker coverage remain unmeasured. These are now mandatory **pre-release**
+picker coverage remain unmeasured. So do three gates the Phase 0 harness
+could not reach at all: stuck-capture behavior after a lost mouse capture
+(neither prototype window handles `WM_CAPTURECHANGED`), locked-crop
+inertness under `preview.locked`, and hide-on-lost-focus lockstep — the
+probe's CLI wires no lock roster, no hide-on-lost-focus provider and no
+alert service. These are now mandatory **pre-release**
 blockers: the provisional 8-crop cap may be lowered, or the crop feature
 blocked entirely, if any of them fail when exercised. Phase 1 planning and
 implementation may proceed under this provisional cap.
