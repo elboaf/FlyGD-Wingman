@@ -390,7 +390,7 @@ does not store ESI raw responses, systems, ships, stations, or names.
 export type FleetAuthHeaders = {
   sessionId: string;
   issuedAt: string;
-  revision: bigint;
+  revision: number;
   bodySha256: string;
   signature: string;
 };
@@ -401,7 +401,7 @@ export function canonicalFleetRequest(input: {
   path: string;
   sessionId: string;
   issuedAt: string;
-  revision: bigint;
+  revision: number;
   bodySha256: string;
 }): Uint8Array;
 
@@ -424,7 +424,7 @@ needed for revocation.
   request verifies, then table-test each mutation:
 
   ```ts
-  const changed = { ...headers, revision: 8n };
+  const changed = { ...headers, revision: 8 };
   expect(verifyFleetRequest(pub, changed, body, req)).toBe("bad_signature");
   ```
 
@@ -669,7 +669,7 @@ export type RelayReadRow = PublishedRow & {
 
 export async function replaceDeviceProjection(args: {
   sessionId: string;
-  revision: bigint;
+  revision: number;
   rows: readonly PublishedRow[];
   now: Date;
 }): Promise<{ ok: true } | { ok: false; code: string }>;
@@ -687,8 +687,8 @@ export async function readFleetProjection(args: {
 
   ```ts
   const common = { sessionId: session.id, now: new Date("2026-09-04T12:00:00Z") };
-  await replaceDeviceProjection({ ...common, rows: [alice, bob], revision: 1n });
-  await replaceDeviceProjection({ ...common, rows: [bob], revision: 2n });
+  await replaceDeviceProjection({ ...common, rows: [alice, bob], revision: 1 });
+  await replaceDeviceProjection({ ...common, rows: [bob], revision: 2 });
   expect(await rowFor("alice")).toBeUndefined();
   ```
 
