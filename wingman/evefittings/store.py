@@ -1055,16 +1055,20 @@ def _load_health(
     )
 
 
-def _read_document(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
-    return _from_dict(json.loads(_read_bounded(path)), datetime.now(UTC))
+def _read_document(
+    path: Path, *, now: datetime | None = None
+) -> tuple[FittingsState, tuple[str, ...]]:
+    return _from_dict(json.loads(_read_bounded(path)), now or datetime.now(UTC))
 
 
-def _loaded_document_requires_rewrite(path: Path, state: FittingsState) -> bool:
+def _loaded_document_requires_rewrite(
+    path: Path, state: FittingsState, *, now: datetime
+) -> bool:
     try:
         raw = json.loads(_read_bounded(path))
     except (OSError, ValueError, RecursionError):
         return True
-    return raw != _to_dict(state, datetime.now(UTC))
+    return raw != _to_dict(state, now)
 
 
 def _preserve_corrupt(path: Path) -> str:
@@ -1178,8 +1182,9 @@ def load_fittings_with_health(
 ) -> tuple[FittingsState, tuple[str, ...], LoadHealth]:
     """Load local fitting state and report whether cleanup can trust it."""
     path = Path(path)
+    now = datetime.now(UTC)
     try:
-        loaded, warnings = _read_document(path)
+        loaded, warnings = _read_document(path, now=now)
     except FileNotFoundError:
         backup = path.with_name(path.name + ".bak")
         try:
@@ -1206,7 +1211,7 @@ def load_fittings_with_health(
     except (ValueError, RecursionError):
         return _recover_corrupt_primary(path)
 
-    rewrite_required = _loaded_document_requires_rewrite(path, loaded)
+    rewrite_required = _loaded_document_requires_rewrite(path, loaded, now=now)
     return (
         loaded,
         warnings,

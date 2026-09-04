@@ -657,13 +657,13 @@ def test_backup_read_retries_once_after_transient_oserror(
     backup_attempts = []
     sleeps = []
 
-    def flaky_read(candidate):
+    def flaky_read(candidate, *args, **kwargs):
         if candidate == backup:
             backup_attempts.append(candidate)
             if len(backup_attempts) == 1:
                 raise PermissionError("temporarily shared")
             return expected, ()
-        return original_read(candidate)
+        return original_read(candidate, *args, **kwargs)
 
     monkeypatch.setattr(store, "_read_document", flaky_read)
     monkeypatch.setattr(store, "_sleep", sleeps.append)
@@ -687,11 +687,11 @@ def test_backup_read_stops_after_one_retry(tmp_path, monkeypatch, primary_state)
     backup_attempts = []
     sleeps = []
 
-    def blocked_read(candidate):
+    def blocked_read(candidate, *args, **kwargs):
         if candidate == backup:
             backup_attempts.append(candidate)
             raise PermissionError("still shared")
-        return original_read(candidate)
+        return original_read(candidate, *args, **kwargs)
 
     monkeypatch.setattr(store, "_read_document", blocked_read)
     monkeypatch.setattr(store, "_sleep", sleeps.append)
@@ -742,6 +742,49 @@ def test_a_valid_primary_is_cleanup_verifiable(tmp_path):
     assert health.rewrite_required is False
 
 
+def test_load_health_uses_one_captured_now_for_boundary_normalization(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "eve_fittings.json"
+    entry = library_entry()
+    boundary_now = NOW
+    at_cutoff = boundary_now - contracts.COMPLETED_OPERATION_MAX_AGE
+    expected = FittingsState(
+        entries=(entry,),
+        intents=(intent("failed", entry=entry, created_utc=at_cutoff),),
+    )
+    save_fittings(path, expected, now=lambda: boundary_now)
+
+    real_datetime = store.datetime
+
+    class DriftDateTime(real_datetime):
+        calls = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls.calls += 1
+            value = (
+                boundary_now
+                if cls.calls == 1
+                else boundary_now + timedelta(microseconds=1)
+            )
+            return value if tz is None else value.astimezone(tz)
+
+        @classmethod
+        def fromisoformat(cls, value):
+            return real_datetime.fromisoformat(value)
+
+    monkeypatch.setattr(store, "datetime", DriftDateTime)
+
+    loaded, warnings, health = store.load_fittings_with_health(path)
+
+    assert loaded == expected
+    assert warnings == ()
+    assert health.cleanup_verifiable is True
+    assert health.rewrite_required is False
+    assert DriftDateTime.calls == 1
+
+
 def test_successfully_recovered_backup_is_cleanup_verifiable(tmp_path):
     path = tmp_path / "eve_fittings.json"
     expected = full_state()
@@ -783,7 +826,7 @@ def test_unreadable_primary_and_backup_is_not_cleanup_verifiable(tmp_path, monke
     path.write_text("{}", encoding="utf-8")
     backup.write_text("{}", encoding="utf-8")
 
-    def fail_read(_candidate):
+    def fail_read(_candidate, *args, **kwargs):
         raise PermissionError("simulated unreadable state")
 
     monkeypatch.setattr(store, "_read_document", fail_read)

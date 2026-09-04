@@ -554,11 +554,17 @@ def load_with_health(path: Path) -> tuple[SkillsState, list[str], LoadHealth]:
         # primary into *.bak* and installing the new one: at that instant
         # there is a *.bak* but no primary. A *.bak* on disk is therefore
         # the one thing that tells the two apart -- first launch never has
-        # one, so its absence is what makes this branch safe to treat as
-        # silent.
+        # one, so only a PROVEN missing backup is safe to treat as silent.
         backup = path.with_name(path.name + ".bak")
-        if not backup.exists():
+        try:
+            backup.stat()
+        except FileNotFoundError:
             return SkillsState(), warnings, _load_health(True)
+        except OSError as exc:
+            warnings.append(
+                f"{path.name} could not be read ({exc}); starting with an empty roster."
+            )
+            return SkillsState(), warnings, _load_health(False)
         return _recover_missing_primary(path, backup, warnings)
     except UnicodeDecodeError:
         # A bad UTF-8 decode is unreadable CONTENT, not an access failure --

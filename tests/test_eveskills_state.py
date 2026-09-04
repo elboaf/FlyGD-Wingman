@@ -578,6 +578,29 @@ def test_unreadable_primary_and_backup_is_not_cleanup_verifiable(tmp_path, monke
     assert health.rewrite_required is False
 
 
+def test_missing_primary_with_unreadable_backup_is_not_verified_first_launch(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "eve_skills.json"
+    backup = target.with_name(target.name + ".bak")
+    backup.write_text("{}", encoding="utf-8")
+    original_stat = type(target).stat
+
+    def fail_backup_stat(candidate, *args, **kwargs):
+        if candidate == backup:
+            raise PermissionError("backup denied")
+        return original_stat(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(type(target), "stat", fail_backup_stat)
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert loaded.characters == []
+    assert warnings and "could not be read" in warnings[0]
+    assert health.cleanup_verifiable is False
+    assert health.rewrite_required is False
+
+
 def test_a_missing_primary_with_an_unreadable_bak_starts_empty_with_a_warning(tmp_path):
     """The backup itself can be corrupt too. That is not first launch
     either -- the user should be told their roster could not be recovered,
