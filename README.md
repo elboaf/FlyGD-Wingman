@@ -76,9 +76,69 @@ half needs no Google account. Neither requires the other.
   with a backup taken first and restore available.
 - **Skills.** Per-character readiness against skill plans you keep in a folder,
   read through EVE SSO and ESI. Shows what is trained, training, or missing.
+- **Fittings.** A persistent local library built from the Personal Fittings on
+  the EVE characters you authorize. Equivalent loadouts are consolidated even
+  when their names or numbered slot positions differ; you can curate names and
+  collections, then explicitly copy selected fits to selected characters.
 
+Profiles, Skills, and Fittings are secondary fleet-preparation destinations.
 The EVE tools are on by default. If you only want the uploader, turn them off in
-**Settings → General** and the window drops to a single screen.
+**Settings → General** and Profiles, Skills, Fittings, and the EVE Settings
+sections are hidden; the window drops to the Uploader alone.
+
+### Fittings and EVE access
+
+Fittings is additive and explicit. Wingman reads a character only after you
+press **Enable fittings** on that character's row and complete EVE's consent
+screen. It requests these two scopes for that character:
+
+```
+esi-fittings.read_fittings.v1
+esi-fittings.write_fittings.v1
+```
+
+The read scope imports that character's Personal Fittings. The write scope is
+used only after you select library entries, select target characters, review
+the exact remote-write count, and confirm the copy. Wingman does not
+continuously synchronize fits and never automatically deletes or replaces a
+fit on a character. It does not call ESI's remote fitting-delete route.
+
+Existing Skills-only consent remains valid for Skills. A character stays
+**Skills only** in Fittings until you enable the additional capability, and the
+upgrade is bound to that exact character. Choosing a different character on
+EVE's consent screen is refused rather than adding or upgrading it silently.
+
+EVE exposes Personal Fittings, not alliance or corporation fittings. To bring
+an alliance doctrine into Wingman:
+
+1. Copy it to one character's Personal Fittings in EVE.
+2. Refresh that character in Wingman.
+3. Use the recent import and source character to identify the new entries.
+4. Add those entries to an `Alliance` collection and curate their names or
+   descriptions as needed.
+
+A fitting create can time out after EVE received it but before Wingman received
+the response. That result is **Unknown**, not Failed. Wingman does not retry it:
+the fitting/character pair remains blocked until a fresh authoritative read
+after EVE's five-minute cache horizon proves whether the fitting exists. This
+prevents an automatic retry from creating a duplicate.
+
+**Forget character is global.** Whether pressed from Skills or Fittings, it
+removes that character's shared EVE credential and its Skills and Fittings
+snapshots. Library entries learned from the character remain. If an Unknown
+fitting write is still unresolved, Forget is refused until reconciliation so
+the evidence and credential needed to resolve it are not discarded.
+
+Fittings state is local and persistent under `%LOCALAPPDATA%\FlyGD Wingman\`:
+
+- `eve_authority.json` holds shared character identity, granted scopes, and
+  DPAPI-protected refresh credentials;
+- `eve_skills.json` holds Skills-only snapshots and selections;
+- `eve_fittings.json` holds the curated library, collections, character
+  presence, snapshots, and unresolved write evidence; and
+- `eve_fittings_names.json` is a rebuildable type-name cache.
+
+As with the rest of Wingman, there is no FlyGD backend and no telemetry.
 
 ## Typical workflow
 
@@ -368,13 +428,21 @@ secrets at build time. **Those credentials are never committed to this
 repository** — `wingman/credentials.py` contains only
 placeholders in the source tree.
 
-So a build from source has no working OAuth client until you supply your own.
-To run it end to end you need to create a Google Cloud project, enable the
-YouTube Data API v3, create an **OAuth client ID of type "Desktop app"**, and
-put its client ID and secret into `CLIENT_CONFIG` in
-`wingman/credentials.py`. Everything except **Connect Google
-Account** works without this. Do not commit real credentials back to the
-repository.
+So a build from source has no working Google OAuth client until you supply your
+own. To run YouTube uploads end to end you need to create a Google Cloud
+project, enable the YouTube Data API v3, create an **OAuth client ID of type
+"Desktop app"**, and put its client ID and secret into `CLIENT_CONFIG` in
+`wingman/credentials.py`. Everything except **Connect Google Account** works
+without this. Do not commit real credentials back to the repository.
+
+The EVE application is a separate external release prerequisite. The client ID
+and exact loopback redirect are defined in `wingman/eveauth/application.py`.
+Before publishing a build, the corresponding application registration at
+EVE Developers must accept all four scopes used by Wingman, including both
+`esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`. Changing
+the source scope list cannot widen what the registered application accepts. A
+fork should register its own EVE application and replace the client ID rather
+than ship under Wingman's identity.
 
 As of 4.0.0, the Python package directory, the executable name, and the
 `%LOCALAPPDATA%` state folder are all named `wingman` / `FlyGD Wingman`,

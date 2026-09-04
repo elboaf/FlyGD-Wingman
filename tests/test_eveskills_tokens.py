@@ -89,3 +89,14 @@ def test_a_token_at_the_2048_character_boundary_round_trips():
     token = "t" * 2048
     blob = tokens.wrap(token, protect=_reverse_protect)
     assert tokens.unwrap(blob, unprotect=_reverse_unprotect) == token
+
+
+def test_re_exported_names_are_the_shared_eveauth_objects():
+    """Wrap/unwrap now live in `wingman.eveauth.tokens`; this module
+    changed no behaviour of its own. An identity check (`is`, not `==`)
+    is what would catch a future fork of this logic that a
+    value-equality assertion could not."""
+    from wingman.eveauth import tokens as eveauth_tokens
+
+    assert tokens.wrap is eveauth_tokens.wrap
+    assert tokens.unwrap is eveauth_tokens.unwrap

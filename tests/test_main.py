@@ -9,6 +9,34 @@ from wingman.__main__ import (
     resolve_recording_dir,
     set_dpi_awareness,
 )
+from wingman.ui.api import Api, AppState
+
+
+def test_build_fittings_controller_loads_local_state_without_network(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
+    state = AppState(recording_dir=None, settings={})
+    api = Api(state)
+    authority = SimpleNamespace()
+
+    class NoNetworkClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def get(self, *_args, **_kwargs):
+            raise AssertionError("controller construction must not GET")
+
+        def post(self, *_args, **_kwargs):
+            raise AssertionError("controller construction must not POST")
+
+    monkeypatch.setattr("wingman.evefittings.controller.EsiClient", NoNetworkClient)
+
+    controller = main_mod.build_fittings_controller(api, authority)
+
+    assert controller is not None
+    assert controller.state.entries == ()
+    assert not (tmp_path / "eve_fittings.json").exists()
 
 
 def test_stored_value_wins_over_detection(tmp_path):

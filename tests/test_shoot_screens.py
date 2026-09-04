@@ -35,8 +35,10 @@ shoot = _load()
 
 
 def test_gate_on_shoots_every_screen():
+    """SCREENS is the one inventory; this assertion must not retype its count."""
     to_shoot, skipped = shoot.screens_for_gate(True)
-    assert len(to_shoot) == 19
+    assert to_shoot == list(shoot.SCREENS)
+    assert len(to_shoot) == len(shoot.SCREENS)
     assert skipped == []
 
 
@@ -54,7 +56,8 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
         "settings-general",
         "dialog",
     ]
-    assert len(skipped) == 15
+    assert len(skipped) == sum(screen.gated for screen in shoot.SCREENS)
+    assert skipped == [screen for screen in shoot.SCREENS if screen.gated]
 
 
 def _strip_js_comments(text: str) -> str:
@@ -298,23 +301,13 @@ def test_manifest_records_what_the_gate_skipped():
         skipped=skipped,
     )
     assert manifest["eve_shown"] is False
-    assert sorted(manifest["skipped"]) == [
-        "profiles",
-        "profiles-account-identity",
-        "profiles-backups",
-        "settings-alerts",
-        "settings-alerts-advanced",
-        "settings-bookmarks",
-        "settings-previews",
-        "settings-previews-copy",
-        "settings-previews-detail",
-        "settings-previews-groups",
-        "settings-previews-middle",
-        "settings-previews-narrow",
-        "settings-previews-sticky-conflict",
-        "settings-previews-table",
-        "skills",
-    ]
+    expected = sorted(screen.key for screen in shoot.SCREENS if screen.gated)
+    assert sorted(manifest["skipped"]) == expected
+    fitting_stages = sorted(
+        screen.key for screen in shoot.SCREENS if screen.key.startswith("fittings")
+    )
+    assert fitting_stages
+    assert set(fitting_stages) <= set(manifest["skipped"])
     assert manifest["shot_count"] == 1
     assert manifest["python"] == "C:/py/python.exe"
 
@@ -527,6 +520,20 @@ def test_preview_group_stage_setup_scripts():
     assert "scrollIntoView" in narrow_script, (
         "narrow stage must frame the roster heading in the scrollport"
     )
+
+
+def test_gate_on_shoots_every_screen_including_new_group_stages():
+    """Preview and Fittings additions stay in the single SCREENS inventory."""
+    to_shoot, skipped = shoot.screens_for_gate(True)
+    assert len(to_shoot) == len(shoot.SCREENS)
+    assert {screen.key for screen in to_shoot} >= {
+        "settings-previews-groups",
+        "settings-previews-narrow",
+        "settings-alerts-advanced",
+        "fittings-copy-progress",
+        "fittings-copy-result",
+    }
+    assert skipped == []
 
 
 # ---------------------------------------------------------------------------
@@ -1415,6 +1422,137 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
         f"post-set ops: {post_set!r}\n"
         "Ensure the screenshot call is inside the try block, not after the finally."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 12: deterministic Fittings capture inventory
+# ---------------------------------------------------------------------------
+
+
+def _fittings_capture_scripts():
+    return {
+        screen.key: shoot.screen_setup_script(screen)
+        for screen in shoot.SCREENS
+        if screen.key.startswith("fittings-")
+    }
+
+
+def test_fittings_capture_inventory_covers_every_required_visual_state():
+    assert set(_fittings_capture_scripts()) == {
+        "fittings-unfiled",
+        "fittings-superseded",
+        "fittings-alliance",
+        "fittings-detail",
+        "fittings-characters",
+        "fittings-copy-preflight",
+        "fittings-copy-limit",
+        "fittings-copy-progress",
+        "fittings-copy-result",
+    }
+    assert all(
+        screen.gated for screen in shoot.SCREENS if screen.key.startswith("fittings")
+    )
+
+
+def test_every_fittings_variant_has_fail_closed_staging():
+    for key, script in _fittings_capture_scripts().items():
+        assert script is not None, key
+        assert "throw new Error" in script, key
+
+
+def test_fittings_result_data_is_owned_by_the_dev_harness():
+    fixture = shoot.load_dev_fittings_screenshot_fixture(str(ROOT))["copy_result"]
+    assert fixture["write_count"] == sum(
+        bool(row["attempted"]) for row in fixture["results"]
+    )
+    assert fixture["write_count"] == 3
+    assert {row["status"] for row in fixture["results"]} == {
+        "success",
+        "unknown",
+        "unattempted_throttle",
+        "failed",
+    }
+    assert not hasattr(shoot, "_FITTINGS_COPY_RESULT_PAYLOAD")
+    for key in ("fittings-copy-progress", "fittings-copy-result"):
+        assert json.dumps(fixture["results"][1]) in _fittings_capture_scripts()[key]
+
+
+def test_fittings_fixture_injection_is_semantic_bounded_and_exact():
+    fixture = shoot.load_dev_fittings_screenshot_fixture(str(ROOT))
+    script = shoot.fittings_fixture_setup_script()
+    assert "window.onFittingsScreenshotState(payload);" in script
+    assert "typeof window.onFittingsScreenshotState !== 'function'" in script
+    assert "Fittings screenshot fixture was not accepted" in script
+    assert "rendered.length !== payload.entries.length" in script
+    match = re.search(r"var payload = (\{.*\});", script, re.DOTALL)
+    assert match
+    assert json.loads(match.group(1)) == fixture
+
+
+def test_fittings_stage_generator_uses_an_explicit_row_action():
+    import inspect
+
+    source = inspect.getsource(shoot._fittings_setup_script)
+    assert ".replace(" not in source
+    assert 'action="open"' in source
+    opened = shoot._fit_check_row_js("row", "true", "row", action="open")
+    selected = shoot._fit_check_row_js("row", "true", "row", action="select")
+    assert "target.click();" in opened
+    assert "box.dispatchEvent(new Event('change'));" not in opened
+    assert "box.dispatchEvent(new Event('change'));" in selected
+
+
+def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatch):
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+
+    class RecordingCDP(_TrackedCDP):
+        def evaluate(self, expression: str):
+            self._ops.append(expression)
+            return super().evaluate(expression)
+
+    cdp = RecordingCDP()
+    shoot.walk(cdp, tmp_path, settle_ms=0)
+    injections = [
+        index
+        for index, expression in enumerate(cdp._ops)
+        if "window.onFittingsScreenshotState(payload);" in expression
+    ]
+    fitting_screens = [screen for screen in shoot.SCREENS if screen.route == "fittings"]
+    assert len(injections) == len(fitting_screens)
+    for stage_number, index in enumerate(injections):
+        following = cdp._ops[index + 1 :]
+        next_injection = next(
+            (
+                offset
+                for offset, expression in enumerate(following)
+                if "window.onFittingsScreenshotState(payload);" in expression
+            ),
+            len(following),
+        )
+        stage = following[:next_injection]
+        assert stage
+        if stage_number:
+            assert any("var openToggle" in expression for expression in stage)
+
+
+def test_fittings_capture_staging_never_starts_a_remote_write():
+    writers = (
+        "fittings_start_copy",
+        "fittings_cancel_copy",
+        "fittings_refresh",
+        "fittings_enable_character",
+        "fittings_forget_character",
+        "fittings_create_collection",
+        "fittings_rename_collection",
+        "fittings_delete_collection",
+        "fittings_update_metadata",
+        "fittings_set_membership",
+        "fittings_set_supersession",
+        "fittings_delete_entry",
+    )
+    for key, script in _fittings_capture_scripts().items():
+        for writer in writers:
+            assert writer not in script, f"{key} must not call {writer}"
 
 
 # ---------------------------------------------------------------------------

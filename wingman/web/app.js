@@ -5,10 +5,11 @@
  * calling window.<handler>(payload); the page reaches Python only through
  * WM.send(), which wraps pywebview.api.
  *
- * Selection, sort order, and row focus are CLIENT state and never cross
- * the bridge — the sole exception is the `preselected` flag arriving on
- * onRows, because the watcher preselects newly-finished recordings so the
- * common case needs no clicking.
+ * Selection, sort order, and row focus stay client state while they only
+ * change what the page draws. Selection crosses when Python must compute
+ * from it: Fittings sends the current page's pruned stable IDs to copy
+ * preflight. The Uploader's `preselected` flag still arrives on onRows so
+ * newly-finished recordings need no extra click.
  */
 (function () {
   'use strict';
@@ -56,7 +57,9 @@
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSigBarState', 'onUpdateStatus',
-                 'onSkills', 'onSkillsProgress'];
+                 'onSkills', 'onSkillsProgress',
+                 'onFittingsChanged', 'onFittingsProgress',
+                 'onFittingsScreenshotState'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -146,6 +149,7 @@
                    firstrun: 'route-firstrun',
                    evesettings: 'route-evesettings',
                    skills: 'route-skills',
+                   fittings: 'route-fittings',
                    formations: 'route-formations',
                    accountidentity: 'route-accountidentity',
                    backups: 'route-backups' };
@@ -179,7 +183,8 @@
     WM.el('routenav').hidden = chromeless;
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'evesettings' || name === 'skills') {
+    if (name === 'main' || name === 'evesettings' || name === 'skills'
+        || name === 'fittings') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;
@@ -253,7 +258,8 @@
   // the gate off, a user standing in one has to be moved off it like
   // anyone standing on a hidden destination, or the nav disappears around
   // them and there is no way back.
-  WM.EVE_ROUTES = ['evesettings', 'skills', 'formations', 'accountidentity', 'backups'];
+  WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
+                   'accountidentity', 'backups'];
   // Alerts joined this list in round 5 (D1) when it stopped being a card
   // inside Previews and became a section. It is EVE-gated for the same
   // reason the other two are: it reads the EVE gamelogs folder and draws

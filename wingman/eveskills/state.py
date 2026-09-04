@@ -1,15 +1,9 @@
-"""Roster, skill snapshots, ETags, and wrapped refresh tokens in one file.
+"""Persistent Skills snapshots, groups, plan selection, errors, and ETags.
 
-One document holds everything about a character, which is what makes forget
-a single atomic write: there is no window in which a token exists without
-its character, and no reconciliation sweep to get wrong. TriffView splits
-these across Credential Manager and state.json and pays for it in rollback
-paths (TriffSkillsAuthentication.cs:103,108) and a RecoverOwnCredentials()
-that exists only to resurrect orphans.
-
-Only the refresh token is wrapped. The metadata beside it stays plaintext so
-a blob that will not decrypt costs one character a re-authentication rather
-than making the whole document unparseable.
+Character identity, scopes, and credentials live in :mod:`wingman.eveauth`.
+This document keeps only data produced or curated by Skills. Its rows are
+reconciled against shared authority at startup, so a crash after global
+forget can leave harmless derived metadata but never an orphan credential.
 
 Normalisation on load is deliberately tolerant rather than versioned, which
 is the same posture settings.py's validated_*() functions take and the
@@ -65,19 +59,11 @@ MAX_GROUP_NAME_CHARS = 40
 @dataclass
 class Character:
     character_id: int
-    character_name: str = ""
-    owner_hash: str = ""
-    scopes: tuple = ()
-    authenticated_utc: "datetime | None" = None
     fetched_utc: "datetime | None" = None
     active_levels: dict = field(default_factory=dict)
     trained_levels: dict = field(default_factory=dict)
     queue: tuple = ()
     error: str = ""
-    needs_reauth: bool = False
-    # base64 text of the DPAPI blob; "" when the token is absent or was
-    # deleted by a definitive auth failure.
-    refresh_token_blob: str = ""
     # Per-endpoint ETags. These are request optimisation ONLY -- they are
     # not freshness state. fetched_utc is the single freshness fact, and it
     # means "both halves were confirmed current at this time".
@@ -117,6 +103,9 @@ class SkillsState:
     characters: list = field(default_factory=list)
     selected_plan_name: str = ""
     selected_group: str = ""
+    # One-way migration marker: if authority is later missing or corrupt,
+    # stale credential fields must never be recreated from this document.
+    authority_migrated: bool = False
 
     def find(self, character_id: int):
         for character in self.characters:
@@ -312,36 +301,12 @@ def _coerce_queue(raw) -> tuple:
     return tuple(entries)
 
 
-# TriffSkillsState.cs:159's `.Take(100)` on Scopes -- the one collection in
-# the source that gets its own cap distinct from MAX_LEVEL_ENTRIES/
-# MAX_QUEUE_ENTRIES, so it needs its own constant rather than reusing one
-# of those. A real ESI grant is a handful of scope strings; 100 is
-# headroom against a hand-edited file, not a real ceiling.
-MAX_SCOPES = 100
-
-
-def _coerce_scopes(raw) -> tuple:
-    if not isinstance(raw, list):
-        return ()
-    out = []
-    for item in raw:
-        if len(out) >= MAX_SCOPES:
-            break
-        if isinstance(item, str) and item and item not in out:
-            out.append(item)
-    return tuple(out)
-
-
 def _coerce_text(raw) -> str:
     return raw if isinstance(raw, str) else ""
 
 
 def _coerce_trimmed_text(raw) -> str:
-    """TriffSkillsState.cs:157-158,163 trims CharacterName, OwnerHash and
-    Error. Used only for those three fields -- the token blob and the two
-    ETags are opaque values, not display text, and trimming them would
-    silently corrupt a blob or ETag that happened to start or end with
-    whitespace-looking bytes."""
+    """Trim the user-visible Skills error; ETags remain opaque."""
     return _coerce_text(raw).strip()
 
 
@@ -392,13 +357,10 @@ def to_dict(state: SkillsState) -> dict:
         "version": STATE_VERSION,
         "selected_plan_name": state.selected_plan_name,
         "selected_group": state.selected_group,
+        "authority_migrated": state.authority_migrated,
         "characters": [
             {
                 "character_id": character.character_id,
-                "character_name": character.character_name,
-                "owner_hash": character.owner_hash,
-                "scopes": list(character.scopes),
-                "authenticated_utc": _iso(character.authenticated_utc),
                 "fetched_utc": _iso(character.fetched_utc),
                 # JSON object keys are strings; from_dict coerces them back.
                 "active_levels": {
@@ -418,8 +380,6 @@ def to_dict(state: SkillsState) -> dict:
                     for entry in character.queue
                 ],
                 "error": character.error,
-                "needs_reauth": character.needs_reauth,
-                "refresh_token_blob": character.refresh_token_blob,
                 "skills_etag": character.skills_etag,
                 "queue_etag": character.queue_etag,
                 "group": character.group,
@@ -451,6 +411,7 @@ def from_dict(raw: object) -> SkillsState:
         raw.get("selected_plan_name")
     )
     result.selected_group = _coerce_group_name(raw.get("selected_group"))
+    result.authority_migrated = raw.get("authority_migrated") is True
 
     characters = raw.get("characters")
     if not isinstance(characters, list):
@@ -490,17 +451,11 @@ def from_dict(raw: object) -> SkillsState:
         attrs_complete = attrs_valid and attrs_fetched is not None
         by_id[character_id] = Character(
             character_id=character_id,
-            character_name=_coerce_trimmed_text(item.get("character_name")),
-            owner_hash=_coerce_trimmed_text(item.get("owner_hash")),
-            scopes=_coerce_scopes(item.get("scopes")),
-            authenticated_utc=_parse_utc(item.get("authenticated_utc")),
             fetched_utc=_parse_utc(item.get("fetched_utc")),
             active_levels=_coerce_levels(item.get("active_levels")),
             trained_levels=_coerce_levels(item.get("trained_levels")),
             queue=_coerce_queue(item.get("queue")),
             error=_coerce_trimmed_text(item.get("error")),
-            needs_reauth=item.get("needs_reauth") is True,
-            refresh_token_blob=_coerce_text(item.get("refresh_token_blob")),
             skills_etag=skills_etag,
             queue_etag=_coerce_text(item.get("queue_etag")),
             group=_coerce_group_name(item.get("group")),
@@ -647,8 +602,7 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
     the directory holding a `.bak` and a `.new` staging file but no
     `eve_skills.json`. Without this, the next load() would take the
     FileNotFoundError branch, believe it is a first launch, and hand back
-    an empty roster with every DPAPI-wrapped refresh token silently gone
-    from view -- while a perfectly good `.bak` sits right beside it.
+    an empty derived roster while a perfectly good `.bak` sits beside it.
     """
     recovered = None
     for attempt in range(2):
@@ -810,8 +764,8 @@ def save(state: SkillsState, path: Path) -> None:
     makes no backup because it is shared with the Wingman/engine boundary,
     where a stray .bak sitting beside a polled INI would be its own problem
     -- the engine reads that directory. The rotation here is a few lines and
-    only this subsystem wants it, because this is the only file holding
-    something (the refresh tokens) that a refresh cannot rebuild.
+    only this subsystem wants it, because plan/group choices and the last
+    coherent offline snapshot should survive one failed replacement.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -866,8 +820,8 @@ def save(state: SkillsState, path: Path) -> None:
         # (uploader.py:286-293 makes the same point about the Google
         # token file). It costs nothing to still call it (POSIX gets
         # the real protection it describes), but the actual protection
-        # for this document on Windows is the %LOCALAPPDATA% directory
-        # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
-        # dpapi.py), not these mode bits.
+        # for this document on Windows is the %LOCALAPPDATA% directory ACL,
+        # not these POSIX mode bits. Credentials live in eve_authority.json
+        # and remain DPAPI-wrapped independently of this Skills document.
         with contextlib.suppress(OSError):
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))

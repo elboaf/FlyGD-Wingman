@@ -1,0 +1,23 @@
+[
+  {
+    "fitting_id": 900001,
+    "ship_type_id": 600001,
+    "name": "Synthetic Cruiser Fit",
+    "description": "Sanitized fixture with synthetic names and IDs only.",
+    "items": [
+      { "flag": "HiSlot0", "quantity": 1, "type_id": 700001 },
+      { "flag": "HiSlot0", "quantity": 1, "type_id": 700010 },
+      { "flag": "HiSlot1", "quantity": 1, "type_id": 700001 },
+      { "flag": "HiSlot2", "quantity": 1, "type_id": 700002 },
+      { "flag": "MedSlot0", "quantity": 1, "type_id": 700003 },
+      { "flag": "MedSlot1", "quantity": 1, "type_id": 700003 },
+      { "flag": "LoSlot0", "quantity": 1, "type_id": 700004 },
+      { "flag": "LoSlot1", "quantity": 1, "type_id": 700005 },
+      { "flag": "RigSlot0", "quantity": 1, "type_id": 700006 },
+      { "flag": "SubSystemSlot0", "quantity": 1, "type_id": 700007 },
+      { "flag": "Cargo", "quantity": 50, "type_id": 700010 },
+      { "flag": "DroneBay", "quantity": 5, "type_id": 700008 },
+      { "flag": "FighterBay", "quantity": 2, "type_id": 700009 }
+    ]
+  }
+]

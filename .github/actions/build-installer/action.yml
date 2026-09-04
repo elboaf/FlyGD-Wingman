@@ -130,6 +130,18 @@ runs:
         # here where the failure is actually actionable.
         uv run python -c "from wingman.eveskills.controller import SkillsController; print('SkillsController importable')"
         if ($LASTEXITCODE -ne 0) { throw "wingman.eveskills.controller.SkillsController is not importable - the Skills route would fail the moment it opens in the frozen app" }
+        # Same trap, for the two packages the character-fittings feature
+        # added: wingman.eveauth (the shared identity/authorization/token
+        # owner both Skills and Fittings now depend on) and
+        # wingman.evefittings (the Fittings controller). Both are plain
+        # package imports with no hiddenimports entry, so a missing
+        # setuptools packages= line or a broken import would otherwise
+        # surface only once the Fittings route -- or, for eveauth, ANY
+        # EVE route -- opens in the frozen app.
+        uv run python -c "from wingman.eveauth.controller import AuthorityController; print('AuthorityController importable')"
+        if ($LASTEXITCODE -ne 0) { throw "wingman.eveauth.controller.AuthorityController is not importable - every EVE route (Skills and Fittings alike) would fail the moment it opens in the frozen app" }
+        uv run python -c "from wingman.evefittings.controller import FittingsController; print('FittingsController importable')"
+        if ($LASTEXITCODE -ne 0) { throw "wingman.evefittings.controller.FittingsController is not importable - the Fittings route would fail the moment it opens in the frozen app" }
 
     - name: Inject OAuth credentials
       if: ${{ inputs.inject-credentials == 'true' }}
@@ -374,6 +386,7 @@ runs:
         # anything and nobody updates it when a file is added. The array
         # below is the list; the comment says what the list is for.
         foreach ($asset in @("index.html", "style.css", "app.js", "list.js", "panel.js", "settings.js", "skills.js", "firstrun.js",
+                             "fittings.js",
                              "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
           $path = Join-Path $web $asset
           if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }

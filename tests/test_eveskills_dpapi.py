@@ -59,3 +59,14 @@ def test_crypt32_binding_is_cached():
     handle would still work but silently double the redeclaration cost."""
     assert dpapi._crypt32() is dpapi._crypt32()
     assert dpapi._kernel32() is dpapi._kernel32()
+
+
+def test_re_exported_names_are_the_shared_eveauth_objects():
+    """DPAPI wrapping now lives in `wingman.eveauth.dpapi`; this module
+    changed no behaviour of its own. An identity check (`is`, not `==`)
+    is what would catch a future fork of this logic that a
+    value-equality assertion could not."""
+    from wingman.eveauth import dpapi as eveauth_dpapi
+
+    for name in ("protect", "unprotect", "available", "_crypt32", "_kernel32"):
+        assert getattr(dpapi, name) is getattr(eveauth_dpapi, name)

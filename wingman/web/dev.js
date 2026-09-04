@@ -293,6 +293,755 @@
     return Promise.resolve(skills);
   };
 
+  // Task 9's fixture library: enough entries and characters to exercise
+  // every state the workspace can render by hand -- unfiled/filed/
+  // superseded scoping, search and ship filters, a >100-row page 2, an
+  // unresolved type name, a non-deployable (Invalid-flag) fit, and all
+  // four character-access states the Characters overlay can show. This
+  // module is the only file allowed to fabricate data (see the file
+  // banner), so this is where that fabrication lives rather than in
+  // fittings.js.
+  var fittings = {
+    auth_configured: true,
+    auth_in_progress: false,
+    refreshing: false,
+    characters: [
+      { character_id: 90000010, character_name: 'Aria Voss', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000011, character_name: 'Bex Talon', status: 'enabled',
+        fetched_utc: '2026-08-20T08:00:00+00:00',
+        error: 'ESI request failed (500): Internal Server Error', stale: true },
+      { character_id: 90000012, character_name: 'Cato Rune', status: 'enable',
+        fetched_utc: '', error: '', stale: false },
+      { character_id: 90000013, character_name: 'Dess Marlow',
+        status: 'reauthenticate', fetched_utc: '', error: '', stale: false },
+      // Three more enabled/fresh characters, added so a single copy batch
+      // can show more than one outcome at once -- Aria alone (the only
+      // enabled+fresh+not-stale character above) cannot demonstrate
+      // "partial" results, because copyEligible() requires all three of
+      // those and every other character above fails at least one. Task 12
+      // scenario characters, driven by fittings_start_copy below:
+      // Eryn is the plain success case, Fio is scripted to come back
+      // Unknown (ambiguous no-response), and Gio is scripted to trip the
+      // fitting-bucket throttle stop -- matching the design doc's "a
+      // fitting-bucket 429 also stops the whole batch" policy.
+      { character_id: 90000014, character_name: 'Eryn Voss', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000015, character_name: 'Fio Kest', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000016, character_name: 'Gio Renn', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false }
+    ],
+    collections: [
+      { id: 'dev-alliance', name: 'Alliance' },
+      { id: 'dev-ratting', name: 'Ratting' }
+    ],
+    entries: [
+      { id: 'fit-rifter-solo', name: 'Rifter - Solo PvP', ship_type_id: 587,
+        ship_name: 'Rifter', description: 'Fast tackle, disengages on a scram.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-01T00:00:00+00:00',
+        updated_utc: '2026-08-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2456, type_name: '150mm Light AutoCannon II', quantity: 3 },
+          { location: 'medium', type_id: 3244, type_name: '1MN Afterburner II', quantity: 1 },
+          { location: 'low', type_id: 519, type_name: 'Gyrostabilizer II', quantity: 2 }
+        ],
+        aliases: [{ name: 'Rifter - Solo PvP', description: '' },
+                  { name: 'Rifter Tackle Fit', description: 'imported alias' }],
+        presences: [
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Rifter - Solo PvP',
+            first_seen_utc: '2026-08-01T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-1' },
+          { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Rifter Tackle Fit',
+            first_seen_utc: '2026-08-05T00:00:00+00:00',
+            last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
+        ] },
+      { id: 'fit-merlin-fleet', name: 'Merlin - Fleet Doctrine', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Standard fleet doctrine fit.',
+        collection_ids: ['dev-alliance'], superseded_by: null, deployable: true,
+        created_utc: '2026-09-01T00:00:00+00:00',
+        updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 },
+          { location: 'medium', type_id: 12613, type_name: 'Medium Shield Extender II', quantity: 2 },
+          { location: 'low', type_id: 519, type_name: 'Gyrostabilizer II', quantity: 1 }
+        ],
+        aliases: [{ name: 'Merlin - Fleet Doctrine', description: '' }],
+        presences: [
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Merlin - Old Doctrine',
+            first_seen_utc: '2026-09-01T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-3' }
+        ] },
+      { id: 'fit-merlin-old', name: 'Merlin - Old Doctrine', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Superseded by the current doctrine.',
+        collection_ids: ['dev-alliance'], superseded_by: 'fit-merlin-fleet', deployable: true,
+        created_utc: '2026-06-01T00:00:00+00:00',
+        updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 }
+        ],
+        aliases: [{ name: 'Merlin - Old Doctrine', description: '' }],
+        // No presence left on any character -- exercised as the entry the
+        // Delete flow can actually complete against in the harness.
+        presences: [] },
+      { id: 'fit-unresolved', name: 'Unnamed Import', ship_type_id: 99999,
+        ship_name: '', description: '',
+        collection_ids: ['dev-ratting'], superseded_by: null, deployable: true,
+        created_utc: '2026-09-02T00:00:00+00:00',
+        updated_utc: '2026-09-02T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 88888, type_name: '', quantity: 1 }],
+        aliases: [{ name: 'Unnamed Import', description: '' }],
+        presences: [] },
+      { id: 'fit-noncombat', name: 'Impairor - Rookie', ship_type_id: 590,
+        ship_name: 'Impairor', description: 'A rookie ship template; nothing to copy.',
+        collection_ids: [], superseded_by: null, deployable: false,
+        created_utc: '2026-07-01T00:00:00+00:00',
+        updated_utc: '2026-07-01T00:00:00+00:00',
+        items: [{ location: 'Invalid', type_id: 1, type_name: 'Rookie Fitting', quantity: 1 }],
+        aliases: [{ name: 'Impairor - Rookie', description: '' }],
+        presences: [] },
+      { id: 'fit-stale-owner', name: 'Punisher - Mission Runner', ship_type_id: 598,
+        ship_name: 'Punisher', description: 'Last confirmed before Bex went stale.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-10T00:00:00+00:00',
+        updated_utc: '2026-08-10T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2860, type_name: 'Small Focused Beam Laser II', quantity: 3 }],
+        aliases: [{ name: 'Punisher - Mission Runner', description: '' }],
+        presences: [
+          { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Punisher - Mission Runner',
+            first_seen_utc: '2026-08-10T00:00:00+00:00',
+            last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
+        ] },
+      // A deliberately engineered name conflict: two different fits (a
+      // Merlin and a Rifter, so they can never canonically match) that
+      // share one preferred name. fit-conflict-existing is already on
+      // Eryn under that name; copying fit-conflict-source (no presence
+      // anywhere) to Eryn hits devCopyPair's conflict branch below,
+      // because Eryn already has a DIFFERENT entry's presence recorded
+      // under that same casefolded name.
+      { id: 'fit-conflict-existing', name: 'Fleet Doctrine Alpha', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Occupies the name the source fit also wants.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-15T00:00:00+00:00',
+        updated_utc: '2026-08-15T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 }],
+        aliases: [{ name: 'Fleet Doctrine Alpha', description: '' }],
+        presences: [
+          { character_id: 90000014, character_name: 'Eryn Voss', source_name: 'Fleet Doctrine Alpha',
+            first_seen_utc: '2026-08-15T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-4' }
+        ] },
+      { id: 'fit-conflict-source', name: 'Fleet Doctrine Alpha', ship_type_id: 587,
+        ship_name: 'Rifter', description: 'Wants a name Eryn already has on a different hull.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-09-02T00:00:00+00:00',
+        updated_utc: '2026-09-02T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2456, type_name: '150mm Light AutoCannon II', quantity: 3 }],
+        aliases: [{ name: 'Fleet Doctrine Alpha', description: '' }],
+        presences: [] }
+    ]
+  };
+
+  // Over one hundred filler entries so paging (page 2 of the "All
+  // fittings" scope) is reachable by hand rather than only by pytest.
+  (function () {
+    var ships = [
+      { id: 603, name: 'Merlin' }, { id: 587, name: 'Rifter' },
+      { id: 598, name: 'Punisher' }, { id: 594, name: 'Incursus' },
+      { id: 591, name: 'Tormentor' }
+    ];
+    for (var index = 0; index < 108; index += 1) {
+      var ship = ships[index % ships.length];
+      var label = (index < 9 ? '00' : index < 99 ? '0' : '') + (index + 1);
+      fittings.entries.push({
+        id: 'fit-gen-' + index, name: 'Generated Fit ' + label,
+        ship_type_id: ship.id, ship_name: ship.name,
+        // The very first generated row ("Generated Fit 001") is
+        // deliberately non-deployable, and deliberately the ONLY thing
+        // that differs from the rest of this loop. Task 12's copy-preflight
+        // and copy-limit screenshot stages need a non-deployable pair and
+        // a >20-write refusal respectively, both alongside curated fixtures
+        // that sort BEFORE this loop ("Fleet Doctrine Alpha" x2) -- and
+        // fittings_state() pages at 100, so anything sorting after this
+        // block (Impairor, Merlin, Punisher, Rifter, Unnamed above) lands
+        // on page 2 and cannot share a page, or a copy selection, with
+        // them. Reusing the first row of a block that is already on page 1
+        // avoids inventing a ninth curated fixture just to dodge paging.
+        description: index === 0 ? 'A rookie template; nothing to copy.' : '',
+        collection_ids: [], superseded_by: null, deployable: index !== 0,
+        created_utc: '2026-09-01T00:00:00+00:00', updated_utc: '2026-09-01T00:00:00+00:00',
+        items: index === 0
+          ? [{ location: 'Invalid', type_id: 1, type_name: 'Rookie Fitting', quantity: 1 }]
+          : [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 1 }],
+        aliases: [{ name: 'Generated Fit ' + label, description: '' }],
+        presences: []
+      });
+    }
+  }());
+
+  var FIT_PAGE_SIZE = 100;
+
+  function fitScoped(collectionId) {
+    if (collectionId === 'unfiled') {
+      return fittings.entries.filter(function (e) { return !e.collection_ids.length; });
+    }
+    if (collectionId === 'superseded') {
+      return fittings.entries.filter(function (e) { return !!e.superseded_by; });
+    }
+    if (collectionId === 'all' || !collectionId) return fittings.entries.slice();
+    return fittings.entries.filter(function (e) {
+      return e.collection_ids.indexOf(collectionId) !== -1;
+    });
+  }
+
+  function fitFiltered(scoped, search, shipTypeId) {
+    var out = shipTypeId
+      ? scoped.filter(function (e) { return e.ship_type_id === shipTypeId; })
+      : scoped;
+    var needle = (search || '').trim().toLowerCase();
+    if (!needle) return out;
+    return out.filter(function (e) {
+      if (e.name.toLowerCase().indexOf(needle) !== -1) return true;
+      if ((e.ship_name || '').toLowerCase().indexOf(needle) !== -1) return true;
+      return e.aliases.some(function (a) { return a.name.toLowerCase().indexOf(needle) !== -1; });
+    });
+  }
+
+  function fitCollectionSummaries() {
+    var unfiled = fittings.entries.filter(function (e) { return !e.collection_ids.length; }).length;
+    var superseded = fittings.entries.filter(function (e) { return !!e.superseded_by; }).length;
+    var counts = {};
+    fittings.collections.forEach(function (c) { counts[c.id] = 0; });
+    fittings.entries.forEach(function (e) {
+      e.collection_ids.forEach(function (id) {
+        if (id in counts) counts[id] += 1;
+      });
+    });
+    return [
+      { id: 'all', name: 'All fittings', count: fittings.entries.length },
+      { id: 'unfiled', name: 'Unfiled', count: unfiled },
+      { id: 'superseded', name: 'Superseded', count: superseded }
+    ].concat(fittings.collections.map(function (c) {
+      return { id: c.id, name: c.name, count: counts[c.id] };
+    }));
+  }
+
+  function fitShipOptions(scoped) {
+    var byId = {};
+    scoped.forEach(function (e) {
+      if (!(e.ship_type_id in byId)) byId[e.ship_type_id] = e.ship_name;
+    });
+    return Object.keys(byId).map(function (key) {
+      return { type_id: parseInt(key, 10), name: byId[key] };
+    }).sort(function (a, b) {
+      return (a.name || '').localeCompare(b.name || '') || a.type_id - b.type_id;
+    });
+  }
+
+  function fitSummaryRow(entry) {
+    return {
+      id: entry.id, name: entry.name, ship_type_id: entry.ship_type_id,
+      ship_name: entry.ship_name, collection_ids: entry.collection_ids.slice(),
+      is_unfiled: !entry.collection_ids.length, superseded_by: entry.superseded_by,
+      presence_count: entry.presences.length, deployable: entry.deployable,
+      updated_utc: entry.updated_utc
+    };
+  }
+
+  function fitPushChanged(reason) {
+    // Mirrors production timing: Python's push is fire-and-forget through
+    // evaluate_js, never synchronous with the bridge call that triggered it.
+    setTimeout(function () {
+      if (window.onFittingsChanged) window.onFittingsChanged({ reason: reason });
+    }, 0);
+  }
+
+  api.fittings_state = function (filters) {
+    console.log('DEV api.fittings_state(', filters, ')');
+    filters = filters || {};
+    var collectionId = filters.collection_id || 'all';
+    var page = filters.page && filters.page > 0 ? filters.page : 1;
+    var scoped = fitScoped(collectionId);
+    var filtered = fitFiltered(scoped, filters.search, filters.ship_type_id);
+    filtered = filtered.slice().sort(function (a, b) {
+      var an = a.name.toLowerCase();
+      var bn = b.name.toLowerCase();
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    var start = (page - 1) * FIT_PAGE_SIZE;
+    var rows = filtered.slice(start, start + FIT_PAGE_SIZE).map(fitSummaryRow);
+    return Promise.resolve({
+      available: true,
+      warnings: [],
+      collections: fitCollectionSummaries(),
+      characters: fittings.characters.map(function (ch) {
+        return { character_id: ch.character_id, character_name: ch.character_name,
+                 status: ch.status, fetched_utc: ch.fetched_utc, error: ch.error,
+                 stale: ch.stale };
+      }),
+      ships: fitShipOptions(scoped),
+      rows: rows,
+      total: filtered.length,
+      page: page,
+      page_size: FIT_PAGE_SIZE,
+      filters: { collection_id: collectionId, search: filters.search || '',
+                 ship_type_id: filters.ship_type_id || null },
+      auth_configured: fittings.auth_configured,
+      auth_in_progress: fittings.auth_in_progress,
+      refreshing: fittings.refreshing
+    });
+  };
+
+  api.fittings_detail = function (entryId) {
+    console.log('DEV api.fittings_detail(', entryId, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (!entry) return Promise.resolve(null);
+    return Promise.resolve({
+      id: entry.id, name: entry.name, description: entry.description,
+      ship_type_id: entry.ship_type_id, ship_name: entry.ship_name,
+      items: entry.items, deployable: entry.deployable,
+      collection_ids: entry.collection_ids.slice(), superseded_by: entry.superseded_by,
+      aliases: entry.aliases, presences: entry.presences,
+      created_utc: entry.created_utc, updated_utc: entry.updated_utc
+    });
+  };
+
+  api.fittings_refresh = function (characterIds) {
+    console.log('DEV api.fittings_refresh(', characterIds, ')');
+    fittings.refreshing = true;
+    var targets = characterIds || fittings.characters
+      .filter(function (c) { return c.status === 'enabled'; })
+      .map(function (c) { return c.character_id; });
+    var total = targets.length;
+    if (!total) { fittings.refreshing = false; return Promise.resolve(true); }
+    targets.forEach(function (characterId, index) {
+      setTimeout(function () {
+        if (window.onFittingsProgress) {
+          window.onFittingsProgress({ character_id: characterId, completed: index + 1,
+                                       total: total, error: '' });
+        }
+        if (index === total - 1) {
+          fittings.refreshing = false;
+          fitPushChanged('refresh');
+        }
+      }, (index + 1) * 350);
+    });
+    return Promise.resolve(true);
+  };
+
+  api.fittings_enable_character = function (characterId) {
+    console.log('DEV api.fittings_enable_character(', characterId, ')');
+    var character = fittings.characters.filter(function (c) {
+      return c.character_id === characterId;
+    })[0];
+    if (character) character.status = 'enabled';
+    fitPushChanged('character');
+    return Promise.resolve(!!character);
+  };
+
+  api.fittings_cancel_auth = function () {
+    console.log('DEV api.fittings_cancel_auth()');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_forget_character = function (characterId) {
+    console.log('DEV api.fittings_forget_character(', characterId, ')');
+    fittings.characters = fittings.characters.filter(function (c) {
+      return c.character_id !== characterId;
+    });
+    fitPushChanged('character');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_create_collection = function (name) {
+    console.log('DEV api.fittings_create_collection(', name, ')');
+    var id = 'dev-collection-' + (fittings.collections.length + 1);
+    fittings.collections.push({ id: id, name: name });
+    fitPushChanged('collection');
+    return Promise.resolve(id);
+  };
+
+  api.fittings_rename_collection = function (collectionId, name) {
+    console.log('DEV api.fittings_rename_collection(', collectionId, name, ')');
+    var collection = fittings.collections.filter(function (c) { return c.id === collectionId; })[0];
+    if (collection) collection.name = name;
+    fitPushChanged('collection');
+    return Promise.resolve(!!collection);
+  };
+
+  api.fittings_delete_collection = function (collectionId) {
+    console.log('DEV api.fittings_delete_collection(', collectionId, ')');
+    fittings.collections = fittings.collections.filter(function (c) { return c.id !== collectionId; });
+    fittings.entries.forEach(function (e) {
+      e.collection_ids = e.collection_ids.filter(function (id) { return id !== collectionId; });
+    });
+    fitPushChanged('collection');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_update_metadata = function (entryId, name, description) {
+    console.log('DEV api.fittings_update_metadata(', entryId, name, description, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) { entry.name = name; entry.description = description; }
+    fitPushChanged('metadata');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_set_membership = function (entryId, collectionId, member) {
+    console.log('DEV api.fittings_set_membership(', entryId, collectionId, member, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) {
+      var has = entry.collection_ids.indexOf(collectionId) !== -1;
+      if (member && !has) entry.collection_ids.push(collectionId);
+      if (!member && has) {
+        entry.collection_ids = entry.collection_ids.filter(function (id) { return id !== collectionId; });
+      }
+    }
+    fitPushChanged('collection_membership');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_set_supersession = function (entryId, supersededBy) {
+    console.log('DEV api.fittings_set_supersession(', entryId, supersededBy, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) entry.superseded_by = supersededBy || null;
+    fitPushChanged('supersession');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_delete_entry = function (entryId) {
+    console.log('DEV api.fittings_delete_entry(', entryId, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry && entry.presences.length) return Promise.resolve(false);
+    fittings.entries = fittings.entries.filter(function (e) { return e.id !== entryId; });
+    fittings.entries.forEach(function (e) {
+      if (e.superseded_by === entryId) e.superseded_by = null;
+    });
+    fitPushChanged('delete');
+    return Promise.resolve(!!entry);
+  };
+
+  // Strict JSON and the sole fabricated-data source for both ?dev=1 and
+  // the live-app screenshot tool. fittings.js accepts it only through its
+  // bounded, CDP-invoked screenshot handler; ordinary production reads and
+  // writes never consult it. Keep result rows in an order the dev copy loop
+  // can really produce: first fit succeeds/turns Unknown/hits throttle, then
+  // every pair for the second fit is unattempted.
+  var DEV_FITTINGS_SCREENSHOT_FIXTURE = {
+    "kind": "fittings-screenshot-v1",
+    "copy_roles": {
+      "unknown_character_id": 90000015,
+      "throttle_character_id": 90000016
+    },
+    "characters": [
+      {"character_id": 90000010, "character_name": "Aria Voss", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000011, "character_name": "Bex Talon", "status": "enabled", "fetched_utc": "2026-08-20T08:00:00+00:00", "error": "ESI request failed (500): Internal Server Error", "stale": true},
+      {"character_id": 90000012, "character_name": "Cato Rune", "status": "enable", "fetched_utc": "", "error": "", "stale": false},
+      {"character_id": 90000013, "character_name": "Dess Marlow", "status": "reauthenticate", "fetched_utc": "", "error": "", "stale": false},
+      {"character_id": 90000014, "character_name": "Eryn Voss", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000015, "character_name": "Fio Kest", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000016, "character_name": "Gio Renn", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false}
+    ],
+    "collections": [
+      {"id": "all", "name": "All fittings", "count": 27},
+      {"id": "unfiled", "name": "Unfiled", "count": 25},
+      {"id": "superseded", "name": "Superseded", "count": 1},
+      {"id": "dev-alliance", "name": "Alliance", "count": 2},
+      {"id": "dev-ratting", "name": "Ratting", "count": 0}
+    ],
+    "entries": [
+      {"id": "fit-conflict-existing", "name": "Fleet Doctrine Alpha", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-08-15T00:00:00+00:00"},
+      {"id": "fit-conflict-source", "name": "Fleet Doctrine Alpha", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-02T00:00:00+00:00"},
+      {"id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-merlin-old", "name": "Merlin - Old Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": "fit-merlin-fleet", "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 2, "deployable": true, "updated_utc": "2026-08-01T00:00:00+00:00"},
+      {"id": "fit-gen-0", "name": "Generated Fit 001", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": false, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-1", "name": "Generated Fit 002", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-2", "name": "Generated Fit 003", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-3", "name": "Generated Fit 004", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-4", "name": "Generated Fit 005", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-5", "name": "Generated Fit 006", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-6", "name": "Generated Fit 007", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-7", "name": "Generated Fit 008", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-8", "name": "Generated Fit 009", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-9", "name": "Generated Fit 010", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-10", "name": "Generated Fit 011", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-11", "name": "Generated Fit 012", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-12", "name": "Generated Fit 013", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-13", "name": "Generated Fit 014", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-14", "name": "Generated Fit 015", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-15", "name": "Generated Fit 016", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-16", "name": "Generated Fit 017", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-17", "name": "Generated Fit 018", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-18", "name": "Generated Fit 019", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-19", "name": "Generated Fit 020", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-20", "name": "Generated Fit 021", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-21", "name": "Generated Fit 022", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"}
+    ],
+    "details": {
+      "fit-rifter-solo": {
+        "id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "description": "Fast tackle, disengages on a scram.", "ship_type_id": 587, "ship_name": "Rifter", "deployable": true, "collection_ids": [], "superseded_by": null, "created_utc": "2026-08-01T00:00:00+00:00", "updated_utc": "2026-08-01T00:00:00+00:00",
+        "items": [
+          {"location": "high", "type_id": 2456, "type_name": "150mm Light AutoCannon II", "quantity": 3},
+          {"location": "medium", "type_id": 3244, "type_name": "1MN Afterburner II", "quantity": 1},
+          {"location": "low", "type_id": 519, "type_name": "Gyrostabilizer II", "quantity": 2}
+        ],
+        "aliases": [{"name": "Rifter - Solo PvP", "description": ""}, {"name": "Rifter Tackle Fit", "description": "imported alias"}],
+        "presences": [
+          {"character_id": 90000010, "character_name": "Aria Voss", "source_name": "Rifter - Solo PvP", "first_seen_utc": "2026-08-01T00:00:00+00:00", "last_confirmed_utc": "2026-09-03T10:00:00+00:00", "discovered_batch_id": "batch-1"},
+          {"character_id": 90000011, "character_name": "Bex Talon", "source_name": "Rifter Tackle Fit", "first_seen_utc": "2026-08-05T00:00:00+00:00", "last_confirmed_utc": "2026-08-20T08:00:00+00:00", "discovered_batch_id": "batch-2"}
+        ]
+      },
+      "fit-merlin-fleet": {
+        "id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "description": "Standard fleet doctrine fit.", "ship_type_id": 603, "ship_name": "Merlin", "deployable": true, "collection_ids": ["dev-alliance"], "superseded_by": null, "created_utc": "2026-09-01T00:00:00+00:00", "updated_utc": "2026-09-01T00:00:00+00:00",
+        "items": [{"location": "high", "type_id": 2453, "type_name": "Light Neutron Blaster II", "quantity": 3}, {"location": "medium", "type_id": 12613, "type_name": "Medium Shield Extender II", "quantity": 2}, {"location": "low", "type_id": 519, "type_name": "Gyrostabilizer II", "quantity": 1}],
+        "aliases": [{"name": "Merlin - Fleet Doctrine", "description": ""}],
+        "presences": [{"character_id": 90000010, "character_name": "Aria Voss", "source_name": "Merlin - Old Doctrine", "first_seen_utc": "2026-09-01T00:00:00+00:00", "last_confirmed_utc": "2026-09-03T10:00:00+00:00", "discovered_batch_id": "batch-3"}]
+      }
+    },
+    "mixed_preflight": {
+      "accepted": true, "ticket_id": "screenshot-ticket", "created_utc": "2026-09-03T10:01:00+00:00", "write_count": 0,
+      "counts": {"ready": 0, "present": 1, "conflict": 1, "unavailable": 1}, "requires_resolution": true, "error": "",
+      "pairs": [
+        {"entry_id": "fit-conflict-existing", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "present", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-0", "character_id": 90000014, "fitting_name": "Generated Fit 001", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 001", "status": "unavailable", "error": "This fitting has no safe deployment template.", "skipped": false},
+        {"entry_id": "fit-conflict-source", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "conflict", "error": "", "skipped": false}
+      ]
+    },
+    "copy_result": {
+      "status": "complete", "operation_id": "dev-operation-results", "write_count": 3,
+      "results": [
+        {"entry_id": "fit-gen-1", "character_id": 90000014, "fitting_name": "Generated Fit 002", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 002", "status": "success", "remote_fitting_id": 9101, "error": "", "attempted": true},
+        {"entry_id": "fit-gen-1", "character_id": 90000015, "fitting_name": "Generated Fit 002", "character_name": "Fio Kest", "chosen_name": "Generated Fit 002", "status": "unknown", "remote_fitting_id": null, "error": "No response was received before the request timed out.", "attempted": true},
+        {"entry_id": "fit-gen-1", "character_id": 90000016, "fitting_name": "Generated Fit 002", "character_name": "Gio Renn", "chosen_name": "Generated Fit 002", "status": "failed", "remote_fitting_id": null, "error": "The fitting write rate limit was reached; the remaining batch was stopped.", "attempted": true},
+        {"entry_id": "fit-gen-2", "character_id": 90000014, "fitting_name": "Generated Fit 003", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000015, "fitting_name": "Generated Fit 003", "character_name": "Fio Kest", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000016, "fitting_name": "Generated Fit 003", "character_name": "Gio Renn", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false}
+      ]
+    }
+  };
+
+  var fitCopyTickets = {};
+  var fitCopyTicketIndex = 0;
+  var fitCopyCancelled = false;
+  // Set once a scripted throttle pair (see FIT_COPY_THROTTLE_CHARACTER
+  // below) has fired, so every pair still queued behind it in the same
+  // batch is also reported unattempted -- matching the design doc's "a
+  // fitting-bucket 429 also stops the whole batch" policy, rather than
+  // only the one pair that tripped it.
+  var fitCopyThrottled = false;
+  // Task 12 scenario characters: fixed IDs the harness scripts a specific
+  // non-success outcome for, so a hand reviewer can reach Unknown and
+  // throttle-stop without needing a real ESI failure. Both are otherwise
+  // ordinary eligible copy targets (see the characters array above).
+  var FIT_COPY_UNKNOWN_CHARACTER =
+    DEV_FITTINGS_SCREENSHOT_FIXTURE.copy_roles.unknown_character_id; // Fio Kest
+  var FIT_COPY_THROTTLE_CHARACTER =
+    DEV_FITTINGS_SCREENSHOT_FIXTURE.copy_roles.throttle_character_id; // Gio Renn
+
+  function devCopyPair(entry, character, names) {
+    var base = {
+      entry_id: entry.id, character_id: character.character_id,
+      fitting_name: entry.name, character_name: character.character_name,
+      chosen_name: entry.name, error: '', skipped: false
+    };
+    if (!entry.deployable || character.status !== 'enabled' || character.stale
+        || !character.fetched_utc) {
+      base.status = 'unavailable';
+      base.error = !entry.deployable ? 'This fitting has no safe deployment template.'
+                                     : 'Refresh or enable this character first.';
+      return base;
+    }
+    if (entry.presences.some(function (p) {
+      return p.character_id === character.character_id;
+    })) {
+      base.status = 'present';
+      return base;
+    }
+    var conflict = fittings.entries.some(function (other) {
+      return other.id !== entry.id && other.presences.some(function (p) {
+        return p.character_id === character.character_id
+          && p.source_name.toLowerCase() === entry.name.toLowerCase();
+      });
+    });
+    if (!conflict) {
+      base.status = 'ready';
+      return base;
+    }
+    var key = entry.id + ':' + character.character_id;
+    if (!(key in names)) {
+      base.status = 'conflict';
+      return base;
+    }
+    if (names[key] === null) {
+      base.status = 'conflict';
+      base.skipped = true;
+      return base;
+    }
+    base.status = 'ready';
+    base.chosen_name = names[key];
+    return base;
+  }
+
+  api.fittings_preflight_copy = function (entryIds, characterIds, names) {
+    console.log('DEV api.fittings_preflight_copy(', entryIds, characterIds, names, ')');
+    names = names || {};
+    var entries = fittings.entries.filter(function (entry) {
+      return entryIds.indexOf(entry.id) !== -1;
+    });
+    var characters = fittings.characters.filter(function (character) {
+      return characterIds.indexOf(character.character_id) !== -1;
+    });
+    var emptyCounts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    if (!entries.length || !characters.length) {
+      return Promise.resolve({
+        accepted: false, ticket_id: '', created_utc: '', write_count: 0,
+        counts: emptyCounts, requires_resolution: false, pairs: [],
+        error: 'Select fittings and target characters first.'
+      });
+    }
+
+    var usedNames = {};
+    fittings.entries.forEach(function (entry) {
+      entry.presences.forEach(function (presence) {
+        usedNames[presence.character_id + ':' + presence.source_name.toLowerCase()] = true;
+      });
+    });
+    var invalidChoices = {};
+    var choiceError = '';
+    Object.keys(names).forEach(function (key) {
+      if (typeof names[key] !== 'string' || !names[key].trim()) return;
+      var characterId = parseInt(key.slice(key.lastIndexOf(':') + 1), 10);
+      var nameKey = characterId + ':' + names[key].trim().toLowerCase();
+      if (usedNames[nameKey]) {
+        invalidChoices[key] = true;
+        if (!choiceError) choiceError = '\u201c' + names[key].trim()
+          + '\u201d is already used on this character.';
+      } else {
+        usedNames[nameKey] = true;
+      }
+    });
+
+    var pairs = [];
+    entries.forEach(function (entry) {
+      characters.forEach(function (character) {
+        var pair = devCopyPair(entry, character, names);
+        if (invalidChoices[pair.entry_id + ':' + pair.character_id]) {
+          pair.status = 'conflict';
+          pair.chosen_name = pair.fitting_name;
+        }
+        pairs.push(pair);
+      });
+    });
+    var counts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    pairs.forEach(function (pair) { counts[pair.status] += 1; });
+    var overLimit = counts.ready > 20;
+    var accepted = !choiceError && !overLimit;
+    var requires = accepted && pairs.some(function (pair) {
+      return pair.status === 'conflict' && !pair.skipped;
+    });
+    var ticketId = accepted ? 'dev-copy-' + (++fitCopyTicketIndex) : '';
+    if (accepted) {
+      fitCopyTickets[ticketId] = { pairs: pairs, write_count: counts.ready };
+    }
+    return Promise.resolve({
+      accepted: accepted, ticket_id: ticketId,
+      created_utc: accepted ? new Date().toISOString() : '',
+      write_count: accepted ? counts.ready : 0,
+      counts: counts, requires_resolution: requires, pairs: pairs,
+      error: choiceError || (overLimit
+        ? 'Split this copy into batches of 20 fittings or fewer.' : '')
+    });
+  };
+
+  api.fittings_start_copy = function (ticketId) {
+    console.log('DEV api.fittings_start_copy(', ticketId, ')');
+    var ticket = fitCopyTickets[ticketId];
+    if (!ticket) return Promise.resolve(false);
+    delete fitCopyTickets[ticketId];
+    fitCopyCancelled = false;
+    fitCopyThrottled = false;
+    var results = [];
+    var index = 0;
+    var operationId = 'dev-operation-' + fitCopyTicketIndex;
+    function advance() {
+      if (index >= ticket.pairs.length) {
+        if (window.onFittingsProgress) {
+          window.onFittingsProgress({
+            kind: 'copy', phase: 'complete', operation_id: operationId,
+            completed: results.length, total: ticket.pairs.length,
+            result: {
+              status: fitCopyCancelled ? 'cancelled' : 'complete',
+              operation_id: operationId, results: results,
+              write_count: results.filter(function (row) {
+                return row.attempted;
+              }).length
+            }
+          });
+        }
+        return;
+      }
+      var pair = ticket.pairs[index++];
+      var result = {};
+      Object.keys(pair).forEach(function (key) { result[key] = pair[key]; });
+      result.attempted = false;
+      if (pair.status === 'ready') {
+        if (fitCopyThrottled) {
+          // The batch already stopped at an earlier pair in this same
+          // operation; everything still queued behind it is unattempted,
+          // not retried and not silently dropped.
+          result.status = 'unattempted_throttle';
+        } else if (fitCopyCancelled) {
+          result.status = 'cancelled';
+        } else if (pair.character_id === FIT_COPY_UNKNOWN_CHARACTER) {
+          result.attempted = true;
+          // Ambiguous transport failure: an HTTP response was never
+          // received, so the outcome is Unknown rather than Failed --
+          // the design doc's "timeout, no response, 408, or 5xx is
+          // Unknown unless ESI documents that the response guarantees
+          // non-creation." This pair is not retried until an
+          // authoritative refresh past the cache horizon reconciles it.
+          result.status = 'unknown';
+          result.error = 'No response was received before the request timed out.';
+        } else if (pair.character_id === FIT_COPY_THROTTLE_CHARACTER) {
+          // A fitting-bucket 429: this pair is itself unattempted, and it
+          // also stops the remainder of the batch (see fitCopyThrottled
+          // above), matching the design doc's conservative stop policy.
+          result.status = 'failed';
+          result.attempted = true;
+          result.error = 'The fitting write rate limit was reached; the '
+            + 'remaining batch was stopped.';
+          fitCopyThrottled = true;
+        } else {
+          result.status = 'success';
+          result.attempted = true;
+          result.remote_fitting_id = 9100 + index;
+        }
+      } else if (pair.status === 'conflict' && pair.skipped) {
+        result.status = 'conflict_skipped';
+      }
+      results.push(result);
+      if (window.onFittingsProgress) {
+        window.onFittingsProgress({
+          kind: 'copy', phase: 'progress', operation_id: operationId,
+          completed: results.length, total: ticket.pairs.length, result: result
+        });
+      }
+      setTimeout(advance, 250);
+    }
+    setTimeout(advance, 250);
+    return Promise.resolve(true);
+  };
+
+  api.fittings_cancel_copy = function () {
+    console.log('DEV api.fittings_cancel_copy()');
+    fitCopyCancelled = true;
+    return Promise.resolve(true);
+  };
+
   api.skills_character_detail = function (id, plan) {
     console.log('DEV api.skills_character_detail(', id, plan, ')');
     return Promise.resolve({
@@ -1269,6 +2018,13 @@
   }
 
   window.DEV = {
+    // The same bounded fixture scripts/shoot_screens.py injects into the live
+    // app. This manual driver keeps every field browser-consumed rather than
+    // leaving a Python-only JSON island in dev.js.
+    fittingsScreenshot: function () {
+      window.onFittingsScreenshotState(
+        JSON.parse(JSON.stringify(DEV_FITTINGS_SCREENSHOT_FIXTURE)));
+    },
     // `busy` defaults to true -- a percentage arriving usually means a live
     // transfer -- but it is a PARAMETER because the two payloads that carry
     // busy=false were otherwise unreachable from this harness, and both are

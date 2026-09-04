@@ -918,3 +918,23 @@ def test_concurrent_forced_refreshes_share_a_single_fetch(keypair):
     # One metadata fetch and one JWKS fetch, not eight of each.
     assert http.fetched.count(METADATA_URL) == 1
     assert http.fetched.count(JWKS_URL) == 1
+
+
+def test_re_exported_names_are_the_shared_eveauth_objects():
+    """Token validation now lives in `wingman.eveauth.jwt`; this module
+    changed no behaviour of its own. An identity check (`is`, not `==`)
+    is what would catch a future fork of this logic that a value-equality
+    assertion could not."""
+    from wingman.eveauth import jwt as eveauth_jwt
+
+    for name in (
+        "JwtError",
+        "EveIdentity",
+        "SigningKeySource",
+        "validate",
+        "_opener",
+        "_NoRedirectHandler",
+        "CLOCK_SKEW_S",
+        "JWKS_TTL_S",
+    ):
+        assert getattr(evejwt, name) is getattr(eveauth_jwt, name)

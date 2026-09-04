@@ -27,6 +27,7 @@
       <button class="navbtn active" id="nav-main" data-route="main">Uploader</button>
       <button class="navbtn" id="nav-evesettings" data-route="evesettings">Profiles</button>
       <button class="navbtn" id="nav-skills" data-route="skills">Skills</button>
+      <button class="navbtn" id="nav-fittings" data-route="fittings">Fittings</button>
     </nav>
     <button class="winbtn gear" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
     <button class="winbtn" id="btn-minimize" title="Minimize">&#8211;</button>
@@ -2074,6 +2075,104 @@
     </section>
   </div>
 
+  <!-- The Fittings workspace (SDD task 9). Same two-pane vocabulary Skills
+       already establishes (rail + main pane; see .skills-rail/.skills-main
+       in style.css) rather than a new idiom: a collection rail on the
+       left, a paged, filterable fitting list with one expandable detail
+       row on the right. Selection stays page-owned (fitCheckedIds below)
+       until a curation request crosses the bridge; nothing here sends or
+       rebuilds the whole library on any event -- every list render comes
+       from the bounded page Python already decided.
+
+       Copy selected is deliberately the ONE `.btn.acc` on this route.
+       Task 10 wires it to explicit additive preflight and execution; the
+       app-owned copy overlay keeps neutral buttons so review, confirmation,
+       progress, and results do not introduce a second accent claim. -->
+  <div class="route" id="route-fittings" aria-labelledby="nav-fittings">
+    <aside class="skills-rail" id="fittings-rail">
+      <div class="rail-block">
+        <p class="rail-count" id="fittings-counts"></p>
+        <button class="btn" id="fittings-refresh-all">Refresh characters</button>
+        <button class="btn" id="fittings-characters-open">Characters…</button>
+      </div>
+      <div class="rail-block rail-plans-block">
+        <div class="rail-head-row">
+          <span class="rail-head">Collections</span>
+        </div>
+        <div class="rail-plans" id="fittings-collections"></div>
+        <div class="rail-plan-actions">
+          <button class="linkbtn" id="fittings-collection-new">New collection</button>
+          <button class="linkbtn" id="fittings-collection-rename" disabled>Rename</button>
+          <button class="linkbtn" id="fittings-collection-delete" disabled>Delete</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="skills-main" id="fittings-main">
+      <header class="skills-head">
+        <h1 id="fittings-collection-name">All fittings</h1>
+        <span class="skills-plan-count" id="fittings-collection-count"></span>
+        <button class="btn acc" id="fittings-copy-selected" disabled>Copy selected</button>
+      </header>
+
+      <div class="skills-notices" id="fittings-notices" hidden></div>
+
+      <div class="skills-filterbar">
+        <input class="field" id="fittings-search" type="text" spellcheck="false"
+               aria-label="Search fittings"
+               placeholder="Search fittings">
+        <select class="field" id="fittings-ship-filter" aria-label="Filter by ship">
+          <option value="">All ships</option>
+        </select>
+        <button class="linkbtn" id="fittings-filter-clear" hidden>Clear filters</button>
+      </div>
+
+      <div class="fit-list" id="fittings-list"></div>
+      <div class="empty" id="fittings-empty"></div>
+
+      <div class="fit-pager" id="fittings-pager" hidden>
+        <button class="linkbtn" id="fittings-page-prev">Previous</button>
+        <span id="fittings-page-label"></span>
+        <button class="linkbtn" id="fittings-page-next">Next</button>
+      </div>
+    </section>
+
+    <!-- The Characters overlay: an app-owned modal, NOT the shared
+         #overlay/#dialog confirm/prompt layer (panel.js's queue answers a
+         single question at a time; this shows a whole roster). Page-
+         initiated confirmations inside it -- forgetting a character --
+         still go through WM.confirm, per DESIGN.md's "never a browser
+         dialog" rule. -->
+    <div class="overlay" id="fittings-characters-overlay" hidden>
+      <div class="dialog" id="fittings-characters-dialog" role="dialog"
+           aria-modal="true" aria-labelledby="fittings-characters-title">
+        <h2 id="fittings-characters-title">Characters</h2>
+        <div class="body" id="fittings-characters-body"></div>
+        <div class="buttons">
+          <button class="btn" id="fittings-characters-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Additive copy is a multi-step, page-owned workflow rather than a
+         single confirm/prompt question. The final send still uses WM.confirm
+         so the exact write count is stated in the shared app-owned layer. -->
+    <div class="overlay" id="fittings-copy-overlay" hidden>
+      <div class="dialog" id="fittings-copy-dialog" role="dialog"
+           aria-modal="true" aria-labelledby="fittings-copy-title">
+        <h2 id="fittings-copy-title">Copy fittings</h2>
+        <div class="body" id="fittings-copy-body"></div>
+        <p class="field-msg" id="fittings-copy-status" role="status"></p>
+        <div class="buttons">
+          <button class="btn" id="fittings-copy-close">Close</button>
+          <button class="btn" id="fittings-copy-review">Review copy</button>
+          <button class="btn" id="fittings-copy-start" hidden>Start copy</button>
+          <button class="btn" id="fittings-copy-cancel" hidden>Cancel copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="route" id="route-firstrun">
     <div class="firstrun">
       <!-- The heading names the PRODUCT, not this screen's task.
@@ -2230,6 +2329,7 @@
   <script src="panel.js"></script>
   <script src="settings.js"></script>
   <script src="skills.js"></script>
+  <script src="fittings.js"></script>
   <script src="firstrun.js"></script>
   <script src="dev.js"></script>
 </body>

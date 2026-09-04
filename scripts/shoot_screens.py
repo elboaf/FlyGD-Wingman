@@ -125,6 +125,36 @@ SCREENS = (
     ),
     Screen("profiles-backups", "Profiles - Backups", "backups", None, True),
     Screen("skills", "Skills", "skills", None, True),
+    Screen("fittings", "Fittings", "fittings", None, True),
+    Screen("fittings-unfiled", "Fittings - Unfiled", "fittings", None, True),
+    Screen("fittings-superseded", "Fittings - Superseded", "fittings", None, True),
+    Screen(
+        "fittings-alliance",
+        "Fittings - Recent alliance import",
+        "fittings",
+        None,
+        True,
+    ),
+    Screen("fittings-detail", "Fittings - Detail", "fittings", None, True),
+    Screen("fittings-characters", "Fittings - Characters", "fittings", None, True),
+    Screen(
+        "fittings-copy-preflight",
+        "Fittings - Copy preflight",
+        "fittings",
+        None,
+        True,
+    ),
+    Screen(
+        "fittings-copy-limit",
+        "Fittings - Copy over the 20-write limit",
+        "fittings",
+        None,
+        True,
+    ),
+    Screen(
+        "fittings-copy-progress", "Fittings - Copy progress", "fittings", None, True
+    ),
+    Screen("fittings-copy-result", "Fittings - Copy results", "fittings", None, True),
     Screen("dialog", "Dialog", "main", None, False),
 )
 
@@ -235,6 +265,403 @@ def _fixture_preview_setup(body: str) -> str:
         "  }\n"
         "  window.onPreviewHotkeys(payload);\n" + body + "\n}())"
     )
+
+
+# Every fittings-* stage below shares this route: WM.route('fittings') fires
+# unconditionally on every visit (app.js:192), but fittings.js's own
+# wm:route listener only tears down selection/overlays/filters when the
+# event's detail is NOT 'fittings' -- i.e. only when actually LEAVING the
+# route. Since every fittings-* screen stays on this same route, nothing
+# resets state between them for free the way it would between two
+# different destinations, so each stage's setup script opens with this
+# snippet to put the route back into a known, previous-stage-independent
+# state before doing anything of its own: no row expanded, neither overlay
+# open, and the collection scope back on "All fittings" (which also clears
+# whatever this or a prior stage had selected -- selectCollection() in
+# fittings.js calls clearSelection() as part of switching collections).
+_FIT_RESET_JS = (
+    "  var openToggle = document.querySelector(\n"
+    "    '.fit-row-toggle[aria-expanded=\"true\"]');\n"
+    "  if (openToggle) { openToggle.click(); }\n"
+    "  var copyOverlay = document.getElementById('fittings-copy-overlay');\n"
+    "  var copyClose = document.getElementById('fittings-copy-close');\n"
+    "  if (copyOverlay && !copyOverlay.hidden && copyClose && !copyClose.disabled) {\n"
+    "    copyClose.click();\n"
+    "  }\n"
+    "  var charsOverlay = document.getElementById('fittings-characters-overlay');\n"
+    "  var charsClose = document.getElementById('fittings-characters-close');\n"
+    "  if (charsOverlay && !charsOverlay.hidden && charsClose) { charsClose.click(); }\n"
+    "  var allButton = null;\n"
+    "  Array.prototype.forEach.call(\n"
+    "    document.querySelectorAll('#fittings-collections .rail-plan'),\n"
+    "    function (btn) {\n"
+    "      var name = btn.querySelector('.rail-plan-name');\n"
+    "      if (name && name.textContent === 'All fittings') { allButton = btn; }\n"
+    "    }\n"
+    "  );\n"
+    "  if (allButton && !allButton.classList.contains('active')) { allButton.click(); }\n"
+    # selectCollection() early-returns (and never resets filters.page) when
+    # the requested collection is already the active one, so a prior
+    # stage's page-2 navigation survives an "All fittings" click that
+    # finds "All fittings" already active. Walk pagination back to page 1
+    # directly instead -- bounded, because #fittings-page-prev disables
+    # itself once page===1 and an unbounded loop over a bug in that would
+    # hang the whole capture run rather than fail one screenshot.
+    "  var prevPage = document.getElementById('fittings-page-prev');\n"
+    "  for (var pageBack = 0; pageBack < 10 && prevPage && !prevPage.disabled; pageBack += 1) {\n"
+    "    prevPage.click();\n"
+    "  }\n"
+)
+
+
+# Shared by the two copy stages below: find the .fit-copy-target row for a
+# named character in the open Copy overlay and check its box. Declared as a
+# JS string once rather than duplicated per stage -- the two-part label
+# structure (a visual .box span, then the plain name span) is an
+# implementation detail of fittings.js's renderCopyTargets() that only one
+# place should have to know.
+_FIT_CHECK_TARGET_JS = (
+    "  function fitCheckTarget(characterName) {\n"
+    "    var found = null;\n"
+    "    Array.prototype.forEach.call(\n"
+    "      document.querySelectorAll('.fit-copy-target'), function (row) {\n"
+    "        var label = row.querySelector('label span:last-child');\n"
+    "        if (label && label.textContent === characterName) { found = row; }\n"
+    "      }\n"
+    "    );\n"
+    "    if (!found) {\n"
+    "      throw new Error(characterName + ' copy target row is missing');\n"
+    "    }\n"
+    "    var box = found.querySelector('input[type=checkbox]');\n"
+    "    if (!box || box.disabled) {\n"
+    "      throw new Error(characterName + ' copy target checkbox is unavailable');\n"
+    "    }\n"
+    "    box.checked = true;\n"
+    "    box.dispatchEvent(new Event('change'));\n"
+    "  }\n"
+)
+
+
+def _fit_check_row_js(
+    var_name: str, predicate_js: str, label: str, *, action: str = "select"
+) -> str:
+    """Find one summary row, then explicitly select or open it."""
+    if action not in {"select", "open"}:
+        raise ValueError(f"unsupported fitting row action: {action!r}")
+    act = (
+        "    target.click();\n"
+        if action == "open"
+        else (
+            "    var row = target.closest('.fit-row');\n"
+            "    var box = row.querySelector('.fit-select input[type=checkbox]');\n"
+            f"    if (!box) {{ throw new Error({label!r} + ' checkbox is missing'); }}\n"
+            "    box.checked = true;\n"
+            "    box.dispatchEvent(new Event('change'));\n"
+        )
+    )
+    return (
+        f"  (function checkRow_{var_name}() {{\n"
+        "    var toggles = document.querySelectorAll(\n"
+        "      '#fittings-list .fit-row-toggle');\n"
+        "    var target = null;\n"
+        "    Array.prototype.forEach.call(toggles, function (btn) {\n"
+        "      if (target) { return; }\n"
+        f"      if ({predicate_js}) {{ target = btn; }}\n"
+        "    });\n"
+        f"    if (!target) {{ throw new Error({label!r} + ' row is missing'); }}\n"
+        + act
+        + "  }());\n"  # Semicolon: two adjacent IIFEs with none between them
+        # (as happens when two of these are concatenated back to back) let
+        # ASI read the second '(function...' as a call on the first's
+        # return value instead of a new statement.
+    )
+
+
+def load_dev_fittings_screenshot_fixture(checkout: str | None = None) -> dict:
+    """Load the strict JSON screenshot fixture owned by web/dev.js."""
+    if checkout is None:
+        checkout = str(pathlib.Path(__file__).resolve().parent.parent)
+    path = pathlib.Path(checkout) / "wingman" / "web" / "dev.js"
+    source = path.read_text(encoding="utf-8")
+    marker = "DEV_FITTINGS_SCREENSHOT_FIXTURE"
+    if marker not in source:
+        raise ValueError(f"{marker} not found in {path}")
+    raw = source[source.index(marker) :]
+    try:
+        start = raw.index("{")
+    except ValueError:
+        raise ValueError(f"{marker} found in {path} but has no opening brace")
+    depth = 0
+    end = start
+    for index, character in enumerate(raw[start:], start):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    else:
+        raise ValueError(f"{marker} object literal in {path} has unbalanced braces")
+    try:
+        return json.loads(raw[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{marker} body in {path} is not valid JSON: {exc}") from exc
+
+
+def fittings_fixture_setup_script() -> str:
+    """Inject the bounded dev.js fixture through the screenshot-only handler."""
+    payload = json.dumps(load_dev_fittings_screenshot_fixture())
+    return (
+        "(function () {\n"
+        "  var payload = " + payload + ";\n"
+        "  if (typeof window.onFittingsScreenshotState !== 'function') {\n"
+        "    throw new Error('onFittingsScreenshotState is missing');\n"
+        "  }\n"
+        "  window.onFittingsScreenshotState(payload);\n"
+        "  var rendered = document.querySelectorAll('#fittings-list .fit-row');\n"
+        "  var heading = document.getElementById('fittings-collection-name');\n"
+        "  if (!heading || heading.textContent !== 'All fittings'\n"
+        "      || rendered.length !== payload.entries.length) {\n"
+        "    throw new Error('Fittings screenshot fixture was not accepted');\n"
+        "  }\n"
+        "}())"
+    )
+
+
+def _fittings_setup_script(key: str) -> str:
+    """Deterministic staging for every fittings-* screenshot stage.
+
+    Every stage is read-only against the harness's fabricated fixture and
+    drives only controls a user could actually press -- selection
+    checkboxes, the rail, Copy selected, target checkboxes, Review -- with
+    one deliberate exception: the progress/result stages inject the canonical
+    dev fixture's production-reachable copy sequence through onFittingsProgress,
+    the same read-side pattern the Preview stages use for onPreviewHotkeys. This
+    avoids waiting through timer-throttled dev execution while keeping one data
+    owner and the same semantic handler the real controller pushes.
+
+    Does NOT include _FIT_RESET_JS or the Alliance scope switch: walk() runs
+    each boundary action as its own evaluate call with a settle sleep afterward.
+    The injected screenshot state answers collection reads synchronously, but
+    retaining the boundary keeps staging equivalent to the ordinary async route.
+    """
+    body = ""
+    if key in {"fittings-unfiled", "fittings-superseded"}:
+        label = "Unfiled" if key == "fittings-unfiled" else "Superseded"
+        body += (
+            "  var wanted = null;\n"
+            "  Array.prototype.forEach.call(\n"
+            "    document.querySelectorAll('#fittings-collections .rail-plan'),\n"
+            "    function (btn) {\n"
+            "      var name = btn.querySelector('.rail-plan-name');\n"
+            f"      if (name && name.textContent === {label!r}) {{ wanted = btn; }}\n"
+            "    }\n"
+            "  );\n"
+            f"  if (!wanted) {{ throw new Error({label!r} + ' collection row is missing'); }}\n"
+            "  wanted.click();\n"
+        )
+    elif key == "fittings-alliance":
+        body += _fit_check_row_js(
+            "alliance",
+            "btn.querySelector('.fit-name') "
+            "&& btn.querySelector('.fit-name').textContent === 'Merlin - Fleet Doctrine'",
+            "recent Alliance import",
+            action="open",
+        )
+    elif key == "fittings-detail":
+        # Open rather than select: this fixture carries aliases, presences,
+        # and three racks specifically for the detail capture.
+        body += _fit_check_row_js(
+            "detail",
+            "btn.querySelector('.fit-name') "
+            "&& btn.querySelector('.fit-name').textContent === 'Rifter - Solo PvP'",
+            "Rifter - Solo PvP",
+            action="open",
+        )
+    elif key == "fittings-characters":
+        body += (
+            "  var open = document.getElementById('fittings-characters-open');\n"
+            "  if (!open) { throw new Error('Characters open control is missing'); }\n"
+            "  open.click();\n"
+            "  var overlay = document.getElementById('fittings-characters-overlay');\n"
+            "  if (!overlay || overlay.hidden) {\n"
+            "    throw new Error('Characters overlay did not open');\n"
+            "  }\n"
+        )
+    elif key == "fittings-copy-preflight":
+        # The injected fixture puts the present/conflict pair and its one
+        # non-deployable generated fit on the same bounded page. Paging clears
+        # page-owned selection, so a mixed preflight must remain one-page data.
+        body += (
+            _fit_check_row_js(
+                "present",
+                "btn.querySelector('.fit-name') "
+                "&& btn.querySelector('.fit-name').textContent === 'Fleet Doctrine Alpha' "
+                "&& btn.querySelector('.fit-meta') "
+                "&& btn.querySelector('.fit-meta').textContent.indexOf('1 character') === 0",
+                "Fleet Doctrine Alpha (already on Eryn)",
+            )
+            + _fit_check_row_js(
+                "unavailable",
+                "btn.querySelector('.fit-name') "
+                "&& btn.querySelector('.fit-name').textContent === 'Generated Fit 001'",
+                "Generated Fit 001 (non-deployable)",
+            )
+            + _fit_check_row_js(
+                "conflict",
+                "btn.querySelector('.fit-name') "
+                "&& btn.querySelector('.fit-name').textContent === 'Fleet Doctrine Alpha' "
+                "&& btn.querySelector('.fit-meta') "
+                "&& btn.querySelector('.fit-meta').textContent.indexOf('0 characters') === 0",
+                "Fleet Doctrine Alpha (unfiled source)",
+            )
+            + "  var copySelected = document.getElementById('fittings-copy-selected');\n"
+            "  if (!copySelected || copySelected.disabled) {\n"
+            "    throw new Error('Copy selected control is unavailable');\n"
+            "  }\n"
+            "  copySelected.click();\n"
+            "  var overlay = document.getElementById('fittings-copy-overlay');\n"
+            "  if (!overlay || overlay.hidden) { throw new Error('Copy overlay did not open'); }\n"
+            + _FIT_CHECK_TARGET_JS
+            + "  fitCheckTarget('Eryn Voss');\n"
+            "  var review = document.getElementById('fittings-copy-review');\n"
+            "  if (!review || review.disabled) { throw new Error('Review copy control is unavailable'); }\n"
+            # Not asserted here: whether .fit-copy-pair rendered a
+            # particular count. requestCopyPreflight()'s render happens
+            # inside a Promise chain that this synchronous script cannot
+            # reliably await -- CDP.evaluate() does not set awaitPromise --
+            # so an assertion immediately after the click risks throwing on
+            # a false negative (unsettled, not wrong) and losing the whole
+            # screenshot rather than merely a stale one. walk()'s 0.25s
+            # post-setup sleep is what the render actually depends on.
+            "  review.click();\n"
+        )
+    elif key == "fittings-copy-limit":
+        body += (
+            "  var picked = 0;\n"
+            "  Array.prototype.some.call(\n"
+            "    document.querySelectorAll('#fittings-list .fit-row-toggle'),\n"
+            "    function (btn) {\n"
+            "      var name = btn.querySelector('.fit-name');\n"
+            "      if (!name || name.textContent.indexOf('Generated Fit ') !== 0) {\n"
+            "        return false;\n"
+            "      }\n"
+            "      var meta = btn.querySelector('.fit-meta');\n"
+            "      if (meta && meta.textContent.indexOf('Not deployable') !== -1) {\n"
+            "        return false;\n"
+            # 'Generated Fit 001' is deliberately non-deployable (dev.js).
+            "      }\n"
+            "      var row = btn.closest('.fit-row');\n"
+            "      var box = row.querySelector('.fit-select input[type=checkbox]');\n"
+            "      if (!box) { return false; }\n"
+            "      box.checked = true;\n"
+            "      box.dispatchEvent(new Event('change'));\n"
+            "      picked += 1;\n"
+            "      return picked >= 21;\n"
+            "    }\n"
+            "  );\n"
+            "  if (picked < 21) {\n"
+            "    throw new Error(\n"
+            "      'Only found ' + picked + ' Generated Fit rows; need 21 to trip the '\n"
+            "      + 'write-count limit');\n"
+            "  }\n"
+            "  var copySelected = document.getElementById('fittings-copy-selected');\n"
+            "  if (!copySelected || copySelected.disabled) {\n"
+            "    throw new Error('Copy selected control is unavailable');\n"
+            "  }\n"
+            "  copySelected.click();\n"
+            + _FIT_CHECK_TARGET_JS
+            + "  fitCheckTarget('Eryn Voss');\n"
+            "  var review = document.getElementById('fittings-copy-review');\n"
+            "  if (!review || review.disabled) { throw new Error('Review copy control is unavailable'); }\n"
+            # Not asserted here for the same reason as fittings-copy-preflight:
+            # the refusal text arrives through requestCopyPreflight()'s
+            # Promise chain, which this synchronous script cannot reliably
+            # await; walk()'s post-setup sleep is what the screenshot
+            # actually depends on.
+            "  review.click();\n"
+        )
+    elif key in {"fittings-copy-progress", "fittings-copy-result"}:
+        # One row selected only to make Copy selected clickable and the
+        # overlay open (onCopyProgress ignores copy events while it is
+        # closed). The result data itself remains owned by dev.js; this
+        # tool only serializes that single authoritative fixture.
+        fixture = load_dev_fittings_screenshot_fixture()["copy_result"]
+        payload = (
+            {
+                "kind": "copy",
+                "phase": "progress",
+                "operation_id": fixture["operation_id"],
+                "completed": 2,
+                "total": len(fixture["results"]),
+                "result": fixture["results"][1],
+            }
+            if key == "fittings-copy-progress"
+            else {
+                "kind": "copy",
+                "phase": "complete",
+                "operation_id": fixture["operation_id"],
+                "completed": len(fixture["results"]),
+                "total": len(fixture["results"]),
+                "result": fixture,
+            }
+        )
+        body += (
+            _fit_check_row_js(
+                "seed",
+                "btn.querySelector('.fit-name') "
+                "&& btn.querySelector('.fit-name').textContent === 'Generated Fit 002'",
+                "Generated Fit 002",
+            )
+            + "  var copySelected = document.getElementById('fittings-copy-selected');\n"
+            "  if (!copySelected || copySelected.disabled) {\n"
+            "    throw new Error('Copy selected control is unavailable');\n"
+            "  }\n"
+            "  copySelected.click();\n"
+            "  var payload = " + json.dumps(payload) + ";\n"
+            "  if (typeof window.onFittingsProgress !== 'function') {\n"
+            "    throw new Error('onFittingsProgress is missing');\n"
+            "  }\n"
+            "  window.onFittingsProgress(payload);\n"
+            "  var copyBody = document.getElementById('fittings-copy-body');\n"
+            "  if (!copyBody || !copyBody.textContent) {\n"
+            "    throw new Error('Copy state did not render');\n"
+            "  }\n"
+        )
+    else:
+        raise ValueError(f"no fittings setup staged for {key!r}")
+    return "(function () {\n" + body + "\n}())"
+
+
+def _fittings_prepare_script(key: str) -> str | None:
+    """Optional collection switch run between reset and final staging."""
+    if key == "fittings-alliance":
+        body = (
+            "  var alliance = null;\n"
+            "  Array.prototype.forEach.call(\n"
+            "    document.querySelectorAll('#fittings-collections .rail-plan'),\n"
+            "    function (btn) {\n"
+            "      var name = btn.querySelector('.rail-plan-name');\n"
+            "      if (name && name.textContent === 'Alliance') { alliance = btn; }\n"
+            "    }\n"
+            "  );\n"
+            "  if (!alliance) {\n"
+            "    throw new Error('Alliance collection row is missing');\n"
+            "  }\n"
+            "  alliance.click();\n"
+        )
+    else:
+        return None
+    return "(function () {\n" + body + "}())"
+
+
+def _fittings_reset_script() -> str:
+    """The state-reset half of every fittings-* stage; see
+    _fittings_setup_script's docstring for why this runs as its own
+    evaluate() call rather than being concatenated onto the stage body.
+    """
+    return "(function () {\n" + _FIT_RESET_JS + "\n}())"
 
 
 def screen_setup_script(screen: Screen) -> str | None:
@@ -511,6 +938,8 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  details.scrollIntoView({block: 'center', behavior: 'instant'});\n"
             "}())"
         )
+    if screen.key.startswith("fittings-"):
+        return _fittings_setup_script(screen.key)
     return None
 
 
@@ -923,6 +1352,25 @@ def walk(
                     (out_dir / name).write_bytes(cdp.screenshot())
                 finally:
                     cdp.clear_device_metrics_override()
+            elif screen.route == "fittings":
+                # Replace live read state through the bounded page-side
+                # screenshot handler before ANY stage action. This follows
+                # the Preview fixture precedent and cannot call Python, ESI,
+                # or a durable writer. Route leave clears the injected state.
+                cdp.evaluate(fittings_fixture_setup_script())
+                time.sleep(0.25)
+                if screen.key.startswith("fittings-"):
+                    cdp.evaluate(_fittings_reset_script())
+                    time.sleep(0.25)
+                    prepare = _fittings_prepare_script(screen.key)
+                    if prepare:
+                        cdp.evaluate(prepare)
+                        time.sleep(0.25)
+                    setup = screen_setup_script(screen)
+                    if setup:
+                        cdp.evaluate(setup)
+                        time.sleep(0.25)
+                (out_dir / name).write_bytes(cdp.screenshot())
             else:
                 setup = screen_setup_script(screen)
                 if setup:

@@ -2020,19 +2020,40 @@ only ever checked by hand.
 Requires a Windows machine with EVE running. None of this is covered by
 pytest — the engine is AutoHotkey.
 
-- [ ] **The title bar holds exactly three destinations** — Uploader,
-      Profiles, Skills — and the window still drags by the wordmark area.
-      Bookmarks and Previews are NOT here: they are sections of Settings,
-      reached through the gear. This item was written when there were two
-      destinations and went unchecked while three more were added; the
-      fifth pushed the bar past its width at 125% scaling. NOTE: that
-      recorded reason does not survive the floor correction — at 840 CSS
-      px the arithmetic says it should have fit. `DESIGN.md` carries it as
-      an open question. The three-destination rule itself rests on
-      `PRODUCT.md`'s destination-vs-configuration test and is unaffected.
+- [ ] **The title bar holds exactly four destinations** — Uploader,
+      Profiles, Skills, Fittings — and the window still drags by the
+      wordmark area. Bookmarks and Previews are NOT here: they are
+      sections of Settings, reached through the gear. This item was
+      written when there were two destinations and went unchecked while
+      three more were added; the fifth pushed the bar past its width at
+      125% scaling. NOTE: that recorded reason does not survive the floor
+      correction — at 840 CSS px the arithmetic says it should have fit.
+      `DESIGN.md` carries it as an open question, now with a headless
+      (non-Windows) CSS measurement at 840/839 CSS px alongside it — see
+      the item below, and do not treat that measurement as covering this
+      one. The four-destination rule itself rests on `PRODUCT.md`'s
+      destination-vs-configuration test and is unaffected.
+- [ ] **UNVERIFIED — reproduce `DESIGN.md`'s headless 840/839 CSS check on
+      real Windows/WebView2, at every display scaling.** `DESIGN.md`'s
+      "Fourth destination, measured" note records titlebar client width,
+      `document.scrollWidth == clientWidth`, the drag region's width and
+      edges, the nav's left/right edges, and every window control's
+      (gear/minimize/close) left/right edge — all confirmed in headless
+      Chromium against `wingman/web/index.html?dev=1` at CSS viewports
+      840x625 and 839x621, `deviceScaleFactor: 1`, with every edge inside
+      the titlebar's own client width and all four destination labels
+      visible. That is NOT a Windows/WebView2 result: it cannot exercise
+      the DPI rounding that makes an 840 logical minimum measure as 839
+      CSS px at 200% in the first place (`ui/window.py`'s `MinimumSize` /
+      `ptMinTrackSize`), which is exactly the fact this checklist's other
+      display-scaling items exist to check. Restart at 100%, 125%, 150%
+      and 200%, drag the window to its floor, and check the same values
+      by hand (or via a real WebView2 CDP session) at each. This item
+      stays unchecked until that has actually been done — do not check it
+      off on the strength of the headless numbers above.
 - [ ] **The bar survives its own minimum at 150% scaling.** Set Windows
       display scaling to 150%, restart, drag the window to its floor. The
-      three nav labels, the gear, minimize and close are ALL visible, and
+      four nav labels, the gear, minimize and close are ALL visible, and
       the wordmark area still drags. Nothing in the bar shrinks: the nav
       and the window buttons are flex:none and the drag region cannot go
       below the wordmark's own width, so an overflow here clips the close
@@ -3646,6 +3667,188 @@ close-EVE requirement beside Save.
 - [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.
 - [ ] Delete every formation, save, launch the client: the probe scanner has no custom formations and nothing else about the client's settings changed. (An empty list is a real state, not a failed save — this is the line that proves write does not confuse the two.)
 - [ ] With unsaved edits showing, the title bar offers no other destination and the gear is hidden: `‹ Profiles` is the only way out and it asks before discarding. (Every other exit routed away without asking, and the next open silently loaded over the edits.)
+
+## EVE Fittings
+
+These checks require a real Windows/WebView2 install and, where stated, a live
+EVE character. The registered EVE application used for the pass must accept
+both `esi-fittings.read_fittings.v1` and
+`esi-fittings.write_fittings.v1`. The `?dev=1` harness is useful for visual
+states, but it does not verify consent, ESI reads, ESI writes, DPAPI, cache
+behavior, or restart durability and cannot substitute for these items.
+
+### Migration and capability consent
+
+- [ ] **A pre-feature Skills document migrates without losing Skills.** Start
+      from a real `eve_skills.json` made by the last release before shared EVE
+      authority, with at least one working Skills-only character. Keep copies
+      of the primary and `.bak`, launch once, and inspect
+      `%LOCALAPPDATA%\FlyGD Wingman\`. Expected: `eve_authority.json` now owns
+      identity/scopes/credential; `eve_skills.json` retains plans, groups,
+      levels, queue and ETags but no credential fields; Skills refresh still
+      succeeds for that character. Restart and refresh Skills again. A migration
+      that only paints the old result while the token is unusable is a failure.
+- [ ] **A failed migration is fail-closed and resumable.** With both the legacy
+      primary and backup unreadable or corrupt, launch. Expected: an actionable
+      unavailable state, the evidence files preserved, and NEITHER a new empty
+      authority document nor a migration-complete marker. Restore one valid
+      source and relaunch; migration then completes. Never infer absence from an
+      access error.
+- [ ] **Skills-only remains Skills-only.** Before pressing Enable fittings,
+      open Skills and refresh the migrated character successfully. Open
+      Fittings > Characters: the same row reads **Skills only**, no fitting GET
+      occurs, and no fitting scopes were silently added to the existing grant.
+- [ ] **Enable fittings is bound to the row that started it.** Press **Enable
+      fittings** on one Skills-only row. The EVE consent page asks for fitting
+      read and write access in addition to that character's enabled
+      capabilities. Complete it with THE SAME character. Expected: only that
+      row becomes enabled and can refresh Personal Fittings; Skills remains
+      usable in the same session and after restart.
+- [ ] **The wrong character is refused.** Start Enable fittings on character A,
+      choose character B on EVE's account/character screen, and complete the
+      callback. Expected: a specific wrong-character refusal, no new B row, no
+      upgrade to A or B, and A's prior Skills-only credential still refreshes
+      Skills. Repeat once by cancelling the browser flow; the row returns to a
+      usable Skills-only state and no partial authority mutation survives.
+
+### Library, import and curation
+
+- [ ] **A real Personal Fittings read imports atomically.** Put representative
+      fits on the enabled character, including racks, cargo/drones, charges or
+      scripts, and one fit with the schema-defined `Invalid` row if available.
+      Press Refresh. Expected: a complete successful read updates the library;
+      a deliberately interrupted/failed read keeps prior entries and presence
+      visible as stale rather than clearing them.
+- [ ] **Equivalent fits deduplicate by loadout, not name or numbered slot.** Put
+      equivalent fits on two characters with different names and high/medium/
+      low slot numbering. Refresh both. Expected: one library entry, both source
+      aliases retained, and both character presences shown. Change a meaningful
+      quantity, rack, cargo, drone, charge or script and confirm it imports as a
+      distinct entry.
+- [ ] **Recent import and source-character filtering identify new presence.**
+      Refresh a character with one newly copied Personal Fitting whose loadout
+      already exists in the library. Filter to that refresh and source
+      character. Expected: the existing consolidated entry appears because its
+      NEW presence carries the refresh batch/time; filtering does not depend on
+      the older library entry's creation date. Clear each filter and confirm the
+      full collection returns.
+- [ ] **Alliance ingestion uses Personal Fittings and stays explicit.** In EVE,
+      copy several alliance fits into one character's Personal Fittings. Refresh
+      that character, isolate the recent/source results, select them, and add
+      them to an `Alliance` collection. Expected: only the entries you chose are
+      filed; Wingman neither reads a corporation/alliance endpoint nor assumes
+      every fit on that character is an alliance fit.
+- [ ] **Unfiled, Superseded and custom collections are durable views.** Add one
+      fitting to two custom collections, rename one collection, remove one
+      membership, and mark an older same-hull entry superseded by a newer one.
+      Expected: Unfiled is derived correctly, Superseded contains the older fit,
+      collection deletion removes grouping only, and no character fitting or
+      library entry is deleted. Restart after EACH mutation and verify exactly
+      the committed state returns.
+- [ ] **Expanded detail is complete and safe.** Open a fit with aliases and more
+      than one presence. Expected: one row expanded at a time; racks, cargo,
+      drones/fighters, quantities, preferred description, aliases, character
+      names/source names, seen dates, collection membership and supersession are
+      readable. Editing name/description commits only from Save, never blur.
+      Text from EVE renders as text, not markup.
+- [ ] **`Invalid` content remains visible but cannot deploy.** An imported fit
+      containing the schema-defined `Invalid` flag stays in the library and its
+      detail labels that group **Invalid (not deployable)**. It is classified
+      Unavailable in copy preflight and no POST is made for it.
+- [ ] **Paging, keyboard and overlays work in WebView2.** Exercise more than 100
+      entries, search, ship filter, every collection, next/previous page, row
+      checks and one expanded detail. Selection never leaks to another page or
+      filter. Tab through Characters and Copy overlays, verify a visible focus
+      ring, Escape closes when safe, and no browser-native confirm/prompt/alert
+      appears.
+
+### Explicit additive copy
+
+- [ ] **Preflight names every classification and exact cost.** Build one batch
+      containing Ready, Already present (equivalent content under any name),
+      Name conflict (same casefolded/NFC name, different content), Unavailable
+      stale/missing-scope, and non-deployable pairs. Expected: counts and rows
+      agree, alternate name or explicit Skip resolves each conflict, no Replace
+      option exists, and the confirmation names the exact remote-write count.
+- [ ] **The 20-write bound refuses rather than truncates or queues.** Select 21
+      otherwise-ready fitting/character pairs. Expected: no ticket/start path,
+      no POST, and an instruction to split the copy into batches of 20 or fewer.
+      Reduce to 20 and re-review explicitly.
+- [ ] **A real Personal Fittings create is additive.** Confirm a one-write copy
+      to a live character, then inspect Personal Fittings in EVE. Expected: the
+      selected fit was added with the chosen name and exact content; no existing
+      fit was deleted, replaced, or renamed. Refresh after EVE's cache horizon
+      and confirm the new presence becomes authoritative. There is no remote
+      DELETE action anywhere in Wingman.
+- [ ] **Partial results remain honest.** Run a batch where one ordinary
+      deterministic rejection can be produced after one success. Expected:
+      Success and Failed are separate per-pair results under one operation ID;
+      the success remains on the character, later eligible pairs continue, and
+      no rollback or automatic retry occurs.
+- [ ] **Unknown is not Failed and cannot be retried early.** On a disposable
+      test character/network, interrupt one create after send so no HTTP
+      response reaches Wingman. Expected: **Unknown**, no Retry control, the
+      pair unavailable to another preflight, and global Forget refused with a
+      reconciliation instruction. Preserve `eve_fittings.json` before any
+      further action as evidence.
+- [ ] **Cache-horizon reconciliation requires a fresh authoritative `200`.**
+      Refresh the Unknown character before five minutes: Unknown remains. A
+      retained/`304` representation also leaves it unresolved. After more than
+      five minutes from the persisted send time, refresh again; the request must
+      be unconditional. A valid `200` showing the fit resolves to Success and
+      presence; a valid `200` proving absence clears the unresolved block. Only
+      then may preflight or Forget proceed. Record any inability to force these
+      network/cache states as unverified, never as passed.
+- [ ] **Cancellation stops before the next request.** Start a multi-pair batch
+      and cancel while one request is active. Expected: that attempted pair gets
+      its real outcome, every not-yet-sent pair reads Cancelled, the completed
+      count is honest, and no later POST appears in network/log evidence.
+- [ ] **Fitting-bucket throttle stops the remainder.** Against a disposable
+      setup capable of returning fitting `429` (or a controlled ESI seam in a
+      Windows test build), confirm the triggering pair and every remaining pair
+      read **Unattempted due to throttle** and no automatic retry occurs. If a
+      real throttle cannot be produced safely, leave this item explicitly
+      unverified; a `?dev=1` result proves presentation only.
+
+### Forget, restart and release integration
+
+- [ ] **Forget is global and preserves curated library content.** Forget one
+      character from Fittings, then repeat from Skills after re-adding it.
+      Expected both entry points remove the shared credential, Skills snapshot,
+      fitting snapshot and that character's presence, while independent library
+      entries, aliases, collections and other characters remain. Re-adding
+      requires EVE sign-in. Restart after the durable removal and verify no
+      orphan credential or presence resurrects.
+- [ ] **Forget waits for active work and blocks on ambiguity.** Start a fitting
+      refresh or POST and press Forget on that same character. Expected: Forget
+      does not race the request. A definite completed outcome permits ordered
+      credential-first cleanup; an Unknown outcome refuses cleanup. In a
+      multi-pair batch, forgetting between pairs prevents every later POST for
+      that character.
+- [ ] **Every durable boundary survives restart.** Repeat restart checks after
+      capability enable, successful import, metadata edit, collection create/
+      rename/delete, membership change, supersession, definite copy result,
+      Unknown creation, reconciliation, and global Forget. The UI must never
+      show an in-memory success that disappears or becomes retryable after
+      restart; a surviving `in_flight` intent must reopen as Unknown.
+- [ ] **The EVE gate cuts every route into Fittings.** With no Fittings work in
+      flight, turn off **Show the EVE tools**. Expected: Profiles, Skills and
+      Fittings disappear, the current and remembered destination repair to the
+      Uploader, and the gear cannot return to a hidden route. Turn the gate back
+      on and confirm local library state is unchanged.
+- [ ] **Installed assets include the complete Fittings route.** In the frozen
+      install, verify `_internal\web\fittings.js` exists beside `app.js` and
+      `skills.js`, then open Fittings offline. Expected: local persisted content
+      renders; a missing script produces an inert/blank route and is a release
+      blocker even if the installer build succeeded.
+- [ ] **Four-destination title-bar geometry holds at every supported scaling.**
+      At 100%, 125%, 150% and 200%, restart, shrink to the 840x625 logical floor,
+      and record CSS-pixel rectangles for titlebar, drag region, nav, gear,
+      minimize and close. Expected at each: `scrollWidth == clientWidth`, close
+      right edge inside titlebar, drag width at least 105 CSS px, and Uploader,
+      Profiles, Skills and Fittings fully visible. Also drag by the remaining
+      wordmark area and use every window control. Headless Chromium measurements
+      in `DESIGN.md` are not a substitute for this Windows/WebView2 pass.
 
 ## EVE skill plan readiness
 

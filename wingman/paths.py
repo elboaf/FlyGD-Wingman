@@ -108,23 +108,37 @@ def eve_settings_backup_dir() -> Path:
     return state_dir() / "eve-settings-backups"
 
 
-def eve_skills_file() -> Path:
-    """Roster, snapshots, skill queue, ETags, and DPAPI-wrapped tokens.
+def eve_authority_file() -> Path:
+    """App-wide EVE identities, scopes, and DPAPI-wrapped credentials."""
+    return state_dir() / "eve_authority.json"
 
-    One document holds all of it, which is what makes forgetting a
-    character a single atomic write. TriffView splits tokens into
-    Windows Credential Manager and cannot update the two together; its
-    own error strings record the cost ("Forget was rolled back because
-    state could not be saved"). A .bak sibling is kept beside this file
-    by the controller, because merging the tokens in moved the one
-    non-rebuildable thing into a file that had no backup tier.
+
+def eve_skills_file() -> Path:
+    """Skills snapshots, queue, groups, plan selection, ETags, and errors.
+
+    An install upgrading from before the shared-authority split still has
+    identities and credentials in this same file on first launch; the
+    fail-closed migration in `eveauth.migration` splits those fields out
+    into `eve_authority_file()` and rewrites this document without them
+    before any controller is constructed (see `__main__.migrate_eve_authority`,
+    run unconditionally at startup, not gated behind a flag or a later task).
     """
     return state_dir() / "eve_skills.json"
+
+
+def eve_fittings_file() -> Path:
+    """Curated fitting library and per-character fitting snapshots."""
+    return state_dir() / "eve_fittings.json"
 
 
 def eve_skills_cache_file() -> Path:
     """Skill name -> type id. Deleting it costs a re-resolve over ESI."""
     return state_dir() / "eve_skills_cache.json"
+
+
+def eve_fittings_names_file() -> Path:
+    """Fitting type-id display names; safe to delete and rebuild from ESI."""
+    return state_dir() / "eve_fittings_names.json"
 
 
 def skill_plans_dir() -> Path:

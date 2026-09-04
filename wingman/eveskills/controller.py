@@ -21,22 +21,23 @@ package. This module is the bridge boundary and the only place they become
 ISO strings.
 """
 
-import copy
 import json
 import logging
 import os
 import sys
 import threading
-import webbrowser
+from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-from . import application, evaluator, plans, planstore, skillids, tokens
+# The shared owner, not `wingman.eveskills.application`'s compatibility
+# re-export. Capability lookup and authorization now live in eveauth, so
+# Skills names that same module when requesting its read-only capability.
+from ..eveauth import application
+from ..eveauth.controller import ACCESS_REASON_OWNER_CHANGED, MutationResult
 from . import esi as esi_mod
-from . import jwt as jwt_mod
-from . import loopback as loopback_mod
-from . import sso as sso_mod
+from . import evaluator, plans, planstore, skillids
 from . import state as state_mod
 from . import training as training_mod
 from .training import ATTRIBUTE_NAMES
@@ -51,32 +52,17 @@ logger = logging.getLogger(__name__)
 # reload that found it.
 MAX_WARNINGS = 20
 MAX_DIAGNOSTICS_PER_ISSUE = 20
+SHUTDOWN_WAIT_SECONDS = 2.0
 
 # Exact user-facing text. These land in a roster row next to the data they
 # describe, so they say what the user must DO, not what the transport
 # returned -- "401" in a row is not an instruction.
 MSG_REAUTH = "EVE rejected the stored authorisation. Re-authenticate this character."
 MSG_NO_TOKEN = "No stored authorisation. Re-authenticate this character."
-MSG_TOKEN_UNREADABLE = (
-    "The stored authorisation could not be decrypted. Re-authenticate this character."
-)
 MSG_SAVE_FAILED = "Fresh data is in memory but was not saved for offline use."
 MSG_OWNER_CHANGE_DETECTED = (
     "Character ownership changed. Re-authenticate this character."
 )
-# NOT used by the refresh path above. That path's own detection IS
-# definitive (owner_changed is in sso._DEFINITIVE), so it does end up
-# clearing the stored refresh token -- _refresh_one hands the definitive
-# error to _commit_failure, which deletes refresh_token_blob so the dead
-# grant is not retried on every future refresh. But it never touches the
-# cached skill/queue data itself (_commit_failure's snapshot is
-# deliberately left untouched, same as any other definitive failure), so
-# "cached skill data was cleared" would still be a lie there. This wording
-# belongs to the commit/auth path (TriffSkillsAuthentication.cs:286-291,
-# "CommitAuthentication"), which is where ActiveLevels, TrainedLevels,
-# Queue, and FetchedUtc actually get cleared -- Task 14's, not this one's.
-# Reserved here rather than invented a second time so that implementation
-# has one place to find the exact wording.
 MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared."
 
 # NOT user-facing in the sense the messages above are: this one lands in
@@ -86,11 +72,6 @@ MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared.
 # what is missing rather than what to do, because there is nothing the user
 # can do: attributes come back on the next refresh or they do not.
 MSG_ATTRIBUTES_UNREADABLE = "EVE returned no usable character attributes."
-
-# An access token is refreshed when it expires within this many seconds. The
-# window has to cover the round trip that is about to use it, or a token that
-# was valid when checked is rejected when sent.
-TOKEN_EXPIRY_MARGIN_S = 30
 
 
 # How many missing requirement names a roster row carries (round 6, P1-2).
@@ -314,24 +295,21 @@ class SkillsController:
         plans_dir,
         push,
         alert,
+        authority,
         client=None,
-        key_source=None,
         spawn=threading.Thread,
         open_folder=None,
-        launch_browser=webbrowser.open,
         now=_utcnow,
-        sso=None,
-        listener_factory=None,
-        validate_token=None,
+        startup_warnings=(),
     ) -> None:
         self._state_path = Path(state_path)
         self._cache_path = Path(cache_path)
         self._plans_dir = Path(plans_dir)
         self._push_cb = push
         self._alert = alert
+        self._authority = authority
         self._now = now
         self._spawn = spawn
-        self._launch_browser = launch_browser
         self._open_folder = (
             open_folder if open_folder is not None else _default_open_folder
         )
@@ -340,14 +318,6 @@ class SkillsController:
             if client is not None
             else esi_mod.EsiClient(user_agent=application.USER_AGENT)
         )
-        # Built lazily on first use rather than here: constructing a
-        # SigningKeySource is cheap but a JWKS fetch is not, and a user who
-        # never signs in must never pay for one. (Task 14.)
-        self._key_source = key_source
-        self._sso = sso
-        self._listener_factory = listener_factory
-        self._validate_token = validate_token
-
         # THE lock. Re-entrant because commit paths mutate the roster and
         # then call helpers that also save, and the save path takes this
         # same lock. A plain Lock would deadlock on the first such nesting,
@@ -365,7 +335,14 @@ class SkillsController:
         # and get their own payload key below -- folding a PlanIssue into
         # this list would either lose that structure or force every
         # consumer of "warnings" to sniff two shapes out of one array.
-        self._load_warnings = list(warnings) + list(cache_warnings)
+        self._load_warnings = (
+            list(startup_warnings) + list(warnings) + list(cache_warnings)
+        )
+        self._authority_owners = {
+            character.character_id: character.owner_hash
+            for character in self._authority.characters
+        }
+        self._reconciled_once = False
 
         self._plans: list = []
         self._plan_issues: list = []
@@ -382,27 +359,11 @@ class SkillsController:
         # dropping it, so a click during a refresh is never silently lost.
         self._refresh_in_flight = False
         self._refresh_again = False
-        # character_id -> (access_token, expires_at). Memory only, and
-        # deliberately so: an access token lives twenty minutes and writing
-        # one to disk would widen what a stolen state file is worth.
-        self._access_tokens: dict[int, tuple[str, datetime]] = {}
-        # One lock per character, held across _access_token's cache check
-        # and refresh so the stampede fix is a guarantee rather than an
-        # accident of today's sequential refresh order. Matches
-        # TriffSkillsAuthentication.cs:127-128's per-character SemaphoreSlim.
-        self._character_gates: dict[int, threading.Lock] = {}
-        self._character_gates_lock = threading.Lock()
+        self._refresh_idle = threading.Event()
+        self._refresh_idle.set()
         # Set on shutdown so a refresh pass stops between characters rather
         # than finishing eighty requests after the window has gone.
         self._stopping = threading.Event()
-        # Task 14 drives this; a real flag now so the payload does not lie.
-        self._auth_in_progress = False
-        # A separate, non-re-entrant latch, acquired non-blocking. Not the
-        # state lock: this one is held for the whole five-minute browser
-        # round trip, and holding the state lock for that would block every
-        # read the page makes while a consent screen is open.
-        self._auth_latch = threading.Lock()
-        self._listener = None
         # The resolver is an attribute rather than a direct call so a test
         # can replace it without a network: skillids.resolve fans out to
         # three ESI endpoints and its own tests already cover that.
@@ -728,10 +689,15 @@ class SkillsController:
     # ----- payload ----------------------------------------------------
 
     def state_payload(self) -> dict:
+        authority = {
+            character.character_id: character
+            for character in self._authority.characters
+        }
+        auth_in_progress = self._authority.auth_in_progress
         with self._lock:
-            return self._state_payload_locked()
+            return self._state_payload_locked(authority, auth_in_progress)
 
-    def _state_payload_locked(self) -> dict:
+    def _state_payload_locked(self, authority, auth_in_progress) -> dict:
         selected = self._selected_plan_locked()
         group = self._selected_group_locked()
         ids = self._cache.type_ids()
@@ -743,15 +709,18 @@ class SkillsController:
         metadata = self._cache.training_metadata(self._now())
         return {
             "auth_configured": application.is_configured(),
-            "auth_in_progress": self._auth_in_progress,
+            "auth_in_progress": auth_in_progress,
             "refresh_in_flight": self._refresh_in_flight,
             "selected_plan_name": selected.name if selected else "",
             "selected_group": group,
             "groups": self._groups_locked(),
             "plans": [self._plan_row_locked(plan, ids, group) for plan in self._plans],
             "characters": [
-                self._character_row(ch, selected, ids, metadata)
+                self._character_row(
+                    ch, authority.get(ch.character_id), selected, ids, metadata
+                )
                 for ch in self._state.characters
+                if ch.character_id in authority
             ],
             # Every issue planstore.list_plans reported: a rejected file
             # (with its per-line diagnostics) and a folder-level problem
@@ -810,7 +779,7 @@ class SkillsController:
             "ready_count": ready,
         }
 
-    def _character_row(self, ch, plan, ids, metadata) -> dict:
+    def _character_row(self, ch, authority, plan, ids, metadata) -> dict:
         """One roster row, scored against the selected plan.
 
         `analysis` is None when no plan is selected or the previously
@@ -840,13 +809,19 @@ class SkillsController:
                 attributes=self._usable_attributes(ch),
                 metadata=metadata,
             )
+        capability = self._authority.capability_status(
+            ch.character_id, application.SKILLS
+        )
+        error = " ".join(
+            message for message in (ch.error, authority.persistence_error) if message
+        )
         return {
             "character_id": ch.character_id,
-            "character_name": ch.character_name,
+            "character_name": authority.character_name,
             "group": ch.group,
             "fetched_utc": _iso(ch.fetched_utc),
-            "error": ch.error,
-            "needs_reauth": bool(ch.needs_reauth),
+            "error": error,
+            "needs_reauth": bool(authority.needs_reauth or capability != "enabled"),
             "stale": ch.stale,
             "readiness": analysis.readiness if analysis else evaluator.UNSCORED,
             "estimated_finish_utc": (
@@ -1078,12 +1053,22 @@ class SkillsController:
         requests.
         """
         with self._lock:
+            if self._stopping.is_set():
+                return
             if self._refresh_in_flight:
                 self._refresh_again = True
                 return
             self._refresh_in_flight = True
+            self._refresh_idle.clear()
         self._push_state(force=True)  # The button becomes "Refreshing...".
-        self._spawn(target=self._refresh_worker, daemon=True).start()
+        try:
+            self._spawn(target=self._refresh_worker, daemon=True).start()
+        except Exception:
+            with self._lock:
+                self._refresh_in_flight = False
+                self._refresh_idle.set()
+            self._push_state(force=True)
+            raise
 
     def _refresh_worker(self) -> None:
         try:
@@ -1117,15 +1102,24 @@ class SkillsController:
                 self._spawn(target=self._refresh_worker, daemon=True).start()
                 return
         finally:
+            with self._lock:
+                if not self._refresh_in_flight:
+                    self._refresh_idle.set()
             # Unconditional: the page's "Refreshing..." state is driven by
             # refresh_in_flight, and a pass that died without this push
             # leaves the button stuck forever.
             self._push_state(force=True)
 
     def _refresh_pass(self) -> None:
+        names = {
+            character.character_id: character.character_name
+            for character in self._authority.characters
+        }
         with self._lock:
             targets = [
-                (ch.character_id, ch.character_name) for ch in self._state.characters
+                (ch.character_id, names.get(ch.character_id, ""))
+                for ch in self._state.characters
+                if ch.character_id in names
             ]
         self._resolve_missing_skill_ids()
         self._refresh_training_metadata()
@@ -1152,7 +1146,25 @@ class SkillsController:
             self._push_state()
 
     def _refresh_one(self, character_id: int) -> str:
-        """Refresh one character. Returns "" on success, else the message."""
+        """Refresh one character under shared lifecycle authority."""
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(
+                    self._authority.lifecycle(character_id, application.SKILLS)
+                )
+            except KeyError:
+                return ""
+            except PermissionError:
+                status = self._authority.capability_status(
+                    character_id, application.SKILLS
+                )
+                message = MSG_NO_TOKEN if status == "missing" else MSG_REAUTH
+                self._commit_failure(character_id, message)
+                return message
+            return self._refresh_one_leased(character_id)
+
+    def _refresh_one_leased(self, character_id: int) -> str:
+        """Fetch and commit while the authority lifecycle lease is held."""
         with self._lock:
             ch = self._state.find(character_id)
             if ch is None:
@@ -1160,21 +1172,20 @@ class SkillsController:
             skills_etag, queue_etag = ch.skills_etag, ch.queue_etag
             attributes_etag = ch.attributes_etag
 
-        skills, error, definitive = self._authorised_get(
+        skills, error, _invalidated = self._authorised_get(
             character_id, _skills_path(character_id), skills_etag
         )
         if skills is None:
-            # Short-circuit, ported verbatim: the queue result could not be
-            # committed on its own anyway, so spending the second request
-            # would only burn error-limit budget to throw the answer away.
-            self._commit_failure(character_id, error, definitive)
+            # The queue result could not be committed on its own, so spending
+            # the second request would only burn error-limit budget.
+            self._commit_failure(character_id, error)
             return error
 
-        queue, error, definitive = self._authorised_get(
+        queue, error, _invalidated = self._authorised_get(
             character_id, _queue_path(character_id), queue_etag
         )
         if queue is None:
-            self._commit_failure(character_id, error, definitive)
+            self._commit_failure(character_id, error)
             return error
 
         # Supplemental, and last for the same reason the queue call is
@@ -1197,197 +1208,25 @@ class SkillsController:
         )
 
     def _access_token(self, character_id: int, *, rejected=None):
-        """(access_token, error, definitive) for one character.
+        """Request one Skills-capable token from shared authority.
 
-        Refreshed when absent, when it expires within TOKEN_EXPIRY_MARGIN_S,
-        or when a caller forces it AND the cached token is still the one ESI
-        just rejected. That last clause is the stampede fix: N concurrent
-        401s from one stale token must produce exactly one refresh, and
-        `_character_gate` below is what makes that a guarantee rather than
-        an accident of today's call pattern -- held across the whole
-        cache-check-and-refresh sequence for this one character, so two
-        truly concurrent callers can never both observe the same stale
-        cache entry and both go on to refresh.
+        A token may carry a non-empty persistence warning. Presence of the
+        token, not an empty error string, decides success; the warning stays
+        visible through the immutable authority row joined into the payload.
         """
-        gate = self._character_gate(character_id)
-        with gate:
-            with self._lock:
-                ch = self._state.find(character_id)
-                if ch is None:
-                    return None, "", False
-                blob = ch.refresh_token_blob
-                owner_hash = ch.owner_hash
-                cached = self._access_tokens.get(character_id)
-
-            now = self._now()
-            if cached is not None:
-                token, expires_at = cached
-                fresh = (expires_at - now).total_seconds() > TOKEN_EXPIRY_MARGIN_S
-                if fresh and (rejected is None or token != rejected):
-                    return token, "", False
-
-            if not blob:
-                # Definitive: no amount of retrying invents a refresh token.
-                return None, MSG_NO_TOKEN, True
-            refresh = tokens.unwrap(blob)
-            if refresh is None:
-                # A DPAPI blob that will not decrypt costs this one character
-                # a re-authentication, which is exactly why only the token is
-                # wrapped and the roster metadata beside it is not.
-                return None, MSG_TOKEN_UNREADABLE, True
-
-            try:
-                token_set = self._sso_module().refresh_token(refresh)
-                # A refreshed token that validates fine but names a
-                # different character, or a different owner, must never be
-                # trusted just because the signature checks out -- CCP's own
-                # session confusion or a stolen/rotated refresh token both
-                # look exactly like this otherwise. Ground truth:
-                # TriffSkillsAuthentication.cs:152-161, folded into the same
-                # try as the refresh itself so both codes flow through the
-                # one classification below.
-                validate = (
-                    self._validate_token
-                    if self._validate_token is not None
-                    else jwt_mod.validate
-                )
-                identity = validate(
-                    token_set.access_token,
-                    client_id=application.CLIENT_ID,
-                    required_scopes=application.SCOPES,
-                    key_source=self._keys(),
-                )
-                if identity.character_id != character_id:
-                    raise sso_mod.OAuthError(
-                        401,
-                        "identity_mismatch",
-                        "Refreshed token belongs to a different character.",
-                    )
-                # Compared only when BOTH sides are non-blank: an absent
-                # hash on either side is missing information, not evidence
-                # of a transfer, and treating it as one would force a
-                # reauth on the first refresh after an upgrade.
-                if (
-                    owner_hash
-                    and identity.owner_hash
-                    and identity.owner_hash != owner_hash
-                ):
-                    raise sso_mod.OAuthError(
-                        401, "owner_changed", "Character ownership changed."
-                    )
-            except sso_mod.OAuthError as exc:
-                # `definitive` is the OAuth error's own classification --
-                # invalid_grant, identity_mismatch, owner_changed. Everything
-                # else is transient and must not delete the stored token.
-                # owner_changed gets its own wording rather than MSG_REAUTH's
-                # generic one, and NOT MSG_OWNER_CHANGED -- returning
-                # definitive=True here does end up clearing the stored
-                # refresh token one layer up (_commit_failure, since
-                # owner_changed is definitive), but it never clears the
-                # cached skill/queue data the way MSG_OWNER_CHANGED claims,
-                # so that wording would still be a lie here. See
-                # MSG_OWNER_CHANGE_DETECTED's own comment.
-                message = (
-                    MSG_OWNER_CHANGE_DETECTED
-                    if exc.code == "owner_changed"
-                    else MSG_REAUTH
-                    if exc.definitive
-                    else f"EVE SSO refused the token refresh: {exc}"
-                )
-                return None, message, exc.definitive
-            except jwt_mod.JwtError as exc:
-                # The token EVE just minted failed to validate. Neither of
-                # the two named codes above, and not necessarily a problem
-                # with the grant itself, so this stays transient rather than
-                # deleting a refresh token that may well still work.
-                logger.warning("Refreshed token failed validation", exc_info=True)
-                return None, f"EVE SSO returned an unusable access token: {exc}", False
-            except Exception as exc:
-                # Network, DNS, TLS. Transient by definition: last-good data
-                # stays visible and the row is merely stale.
-                logger.warning("Token refresh failed", exc_info=True)
-                return None, f"Could not reach EVE SSO: {exc}", False
-
-            with self._lock:
-                ch = self._state.find(character_id)
-                if ch is None:
-                    return None, "", False
-                # EVE rotates the refresh token on every use, so the new one
-                # is stored before it is used. Losing this write means the
-                # NEXT launch cannot authenticate at all, with nothing on
-                # screen to explain why.
-                #
-                # EVE sometimes omits the refresh token on a response (it
-                # means "the previous one is still valid"), and
-                # sso.refresh_token reports that as "" rather than
-                # distinguishing "omitted" from "empty" -- it can't,
-                # EveSso.cs does not either at that layer. tokens.wrap("")
-                # returns "", the no-token sentinel, so writing it
-                # unconditionally would overwrite a valid stored credential
-                # with the empty-blob sentinel: the character looks
-                # authorised until the NEXT refresh, which then fails for
-                # good with nothing on screen explaining why. `.strip()`
-                # rather than bare truthiness so a whitespace-only value is
-                # treated the same as an omitted one, matching C#'s
-                # IsNullOrWhiteSpace. Only overwrite when EVE actually sent
-                # a new one; otherwise the previously stored blob is still
-                # correct and is left alone.
-                if token_set.refresh_token.strip():
-                    ch.refresh_token_blob = tokens.wrap(token_set.refresh_token)
-                self._access_tokens[character_id] = (
-                    token_set.access_token,
-                    now + timedelta(seconds=max(0, int(token_set.expires_in))),
-                )
-                if not self._save_locked():
-                    # The rotated token is live in memory and correct; only
-                    # the offline copy is missing. Surfaced the way
-                    # _commit_success surfaces its own save failure, rather
-                    # than swallowed -- a save that never reaches disk here
-                    # means the NEXT launch authenticates with a stale
-                    # token, and nothing on screen would otherwise explain
-                    # why.
-                    #
-                    # Deliberately NOT rolled back to the previous blob,
-                    # unlike select_plan/forget/_upsert_identity: EVE has
-                    # already rotated the OLD refresh token away server-side
-                    # the moment the refresh call above succeeded, so
-                    # restoring it would not undo anything -- it would hand
-                    # this character a credential already known to be dead,
-                    # discarding the one that actually works. Unlike those
-                    # three call sites, this one also runs unattended and
-                    # keeps a still-valid access token cached regardless of
-                    # save success, so the only cost of leaving the new blob
-                    # in memory is deferring the write to the next
-                    # successful save (from anywhere) rather than forcing a
-                    # re-authentication banner on a character that is not
-                    # actually broken.
-                    ch.error = MSG_SAVE_FAILED
-            return token_set.access_token, "", False
-
-    def _character_gate(self, character_id: int) -> threading.Lock:
-        """The per-character lock `_access_token` holds for its full body.
-
-        Built lazily per character id and never removed: a forgotten
-        character's gate is a few dozen bytes that outlives it, which is
-        cheaper than adding a second lock to guard deleting the first one.
-        """
-        with self._character_gates_lock:
-            gate = self._character_gates.get(character_id)
-            if gate is None:
-                gate = threading.Lock()
-                self._character_gates[character_id] = gate
-            return gate
-
-    def _keys(self):
-        """The JWKS source, built on first use.
-
-        Lazy because constructing it is cheap but fetching JWKS is not, and
-        a character that never needs a refresh must never pay for one.
-        """
-        with self._lock:
-            if self._key_source is None:
-                self._key_source = jwt_mod.SigningKeySource()
-            return self._key_source
+        result = self._authority.access_token(
+            character_id,
+            application.SKILLS,
+            rejected_token=rejected,
+        )
+        error = result.error
+        if result.token is None and result.grant_invalidated:
+            error = (
+                MSG_OWNER_CHANGE_DETECTED
+                if result.reason == ACCESS_REASON_OWNER_CHANGED
+                else MSG_REAUTH
+            )
+        return result.token, error, result.grant_invalidated
 
     def _authorised_get(self, character_id: int, path: str, etag: str):
         """One authorised GET with exactly one 401 retry.
@@ -1411,12 +1250,14 @@ class SkillsController:
                 return None, error, definitive
             response = self._client.get(path, token=token, etag=etag or None)
             if response.status == 401:
-                return None, MSG_REAUTH, True
+                # An endpoint rejection is not evidence that the shared grant
+                # is invalid. Authority alone classifies refresh/JWT outcomes.
+                return None, MSG_REAUTH, False
 
         if response.status == 403:
-            # Definitive: the grant exists but no longer carries the scope,
-            # which only a fresh consent screen can fix.
-            return None, MSG_REAUTH, True
+            # Scope claims remain authoritative. This endpoint error belongs
+            # to Skills and must not delete a grant Fittings may also use.
+            return None, MSG_REAUTH, False
         if not (response.ok or response.not_modified):
             # Includes esi.py's synthetic 503 for retry exhaustion, which
             # did not necessarily come from ESI -- transient either way.
@@ -1426,12 +1267,6 @@ class SkillsController:
                 False,
             )
         return response, "", False
-
-    def _sso_module(self):
-        """The SSO seam, resolved once. Injected whole in tests."""
-        if self._sso is None:
-            self._sso = sso_mod
-        return self._sso
 
     def _commit_success(
         self, character_id: int, skills, queue, attributes, attributes_error: str
@@ -1516,7 +1351,6 @@ class SkillsController:
                 ch.attributes_error = attributes_error or MSG_ATTRIBUTES_UNREADABLE
             ch.fetched_utc = now
             ch.error = ""
-            ch.needs_reauth = False
             if self._save_locked():
                 return ""
             # The data is live in memory and correct; only the offline copy
@@ -1524,9 +1358,7 @@ class SkillsController:
             ch.error = MSG_SAVE_FAILED
             return MSG_SAVE_FAILED
 
-    def _commit_failure(
-        self, character_id: int, message: str, definitive: bool
-    ) -> None:
+    def _commit_failure(self, character_id: int, message: str) -> None:
         """Record the failure. The snapshot is deliberately left untouched.
 
         `fetched_utc` does not move here, which is the whole mechanism
@@ -1538,14 +1370,6 @@ class SkillsController:
             if ch is None:
                 return
             ch.error = message
-            if definitive:
-                ch.needs_reauth = True
-                # The stored grant cannot work again, so it is deleted
-                # rather than retried on every future refresh -- and the row
-                # shows a re-authenticate banner instead of an error that
-                # never clears.
-                ch.refresh_token_blob = ""
-                self._access_tokens.pop(character_id, None)
             self._save_locked()
 
     def _resolve_missing_skill_ids(self) -> None:
@@ -1658,332 +1482,136 @@ class SkillsController:
                 # the next refresh and nothing else.
                 logger.warning("Could not save the skill id cache", exc_info=True)
 
-    # ----- forget -----------------------------------------------------
+    # ----- shared-authority participant --------------------------------
 
     def forget(self, character_id) -> bool:
-        """Remove a character and its stored token. One write, always.
-
-        Because the roster row and the DPAPI-wrapped refresh token live in
-        the same document, removing the row removes the token with it. That
-        makes the entire orphan class impossible rather than recoverable --
-        no rollback transaction, no reconciliation sweep, and no window in
-        which a token outlives the character it belongs to.
-
-        Idempotent: removing a character that is not there is a success.
-        The page can hold a stale roster across a refresh that already
-        dropped the row, and a two-step confirm makes a double click easy.
-        A save failure is not: it would leave the character back on disk,
-        token and all, ready to reappear on the next launch even though the
-        user was told it was gone. Rolled back and reported instead, the
-        same idiom select_plan uses for its own save failure.
-        """
+        """Compatibility delegate for callers predating shared authority."""
+        if isinstance(character_id, bool):
+            return False
         try:
             wanted = int(character_id)
         except (TypeError, ValueError):
-            # Arrives from JavaScript, where a missing dataset attribute is
-            # undefined -> None. Refused rather than coerced.
-            logger.warning("Refusing a non-numeric character id: %r", character_id)
             return False
         if wanted <= 0:
-            # ForgetAsync:60 rejects this outright rather than treating it
-            # as a no-op success -- ids are always positive, so this is a
-            # caller bug, not an empty roster.
-            logger.warning("Refusing a non-positive character id: %r", wanted)
             return False
+        result = self._authority.forget(wanted)
+        return result.applied
+
+    def prepare_forget(self, character_id: int) -> MutationResult:
+        """Check-only preflight; cleanup cannot start before authority saves."""
+        del character_id
         with self._lock:
-            previous = self._state.find(wanted)
-            previous_token = self._access_tokens.get(wanted)
-            self._state.remove(wanted)
-            self._access_tokens.pop(wanted, None)
-            saved = self._save_locked()
-            if not saved and previous is not None:
-                self._state.upsert(previous)
-                if previous_token is not None:
-                    self._access_tokens[wanted] = previous_token
+            return MutationResult(True, True, "")
+
+    def authority_removed(self, character_id: int) -> None:
+        """Prune derived state only after shared authority is durably absent."""
+        with self._lock:
+            removed = self._state.remove(character_id)
+            self._authority_owners.pop(character_id, None)
+            saved = not removed or self._save_locked()
         self._push_state(force=True)
         if not saved:
             self._alert(
                 "warning",
-                "Could not save the change",
-                "The character was not forgotten and has been restored.",
+                "Character cleanup is incomplete",
+                "Wingman removed the EVE authorisation, but could not save "
+                "the Skills cleanup. It will retry at the next startup.",
             )
-            return False
-        return True
+
+    def grant_invalidated(self, character_id: int) -> None:
+        """Discard snapshots after any definitive shared-grant invalidation."""
+        authority = self._authority.character(character_id)
+        new_owner = authority.owner_hash if authority is not None else ""
+        with self._lock:
+            previous_owner = self._authority_owners.get(character_id, "")
+            self._authority_owners[character_id] = new_owner
+            character = self._state.find(character_id)
+            owner_changed = bool(
+                character
+                and previous_owner
+                and new_owner
+                and previous_owner != new_owner
+            )
+            saved = True
+            if character is not None:
+                character.active_levels = {}
+                character.trained_levels = {}
+                character.queue = ()
+                character.fetched_utc = None
+                character.skills_etag = ""
+                character.queue_etag = ""
+                # Training estimates are character-owned snapshots too. A
+                # definitive grant invalidation must not leave SP or learning
+                # attributes from the previous owner available for scoring.
+                character.skill_points = {}
+                character.skill_points_complete = False
+                character.attributes = {}
+                character.attributes_fetched_utc = None
+                character.attributes_error = ""
+                character.attributes_etag = ""
+                character.error = MSG_OWNER_CHANGED if owner_changed else MSG_REAUTH
+                saved = self._save_locked()
+        self._push_state(force=True)
+        if not saved:
+            self._alert(
+                "warning",
+                "Skills cleanup is not saved",
+                "The EVE grant became invalid, but the cleared Skills snapshot "
+                "could not be saved. Wingman will retry cleanup at the next startup.",
+            )
+
+    def reconcile_characters(self, characters) -> None:
+        """Make the Skills roster the derived projection of shared authority."""
+        wanted = {character.character_id: character for character in characters}
+        with self._lock:
+            first_reconciliation = not self._reconciled_once
+            self._reconciled_once = True
+            existing = {character.character_id for character in self._state.characters}
+            removed = existing - wanted.keys()
+            added = wanted.keys() - existing
+            if removed:
+                self._state.characters = [
+                    character
+                    for character in self._state.characters
+                    if character.character_id in wanted
+                ]
+            for character_id in added:
+                self._state.upsert(state_mod.Character(character_id=character_id))
+            self._authority_owners = {
+                character_id: character.owner_hash
+                for character_id, character in wanted.items()
+            }
+            changed = bool(removed or added)
+            saved = not changed or self._save_locked()
+        if changed and not first_reconciliation:
+            self._push_state(force=True)
+        if not saved:
+            warning = (
+                "Shared EVE characters are available for this session, but the "
+                "Skills roster reconciliation could not be saved."
+            )
+            if first_reconciliation:
+                # The page does not exist yet, so an alert would be dropped.
+                # Keep this in the route payload beside migration warnings.
+                with self._lock:
+                    self._load_warnings.insert(0, warning)
+            else:
+                self._alert("warning", "Skills roster not saved", warning)
+        if not first_reconciliation:
+            # Preserve the existing sign-in behavior for both new characters
+            # and reauthentication: every successful consent flow refreshes
+            # Skills instead of leaving the row stale until another click.
+            self.refresh_characters()
 
     # ----- interactive sign-in --------------------------------------------
 
     def authenticate(self) -> None:
-        """Start an interactive EVE sign-in on a worker. Returns at once.
-
-        Called from the bridge thread, and the flow launches a browser and
-        then blocks on the loopback accept loop for up to five minutes.
-        Running that here would freeze the window for the duration.
-        """
-        if not application.is_configured():
-            self._alert(
-                "warning",
-                "EVE sign-in is not configured",
-                "This build has no EVE application client id compiled "
-                "in, so it cannot ask CCP for authorisation.",
-            )
-            return
-        if not self._auth_latch.acquire(blocking=False):
-            # Non-blocking on purpose: two authorisations would fight over
-            # the same fixed loopback port, and the redirect URI is
-            # registered with CCP so there is no second port to fall back
-            # to.
-            self._alert(
-                "warning",
-                "Sign-in already in progress",
-                "Finish or cancel the EVE sign-in already running.",
-            )
-            return
-        with self._lock:
-            self._auth_in_progress = True
-        self._push_state(force=True)
-        try:
-            self._spawn(target=self._auth_worker, daemon=True).start()
-        except Exception:
-            # _auth_worker's own finally is what normally releases the latch
-            # and clears the in-progress flag, but it never runs if starting
-            # the thread itself raises -- that window has to be closed here,
-            # or sign-in is dead until restart.
-            logger.exception("Could not start the EVE sign-in worker")
-            with self._lock:
-                self._auth_in_progress = False
-            self._auth_latch.release()
-            self._push_state(force=True)
-            self._alert(
-                "warning", "Sign-in failed", "Could not start the EVE sign-in worker."
-            )
-
-    def _auth_worker(self) -> None:
-        added = False
-        try:
-            added = self._run_auth()
-        except loopback_mod.CallbackCancelled:
-            # The user pressed Cancel sign-in. Not an error, and alerting
-            # on it would make the cancel button feel like a failure.
-            logger.info("EVE sign-in cancelled")
-        except loopback_mod.CallbackTimeout:
-            self._alert(
-                "warning",
-                "Sign-in timed out",
-                "No response from EVE SSO within five minutes.",
-            )
-        except sso_mod.OAuthError as exc:
-            self._alert("warning", "EVE refused the sign-in", str(exc))
-        except jwt_mod.JwtError as exc:
-            # A token that does not validate is never accepted as a
-            # fallback: the whole point of validation is that a failure
-            # rejects rather than degrades.
-            self._alert("warning", "EVE returned a token we cannot trust", str(exc))
-        except Exception as exc:
-            logger.exception("EVE sign-in failed")
-            self._alert("warning", "Sign-in failed", str(exc))
-        finally:
-            with self._lock:
-                self._auth_in_progress = False
-                self._listener = None
-            self._auth_latch.release()
-            self._push_state(force=True)
-        if added:
-            # A newly authorised character is Unscored until its first
-            # refresh lands, so a successful sign-in that stopped here
-            # would look like it did nothing.
-            self.refresh_characters()
-
-    def _run_auth(self) -> bool:
-        sso = self._sso_module()
-        pkce = sso.generate_pkce()
-        factory = (
-            self._listener_factory
-            if self._listener_factory is not None
-            else loopback_mod.LoopbackListener
-        )
-        # Snapshotted before the browser opens, not at commit time: the
-        # up-to-five-minute consent window is long enough for the user to
-        # forget this very character from the roster page while it is open.
-        # TriffSkillsAuthentication.cs:38,45-48 takes the same snapshot for
-        # the same reason and refuses to commit an id that vanished from it.
-        with self._lock:
-            known_ids = frozenset(c.character_id for c in self._state.characters)
-        with factory(
-            host=application.REDIRECT_HOST,
-            port=application.REDIRECT_PORT,
-            path=application.REDIRECT_PATH,
-        ) as listener:
-            with self._lock:
-                self._listener = listener
-            # The browser launches only AFTER the bind. The reverse order
-            # is a race: the redirect can arrive before anything is
-            # listening, and the user then sees a connection-refused page
-            # while Wingman waits five minutes for a callback that already
-            # happened.
-            self._launch_browser(sso.authorize_url(pkce))
-            callback = listener.wait(pkce.state)
-
-        if callback.error:
-            self._alert("warning", "EVE refused the sign-in", callback.error)
-            return False
-
-        token_set = sso.exchange_code(callback.code, pkce.verifier)
-        validate = (
-            self._validate_token
-            if self._validate_token is not None
-            else jwt_mod.validate
-        )
-        identity = validate(
-            token_set.access_token,
-            client_id=application.CLIENT_ID,
-            required_scopes=application.SCOPES,
-            key_source=self._keys(),
-        )
-        return self._upsert_identity(identity, token_set, known_ids)
-
-    def _upsert_identity(self, identity, token_set, known_ids=frozenset()) -> bool:
-        blob = tokens.wrap(token_set.refresh_token)
-        now = self._now()
-        full = False
-        forgotten_mid_auth = False
-        saved = True
-        with self._lock:
-            existing = self._state.find(identity.character_id)
-            if existing is None and identity.character_id in known_ids:
-                # The character was on the roster when the browser opened
-                # and is gone now: forgotten while the consent screen was
-                # up. Committing here would silently resurrect it, exactly
-                # what the user asked not to happen.
-                forgotten_mid_auth = True
-            else:
-                # existing.owner_hash's comparisons never fire for a brand
-                # new character (existing is None), so the aliasing below
-                # only ever mutates a row this method itself owns.
-                previous = copy.deepcopy(existing) if existing is not None else None
-                ch = existing or state_mod.Character(character_id=identity.character_id)
-                # Compared only when BOTH sides carry a hash: an absent
-                # claim on either side is missing information, not evidence
-                # of a transfer, and treating it as one would wipe a good
-                # snapshot -- or, on the write below, permanently blank out
-                # a stored hash and disable every future check -- on the
-                # first re-auth after an upgrade. Mirrors _access_token's
-                # own comparison above.
-                if (
-                    existing is not None
-                    and existing.owner_hash
-                    and identity.owner_hash
-                    and existing.owner_hash != identity.owner_hash
-                ):
-                    # A different account owns this character now. Its
-                    # skills, queue and etags describe someone else's
-                    # training, and scoring a plan against them would be
-                    # confidently wrong.
-                    ch.active_levels = {}
-                    ch.trained_levels = {}
-                    ch.queue = ()
-                    ch.fetched_utc = None
-                    ch.skills_etag = ""
-                    ch.queue_etag = ""
-                    # Total SP and the five learning attributes are just as
-                    # much someone else's data as active_levels/queue above
-                    # -- character-owned estimate inputs, not public
-                    # training metadata, so they are cleared here too.
-                    # SkillIdCache is untouched: it is not character-owned.
-                    ch.skill_points = {}
-                    ch.skill_points_complete = False
-                    ch.attributes = {}
-                    ch.attributes_fetched_utc = None
-                    ch.attributes_error = ""
-                    ch.attributes_etag = ""
-                    ch.error = MSG_OWNER_CHANGED
-                else:
-                    ch.error = ""
-                ch.character_name = identity.name
-                if identity.owner_hash:
-                    # Never blanked: once written, this hash is the only
-                    # thing standing between a real transfer and a token
-                    # that happened to omit the claim (jwt.py:234-239 -- a
-                    # blank owner_hash is normal, not a signal). Overwriting
-                    # a stored hash with a blank one would disable this
-                    # check and _access_token's forever, for this character.
-                    ch.owner_hash = identity.owner_hash
-                ch.scopes = tuple(sorted(identity.scopes))
-                ch.authenticated_utc = now
-                ch.needs_reauth = False
-                ch.refresh_token_blob = blob
-                previous_token = self._access_tokens.get(ch.character_id)
-                try:
-                    # upsert() itself raises ValueError at MAX_CHARACTERS --
-                    # only for a genuinely new id; an update to an existing
-                    # row always succeeds regardless of how full the roster
-                    # is, since it does not grow it.
-                    self._state.upsert(ch)
-                except ValueError:
-                    full = True
-                else:
-                    self._access_tokens[ch.character_id] = (
-                        token_set.access_token,
-                        now + timedelta(seconds=max(0, int(token_set.expires_in))),
-                    )
-                    saved = self._save_locked()
-                    if not saved:
-                        # ch may be the SAME object as the live roster
-                        # entry (existing is ch when the character was
-                        # already present), so its fields were mutated in
-                        # place the moment they were set above, save or no
-                        # save. A failed save is rolled back by restoring
-                        # the pre-mutation snapshot -- or, for a brand new
-                        # sign-in, by removing the row this call itself
-                        # added -- rather than leaving memory and disk
-                        # diverged. Unlike _commit_success's periodic
-                        # refresh, a sign-in is a one-time event with no
-                        # later pass to self-heal it, and the divergence
-                        # here is worse: memory would hold a refresh token
-                        # EVE has already rotated away.
-                        if previous is not None:
-                            self._state.upsert(previous)
-                        else:
-                            self._state.remove(ch.character_id)
-                        if previous_token is not None:
-                            self._access_tokens[ch.character_id] = previous_token
-                        else:
-                            self._access_tokens.pop(ch.character_id, None)
-        if forgotten_mid_auth:
-            self._alert(
-                "warning",
-                "Sign-in not completed",
-                "The character was forgotten while reauthorization was in progress.",
-            )
-            return False
-        if full:
-            # Alerted outside the lock: _alert reaches pywebview, and a slow
-            # page must not hold the state lock.
-            self._alert(
-                "warning",
-                "Too many characters",
-                f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
-                "characters. Forget one before adding another.",
-            )
-            return False
-        if not saved:
-            self._alert(
-                "warning",
-                "Could not save the sign-in",
-                "The sign-in was not saved and has been reverted.",
-            )
-            return False
-        return True
+        """Compatibility delegate; the bridge calls authority directly."""
+        self._authority.authenticate_skills()
 
     def cancel_auth(self) -> None:
-        """Unblock the listener. Safe when no sign-in is running."""
-        with self._lock:
-            listener = self._listener
-        if listener is None:
-            return
-        try:
-            listener.cancel()
-        except Exception:
-            logger.exception("Could not cancel the EVE sign-in listener")
+        """Compatibility delegate; the bridge calls authority directly."""
+        self._authority.cancel_auth()
 
     # ----- detail -----------------------------------------------------
 
@@ -2099,16 +1727,8 @@ class SkillsController:
     # ----- shutdown -----------------------------------------------------
 
     def shutdown(self) -> None:
-        """Stop cleanly on the way out. NEVER raises.
-
-        Runs on every exit path from main(), after the window has gone, so
-        like shutdown_engine() it must not be the thing that raises. The
-        listener is what matters: a socket bound to the fixed redirect port
-        with nothing left to accept on it would make the NEXT launch's
-        sign-in fail to bind, with no fallback port to move to.
-        """
+        """Stop feature workers before shared authority is torn down."""
         self._stopping.set()
-        try:
-            self.cancel_auth()
-        except Exception:
-            logger.exception("EVE skills shutdown was not clean")
+        with self._lock:
+            self._refresh_again = False
+        self._refresh_idle.wait(timeout=SHUTDOWN_WAIT_SECONDS)
