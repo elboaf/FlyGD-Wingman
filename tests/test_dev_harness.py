@@ -275,6 +275,7 @@ def test_no_load_time_read_is_left_undoubled():
         "get_bookmarks",
         "get_preview_hotkey_state",
         "update_status",
+        "eve_characters_state",
     }
     stubbed = _stubbed()
     undoubled = sorted(reads - stubbed)
@@ -289,6 +290,22 @@ def test_update_status_methods_share_one_dev_fixture():
     assert "api.update_status = function ()" in DEV_JS
     assert "api.check_for_updates = function ()" in DEV_JS
     assert "Promise.resolve(devUpdateState())" in DEV_JS
+
+
+def test_characters_methods_share_one_dev_fixture_and_event_path():
+    assert "var DEV_CHARACTERS_FIXTURE = {" in DEV_JS
+    assert (
+        "var _devCharacters = JSON.parse(JSON.stringify(DEV_CHARACTERS_FIXTURE));"
+        in DEV_JS
+    )
+    assert "function devCharactersState()" in DEV_JS
+    assert "function devPushCharactersChanged()" in DEV_JS
+    assert "window.onEveAuthorityChanged({});" in DEV_JS
+    assert "api.eve_characters_state = function ()" in DEV_JS
+    assert "Promise.resolve(devCharactersState())" in DEV_JS
+    assert "api.eve_characters_authenticate = function ()" in DEV_JS
+    assert "api.eve_characters_cancel_auth = function ()" in DEV_JS
+    assert "api.eve_characters_forget = function (characterId)" in DEV_JS
 
 
 def test_update_action_methods_have_dev_doubles():

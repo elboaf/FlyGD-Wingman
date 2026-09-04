@@ -2228,10 +2228,72 @@ button.btn:disabled,
 }
 #characters-roster {
   display: flex; flex: 1; min-height: 0; flex-direction: column;
-  gap: 8px; overflow-y: auto; scrollbar-gutter: stable;
+  gap: 0; overflow-y: auto; scrollbar-gutter: stable;
 }
 #characters-roster:has(> #characters-empty:not([hidden])) {
   justify-content: center;
+}
+#characters-empty {
+  display: flex; flex-direction: column; gap: 6px;
+}
+#characters-empty[hidden] { display: none; }
+/* One compact table, not one card per row: the screen's job is to scan a
+   roster and act on one character, so the rows share one set of tracks and
+   the menu carries the rare destructive action outside the scan line. */
+.characters-head,
+.characters-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) max-content max-content max-content auto;
+  gap: 10px;
+  align-items: center;
+}
+.characters-head {
+  position: sticky; top: 0; z-index: 2;
+  padding: 0 10px 8px;
+  min-height: 28px;
+  font-size: var(--fs-muted); color: var(--text-dim);
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-border);
+}
+.characters-head > span:last-child,
+.characters-actions { justify-self: end; }
+.characters-row {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.characters-name { min-width: 0; }
+.characters-name-text {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+}
+.characters-name-note {
+  display: block; margin-top: 3px;
+  color: var(--warn); font-size: var(--fs-muted);
+}
+.characters-status {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 24px; padding: 0 9px;
+  border: 1px solid var(--field-border); border-radius: 999px;
+  background: var(--sunken);
+  color: var(--text-dim); font-size: var(--fs-muted);
+  white-space: nowrap;
+}
+.characters-status.authorized { color: var(--ok); }
+.characters-status.sign-in { color: var(--warn); }
+.characters-authenticated {
+  color: var(--text-faint); font-size: var(--fs-muted); white-space: nowrap;
+}
+.characters-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+.characters-menu-trigger { white-space: nowrap; }
+/* The portal lives outside the roster scroller (index.html) and reuses one
+   menu object for every row, so its hide rule belongs to the menu itself. */
+#characters-menu[hidden] { display: none; }
+#characters-menu > button.danger { color: var(--danger); }
+#characters-menu > button.danger:hover:not(:disabled) {
+  background: var(--hover);
 }
 
 /* ABOUT is the one card on this route that states facts BEFORE it offers a

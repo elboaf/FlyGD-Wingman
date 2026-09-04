@@ -176,6 +176,16 @@ def test_no_native_dialogs():
             assert call not in src, f"{path.name} calls {call}"
 
 
+def test_characters_builds_rows_without_html_interpolation():
+    """Task 8's roster rows are generated entirely from DOM APIs and text
+    properties. No HTML string assembly: a future row label can contain
+    anything EVE permits without becoming markup or breaking a menu label.
+    """
+    src = _strip_js_comments((WEB / "characters.js").read_text(encoding="utf-8"))
+    for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML"):
+        assert forbidden not in src
+
+
 def test_the_gear_carries_a_static_accessible_name_before_the_first_update_push():
     """renderUpdateBadge (app.js) sets `title`/`aria-label` from the first
     `onUpdateStatus` push, but that push is a round trip after the page
@@ -488,6 +498,15 @@ def test_every_hidden_element_can_actually_hide():
         "these carry `hidden` but their own rule sets a display, so they "
         "stay visible: " + repr(problems)
     )
+
+
+def test_characters_empty_and_menu_rules_carry_their_own_hidden_overrides():
+    """Task 7 left this deferred until the empty state gained its own
+    layout. Task 8's empty box and one fixed menu both set display and both
+    are hidden in normal operation, so both need explicit author rules.
+    """
+    assert "#characters-empty[hidden] { display: none; }" in CSS
+    assert "#characters-menu[hidden] { display: none; }" in CSS
 
 
 # ---- one accent per screen ---------------------------------------------
@@ -1136,6 +1155,17 @@ def test_the_training_states_do_not_reuse_the_outbound_link_colour():
 
 
 # ---- the control vocabulary --------------------------------------------
+
+
+def test_characters_menu_uses_the_accessible_menu_vocabulary_literally():
+    """The row trigger names a menu, the portal is a menu, and its action is
+    a menuitem. These are lexical guards because nothing in pytest renders
+    the popup to let an accessibility tree be inspected.
+    """
+    src = _strip_js_comments((WEB / "characters.js").read_text(encoding="utf-8"))
+    assert "aria-haspopup', 'menu'" in src
+    assert "menu.setAttribute('role', 'menu');" in src
+    assert "forget.setAttribute('role', 'menuitem');" in src
 
 
 def test_every_action_control_shares_one_disabled_state():

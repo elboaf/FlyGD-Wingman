@@ -1,9 +1,10 @@
-"""The Characters Settings shell, checked lexically and through app.js.
+"""The Characters Settings section, checked lexically and through app.js.
 
-Task 7 adds only the Settings shell: a gated rail item, the inert pane
-markup, the route-safe navigation helper, and the module include. The
-roster's behaviour lands later, so these tests stop at the shell and at the
-route/section event contract it depends on.
+Task 7 added only the Settings shell. Task 8 is the first live behaviour:
+fresh reads on entry, stale-reply suppression, dense roster rendering,
+authorization actions, one fixed menu, and the three forget outcomes.
+Like the rest of Wingman's web tests, these are lexical because pytest never
+renders the page.
 """
 
 import json
@@ -20,6 +21,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 APP = (WEB / "app.js").read_text(encoding="utf-8")
+JS = (WEB / "characters.js").read_text(encoding="utf-8")
 
 
 def _settings_route() -> str:
@@ -60,7 +62,9 @@ def test_characters_shell_has_the_approved_heading_and_required_ids():
         "characters-menu",
         "characters-menu-forget",
     ):
-        assert f'id="{element_id}"' in pane, f"Characters shell is missing #{element_id}"
+        assert f'id="{element_id}"' in pane, (
+            f"Characters shell is missing #{element_id}"
+        )
 
     live = re.search(r'<[^>]+id="characters-live"[^>]*>', pane)
     assert live, "Characters shell is missing the always-mounted live region"
@@ -72,9 +76,147 @@ def test_characters_shell_has_the_approved_heading_and_required_ids():
 def test_characters_module_exists_and_listens_for_section_entry():
     path = WEB / "characters.js"
     assert path.is_file(), "wingman/web/characters.js does not exist"
-    js = path.read_text(encoding="utf-8")
-    assert "document.addEventListener('wm:section'" in js
-    assert "ev.detail === 'characters'" in js
+    assert "document.addEventListener('wm:section'" in JS
+    assert "ev.detail === 'characters'" in JS
+
+
+def test_characters_module_guards_every_shell_node_it_now_uses():
+    for element_id in (
+        "section-characters",
+        "characters-count",
+        "characters-authenticate",
+        "characters-activity",
+        "characters-cancel",
+        "characters-notice",
+        "characters-live",
+        "characters-roster",
+        "characters-empty",
+        "characters-filter",
+        "characters-filter-clear",
+        "characters-menu",
+        "characters-menu-forget",
+    ):
+        assert f"WM.el('{element_id}')" in JS
+
+    assert re.search(
+        r"if \(!count\s*\|\|\s*!authenticate\s*\|\|\s*!activity\s*\|\|\s*!cancel\s*"
+        r"\|\|\s*!notice\s*\|\|\s*!live\s*\|\|\s*!roster\s*\|\|\s*!empty\s*"
+        r"\|\|\s*!filter\s*\|\|\s*!filterClear\s*\|\|\s*!menu\s*\|\|\s*!forget\)"
+        r"\s*\{\s*return;\s*\}",
+        JS,
+        re.DOTALL,
+    )
+
+
+def test_characters_re_read_on_entry_and_visible_authority_change_with_stale_guard():
+    assert "WM.send('eve_characters_state')" in JS
+    assert "requestSequence += 1" in JS
+    assert re.search(
+        r"requestSequence \+= 1;\s*var wanted = requestSequence;\s*"
+        r"WM\.send\('eve_characters_state'\)\.then\(function \(payload\) \{\s*"
+        r"if \(wanted !== requestSequence \|\| !isVisible\(\)\) return;\s*"
+        r"render\(payload\);",
+        JS,
+        re.DOTALL,
+    )
+
+    assert "document.addEventListener('wm:eve-authority'" in JS
+    assert re.search(
+        r"document\.addEventListener\('wm:eve-authority', function \(\) \{\s*"
+        r"if \(!isVisible\(\)\) return;\s*requestState\(\);\s*\}\);",
+        JS,
+        re.DOTALL,
+    )
+
+    section_listener = JS.split("document.addEventListener('wm:section'", 1)[1]
+    assert section_listener.index("enterSection();") < section_listener.index(
+        "requestState();"
+    )
+
+
+# The shared event carries only a semantic "something changed" signal
+# (Task 6 / app.js fan-out), so the Characters module must re-ask for state
+# rather than treat the payload itself as renderable data.
+def test_characters_event_path_re_reads_state_rather_than_rendering_event_payloads():
+    authority_listener = JS.split("document.addEventListener('wm:eve-authority'", 1)[1]
+    authority_listener = authority_listener.split("});", 1)[0]
+    assert "render(" not in authority_listener
+    assert "requestState();" in authority_listener
+
+
+# The filter is client state: it changes only what the page draws, so it
+# never crosses the bridge. The roster names the filtered result set for
+# assistive tech, and the clear action is a subordinate inline control.
+def test_characters_filter_and_empty_states_are_rendered_locally():
+    assert "characters.length" in JS
+    assert "roster.setAttribute('aria-label'" in JS
+    assert "filterClear.hidden = !filterText.trim();" in JS
+    assert "filter.value = '';" in JS
+    assert "filter.focus();" in JS
+    assert "No authorized characters yet." in JS
+    assert "No characters match \u201c" in JS
+    assert "The shared EVE character authority is unavailable." in JS
+
+
+# Task 6's management_state() intentionally collapsed capability state to the
+# shared vocabulary `authorized` / `sign_in`; this screen must render those
+# exact words rather than inventing a third label per feature.
+def test_characters_render_uses_shared_status_words_and_authenticated_time():
+    assert "row.skills === 'authorized'" in JS
+    assert "row.fittings === 'authorized'" in JS
+    assert "return 'Authorized';" in JS
+    assert "return 'Sign in';" in JS
+    assert "authenticated_utc" in JS
+    assert "Authenticated" in JS
+
+
+# The start/cancel calls return only {accepted, error}. A successful click is
+# NOT completion; waiting/idle state comes back from a later authority read.
+def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state():
+    assert "WM.send('eve_characters_authenticate')" in JS
+    assert "WM.send('eve_characters_cancel_auth')" in JS
+    assert "Authenticate character\u2026" in JS
+    assert "Waiting for EVE SSO\u2026" in JS
+    assert "authorization_activity = 'waiting'" not in JS
+    assert re.search(
+        r"WM\.send\('eve_characters_authenticate'\)\.then\(function \(result\) \{\s*"
+        r"if \(!result \|\| !result\.accepted\) \{",
+        JS,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"WM\.send\('eve_characters_cancel_auth'\)\.then\(function \(result\) \{\s*"
+        r"if \(!result \|\| !result\.accepted\) \{",
+        JS,
+        re.DOTALL,
+    )
+
+
+# One fixed-position menu portal, outside the scroller, means every row reuses
+# the same menu object and only the current trigger/id move.
+def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
+    assert "aria-haspopup', 'menu'" in JS
+    assert "menu.setAttribute('role', 'menu');" in JS
+    assert "forget.setAttribute('role', 'menuitem');" in JS
+    assert "aria-expanded" in JS
+    assert "ArrowDown" in JS
+    assert "ArrowUp" in JS
+    assert "Home" in JS
+    assert "End" in JS
+    assert "Escape" in JS
+    assert "document.addEventListener('mousedown'" in JS
+    assert "window.addEventListener('blur', function () { closeMenu(false); });" in JS
+    assert "menu.style.left" in JS
+    assert "menu.style.top" in JS
+    assert "rect.top - menuRect.height - 4" in JS
+    assert "window.innerWidth - menuRect.width - 6" in JS
+    assert "WM.confirm('Forget character'" in JS
+    assert "Skills and Fittings" in JS
+    assert "WM.send('eve_characters_forget', characterId)" in JS
+    assert "if (!result || !result.applied)" in JS
+    assert "if (!result.persisted)" in JS
+    assert "requestState();" in JS
+    assert ".focus();" in JS
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

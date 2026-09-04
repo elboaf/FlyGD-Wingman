@@ -294,6 +294,116 @@
     return Promise.resolve(skills);
   };
 
+  // Shared EVE character-management fixture. Deliberately independent of
+  // Skills' own route payload and Fittings' workspace payload: Task 8's
+  // Settings roster is a fresh read of eve_characters_state(), not a
+  // projection of another screen's state, and the dev harness must exercise
+  // that read rather than accidentally keeping it alive through a sibling.
+  var DEV_CHARACTERS_FIXTURE = {
+    available: true,
+    auth_configured: true,
+    authorization_activity: 'idle',
+    authorization_notice: '',
+    warnings: [],
+    characters: [
+      {
+        character_id: 7,
+        character_name: 'Full',
+        authenticated_utc: '2026-09-04T12:00:00+00:00',
+        skills: 'authorized',
+        fittings: 'authorized',
+        needs_reauth: false,
+        persistence_error: ''
+      },
+      {
+        character_id: 4,
+        character_name: 'Needs Reauth',
+        authenticated_utc: '2026-09-04T12:00:00+00:00',
+        skills: 'sign_in',
+        fittings: 'sign_in',
+        needs_reauth: true,
+        persistence_error: 'The rotated EVE token could not be saved.'
+      },
+      {
+        character_id: 2,
+        character_name: 'Skills Only',
+        authenticated_utc: '2026-09-04T12:00:00+00:00',
+        skills: 'authorized',
+        fittings: 'sign_in',
+        needs_reauth: false,
+        persistence_error: ''
+      }
+    ]
+  };
+  var _devCharacters = JSON.parse(JSON.stringify(DEV_CHARACTERS_FIXTURE));
+
+  function devCharactersState() {
+    return JSON.parse(JSON.stringify(_devCharacters));
+  }
+
+  function devPushCharactersChanged() {
+    setTimeout(function () {
+      if (window.onEveAuthorityChanged) window.onEveAuthorityChanged({});
+    }, 0);
+  }
+
+  api.eve_characters_state = function () {
+    console.log('DEV api.eve_characters_state()');
+    return Promise.resolve(devCharactersState());
+  };
+
+  api.eve_characters_authenticate = function () {
+    console.log('DEV api.eve_characters_authenticate()');
+    if (!_devCharacters.auth_configured) {
+      return Promise.resolve({
+        accepted: false,
+        error: 'This build has no EVE application id configured.'
+      });
+    }
+    if (_devCharacters.authorization_activity === 'waiting') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'An EVE sign-in is already in progress.'
+      });
+    }
+    _devCharacters.authorization_activity = 'waiting';
+    _devCharacters.authorization_notice = '';
+    devPushCharactersChanged();
+    return Promise.resolve({ accepted: true, error: '' });
+  };
+
+  api.eve_characters_cancel_auth = function () {
+    console.log('DEV api.eve_characters_cancel_auth()');
+    if (_devCharacters.authorization_activity !== 'waiting') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'The EVE sign-in is not running.'
+      });
+    }
+    _devCharacters.authorization_activity = 'idle';
+    _devCharacters.authorization_notice = '';
+    devPushCharactersChanged();
+    return Promise.resolve({ accepted: true, error: '' });
+  };
+
+  api.eve_characters_forget = function (characterId) {
+    console.log('DEV api.eve_characters_forget(', characterId, ')');
+    var before = _devCharacters.characters.length;
+    _devCharacters.characters = _devCharacters.characters.filter(function (row) {
+      return row.character_id !== characterId;
+    });
+    if (_devCharacters.characters.length === before) {
+      return Promise.resolve({
+        applied: false,
+        persisted: false,
+        error: 'That character is already gone.'
+      });
+    }
+    _devCharacters.authorization_notice = '';
+    devPushCharactersChanged();
+    return Promise.resolve({ applied: true, persisted: true, error: '' });
+  };
+
   // Task 9's fixture library: enough entries and characters to exercise
   // every state the workspace can render by hand -- unfiled/filed/
   // superseded scoping, search and ship filters, a >100-row page 2, an
