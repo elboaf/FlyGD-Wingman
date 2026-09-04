@@ -2800,6 +2800,23 @@ pytest.
 - [ ] **With both running, a press always moves you.** Press it repeatedly
   from one of the two clients. Expected: it goes to the OTHER one rather
   than re-focusing the client already in front.
+- [ ] **LOAD-BEARING: a burst of presses ends when the keys stop.** With
+  two clients running, alternate their character chords as fast as you
+  can for a couple of seconds, then STOP and hold still. Expected: at
+  most ONE more switch happens — to whichever client you pressed LAST —
+  and then the desktop is still. The bug this pins: every press used to
+  be a queued, fully-executed switch, so after a burst the clients kept
+  trading places on their own. Also check the press for the client you
+  are ALREADY on costs nothing: no minimize, no visible flicker, no
+  delay — it is a recognised no-op now.
+- [ ] **Input lands immediately after a switch.** Switch to a client
+  with a hotkey (and separately, by clicking its preview) and
+  immediately — within a fraction of a second — type a character or
+  click a UI button in the game. Expected: the input goes to that
+  client at once. The bug this pins: the switch left the client
+  foreground but focusless, and roughly the first 0.5-1s of input was
+  swallowed. Try it on a client that was MINIMIZED before the switch —
+  the async restore is the likeliest moment for a relapse.
 - [ ] **A character chord that collides with a cycle chord is still a
   clash.** Bind `Ctrl+Alt+Right` to a character while it is also Cycle
   forward. Expected: both rows go red and the tooltip says the cycle keybind
@@ -2809,6 +2826,27 @@ pytest.
 
 Nothing in the suite can open a second window, so every item here is a
 manual check by construction.
+
+- [ ] **The bar has no taskbar presence.** With the bar open, hover
+      Wingman's taskbar icon: only the main window's preview appears.
+      Expected: no second entry, no aero preview for the bar, and
+      therefore no X to close it with. (The bar now carries
+      WS_EX_TOOLWINDOW; before this it shipped a taskbar button like a
+      real window.)
+- [ ] **Toggling cannot be desynced by a repaint.** Toggle the bar off
+      from Wingman, then hover/minimise/restore windows and click
+      around the desktop. Expected: the bar stays hidden. The bug this
+      pins: the toggle wrote its state at a window object that an
+      external close had already killed, and any repaint resurrected a
+      bar the GUI believed hidden.
+- [ ] **The GUI toggle is the only way the bar changes, and it always
+      recovers.** With the bar open, toggle it off and on from
+      Settings/strip: it reappears at its last position. (Historical:
+      an externally-closed bar used to stay dead until Wingman was
+      restarted; the toggle now detects the dead window and rebuilds
+      it. The aero-preview close that triggered this no longer exists,
+      so the recovery path is exercised by toggling rapidly while the
+      bar is still initialising.)
 
 - [ ] **The bar opens, floats, and stays on top.** Click the `⌒`-style
       toggle at the right end of the status strip with the bookmark engine

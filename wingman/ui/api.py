@@ -3551,7 +3551,8 @@ class Api:
 
         The window is created on first enable and kept hidden afterwards
         (ui/sigbar.py's docstring holds the cost argument), so this only
-        ever shows or hides -- except the first time, which builds it.
+        ever shows or hides -- except the first time, and except after
+        the window was destroyed out from under us (see _sig_bar_alive).
         """
         from wingman.ui import sigbar
 
@@ -3568,13 +3569,20 @@ class Api:
                 )
                 if not self._sigbar_quitting:
                     if on:
-                        if bar is None:
-                            bar = sigbar.create(self, hidden=False)
-                        else:
-                            bar.show()
-                        shown = bar is not None
-                    elif bar is not None:
-                        bar.hide()
+                        # is_alive, not `is None`: a destroyed window
+                        # leaves the Python object behind, and a toggle
+                        # at the corpse must rebuild rather than report
+                        # success at nothing. create() builds the bar
+                        # hidden and styled; reveal_bar shows it without
+                        # activating (pywebview's show() would steal the
+                        # foreground from the client being flown).
+                        if not sigbar.is_alive(bar):
+                            bar = sigbar.create(self)
+                        if bar is not None:
+                            sigbar.reveal_bar(bar)
+                            shown = True
+                    elif sigbar.is_alive(bar):
+                        sigbar.hide_bar(bar)
         except Exception:
             # A bar that cannot appear is degraded chrome, not a failed
             # setting: the persisted choice stands and the next toggle
@@ -3592,6 +3600,20 @@ class Api:
         )
         self._push_sig_bar_state()
         return self._field_ok()
+
+    @staticmethod
+    def _sig_bar_alive(bar) -> bool:
+        """Whether the bar window can still be shown or hidden.
+
+        Retired in favour of sigbar.is_alive (IsWindow on the HWND): the
+        closed-event walk this replaced needed attribute-shape guesses
+        over test fakes, while a handle check is one syscall and covers
+        every teardown route. Kept as a thin delegate so the existing
+        log-line helper and any page-side callers keep their name.
+        """
+        from wingman.ui import sigbar
+
+        return sigbar.is_alive(bar)
 
     def _sig_bar_visible(self):
         """Best-effort visibility readback, for the toggle log line only."""
@@ -3628,8 +3650,20 @@ class Api:
         bar at its broken birth size for the session. The caller is a
         per-call bridge thread, so parking here costs nothing else.
         """
+        from wingman.ui import sigbar
+
         bar = self._sigbar_window
         if bar is None:
+            return
+        # NEVER resize a hidden bar: pywebview's resize is a raw
+        # SetWindowPos carrying SWP_SHOWWINDOW, so a fit against a hidden
+        # window SHOWS it. The page renders on every push -- including the
+        # 3s poll aimed at a bar the user toggled off -- and each render
+        # re-fits, which is how a toggled-off bar kept reappearing on the
+        # next poll with the GUI still reporting it off. The reveal path
+        # pushes status the moment it shows the bar, so the first fit a
+        # visible bar receives is only ever one tick away.
+        if not sigbar.is_visible(bar):
             return
         try:
             width, height = int(width), int(height)

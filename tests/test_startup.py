@@ -292,7 +292,7 @@ def test_create_finishing_after_shutdown_starts_is_seen_and_destroyed(
         api = startup.captured["api"]
         api._state.settings["sig_bar"] = {"enabled": True, "x": 1, "y": 2}
         api._sigbar_lifecycle_lock = ObservedLock()
-        creator = threading.Thread(target=lambda: sigbar.create(api, hidden=True))
+        creator = threading.Thread(target=lambda: sigbar.create(api))
         creator.start()
         assert create_entered.wait(timeout=2)
 
