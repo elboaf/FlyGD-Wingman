@@ -3935,7 +3935,7 @@ class Api:
                 self._fleet_pending_seen = self._fleet_unique_names(
                     [*self._fleet_pending_seen, *signature]
                 )
-                current = list(signature)
+                current = sorted(signature, key=lambda name: (name.casefold(), name))
                 pending = list(self._fleet_pending_seen)
         if roster_changed:
             self._remember_fleet_roster(current, pending)
@@ -4022,13 +4022,13 @@ class Api:
                 self._fleet_expected_generation,
                 self._fleet_snapshot,
                 self._fleet_roster_signature,
-                self._fleet_pending_seen,
                 self._fleet_presentation_revision,
             )
             self._fleet_expected_generation = None
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
-            self._fleet_pending_seen = []
+            # Pending names survive activation boundaries until their roster
+            # write succeeds; only the accepted snapshot/signature is stale.
             self._next_fleet_revision_locked()
         return accepted
 
@@ -4039,7 +4039,6 @@ class Api:
                 self._fleet_expected_generation,
                 self._fleet_snapshot,
                 self._fleet_roster_signature,
-                self._fleet_pending_seen,
                 _revision,
             ) = accepted
             # Closing may already have been observed by a page. Restoring a
@@ -4053,19 +4052,27 @@ class Api:
             self._fleet_expected_generation = generation
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
-            self._fleet_pending_seen = []
             self._next_fleet_revision_locked()
+
+    def _requested_fleet_generation(self) -> int | None:
+        """Read the coordinator reservation without letting recovery re-close Fleet."""
+        if self._telemetry is None:
+            return None
+        try:
+            return self._telemetry.requested_fleet_generation()
+        except Exception:
+            logger.exception("Could not read requested Fleet telemetry generation")
+            return None
 
     def _reconcile_fleet_generation(self, *, transition: bool) -> int | None:
         """Reconcile Fleet without allowing a retired callback through the handoff."""
-        if self._telemetry is None:
-            return None
         if transition:
             # Startup enters through here too. A caller that must persist a
             # transition closes first so it can restore this acceptance on a
             # write failure; this second close keeps direct callers safe.
             self._close_fleet_presentation()
         failed = False
+        generation = None
         try:
             generation = self._reconcile_eve_runtime()
         except Exception:
@@ -4074,9 +4081,16 @@ class Api:
             # WAITING instead of reviving an older accepted snapshot.
             failed = True
             logger.exception("Fleet telemetry reconciliation failed")
-            generation = self._telemetry.requested_fleet_generation()
-        self._install_fleet_generation(generation)
-        if not failed and self.fleet_bar_settings().get("enabled"):
+        finally:
+            if generation is None:
+                generation = self._requested_fleet_generation()
+            # No failure path may leave the rejecting sentinel installed.
+            self._install_fleet_generation(generation)
+        if (
+            not failed
+            and self._telemetry is not None
+            and self.fleet_bar_settings().get("enabled")
+        ):
             self._receive_fleet_snapshot(self._telemetry.snapshot())
         return generation
 
@@ -4140,11 +4154,22 @@ class Api:
                 # ordinary toggle: callbacks during persistence must not
                 # repaint this just-failed activation with old rows.
                 self._close_fleet_presentation()
-                settings_mod.update_section(
-                    self._state.settings, "fleet_bar", {"enabled": False}
-                )
-                self._reconcile_fleet_generation(transition=False)
-                self._push_fleet_bar_state()
+                try:
+                    settings_mod.update_section(
+                        self._state.settings, "fleet_bar", {"enabled": False}
+                    )
+                except OSError:
+                    # update() restores the live section to enabled=True, so
+                    # below must reopen the existing requested generation.
+                    logger.exception(
+                        "Could not roll back the Fleet Bar setting after window creation failed"
+                    )
+                finally:
+                    # Reconcile whichever setting is now authoritative. This
+                    # is deliberately in finally: a second save failure used
+                    # to strand callbacks behind _close_fleet_presentation().
+                    self._reconcile_fleet_generation(transition=False)
+                    self._push_fleet_bar_state()
                 return self._field_refused("The Fleet Bar could not be opened.")
         self._push_fleet_bar_state()
         return self._field_ok()

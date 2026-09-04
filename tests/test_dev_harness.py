@@ -316,6 +316,18 @@ def test_dev_fleet_hidden_limit_scenario_is_reachable_and_pushes_state():
     assert "window.onFleetBarState(fleetBarState())" in body
 
 
+def test_disabled_fleet_dev_state_marks_characters_unknown():
+    """Turning the dev Fleet bar off must exercise the Known grouping."""
+    start = DEV_JS.index("function fleetBarState()")
+    state = DEV_JS[start : DEV_JS.index("\n  }\n", start)]
+
+    assert re.search(
+        r"running:\s*fleetBar\.enabled\s*\?\s*"
+        r"fleetBar\.running\.indexOf\(name\)\s*!==\s*-1\s*:\s*null",
+        state,
+    )
+
+
 def test_dev_update_permissions_match_the_production_state_matrix():
     match = re.search(
         r"var DEV_UPDATE_PERMISSIONS = JSON\.parse\('(.*?)'\);",

@@ -2,6 +2,7 @@
 
 import inspect
 import json
+import re
 import sys
 import threading
 from pathlib import Path
@@ -191,6 +192,32 @@ def test_persisted_enabled_startup_installs_generation_before_latest_snapshot(ap
     assert api._fleet_snapshot is latest
 
 
+def test_enabled_fleet_keeps_remembered_names_known_before_first_roster(api, tmp_path):
+    """The coordinator must not turn an activation's synthetic empty into Offline."""
+    from tests.test_telemetry_coordinator import _harness, _roster
+
+    harness = _harness(tmp_path, fleet=True)
+    telemetry = harness.coordinator
+    api._telemetry = telemetry
+    api._state.settings["fleet_bar"].update(enabled=True, seen=["Alice"])
+    telemetry.subscribe_fleet(api._receive_fleet_snapshot)
+
+    api.start_previews_if_enabled()
+    telemetry.dispatch_once(0)
+
+    assert api._fleet_snapshot is None
+    assert api.fleet_bar_settings()["characters"] == [
+        {"name": "Alice", "running": None, "visible": True}
+    ]
+
+    harness.discovery.publish(_roster())
+    harness.pump()
+
+    assert api.fleet_bar_settings()["characters"] == [
+        {"name": "Alice", "running": False, "visible": True}
+    ]
+
+
 def test_unexpected_reconcile_error_uses_requested_generation(api):
     """After a persisted enable, infrastructure failure leaves Fleet waiting."""
     api._telemetry.generation = 2
@@ -326,6 +353,65 @@ def test_failed_first_show_rolls_back_enabled_state(tmp_path, monkeypatch):
     assert accepted_during_rollback == [None]
 
 
+def test_creation_failure_with_failed_rollback_reopens_current_generation(
+    api, monkeypatch
+):
+    """A failed rollback cannot strand subscribers behind the rejecting sentinel."""
+    from wingman.ui import api as api_mod
+    from wingman.ui import fleetbar
+
+    api._fleetbar_window = None
+    original_save = api_mod.settings_mod._save_locked
+    saves = 0
+
+    def fail_only_rollback(*args, **kwargs):
+        nonlocal saves
+        saves += 1
+        if saves == 2:
+            raise OSError("disk full")
+        return original_save(*args, **kwargs)
+
+    def reconcile():
+        api._telemetry.reconciled += 1
+        if api._state.settings["fleet_bar"]["enabled"]:
+            api._telemetry.generation = max(api._telemetry.generation, 1)
+        return api._telemetry.generation
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", fail_only_rollback)
+    monkeypatch.setattr(
+        fleetbar,
+        "create",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broken")),
+    )
+    api._telemetry.reconcile = reconcile
+
+    result = api.toggle_fleet_bar(True)
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "The Fleet Bar could not be opened.",
+    }
+    assert saves == 2
+    assert api._state.settings["fleet_bar"]["enabled"] is True
+    assert api._fleet_expected_generation == api._telemetry.requested_fleet_generation()
+    assert api._fleet_snapshot is None
+    state_push = [
+        script for script in api._window.evaluated if "onFleetBarState" in script
+    ][-1]
+    state = json.loads(state_push.split("window.onFleetBarState(", 1)[1][:-1])
+    assert state["enabled"] is True
+
+    current = FleetSnapshot(
+        rows=(FleetRow("Alice", 10),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=api._fleet_expected_generation,
+    )
+    api._receive_fleet_snapshot(current)
+
+    assert api._fleet_snapshot is current
+
+
 def test_reenable_does_not_flash_previous_generation_rows(api):
     api._fleet_expected_generation = 1
     api._telemetry.generation = 1
@@ -420,6 +506,48 @@ def test_fleet_page_source_rejects_stale_revision_and_all_hidden_copy():
     assert "Waiting for EVE clients" in html
 
 
+def test_fleet_page_rejects_invalid_hydration_without_erasing_newer_state():
+    """No DOM harness exists, so pin the guard before any DOM mutation."""
+    from wingman.ui import window as window_mod
+
+    js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
+    render = js[
+        js.index("function render(payload)") : js.index("window.onFleetSnapshot")
+    ]
+    invalid_revision = re.search(
+        r"if\s*\(\s*typeof revision !== 'number'\s*\|\|\s*"
+        r"!isFinite\(revision\)\s*\|\|\s*revision < 0\s*\|\|\s*"
+        r"Math\.floor\(revision\) !== revision\s*\)\s*\{\s*"
+        r"return Promise\.resolve\(null\);\s*\}",
+        render,
+    )
+
+    assert invalid_revision is not None
+    assert invalid_revision.start() < render.index("var rows")
+    hydration = js[js.index("Promise.all([send('fleet_bar_snapshot')") :]
+    assert "render(values[0] || {})" not in hydration
+    assert "if (!values[0]) return null;" in hydration
+    assert "return render(values[0]);" in hydration
+
+
+def test_fleet_page_changes_empty_live_text_only_for_a_new_message():
+    """Repeated cadence renders must not reannounce the same role=status copy."""
+    from wingman.ui import window as window_mod
+
+    js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
+    render = js[
+        js.index("function render(payload)") : js.index("window.onFleetSnapshot")
+    ]
+
+    assert "var emptyText = runningCount > 0" in render
+    assert re.search(
+        r"if\s*\(empty\.textContent !== emptyText\)\s*\{\s*"
+        r"empty\.textContent = emptyText;\s*\}",
+        render,
+    )
+    assert render.count("empty.textContent =") == 1
+
+
 def test_fleet_settings_groups_running_offline_and_hidden(api):
     api._state.settings["fleet_bar"].update(
         seen=["Bravo", "Alice", "Offline"], hidden=["Bravo"]
@@ -468,6 +596,31 @@ def test_fleet_roster_persists_current_pending_then_prior_without_duplicates(api
         "Persisted",
     ]
     assert api._fleet_pending_seen == []
+
+
+def test_fleet_roster_sorts_current_tier_before_pending_and_persisted_names(api):
+    """Current characters have a deterministic case-insensitive recency tier."""
+    api._state.settings["fleet_bar"]["seen"] = ["Persisted"]
+    api._fleet_expected_generation = 1
+
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(
+                FleetRow("bravo", 1),
+                FleetRow("alice", 1),
+                FleetRow("Alice", 1),
+            ),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    assert api._state.settings["fleet_bar"]["seen"] == [
+        "Alice",
+        "alice",
+        "bravo",
+        "Persisted",
+    ]
 
 
 def test_failed_roster_memory_write_keeps_pending_until_next_roster_transition(
@@ -519,6 +672,42 @@ def test_failed_roster_memory_write_keeps_pending_until_next_roster_transition(
         "Persisted",
     ]
     assert api._fleet_pending_seen == []
+
+
+def test_failed_roster_memory_stays_known_through_off_on_before_next_roster(
+    api, monkeypatch
+):
+    """A failed seen write remains configurable if Fleet goes quiet before retry."""
+    from wingman.ui import api as api_mod
+
+    api._state.settings["fleet_bar"].update(enabled=True, seen=["Persisted"])
+    api._fleet_expected_generation = 1
+    original_save = api_mod.settings_mod._save_locked
+
+    monkeypatch.setattr(
+        api_mod.settings_mod,
+        "_save_locked",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 1),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+    assert api._fleet_pending_seen == ["Alice"]
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", original_save)
+    api.toggle_fleet_bar(False)
+    api.toggle_fleet_bar(True)
+
+    assert api._fleet_snapshot is None
+    assert api._fleet_pending_seen == ["Alice"]
+    assert api.fleet_bar_settings()["characters"] == [
+        {"name": "Alice", "running": None, "visible": True},
+        {"name": "Persisted", "running": None, "visible": True},
+    ]
 
 
 def test_metric_only_snapshot_does_not_push_main_fleet_state(api):

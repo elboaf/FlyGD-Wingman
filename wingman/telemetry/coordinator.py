@@ -214,6 +214,9 @@ class TelemetryCoordinator:
         self._sessions: dict[str, object] = {}
         self._fleet_active = False
         self._fleet_roster_generation: int | None = None
+        # No current-generation publication is truthful until a complete
+        # discovery roster has reached Fleet Metrics for this activation.
+        self._fleet_has_complete_roster = False
         self._fleet_active_generation = 0
 
         self._lock = threading.Lock()
@@ -325,34 +328,36 @@ class TelemetryCoordinator:
             want_stream = fleet_enabled or (preview_enabled and alerts_enabled)
             folder = self._resolved_folder() if want_stream else None
             fleet_generation = self._request_fleet_mode(fleet_enabled)
+            needs_dispatcher = want_discovery or folder is not None
 
             # Producers must never run without the sole consumer of their
             # queue. A retained timed-out dispatcher can refuse a restart;
-            # leave producers stopped and retry next reconcile.
-            self._dispatcher_finalized_dead = False
-            started = self._start_dispatcher()
-            if fleet_enabled and self._dispatcher_finalized_dead:
-                with self._lock:
-                    needs_restore = not self._fleet_requested
+            # leave producers stopped and retry next reconcile. Do not create
+            # one just to observe the all-off Fleet generation reservation.
+            if needs_dispatcher:
+                self._dispatcher_finalized_dead = False
+                started = self._start_dispatcher()
+                if fleet_enabled and self._dispatcher_finalized_dead:
+                    with self._lock:
+                        needs_restore = not self._fleet_requested
+                        if needs_restore:
+                            self._fleet_requested = True
                     if needs_restore:
-                        self._fleet_requested = True
-                if needs_restore:
-                    # A dead dispatcher can drain the queued activation while
-                    # finalizing; restore the same generation so this reconcile
-                    # still publishes the reservation it already handed out.
-                    self._queue.put(_FleetMode(fleet_enabled, fleet_generation))
-            if not started:
-                return fleet_generation
+                        # A dead dispatcher can drain the queued activation while
+                        # finalizing; restore the same generation so this reconcile
+                        # still publishes the reservation it already handed out.
+                        self._queue.put(_FleetMode(fleet_enabled, fleet_generation))
+                if not started:
+                    return fleet_generation
 
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)
             self._request_alert_mode(preview_enabled and alerts_enabled)
 
-            if not want_discovery and folder is None:
-                # Nothing left to serialize.  Stopping the dispatcher here
-                # is what makes "the last consumer detaching" release the
-                # thread too, rather than leaving one publishing empty
-                # snapshots at one hertz for the rest of the session.
+            if not needs_dispatcher:
+                # Nothing left to serialize. Stopping an existing dispatcher
+                # here releases the last consumer without creating one on an
+                # all-off startup solely to stop it again.
                 self._stop_dispatcher()
             return fleet_generation
 
@@ -622,6 +627,7 @@ class TelemetryCoordinator:
         self._fleet_active = False
         self._fleet_active_generation = 0
         self._fleet_roster_generation = None
+        self._fleet_has_complete_roster = False
         self._metrics.reset()
         with self._lock:
             self._fleet_requested = False
@@ -738,12 +744,17 @@ class TelemetryCoordinator:
             # callback for that same completed scan may already be queued;
             # consume one roster generation only once or every enable race
             # looks like a second session publication to Fleet Metrics.
-            is_new_fleet_roster = self._fleet_active and (
-                self._fleet_roster_generation is None
-                or payload.generation > self._fleet_roster_generation
+            is_new_fleet_roster = (
+                self._fleet_active
+                and payload.generation != 0
+                and (
+                    self._fleet_roster_generation is None
+                    or payload.generation > self._fleet_roster_generation
+                )
             )
             if is_new_fleet_roster and self._consume_metrics(envelope):
                 self._fleet_roster_generation = payload.generation
+                self._fleet_has_complete_roster = True
                 self._republish_sources(payload)
             return
 
@@ -794,6 +805,7 @@ class TelemetryCoordinator:
         self._metrics.reset()
         self._sessions = {}
         self._fleet_roster_generation = None
+        self._fleet_has_complete_roster = False
         with self._lock:
             self._latest = None
         if not prime:
@@ -809,6 +821,7 @@ class TelemetryCoordinator:
         envelope = TelemetryEnvelope(sequence=self._sequence, payload=snapshot)
         if self._consume_metrics(envelope):
             self._fleet_roster_generation = snapshot.generation
+            self._fleet_has_complete_roster = True
             self._republish_sources(snapshot)
 
     def _apply_preview(self, snapshot: RosterSnapshot) -> None:
@@ -874,7 +887,7 @@ class TelemetryCoordinator:
         Fleet Metrics has already consumed this batch: the snapshot a
         subscriber sees is never behind the envelopes that produced it.
         """
-        if not self._fleet_active:
+        if not self._fleet_active or not self._fleet_has_complete_roster:
             return
         health = self._health()
         try:

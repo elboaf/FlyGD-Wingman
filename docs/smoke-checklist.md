@@ -2916,7 +2916,7 @@ independent of both preview thumbnails and alert preferences.
       Expected: every logged-in character appears exactly once in alphabetical
       order, including the preview-excluded one; the character-select client has
       no row until its title identifies a character.
-- [ ] **Characters groups known names truthfully.** In Settings › Previews ›
+- [ ] **Character grouping is truthful.** In Settings › Previews ›
       Fleet combat bar, open **Characters** after Wingman has seen several
       characters. With Fleet Bar on, running names are under `Running` and
       remembered logged-out names are under `Offline`; no name appears twice.

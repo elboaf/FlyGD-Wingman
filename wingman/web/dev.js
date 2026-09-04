@@ -42,7 +42,8 @@
       characters: fleetBar.seen.map(function (name) {
         return {
           name: name,
-          running: fleetBar.running.indexOf(name) !== -1,
+          running: fleetBar.enabled
+            ? fleetBar.running.indexOf(name) !== -1 : null,
           visible: fleetBar.hidden.indexOf(name) === -1
         };
       })

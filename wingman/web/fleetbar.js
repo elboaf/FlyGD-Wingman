@@ -65,11 +65,15 @@
 
   function render(payload) {
     payload = payload || {};
-    var revision = Number(payload.revision);
-    if (isFinite(revision) && revision < lastRevision) {
+    var revision = payload.revision;
+    if (typeof revision !== 'number' || !isFinite(revision) || revision < 0 ||
+        Math.floor(revision) !== revision) {
       return Promise.resolve(null);
     }
-    if (isFinite(revision)) lastRevision = revision;
+    if (revision < lastRevision) {
+      return Promise.resolve(null);
+    }
+    lastRevision = revision;
     var rows = Array.isArray(payload.rows) ? payload.rows : [];
     var runningCount = Number(payload.running_count) || 0;
     var health = payload.stream_health || { state: 'stopped', detail: null };
@@ -97,9 +101,12 @@
     });
 
     empty.hidden = rows.length !== 0;
-    empty.textContent = runningCount > 0
+    var emptyText = runningCount > 0
       ? 'All running characters are hidden.'
       : 'Waiting for EVE clients\u2026';
+    if (empty.textContent !== emptyText) {
+      empty.textContent = emptyText;
+    }
     healthNode.textContent = healthLabel(health);
     healthNode.classList.toggle('warn', health.state === 'stale' ||
       health.state === 'missing_folder');
@@ -122,7 +129,8 @@
   var fontsReady = (document.fonts && document.fonts.ready)
     ? document.fonts.ready : Promise.resolve();
   Promise.all([send('fleet_bar_snapshot'), fontsReady]).then(function (values) {
-    return render(values[0] || {});
+    if (!values[0]) return null;
+    return render(values[0]);
   }).then(function () {
     return send('fleet_bar_ready');
   });
