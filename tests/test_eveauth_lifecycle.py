@@ -315,6 +315,7 @@ def test_participant_cleanup_follows_persisted_authority_removal(tmp_path):
     authority, _, _, _ = build(tmp_path, saver=recording_save)
     participant = Participant(order=order)
     authority.register_participant(application.SKILLS, participant)
+    authority.register_participant(application.FITTINGS, Participant())
 
     result = authority.forget(42)
 
@@ -341,17 +342,36 @@ def test_forget_reports_partial_cleanup_when_a_participant_cannot_save(tmp_path)
     assert partial.removed == complete.removed == [42]
 
 
+def test_forget_reports_partial_cleanup_when_a_required_slot_is_absent(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+    authority.register_participant(application.SKILLS, Participant())
+
+    result = authority.forget(42)
+
+    assert result == MutationResult(True, False, "Fittings cleanup is unavailable.")
+    assert authority.character(42) is None
+    assert authority._cleanup_verification[application.FITTINGS] == CleanupVerification(
+        False,
+        frozenset({42}),
+        "Fittings cleanup is unavailable.",
+    )
+
+
 def test_forget_retries_cleanup_when_authority_was_already_removed(tmp_path):
     authority, _, _, _ = build(tmp_path)
     participant = Participant()
+    other = Participant()
     authority.register_participant(application.SKILLS, participant)
+    authority.register_participant(application.FITTINGS, other)
     authority.forget(42)
     participant.removed.clear()
+    other.removed.clear()
 
     result = authority.forget(42)
 
     assert result == MutationResult(True, True, "")
     assert participant.removed == [42]
+    assert other.removed == [42]
 
 
 def test_participant_hooks_run_lifecycle_then_feature_without_authority_lock(tmp_path):
@@ -409,6 +429,27 @@ def test_register_participant_turns_reconcile_exceptions_into_unverified_cleanup
     assert authority._verify_unknown_character(77) == MutationResult(
         False,
         False,
+        "Skills cleanup is unavailable.",
+    )
+
+
+def test_cleanup_exception_preserves_prior_blocked_ids(tmp_path):
+    authority, _, _, _ = build(tmp_path)
+    authority.register_participant(
+        application.SKILLS,
+        Participant(
+            verification=CleanupVerification(True, frozenset({7})),
+            cleanup=OSError("disk"),
+        ),
+    )
+    authority.register_participant(application.FITTINGS, Participant())
+
+    result = authority.forget(42)
+
+    assert result == MutationResult(True, False, "Skills cleanup is unavailable.")
+    assert authority._cleanup_verification[application.SKILLS] == CleanupVerification(
+        False,
+        frozenset({7, 42}),
         "Skills cleanup is unavailable.",
     )
 

@@ -463,6 +463,7 @@ class AuthorityController:
         gate = self._lifecycle_gate(wanted)
         with gate:
             participants = self._participant_slots_snapshot()
+            participants_by_capability = dict(participants)
             refusals = []
             for _capability, participant in participants:
                 try:
@@ -514,12 +515,7 @@ class AuthorityController:
                     result = participant.authority_removed(wanted)
                 except Exception:
                     logger.warning("EVE participant cleanup failed", exc_info=True)
-                    verification = self._cleanup_unavailable(capability)
-                    verification = CleanupVerification(
-                        False,
-                        frozenset({*verification.blocked_character_ids, wanted}),
-                        verification.error,
-                    )
+                    verification = self._blocked_unavailable_cleanup(capability, wanted)
                     self._store_cleanup_verification(capability, verification)
                     cleanup_errors.append(verification.error)
                     continue
@@ -535,6 +531,12 @@ class AuthorityController:
                     cleanup_errors.append(
                         result.error or "A feature cleanup is incomplete."
                     )
+            for capability in application.FULL_AUTH_CAPABILITIES:
+                if capability in participants_by_capability:
+                    continue
+                verification = self._blocked_unavailable_cleanup(capability, wanted)
+                self._store_cleanup_verification(capability, verification)
+                cleanup_errors.append(verification.error)
             self._changed_safely()
             if cleanup_errors:
                 return MutationResult(True, False, cleanup_errors[0])
@@ -887,6 +889,17 @@ class AuthorityController:
         return CleanupVerification(
             False,
             error=f"{capability.title()} cleanup is unavailable.",
+        )
+
+    def _blocked_unavailable_cleanup(
+        self, capability: str, character_id: int
+    ) -> CleanupVerification:
+        with self._lock:
+            previous = self._cleanup_verification[capability]
+        return CleanupVerification(
+            False,
+            frozenset({*previous.blocked_character_ids, character_id}),
+            self._cleanup_unavailable(capability).error,
         )
 
     def _store_cleanup_verification(

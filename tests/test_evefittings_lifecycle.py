@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from wingman.eveauth import application
+from wingman.eveauth import CleanupVerification, application
 from wingman.eveauth import state as authority_state_mod
 from wingman.eveauth.controller import AuthorityController, MutationResult
 from wingman.eveesi import EsiResponse, MutationResponse
@@ -568,6 +568,24 @@ def test_forget_between_copy_pairs_prevents_the_later_send(tmp_path):
         entries=(_entry("fit-1", 1, 200), _entry("fit-2", 2, 201)),
         progress=progress,
     )
+
+    class CleanSkillsParticipant:
+        def prepare_forget(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def authority_removed(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def grant_invalidated(self, character_id):
+            del character_id
+
+        def reconcile_characters(self, characters):
+            del characters
+            return CleanupVerification(True, frozenset())
+
+    authority.register_participant(application.SKILLS, CleanSkillsParticipant())
     ticket = fittings.preflight_copy(["fit-1", "fit-2"], [CHARACTER_ID])["ticket_id"]
     copy_result = []
     worker = threading.Thread(
