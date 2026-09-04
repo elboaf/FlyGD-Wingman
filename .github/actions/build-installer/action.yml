@@ -389,7 +389,7 @@ runs:
                              "fittings.js",
                              "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
           $path = Join-Path $web $asset
-          if (-not (Test-Path $path)) { throw "$asset missing from the bundled web/ data at $path" }
+          if (-not (Test-Path $path -PathType Leaf)) { throw "$asset missing from the bundled web/ data at $path" }
         }
         # The fonts fail QUIETLY where the scripts fail loudly: a missing
         # woff2 renders the page in Segoe UI instead of Inter, which looks

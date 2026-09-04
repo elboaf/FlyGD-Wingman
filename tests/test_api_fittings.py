@@ -103,6 +103,69 @@ def test_fittings_detail_answers_none_with_no_controller(tmp_path):
 # ---- fittings_refresh: fire-and-forget worker ----------------------------
 
 
+def test_fittings_refresh_uses_the_injected_worker_factory(tmp_path):
+    from tests.test_api import pushes
+
+    fittings = Mock()
+    fittings.refresh.return_value = {"ok": True}
+    constructed = []
+
+    class ImmediateWorker:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+            self._target = kwargs["target"]
+            self._args = kwargs["args"]
+
+        def start(self):
+            self._target(*self._args)
+
+    api = make_api(tmp_path, fittings=fittings, spawn=ImmediateWorker)
+
+    assert api.fittings_refresh([42]) is True
+    assert len(constructed) == 1
+    fittings.refresh.assert_called_once_with([42])
+    assert pushes(api._window) == [("onFittingsChanged", {"reason": "refresh"})]
+
+
+def test_fittings_refresh_construction_failure_clears_optimistic_state(tmp_path):
+    from tests.test_api import pushes
+
+    fittings = Mock()
+    attempts = []
+
+    def fail_spawn(**kwargs):
+        attempts.append(kwargs)
+        raise RuntimeError("cannot construct worker")
+
+    api = make_api(tmp_path, fittings=fittings, spawn=fail_spawn)
+
+    assert api.fittings_refresh([42]) is False
+    assert len(attempts) == 1
+    fittings.refresh.assert_not_called()
+    assert pushes(api._window) == [("onFittingsChanged", {"reason": "refresh"})]
+
+
+def test_fittings_refresh_start_failure_clears_optimistic_state(tmp_path):
+    from tests.test_api import pushes
+
+    fittings = Mock()
+    starts = []
+
+    class StartFailureWorker:
+        def start(self):
+            starts.append(True)
+            raise RuntimeError("cannot start worker")
+
+    api = make_api(
+        tmp_path, fittings=fittings, spawn=lambda **_kwargs: StartFailureWorker()
+    )
+
+    assert api.fittings_refresh([42]) is False
+    assert starts == [True]
+    fittings.refresh.assert_not_called()
+    assert pushes(api._window) == [("onFittingsChanged", {"reason": "refresh"})]
+
+
 def test_fittings_refresh_spawns_a_worker_and_returns_immediately(tmp_path):
     started = threading.Event()
     release = threading.Event()
@@ -297,6 +360,105 @@ def test_fittings_preflight_copy_has_a_safe_unavailable_fallback(tmp_path):
     assert result["accepted"] is False
     assert result["ticket_id"] == ""
     assert result["error"]
+
+
+def test_fittings_start_copy_uses_the_injected_worker_factory(tmp_path):
+    fittings = Mock()
+    fittings.start_copy.return_value = {
+        "status": "invalid_ticket",
+        "operation_id": "",
+        "results": [],
+        "write_count": 0,
+    }
+    constructed = []
+
+    class ImmediateWorker:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+            self._target = kwargs["target"]
+            self._args = kwargs["args"]
+
+        def start(self):
+            self._target(*self._args)
+
+    api = make_api(tmp_path, fittings=fittings, spawn=ImmediateWorker)
+
+    assert api.fittings_start_copy("ticket-1") is True
+    assert len(constructed) == 1
+    fittings.start_copy.assert_called_once_with("ticket-1")
+
+
+def test_fittings_start_copy_construction_failure_completes_optimistic_copy(tmp_path):
+    from tests.test_api import pushes
+
+    fittings = Mock()
+    attempts = []
+
+    def fail_spawn(**kwargs):
+        attempts.append(kwargs)
+        raise RuntimeError("cannot construct worker")
+
+    api = make_api(tmp_path, fittings=fittings, spawn=fail_spawn)
+
+    assert api.fittings_start_copy("ticket-1") is False
+    assert len(attempts) == 1
+    fittings.start_copy.assert_not_called()
+    assert pushes(api._window) == [
+        (
+            "onFittingsProgress",
+            {
+                "kind": "copy",
+                "phase": "complete",
+                "operation_id": "",
+                "completed": 0,
+                "total": 0,
+                "result": {
+                    "status": "failed",
+                    "operation_id": "",
+                    "results": [],
+                    "write_count": 0,
+                },
+            },
+        )
+    ]
+
+
+def test_fittings_start_copy_start_failure_completes_optimistic_copy(tmp_path):
+    from tests.test_api import pushes
+
+    fittings = Mock()
+    starts = []
+
+    class StartFailureWorker:
+        def start(self):
+            starts.append(True)
+            raise RuntimeError("cannot start worker")
+
+    api = make_api(
+        tmp_path, fittings=fittings, spawn=lambda **_kwargs: StartFailureWorker()
+    )
+
+    assert api.fittings_start_copy("ticket-1") is False
+    assert starts == [True]
+    fittings.start_copy.assert_not_called()
+    assert pushes(api._window) == [
+        (
+            "onFittingsProgress",
+            {
+                "kind": "copy",
+                "phase": "complete",
+                "operation_id": "",
+                "completed": 0,
+                "total": 0,
+                "result": {
+                    "status": "failed",
+                    "operation_id": "",
+                    "results": [],
+                    "write_count": 0,
+                },
+            },
+        )
+    ]
 
 
 def test_fittings_start_copy_runs_on_a_worker(tmp_path):

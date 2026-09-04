@@ -1043,7 +1043,9 @@ def test_nothing_hides_itself_with_an_inline_display_style():
     test was written to catch.
     """
     inline_display = re.search(
-        r"""style\s*=\s*(['"])(?:(?!\1).)*?\bdisplay\s*:""", HTML, re.IGNORECASE
+        r"""style\s*=\s*(['"])(?:(?!\1).)*?\bdisplay\s*:""",
+        _strip_html_comments(HTML),
+        re.IGNORECASE,
     )
     assert inline_display is None, (
         "an element hides with an inline display style "
@@ -1051,8 +1053,7 @@ def test_nothing_hides_itself_with_an_inline_display_style():
         "test_every_hidden_element_can_actually_hide sees it"
     )
     js_display_write = re.compile(
-        r"""\.style(?:\.display\b|\s*\[\s*['"]display['"]\s*\]|\s*\.\s*setProperty\s*\(\s*['"]display['"])""",
-        re.VERBOSE,
+        r"""\.style(?:\.display\b|\s*\[\s*['"]display['"]\s*\]|\s*\.\s*setProperty\s*\(\s*['"]display['"])"""
     )
     for path in sorted(WEB.glob("*.js")):
         if path.name == "dev.js":

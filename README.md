@@ -92,7 +92,7 @@ Fittings is additive and explicit. Wingman reads a character only after you
 press **Enable fittings** on that character's row and complete EVE's consent
 screen. It requests these two scopes for that character:
 
-```
+```text
 esi-fittings.read_fittings.v1
 esi-fittings.write_fittings.v1
 ```

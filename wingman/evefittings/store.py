@@ -47,6 +47,7 @@ MAX_ETAG_CHARS = 4096
 INTENT_STATUSES = frozenset({"in_flight", "unknown", "success", "failed"})
 
 T = TypeVar("T")
+_sleep = time.sleep
 
 
 def _iso(value: datetime | None) -> str:
@@ -1071,7 +1072,7 @@ def _read_backup_with_retry(
         # A scanner or backup tool can briefly hold a good file without
         # sharing read access on Windows. One short retry matches Skills'
         # recovery behavior without turning a persistent error into a stall.
-        time.sleep(0.05)
+        _sleep(0.05)
         return _read_document(backup)
 
 

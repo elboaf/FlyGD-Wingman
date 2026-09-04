@@ -5181,7 +5181,9 @@ button.btn.danger:disabled {
 }
 .fit-copy-alternate { flex: 1; min-width: 0; }
 .fit-copy-result.unknown { color: var(--warn); }
-.fit-copy-result.failed { color: var(--bad); }
+.fit-copy-result.unattempted_throttle { color: var(--warn); }
+.fit-copy-result.cancelled { color: var(--warn); }
+.fit-copy-result.failed { color: var(--err); }
 #fittings-copy-status { margin-top: 10px; min-height: 18px; }
 #fittings-copy-dialog .buttons > [hidden] { display: none; }
 

@@ -257,7 +257,8 @@ def test_names_arrive_after_snapshot_commit_and_emit_a_semantic_change(tmp_path)
     )
     assert persisted["entries"]
     assert all(
-        "name" not in item for item in json.loads(state_path.read_text())["entries"]
+        "name" not in item
+        for item in json.loads(state_path.read_text(encoding="utf-8"))["entries"]
     )
 
 
