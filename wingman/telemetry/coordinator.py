@@ -223,6 +223,12 @@ class TelemetryCoordinator:
         self._reconcile_lock = threading.Lock()
 
         self._lifecycle_lock = threading.Lock()
+        # Serializes the complete dequeue -> sequence -> consumer -> publish
+        # iteration. The real worker is the ordinary owner; dispatch_once()
+        # uses the same lock only when no worker is alive, for deterministic
+        # tests. Without one lock, two manual callers could stamp and deliver
+        # envelopes in a different order from Queue.get().
+        self._dispatch_lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._running = False
         self._stop_event = threading.Event()
@@ -295,10 +301,14 @@ class TelemetryCoordinator:
         the first consumer starts it exactly once and the last one stops it
         exactly once, however often this is called in between.
         """
-        want_discovery = self._wants_discovery()
-        folder = self._resolved_folder() if self._wants_stream_consumer() else None
-
         with self._reconcile_lock:
+            # Read every live setting inside the same pass lock as the state
+            # changes it decides. Reading before the lock lets stop() finish
+            # between those two phases, after which this pass could restart
+            # services from a stale pre-stop preference snapshot.
+            want_discovery = self._wants_discovery()
+            folder = self._resolved_folder() if self._wants_stream_consumer() else None
+
             if want_discovery or folder is not None:
                 self._start_dispatcher()
 
@@ -502,7 +512,8 @@ class TelemetryCoordinator:
 
     def _run(self, stop_event: threading.Event) -> None:
         while not stop_event.is_set():
-            self.dispatch_once(PUBLISH_INTERVAL_S)
+            with self._dispatch_lock:
+                self._dispatch_iteration(PUBLISH_INTERVAL_S)
 
     def stop(self, timeout: float = 5.0) -> None:
         """Detach every consumer and stop shared infrastructure.
@@ -517,12 +528,23 @@ class TelemetryCoordinator:
             self._stop_dispatcher(timeout)
 
     def dispatch_once(self, timeout: float = PUBLISH_INTERVAL_S) -> None:
-        """One dispatcher iteration: consume what is queued, then publish.
+        """Drive one iteration synchronously when no worker is alive.
 
-        Deterministic test seam.  A timeout with nothing queued still
-        publishes -- that idle path is the one-second decay cadence, and
-        it is why a DPS window empties without any new fact arriving.
+        This is a deterministic test seam, not a second dispatcher. A live
+        worker owns the queue and sequence; allowing an external caller to
+        consume beside it would make dequeue order and delivery order race.
+        Concurrent manual callers are serialized by the same lock the real
+        worker uses.
         """
+        with self._lifecycle_lock:
+            worker_alive = self._worker is not None and self._worker.is_alive()
+        if worker_alive:
+            raise RuntimeError("dispatch_once cannot run beside dispatcher worker")
+        with self._dispatch_lock:
+            self._dispatch_iteration(timeout)
+
+    def _dispatch_iteration(self, timeout: float) -> None:
+        """Consume one batch and publish; caller owns ``_dispatch_lock``."""
         try:
             item = self._queue.get(timeout=timeout)
         except queue.Empty:

@@ -12,6 +12,8 @@ and it never starts a thread either.
 
 import datetime
 import queue
+import threading
+import time
 
 import pytest
 
@@ -88,6 +90,38 @@ def _fact(character, kind, *, amount=None, source="", occurred_at=NOW, generatio
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
+
+
+class _AttemptSignallingLock:
+    """Real lock that proves one watched thread reached acquire()."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._watched = None
+        self.attempted = threading.Event()
+        self.held = False
+
+    def watch_current_thread(self):
+        self._watched = threading.get_ident()
+
+    def acquire(self, *args, **kwargs):
+        if threading.get_ident() == self._watched:
+            self.attempted.set()
+        acquired = self._lock.acquire(*args, **kwargs)
+        if acquired:
+            self.held = True
+        return acquired
+
+    def release(self):
+        self.held = False
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *_args):
+        self.release()
 
 
 class FakeDiscovery:
@@ -341,6 +375,20 @@ class TestRuntimePredicates:
 
         assert h.discovery.starts == 1
         assert len(h.stream.starts) == 1
+
+    def test_reconcile_reads_predicates_while_holding_its_pass_lock(self, tmp_path):
+        h = _harness(tmp_path, preview=False, fleet=False, alerts=False)
+        gate = _AttemptSignallingLock()
+        reads_under_lock = []
+        h.coordinator._reconcile_lock = gate
+        h.coordinator._fleet_enabled = lambda: (
+            reads_under_lock.append(gate.held) or True
+        )
+
+        h.coordinator.reconcile()
+
+        assert reads_under_lock
+        assert all(reads_under_lock)
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +816,7 @@ class TestDispatcherThread:
     def test_real_dispatcher_thread_publishes_and_joins(self, tmp_path):
         discovery = FakeDiscovery()
         stream = FakeStream()
+        metrics = FleetMetrics(_clock=lambda: 1000.0, _utc_now=lambda: NOW)
         coordinator = TelemetryCoordinator(
             preview_enabled=lambda: False,
             fleet_enabled=lambda: True,
@@ -775,20 +824,88 @@ class TestDispatcherThread:
             gamelogs_folder=lambda: tmp_path,
             discovery=discovery,
             stream=stream,
-            metrics=RecordingMetrics(),
+            metrics=metrics,
         )
         seen = queue.Queue()
         coordinator.subscribe_fleet(seen.put)
         coordinator.reconcile()
         try:
             discovery.publish(_roster(_session("Alice")))
-            snapshot = seen.get(timeout=5)
-            assert isinstance(snapshot, FleetSnapshot)
+            deadline = time.monotonic() + 5
+            snapshot = None
+            while time.monotonic() < deadline:
+                candidate = seen.get(timeout=max(0.01, deadline - time.monotonic()))
+                if candidate.rows:
+                    snapshot = candidate
+                    break
+            assert snapshot is not None
+            assert [row.character for row in snapshot.rows] == ["Alice"]
         finally:
             coordinator.stop(timeout=5)
 
         assert discovery.stops == 1
         assert stream.stops == 1
+
+    def test_manual_dispatch_is_rejected_while_worker_is_alive(self, tmp_path):
+        coordinator = TelemetryCoordinator(
+            preview_enabled=lambda: True,
+            fleet_enabled=lambda: False,
+            alerts_enabled=lambda: False,
+            gamelogs_folder=lambda: tmp_path,
+            discovery=FakeDiscovery(),
+            stream=FakeStream(),
+            metrics=RecordingMetrics(),
+        )
+        coordinator.reconcile()
+        try:
+            with pytest.raises(RuntimeError, match="dispatcher worker"):
+                coordinator.dispatch_once(0)
+        finally:
+            coordinator.stop(timeout=5)
+
+    def test_manual_dispatch_calls_have_one_owner(self, tmp_path):
+        class BlockingMetrics(RecordingMetrics):
+            def __init__(self):
+                super().__init__()
+                self.entered = threading.Event()
+                self.release = threading.Event()
+
+            def consume(self, envelope):
+                super().consume(envelope)
+                if not self.entered.is_set():
+                    self.entered.set()
+                    assert self.release.wait(5)
+
+        metrics = BlockingMetrics()
+        h = _harness(tmp_path, fleet=True, metrics=metrics)
+        gate = _AttemptSignallingLock()
+        h.coordinator._dispatch_lock = gate
+        h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+
+        first = threading.Thread(target=lambda: h.coordinator.dispatch_once(0))
+        first.start()
+        assert metrics.entered.wait(5)
+
+        h.stream.publish(_lifecycle("Alice"))
+        second_done = threading.Event()
+
+        def second_dispatch():
+            gate.watch_current_thread()
+            h.coordinator.dispatch_once(0)
+            second_done.set()
+
+        second = threading.Thread(target=second_dispatch)
+        second.start()
+        assert gate.attempted.wait(5)
+        assert not second_done.is_set()
+
+        metrics.release.set()
+        first.join(5)
+        second.join(5)
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert metrics.sequences == sorted(set(metrics.sequences))
 
 
 class TestCadence:
