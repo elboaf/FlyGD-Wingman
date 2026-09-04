@@ -8,12 +8,15 @@ from wingman.preview.geometry import Rect
 
 
 class FakeDwm:
-    def __init__(self, hr=0):
-        self.hr, self.unregistered, self.updates = hr, [], []
+    def __init__(self, hr=0, register_hr=None, update_hr=None):
+        # Support both old API (hr=) and new independent control
+        self.register_hr = register_hr if register_hr is not None else hr
+        self.update_hr = update_hr if update_hr is not None else hr
+        self.unregistered, self.updates = [], []
 
     def DwmRegisterThumbnail(self, dest, src, out):
         out._obj.value = 0xABC
-        return self.hr
+        return self.register_hr
 
     def DwmUnregisterThumbnail(self, handle):
         self.unregistered.append(handle)
@@ -21,7 +24,7 @@ class FakeDwm:
 
     def DwmUpdateThumbnailProperties(self, handle, props):
         self.updates.append(props._obj)
-        return 0
+        return self.update_hr
 
 
 class FakeLibs:
@@ -61,3 +64,63 @@ def test_update_sends_the_destination_rect_as_edges_not_extents():
     t.update(Rect(5, 35, 310, 170))
     rc = dwm.updates[0].rcDestination
     assert (rc.left, rc.top, rc.right, rc.bottom) == (5, 35, 315, 205)
+
+
+def test_update_returns_raw_hresult():
+    dwm = FakeDwm(update_hr=-2147467259)
+    t = thumbnail.Thumbnail.register(FakeLibs(dwm), 1, 2)
+    assert t.update(Rect(0, 0, 10, 10)) == -2147467259
+
+
+def test_hresult_format_is_unsigned_and_fixed_width():
+    assert thumbnail._format_hresult(-2147467259) == "0x80004005"
+    assert thumbnail._format_hresult(0x80004005) == "0x80004005"
+
+
+def test_update_after_close_returns_none():
+    dwm = FakeDwm()
+    t = thumbnail.Thumbnail.register(FakeLibs(dwm), 1, 2)
+    t.close()
+    assert t.update(Rect(0, 0, 10, 10)) is None
+
+
+def test_update_without_source_preserves_full_client_flags():
+    dwm = FakeDwm()
+    t = thumbnail.Thumbnail.register(FakeLibs(dwm), 1, 2)
+    t.update(Rect(5, 35, 310, 170))
+    props = dwm.updates[0]
+    assert props.dwFlags == (
+        thumbnail.win32.DWM_TNP_RECTDESTINATION
+        | thumbnail.win32.DWM_TNP_VISIBLE
+        | thumbnail.win32.DWM_TNP_OPACITY
+        | thumbnail.win32.DWM_TNP_SOURCECLIENTAREAONLY
+    )
+
+
+def test_update_with_source_sets_rectsource_as_edges():
+    dwm = FakeDwm()
+    t = thumbnail.Thumbnail.register(FakeLibs(dwm), 1, 2)
+    assert t.update(
+        Rect(0, 0, 320, 180), source_rect=Rect(100, 50, 400, 225)
+    ) == 0
+    props = dwm.updates[0]
+    assert props.dwFlags & thumbnail.win32.DWM_TNP_RECTSOURCE
+    src = props.rcSource
+    assert (src.left, src.top, src.right, src.bottom) == (100, 50, 500, 275)
+
+
+def test_update_failure_logs_unsigned_hresult_and_handles(caplog):
+    dwm = FakeDwm(update_hr=-2147467259)
+    t = thumbnail.Thumbnail.register(FakeLibs(dwm), 0x10, 0x20)
+    with caplog.at_level("WARNING"):
+        t.update(Rect(0, 0, 10, 10), source_rect=Rect(1, 2, 3, 4))
+    assert "hr=0x80004005" in caplog.text
+    assert "src=0x20" in caplog.text
+    assert "dest=0x10" in caplog.text
+
+
+def test_successful_update_is_silent(caplog):
+    t = thumbnail.Thumbnail.register(FakeLibs(FakeDwm()), 1, 2)
+    with caplog.at_level("WARNING"):
+        t.update(Rect(0, 0, 10, 10))
+    assert "DwmUpdateThumbnailProperties failed" not in caplog.text
