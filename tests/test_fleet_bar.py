@@ -90,6 +90,13 @@ def _headless_fleet_window_helpers(monkeypatch):
 def api(tmp_path):
     telemetry = FakeTelemetry()
     built = make_api(tmp_path, telemetry=telemetry)
+    built._state.settings["fleet_bar"] = {
+        "enabled": False,
+        "x": None,
+        "y": None,
+        "seen": [],
+        "hidden": [],
+    }
     built._fleetbar_window = FleetWindow()
     built._fleetbar_ready = True
     return built
@@ -393,9 +400,301 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
                 "log_status": "NO LOG",
             },
         ],
+        "running_count": 2,
+        "revision": 1,
         "stream_health": {"state": "stale", "detail": "3.2s since poll"},
         "metric_error": "clock skew",
     }
+
+
+def test_fleet_settings_groups_running_offline_and_hidden(api):
+    api._state.settings["fleet_bar"].update(
+        seen=["Bravo", "Alice", "Offline"], hidden=["Bravo"]
+    )
+    api._fleet_expected_generation = 3
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Bravo", 0), FleetRow("Alice", 10)),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=3,
+        )
+    )
+
+    assert api.fleet_bar_settings()["characters"] == [
+        {"name": "Alice", "running": True, "visible": True},
+        {"name": "Bravo", "running": True, "visible": False},
+        {"name": "Offline", "running": False, "visible": True},
+    ]
+
+
+def test_fleet_settings_reports_unknown_when_consumer_is_inactive(api):
+    api._state.settings["fleet_bar"]["seen"] = ["Alice"]
+    api._fleet_snapshot = None
+
+    assert api.fleet_bar_settings()["characters"] == [
+        {"name": "Alice", "running": None, "visible": True}
+    ]
+
+
+def test_fleet_roster_persists_current_pending_then_prior_without_duplicates(api):
+    api._state.settings["fleet_bar"]["seen"] = ["Persisted", "Current"]
+    api._fleet_pending_seen = ["Pending", "Current"]
+    api._fleet_expected_generation = 1
+
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Current", 1),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    assert api._state.settings["fleet_bar"]["seen"] == [
+        "Current",
+        "Pending",
+        "Persisted",
+    ]
+    assert api._fleet_pending_seen == []
+
+
+def test_failed_roster_memory_write_keeps_pending_until_next_roster_transition(
+    api, monkeypatch
+):
+    from wingman.ui import api as api_mod
+
+    api._state.settings["fleet_bar"]["seen"] = ["Persisted"]
+    api._fleet_expected_generation = 1
+    original_save = api_mod.settings_mod._save_locked
+    calls = 0
+
+    def fail_save(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", fail_save)
+    first = FleetSnapshot(
+        rows=(FleetRow("Alice", 1),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+    api._receive_fleet_snapshot(first)
+
+    assert api._state.settings["fleet_bar"]["seen"] == ["Persisted"]
+    assert api._fleet_pending_seen == ["Alice"]
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 99),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+    assert calls == 1
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", original_save)
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 99), FleetRow("Bravo", 1)),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    assert api._state.settings["fleet_bar"]["seen"] == [
+        "Alice",
+        "Bravo",
+        "Persisted",
+    ]
+    assert api._fleet_pending_seen == []
+
+
+def test_metric_only_snapshot_does_not_push_main_fleet_state(api):
+    api._fleet_expected_generation = 1
+    first = FleetSnapshot(
+        rows=(FleetRow("Alice", 1),),
+        stream_health=StreamHealth(state="active"),
+        activation_generation=1,
+    )
+    api._receive_fleet_snapshot(first)
+    api._window.evaluated.clear()
+
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 99),),
+            stream_health=StreamHealth(state="active", detail="fresh"),
+            metric_error="late sample",
+            activation_generation=1,
+        )
+    )
+
+    assert not [
+        script for script in api._window.evaluated if "onFleetBarState" in script
+    ]
+
+
+def test_hide_filters_only_fleet_payload(api):
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 10),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    result = api.set_fleet_bar_character_visible("Alice", False)
+
+    assert result["applied"] is True
+    assert "Alice" not in [row["character"] for row in api.fleet_bar_snapshot()["rows"]]
+    assert api._state.settings["preview"].get("excluded", []) == []
+
+
+def test_visibility_write_failure_refuses_and_rolls_back(api, monkeypatch):
+    from wingman.ui import api as api_mod
+
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 10),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", fail_save)
+    result = api.set_fleet_bar_character_visible("Alice", False)
+
+    assert result["applied"] is False
+    assert "Alice" not in api._state.settings["fleet_bar"]["hidden"]
+    assert result["state"]["characters"][0]["visible"] is True
+
+
+def test_concurrent_hides_at_limit_do_not_lose_or_silently_truncate(api):
+    original = [f"Hidden {index}" for index in range(63)]
+    api._state.settings["fleet_bar"].update(seen=["Alice", "Bravo"], hidden=original)
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 1), FleetRow("Bravo", 1)),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+    start = threading.Barrier(3)
+    results = {}
+
+    def hide(name):
+        start.wait()
+        results[name] = api.set_fleet_bar_character_visible(name, False)
+
+    threads = [
+        threading.Thread(target=hide, args=("Alice",)),
+        threading.Thread(target=hide, args=("Bravo",)),
+    ]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join(5)
+
+    hidden = api._state.settings["fleet_bar"]["hidden"]
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(hidden) == 64
+    assert set(original) <= set(hidden)
+    assert sorted(result["applied"] for result in results.values()) == [False, True]
+
+
+def test_visibility_noop_does_not_write_and_restore_is_allowed_at_the_cap(
+    api, monkeypatch
+):
+    from wingman.ui import api as api_mod
+
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 10),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+    api._state.settings["fleet_bar"]["hidden"] = ["Alice"] + [
+        f"Hidden {index}" for index in range(63)
+    ]
+    original_save = api_mod.settings_mod._save_locked
+    saves = 0
+
+    def count_save(*args, **kwargs):
+        nonlocal saves
+        saves += 1
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(api_mod.settings_mod, "_save_locked", count_save)
+    unchanged = api.set_fleet_bar_character_visible("Alice", False)
+    restored = api.set_fleet_bar_character_visible("Alice", True)
+
+    assert unchanged["applied"] is True
+    assert saves == 1
+    assert restored["applied"] is True
+    assert "Alice" not in api._state.settings["fleet_bar"]["hidden"]
+
+
+def test_visibility_refuses_unknown_or_invalid_names(api):
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 10),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    assert api.set_fleet_bar_character_visible("Unknown", False)["applied"] is False
+    assert api.set_fleet_bar_character_visible(None, False)["applied"] is False
+
+
+def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 43, ("SCRAM",)),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+
+    api.set_fleet_bar_character_visible("Alice", False)
+    hidden = api.fleet_bar_snapshot()
+    api.set_fleet_bar_character_visible("Alice", True)
+    restored = api.fleet_bar_snapshot()
+
+    assert hidden["rows"] == []
+    assert hidden["running_count"] == 1
+    assert restored["rows"] == [
+        {"character": "Alice", "dps": 43, "ewar": ["SCRAM"], "log_status": None}
+    ]
+
+
+def test_fleet_payload_revision_increases_after_lifecycle_transition(api):
+    api._fleet_expected_generation = 1
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Alice", 10),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+    older = api.fleet_bar_snapshot()
+    older_settings = api.fleet_bar_settings()
+
+    api._install_fleet_generation(2)
+    newer = api.fleet_bar_snapshot()
+    newer_settings = api.fleet_bar_settings()
+
+    assert older["revision"] < newer["revision"]
+    assert older_settings["revision"] < newer_settings["revision"]
 
 
 def test_snapshot_push_targets_only_the_fleet_window(api):

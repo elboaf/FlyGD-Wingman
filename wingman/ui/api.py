@@ -115,6 +115,14 @@ _ALERT_EVENT_FIELDS = frozenset(
 )
 
 
+class _FleetVisibilityNoChange(Exception):
+    """End a settings transaction without turning an idempotent request into a save."""
+
+
+class _FleetVisibilityRefused(Exception):
+    """Reject a visibility mutation from inside its serialized settings transaction."""
+
+
 def _folder_dialog_kind():
     """pywebview's folder-dialog constant, imported at call time.
 
@@ -3759,14 +3767,63 @@ class Api:
 
     # ----- floating Fleet DPS/EWAR bar ---------------------------------
 
-    def fleet_bar_settings(self) -> dict:
-        """Copy of the persisted window state for both main-page toggles."""
-        return dict(self._state.settings.get("fleet_bar") or {})
+    def _next_fleet_revision_locked(self) -> int:
+        self._fleet_presentation_revision += 1
+        return self._fleet_presentation_revision
 
-    def _push_fleet_bar_state(self) -> None:
-        self._push("onFleetBarState", self.fleet_bar_settings())
+    @staticmethod
+    def _fleet_unique_names(names) -> list[str]:
+        """Keep the first spelling and order from one persisted roster tier."""
+        return list(dict.fromkeys(name for name in names if isinstance(name, str)))
 
-    def _fleet_payload(self, snapshot) -> dict:
+    def _fleet_characters_locked(self, section: dict) -> list[dict]:
+        snapshot = self._fleet_snapshot
+        running = None if snapshot is None else {row.character for row in snapshot.rows}
+        names = set(section.get("seen") or ())
+        names.update(section.get("hidden") or ())
+        names.update(self._fleet_pending_seen)
+        if running is not None:
+            names.update(running)
+        hidden = set(section.get("hidden") or ())
+        key = (
+            (lambda name: (name.casefold(), name))
+            if running is None
+            else (lambda name: (name not in running, name.casefold(), name))
+        )
+        return [
+            {
+                "name": name,
+                "running": None if running is None else name in running,
+                "visible": name not in hidden,
+            }
+            for name in sorted(names, key=key)
+            if isinstance(name, str)
+        ]
+
+    def _fleet_settings_payload_locked(self, section: dict, revision: int) -> dict:
+        payload = {
+            "enabled": bool(section.get("enabled")),
+            "x": section.get("x"),
+            "y": section.get("y"),
+            "seen": list(section.get("seen") or ()),
+            "hidden": list(section.get("hidden") or ()),
+            "revision": revision,
+        }
+        payload["characters"] = self._fleet_characters_locked(section)
+        return payload
+
+    def _fleet_display_payload_locked(
+        self, snapshot, section: dict, revision: int
+    ) -> dict:
+        if snapshot is None:
+            return {
+                "rows": [],
+                "running_count": 0,
+                "revision": revision,
+                "stream_health": {"state": "stopped", "detail": None},
+                "metric_error": None,
+            }
+        hidden = set(section.get("hidden") or ())
         return {
             "rows": [
                 {
@@ -3776,7 +3833,10 @@ class Api:
                     "log_status": row.log_status,
                 }
                 for row in snapshot.rows
+                if row.character not in hidden
             ],
+            "running_count": len(snapshot.rows),
+            "revision": revision,
             "stream_health": {
                 "state": snapshot.stream_health.state,
                 "detail": snapshot.stream_health.detail,
@@ -3784,23 +3844,38 @@ class Api:
             "metric_error": snapshot.metric_error,
         }
 
+    def _fleet_payloads_locked(self) -> tuple[dict, dict]:
+        section = dict(self._state.settings.get("fleet_bar") or {})
+        revision = self._fleet_presentation_revision
+        return (
+            self._fleet_settings_payload_locked(section, revision),
+            self._fleet_display_payload_locked(self._fleet_snapshot, section, revision),
+        )
+
+    def fleet_bar_settings(self) -> dict:
+        """Immutable Fleet settings and roster state for the main-page controls."""
+        with self._fleet_presentation_lock:
+            settings_payload, _ = self._fleet_payloads_locked()
+        return settings_payload
+
+    def _push_fleet_bar_state(self, payload: dict | None = None) -> None:
+        self._push(
+            "onFleetBarState",
+            payload if payload is not None else self.fleet_bar_settings(),
+        )
+
     def fleet_bar_snapshot(self) -> dict:
         """Current complete display payload, also used by the bar at boot."""
         with self._fleet_presentation_lock:
-            snapshot = self._fleet_snapshot
-        if snapshot is None:
-            return {
-                "rows": [],
-                "stream_health": {"state": "stopped", "detail": None},
-                "metric_error": None,
-            }
-        return self._fleet_payload(snapshot)
+            _, display_payload = self._fleet_payloads_locked()
+        return display_payload
 
-    def _push_fleet_snapshot(self) -> None:
+    def _push_fleet_snapshot(self, payload: dict | None = None) -> None:
         bar = self._fleetbar_window
         if bar is None:
             return
-        payload = self.fleet_bar_snapshot()
+        if payload is None:
+            payload = self.fleet_bar_snapshot()
         script = (
             f"window.onFleetSnapshot && window.onFleetSnapshot({json.dumps(payload)})"
         )
@@ -3808,6 +3883,40 @@ class Api:
             bar.evaluate_js(script)
         except Exception:
             logger.debug("Fleet Bar snapshot push failed", exc_info=True)
+
+    def _remember_fleet_roster(self, current: list[str], pending: list[str]) -> bool:
+        """Persist a roster transition without holding the presentation lock.
+
+        The current snapshot wins over names pending from a failed earlier save,
+        which win over the persisted memory.  A metric-only publication never
+        reaches here, so a disk error is retried only when the roster changes.
+        """
+        candidate = []
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                section = dict(doc.get("fleet_bar") or {})
+                persisted = list(section.get("seen") or ())
+                candidate = self._fleet_unique_names([*current, *pending, *persisted])
+                normalized = settings_mod.validated_fleet_bar(
+                    {**section, "seen": candidate}
+                )["seen"]
+                if normalized == persisted:
+                    candidate = normalized
+                    raise _FleetVisibilityNoChange()
+                section["seen"] = normalized
+                doc["fleet_bar"] = section
+                candidate = normalized
+        except _FleetVisibilityNoChange:
+            pass
+        except OSError:
+            logger.exception("Could not persist the Fleet character roster")
+            return False
+        with self._fleet_presentation_lock:
+            saved = set(candidate)
+            self._fleet_pending_seen = [
+                name for name in self._fleet_pending_seen if name not in saved
+            ]
+        return True
 
     def _receive_fleet_snapshot(self, snapshot) -> None:
         """Coordinator subscriber; safe on its dispatcher thread."""
@@ -3817,12 +3926,94 @@ class Api:
                 or snapshot.activation_generation != self._fleet_expected_generation
             ):
                 return
+            signature = tuple(row.character for row in snapshot.rows)
+            roster_changed = signature != self._fleet_roster_signature
             self._fleet_snapshot = snapshot
-            self._fleet_presentation_revision += 1
-            self._fleet_roster_signature = tuple(row.character for row in snapshot.rows)
+            self._next_fleet_revision_locked()
+            self._fleet_roster_signature = signature
+            if roster_changed:
+                self._fleet_pending_seen = self._fleet_unique_names(
+                    [*self._fleet_pending_seen, *signature]
+                )
+                current = list(signature)
+                pending = list(self._fleet_pending_seen)
+        if roster_changed:
+            self._remember_fleet_roster(current, pending)
+            with self._fleet_presentation_lock:
+                settings_payload, display_payload = self._fleet_payloads_locked()
+            self._push_fleet_bar_state(settings_payload)
+        else:
+            display_payload = self.fleet_bar_snapshot()
         # pywebview can synchronously enter page code, so the presentation
         # lock protects state only and is deliberately released before JS.
-        self._push_fleet_snapshot()
+        self._push_fleet_snapshot(display_payload)
+
+    def set_fleet_bar_character_visible(self, name, visible) -> dict:
+        """Persist one exact character visibility choice without touching Preview."""
+        if not isinstance(name, str) or not isinstance(visible, bool):
+            return self._fleet_visibility_result(
+                False, "Choose a character from the Fleet list."
+            )
+        with self._fleet_presentation_lock:
+            section = dict(self._state.settings.get("fleet_bar") or {})
+            known = {
+                character["name"]
+                for character in self._fleet_characters_locked(section)
+            }
+        if name not in known:
+            return self._fleet_visibility_result(
+                False, "Choose a character from the Fleet list."
+            )
+        changed = False
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                section = dict(doc.get("fleet_bar") or {})
+                hidden = list(section.get("hidden") or ())
+                if visible:
+                    updated = [item for item in hidden if item != name]
+                    if updated == hidden:
+                        raise _FleetVisibilityNoChange()
+                else:
+                    if name in hidden:
+                        raise _FleetVisibilityNoChange()
+                    if len(hidden) >= 64:
+                        raise _FleetVisibilityRefused(
+                            "Show a hidden character before hiding another."
+                        )
+                    updated = [*hidden, name]
+                section["hidden"] = updated
+                doc["fleet_bar"] = section
+                changed = True
+        except _FleetVisibilityNoChange:
+            return self._fleet_visibility_result(True, None)
+        except _FleetVisibilityRefused as exc:
+            return self._fleet_visibility_result(False, str(exc))
+        except OSError:
+            logger.exception("Could not persist Fleet character visibility")
+            return self._fleet_visibility_result(
+                False, "Could not save Fleet character visibility."
+            )
+        if changed:
+            with self._fleet_presentation_lock:
+                self._next_fleet_revision_locked()
+                settings_payload, display_payload = self._fleet_payloads_locked()
+            self._push_fleet_bar_state(settings_payload)
+            self._push_fleet_snapshot(display_payload)
+            return {
+                "applied": True,
+                "persisted": True,
+                "error": None,
+                "state": settings_payload,
+            }
+        raise AssertionError("Fleet visibility transaction finished without a result")
+
+    def _fleet_visibility_result(self, applied: bool, error: str | None) -> dict:
+        return {
+            "applied": applied,
+            "persisted": applied,
+            "error": error,
+            "state": self.fleet_bar_settings(),
+        }
 
     def _close_fleet_presentation(self):
         """Reject callbacks and retain enough state to undo an unsaved toggle."""
@@ -3838,7 +4029,7 @@ class Api:
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
             self._fleet_pending_seen = []
-            self._fleet_presentation_revision += 1
+            self._next_fleet_revision_locked()
         return accepted
 
     def _restore_fleet_presentation(self, accepted) -> None:
@@ -3849,8 +4040,12 @@ class Api:
                 self._fleet_snapshot,
                 self._fleet_roster_signature,
                 self._fleet_pending_seen,
-                self._fleet_presentation_revision,
+                _revision,
             ) = accepted
+            # Closing may already have been observed by a page. Restoring a
+            # failed lifecycle transition is a new semantic presentation, not
+            # permission to reuse an older revision.
+            self._next_fleet_revision_locked()
 
     def _install_fleet_generation(self, generation: int | None) -> None:
         """Open acceptance for one coordinator reservation, still on WAITING."""
@@ -3859,7 +4054,7 @@ class Api:
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
             self._fleet_pending_seen = []
-            self._fleet_presentation_revision += 1
+            self._next_fleet_revision_locked()
 
     def _reconcile_fleet_generation(self, *, transition: bool) -> int | None:
         """Reconcile Fleet without allowing a retired callback through the handoff."""
