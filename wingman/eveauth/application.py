@@ -1,18 +1,19 @@
 """EVE application identity: client id, redirect, capability scopes, endpoints.
 
-Shared by every EVE-authenticated capability -- Skills (read-only skill and
-skill-queue data) and Fittings (read and write fitting data) -- which
-authenticate against the same CCP application and share the loopback
-callback, the PKCE flow, and the JWT validator, but must NEVER share a
-scope request. A user granting Skills its two read-only scopes has not
-agreed to let this build read or write their fittings, and the reverse is
-just as true. `CAPABILITY_SCOPES` is the one place a capability's scope
-set is looked up by name, every entry is a separate and disjoint
-`frozenset`, and there is no combined "every scope" value anywhere in this
-module: a caller names the ONE capability it wants (`sso.authorize_url`
-takes that set directly, with no default), and a caller that forgets to
-narrow the request gets a `TypeError` from a missing argument, never a
-wider consent screen than it asked for.
+This module centralises the EVE application constants and the explicit
+mapping of capability names to the ESI scopes they require. Skills
+(read-only skill and skill-queue data) and Fittings (read and write
+fitting data) are distinct capabilities with disjoint scope sets, and
+callers that request a single capability should continue to do so.
+
+Separately, the product defines an explicit "full authorization"
+contract (FULL_AUTH_CAPABILITIES, FULL_AUTH_SCOPES) that represents the
+union of the named capabilities that together constitute a complete
+character authorization for this app. This combined value is intentionally
+explicit (FULL_AUTH_CAPABILITIES is a fixed tuple) so that adding a new
+CAPABILITY_SCOPES entry in future cannot silently widen the full consent
+flow; any change to what "full" means must be deliberate and covered by
+tests.
 
 The client id is a plain source constant, not a build-time injected
 value, matching TriffView's EveApplication.cs:12. EVE's flow is PKCE
