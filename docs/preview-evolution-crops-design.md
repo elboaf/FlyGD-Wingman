@@ -1,6 +1,6 @@
 # Preview evolution and cropped-region previews
 
-**Status:** Draft for review
+**Status:** Approved
 **Date:** 2026-09-04
 **Wingman baseline:** `c3ee6fecdab98d0c4b13413908a89537954d7e02`
 **Reference reviewed:** CJKondur/EVE-MultiPreview at
