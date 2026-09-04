@@ -168,7 +168,7 @@ class TelemetryCoordinator:
     """Shared telemetry ownership: predicates, sequence, dispatch, cadence.
 
     Public interface:
-        reconcile()
+        reconcile() -> int
         request_discovery()
         snapshot() -> FleetSnapshot
         subscribe_fleet(callback) -> unsubscribe callable
@@ -330,6 +330,17 @@ class TelemetryCoordinator:
             # leave producers stopped and retry next reconcile.
             if (want_discovery or folder is not None) and not self._start_dispatcher():
                 return fleet_generation
+
+            if fleet_enabled:
+                with self._lock:
+                    needs_restore = not self._fleet_requested
+                    if needs_restore:
+                        self._fleet_requested = True
+                if needs_restore:
+                    # A dead dispatcher can drain the queued activation while
+                    # finalizing; restore the same generation so this reconcile
+                    # still publishes the reservation it already handed out.
+                    self._queue.put(_FleetMode(fleet_enabled, fleet_generation))
 
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)

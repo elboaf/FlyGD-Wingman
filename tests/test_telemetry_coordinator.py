@@ -492,6 +492,28 @@ class TestFleetGeneration:
         assert h.coordinator.requested_fleet_generation() == 1
         assert h.coordinator.snapshot().activation_generation == 1
 
+    def test_late_dead_dispatcher_preserves_the_reserved_fleet_generation(
+        self, tmp_path
+    ):
+        class DeadWorker:
+            def is_alive(self):
+                return False
+
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._worker = DeadWorker()
+        h.coordinator._running = False
+        h.subscribe()
+
+        generation = h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        h.pump()
+
+        assert generation == 1
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.snapshots
+        assert h.snapshots[-1].activation_generation == generation
+
     def test_empty_and_disabled_snapshots_keep_generation_zero(self, tmp_path):
         h = _harness(tmp_path, fleet=True)
 
