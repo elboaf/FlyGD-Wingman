@@ -18,9 +18,7 @@ def test_fleet_bar_defaults_off_with_no_position():
 
 
 def test_fleet_bar_validation_rejects_bool_coordinates():
-    value = settings.validated_fleet_bar(
-        {"enabled": True, "x": True, "y": "12"}
-    )
+    value = settings.validated_fleet_bar({"enabled": True, "x": True, "y": "12"})
     assert value == {"enabled": True, "x": None, "y": None}
 
 
@@ -40,7 +38,10 @@ def test_save_normalises_malformed_fleet_bar_in_the_file(tmp_path):
 
     p = tmp_path / "s.json"
     settings.save(
-        {**settings._fresh_defaults(), "fleet_bar": {"enabled": True, "x": True, "y": "bad"}},
+        {
+            **settings._fresh_defaults(),
+            "fleet_bar": {"enabled": True, "x": True, "y": "bad"},
+        },
         p,
     )
     raw = json.loads(p.read_text())
