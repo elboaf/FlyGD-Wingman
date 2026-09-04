@@ -221,6 +221,18 @@ class FleetMetrics:
         self._last_roster_sequence: int | None = None
         self._metric_error: str | None = None
 
+    def reset(self) -> None:
+        """Forget every client/source metric and transient diagnostic.
+
+        Called only by the coordinator's serialized dispatcher when Fleet
+        turns off or starts a fresh enabled generation. Keeping this here,
+        rather than replacing the metrics object, preserves injected clocks
+        while preventing disabled-time facts from appearing on re-enable.
+        """
+        self._states.clear()
+        self._last_roster_sequence = None
+        self._metric_error = None
+
     # ------------------------------------------------------------------
     # Consumption
     # ------------------------------------------------------------------

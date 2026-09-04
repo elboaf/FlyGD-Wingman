@@ -116,6 +116,12 @@ _ALERT_EVENTS = {
 _WAKE = object()
 
 
+class _FleetMode(NamedTuple):
+    """Internal queue control, ordered with producer payloads."""
+
+    enabled: bool
+
+
 class AlertEvent(NamedTuple):
     """What AlertPolicy.handle() reads off each event.
 
@@ -207,9 +213,12 @@ class TelemetryCoordinator:
         # would be destroyed by a second writer.
         self._sequence = 0
         self._sessions: dict[str, object] = {}
+        self._fleet_active = False
+        self._fleet_roster_generation: int | None = None
 
         self._lock = threading.Lock()
         self._latest: FleetSnapshot | None = None
+        self._fleet_requested = False
         self._discovery_started = False
         self._discovery_unsub: Callable[[], None] | None = None
         self._stream_folder: Path | None = None
@@ -306,8 +315,12 @@ class TelemetryCoordinator:
             # changes it decides. Reading before the lock lets stop() finish
             # between those two phases, after which this pass could restart
             # services from a stale pre-stop preference snapshot.
-            want_discovery = self._wants_discovery()
-            folder = self._resolved_folder() if self._wants_stream_consumer() else None
+            preview_enabled = self._flag(self._preview_enabled)
+            fleet_enabled = self._flag(self._fleet_enabled)
+            alerts_enabled = self._flag(self._alerts_enabled)
+            want_discovery = preview_enabled or fleet_enabled
+            want_stream = fleet_enabled or (preview_enabled and alerts_enabled)
+            folder = self._resolved_folder() if want_stream else None
 
             # Producers must never run without the sole consumer of their
             # queue. A retained timed-out dispatcher can refuse a restart;
@@ -317,6 +330,7 @@ class TelemetryCoordinator:
 
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)
+            self._request_fleet_mode(fleet_enabled)
 
             if not want_discovery and folder is None:
                 # Nothing left to serialize.  Stopping the dispatcher here
@@ -392,6 +406,14 @@ class TelemetryCoordinator:
                 self._stream_folder = folder
                 self._stream_unsub = unsub
 
+    def _request_fleet_mode(self, enabled: bool) -> None:
+        """Order a Fleet consumer transition with producer payloads."""
+        with self._lock:
+            if enabled == self._fleet_requested:
+                return
+            self._fleet_requested = enabled
+        self._queue.put(_FleetMode(enabled))
+
     def request_discovery(self) -> None:
         """Ask for an immediate roster scan.  Safe from any thread.
 
@@ -435,6 +457,10 @@ class TelemetryCoordinator:
         race the dispatcher through that module's mutable state.  The last
         published value is at most one publication interval old.
         """
+        if not self._flag(self._fleet_enabled):
+            return FleetSnapshot(
+                rows=_EMPTY_ROWS, stream_health=StreamHealth(state="disabled")
+            )
         with self._lock:
             latest = self._latest
         if latest is not None:
@@ -524,6 +550,12 @@ class TelemetryCoordinator:
                 # later restart re-asks the stream about every session it
                 # sees rather than trusting a map built before the gap.
                 self._sessions = {}
+                self._fleet_active = False
+                self._fleet_roster_generation = None
+                self._metrics.reset()
+                with self._lock:
+                    self._fleet_requested = False
+                    self._latest = None
                 # And whatever the producers queued but nobody consumed:
                 # those payloads describe the session that just ended, and
                 # stamping them with fresh sequences after a restart would
@@ -601,20 +633,32 @@ class TelemetryCoordinator:
 
     def _process(self, payload, alerts: list[AlertEvent]) -> None:
         """Stamp one payload and fan it out.  Dispatcher thread only."""
+        if isinstance(payload, _FleetMode):
+            self._apply_fleet_mode(payload.enabled)
+            return
+
         self._sequence += 1
         envelope = TelemetryEnvelope(sequence=self._sequence, payload=payload)
 
-        try:
-            self._metrics.consume(envelope)
-        except Exception:
-            # Fleet Metrics is pure, so this should not happen -- and if it
-            # does, the cadence, Preview and Alerts must survive it.
-            logger.exception("Fleet Metrics raised while consuming telemetry")
-
         if isinstance(payload, RosterSnapshot):
             self._apply_preview(payload)
-            self._republish_sources(payload)
-        elif isinstance(payload, CombatFact):
+            # Enabling Fleet primes discovery.snapshot() synchronously. The
+            # callback for that same completed scan may already be queued;
+            # consume one roster generation only once or every enable race
+            # looks like a second session publication to Fleet Metrics.
+            is_new_fleet_roster = self._fleet_active and (
+                self._fleet_roster_generation is None
+                or payload.generation > self._fleet_roster_generation
+            )
+            if is_new_fleet_roster and self._consume_metrics(envelope):
+                self._fleet_roster_generation = payload.generation
+                self._republish_sources(payload)
+            return
+
+        if self._fleet_active:
+            self._consume_metrics(envelope)
+
+        if isinstance(payload, CombatFact):
             name = _ALERT_EVENTS.get(payload.kind)
             if name is not None:
                 alerts.append(
@@ -624,6 +668,41 @@ class TelemetryCoordinator:
                         source=payload.source,
                     )
                 )
+
+    def _consume_metrics(self, envelope: TelemetryEnvelope) -> bool:
+        try:
+            self._metrics.consume(envelope)
+            return True
+        except Exception:
+            # Fleet Metrics is pure, so this should not happen -- and if it
+            # does, cadence, Preview and Alerts must survive it.
+            logger.exception("Fleet Metrics raised while consuming telemetry")
+            return False
+
+    def _apply_fleet_mode(self, enabled: bool) -> None:
+        """Reset Fleet state and prime a newly enabled current roster."""
+        if enabled == self._fleet_active:
+            return
+        self._fleet_active = enabled
+        self._metrics.reset()
+        self._sessions = {}
+        self._fleet_roster_generation = None
+        with self._lock:
+            self._latest = None
+        if not enabled:
+            return
+        try:
+            snapshot = self._discovery.snapshot()
+        except Exception:
+            logger.exception("Could not read current roster while enabling Fleet")
+            return
+        if snapshot.generation == 0:
+            return  # Discovery has not completed its first scan yet.
+        self._sequence += 1
+        envelope = TelemetryEnvelope(sequence=self._sequence, payload=snapshot)
+        if self._consume_metrics(envelope):
+            self._fleet_roster_generation = snapshot.generation
+            self._republish_sources(snapshot)
 
     def _apply_preview(self, snapshot: RosterSnapshot) -> None:
         if self._preview_host is None or not self._flag(self._preview_enabled):
@@ -683,11 +762,13 @@ class TelemetryCoordinator:
             logger.exception("Alert policy raised while handling telemetry facts")
 
     def _publish(self) -> None:
-        """Build one complete fleet snapshot and deliver it.
+        """Build one complete fleet snapshot and deliver it when enabled.
 
         Fleet Metrics has already consumed this batch: the snapshot a
         subscriber sees is never behind the envelopes that produced it.
         """
+        if not self._fleet_active:
+            return
         health = self._health()
         try:
             snapshot = self._metrics.snapshot(self._sequence, health)

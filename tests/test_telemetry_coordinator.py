@@ -134,6 +134,7 @@ class FakeDiscovery:
         self.subscribers = []
         self.start_results = list(start_results or [])
         self.stop_results = list(stop_results or [])
+        self._latest = RosterSnapshot(generation=0, clients=())
 
     def subscribe(self, callback):
         self.subscribers.append(callback)
@@ -155,7 +156,11 @@ class FakeDiscovery:
     def request_scan(self):
         self.scans += 1
 
+    def snapshot(self):
+        return self._latest
+
     def publish(self, snapshot):
+        self._latest = snapshot
         for callback in list(self.subscribers):
             callback(snapshot)
 
@@ -225,6 +230,7 @@ class RecordingMetrics:
         self.calls = []
         self.rows = rows
         self.raise_on_consume = False
+        self.resets = 0
 
     @property
     def envelopes(self):
@@ -233,6 +239,10 @@ class RecordingMetrics:
     @property
     def sequences(self):
         return [env.sequence for env in self.envelopes]
+
+    def reset(self):
+        self.resets += 1
+        self.calls.append(("reset", None))
 
     def consume(self, envelope):
         self.calls.append(("consume", envelope))
@@ -536,7 +546,7 @@ class TestSequencing:
 
         kinds = [kind for kind, _ in h.metrics.calls]
         assert kinds[-1] == "snapshot"
-        assert kinds[:-1] == ["consume", "consume"]
+        assert kinds[:-1] == ["reset", "consume", "consume"]
         assert len(h.snapshots) == 1
 
     def test_alert_facts_reach_policy_once_per_batch_in_order(self, tmp_path):
@@ -584,6 +594,76 @@ class TestSequencing:
         h.pump()
 
         assert [s.generation for s in preview.rosters] == [2]
+
+    def test_preview_only_mode_never_touches_fleet_metrics_or_subscribers(
+        self, tmp_path
+    ):
+        preview = FakePreviewHost()
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=True,
+            fleet=False,
+            alerts=True,
+            preview_host=preview,
+            alert_policy=policy,
+        )
+        h.subscribe()
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.pump()
+
+        assert preview.rosters
+        assert policy.calls
+        assert h.metrics.envelopes == []
+        assert h.snapshots == []
+
+    def test_disabling_fleet_resets_state_and_silences_subscribers(self, tmp_path):
+        h = _harness(tmp_path, preview=True, fleet=True, preview_host=FakePreviewHost())
+        h.subscribe()
+        h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        published = len(h.snapshots)
+
+        h.flags["fleet"] = False
+        h.coordinator.reconcile()
+        h.pump()
+
+        assert h.metrics.resets >= 1
+        assert len(h.snapshots) == published
+        assert h.coordinator.snapshot().rows == ()
+        assert h.coordinator.snapshot().stream_health == StreamHealth(state="disabled")
+
+    def test_reenabling_fleet_primes_current_roster_and_republishes_source(
+        self, tmp_path
+    ):
+        h = _harness(
+            tmp_path,
+            preview=True,
+            fleet=False,
+            alerts=False,
+            preview_host=FakePreviewHost(),
+        )
+        current = _roster(_session("Alice"), generation=7)
+        h.discovery.publish(current)
+        h.coordinator.reconcile()
+        h.pump()
+        assert h.metrics.envelopes == []
+
+        h.flags["fleet"] = True
+        h.coordinator.reconcile()
+        h.pump()
+
+        roster_envelopes = [
+            env
+            for env in h.metrics.envelopes
+            if isinstance(env.payload, RosterSnapshot)
+        ]
+        assert [env.payload for env in roster_envelopes] == [current]
+        assert h.stream.requested == ["Alice"]
 
 
 class TestConsumerFailureIsolation:
@@ -746,12 +826,12 @@ class TestLifecycle:
 
         h.discovery.publish(_roster(_session("Alice")))
         h.coordinator.stop()
-        h.coordinator.reconcile()
-        h.pump()
 
-        # The queued roster described the session that ended; stamping it
-        # with a fresh sequence would present it to Fleet Metrics as now.
+        # The queued callback payload described the dispatcher generation
+        # that ended. Stop drains it without stamping; a later reconcile may
+        # legitimately prime discovery's current snapshot as fresh state.
         assert h.metrics.envelopes == []
+        assert h.coordinator._queue.empty()
 
     def test_restart_reasks_the_stream_about_a_surviving_session(self, tmp_path):
         h = _harness(tmp_path, fleet=True)

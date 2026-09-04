@@ -98,6 +98,20 @@ def _row(snapshot, character):
     return next(r for r in snapshot.rows if r.character == character)
 
 
+def test_reset_clears_sessions_metrics_and_diagnostics():
+    metrics, _, _ = _metrics()
+    metrics.consume(_env(1, _roster(_session("Alice"))))
+    metrics.consume(_env(2, _lifecycle("Alice")))
+    metrics.consume(_env(3, _damage("Alice", 100, NOW + datetime.timedelta(seconds=3))))
+    assert metrics.snapshot(4, HEALTH).metric_error
+
+    metrics.reset()
+
+    snapshot = metrics.snapshot(5, HEALTH)
+    assert snapshot.rows == ()
+    assert snapshot.metric_error is None
+
+
 # ---------------------------------------------------------------------------
 # Roster/source binding
 # ---------------------------------------------------------------------------
