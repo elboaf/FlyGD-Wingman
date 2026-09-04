@@ -16,12 +16,20 @@ def test_fleet_bar_defaults_off_with_no_position():
         "enabled": False,
         "x": None,
         "y": None,
+        "seen": [],
+        "hidden": [],
     }
 
 
 def test_fleet_bar_validation_rejects_bool_coordinates():
     value = settings.validated_fleet_bar({"enabled": True, "x": True, "y": "12"})
-    assert value == {"enabled": True, "x": None, "y": None}
+    assert value == {
+        "enabled": True,
+        "x": None,
+        "y": None,
+        "seen": [],
+        "hidden": [],
+    }
 
 
 def test_fleet_bar_defaults_are_not_shared():
@@ -29,6 +37,27 @@ def test_fleet_bar_defaults_are_not_shared():
     second = settings._fresh_defaults()
     first["fleet_bar"]["enabled"] = True
     assert second["fleet_bar"]["enabled"] is False
+    assert second["fleet_bar"]["seen"] == []
+    assert second["fleet_bar"]["hidden"] == []
+
+
+def test_fleet_bar_validates_character_rosters():
+    value = settings.validated_fleet_bar(
+        {
+            "enabled": True,
+            "seen": ["Alice", "", 4, "hwnd:0x1", "Alice", "Bravo"],
+            "hidden": ["Bravo", None, "Bravo", "Carol"],
+        }
+    )
+    assert value["seen"] == ["Alice", "Bravo"]
+    assert value["hidden"] == ["Bravo", "Carol"]
+
+
+def test_fleet_bar_character_rosters_are_capped():
+    names = [f"Character {index}" for index in range(70)]
+    value = settings.validated_fleet_bar({"seen": names, "hidden": names})
+    assert value["seen"] == names[:64]
+    assert value["hidden"] == names[:64]
 
 
 def test_save_normalises_malformed_fleet_bar_in_the_file(tmp_path):
@@ -45,7 +74,13 @@ def test_save_normalises_malformed_fleet_bar_in_the_file(tmp_path):
         p,
     )
     raw = json.loads(p.read_text())
-    assert raw["fleet_bar"] == {"enabled": True, "x": None, "y": None}
+    assert raw["fleet_bar"] == {
+        "enabled": True,
+        "x": None,
+        "y": None,
+        "seen": [],
+        "hidden": [],
+    }
 
 
 def test_save_normalises_partial_fleet_bar_in_the_file(tmp_path):
@@ -57,4 +92,10 @@ def test_save_normalises_partial_fleet_bar_in_the_file(tmp_path):
         p,
     )
     raw = json.loads(p.read_text())
-    assert raw["fleet_bar"] == {"enabled": True, "x": None, "y": None}
+    assert raw["fleet_bar"] == {
+        "enabled": True,
+        "x": None,
+        "y": None,
+        "seen": [],
+        "hidden": [],
+    }

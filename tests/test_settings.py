@@ -124,6 +124,8 @@ def test_defaults_are_the_documented_values():
             "enabled": False,
             "x": None,
             "y": None,
+            "seen": [],
+            "hidden": [],
         },
     }
 
@@ -240,7 +242,13 @@ def test_save_then_load_roundtrips(tmp_path):
     assert settings.load(p)["privacy"] == "public"
     assert settings.load(p)["notify_mode"] == "popup"
     assert settings.load(p)["category"] == "22"
-    assert settings.load(p)["fleet_bar"] == {"enabled": True, "x": -320, "y": 48}
+    assert settings.load(p)["fleet_bar"] == {
+        "enabled": True,
+        "x": -320,
+        "y": 48,
+        "seen": [],
+        "hidden": [],
+    }
 
 
 def test_save_creates_parent_directory(tmp_path):
