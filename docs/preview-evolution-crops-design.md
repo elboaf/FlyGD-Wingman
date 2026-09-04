@@ -114,7 +114,13 @@ The approved product decisions are:
 
 - A crop is an independent Wingman-owned live window alongside the primary
   preview. It does not replace or alter the primary preview.
-- The first production release supports zero or one crop per character.
+- The first production release supports zero or one crop per character and a
+  fixed global live-crop cap. That cap is the highest simultaneous count that
+  passes the prototype gates, never a count the prototype did not exercise.
+- Enabling a crop at the cap is rejected with actionable status. If a
+  hand-edited or future settings file contains more enabled definitions than
+  the cap, reconciliation opens the case-insensitively sorted first entries,
+  reports the rest as cap-suppressed, and keeps every definition editable.
 - The schema and component boundaries must permit multiple named crops later,
   but that later feature is not implemented speculatively.
 - The prototype uses client-relative pixel coordinates and does not persist
@@ -134,6 +140,10 @@ The approved product decisions are:
   asynchronous activation path.
 - Crop movement, resizing, lock state, and hide-on-lost-focus behavior follow
   the primary preview contract where applicable.
+- `preview.enabled` remains the sole runtime master. Turning it off closes the
+  host and every crop while retaining each crop's individual enabled state;
+  turning it on starts the host and reconciles enabled crops. Crops never start
+  the preview host independently.
 
 ## Why a prototype is mandatory
 
@@ -197,7 +207,7 @@ Responsibilities:
 - Future one-to-many schema migration.
 - Effective crop state from `enabled`, character availability, and source
   validity.
-- Resource-limit policy.
+- Resource-limit policy, including deterministic cap suppression.
 - DWM update/recovery state transitions where they can be expressed without
   native calls.
 
@@ -275,9 +285,18 @@ The host must:
 - Permit only one active picker.
 - Close or supersede a picker deterministically.
 - Receive a confirmed pixel proposal on its own pump thread.
-- Create a live crop before asking settings to persist it.
-- Close the new crop if persistence fails, so runtime and disk cannot disagree.
-- Reconcile live crops after every refreshed client registry.
+- For first creation, create a live crop before asking settings to persist it.
+- For reselection, keep the old crop authoritative and visible while the picker
+  is open. Confirm creates a hidden candidate against the current client HWND,
+  using the old destination geometry. After candidate DWM setup succeeds,
+  persist the new source while retaining the old definition as rollback state.
+  Only then replace the registry entry, show the candidate, and close the old
+  crop in one pump turn. Candidate or persistence failure destroys the
+  candidate and leaves the old live crop and definition untouched.
+- Close a newly created crop if persistence fails, so runtime and disk cannot
+  disagree.
+- Reconcile live crops after every refreshed client registry and after master
+  preview enablement changes.
 - Destroy a live crop when its character becomes unavailable while retaining
   the definition.
 - Rebind and recreate an enabled crop when the named character returns on a new
@@ -305,6 +324,16 @@ The first production UI should fit the existing Previews character table:
   will reopen when the character returns.
 - Failed or invalid crop: show actionable status and offer reselection.
 
+Row composition must include every character named by `preview.crops`, in
+addition to running, seen, hotkey, and group sources. Crop-definition owners
+are protected references for roster pruning, so an unavailable configured crop
+cannot age out of the table and become invisible or unremovable. Cap-suppressed
+entries remain visible with the reason they did not open.
+
+When the preview master is off, crop controls follow the existing inert
+Previews-section treatment. Their definitions and individual enabled states
+remain visible but no action may start the host independently.
+
 Do not create a new top-level destination. Crops configure windows that appear
 on the desktop, so they remain Settings material under the product's
 configuration-versus-destination rule.
@@ -318,22 +347,26 @@ must never silently become user-facing production behavior.
 
 The prototype supports:
 
-- One named, currently running character.
-- One temporary picker.
-- One live crop.
+- One temporary picker at a time.
+- An interactive path for selecting one named, currently running character.
+- A load-test path that instantiates simultaneous ephemeral crops for distinct
+  running characters at staged counts of 1, 2, 4, and 8, stopping when a stage
+  fails or the machine has fewer clients.
+- A hard prototype ceiling of eight live crops. This is a probe guard, not the
+  production cap.
 - Client-relative pixel source coordinates.
 - In-memory destination geometry.
 - Click activation.
 - Move and aspect-preserving resize.
 - Explicit DWM registration and update diagnostics.
-- A hard limit of one live crop.
 - Clean close and shutdown.
 
 It does not support:
 
 - Settings persistence or migration.
 - Automatic restart restoration.
-- Multiple crops.
+- Multiple crops for one character or persisted crop management; simultaneous
+  ephemeral crops exist only in the staged load-test path.
 - Alerts, labels, custom styles, opacity, or click-through.
 - Import/export or profiles.
 - Frozen frames.
@@ -386,6 +419,9 @@ settings conventions. The semantics are fixed:
   primary preview persistence.
 - An absent crop means never configured.
 - `enabled: false` retains the definition without creating a live window.
+- The live-crop cap is a product constant derived from recorded prototype
+  results, not a user-tunable setting. Production must not ship until that
+  constant has a measured value.
 - Invalid entries are dropped or disabled according to the same forgiving
   posture as other settings: one bad crop must not prevent app startup.
 
@@ -413,12 +449,18 @@ Expected transitions:
 | Enabled, available | Character logs out/title becomes anonymous | Close live crop; retain definition |
 | Enabled, unavailable | Character returns on any HWND | Validate source; recreate automatically |
 | Enabled, available | Client exits | Close live crop; retain definition |
-| Enabled, available | User disables | Persist disabled state; reconciliation closes live crop |
-| Disabled | User enables while available | Create live crop, then persist enabled state |
-| Disabled | User enables while unavailable | Persist enabled; create when character returns |
-| Any saved state | User removes | Persist removal; reconciliation closes live crop |
+| Enabled, available | User reselects and cancels | Keep old crop and definition unchanged |
+| Enabled, available | User confirms valid reselection | Validate hidden candidate, persist replacement, then swap live crop |
+| Enabled, available | Reselection candidate or persistence fails | Destroy candidate; keep old crop and definition unchanged |
+| Enabled, available | User disables | Cancel pending geometry, persist disabled state, then reconcile closed |
+| Disabled | User enables while available and below cap | Create live crop, then persist enabled state |
+| Disabled | User enables while unavailable and below cap | Persist enabled; create when character returns |
+| Disabled | User enables at live-crop cap | Reject; retain disabled state |
+| Any saved state | User removes | Tombstone/cancel pending geometry, persist removal, then reconcile closed |
+| Preview master on | User turns master off | Stop host and close all live crops; retain definitions and per-crop enabled states |
+| Preview master off | User turns master on | Start host and reconcile enabled crops up to the measured cap |
 | Picker open | Client disappears or identity changes | Cancel picker with status; persist nothing |
-| Live crop | App shuts down | Destroy DWM relationship and HWND before host teardown |
+| Live crop | App shuts down | Cancel or flush current geometry, then destroy DWM relationship and HWND before host teardown |
 
 A definition never follows the process into character select. An anonymous
 client has no stable character ownership and cannot borrow the prior
@@ -443,6 +485,8 @@ character's crop.
   crop enablement is explicit. The production UI must make that independence
   understandable. If user testing finds it confusing, coupling the states is
   a product decision, not an implementation shortcut.
+- The preview master does suppress every crop because it owns the host
+  lifecycle. Suppression does not rewrite per-crop enabled state.
 - Closing the crop through its own close affordance requests the same
   transactional disable operation as Settings. On persistence success,
   reconciliation closes it and retains the definition. On persistence failure,
@@ -483,11 +527,24 @@ character's crop.
   truth first, then let host reconciliation close the live crop. A failed write
   therefore leaves the still-enabled crop visible rather than making runtime
   disagree with disk.
-- Geometry updates use the existing debounce/flush discipline.
+- Crop geometry persistence gets its own lock-serialized pending-delta state,
+  following `preview/store.py` rather than sharing that store's primary-layout
+  dictionary. Every scheduled write captures the crop's current in-memory
+  generation and may apply only if the definition still exists at that
+  generation.
+- Disable and removal acquire the same lock, cancel the pending timer, discard
+  that crop's pending geometry, and record a tombstone/new generation before
+  updating settings. A callback that already woke must recheck the generation
+  under the lock and no-op. This prevents a move immediately followed by
+  removal from recreating the definition.
+- Reselection invalidates pending geometry for the old generation only after
+  the replacement settings write succeeds; the candidate inherits the latest
+  resolved destination geometry used for that write.
 - A failed geometry save leaves the last persisted geometry intact and reports
   the failure without killing the host.
-- Shutdown flush ordering must not recreate or retry a crop after teardown has
-  begun.
+- Shutdown marks the crop store closing under the same lock, then flushes only
+  current non-tombstoned deltas. No late callback may recreate, re-enable, or
+  retry a crop after teardown begins.
 
 ### Geometry and displays
 
@@ -537,6 +594,9 @@ or an explicitly reviewed exception for every applicable gate.
 - Logout to character select never leaves the crop bound to an anonymous
   client.
 - A returning named character can be rebound on a new HWND.
+- Reselection leaves the old crop visible until candidate setup and persistence
+  succeed, preserves destination geometry, and rolls back without a live or
+  persisted change on either failure.
 - Picker cancel and client-loss cancellation leave no live residue.
 - Crop shutdown leaves no orphan HWND or callback.
 - Lock and hide-on-lost-focus match their primary-preview truth tables.
@@ -561,8 +621,12 @@ loop.
 
 ### Performance gates
 
-Measure a baseline with primary previews only, then one crop with 2, 5, 10, and
-20 running clients where hardware permits. Record:
+Measure a baseline with primary previews only. Then measure simultaneous crop
+counts of 1, 2, 4, and 8 alongside 2, 5, 10, and 20 running clients where the
+client count permits. Stop increasing crops after the first failed stage, but
+record the failure rather than omitting it. Exercise both crops from distinct
+clients and, where useful to isolate compositor cost, repeated source
+relationships against one client. Record:
 
 - Hardware, Windows build, monitor topology, scaling, and client resolutions.
 - Wingman CPU and working set.
@@ -577,7 +641,10 @@ The implementation plan must choose concrete acceptance thresholds before the
 probe is run. Thresholds are not invented in this design because they need a
 measured current baseline and representative hardware. At minimum, one crop
 must not produce a user-visible regression in switching or primary-preview
-dragging.
+dragging. The first production global cap is the greatest staged simultaneous
+crop count that passes every applicable gate; it may be lower than the number
+of configured characters and may not exceed eight without a new measured
+probe.
 
 A failed gate produces one of three explicit outcomes:
 
@@ -614,6 +681,14 @@ Using injected clients, windows, and settings collaborators:
 - Client loss during picker confirmation.
 - Create-before-persist ordering.
 - Persistence failure closes the just-created crop.
+- Reselection candidate-and-swap ordering, destination preservation, and
+  rollback on candidate or persistence failure.
+- Crop-geometry generation checks, tombstones, disable/removal cancellation,
+  and shutdown flush ordering.
+- Preview master off/on closes and later recreates individually enabled crops
+  without rewriting their definitions.
+- Cap enforcement, deterministic suppression of excess hand-edited entries,
+  and rejection of an enable request at the cap.
 - Teardown destroys crop relationships before the message-only host.
 - DWM recovery is bounded and does not retry on every sweep.
 
@@ -632,6 +707,8 @@ Using injected clients, windows, and settings collaborators:
 - Every public non-method `Api` attribute remains underscore-prefixed.
 - New web controls follow `DESIGN.md` conventions.
 - Settings fields commit through per-field endpoints and never on blur.
+- Crop-definition keys participate in character-row composition and protect
+  their owners from seen-roster pruning.
 - New package/module files are present in frozen-build packaging where
   applicable.
 - No new client-targeted move, resize, or maximize API enters the preview
@@ -660,8 +737,10 @@ phase without another review.
 ### Phase 0 — Crop feasibility and DWM observability
 
 1. Surface DWM registration/update failures without changing successful paths.
-2. Build the ephemeral one-crop picker and crop window prototype.
-3. Run Windows, real-EVE, mixed-DPI, lifecycle, and performance gates.
+2. Build the ephemeral picker and crop window prototype, including the staged
+   1/2/4/8 simultaneous-crop load path.
+3. Run Windows, real-EVE, mixed-DPI, lifecycle, and performance gates, then set
+   the first production live-crop cap from the greatest passing stage.
 4. Record measurements and a go/no-go decision.
 
 ### Phase 1 — Production cropped previews
@@ -669,10 +748,12 @@ phase without another review.
 1. Add the pure normalized crop model and versioned settings validation.
 2. Build the production picker.
 3. Build the independent crop window controller.
-4. Add host reconciliation, character rebinding, bounded recovery, and
-   teardown.
-5. Add transactional settings and semantic API methods.
-6. Add the compact Previews-settings controls.
+4. Add host reconciliation, character rebinding, measured cap enforcement,
+   candidate-and-swap reselection, bounded recovery, and teardown.
+5. Add transactional settings, generation-guarded crop geometry persistence,
+   tombstoned removal, and semantic API methods.
+6. Add the compact Previews-settings controls, crop-owner row retention, and
+   preview-master suppression behavior.
 7. Add automated tests, packaging checks, help text, and mandatory smoke
    coverage.
 
@@ -758,7 +839,8 @@ After one production crop is stable and measured:
 
 - Migrate to stable crop IDs and per-character lists.
 - Add names only when more than one crop exists.
-- Define an explicit live-crop cap based on measurements.
+- Re-measure and revise the existing global cap before allowing more live
+  relationships per character.
 - Decide whether lock, visibility, opacity, and hotkeys become per crop.
 - Keep alerts on primary previews unless a separate product decision changes
   that attention model.
@@ -849,6 +931,12 @@ This design succeeds when:
   feature behind.
 - A successful prototype leads to a production crop whose stable owner is a
   character and whose live owner is a replaceable HWND.
+- Production concurrency is bounded by the greatest staged simultaneous-crop
+  count that passed the prototype gates.
+- Reselection either swaps a fully validated and persisted candidate into place
+  or leaves the old live and persisted crop unchanged.
+- Configured crop owners remain visible and removable regardless of roster age
+  or preview-master state.
 - No roadmap item weakens the prohibition on changing real EVE client
   geometry.
 - Each subsequent phase can receive its own bounded design or implementation
