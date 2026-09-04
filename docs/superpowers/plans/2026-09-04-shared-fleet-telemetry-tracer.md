@@ -865,12 +865,14 @@ export async function readFleetProjection(args: {
 - Create: `wingman/fleetsharing/crypto.py`
 - Create: `wingman/fleetsharing/client.py`
 - Create: `wingman/fleetsharing/state.py`
+- Modify: `wingman/settings.py`
 - Modify: `wingman/paths.py`
 - Modify: `pyproject.toml`
 - Create: `tests/test_fleetsharing_projection.py`
 - Create: `tests/test_fleetsharing_crypto.py`
 - Create: `tests/test_fleetsharing_client.py`
 - Create: `tests/test_fleetsharing_state.py`
+- Create: `tests/test_fleetsharing_settings.py`
 - Create: `tests/fixtures/fleet-signature-v1.json` (verbatim authGD fixture)
 - Modify: `tests/test_paths.py`
 - Modify: `tests/test_packaging_completeness.py`
@@ -904,6 +906,10 @@ def sign_request(private_key: bytes, canonical: bytes) -> str:
 
 
 def fleet_sharing_file() -> Path:
+    raise NotImplementedError
+
+
+def validated_fleet_sharing(raw: object) -> dict[str, bool]:
     raise NotImplementedError
 ```
 
@@ -973,7 +979,19 @@ def fleet_sharing_file() -> Path:
   approval URL and the opaque session/catalogue values. They are transport
   primitives, not a finished Wingman settings/pairing UI.
 
-- [ ] **Step 6: Add package/path assertions and run focused tests**
+- [ ] **Step 6: Add the inert persisted sharing predicate**
+
+  Write `tests/test_fleetsharing_settings.py` first. It must assert that a fresh
+  settings document normalizes to exactly `{"enabled": False}`, malformed
+  input cannot enable sharing, and an explicit `True` round-trips through
+  `settings.load()`/save normalization without affecting `fleet_bar` settings.
+  Run it red, then add a top-level `fleet_sharing` default and
+  `validated_fleet_sharing(raw)` in `wingman/settings.py` following the existing
+  top-level section validation pattern. There is deliberately no UI control in
+  this tracer, so ordinary installs remain off; tests and the isolated tracer
+  harness are the only activation seams.
+
+- [ ] **Step 7: Add package/path assertions and run focused tests**
 
   Add `wingman.fleetsharing` to explicit setuptools packages and extend package
   completeness tests. Then run:
@@ -981,15 +999,16 @@ def fleet_sharing_file() -> Path:
   ```bash
   uv run --no-sync python -m pytest tests/test_fleetsharing_projection.py \
     tests/test_fleetsharing_crypto.py tests/test_fleetsharing_client.py \
-    tests/test_fleetsharing_state.py tests/test_paths.py tests/test_packaging_completeness.py -v
+    tests/test_fleetsharing_state.py tests/test_fleetsharing_settings.py \
+    tests/test_paths.py tests/test_packaging_completeness.py -v
   uv run --extra dev ruff check wingman/fleetsharing wingman/paths.py tests/test_fleetsharing_*.py
   uv run --extra dev ruff format --check wingman/fleetsharing wingman/paths.py tests/test_fleetsharing_*.py
   ```
 
-- [ ] **Step 7: Commit pure Wingman sharing boundary**
+- [ ] **Step 8: Commit pure Wingman sharing boundary**
 
   ```bash
-  git add wingman/fleetsharing wingman/paths.py pyproject.toml \
+  git add wingman/fleetsharing wingman/settings.py wingman/paths.py pyproject.toml \
     tests/test_fleetsharing_*.py tests/test_paths.py tests/test_packaging_completeness.py
   git commit -m "feat: add fleet sharing protocol client"
   ```
