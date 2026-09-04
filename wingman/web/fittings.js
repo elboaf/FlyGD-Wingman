@@ -772,7 +772,11 @@
                  { destructive: true })
         .then(function (ok) {
           if (!ok) return;
-          WM.send('fittings_delete_entry', current.id).then(function () {
+          WM.send('fittings_delete_entry', current.id).then(function (applied) {
+            if (!applied) {
+              requestState();
+              return;
+            }
             delete selected[current.id];
             renderSelectionCount();
             expandedId = '';
@@ -851,6 +855,12 @@
   });
 
   document.addEventListener('keydown', function (event) {
+    if (charactersOverlayOpen && event.key === 'Escape') {
+      event.preventDefault();
+      closeCharactersOverlay();
+      WM.el('fittings-characters-open').focus();
+      return;
+    }
     if (!copyOverlayOpen || event.key !== 'Escape' || copyPhase === 'progress') return;
     event.preventDefault();
     closeCopyOverlay(false);
@@ -1123,6 +1133,7 @@
     charactersOverlayOpen = true;
     WM.el('fittings-characters-overlay').hidden = false;
     renderCharactersOverlay();
+    WM.el('fittings-characters-close').focus();
   });
 
   WM.el('fittings-characters-close').addEventListener('click', closeCharactersOverlay);

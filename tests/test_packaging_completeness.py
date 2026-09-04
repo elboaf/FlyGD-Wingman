@@ -596,3 +596,7 @@ def test_the_build_verifies_fittings_js_is_bundled():
     )
     for name in ("index.html", "style.css", "app.js", "skills.js"):
         assert name in web_check, name
+    assert "Test-Path $path -PathType Leaf" in web_check, (
+        "the bundled-web-assets check must prove each expected path is a file, "
+        "not merely an existing directory"
+    )

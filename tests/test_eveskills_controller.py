@@ -172,6 +172,7 @@ def build(
 
     pushed = []
     alerts = []
+    now = kwargs.pop("now", Clock())
     authority = kwargs.pop("authority", None)
     sso = kwargs.pop("sso", None)
     roster = authority_characters
@@ -220,7 +221,7 @@ def build(
             key_source=kwargs.pop("key_source", None),
             spawn=kwargs.get("spawn", threading.Thread),
             launch_browser=kwargs.pop("launch_browser", lambda _url: None),
-            now=kwargs.get("now", Clock()),
+            now=now,
             sso=sso,
             listener_factory=kwargs.pop("listener_factory", None),
             validate_token=validate,
@@ -244,7 +245,7 @@ def build(
         alert=lambda kind, title, body: alerts.append((kind, title, body)),
         authority=authority,
         client=kwargs.pop("client", None) or object(),
-        now=kwargs.pop("now", Clock()),
+        now=now,
         **kwargs,
     )
     authority.register_participant(controller)

@@ -498,7 +498,9 @@ def test_refresh_reports_progress_per_character(tmp_path, monkeypatch):
 # ---- production wiring (__main__.build_fittings_controller) --------------
 
 
-def test_production_builder_passes_bound_change_and_progress_callbacks(tmp_path):
+def test_production_builder_passes_bound_change_and_progress_callbacks(
+    tmp_path, monkeypatch
+):
     """Mirrors test_skills_wiring.py's own bound-method check: a name
     resolved lazily inside a lambda is not checked when the builder runs,
     so a wrong alias ships green and fails on a user's machine the first
@@ -525,23 +527,21 @@ def test_production_builder_passes_bound_change_and_progress_callbacks(tmp_path)
         def _push_fittings_progress(self, payload):
             pass
 
-    monkeypatch_paths = main_mod.paths
-    original_eve_fittings_file = monkeypatch_paths.eve_fittings_file
-    original_eve_fittings_names_file = monkeypatch_paths.eve_fittings_names_file
-    monkeypatch_paths.eve_fittings_file = lambda: tmp_path / "eve_fittings.json"
-    monkeypatch_paths.eve_fittings_names_file = lambda: (
-        tmp_path / "eve_fitting_names.json"
+    monkeypatch.setattr(
+        main_mod.paths, "eve_fittings_file", lambda: tmp_path / "eve_fittings.json"
     )
-    try:
-        api = FakeApi()
-        controller = main_mod.build_fittings_controller(api, FakeAuthorityForMain())
-        assert controller is not None
-        assert controller._changed == api._push_fittings_changed
-        assert controller._progress == api._push_fittings_progress
-        assert controller._alert == api._alert
-    finally:
-        monkeypatch_paths.eve_fittings_file = original_eve_fittings_file
-        monkeypatch_paths.eve_fittings_names_file = original_eve_fittings_names_file
+    monkeypatch.setattr(
+        main_mod.paths,
+        "eve_fittings_names_file",
+        lambda: tmp_path / "eve_fitting_names.json",
+    )
+
+    api = FakeApi()
+    controller = main_mod.build_fittings_controller(api, FakeAuthorityForMain())
+    assert controller is not None
+    assert controller._changed == api._push_fittings_changed
+    assert controller._progress == api._push_fittings_progress
+    assert controller._alert == api._alert
 
 
 def test_workspace_ship_options_reflect_collection_scope_before_search(tmp_path):

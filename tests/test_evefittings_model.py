@@ -234,19 +234,20 @@ def test_remote_validation_is_strict_about_shape_ids_quantities_and_bounds():
     for value in bad_values:
         payload = [remote()]
         payload[0]["items"][0]["quantity"] = value
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Remote item quantity"):
             validate_remote_snapshot(payload)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Remote fitting name must not be empty"):
         validate_remote_snapshot([remote(name="")])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Remote fitting name exceeds"):
         validate_remote_snapshot([remote(name="x" * 51)])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Remote fitting description exceeds"):
         validate_remote_snapshot([remote(description="x" * 501)])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must contain item rows"):
         validate_remote_snapshot([remote(items=[])])
-    with pytest.raises(ValueError):
-        validate_remote_snapshot([remote()] * 501)
+    oversized = [remote(fitting_id=index + 1) for index in range(501)]
+    with pytest.raises(ValueError, match="snapshot exceeds 500 fittings"):
+        validate_remote_snapshot(oversized)
 
 
 def test_remote_fitting_and_canonical_types_are_immutable():

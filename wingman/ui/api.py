@@ -7537,9 +7537,15 @@ class Api:
         if self._fittings is None:
             return False
         ids = list(character_ids) if isinstance(character_ids, list) else None
-        threading.Thread(
-            target=self._fittings_refresh_worker, args=(ids,), daemon=True
-        ).start()
+        try:
+            worker = self._spawn(
+                target=self._fittings_refresh_worker, args=(ids,), daemon=True
+            )
+            worker.start()
+        except RuntimeError:
+            logger.exception("Could not start fitting refresh worker")
+            self._push_fittings_changed({"reason": "refresh"})
+            return False
         return True
 
     def _fittings_refresh_worker(self, character_ids) -> None:
@@ -7643,9 +7649,29 @@ class Api:
     def fittings_start_copy(self, ticket_id) -> bool:
         if self._fittings is None or not isinstance(ticket_id, str) or not ticket_id:
             return False
-        threading.Thread(
-            target=self._fittings_copy_worker, args=(ticket_id,), daemon=True
-        ).start()
+        try:
+            worker = self._spawn(
+                target=self._fittings_copy_worker, args=(ticket_id,), daemon=True
+            )
+            worker.start()
+        except RuntimeError:
+            logger.exception("Could not start fitting copy worker")
+            self._push_fittings_progress(
+                {
+                    "kind": "copy",
+                    "phase": "complete",
+                    "operation_id": "",
+                    "completed": 0,
+                    "total": 0,
+                    "result": {
+                        "status": "failed",
+                        "operation_id": "",
+                        "results": [],
+                        "write_count": 0,
+                    },
+                }
+            )
+            return False
         return True
 
     def _fittings_copy_worker(self, ticket_id) -> None:

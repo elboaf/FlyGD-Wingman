@@ -635,7 +635,7 @@ def test_backup_read_retries_once_after_transient_oserror(
         return original_read(candidate)
 
     monkeypatch.setattr(store, "_read_document", flaky_read)
-    monkeypatch.setattr(store.time, "sleep", sleeps.append)
+    monkeypatch.setattr(store, "_sleep", sleeps.append)
 
     loaded, warnings = load_fittings(path)
 
@@ -663,7 +663,7 @@ def test_backup_read_stops_after_one_retry(tmp_path, monkeypatch, primary_state)
         return original_read(candidate)
 
     monkeypatch.setattr(store, "_read_document", blocked_read)
-    monkeypatch.setattr(store.time, "sleep", sleeps.append)
+    monkeypatch.setattr(store, "_sleep", sleeps.append)
 
     loaded, warnings = load_fittings(path)
 

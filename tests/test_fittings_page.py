@@ -262,6 +262,24 @@ def test_rejected_local_edits_immediately_requery_persisted_state():
     assert "if (!applied) requestState();" in FITTINGS_JS
 
 
+def test_rejected_fitting_delete_requeries_without_clearing_page_state():
+    call = FITTINGS_JS.index("WM.send('fittings_delete_entry'")
+    callback = FITTINGS_JS[call : FITTINGS_JS.index("});\n    });", call)]
+
+    assert ".then(function (applied)" in callback
+    rejection = callback[callback.index("if (!applied)") :]
+    rejection = rejection[: rejection.index("}") + 1]
+    assert "requestState();" in rejection
+    assert "return;" in rejection
+    for cleanup in (
+        "delete selected[current.id];",
+        "expandedId = '';",
+        "detail = null;",
+    ):
+        assert cleanup not in rejection
+        assert cleanup in callback[callback.index("if (!applied)") + len(rejection) :]
+
+
 def test_refresh_refusal_error_is_rendered_from_semantic_progress():
     notices = FITTINGS_JS[
         FITTINGS_JS.index("function renderNotices") : FITTINGS_JS.index(
@@ -334,6 +352,38 @@ def test_copy_results_name_every_terminal_category_and_never_offer_retry():
         assert label in FITTINGS_JS
     copy_section = FITTINGS_JS[FITTINGS_JS.index("function renderCopyResults") :]
     assert "Retry" not in copy_section
+
+
+def test_copy_result_terminal_states_use_existing_semantic_tokens():
+    failed = re.search(r"\.fit-copy-result\.failed\s*\{([^{}]*)\}", CSS)
+    assert failed and "color: var(--err)" in failed.group(1)
+    for status in ("unattempted_throttle", "cancelled"):
+        rule = re.search(rf"\.fit-copy-result\.{status}\s*\{{([^{{}}]*)\}}", CSS)
+        assert rule and "color: var(--warn)" in rule.group(1), status
+
+
+def test_fittings_empty_state_starts_hidden_until_the_first_payload():
+    empty = re.search(r'<div class="empty" id="fittings-empty"[^>]*>', HTML)
+    assert empty and re.search(r"\bhidden\b", empty.group(0))
+
+
+def test_characters_overlay_focus_and_keyboard_dismissal_match_copy_overlay():
+    opening = FITTINGS_JS[
+        FITTINGS_JS.index(
+            "WM.el('fittings-characters-open').addEventListener"
+        ) : FITTINGS_JS.index("WM.el('fittings-characters-close').addEventListener")
+    ]
+    assert "WM.el('fittings-characters-close').focus();" in opening
+
+    keydown = FITTINGS_JS[
+        FITTINGS_JS.index("document.addEventListener('keydown'") : FITTINGS_JS.index(
+            "function copyButtons"
+        )
+    ]
+    assert "charactersOverlayOpen" in keydown
+    assert "event.key !== 'Escape'" in keydown or "event.key === 'Escape'" in keydown
+    assert "closeCharactersOverlay();" in keydown
+    assert "WM.el('fittings-characters-open').focus();" in keydown
 
 
 def test_copy_selected_remains_the_only_accent_action():
