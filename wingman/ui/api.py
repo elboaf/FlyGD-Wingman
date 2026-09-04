@@ -198,6 +198,26 @@ def _with_fetch_labels(payload: dict) -> dict:
     return out
 
 
+# Shared authority warnings come from startup migration/load paths and are
+# replayed on demand through a state read, not a one-shot dialog. Keep them
+# bounded per entry and in count, matching the Skills route's payload-sized
+# posture and the authority controller's 500-character notice cap.
+EVE_CHARACTERS_MAX_WARNINGS = 20
+EVE_CHARACTERS_MAX_TEXT_CHARS = 500
+
+
+def _bound_eve_characters_text(text: str) -> str:
+    return text[:EVE_CHARACTERS_MAX_TEXT_CHARS]
+
+
+def _bound_eve_characters_warnings(warnings=None) -> list[str]:
+    raw = warnings or ["The shared EVE character authority is unavailable."]
+    return [
+        _bound_eve_characters_text(warning)
+        for warning in raw[:EVE_CHARACTERS_MAX_WARNINGS]
+    ]
+
+
 def _empty_eve_characters_state(warnings=None) -> dict:
     """The shared character-management answer when no authority exists."""
     return {
@@ -206,9 +226,7 @@ def _empty_eve_characters_state(warnings=None) -> dict:
         "authorization_activity": "idle",
         "authorization_notice": "",
         "characters": [],
-        "warnings": list(
-            warnings or ["The shared EVE character authority is unavailable."]
-        ),
+        "warnings": _bound_eve_characters_warnings(warnings),
     }
 
 
@@ -7707,39 +7725,51 @@ class Api:
         payload = dict(self._authority.management_state())
         payload["available"] = True
         payload["auth_configured"] = eveauth_application.is_configured()
-        payload["warnings"] = list(self._authority_warnings)
+        payload["warnings"] = _bound_eve_characters_warnings(self._authority_warnings)
         return payload
 
     def eve_characters_authenticate(self) -> dict:
         if self._authority is None:
             return {
                 "accepted": False,
-                "error": "The shared EVE character authority is unavailable.",
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
             }
         result = self._authority.start_full_authorization()
-        return {"accepted": result.accepted, "error": result.error}
+        return {
+            "accepted": result.accepted,
+            "error": _bound_eve_characters_text(result.error),
+        }
 
     def eve_characters_cancel_auth(self) -> dict:
         if self._authority is None:
             return {
                 "accepted": False,
-                "error": "The shared EVE character authority is unavailable.",
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
             }
         result = self._authority.cancel_authorization()
-        return {"accepted": result.accepted, "error": result.error}
+        return {
+            "accepted": result.accepted,
+            "error": _bound_eve_characters_text(result.error),
+        }
 
     def eve_characters_forget(self, character_id) -> dict:
         if self._authority is None:
             return {
                 "applied": False,
                 "persisted": False,
-                "error": "The shared EVE character authority is unavailable.",
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
             }
         result = self._authority.forget(character_id)
         return {
             "applied": result.applied,
             "persisted": result.persisted,
-            "error": result.error,
+            "error": _bound_eve_characters_text(result.error),
         }
 
     # ---- EVE skills ---
