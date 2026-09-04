@@ -239,14 +239,13 @@ separate clean authGD worktree.
 
   Expected: the new policy assertion and local telemetry suites pass.
 
-- [ ] **Step 6: Open and record the CCP policy inquiry**
+- [ ] **Step 6: Record the unverified CCP-policy release gate**
 
-  Submit a support/developer inquiry describing exactly: a display-only desktop
-  tool reads player-generated local combat logs; derives a ten-second DPS value
-  and current tackle state; sends only that sparse result to authenticated
-  current fleet members; never sends input, reads memory, transfers raw logs,
-  or automates gameplay. Record only the inquiry reference/date in the spec’s
-  release-gate section; do not claim permission pending CCP’s response.
+  Do not send an external CCP inquiry during this tracer. Record in the spec’s
+  release-gate section that the user directed the project not to seek a new
+  ruling and that technical validation does not establish policy permission.
+  Keep CCP-policy status `unverified`; it blocks public release only, not the
+  isolated tracer work in this plan.
 
 - [ ] **Step 7: Commit the Wingman policy artifact**
 
