@@ -355,8 +355,14 @@ The repository was reformatted with `ruff format` in one commit touching
 that reformat rather than to whoever wrote the code. The setting is
 per-clone and cannot be committed, so every clone needs it once.
 
-Official releases are built by
-[`.github/workflows/release.yml`](.github/workflows/release.yml), which injects
+Official releases are built in two ways. The primary path is
+[`.github/workflows/autorelease.yml`](.github/workflows/autorelease.yml):
+merge a bump of `__version__` in `wingman/__init__.py` to `main`, and the
+workflow tests, builds and publishes the release, creating the `vX.Y.Z` tag
+itself — publishing pauses for an approval click if the `release` GitHub
+environment has reviewers configured. The fallback path is
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which
+triggers on a manually pushed `v*` tag. Both inject
 the project's own Google OAuth desktop-client configuration from repository
 secrets at build time. **Those credentials are never committed to this
 repository** — `wingman/credentials.py` contains only
