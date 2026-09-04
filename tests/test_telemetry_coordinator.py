@@ -20,6 +20,7 @@ import pytest
 from wingman.telemetry.coordinator import (
     PUBLISH_INTERVAL_S,
     TelemetryCoordinator,
+    _FleetMode,
     _noop_thread_factory,
 )
 from wingman.telemetry.metrics import NO_LOG, FleetMetrics
@@ -499,20 +500,36 @@ class TestFleetGeneration:
             def is_alive(self):
                 return False
 
+        class FailingWorker:
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+            def is_alive(self):
+                return False
+
         h = _harness(tmp_path, fleet=True)
         h.coordinator._worker = DeadWorker()
         h.coordinator._running = False
+        h.coordinator._fleet_active = True
+        h.coordinator._fleet_requested = True
+        h.coordinator._fleet_active_generation = 1
+        h.coordinator._fleet_requested_generation = 1
+        h.coordinator._queue.put(_FleetMode(True, 1))
         h.subscribe()
+        h.coordinator._thread_factory = lambda **_kwargs: FailingWorker()
 
-        generation = h.coordinator.reconcile()
+        first = h.coordinator.reconcile()
+
+        h.coordinator._thread_factory = _noop_thread_factory
+        second = h.coordinator.reconcile()
         h.discovery.publish(_roster(_session("Alice")))
         h.pump()
         h.pump()
 
-        assert generation == 1
+        assert (first, second) == (1, 1)
         assert h.coordinator.requested_fleet_generation() == 1
         assert h.snapshots
-        assert h.snapshots[-1].activation_generation == generation
+        assert h.snapshots[-1].activation_generation == 1
 
     def test_empty_and_disabled_snapshots_keep_generation_zero(self, tmp_path):
         h = _harness(tmp_path, fleet=True)

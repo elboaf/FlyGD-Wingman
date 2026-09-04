@@ -242,6 +242,7 @@ class TelemetryCoordinator:
         self._dispatch_lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._running = False
+        self._dispatcher_finalized_dead = False
         self._stop_event = threading.Event()
 
     # ------------------------------------------------------------------
@@ -328,10 +329,9 @@ class TelemetryCoordinator:
             # Producers must never run without the sole consumer of their
             # queue. A retained timed-out dispatcher can refuse a restart;
             # leave producers stopped and retry next reconcile.
-            if (want_discovery or folder is not None) and not self._start_dispatcher():
-                return fleet_generation
-
-            if fleet_enabled:
+            self._dispatcher_finalized_dead = False
+            started = self._start_dispatcher()
+            if fleet_enabled and self._dispatcher_finalized_dead:
                 with self._lock:
                     needs_restore = not self._fleet_requested
                     if needs_restore:
@@ -341,6 +341,8 @@ class TelemetryCoordinator:
                     # finalizing; restore the same generation so this reconcile
                     # still publishes the reservation it already handed out.
                     self._queue.put(_FleetMode(fleet_enabled, fleet_generation))
+            if not started:
+                return fleet_generation
 
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)
@@ -573,6 +575,7 @@ class TelemetryCoordinator:
                 # It died after the prior bounded join returned. Finalize
                 # that generation before a replacement can consume its
                 # queued payloads or publish its cached rows.
+                self._dispatcher_finalized_dead = True
                 self._finalize_dead_dispatcher()
             self._running = True
             self._stop_event = threading.Event()
