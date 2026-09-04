@@ -102,3 +102,4 @@ class FleetSnapshot:
     rows: tuple[FleetRow, ...]
     stream_health: StreamHealth
     metric_error: str | None = None
+    activation_generation: int = 0

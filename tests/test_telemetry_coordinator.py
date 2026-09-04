@@ -443,6 +443,78 @@ class TestRuntimePredicates:
         assert all(reads_under_lock)
 
 
+class TestFleetGeneration:
+    def test_fleet_generation_is_reserved_even_when_dispatcher_cannot_start(
+        self, tmp_path
+    ):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._start_dispatcher = lambda: False
+
+        generation = h.coordinator.reconcile()
+
+        assert generation == 1
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.coordinator._fleet_requested is True
+
+    def test_idempotent_reconcile_reuses_requested_fleet_generation(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+
+        first = h.coordinator.reconcile()
+        second = h.coordinator.reconcile()
+
+        assert first == second == 1
+
+    def test_each_fleet_mode_transition_reserves_a_new_generation(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        first = h.coordinator.reconcile()
+        h.flags["fleet"] = False
+        second = h.coordinator.reconcile()
+        h.flags["fleet"] = True
+        third = h.coordinator.reconcile()
+
+        assert (first, second, third) == (1, 2, 3)
+
+    def test_failed_start_keeps_the_reserved_generation_for_a_later_reconcile(
+        self, tmp_path
+    ):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._start_dispatcher = lambda: False
+
+        first = h.coordinator.reconcile()
+        h.coordinator._start_dispatcher = (
+            TelemetryCoordinator._start_dispatcher.__get__(h.coordinator)
+        )
+        h.flags["preview"] = True
+        second = h.coordinator.reconcile()
+        h.coordinator.dispatch_once(0)
+
+        assert (first, second) == (1, 1)
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.coordinator.snapshot().activation_generation == 1
+
+    def test_empty_and_disabled_snapshots_keep_generation_zero(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+
+        assert h.coordinator.snapshot().activation_generation == 0
+
+        h.coordinator.reconcile()
+        assert h.coordinator.snapshot().activation_generation == 0
+
+        h.flags["fleet"] = False
+        h.coordinator.reconcile()
+        assert h.coordinator.snapshot().activation_generation == 0
+
+    def test_published_snapshot_carries_the_activated_generation(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.subscribe()
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert h.snapshots[-1].activation_generation == 1
+
+
 # ---------------------------------------------------------------------------
 # Step 2: sequencing and source republication
 # ---------------------------------------------------------------------------
