@@ -22,6 +22,9 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
 MANUAL_UPDATE_HARNESS = ROOT / "tests" / "manual" / "update_harness.py"
+MANUAL_PREVIEW_CROP_HARNESS = ROOT / "tests" / "manual" / "preview_crop_harness.py"
+MANUAL_PREVIEW_CROP_MODEL = ROOT / "tests" / "manual" / "preview_crop_model.py"
+MANUAL_PREVIEW_CROP_WINDOWS = ROOT / "tests" / "manual" / "preview_crop_windows.py"
 
 
 def test_readme_discloses_automatic_github_update_checks():
@@ -295,6 +298,34 @@ def test_manual_update_harness_is_not_packaged():
     spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
     assert "tests/manual" not in spec
     assert MANUAL_UPDATE_HARNESS.is_file() and MANUAL_UPDATE_FIXTURE.is_file()
+
+
+def test_manual_preview_crop_harness_is_not_packaged():
+    """The crop probe is three checkout-only files, not one: the harness
+    loads the model and the window controllers as siblings by path, so a
+    build that shipped any of them would ship a prototype that opens
+    always-on-top windows against live EVE clients. The lexical guard is
+    kept for the same reason the updater harness keeps it -- `tests/manual`
+    appearing anywhere in the spec is the only way any of them could be
+    collected.
+    """
+    spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
+    assert "tests/manual" not in spec
+    assert MANUAL_PREVIEW_CROP_HARNESS.is_file()
+    assert MANUAL_PREVIEW_CROP_MODEL.is_file()
+    assert MANUAL_PREVIEW_CROP_WINDOWS.is_file()
+
+
+def test_no_shipped_module_imports_the_crop_probe():
+    """Packaging exclusion is only half of it: a `wingman/` module that
+    imported the probe would drag it into the frozen build through
+    PyInstaller's own dependency analysis, spec exclusion or not."""
+    offenders = [
+        path.relative_to(ROOT)
+        for path in (ROOT / "wingman").rglob("*.py")
+        if "preview_crop_" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
 
 
 @pytest.mark.parametrize(

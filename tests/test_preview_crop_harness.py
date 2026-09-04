@@ -11,9 +11,18 @@ which is the smoke checklist's job, not pytest's. What IS exercised is
 everything between: which clients are eligible, which crops are created,
 closed and recreated, where activation is routed, and the order teardown
 takes.
+
+The last section covers the checkout-only CLI. It never reaches Windows
+either: the platform check, the single-instance refusal, DPI awareness and
+the host itself are all driven through the module's own seams, so the same
+tests run on the Linux and Windows CI jobs and neither one opens a window.
 """
 
 import importlib.util
+import subprocess
+import sys
+import textwrap
+import types
 from pathlib import Path
 
 import pytest
@@ -700,3 +709,466 @@ def test_the_prototype_persists_nothing():
     assert host._flush_layouts is None
     assert host._replace_layout is None
     assert host._clear_layouts is None
+
+
+# --- the checkout-only CLI -------------------------------------------------
+
+ROOT = Path(__file__).resolve().parents[1]
+HARNESS_PATH = ROOT / "tests" / "manual" / "preview_crop_harness.py"
+OPT_IN = "--i-understand-this-is-an-ephemeral-windows-probe"
+
+
+class FakeProbeHost:
+    """Stands in for PrototypePreviewHost over a whole CLI run.
+
+    Only the four methods the CLI is allowed to call: start, wait_ready,
+    set_probe_count, probe_status and stop. Anything else the CLI reached
+    for would fail here, which is the point -- the probe's contract with
+    the host is exactly this surface.
+    """
+
+    def __init__(self, clients=("Alice",), ready=True, failures_at=None, live_at=None):
+        self.character = None
+        self.ready = ready
+        self.clients = list(clients)
+        self._failures_at = dict(failures_at or {})
+        self._live_at = dict(live_at or {})
+        self.events = []
+        self.requested = 0
+        self.started = 0
+        self.stopped = 0
+        self.wait_timeouts = []
+
+    def start(self):
+        self.started += 1
+        self.events.append(("start",))
+
+    def wait_ready(self, timeout):
+        self.wait_timeouts.append(timeout)
+        return self.ready
+
+    def set_probe_count(self, count):
+        stage = model.validated_stage(count)
+        self.requested = stage
+        self.events.append(("stage", stage))
+        return stage
+
+    def probe_status(self):
+        live = self._live_at.get(self.requested, min(self.requested, len(self.clients)))
+        return {
+            "character": self.character,
+            "requested": self.requested,
+            "live": live,
+            "crops": self.clients[:live],
+            "picker_open": False,
+            "failures": list(self._failures_at.get(self.requested, ())),
+            "clients": list(self.clients),
+        }
+
+    def stop(self):
+        self.stopped += 1
+        self.events.append(("stop",))
+
+
+def run_cli(
+    monkeypatch,
+    argv,
+    *,
+    host=None,
+    single_instance=object(),
+    platform="win32",
+    console=True,
+):
+    """Drive harness.main() with every Windows seam replaced.
+
+    `host=None` means "this run must refuse before a host exists": the
+    factory raises rather than returning one, and main() does not catch
+    AssertionError, so a CLI that constructed a host anyway fails loudly
+    instead of quietly passing.
+    """
+    monkeypatch.setattr(harness.sys, "platform", platform)
+    monkeypatch.setattr(harness, "_acquire_single_instance", lambda: single_instance)
+    dpi_calls = []
+    monkeypatch.setattr(harness, "_set_dpi_awareness", lambda: dpi_calls.append(True))
+
+    built = []
+
+    def factory(**kwargs):
+        built.append(kwargs)
+        if host is None:
+            raise AssertionError("the CLI constructed a host it should have refused")
+        # Recorded on the fake so probe_status can report it, exactly as
+        # the real host stores the requested character.
+        host.character = kwargs.get("character")
+        host.events.append(("construct",))
+        return host
+
+    monkeypatch.setattr(harness, "PrototypePreviewHost", factory)
+
+    presses = []
+
+    def fake_input(*_args):
+        presses.append(True)
+        if not console:
+            raise EOFError
+        return ""
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    code = harness.main(argv)
+    return types.SimpleNamespace(
+        code=code, built=built, dpi_calls=dpi_calls, presses=presses
+    )
+
+
+# -- parsing ----------------------------------------------------------------
+
+
+def test_parser_exposes_pick_and_load():
+    args = harness.build_parser().parse_args(["pick", "--character", "Alice", OPT_IN])
+    assert args.command == "pick"
+    assert args.character == "Alice"
+    assert args.handler is harness._run_pick
+
+    args = harness.build_parser().parse_args(["load", OPT_IN])
+    assert args.command == "load"
+    assert args.handler is harness._run_load
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pick", "--character", "Alice"],
+        ["load"],
+    ],
+)
+def test_both_commands_require_the_acknowledgement(argv):
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(argv)
+
+
+def test_abbreviated_acknowledgement_is_rejected():
+    """allow_abbrev=False on every parser. The flag is long precisely so
+    that it cannot be typed by accident, which a prefix match would undo."""
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(
+            ["load", "--i-understand-this-is-an-ephemeral-windows"]
+        )
+
+
+def test_an_abbreviated_option_is_rejected_too():
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(["pick", "--charac", "Alice", OPT_IN])
+
+
+def test_pick_requires_a_character():
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(["pick", OPT_IN])
+
+
+@pytest.mark.parametrize("argv", [[], ["probe", OPT_IN]])
+def test_an_unknown_or_missing_command_is_rejected(argv):
+    with pytest.raises(SystemExit):
+        harness.build_parser().parse_args(argv)
+
+
+def test_the_staged_counts_are_the_models_valid_stages():
+    """Derived, not retyped: the pure model owns which counts exist, and
+    the ceiling is the probe guard the host already enforces."""
+    for stage in harness.PROBE_STAGES:
+        assert model.validated_stage(stage) == stage
+    assert max(harness.PROBE_STAGES) == harness.PROBE_MAX
+
+
+# -- import inertness -------------------------------------------------------
+
+
+def test_importing_the_harness_starts_nothing_and_parses_nothing():
+    """A module that parsed argv or started a pump at import would act on
+    a stray sys.argv -- including the test runner's own. The subprocess
+    gives it a fully valid `pick` argv to act on, so a module that did
+    would be caught rather than merely unproven."""
+    probe = textwrap.dedent(
+        """
+        import importlib.util
+        import sys
+        import threading
+
+        path = sys.argv[1]
+        sys.argv = [
+            "preview_crop_harness",
+            "pick",
+            "--character",
+            "Alice",
+            "--i-understand-this-is-an-ephemeral-windows-probe",
+        ]
+        before = threading.active_count()
+        spec = importlib.util.spec_from_file_location("preview_crop_harness", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert threading.active_count() == before, "the import started a thread"
+        assert "wingman.__main__" not in sys.modules, "the import pulled in the app"
+        print("inert")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(HARNESS_PATH)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "inert"
+
+
+def test_importing_the_harness_binds_no_native_library(monkeypatch):
+    """win32.bind() is the module's only route to a native handle, and the
+    same Linux-import constraint the two controllers document applies
+    here: nothing native may happen before a subcommand is parsed."""
+
+    def explode():
+        raise AssertionError("the import bound the native libraries")
+
+    monkeypatch.setattr(harness.win32, "bind", explode)
+    _load("preview_crop_harness_reimport", "manual/preview_crop_harness.py")
+
+
+# -- refusals ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv", [["pick", "--character", "Alice", OPT_IN], ["load", OPT_IN]]
+)
+def test_a_non_windows_run_refuses_before_constructing_a_host(
+    monkeypatch, capsys, argv
+):
+    result = run_cli(monkeypatch, argv, host=None, platform="linux")
+    assert result.code == 1
+    assert result.built == []
+    assert result.dpi_calls == []
+    err = capsys.readouterr().err
+    assert err.startswith("crop probe failure: ")
+    assert "Windows" in err
+
+
+@pytest.mark.parametrize(
+    "argv", [["pick", "--character", "Alice", OPT_IN], ["load", OPT_IN]]
+)
+def test_a_running_wingman_refuses_before_constructing_a_host(
+    monkeypatch, capsys, argv
+):
+    """Two hosts on one desktop would discover the same clients and hold
+    two DWM relationships each, and the installed app owns the real
+    settings file this probe must never touch."""
+    result = run_cli(monkeypatch, argv, host=None, single_instance=None)
+    assert result.code == 1
+    assert result.built == []
+    err = capsys.readouterr().err
+    assert err.startswith("crop probe failure: ")
+    assert "Wingman" in err
+
+
+def test_a_console_that_cannot_be_read_is_a_refusal_not_a_traceback(
+    monkeypatch, capsys
+):
+    host = FakeProbeHost()
+    result = run_cli(
+        monkeypatch,
+        ["pick", "--character", "Alice", OPT_IN],
+        host=host,
+        console=False,
+    )
+    assert result.code == 1
+    assert host.stopped == 1  # the finally still ran
+    assert "crop probe failure: " in capsys.readouterr().err
+
+
+def test_an_oserror_from_the_host_is_reported_and_returns_one(monkeypatch, capsys):
+    host = FakeProbeHost()
+
+    def explode():
+        raise OSError("RegisterClassW failed")
+
+    monkeypatch.setattr(host, "start", explode)
+    result = run_cli(monkeypatch, ["pick", "--character", "Alice", OPT_IN], host=host)
+    assert result.code == 1
+    assert host.stopped == 1
+    assert "crop probe failure: RegisterClassW failed" in capsys.readouterr().err
+
+
+# -- one host lifecycle -----------------------------------------------------
+
+
+def test_the_probe_starts_exactly_one_host_and_always_stops_it(monkeypatch):
+    host = FakeProbeHost()
+    result = run_cli(monkeypatch, ["pick", "--character", "Alice", OPT_IN], host=host)
+    assert result.code == 0
+    assert len(result.built) == 1
+    assert host.started == 1
+    assert host.stopped == 1
+    assert host.events[0] == ("construct",)
+    assert host.events[-1] == ("stop",)
+
+
+def test_dpi_awareness_is_set_before_the_host_is_constructed(monkeypatch):
+    """The host's windows are placed in physical pixels the moment the
+    pump starts, so a process that became DPI-aware afterwards would
+    measure a scaled desktop it no longer has."""
+    order = []
+    monkeypatch.setattr(harness.sys, "platform", "win32")
+    monkeypatch.setattr(harness, "_acquire_single_instance", lambda: object())
+    monkeypatch.setattr(harness, "_set_dpi_awareness", lambda: order.append("dpi"))
+
+    host = FakeProbeHost()
+
+    def factory(**kwargs):
+        order.append("host")
+        host.character = kwargs.get("character")
+        return host
+
+    monkeypatch.setattr(harness, "PrototypePreviewHost", factory)
+    monkeypatch.setattr("builtins.input", lambda *_: "")
+    assert harness.main(["pick", "--character", "Alice", OPT_IN]) == 0
+    assert order == ["dpi", "host"]
+
+
+def test_the_probe_persists_nothing_through_the_cli(monkeypatch):
+    """No settings callbacks cross the CLI at all -- the only keyword it
+    passes is the character the picker waits for."""
+    host = FakeProbeHost()
+    result = run_cli(monkeypatch, ["pick", "--character", "Alice", OPT_IN], host=host)
+    assert result.built == [{"character": "Alice"}]
+
+
+def test_a_host_that_never_becomes_ready_is_stopped_and_reported(monkeypatch, capsys):
+    host = FakeProbeHost(ready=False)
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 1
+    assert host.stopped == 1
+    assert host.wait_timeouts == [harness.READY_TIMEOUT_S]
+    assert "crop probe failure: " in capsys.readouterr().err
+
+
+# -- pick -------------------------------------------------------------------
+
+
+def test_pick_prints_both_control_grammars_and_waits_for_enter(monkeypatch, capsys):
+    host = FakeProbeHost()
+    result = run_cli(monkeypatch, ["pick", "--character", "Alice", OPT_IN], host=host)
+    out = capsys.readouterr().out
+    assert result.code == 0
+    assert result.presses == [True]
+    for phrase in (
+        "left drag selects",
+        "Enter confirms",
+        "Escape cancels",
+        "left click activates",
+        "left drag moves",
+        "right drag resizes",
+    ):
+        assert phrase in out, phrase
+    assert "Alice" in out
+
+
+# -- load -------------------------------------------------------------------
+
+
+def test_load_refuses_when_no_named_client_is_running(monkeypatch, capsys):
+    host = FakeProbeHost(clients=())
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 1
+    assert ("stage", 1) not in host.events
+    assert host.stopped == 1
+    assert "crop probe failure: " in capsys.readouterr().err
+
+
+def test_load_walks_every_stage_and_waits_between_them(monkeypatch, capsys):
+    host = FakeProbeHost(clients=("A", "B", "C", "D", "E", "F", "G", "H"))
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 0
+    assert [e for e in host.events if e[0] == "stage"] == [
+        ("stage", stage) for stage in harness.PROBE_STAGES
+    ]
+    # One console pause per stage, so the operator can record metrics
+    # before the next one opens.
+    assert len(result.presses) == len(harness.PROBE_STAGES)
+    out = capsys.readouterr().out
+    assert out.count("live crops:") == len(harness.PROBE_STAGES)
+
+
+def test_load_stops_at_the_stage_the_machine_cannot_fill(monkeypatch, capsys):
+    """A stage with fewer clients than crops would measure a different
+    thing than the one the gate names, so it is not run at all."""
+    host = FakeProbeHost(clients=("A", "B", "C"))
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 0
+    assert [e for e in host.events if e[0] == "stage"] == [("stage", 1), ("stage", 2)]
+    assert "3 named client" in capsys.readouterr().out
+
+
+def test_load_stops_on_the_first_stage_that_reports_a_failure(monkeypatch, capsys):
+    host = FakeProbeHost(
+        clients=("A", "B", "C", "D"),
+        failures_at={2: [{"stable_key": "B", "reason": "crop-failed"}]},
+    )
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 0
+    assert [e for e in host.events if e[0] == "stage"] == [("stage", 1), ("stage", 2)]
+    out = capsys.readouterr().out
+    assert "crop-failed" in out
+    assert host.stopped == 1
+
+
+def test_a_stage_is_awaited_until_its_crops_are_live(monkeypatch):
+    """set_probe_count only stores intent and wakes the pump; the crops
+    appear on a later sweep, so printing the status immediately would
+    report every stage as empty."""
+    host = FakeProbeHost(clients=("A", "B"))
+    live = {"n": 0}
+
+    def status():
+        live["n"] += 1
+        return {
+            "character": None,
+            "requested": 1,
+            "live": 1 if live["n"] > 2 else 0,
+            "crops": ["A"] if live["n"] > 2 else [],
+            "picker_open": False,
+            "failures": [],
+            "clients": ["A", "B"],
+        }
+
+    monkeypatch.setattr(host, "probe_status", status)
+    slept = []
+    monkeypatch.setattr(harness.time, "sleep", slept.append)
+    settled = harness._await_stage(host, 1)
+    assert settled["live"] == 1
+    assert slept  # it waited rather than reporting the empty first read
+
+
+def test_an_unfillable_stage_gives_up_instead_of_waiting_forever(monkeypatch):
+    host = FakeProbeHost(clients=("A",), live_at={1: 0})
+    monkeypatch.setattr(harness.time, "sleep", lambda _seconds: None)
+    clock = iter([0.0, 0.0, harness.STAGE_TIMEOUT_S + 1])
+    monkeypatch.setattr(harness.time, "monotonic", lambda: next(clock))
+    assert harness._await_stage(host, 1)["live"] == 0
+
+
+# -- documentation ----------------------------------------------------------
+
+
+def test_the_readme_documents_the_exact_commands_and_boundaries():
+    """The commands are not retyped prose: an operator copies them, and a
+    README that drifted from the parser would be a run that refuses or,
+    worse, one that does something else."""
+    readme = (ROOT / "tests" / "manual" / "README.md").read_text(encoding="utf-8")
+    assert "tests/manual/preview_crop_harness.py pick" in readme
+    assert "tests/manual/preview_crop_harness.py load" in readme
+    assert OPT_IN in readme
+    assert "--character" in readme
+    for phrase in (
+        "saves nothing",
+        "moves no EVE window",
+        "eight",
+        "must not run beside",
+    ):
+        assert phrase in readme, phrase

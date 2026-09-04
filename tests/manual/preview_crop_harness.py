@@ -30,11 +30,19 @@ for the same reasoning applied to hotkeys).
 Same Linux-import constraint as wingman/preview/win32.py and the two
 controllers this drives: no native call happens at module scope. The only
 one this module makes at all is GetClientRect, through injected libs.
+Importing this file parses no arguments, starts no thread, binds no native
+library and does not even import wingman/__main__.py -- everything the CLI
+at the bottom needs from the application entry point is imported inside the
+function that uses it.
 """
 
+import argparse
+import contextlib
 import ctypes
 import importlib.util
 import logging
+import sys
+import time
 from pathlib import Path
 
 from wingman.preview import geometry, win32
@@ -71,6 +79,11 @@ logger = logging.getLogger(__name__)
 # cap: eight is the largest staged count the load path measures, and the
 # measurement is what decides the real cap later.
 PROBE_MAX = 8
+# The staged simultaneous counts the design doc's performance gates name,
+# in the order the load path walks them. Not a second copy of the
+# validation rule: `validated_stage` in the pure model owns which counts
+# exist, and the tests assert these are exactly the ones it accepts.
+PROBE_STAGES = (1, 2, 4, 8)
 # How large a load-staged crop opens. The staged crops exist to be counted
 # and measured, not arranged, so they take the aspect of their own source
 # (via fit_within) and stack up the bottom-right corner out of the way.
@@ -568,3 +581,248 @@ class PrototypePreviewHost(PreviewHost):
             crop.close()
         self._probe_interactive_key = None
         super()._teardown(libs)
+
+
+# ---- the checkout-only CLI ---------------------------------------------
+#
+# Everything below runs on the CLI thread and only after a subcommand has
+# been parsed. Nothing here is reachable from the application: no module
+# in wingman/ imports this file, packaging/uploader.spec excludes
+# tests/manual, and the harness writes no settings and no layout.
+
+# Deliberately long, and every parser sets allow_abbrev=False so no prefix
+# of it works either. This probe opens always-on-top layered windows
+# against live EVE clients and holds Wingman's own single-instance mutex
+# while it runs; starting it must be an explicit sentence, not a flag that
+# can be tab-completed or half-typed.
+_OPT_IN = "--i-understand-this-is-an-ephemeral-windows-probe"
+
+# How long the CLI waits for the inherited pump's first sweep. The base
+# host sets _ready at the end of that sweep, so this covers window class
+# registration, the message-only window and one discovery pass.
+READY_TIMEOUT_S = 5.0
+# How long a staged count is given to appear. set_probe_count only stores
+# the intent and wakes the pump, so the crops arrive on a later sweep --
+# printing the status immediately would report every stage as empty.
+STAGE_TIMEOUT_S = 5.0
+_STAGE_POLL_S = 0.1
+
+_PICK_CONTROLS = (
+    "  picker: left drag selects, Enter confirms, Escape cancels\n"
+    "  crop:   left click activates, left drag moves, right drag resizes"
+)
+
+
+def _acquire_single_instance():
+    """Wingman's own single-instance guard, imported here and not above.
+
+    A module-scope import would pull the whole application entry point --
+    and with it pywebview, pystray and the tray icon's dependencies -- into
+    every pytest run that merely loads this file, and would break the
+    import inertness the probe shares with the two controllers it drives.
+    """
+    from wingman.__main__ import acquire_single_instance
+
+    return acquire_single_instance()
+
+
+def _set_dpi_awareness() -> None:
+    """PROCESS_SYSTEM_DPI_AWARE, through the application's own helper.
+
+    Imported lazily for the same reason as above. Calling Wingman's helper
+    rather than SetProcessDpiAwareness directly is the point: the probe has
+    to measure crops in the DPI mode the shipped app actually runs in.
+    """
+    from wingman.__main__ import set_dpi_awareness
+
+    set_dpi_awareness()
+
+
+def _require_probe_environment() -> None:
+    """Refuse to start anywhere the probe would be unsafe or meaningless.
+
+    The single-instance check is not politeness. An installed Wingman on
+    the same desktop would discover the same clients, hold its own DWM
+    relationships against them and apply its own visibility and activation
+    decisions -- so every number this probe records would be measured
+    against two preview subsystems, and the app's settings file would be
+    live under a process that is supposed to persist nothing.
+
+    Acquiring the mutex (rather than only testing it) is deliberate too:
+    for as long as the probe runs, Wingman refuses to start beside it.
+    """
+    if sys.platform != "win32":
+        raise RuntimeError("the crop probe requires Windows")
+    if _acquire_single_instance() is None:
+        raise RuntimeError(
+            "FlyGD Wingman (or its 3.x predecessor) is already running; "
+            "close it before running the crop probe"
+        )
+
+
+def _wait_for_enter(prompt) -> None:
+    """Hold the probe open until the operator presses Enter.
+
+    EOFError becomes a RuntimeError so a run with no console -- redirected
+    stdin, a scheduled task -- ends as this harness's own one-line failure
+    rather than a traceback. Silently continuing would be worse: every
+    pause here exists so a human can look at, or measure, what is on
+    screen.
+    """
+    print(prompt, flush=True)
+    try:
+        input()
+    except EOFError:
+        raise RuntimeError(
+            "the crop probe needs an interactive console to wait for Enter"
+        ) from None
+
+
+def _format_status(status) -> str:
+    return "\n".join(
+        (
+            f"  requested: {status['requested']}",
+            f"  live crops: {status['live']} {status['crops']}",
+            f"  picker open: {status['picker_open']}",
+            f"  named clients: {status['clients']}",
+            f"  failures: {status['failures']}",
+        )
+    )
+
+
+@contextlib.contextmanager
+def _probe_host(character=None):
+    """The one host lifecycle a probe run gets.
+
+    Constructed with no settings persistence callbacks at all -- the
+    subclass supplies its own discarding on_layout_changed -- and stopped
+    in `finally` whatever happens, because a pump left running owns HWNDs
+    and DWM relationships with nothing left to close them.
+    """
+    _require_probe_environment()
+    # Before the host, never after: its windows are placed in physical
+    # pixels the moment the pump starts, and a process that became
+    # DPI-aware afterwards would be measuring a desktop it no longer has.
+    _set_dpi_awareness()
+    host = PrototypePreviewHost(character=character)
+    try:
+        host.start()
+        if not host.wait_ready(READY_TIMEOUT_S):
+            raise RuntimeError(
+                f"the preview host was not ready within {READY_TIMEOUT_S:.1f}s"
+            )
+        yield host
+    finally:
+        host.stop()
+
+
+def _await_stage(host, stage, timeout=STAGE_TIMEOUT_S):
+    """The status once *stage* crops are live, a failure is recorded, or
+    the wait runs out. The timed-out status is RETURNED rather than raised
+    on: a stage that could not be filled is a result the operator has to
+    record, not an error that should discard the run so far."""
+    deadline = time.monotonic() + timeout
+    while True:
+        status = host.probe_status()
+        if status["live"] >= stage or status["failures"]:
+            return status
+        if time.monotonic() >= deadline:
+            return status
+        time.sleep(_STAGE_POLL_S)
+
+
+def _run_pick(args) -> None:
+    """Interactive path: one picker for one named character."""
+    with _probe_host(character=args.character) as host:
+        print(f"waiting for {args.character}; the picker opens once that client is up")
+        print(_PICK_CONTROLS, flush=True)
+        _wait_for_enter("press Enter to close the probe and every crop it opened")
+        print(_format_status(host.probe_status()))
+
+
+def _run_load(args) -> None:
+    """Load path: the staged simultaneous counts, one stage at a time.
+
+    Each stage pauses for Enter so the operator can record the metrics the
+    design doc's performance gates ask for before the next one opens. A
+    stage the machine cannot fill is not run at all -- fewer clients than
+    crops measures something other than the gate it is named after.
+    """
+    with _probe_host() as host:
+        clients = host.probe_status()["clients"]
+        if not clients:
+            raise RuntimeError(
+                "no named EVE client is running; log at least one character in first"
+            )
+        print(f"named clients: {clients}", flush=True)
+        for stage in PROBE_STAGES:
+            if len(clients) < stage:
+                print(
+                    f"stopping before stage {stage}: "
+                    f"only {len(clients)} named client(s) are running"
+                )
+                return
+            host.set_probe_count(stage)
+            status = _await_stage(host, stage)
+            print(f"stage {stage}:")
+            print(_format_status(status), flush=True)
+            if status["failures"]:
+                print(f"stopping at stage {stage}: a crop did not open")
+                return
+            clients = status["clients"]
+            _wait_for_enter(f"stage {stage} is up; press Enter to continue")
+
+
+def _add_opt_in(parser) -> None:
+    parser.add_argument(
+        _OPT_IN,
+        action="store_true",
+        required=True,
+        help="required acknowledgement that this opens ephemeral probe windows",
+    )
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Windows-only engineering probe for cropped preview regions. "
+            "Persists nothing; every window it opens dies with the process."
+        ),
+        allow_abbrev=False,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    pick = commands.add_parser(
+        "pick",
+        help="open one interactive crop picker for a named character",
+        allow_abbrev=False,
+    )
+    pick.add_argument("--character", required=True)
+    _add_opt_in(pick)
+    pick.set_defaults(handler=_run_pick)
+
+    load = commands.add_parser(
+        "load",
+        help="stage 1, 2, 4 and 8 simultaneous crops for measurement",
+        allow_abbrev=False,
+    )
+    _add_opt_in(load)
+    load.set_defaults(handler=_run_load)
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        args.handler(args)
+    except (OSError, RuntimeError) as exc:
+        # Every refusal in this file is one of these two, and the probe is
+        # run from a console: one line is the whole report. Native detail
+        # that matters is already in the log the controllers write to.
+        print(f"crop probe failure: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
