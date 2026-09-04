@@ -10,16 +10,19 @@
 
 Full results, thresholds, and observed values are in
 `docs/preview-crop-prototype-results.md`. That document's decision remains
-**INCOMPLETE — no production cap selected.** Stages 1 and 2 functionally
-created crops on a two-named-client machine after fixing a picker focus
-defect, and a later five-named-client session additionally ran stage 4,
-which functioned correctly and now has a real automated 60-second
-CPU/working-set sample whose deltas sit within their individual
-thresholds. That is still not a pass: GPU utilization, activation and drag
-latency, mixed-DPI (125%/150%/200%) correctness, and stage 8 remain
-entirely unmeasured, so no stage can be scored against every committed
-criterion. Phase 1 production work must not begin until the remaining
-Phase 0 gates are exercised or this scope is explicitly revised.
+**INCOMPLETE — no production cap selected.** Stages 1, 2, and 4
+functionally created crops across two- and five-named-client sessions, and
+stage 8 has since run in a ten-named-client session where the user reported
+responsive click/move/resize behavior and a clean close. Stages 4 and 8
+each have a real automated 60-second CPU/working-set sample within
+threshold, and stage 8 additionally has an informal 10-sample (not
+60-second) GPU-median comparison within threshold. That is still not a
+pass: quantitative expected-vs-observed source-edge correctness, activation
+and drag latency, mixed-DPI (125%/150%/200%) coverage, a continuous
+60-second GPU sample, numeric HWND counts, and full lifecycle variants
+remain unmeasured for every stage, so no stage can be scored against every
+committed criterion. Phase 1 production work must not begin until the
+remaining Phase 0 gates are exercised or this scope is explicitly revised.
 
 ## Intended outcome
 
