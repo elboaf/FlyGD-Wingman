@@ -194,9 +194,13 @@
     });
   }
 
+  function requeryIfRejected(applied) {
+    if (!applied) requestState();
+  }
+
   function render(payload) {
     STATE = payload;
-    if (!payload.refreshing) progress = null;
+    if (!payload.refreshing && !(progress && progress.error)) progress = null;
     refreshInFlight = payload.refreshing;
     renderCounts();
     renderCollections();
@@ -225,7 +229,7 @@
       return;
     }
     progress = payload;
-    refreshInFlight = true;
+    refreshInFlight = !(payload && payload.phase === 'complete');
     // A progress push races the first fittings_state() reply in theory
     // (independent async paths -- clicking Refresh does not wait on the
     // initial state fetch to land): nothing to update yet if STATE is
@@ -334,7 +338,8 @@
         if (text === null) return;
         var wanted = text.trim();
         if (!wanted || wanted === current.name) return;
-        WM.send('fittings_rename_collection', current.id, wanted);
+        WM.send('fittings_rename_collection', current.id, wanted)
+          .then(requeryIfRejected);
       });
   });
 
@@ -363,6 +368,7 @@
     // worker and the first onFittingsProgress may be seconds away (one
     // ESI round trip per character), so waiting for a push to disable
     // this button would leave it clickable for the length of that wait.
+    progress = null;
     refreshInFlight = true;
     renderRailButtons();
     WM.send('fittings_refresh', null);
@@ -394,6 +400,7 @@
       lines.push('Refreshed ' + progress.completed + ' of '
                  + progress.total + ' characters');
     }
+    if (progress && progress.error) lines.push(progress.error);
     (STATE.warnings || []).forEach(function (text) { lines.push(text); });
     host.hidden = !lines.length;
     lines.forEach(function (text) { host.appendChild(WM.make('p', 'notice', text)); });
@@ -684,7 +691,7 @@
     var save = WM.make('button', 'btn', 'Save');
     save.addEventListener('click', function () {
       WM.send('fittings_update_metadata', current.id, nameInput.value,
-              descInput.value);
+              descInput.value).then(requeryIfRejected);
     });
     box.appendChild(save);
     return box;
@@ -711,7 +718,7 @@
       check.checked = current.collection_ids.indexOf(collection.id) !== -1;
       check.addEventListener('change', function () {
         WM.send('fittings_set_membership', current.id, collection.id,
-                check.checked);
+                check.checked).then(requeryIfRejected);
       });
       box.appendChild(label);
     });
@@ -743,7 +750,8 @@
       select.appendChild(stale);
     }
     select.addEventListener('change', function () {
-      WM.send('fittings_set_supersession', current.id, select.value || null);
+      WM.send('fittings_set_supersession', current.id, select.value || null)
+        .then(requeryIfRejected);
     });
     box.appendChild(select);
     return box;
@@ -826,10 +834,16 @@
   }
 
   function closeCopyOverlay(force) {
-    if (!copyOverlayOpen || (copyPhase === 'progress' && !force)) return;
+    if (copyPhase === 'progress' && !force) return;
+    if (force) copyPhase = 'targets';
+    if (!copyOverlayOpen) {
+      renderSelectionCount();
+      return;
+    }
     copyOverlayOpen = false;
     copyPreflight = null;
     WM.el('fittings-copy-overlay').hidden = true;
+    renderSelectionCount();
   }
 
   WM.el('fittings-copy-close').addEventListener('click', function () {
@@ -1160,6 +1174,7 @@
       var refresh = WM.make('button', 'btn', 'Refresh');
       refresh.disabled = refreshInFlight;
       refresh.addEventListener('click', function () {
+        progress = null;
         refreshInFlight = true;
         renderRailButtons();
         renderCharactersOverlay();

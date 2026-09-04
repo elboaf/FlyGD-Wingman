@@ -5931,7 +5931,20 @@ class Api:
 
     def _fittings_refresh_worker(self, character_ids) -> None:
         try:
-            self._fittings.refresh(character_ids)
+            result = self._fittings.refresh(character_ids)
+            if isinstance(result, dict) and result.get("error"):
+                characters = result.get("characters")
+                completed = len(characters) if isinstance(characters, list) else 0
+                self._push_fittings_progress(
+                    {
+                        "kind": "refresh",
+                        "phase": "complete",
+                        "completed": completed,
+                        "total": completed,
+                        "busy": bool(result.get("busy")),
+                        "error": str(result["error"]),
+                    }
+                )
         except Exception:
             logger.exception("Fitting refresh failed")
         finally:

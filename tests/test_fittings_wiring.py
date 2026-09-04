@@ -84,11 +84,16 @@ class FakeAuthority:
     def __init__(self, character_ids=(42, 43)):
         self._ids = tuple(character_ids)
         self.auth_in_progress = False
+        self.persistence_errors = {}
 
     @property
     def characters(self):
         return tuple(
-            SimpleNamespace(character_id=value, character_name=f"Pilot {value}")
+            SimpleNamespace(
+                character_id=value,
+                character_name=f"Pilot {value}",
+                persistence_error=self.persistence_errors.get(value, ""),
+            )
             for value in self._ids
         )
 
@@ -140,6 +145,15 @@ def test_workspace_returns_one_bounded_page(tmp_path):
     assert payload["total"] == len(entries)
     assert payload["page"] == 2
     assert payload["page_size"] == contracts.PAGE_SIZE
+
+
+def test_workspace_character_summary_includes_authority_persistence_error(tmp_path):
+    controller, authority = make_controller(tmp_path)
+    authority.persistence_errors[42] = "The refreshed EVE grant could not be saved."
+
+    rows = {row["character_id"]: row for row in controller.workspace({})["characters"]}
+
+    assert rows[42]["error"] == "The refreshed EVE grant could not be saved."
 
 
 def test_workspace_filters_by_collection_all_unfiled_superseded_and_custom(tmp_path):

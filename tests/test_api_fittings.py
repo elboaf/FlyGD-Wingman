@@ -134,6 +134,62 @@ def test_fittings_refresh_pushes_a_completion_notice(tmp_path):
     fittings.refresh.assert_called_once_with([42])
 
 
+def test_fittings_refresh_surfaces_aggregate_refusals_before_change_notice(tmp_path):
+    from tests.test_api import pushes
+
+    cases = (
+        {
+            "ok": False,
+            "busy": True,
+            "batch_id": "",
+            "characters": [],
+            "error": "A fitting refresh is already in progress.",
+        },
+        {
+            "ok": False,
+            "busy": False,
+            "batch_id": "",
+            "characters": [],
+            "error": "The fitting subsystem is shutting down.",
+        },
+        {
+            "ok": False,
+            "busy": False,
+            "batch_id": "batch-1",
+            "characters": [
+                {
+                    "character_id": 42,
+                    "ok": False,
+                    "error": "Unknown EVE character.",
+                }
+            ],
+            "error": "Unknown EVE character.",
+        },
+    )
+
+    for result in cases:
+        fittings = Mock()
+        fittings.refresh.return_value = result
+        api = make_api(tmp_path, fittings=fittings)
+
+        api._fittings_refresh_worker([42])
+
+        assert pushes(api._window) == [
+            (
+                "onFittingsProgress",
+                {
+                    "kind": "refresh",
+                    "phase": "complete",
+                    "completed": len(result["characters"]),
+                    "total": len(result["characters"]),
+                    "busy": result["busy"],
+                    "error": result["error"],
+                },
+            ),
+            ("onFittingsChanged", {"reason": "refresh"}),
+        ]
+
+
 def test_fittings_refresh_coerces_a_non_list_argument_to_none(tmp_path):
     fittings = Mock()
     fittings.refresh.return_value = {"ok": True}

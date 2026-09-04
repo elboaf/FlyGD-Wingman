@@ -230,6 +230,48 @@ def test_filter_collection_and_page_changes_clear_selection_before_refetch():
     assert FITTINGS_JS.count("clearSelection();") >= 6
 
 
+def test_route_leave_force_closes_copy_and_resets_progress_phase():
+    """A late completion push is ignored after leave, so forced close itself
+    must release the phase that disables the route's sole accent action."""
+    close_at = FITTINGS_JS.index("function closeCopyOverlay")
+    close = FITTINGS_JS[
+        close_at : FITTINGS_JS.index("WM.el('fittings-copy-close')", close_at)
+    ]
+    leave = FITTINGS_JS[FITTINGS_JS.index("document.addEventListener('wm:route'") :]
+    leave = leave[: leave.index("// ---- rail")]
+
+    assert "if (force) copyPhase = 'targets';" in close
+    assert "renderSelectionCount();" in close
+    assert "closeCopyOverlay(true);" in leave
+    assert leave.index("fittings_cancel_copy") < leave.index("closeCopyOverlay(true)")
+
+
+def test_rejected_local_edits_immediately_requery_persisted_state():
+    """Controller alerts explain refusal; a fresh state/detail render reverts
+    controls that otherwise continue displaying values that were never saved."""
+    for bridge_name in (
+        "fittings_rename_collection",
+        "fittings_update_metadata",
+        "fittings_set_membership",
+        "fittings_set_supersession",
+    ):
+        call = FITTINGS_JS.index("WM.send('" + bridge_name + "'")
+        tail = FITTINGS_JS[call : call + 300]
+        assert ".then(requeryIfRejected)" in tail, bridge_name
+    assert "function requeryIfRejected(applied)" in FITTINGS_JS
+    assert "if (!applied) requestState();" in FITTINGS_JS
+
+
+def test_refresh_refusal_error_is_rendered_from_semantic_progress():
+    notices = FITTINGS_JS[
+        FITTINGS_JS.index("function renderNotices") : FITTINGS_JS.index(
+            "function renderShipFilterOptions"
+        )
+    ]
+    assert "progress && progress.error" in notices
+    assert "lines.push(progress.error);" in notices
+
+
 def test_copy_has_preflight_progress_and_results_overlays():
     for element_id in (
         "fittings-copy-overlay",

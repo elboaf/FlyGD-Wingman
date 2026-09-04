@@ -299,8 +299,9 @@ def migrate_legacy_skills(
         # This first stripped save is also the moment `eve_skills.json.bak`
         # stops being the recovery copy skills_state.save()'s docstring
         # describes and starts being a one-cycle liability instead:
-        # save() rotates whatever is CURRENTLY at legacy_path into `.bak`
-        # before writing the new content, and what is currently there,
+        # save() first writes the stripped content durably to staging, then
+        # rotates whatever is CURRENTLY at legacy_path into `.bak` before
+        # installing that staging file; what is currently at the primary,
         # the first time this runs, is the pre-strip legacy document --
         # credentials included. So immediately after migration completes,
         # the primary is clean but `eve_skills.json.bak` still holds the

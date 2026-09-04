@@ -503,6 +503,50 @@ def test_execution_saves_in_flight_before_the_single_post(tmp_path):
     assert result["results"][0]["remote_fitting_id"] == 9001
 
 
+def test_outcome_replaces_a_rebuilt_intent_by_durable_key(tmp_path):
+    controller, _, client, _ = make_controller(
+        tmp_path, ready_state(), replies=[mutation(201, {"fitting_id": 88})]
+    )
+
+    def rebuild_immutable_state(_count):
+        with controller._lock:
+            controller._state = replace(
+                controller._state,
+                intents=tuple(replace(item) for item in controller._state.intents),
+            )
+
+    client.on_post = rebuild_immutable_state
+    ticket_id = ready_ticket(controller)
+
+    result = controller.start_copy(ticket_id)
+
+    assert result["results"][0]["status"] == "success"
+    assert controller.state.intents[-1].status == "success"
+    assert controller.state.intents[-1].remote_fitting_id == 88
+
+
+def test_missing_durable_intent_fails_safe_after_the_post(tmp_path):
+    controller, _, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation(201, {"fitting_id": 88})]
+    )
+
+    def drop_live_intent(_count):
+        with controller._lock:
+            controller._state = replace(controller._state, intents=())
+
+    client.on_post = drop_live_intent
+    ticket_id = ready_ticket(controller)
+
+    result = controller.start_copy(ticket_id)
+
+    assert result["status"] == "persistence_failed"
+    assert result["results"][0]["status"] == "unknown"
+    assert result["results"][0]["attempted"] is True
+    persisted, _warnings = load_fittings(path)
+    assert persisted.intents[-1].status == "unknown"
+    assert persisted.intents[-1].unresolved is True
+
+
 def test_failed_intent_save_sends_nothing(tmp_path):
     def refuse_save(path, state):
         raise OSError("disk full")

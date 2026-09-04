@@ -1242,8 +1242,39 @@ class FittingsController:
                 )
                 completed = self._now()
                 with self._lock:
+                    intent_key = (
+                        operation_id,
+                        pair.character_id,
+                        write_intent.content,
+                    )
+                    matching = tuple(
+                        item
+                        for item in self._state.intents
+                        if (
+                            item.operation_id,
+                            item.character_id,
+                            item.content,
+                        )
+                        == intent_key
+                    )
+                    # The feature lock is deliberately released during the
+                    # transport. Immutable-state rebuilds may replace object
+                    # identities in that window, so outcome publication keys
+                    # the durable evidence. Missing or duplicated evidence is
+                    # unsafe to guess at after a request may have been sent.
+                    if len(matching) != 1 or matching[0].status != "in_flight":
+                        return (
+                            self._copy_row(
+                                pair,
+                                "unknown",
+                                "The remote outcome could not be matched to its saved intent. Refresh to reconcile it.",
+                                attempted=True,
+                            ),
+                            "persistence_failed",
+                        )
+                    current_intent = matching[0]
                     updated = replace(
-                        write_intent,
+                        current_intent,
                         status=outcome,
                         completed_utc=(
                             completed if outcome in {"success", "failed"} else None
@@ -1252,7 +1283,14 @@ class FittingsController:
                         error=_bounded_error(error) if error else "",
                     )
                     intents = tuple(
-                        updated if item is write_intent else item
+                        updated
+                        if (
+                            item.operation_id,
+                            item.character_id,
+                            item.content,
+                        )
+                        == intent_key
+                        else item
                         for item in self._state.intents
                     )
                     candidate = store.bounded_operation_history(
@@ -1631,12 +1669,20 @@ class FittingsController:
             ),
             None,
         )
+        error = " ".join(
+            message
+            for message in (
+                snapshot.error if snapshot else "",
+                character.persistence_error,
+            )
+            if message
+        )
         return {
             "character_id": character.character_id,
             "character_name": character.character_name,
             "status": status,
             "fetched_utc": _iso(snapshot.fetched_utc) if snapshot else "",
-            "error": snapshot.error if snapshot else "",
+            "error": error,
             "stale": bool(snapshot.stale) if snapshot else False,
         }
 
