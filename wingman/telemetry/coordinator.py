@@ -107,7 +107,8 @@ PUBLISH_INTERVAL_S = 1.0
 _ALERT_EVENTS = {
     "incoming_damage": "combat",
     "incoming_miss": "combat",
-    "incoming_tackle": "warp_scramble",
+    "incoming_scram": "warp_scramble",
+    "incoming_point": "warp_scramble",
     "decloak": "decloak",
 }
 
