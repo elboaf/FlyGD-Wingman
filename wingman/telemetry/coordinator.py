@@ -1,9 +1,9 @@
 """The one serialized telemetry coordinator.
 
 Everything shared between Previews, Alerts and the fleet bar meets here:
-``ClientDiscovery`` publishes rosters on its own scan thread,
-``GameLogStream`` publishes source lifecycles and combat facts on its own
-poll thread, and this module turns those two independent orders into ONE
+``ClientDiscovery`` publishes rosters on its scan thread. ``GameLogStream``
+publishes polled events on its worker and requested source restatements on
+the requesting thread. This module turns those producer orders into ONE
 stamped, totally-ordered stream that every consumer sees identically.
 
 Why a queue and a thread of its own
@@ -115,6 +115,7 @@ _ALERT_EVENTS = {
 # wait out a whole publication interval.
 _WAKE = object()
 _FLEET_REFRESH = object()
+_ALERT_RESET = object()
 
 
 class _FleetMode(NamedTuple):
@@ -215,6 +216,7 @@ class TelemetryCoordinator:
         self._lock = threading.Lock()
         self._latest: FleetSnapshot | None = None
         self._fleet_requested = False
+        self._alerts_requested = False
         self._discovery_started = False
         self._discovery_unsub: Callable[[], None] | None = None
         self._stream_folder: Path | None = None
@@ -327,6 +329,7 @@ class TelemetryCoordinator:
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)
             self._request_fleet_mode(fleet_enabled)
+            self._request_alert_mode(preview_enabled and alerts_enabled)
 
             if not want_discovery and folder is None:
                 # Nothing left to serialize.  Stopping the dispatcher here
@@ -379,7 +382,7 @@ class TelemetryCoordinator:
         with self._lock:
             current = self._stream_folder
             unsub = self._stream_unsub
-        refresh_fleet = False
+        refresh_consumers = False
 
         # A missing subscription denotes a timed-out detached generation.
         # A folder move uses the same stop-before-start path.
@@ -393,24 +396,28 @@ class TelemetryCoordinator:
             with self._lock:
                 self._stream_folder = None
             current = None
-            refresh_fleet = self._flag(self._fleet_enabled)
+            refresh_consumers = True
 
         if folder is not None and current is None:
             unsub = self._stream.subscribe(self._on_stream_event)
             if not self._completed(self._stream.start(folder)):
                 unsub()
-                if refresh_fleet:
-                    self._queue.put(_FLEET_REFRESH)
+                if refresh_consumers:
+                    self._queue_stream_refreshes()
                 return
             with self._lock:
                 self._stream_folder = folder
                 self._stream_unsub = unsub
 
-        if refresh_fleet:
-            # Ordered with source callbacks from the new generation. The
-            # dispatcher resets old bindings, re-primes the current roster,
-            # and asks the now-current stream to restate each source.
+        if refresh_consumers:
+            self._queue_stream_refreshes()
+
+    def _queue_stream_refreshes(self) -> None:
+        """Order consumer resets behind the old stream generation."""
+        if self._flag(self._fleet_enabled):
             self._queue.put(_FLEET_REFRESH)
+        if self._wants_alert_policy():
+            self._queue.put(_ALERT_RESET)
 
     def _request_fleet_mode(self, enabled: bool) -> None:
         """Order a Fleet consumer transition with producer payloads."""
@@ -419,6 +426,13 @@ class TelemetryCoordinator:
                 return
             self._fleet_requested = enabled
         self._queue.put(_FleetMode(enabled))
+
+    def _request_alert_mode(self, enabled: bool) -> None:
+        with self._lock:
+            if enabled == self._alerts_requested:
+                return
+            self._alerts_requested = enabled
+        self._queue.put(_ALERT_RESET)
 
     def request_discovery(self) -> None:
         """Ask for an immediate roster scan.  Safe from any thread.
@@ -516,7 +530,7 @@ class TelemetryCoordinator:
         self._queue.put(snapshot)
 
     def _on_stream_event(self, event) -> None:
-        """The stream's poll thread.  Must not do work; see module docstring."""
+        """Any stream delivery context. Must only enqueue; see module docstring."""
         self._queue.put(event)
 
     # ------------------------------------------------------------------
@@ -527,22 +541,33 @@ class TelemetryCoordinator:
         with self._lifecycle_lock:
             if self._running:
                 return True
-            if self._worker is not None and self._worker.is_alive():
-                # A worker a previous stop() failed to join is still
-                # draining this queue; a second one would deliver the same
-                # batch twice.  Same refusal ClientDiscovery.start makes.
-                return False
+            if self._worker is not None:
+                if self._worker.is_alive():
+                    # A worker a previous stop() failed to join is still
+                    # draining this queue; a second one would deliver the
+                    # same batch twice.
+                    return False
+                # It died after the prior bounded join returned. Finalize
+                # that generation before a replacement can consume its
+                # queued payloads or publish its cached rows.
+                self._finalize_dead_dispatcher()
             self._running = True
             self._stop_event = threading.Event()
             stop_ev = self._stop_event
-            worker = self._thread_factory(
-                target=self._run,
-                args=(stop_ev,),
-                name="telemetry-dispatch",
-                daemon=False,
-            )
-            self._worker = worker
-            worker.start()
+            try:
+                worker = self._thread_factory(
+                    target=self._run,
+                    args=(stop_ev,),
+                    name="telemetry-dispatch",
+                    daemon=False,
+                )
+                self._worker = worker
+                worker.start()
+            except Exception:
+                logger.exception("Could not start telemetry dispatcher")
+                self._running = False
+                self._worker = None
+                return False
             return True
 
     def _stop_dispatcher(self, timeout: float = 5.0) -> None:
@@ -562,23 +587,23 @@ class TelemetryCoordinator:
             # Retained on timeout so a later stop() can retry the join and
             # _start_dispatcher can refuse to run two dispatchers at once.
             if not worker.is_alive():
-                self._worker = None
-                # Dispatcher-thread-only state, safe to touch exactly here:
-                # the thread that owned it is confirmed dead.  Cleared so a
-                # later restart re-asks the stream about every session it
-                # sees rather than trusting a map built before the gap.
-                self._sessions = {}
-                self._fleet_active = False
-                self._fleet_roster_generation = None
-                self._metrics.reset()
-                with self._lock:
-                    self._fleet_requested = False
-                    self._latest = None
-                # And whatever the producers queued but nobody consumed:
-                # those payloads describe the session that just ended, and
-                # stamping them with fresh sequences after a restart would
-                # present them to Fleet Metrics as current.
-                self._drain_queue()
+                self._finalize_dead_dispatcher()
+
+    def _finalize_dead_dispatcher(self) -> None:
+        """Clear one confirmed-dead generation; caller owns lifecycle lock."""
+        self._worker = None
+        self._sessions = {}
+        self._fleet_active = False
+        self._fleet_roster_generation = None
+        self._metrics.reset()
+        with self._lock:
+            self._fleet_requested = False
+            self._alerts_requested = False
+            self._latest = None
+        # Payloads nobody consumed describe the ended generation. Stamping
+        # them after restart would present stale sessions as current.
+        self._drain_queue()
+        self._reset_alert_policy()
 
     def _drain_queue(self) -> None:
         while True:
@@ -592,17 +617,32 @@ class TelemetryCoordinator:
             with self._dispatch_lock:
                 self._dispatch_iteration(PUBLISH_INTERVAL_S)
 
-    def stop(self, timeout: float = 5.0) -> None:
-        """Detach every consumer and stop shared infrastructure.
+    def stop(self, timeout: float = 5.0) -> bool:
+        """Detach consumers, stop workers, and report bounded completion.
 
-        Idempotent, and ordered: consumers detach before the workers they
-        feed are joined, so no producer thread is still delivering into a
-        dispatcher that is being shut down.
+        A timed-out producer remains authoritative by design. Shutdown gets
+        one retry before the dispatcher is stopped; if blocking external I/O
+        still prevents exit, ``False`` and the error log make that state
+        observable rather than pretending teardown completed.
         """
         with self._reconcile_lock:
-            self._reconcile_discovery(False)
-            self._reconcile_stream(None)
+            services_stopped = False
+            for _ in range(2):
+                self._reconcile_discovery(False)
+                self._reconcile_stream(None)
+                with self._lock:
+                    services_stopped = (
+                        not self._discovery_started and self._stream_folder is None
+                    )
+                if services_stopped:
+                    break
             self._stop_dispatcher(timeout)
+            with self._lifecycle_lock:
+                dispatcher_stopped = self._worker is None or not self._worker.is_alive()
+            completed = services_stopped and dispatcher_stopped
+            if not completed:
+                logger.error("EVE telemetry workers did not stop cleanly")
+            return completed
 
     def dispatch_once(self, timeout: float = PUBLISH_INTERVAL_S) -> None:
         """Drive one iteration synchronously when no worker is alive.
@@ -658,6 +698,9 @@ class TelemetryCoordinator:
             if self._fleet_active:
                 self._reset_fleet_state(prime=True)
             return
+        if payload is _ALERT_RESET:
+            self._reset_alert_policy()
+            return
 
         self._sequence += 1
         envelope = TelemetryEnvelope(sequence=self._sequence, payload=payload)
@@ -700,6 +743,14 @@ class TelemetryCoordinator:
             # does, cadence, Preview and Alerts must survive it.
             logger.exception("Fleet Metrics raised while consuming telemetry")
             return False
+
+    def _reset_alert_policy(self) -> None:
+        if self._alert_policy is None:
+            return
+        try:
+            self._alert_policy.reset()
+        except Exception:
+            logger.exception("Alert policy raised while resetting cooldowns")
 
     def _apply_fleet_mode(self, enabled: bool) -> None:
         """Reset Fleet state and prime a newly enabled current roster."""

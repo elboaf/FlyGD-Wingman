@@ -88,6 +88,17 @@ def test_pve_filter_can_be_disabled():
     assert policy.handle([Event("Alice", "combat", NPC)], 0.0)
 
 
+def test_reset_starts_a_fresh_cooldown_generation():
+    policy = _policy()
+    event = Event("Alice", "warp_scramble", PLAYER)
+    assert policy.handle([event], 0.0)
+    assert policy.handle([event], 1.0) == []
+
+    policy.reset()
+
+    assert policy.handle([event], 1.0)
+
+
 def test_cooldowns_are_per_character_and_event():
     policy = _policy()
     combat = Event("Alice", "combat", PLAYER)

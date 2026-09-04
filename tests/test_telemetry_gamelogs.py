@@ -858,6 +858,23 @@ class TestInterface:
         assert stream._worker is w1
         stream.stop()
 
+    def test_failed_thread_start_rolls_back_for_retry(self, tmp_path):
+        class FailingWorker:
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+            def is_alive(self):
+                return False
+
+        stream = GameLogStream(_thread_factory=lambda **_kwargs: FailingWorker())
+
+        assert stream.start(tmp_path) is False
+        assert stream._started is False
+        assert stream._worker is None
+        stream._thread_factory = _noop_thread_factory
+        assert stream.start(tmp_path) is True
+        assert stream.stop() is True
+
     def test_request_source_known(self, tmp_path):
         _log(tmp_path, "Alice")
         stream = _stream()

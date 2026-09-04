@@ -7,8 +7,8 @@ before any CombatFact for the corresponding generation; the serialised dispatch
 order is the correctness contract.
 
 Source-selection rules (age cutoff, dedup-before-cap, session-start + mtime
-tie-break) are ported from alerts/tailer.py with their proven comments.  The
-Tailer is NOT deleted or production-rewired here.
+tie-break) were carried forward from the removed alert Tailer; this stream is
+now their sole production owner.
 
 Concurrency model
 -----------------
@@ -278,15 +278,22 @@ class GameLogStream:
                 self._last_successful_rescan_mono = None
                 self._stop_event = threading.Event()
                 stop_ev = self._stop_event
-            worker = self._thread_factory(
-                target=self._run,
-                args=(stop_ev,),
-                name="gamelog-stream",
-                daemon=False,
-            )
-            with self._lock:
-                self._worker = worker
-            worker.start()
+            try:
+                worker = self._thread_factory(
+                    target=self._run,
+                    args=(stop_ev,),
+                    name="gamelog-stream",
+                    daemon=False,
+                )
+                with self._lock:
+                    self._worker = worker
+                worker.start()
+            except Exception:
+                logger.exception("Could not start gamelog stream worker")
+                with self._lock:
+                    self._started = False
+                    self._worker = None
+                return False
             return True
 
     def stop(self, timeout: float = 3.0) -> bool:

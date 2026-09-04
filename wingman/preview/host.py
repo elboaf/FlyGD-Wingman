@@ -274,10 +274,8 @@ class PreviewHost:
         request_discovery=None,
     ):
         self._on_layout_changed = on_layout_changed
-        # None preserves the legacy self-discovery timer for isolated tests
-        # and compatibility callers. Production injects the shared
-        # coordinator request, so this host only reconciles roster snapshots
-        # posted onto its pump.
+        # Production injects the shared coordinator request. None is an inert
+        # test seam; this host never enumerates clients from its pump.
         self._request_discovery = request_discovery
         # Called during teardown, before any window is destroyed. Layout
         # writes are debounced, so without this a drag in the last second
@@ -803,8 +801,8 @@ class PreviewHost:
         a str or None written as a single attribute assignment on the
         preview thread (_apply_selection), so a reader sees one generation
         or the next and never a torn one. Taking _lock here would add no
-        guarantee the write side does not already give, and this is called
-        once a second from the alert poll thread.
+        guarantee the write side does not already give, and AlertPolicy
+        reads it once per telemetry event batch.
 
         The value is a Client.stable_key, which is the character name for
         any client past character-select and a synthetic "hwnd:0x..." for
@@ -848,15 +846,10 @@ class PreviewHost:
         # snapshot only after the pump HWND exists, so apply_roster can post
         # a signal rather than relying solely on the pending slot.
         self.request_sweep()
-        # apply_roster is
-        # safe from any thread and start() returns before this window
-        # exists, so a snapshot published in that gap was retained with no
-        # PostMessageW to carry it -- nothing else would ever drain it, and
-        # previews would sit on whatever the direct sweep found until the
-        # next shared scan. Draining it here rather than ahead of _sweep is
-        # what stops the older, self-discovered roster from being applied
-        # last and overwriting it. Drains the slot, so the ordinary
-        # WM_APP_ROSTER path cannot then apply the same snapshot twice.
+        # apply_roster is safe from any thread and start() returns before
+        # this window exists, so a snapshot published in that gap was retained
+        # with no PostMessageW to carry it. Drain the slot once here; the
+        # ordinary WM_APP_ROSTER path must not apply it a second time.
         try:
             self._apply_pending_roster(libs)
         except Exception:
@@ -1112,7 +1105,6 @@ class PreviewHost:
         # libs, get sampled sizes.
         if libs is not None:
             self._record_client_sizes(libs, clients)
-        discovery.flush_image_cache_periodically()
         before = self.characters()
         # Wholesale, never merged. reconcile() compares stable keys only, so
         # a character that reappears on a new HWND between sweeps counts as

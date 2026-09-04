@@ -16,6 +16,14 @@
       user-select: none;
     }
     .fleet-shell {
+      /* style.css's .pywebview-drag-region is title-bar geometry as well as
+         drag behavior (flex:1, height:100%, display:flex). This page needs
+         only the behavior; reset the geometry or the table fills the whole
+         WebView and lays its header, rows and note side by side. */
+      display: block;
+      width: 380px;
+      height: max-content;
+      flex: none;
       overflow: hidden;
       border: 1px solid var(--control-border);
       border-radius: var(--radius-sm);

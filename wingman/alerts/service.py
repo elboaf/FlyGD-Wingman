@@ -31,6 +31,10 @@ class AlertPolicy:
         # (character, event) -> monotonic time it last dispatched.
         self._cooldowns = {}
 
+    def reset(self) -> None:
+        """Start a fresh lifecycle generation with no inherited cooldowns."""
+        self._cooldowns.clear()
+
     def _focused_character(self):
         """Read focus without allowing a secondary suppression to lose a poll."""
         try:

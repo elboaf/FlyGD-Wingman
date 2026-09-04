@@ -139,9 +139,9 @@ _PREVIEW_DEFAULTS_VERSION = 2
 def _preview_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global.
 
-    Off by default, like eve_bookmarks: enabling it starts a thread, a
-    700ms sweep, and a foreground hook. A user who never previews EVE
-    clients should pay none of that.
+    Off by default, like eve_bookmarks: enabling it starts the preview pump,
+    the shared 700ms discovery cadence, and a foreground hook. A user with
+    both Preview and Fleet off should pay none of that.
     """
     return {
         "enabled": False,
@@ -337,9 +337,9 @@ DEFAULTS = {
     # Settings > General.
     #
     # This governs VISIBILITY ONLY. It never starts or stops anything --
-    # eve_bookmarks.enabled and preview.enabled remain the sole runtime
-    # switches, read at launch by start_engine_if_enabled and
-    # start_previews_if_enabled. See Api.set_show_eve_tools for the guard
+    # eve_bookmarks.enabled, preview.enabled, and fleet_bar.enabled are the
+    # runtime switches, read at launch by start_engine_if_enabled and shared
+    # telemetry reconciliation. See Api.set_show_eve_tools for the guard
     # that keeps this from hiding a running feature's off switch.
     "show_eve_tools": True,
     # Whether the user dismissed the first-run folder screen without

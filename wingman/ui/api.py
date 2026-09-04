@@ -11,10 +11,10 @@ with nothing in the traceback naming the attribute responsible. Every
 non-method attribute here is therefore underscore-prefixed, and
 `test_api.py` asserts it rather than trusting anyone to remember.
 
-**Workers never touch the page directly.** They call `_push`, which is the
-successor to `UploaderWindow._ui` -- but semantic where `_ui` marshalled
-widget method calls. `evaluate_js` is safe to call from any thread; there
-is no UI thread to marshal onto.
+**Workers use semantic push chokepoints.** Most call `_push`; the independent
+Fleet page uses `_push_fleet_snapshot`. Both serialize a complete semantic
+payload and call `evaluate_js`, which is safe from any thread; there is no UI
+thread to marshal onto.
 
 `_window` is assigned by ui.window.create() after construction rather than
 passed in: create_window() needs js_api before a window object exists.
@@ -2888,11 +2888,6 @@ class Api:
     def fleet_bar_snapshot(self) -> dict:
         """Current complete display payload, also used by the bar at boot."""
         snapshot = self._fleet_snapshot
-        if snapshot is None and self._telemetry is not None:
-            try:
-                snapshot = self._telemetry.snapshot()
-            except Exception:
-                logger.exception("Could not read Fleet Bar snapshot")
         if snapshot is None:
             return {
                 "rows": [],
@@ -2924,6 +2919,12 @@ class Api:
         from wingman.ui import fleetbar
 
         on = bool(on)
+        previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
+        if on != previous:
+            # A snapshot belongs to one enabled generation. Re-enabling
+            # opens on WAITING until the coordinator publishes fresh state,
+            # never on rows cached before the disabled interval.
+            self._fleet_snapshot = None
         settings_mod.update_section(self._state.settings, "fleet_bar", {"enabled": on})
         self._reconcile_eve_runtime()
         bar = self._fleetbar_window
@@ -2937,9 +2938,25 @@ class Api:
             elif bar is not None:
                 bar.hide()
         except Exception:
-            # The persisted runtime choice stands. A later toggle retries
-            # display construction without losing telemetry state.
             logger.exception("Fleet Bar window toggle failed")
+            if on:
+                failed = self._fleetbar_window
+                self._fleetbar_window = None
+                if failed is not None:
+                    try:
+                        failed.destroy()
+                    except Exception:
+                        logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
+                # A display feature that did not display is not enabled.
+                # Roll the runtime choice back so both controls stay honest
+                # and a later click retries construction from a clean state.
+                settings_mod.update_section(
+                    self._state.settings, "fleet_bar", {"enabled": False}
+                )
+                self._fleet_snapshot = None
+                self._reconcile_eve_runtime()
+                self._push_fleet_bar_state()
+                return self._field_refused("The Fleet Bar could not be opened.")
         self._push_fleet_bar_state()
         return self._field_ok()
 
@@ -3106,16 +3123,15 @@ class Api:
     # ---- EVE client previews ------------------------------------------
 
     def _reconcile_eve_runtime(self) -> None:
-        """Reconcile the shared runtime, falling back to legacy Alerts."""
+        """Bring the sole shared EVE telemetry runtime in line with settings."""
         if self._telemetry is not None:
             self._telemetry.reconcile()
 
     def start_previews_if_enabled(self) -> None:
-        """Start the preview thread only if the user asked for it.
+        """Start Preview if enabled, then reconcile all shared EVE telemetry.
 
-        Called on launch. Lazy on purpose: enabling costs a thread, a
-        700ms discovery sweep and a foreground hook, and a user who never
-        previews EVE clients should pay none of it.
+        Fleet can independently start discovery and gamelog workers while
+        Preview stays off. The preview pump and foreground hook remain lazy.
         """
         if self._preview_host is None:
             self._reconcile_eve_runtime()
@@ -3128,8 +3144,7 @@ class Api:
         if section.get("enabled"):
             self._preview_host.start()
         # After host start(), so Preview roster delivery has a live pump.
-        # Telemetry predicates read persisted settings directly; the legacy
-        # fallback still relies on the host's live state.
+        # Telemetry predicates read persisted settings directly.
         self._reconcile_eve_runtime()
 
     def set_preview_enabled(self, enabled: bool) -> None:
@@ -4229,8 +4244,8 @@ class Api:
     def set_alert_pve_filter(self, enabled) -> dict:
         """Suppress alerts that look like NPC fire rather than a player's.
 
-        Read live by the poll thread through the same config callable on
-        its next tick -- no reconcile() needed, this cannot change whether
+        Read live by AlertPolicy on its next telemetry batch -- no
+        reconcile() needed, this cannot change whether
         the thread itself should run.
         """
         return self._write_alert_setting(("pve_filter",), bool(enabled))
@@ -4243,8 +4258,8 @@ class Api:
     def set_alert_volume(self, value) -> dict:
         """Persist how loud every alert sound is, 0-100.
 
-        Read live by the poll thread through the same config callable on
-        its next alert -- no reconcile() and no push: nothing is playing
+        Read live by AlertPolicy on its next telemetry batch -- no
+        reconcile() and no push: nothing is playing
         between two alerts, so there is no live state to correct.
 
         Deliberately does NOT clamp here, matching set_preview_opacity and
@@ -4363,9 +4378,14 @@ class Api:
         # setting still holds a path.
         if folder is not None and not folder.is_dir():
             folder = None
-        if self._telemetry is not None:
+        alerts_wanted = bool(
+            self._preview_host is not None
+            and section.get("enabled")
+            and alerts.get("enabled")
+        )
+        if self._telemetry is not None and alerts_wanted:
             health = self._telemetry.stream_health()
-            running = health.state in {"running", "active", "stale", "error"}
+            running = health.state in {"running", "active"}
             last_error = health.detail if health.state in {"stale", "error"} else None
             characters = list(self._telemetry.stream_characters())
         else:

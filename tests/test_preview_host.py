@@ -2145,9 +2145,8 @@ def test_a_raising_status_callback_does_not_kill_the_registration_pass():
 
 
 def test_a_raising_clients_callback_does_not_kill_the_sweep(monkeypatch):
-    """Identical hazard to on_hotkey_status: _sweep() runs from _run()
-    before _ready.set() on the very first sweep, so a raise here would
-    kill the preview thread the same way."""
+    """The retained raw-roster test seam must isolate outward callbacks
+    exactly like pump-applied shared rosters do."""
 
     def boom(now):
         raise RuntimeError("bridge is gone")
@@ -5314,13 +5313,11 @@ def test_the_roster_adapter_agrees_with_discovery_on_stable_keys():
 
 
 def test_the_compatibility_sweep_reconciles_one_adapted_snapshot(monkeypatch):
-    """Until Task 9 removes it, the 700ms timer still discovers directly --
-    and now reaches the same reconciliation the pump-applied path does, so
-    both cannot drift apart while the migration is half done.
+    """The historical raw-discovery tests retain one adapter into the same
+    roster reconciliation production reaches from shared telemetry.
 
-    Its snapshot deliberately carries no generation: this path publishes
-    nothing, so it must not consume a generation number that would then make
-    the first real shared snapshot look stale.
+    Its snapshot deliberately carries no generation because this test seam
+    publishes nothing and must not affect shared-snapshot ordering.
     """
     seen = []
     h = host.PreviewHost(on_layout_changed=lambda *a: None)

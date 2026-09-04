@@ -225,15 +225,22 @@ class ClientDiscovery:
                 self._wake_event = threading.Event()
                 stop_ev = self._stop_event
                 wake_ev = self._wake_event
-            worker = self._thread_factory(
-                target=self._run,
-                args=(stop_ev, wake_ev),
-                name="client-discovery",
-                daemon=False,
-            )
-            with self._lock:
-                self._worker = worker
-            worker.start()
+            try:
+                worker = self._thread_factory(
+                    target=self._run,
+                    args=(stop_ev, wake_ev),
+                    name="client-discovery",
+                    daemon=False,
+                )
+                with self._lock:
+                    self._worker = worker
+                worker.start()
+            except Exception:
+                logger.exception("Could not start client discovery worker")
+                with self._lock:
+                    self._started = False
+                    self._worker = None
+                return False
             return True
 
     def stop(self, timeout: float = 5.0) -> bool:
@@ -325,6 +332,7 @@ class ClientDiscovery:
                     self._last_error = "client enumeration failed"
                 return
 
+            discovery.flush_image_cache_periodically()
             with self._lock:
                 self._last_error = None
                 generation = self._next_generation

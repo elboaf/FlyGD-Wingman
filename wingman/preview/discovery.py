@@ -178,7 +178,7 @@ def _image_name_for_pid(pid: int):
 
 
 def flush_image_cache_periodically() -> None:
-    """PIDs are reused. Called once per sweep by the host."""
+    """PIDs are reused. Called once per shared discovery scan."""
     global _CACHE_SWEEPS
     _CACHE_SWEEPS += 1
     if _CACHE_SWEEPS >= _CACHE_FLUSH_EVERY:

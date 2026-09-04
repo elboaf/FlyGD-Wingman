@@ -106,7 +106,7 @@ def _alerts_section(**over):
     return section
 
 
-# ---- reconcile() fires from all five places --------------------------------
+# ---- runtime-affecting settings reconcile shared telemetry -----------------
 
 
 def test_shared_telemetry_reconciles_for_folder_alert_and_preview_changes(tmp_path):
@@ -127,15 +127,29 @@ def test_shared_telemetry_health_drives_alert_state(tmp_path):
         StreamHealth(state="error", detail="source read failed"),
         characters=("Alice", "Bob"),
     )
-    api = make_api(tmp_path, telemetry=telemetry)
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
     api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
     api._state.settings["gamelogs_dir"] = str(tmp_path)
 
     state = api.get_alert_state()
 
-    assert state["running"] is True
+    assert state["running"] is False
     assert state["last_error"] == "source read failed"
     assert state["characters"] == ["Alice", "Bob"]
+
+
+def test_fleet_owned_stream_does_not_make_disabled_alerts_look_armed(tmp_path):
+    telemetry = FakeTelemetry(StreamHealth(state="active"), characters=("Alice",))
+    api = make_api(tmp_path, telemetry=telemetry)
+    api._state.settings["preview"] = {
+        "enabled": True,
+        "alerts": _alerts_section(enabled=False),
+    }
+
+    state = api.get_alert_state()
+
+    assert state["running"] is False
+    assert state["characters"] == []
 
 
 def test_shutdown_stops_shared_telemetry_once(tmp_path):
@@ -306,9 +320,8 @@ def test_set_alert_event_lets_settings_clamp_the_value(tmp_path):
 
 
 def test_set_alert_event_does_not_reconcile(tmp_path):
-    """A per-event field is read live by the poll thread through the
-    config callable on its next tick -- it cannot change whether the
-    thread itself should be running, so this is not one of the five."""
+    """A per-event field is read live by AlertPolicy on its next batch; it
+    cannot change whether shared telemetry itself should be running."""
     telemetry = FakeTelemetry()
     api = make_api(tmp_path, telemetry=telemetry)
 
@@ -533,7 +546,7 @@ def test_no_gamelogs_folder_state_is_reachable():
 
 def test_health_and_characters_render_together():
     """A character list with no liveness beside it keeps reading
-    "watching Alice, Bob" after the tailer thread has died --
+    "watching Alice, Bob" after the shared reader has failed --
     get_alert_state's `running` flag must appear in the same rendered
     sentence as the characters, never the characters alone.
 
@@ -600,7 +613,7 @@ def test_the_card_refreshes_when_previews_are_toggled_without_navigating():
     """#preview-enabled and this card share ONE section (#section-previews)
     with no navigation between them, so refresh() firing only on wm:section
     and after set_alert_enabled left the card stale the moment previews
-    were toggled off: the backend really did stop the poll thread, but the
+    were toggled off: the backend really did detach AlertPolicy, but the
     card kept showing 'Watching gamelogs' with the previews-off banner
     hidden, indefinitely. settings.js dispatches a custom event once its
     own set_preview_enabled call settles (not on the raw DOM change, so

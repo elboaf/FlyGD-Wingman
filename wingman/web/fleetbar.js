@@ -22,7 +22,9 @@
   }
 
   function fit() {
-    send('fit_fleet_bar', document.body.scrollWidth, document.body.scrollHeight);
+    var shell = document.querySelector('.fleet-shell');
+    if (!shell) return;
+    send('fit_fleet_bar', shell.offsetWidth, shell.offsetHeight);
   }
 
   function cell(className, text, role) {

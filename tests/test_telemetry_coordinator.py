@@ -270,6 +270,10 @@ class FakePolicy:
     def __init__(self, *, raises=False):
         self.calls = []
         self.raises = raises
+        self.resets = 0
+
+    def reset(self):
+        self.resets += 1
 
     def handle(self, events, now):
         self.calls.append((list(events), now))
@@ -363,6 +367,29 @@ class TestRuntimePredicates:
             h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
             h.pump()
         assert (len(policy.calls) == 1) is want_policy
+
+    def test_alert_policy_resets_across_disable_and_reenable(self, tmp_path):
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=True,
+            fleet=True,
+            alerts=True,
+            preview_host=FakePreviewHost(),
+            alert_policy=policy,
+        )
+        h.coordinator.reconcile()
+        h.pump()
+        initial = policy.resets
+
+        h.flags["alerts"] = False
+        h.coordinator.reconcile()
+        h.pump()
+        h.flags["alerts"] = True
+        h.coordinator.reconcile()
+        h.pump()
+
+        assert policy.resets == initial + 2
 
     def test_stream_needs_a_resolvable_folder(self, tmp_path):
         h = _harness(tmp_path, fleet=True, folder=tmp_path / "gone")
@@ -826,6 +853,24 @@ class TestLifecycle:
         assert h.discovery.starts == 1
         assert h.stream.stops == 1
 
+    def test_stop_retries_timed_out_services_and_reports_completion(self, tmp_path):
+        discovery = FakeDiscovery(stop_results=[False, True])
+        stream = FakeStream(stop_results=[False, True])
+        h = _harness(tmp_path, fleet=True, discovery=discovery, stream=stream)
+        h.coordinator.reconcile()
+
+        assert h.coordinator.stop() is True
+        assert discovery.stops == 2
+        assert stream.stops == 2
+
+    def test_stop_reports_an_authoritative_worker_that_remains_stuck(self, tmp_path):
+        discovery = FakeDiscovery(stop_results=[False, False])
+        h = _harness(tmp_path, fleet=True, discovery=discovery)
+        h.coordinator.reconcile()
+
+        assert h.coordinator.stop() is False
+        assert discovery.stops == 2
+
     def test_stop_stops_every_service_and_is_idempotent(self, tmp_path):
         h = _harness(tmp_path, preview=True, fleet=True, alerts=True)
         h.coordinator.reconcile()
@@ -1026,6 +1071,34 @@ class TestDispatcherThread:
         finally:
             coordinator.stop(timeout=5)
 
+    def test_failed_dispatcher_start_rolls_back_and_starts_no_producers(self, tmp_path):
+        class FailingWorker:
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+            def is_alive(self):
+                return False
+
+        discovery = FakeDiscovery()
+        stream = FakeStream()
+        coordinator = TelemetryCoordinator(
+            preview_enabled=lambda: False,
+            fleet_enabled=lambda: True,
+            alerts_enabled=lambda: False,
+            gamelogs_folder=lambda: tmp_path,
+            discovery=discovery,
+            stream=stream,
+            metrics=RecordingMetrics(),
+            _thread_factory=lambda **_kwargs: FailingWorker(),
+        )
+
+        coordinator.reconcile()
+
+        assert coordinator._running is False
+        assert coordinator._worker is None
+        assert discovery.starts == 0
+        assert stream.starts == []
+
     def test_refused_dispatcher_restart_does_not_start_producers(self, tmp_path):
         class AliveWorker:
             def is_alive(self):
@@ -1041,6 +1114,34 @@ class TestDispatcherThread:
 
         assert discovery.starts == 0
         assert stream.starts == []
+
+    def test_late_dead_dispatcher_is_finalized_before_restart(self, tmp_path):
+        class DeadWorker:
+            def is_alive(self):
+                return False
+
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._worker = DeadWorker()
+        h.coordinator._running = False
+        h.coordinator._fleet_active = True
+        h.coordinator._fleet_requested = True
+        h.coordinator._sessions = {"Old Session": object()}
+        h.coordinator._latest = FleetSnapshot(
+            rows=(FleetRow("Old Session", 99),),
+            stream_health=StreamHealth(state="active"),
+        )
+        h.coordinator._queue.put(_roster(_session("Old Session")))
+
+        h.coordinator.reconcile()
+        h.pump()
+
+        assert h.coordinator._sessions == {}
+        assert h.coordinator.snapshot().rows == ()
+        assert not [
+            envelope
+            for envelope in h.metrics.envelopes
+            if isinstance(envelope.payload, RosterSnapshot) and envelope.payload.clients
+        ]
 
     def test_manual_dispatch_calls_have_one_owner(self, tmp_path):
         class BlockingMetrics(RecordingMetrics):

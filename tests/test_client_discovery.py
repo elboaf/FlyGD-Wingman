@@ -67,6 +67,17 @@ def _sessions(snapshot: RosterSnapshot):
 
 
 class TestStableSessions:
+    def test_each_successful_scan_maintains_process_image_cache(self, monkeypatch):
+        flushed = []
+        monkeypatch.setattr(
+            discovery, "flush_image_cache_periodically", lambda: flushed.append(True)
+        )
+        disco = _discovery(_enumerate_clients=_result_seq([ALICE]))
+
+        disco.scan_once()
+
+        assert flushed == [True]
+
     def test_unchanged_tuple_keeps_first_seen_generation(self):
         disco = _discovery(_enumerate_clients=_result_seq([ALICE], [ALICE], [ALICE]))
         received = _collect(disco)
@@ -565,6 +576,26 @@ class TestWorker:
         assert disco.start() is True
         assert disco.start() is True
         assert disco.stop() is True
+        assert disco.stop() is True
+
+    def test_failed_thread_start_rolls_back_for_retry(self):
+        class FailingWorker:
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+            def is_alive(self):
+                return False
+
+        disco = ClientDiscovery(
+            _enumerate_clients=_result_seq([]),
+            _thread_factory=lambda **_kwargs: FailingWorker(),
+        )
+
+        assert disco.start() is False
+        assert disco._started is False
+        assert disco._worker is None
+        disco._thread_factory = _noop_thread_factory
+        assert disco.start() is True
         assert disco.stop() is True
 
     def test_timeout_reports_false_and_blocks_restart(self):

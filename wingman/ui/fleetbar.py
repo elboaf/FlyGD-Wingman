@@ -19,7 +19,7 @@ MIN_SIZE = (1, 1)
 DEFAULT_MARGIN = 60
 
 
-def _default_placement(_scale) -> tuple[int, int]:
+def _default_placement() -> tuple[int, int]:
     """Top-left leaves room for a roster that grows downward after boot."""
     return (DEFAULT_MARGIN, DEFAULT_MARGIN)
 
@@ -31,7 +31,7 @@ def create(api, hidden: bool = True):
     section = api._state.settings.get("fleet_bar") or {}
     x, y = section.get("x"), section.get("y")
     if x is None or y is None:
-        x, y = _default_placement(window_mod._system_scale)
+        x, y = _default_placement()
 
     bar = webview.create_window(
         "Wingman Fleet Bar",
@@ -55,12 +55,16 @@ def create(api, hidden: bool = True):
 def restore(api) -> None:
     """Restore the bar after the main WebView2 window is shown."""
     section = api._state.settings.get("fleet_bar") or {}
-    if not section.get("enabled"):
+    if not section.get("enabled") or api._fleetbar_window is not None:
         return
     try:
         bar = create(api, hidden=True)
     except Exception:
         logger.exception("Fleet Bar window could not be created")
+        # Enabled means visible for this display-only feature. Keep persisted
+        # state and both main-page controls honest, and let the next click
+        # retry the same construction path.
+        api.toggle_fleet_bar(False)
         return
 
     def reveal() -> None:
@@ -69,5 +73,6 @@ def restore(api) -> None:
             api._push_fleet_snapshot()
         except Exception:
             logger.exception("Fleet Bar window could not be shown")
+            api.toggle_fleet_bar(False)
 
     threading.Timer(0.3, reveal).start()

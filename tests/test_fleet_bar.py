@@ -34,17 +34,11 @@ class FleetWindow(FakeWindow):
 
 
 class FakeTelemetry:
-    def __init__(self, snapshot=None):
+    def __init__(self):
         self.reconciled = 0
-        self._snapshot = snapshot or FleetSnapshot(
-            rows=(), stream_health=StreamHealth(state="running")
-        )
 
     def reconcile(self):
         self.reconciled += 1
-
-    def snapshot(self):
-        return self._snapshot
 
     def stop(self):
         pass
@@ -94,6 +88,41 @@ def test_toggle_pushes_one_authoritative_state_to_main_page(api):
     state_pushes = [script for script in scripts if "onFleetBarState" in script]
     assert len(state_pushes) == 1
     assert api.fleet_bar_settings()["enabled"] is True
+
+
+def test_failed_first_show_rolls_back_enabled_state(tmp_path, monkeypatch):
+    from wingman.ui import fleetbar
+
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry)
+
+    def fail_create(_api, hidden=True):
+        raise RuntimeError("WebView unavailable")
+
+    monkeypatch.setattr(fleetbar, "create", fail_create)
+
+    result = api.toggle_fleet_bar(True)
+
+    assert result["applied"] is False
+    assert api._state.settings["fleet_bar"]["enabled"] is False
+    assert telemetry.reconciled == 2
+
+
+def test_reenable_does_not_flash_previous_generation_rows(api):
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("Old Session", 99),),
+            stream_health=StreamHealth(state="active"),
+        )
+    )
+
+    api.toggle_fleet_bar(False)
+    api._fleetbar_window.calls.clear()
+    api.toggle_fleet_bar(True)
+
+    script = _fleet_scripts(api._fleetbar_window)[-1]
+    payload = json.loads(script.split("window.onFleetSnapshot(", 1)[1][:-1])
+    assert payload["rows"] == []
 
 
 def test_toggle_off_hides_existing_window_and_reconciles(api):
@@ -162,6 +191,22 @@ def test_shutdown_detaches_fleet_subscription(api):
     assert api._fleet_unsubscribe is None
 
 
+def test_failed_restore_rolls_back_enabled_state(api, monkeypatch):
+    from wingman.ui import fleetbar
+
+    api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
+    api._fleetbar_window = None
+    monkeypatch.setattr(
+        fleetbar,
+        "create",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broken")),
+    )
+
+    fleetbar.restore(api)
+
+    assert api._state.settings["fleet_bar"]["enabled"] is False
+
+
 def test_restore_creates_hidden_then_reveals_with_current_snapshot(api, monkeypatch):
     from wingman.ui import fleetbar
 
@@ -185,6 +230,7 @@ def test_restore_creates_hidden_then_reveals_with_current_snapshot(api, monkeypa
     monkeypatch.setattr(fleetbar, "create", fake_create)
     monkeypatch.setattr(fleetbar.threading, "Timer", ImmediateTimer)
 
+    fleetbar.restore(api)
     fleetbar.restore(api)
 
     assert created == [True]
@@ -276,4 +322,6 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     assert "<button" not in html and "<input" not in html
     assert "window.onFleetSnapshot" in js
     assert "Waiting for EVE clients" in html
+    assert "flex: none" in html  # overrides title-bar drag-region geometry
+    assert "shell.offsetHeight" in js  # content can shrink with the roster
     assert "SCRAM/POINT" not in js  # rendered from telemetry, never guessed here

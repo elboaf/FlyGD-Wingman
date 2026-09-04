@@ -243,8 +243,8 @@
 
   // ---- the EVE gate ---------------------------------------------------
   // Visibility only. Nothing here starts or stops a feature; Python's
-  // set_show_eve_tools refuses to turn the gate off while either is
-  // running, precisely so this can never hide a live feature's off switch.
+  // set_show_eve_tools refuses to turn the gate off while Bookmarks,
+  // Previews, or Fleet Bar is running, so it cannot hide a live off switch.
   //
   // With both destinations hidden the nav has one entry left, so it hides
   // altogether -- which is the single-screen app the README describes.
