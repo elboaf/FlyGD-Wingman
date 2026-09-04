@@ -126,4 +126,4 @@ def test_successful_update_is_silent(caplog):
     t = thumbnail.Thumbnail.register(FakeLibs(FakeDwm()), 1, 2)
     with caplog.at_level("WARNING"):
         t.update(Rect(0, 0, 10, 10))
-    assert "DwmUpdateThumbnailProperties failed" not in caplog.text
+    assert caplog.records == []

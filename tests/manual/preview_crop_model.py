@@ -108,18 +108,21 @@ def stack_from_bottom_right(index, monitor, size, gap=8):
 
     Args:
         index: Stack position (0 = bottom, 1 = above, ...).
-        monitor: Rect of monitor (typically monitor.x < 0 for off-screen).
+        monitor: Rect of monitor in virtual desktop coordinates. A monitor
+            left of or above the primary normally has a negative x or y;
+            that is not an off-screen or error condition.
         size: (width, height) of window.
-        gap: Pixels between stacked windows (default 8).
+        gap: Pixels between stacked windows, and between the stack and
+            the monitor's right/bottom edges (default 8).
 
     Returns:
-        Rect positioned at monitor.bottom_right - size, moved up by
+        Rect positioned at monitor.bottom_right - size - gap, moved up by
         (index * (height + gap)).
     """
     w, h = size
-    # Start at bottom-right of monitor, inset by 8 pixels.
-    x = monitor.right - w - 8
-    y = monitor.bottom - h - 8
+    # Start at bottom-right of monitor, inset by gap.
+    x = monitor.right - w - gap
+    y = monitor.bottom - h - gap
     # Move up for each index.
     y -= index * (h + gap)
     return Rect(x, y, w, h)

@@ -3087,10 +3087,10 @@ below is checked against is fixed in advance in
 in this checklist.
 
 Requires a Windows machine with at least one EVE client logged in to a named
-character for `pick`; the `load` path's higher stages need that many
-simultaneously running named clients or it stops before them. Commands and
-safety boundaries are in `tests/manual/README.md`; both subcommands require
-the full `--i-understand-this-is-an-ephemeral-windows-probe` flag.
+character for `pick`; the `load` path's stages (1, 2, 4, 8) each need that
+many simultaneously running named clients or it stops before them. Commands
+and safety boundaries are in `tests/manual/README.md`; both subcommands
+require the full `--i-understand-this-is-an-ephemeral-windows-probe` flag.
 
 - [ ] **Single-instance refusal.** With the installed Wingman (or its 3.x
       predecessor) running, launch either `pick` or `load`. Expected: it

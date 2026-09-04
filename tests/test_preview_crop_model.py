@@ -86,3 +86,16 @@ def test_stack_starts_at_monitor_bottom_right_and_moves_up():
     assert model.stack_from_bottom_right(1, monitor, (320, 180)) == Rect(
         -328, 704, 320, 180
     )
+
+
+def test_stack_gap_controls_both_edge_inset_and_spacing():
+    """A non-default gap must move the bottom-right inset AND the
+    inter-window spacing; a gap that only affected one of the two would
+    let stacked crops touch the monitor edge or overlap each other."""
+    monitor = Rect(-1920, 0, 1920, 1080)
+    assert model.stack_from_bottom_right(0, monitor, (320, 180), gap=20) == Rect(
+        -340, 880, 320, 180
+    )
+    assert model.stack_from_bottom_right(1, monitor, (320, 180), gap=20) == Rect(
+        -340, 680, 320, 180
+    )
