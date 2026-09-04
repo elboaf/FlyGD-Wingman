@@ -340,9 +340,10 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
     for t in threads:
         t.start()
     for t in threads:
-        # Bounded: if settings.update() ever deadlocks, this test must
-        # fail loudly instead of hanging until the CI job times out.
-        t.join(timeout=5.0)
+        # Bounded: if settings.update() ever deadlocks, this test must fail
+        # rather than hang the job. Windows performs 100 atomic replace/fsync
+        # cycles here and can exceed five seconds under runner I/O contention.
+        t.join(timeout=15.0)
         assert not t.is_alive()
 
     written = json.loads(path.read_text())

@@ -49,6 +49,29 @@ class FakeTelemetry:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _headless_fleet_window_helpers(monkeypatch):
+    """Keep fake windows independent of the host running the test suite."""
+    from wingman.ui import fleetbar
+
+    monkeypatch.setattr(
+        fleetbar,
+        "is_alive",
+        lambda bar: bar is not None and getattr(bar, "alive", True),
+    )
+
+    def reveal(bar):
+        if bar is not None:
+            bar.show()
+
+    def hide(bar):
+        if bar is not None:
+            bar.hide()
+
+    monkeypatch.setattr(fleetbar, "reveal_bar", reveal)
+    monkeypatch.setattr(fleetbar, "hide_bar", hide)
+
+
 @pytest.fixture
 def api(tmp_path):
     telemetry = FakeTelemetry()
