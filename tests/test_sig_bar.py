@@ -375,6 +375,29 @@ def test_gate_is_inert_with_an_empty_window_map(api, monkeypatch):
         api.toggle_sig_bar(False)
 
 
+def test_gate_is_inert_when_no_box_is_checked(api, monkeypatch):
+    """The bookmarks tab persists UNCHECKED windows as False entries, so
+    an all-False map is "opened the tab", not "scoped the bar". It kept
+    the always-show behaviour -- reading it as scoped is what hid the
+    bar entirely in the first test build."""
+    from wingman import settings as settings_mod
+
+    settings_mod.update_section(
+        api._state.settings,
+        "eve_bookmarks",
+        {"windows": {"EVE - Alice": False, "EVE - Bob": False}},
+    )
+    api.toggle_sig_bar(True)
+    try:
+        from wingman import evewindows
+
+        monkeypatch.setattr(evewindows, "focused_eve_title", lambda: "EVE - Alice")
+        api._apply_sig_bar_focus_gate()
+        assert api._sigbar_window.hidden is False
+    finally:
+        api.toggle_sig_bar(False)
+
+
 def test_gate_leaves_a_disabled_bar_hidden(api, monkeypatch):
     """The gate never shows a bar the user toggled off -- enabled is the
     master switch, focus only scopes an enabled bar."""

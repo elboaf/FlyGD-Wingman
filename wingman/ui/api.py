@@ -3689,10 +3689,15 @@ class Api:
         The rule the feature ships with: `sig_bar.enabled` is the master
         toggle, and the eve_bookmarks window checkboxes are the per-client
         allowlist -- the bar shows only while an EVE client whose checkbox
-        is checked holds the foreground. An EMPTY map means the user never
-        scoped anything, and the gate is inert (always allowed): hiding a
-        long-shipping bar from everyone who has never opened that tab
-        would be a silent regression dressed as a feature.
+        is checked holds the foreground.
+
+        The inert case is "no box CHECKED", not "map empty": the bookmarks
+        tab persists every live window as an entry, unchecked boxes stored
+        as False, so a user who has merely OPENED that tab with EVE
+        running has an all-False map. Reading that as "scoped" hid the
+        bar from a user who never opted in -- shipped as "the bar does
+        not show at all" in the first test build. The gate engages only
+        when at least one client is actually checked.
 
         Identity is the full `EVE - <name>` title, exactly the key the
         bookmarks tab persists -- no name stripping here, or a client at
@@ -3700,7 +3705,7 @@ class Api:
         drift from the checkbox that names it.
         """
         windows = (self._state.settings.get("eve_bookmarks") or {}).get("windows")
-        if not windows:
+        if not windows or not any(windows.values()):
             return True
         title = evewindows.focused_eve_title()
         return bool(title and windows.get(title))
