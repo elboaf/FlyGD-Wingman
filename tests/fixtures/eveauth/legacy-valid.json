@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "selected_plan_name": "Interceptors",
+  "selected_group": "Wolfpack",
+  "characters": [
+    {
+      "character_id": 90000001,
+      "character_name": "Aiga Otsolen",
+      "owner_hash": "owner-123",
+      "scopes": [
+        "esi-skills.read_skills.v1",
+        "esi-skills.read_skillqueue.v1"
+      ],
+      "authenticated_utc": "2026-09-03T12:30:00+00:00",
+      "fetched_utc": "2026-09-03T13:00:00+00:00",
+      "active_levels": {"3300": 5},
+      "trained_levels": {"3300": 5, "3301": 4},
+      "queue": [
+        {
+          "skill_id": 3301,
+          "finished_level": 5,
+          "start_date": "2026-09-03T13:00:00+00:00",
+          "finish_date": "2026-09-04T13:00:00+00:00",
+          "queue_position": 0
+        }
+      ],
+      "error": "",
+      "needs_reauth": false,
+      "refresh_token_blob": "QUJD",
+      "skills_etag": "skills-tag",
+      "queue_etag": "queue-tag",
+      "group": "Wolfpack"
+    }
+  ]
+}

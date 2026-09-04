@@ -5,10 +5,11 @@
  * calling window.<handler>(payload); the page reaches Python only through
  * WM.send(), which wraps pywebview.api.
  *
- * Selection, sort order, and row focus are CLIENT state and never cross
- * the bridge — the sole exception is the `preselected` flag arriving on
- * onRows, because the watcher preselects newly-finished recordings so the
- * common case needs no clicking.
+ * Selection, sort order, and row focus stay client state while they only
+ * change what the page draws. Selection crosses when Python must compute
+ * from it: Fittings sends the current page's pruned stable IDs to copy
+ * preflight. The Uploader's `preselected` flag still arrives on onRows so
+ * newly-finished recordings need no extra click.
  */
 (function () {
   'use strict';
@@ -55,8 +56,10 @@
                  'onPreviewBindCaptured',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
-                 'onSigBarState', 'onFleetBarState',
-                 'onSkills', 'onSkillsProgress'];
+                 'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
+                 'onSkills', 'onSkillsProgress',
+                 'onFittingsChanged', 'onFittingsProgress',
+                 'onFittingsScreenshotState'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -146,6 +149,7 @@
                    firstrun: 'route-firstrun',
                    evesettings: 'route-evesettings',
                    skills: 'route-skills',
+                   fittings: 'route-fittings',
                    formations: 'route-formations',
                    accountidentity: 'route-accountidentity',
                    backups: 'route-backups' };
@@ -179,7 +183,8 @@
     WM.el('routenav').hidden = chromeless;
     // The gear returns to wherever you were: Settings is a window-level
     // action layered on top of a peer destination, not a peer itself.
-    if (name === 'main' || name === 'evesettings' || name === 'skills') {
+    if (name === 'main' || name === 'evesettings' || name === 'skills'
+        || name === 'fittings') {
       // Peer destinations, unlike Settings: the gear returns to whichever
       // of these you came from.
       WM.last_destination = name;
@@ -253,7 +258,8 @@
   // the gate off, a user standing in one has to be moved off it like
   // anyone standing on a hidden destination, or the nav disappears around
   // them and there is no way back.
-  WM.EVE_ROUTES = ['evesettings', 'skills', 'formations', 'accountidentity', 'backups'];
+  WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
+                   'accountidentity', 'backups'];
   // Alerts joined this list in round 5 (D1) when it stopped being a card
   // inside Previews and became a section. It is EVE-gated for the same
   // reason the other two are: it reads the EVE gamelogs folder and draws
@@ -316,6 +322,22 @@
   });
 
   // ---- title bar ----------------------------------------------------
+  // Cached reads may resolve after a newer Python push. Advancing on every
+  // accepted render, including same-state progress, lets each read prove no
+  // fresher badge payload arrived while it was in flight.
+  var updateBadgeGeneration = 0;
+
+  function renderUpdateBadge(payload) {
+    updateBadgeGeneration += 1;
+    var gear = WM.el('btn-settings');
+    var available = !!payload.update_available;
+    gear.classList.toggle('update-available', available);
+    gear.title = available ? 'Settings — update available' : 'Settings';
+    gear.setAttribute('aria-label', gear.title);
+    document.dispatchEvent(new CustomEvent('wm:update-status', {detail: payload}));
+  }
+  WM.handle('onUpdateStatus', renderUpdateBadge);
+
   WM.el('btn-minimize').addEventListener('click', function () {
     WM.send('minimize');
   });
@@ -345,6 +367,15 @@
     // Save from it wrote the blanks back.
     WM.send('get_settings').then(function (payload) {
       if (payload) window.onSettings(payload);
+    });
+    // Keep this cached read for dev mode, where Python never pushes, but do
+    // not let its older snapshot repaint over an update push that won the
+    // race while the bridge promise was pending.
+    var badgeGenerationAtRead = updateBadgeGeneration;
+    WM.send('update_status').then(function (payload) {
+      if (payload && updateBadgeGeneration === badgeGenerationAtRead) {
+        window.onUpdateStatus(payload);
+      }
     });
   });
 }());

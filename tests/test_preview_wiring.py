@@ -2081,7 +2081,8 @@ def test_local_bind_conflict_copy_uses_authoritative_collision_state():
         assert source in block
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
     assert (
-        "makeBindConflict(label, gesture, character, isExcluded(character))" in append
+        "makeBindConflict(label, gesture, character, isExcluded(character), ownerKey)"
+        in append
     )
 
 
@@ -3048,7 +3049,7 @@ def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
     remain visible on the bind button without being rendered as a conflict.
     """
     js = _web("previews.js")
-    assert "function makeBindConflict(label, gesture, character, off)" in js
+    assert "function makeBindConflict(label, gesture, character, off, ownerKey)" in js
     conflict = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
     assert "if (off) { return null; }" in conflict
     assert "bookmark === 'latent'" not in conflict
@@ -3058,7 +3059,8 @@ def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
 
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
     assert (
-        "makeBindConflict(label, gesture, character, isExcluded(character))" in append
+        "makeBindConflict(label, gesture, character, isExcluded(character), ownerKey)"
+        in append
     )
 
 

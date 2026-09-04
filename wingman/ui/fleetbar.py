@@ -7,7 +7,9 @@ than attaching Python window-event handlers that can deadlock WinForms.
 """
 
 import logging
+import sys
 
+from wingman.ui import sigbar as sigbar_mod
 from wingman.ui import window as window_mod
 
 logger = logging.getLogger(__name__)
@@ -24,39 +26,71 @@ def _default_placement() -> tuple[int, int]:
 
 
 def create(api, hidden: bool = True):
-    """Create the pinned display and assign its private Api back-reference."""
+    """Create hidden and publish only inside the shutdown lifecycle gate."""
     import webview
 
-    section = api._state.settings.get("fleet_bar") or {}
-    x, y = section.get("x"), section.get("y")
-    if x is None or y is None:
-        x, y = _default_placement()
+    with api._fleetbar_lifecycle_lock:
+        if api._fleetbar_quitting:
+            return None
+        section = api._state.settings.get("fleet_bar") or {}
+        x, y = section.get("x"), section.get("y")
+        if x is None or y is None:
+            x, y = _default_placement()
 
-    bar = webview.create_window(
-        "Wingman Fleet Bar",
-        str(window_mod._web_dir() / "fleetbar.html"),
-        js_api=api,
-        width=WIDTH,
-        height=HEIGHT,
-        x=x,
-        y=y,
-        frameless=True,
-        easy_drag=False,
-        on_top=True,
-        background_color=window_mod.BACKGROUND,
-        min_size=MIN_SIZE,
-        hidden=hidden,
-    )
-    api._fleetbar_window = bar
-    return bar
+        bar = webview.create_window(
+            "Wingman Fleet Bar",
+            str(window_mod._web_dir() / "fleetbar.html"),
+            js_api=api,
+            width=WIDTH,
+            height=HEIGHT,
+            x=x,
+            y=y,
+            frameless=True,
+            easy_drag=False,
+            on_top=True,
+            focus=False,
+            background_color=window_mod.BACKGROUND,
+            min_size=MIN_SIZE,
+            # Tool-window styling must land before the first show or Windows
+            # can retain a taskbar button and Aero preview for the process.
+            hidden=True,
+        )
+        api._fleetbar_window = bar
+        if sys.platform == "win32":
+            sigbar_mod._apply_tool_style(bar)
+        return bar
+
+
+def is_alive(bar) -> bool:
+    if sys.platform == "win32":
+        return sigbar_mod.is_alive(bar)
+    return bar is not None and getattr(bar, "alive", True)
+
+
+def reveal_bar(bar) -> None:
+    if sys.platform == "win32":
+        sigbar_mod.reveal_bar(bar)
+    elif bar is not None:
+        bar.show()
+
+
+def hide_bar(bar) -> None:
+    if sys.platform == "win32":
+        sigbar_mod.hide_bar(bar)
+    elif bar is not None:
+        bar.hide()
 
 
 def restore(api) -> None:
     """Create hidden; the page reveals itself after its first render and fit."""
     failed = False
-    with api._fleetbar_lock:
+    with api._fleetbar_lifecycle_lock:
         section = api._state.settings.get("fleet_bar") or {}
-        if not section.get("enabled") or api._fleetbar_window is not None:
+        if (
+            api._fleetbar_quitting
+            or not section.get("enabled")
+            or is_alive(api._fleetbar_window)
+        ):
             return
         try:
             api._fleetbar_ready = False

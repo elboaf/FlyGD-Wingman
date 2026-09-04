@@ -107,7 +107,7 @@ def query_of(url: str) -> dict:
 
 def test_authorize_url_carries_every_required_parameter():
     pkce = sso.generate_pkce()
-    url = sso.authorize_url(pkce)
+    url = sso.authorize_url(pkce, application.SCOPES)
     assert url.startswith(application.SSO_AUTHORIZE + "?")
     assert query_of(url) == {
         "response_type": "code",
@@ -125,7 +125,7 @@ def test_authorize_url_encodes_every_key_and_value():
     spaces. Left raw, the query would end at the first character CCP's
     parser disagreed about -- and a truncated redirect_uri is a rejected
     authorization, not a visible error."""
-    url = sso.authorize_url(sso.generate_pkce())
+    url = sso.authorize_url(sso.generate_pkce(), application.SCOPES)
     assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A51779%2Fcallback%2F" in url
     assert " " not in url
 
@@ -133,17 +133,57 @@ def test_authorize_url_encodes_every_key_and_value():
 def test_authorize_url_sorts_the_scopes():
     """A stable order keeps the URL reproducible and the consent screen
     identical between runs."""
-    scope = query_of(sso.authorize_url(sso.generate_pkce()))["scope"]
+    scope = query_of(sso.authorize_url(sso.generate_pkce(), application.SCOPES))[
+        "scope"
+    ]
     assert scope == " ".join(sorted(scope.split(" ")))
+
+
+def test_authorize_url_requires_an_explicit_scope_set():
+    """Inherited unchanged from eveauth.sso: there is no "every scope"
+    default here either, so a caller that forgets to name a scope set
+    gets a clean refusal, not a URL with an empty scope= parameter."""
+    with pytest.raises(ValueError, match="scope"):
+        sso.authorize_url(sso.generate_pkce(), ())
+
+
+def test_re_exported_names_are_the_shared_eveauth_objects():
+    """This module changed no behaviour of its own; every one of these
+    names is imported, not reimplemented, from `eveauth.sso`. An identity
+    check (`is`, not `==`) is what would catch a future fork of this
+    logic that a value-equality assertion could not."""
+    from wingman.eveauth import sso as eveauth_sso
+
+    for name in (
+        "Pkce",
+        "TokenSet",
+        "OAuthError",
+        "generate_pkce",
+        "authorize_url",
+        "exchange_code",
+        "refresh_token",
+        "_NoRedirectHandler",
+    ):
+        assert getattr(sso, name) is getattr(eveauth_sso, name)
 
 
 def test_no_client_secret_appears_anywhere():
     """This is a PUBLIC client: it ships to end users, so any secret baked
     into the binary would be readable by everyone holding it and would
-    protect nothing at all. PKCE is what stands in for one."""
-    source = inspect.getsource(sso)
-    assert "client_secret" not in source
-    assert "Authorization" not in source
+    protect nothing at all. PKCE is what stands in for one.
+
+    Inspects the OWNING implementation, `wingman.eveauth.sso` -- this
+    compatibility module is now a handful of import statements and would
+    pass vacuously regardless of what the real implementation does. The
+    compatibility module is checked too, cheaply, so a stray literal
+    added directly to the compat shim in some future edit would not slip
+    through either."""
+    from wingman.eveauth import sso as eveauth_sso
+
+    for module in (eveauth_sso, sso):
+        module_source = inspect.getsource(module)
+        assert "client_secret" not in module_source
+        assert "Authorization" not in module_source
 
 
 VERIFIER = RFC7636_VERIFIER

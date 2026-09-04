@@ -76,9 +76,69 @@ half needs no Google account. Neither requires the other.
   with a backup taken first and restore available.
 - **Skills.** Per-character readiness against skill plans you keep in a folder,
   read through EVE SSO and ESI. Shows what is trained, training, or missing.
+- **Fittings.** A persistent local library built from the Personal Fittings on
+  the EVE characters you authorize. Equivalent loadouts are consolidated even
+  when their names or numbered slot positions differ; you can curate names and
+  collections, then explicitly copy selected fits to selected characters.
 
+Profiles, Skills, and Fittings are secondary fleet-preparation destinations.
 The EVE tools are on by default. If you only want the uploader, turn them off in
-**Settings → General** and the window drops to a single screen.
+**Settings → General** and Profiles, Skills, Fittings, and the EVE Settings
+sections are hidden; the window drops to the Uploader alone.
+
+### Fittings and EVE access
+
+Fittings is additive and explicit. Wingman reads a character only after you
+press **Enable fittings** on that character's row and complete EVE's consent
+screen. It requests these two scopes for that character:
+
+```text
+esi-fittings.read_fittings.v1
+esi-fittings.write_fittings.v1
+```
+
+The read scope imports that character's Personal Fittings. The write scope is
+used only after you select library entries, select target characters, review
+the exact remote-write count, and confirm the copy. Wingman does not
+continuously synchronize fits and never automatically deletes or replaces a
+fit on a character. It does not call ESI's remote fitting-delete route.
+
+Existing Skills-only consent remains valid for Skills. A character stays
+**Skills only** in Fittings until you enable the additional capability, and the
+upgrade is bound to that exact character. Choosing a different character on
+EVE's consent screen is refused rather than adding or upgrading it silently.
+
+EVE exposes Personal Fittings, not alliance or corporation fittings. To bring
+an alliance doctrine into Wingman:
+
+1. Copy it to one character's Personal Fittings in EVE.
+2. Refresh that character in Wingman.
+3. Use the recent import and source character to identify the new entries.
+4. Add those entries to an `Alliance` collection and curate their names or
+   descriptions as needed.
+
+A fitting create can time out after EVE received it but before Wingman received
+the response. That result is **Unknown**, not Failed. Wingman does not retry it:
+the fitting/character pair remains blocked until a fresh authoritative read
+after EVE's five-minute cache horizon proves whether the fitting exists. This
+prevents an automatic retry from creating a duplicate.
+
+**Forget character is global.** Whether pressed from Skills or Fittings, it
+removes that character's shared EVE credential and its Skills and Fittings
+snapshots. Library entries learned from the character remain. If an Unknown
+fitting write is still unresolved, Forget is refused until reconciliation so
+the evidence and credential needed to resolve it are not discarded.
+
+Fittings state is local and persistent under `%LOCALAPPDATA%\FlyGD Wingman\`:
+
+- `eve_authority.json` holds shared character identity, granted scopes, and
+  DPAPI-protected refresh credentials;
+- `eve_skills.json` holds Skills-only snapshots and selections;
+- `eve_fittings.json` holds the curated library, collections, character
+  presence, snapshots, and unresolved write evidence; and
+- `eve_fittings_names.json` is a rebuildable type-name cache.
+
+As with the rest of Wingman, there is no FlyGD backend and no telemetry.
 
 ## Typical workflow
 
@@ -119,10 +179,10 @@ which requires this scope. Wingman makes no other YouTube API call.
 **What this means in practice:**
 
 - **Uploads only happen when you start them.** Wingman never uploads
-  automatically. A video is uploaded only after you tick it and press
-  **Upload**, and the combat logs go with it only while that box is ticked.
-  Detecting a new recording produces a notification and a list entry —
-  nothing more.
+  automatically. A video is uploaded only after you select it and press
+  **Upload**. If you configured a Discord webhook, matching combat logs are
+  posted there after the video publishes. Detecting a new recording produces
+  a notification and a list entry — nothing more.
 - **Sign-in only happens when you ask for it**, either via
   **Settings → Connect Google Account** or automatically at the moment of your
   first upload if you have not connected yet.
@@ -135,9 +195,9 @@ which requires this scope. Wingman makes no other YouTube API call.
   on your channel.
 - **Your Google credentials are stored locally**, on your own computer, by the
   desktop application. See [Where credentials live](#where-credentials-live).
-- **Google OAuth tokens are not sent to any FlyGD server.** Wingman has no
-  backend. It talks to Google directly and to a Discord webhook you configure;
-  there is nothing else it can talk to.
+- **No FlyGD-operated backend receives Google OAuth tokens or other
+  application data.** See the [Privacy section](#privacy) network table for
+  the external services each feature contacts and what it sends.
 - **Video data goes straight from your computer to Google.** The upload is a
   resumable upload made by the application to the YouTube Data API. It does
   not pass through any FlyGD-controlled infrastructure.
@@ -200,14 +260,13 @@ This feature is optional, off until you configure it, and **completely
 separate from Google sign-in**. It uses no Google credentials and sends no
 Google user data anywhere.
 
-With **Also post combat logs to Discord** ticked, an upload does a second
-thing once the video is published: it works out the time span the selected
-recordings cover, collects the EVE Online gamelog files from your local
-`Gamelogs` folder that overlap that span, zips them, and posts the archive to
-the Discord webhook URL you entered in Settings. That is the entire scope of
-the feature: local EVE log files, to a Discord channel you chose.
-
-Untick the box to upload the video alone.
+When a Discord webhook is configured, an upload does a second thing once the
+video is published: it works out the time span the selected recordings cover,
+collects the EVE Online gamelog files from your local `Gamelogs` folder that
+overlap that span, zips them, and posts the archive to the webhook URL you
+entered in Settings. That is the entire scope of the feature: local EVE log
+files, to a Discord channel you chose. Remove the webhook in Settings to upload
+videos without posting combat logs to Discord.
 
 Notes:
 
@@ -240,10 +299,22 @@ Notes:
 Python, FFmpeg, and the OAuth client configuration are bundled — there is no
 separate OBS script to install, and no Google Cloud project for you to set up.
 
+Once each time Wingman starts, it checks the GitHub release API in the
+background for a newer stable release. If one is available, the Settings gear
+shows a dot and **Settings → General → About Wingman** offers **Download
+update**. **Check again** repeats only the release check; the installer is not
+downloaded until you choose **Download update**, and it is never installed
+until you confirm. Wingman checks the downloaded size and GitHub-published
+SHA-256 before opening the normal visible installer. That SHA-256 provides
+same-channel integrity — it confirms that the download matches GitHub's
+release record — but it does not prove publisher identity because the asset
+and digest come from the same source.
+
 **Windows will warn you** that it "protected your PC": the installer and the
-application are not code-signed. Click **More info** → **Run anyway**. This
-happens once per machine, for the installer and for the first launch. This is
-about code signing, and is unrelated to Google sign-in.
+application are not code-signed. Guided updates keep this warning and the
+visible installer rather than bypassing either one. Click **More info** → **Run
+anyway**. This happens once per machine, for the installer and for the first
+launch. This is about code signing, and is unrelated to Google sign-in.
 
 ## Settings
 
@@ -274,16 +345,18 @@ and no telemetry. Everything it stores — your settings, your Google OAuth
 token, its log file, and temporary stitched video files — lives under
 `%LOCALAPPDATA%\FlyGD Wingman\` on your own machine.
 
-The application makes network connections to exactly two places, both of which
-you initiate:
+These features make the following network connections:
 
 | Destination | When | What is sent |
 |---|---|---|
+| GitHub release APIs and release downloads | Wingman's release API is checked once each time Wingman starts, including when Windows starts it hidden at sign-in. **Check again** repeats that check and **Download update** explicitly downloads its installer; there is no polling or automatic download. Separately, FightRecorder stays local until you choose **Check for updates**, **Install**, or **Update** on its Settings card; those actions check its GitHub release and Install/Update downloads the plugin DLL. | The automatic Wingman check identifies the installed Wingman version in its User-Agent, and each request carries ordinary network connection metadata and identifies the repository or release asset requested. FightRecorder checks do not send the installed plugin version. No Wingman settings, EVE or Google account data, filenames, recordings, or telemetry are sent. |
+| CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You add or reconnect a Skills character; Wingman refreshes that character's skills, queue, and attributes or resolves uncached skill plans through unauthenticated universe ID/name (`/universe/ids`), type metadata, and group metadata lookups. Profiles looks up local character IDs first through unauthenticated `/characters/{id}/` requests, then uses `/universe/names` for remaining display names. | EVE SSO receives Wingman's registered client ID, redirect URI, requested read-only skills/queue scopes and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills, queue, and attributes requests carry the character ID and EVE bearer access token. Unauthenticated name and metadata lookups carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
-| A Discord webhook you configure | You press **Upload** with **Also post combat logs to Discord** ticked | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
+| A Discord webhook you configure | You press **Upload** while a webhook is configured, after the video publishes successfully | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
 
-Your Google account data is never sent to Discord, and no Google OAuth token
-ever leaves your machine. Full statement:
+Your Google account data and OAuth token go only to Google, never to Discord,
+GitHub, or CCP. EVE tokens go only to CCP's EVE SSO and ESI endpoints. Full
+statement:
 [Privacy Policy](https://wingman.zoolanders.vip/privacy) ·
 [Terms of Service](https://wingman.zoolanders.vip/terms).
 
@@ -342,20 +415,34 @@ The repository was reformatted with `ruff format` in one commit touching
 that reformat rather than to whoever wrote the code. The setting is
 per-clone and cannot be committed, so every clone needs it once.
 
-Official releases are built by
-[`.github/workflows/release.yml`](.github/workflows/release.yml), which injects
+Official releases are built in two ways. The primary path is
+[`.github/workflows/autorelease.yml`](.github/workflows/autorelease.yml):
+merge a bump of `__version__` in `wingman/__init__.py` to `main`, and the
+workflow tests, builds and publishes the release, creating the `vX.Y.Z` tag
+itself — publishing pauses for an approval click if the `release` GitHub
+environment has reviewers configured. The fallback path is
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which
+triggers on a manually pushed `v*` tag. Both inject
 the project's own Google OAuth desktop-client configuration from repository
 secrets at build time. **Those credentials are never committed to this
 repository** — `wingman/credentials.py` contains only
 placeholders in the source tree.
 
-So a build from source has no working OAuth client until you supply your own.
-To run it end to end you need to create a Google Cloud project, enable the
-YouTube Data API v3, create an **OAuth client ID of type "Desktop app"**, and
-put its client ID and secret into `CLIENT_CONFIG` in
-`wingman/credentials.py`. Everything except **Connect Google
-Account** works without this. Do not commit real credentials back to the
-repository.
+So a build from source has no working Google OAuth client until you supply your
+own. To run YouTube uploads end to end you need to create a Google Cloud
+project, enable the YouTube Data API v3, create an **OAuth client ID of type
+"Desktop app"**, and put its client ID and secret into `CLIENT_CONFIG` in
+`wingman/credentials.py`. Everything except **Connect Google Account** works
+without this. Do not commit real credentials back to the repository.
+
+The EVE application is a separate external release prerequisite. The client ID
+and exact loopback redirect are defined in `wingman/eveauth/application.py`.
+Before publishing a build, the corresponding application registration at
+EVE Developers must accept all four scopes used by Wingman, including both
+`esi-fittings.read_fittings.v1` and `esi-fittings.write_fittings.v1`. Changing
+the source scope list cannot widen what the registered application accepts. A
+fork should register its own EVE application and replace the client ID rather
+than ship under Wingman's identity.
 
 As of 4.0.0, the Python package directory, the executable name, and the
 `%LOCALAPPDATA%` state folder are all named `wingman` / `FlyGD Wingman`,

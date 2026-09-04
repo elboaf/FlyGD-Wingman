@@ -1,15 +1,9 @@
-"""Roster, skill snapshots, ETags, and wrapped refresh tokens in one file.
+"""Persistent Skills snapshots, groups, plan selection, errors, and ETags.
 
-One document holds everything about a character, which is what makes forget
-a single atomic write: there is no window in which a token exists without
-its character, and no reconciliation sweep to get wrong. TriffView splits
-these across Credential Manager and state.json and pays for it in rollback
-paths (TriffSkillsAuthentication.cs:103,108) and a RecoverOwnCredentials()
-that exists only to resurrect orphans.
-
-Only the refresh token is wrapped. The metadata beside it stays plaintext so
-a blob that will not decrypt costs one character a re-authentication rather
-than making the whole document unparseable.
+Character identity, scopes, and credentials live in :mod:`wingman.eveauth`.
+This document keeps only data produced or curated by Skills. Its rows are
+reconciled against shared authority at startup, so a crash after global
+forget can leave harmless derived metadata but never an orphan credential.
 
 Normalisation on load is deliberately tolerant rather than versioned, which
 is the same posture settings.py's validated_*() functions take and the
@@ -28,6 +22,7 @@ from pathlib import Path
 
 from .. import atomicio
 from .evaluator import QueueEntry
+from .training import ATTRIBUTE_NAMES
 
 MAX_CHARACTERS = 50
 STATE_VERSION = 1
@@ -64,19 +59,11 @@ MAX_GROUP_NAME_CHARS = 40
 @dataclass
 class Character:
     character_id: int
-    character_name: str = ""
-    owner_hash: str = ""
-    scopes: tuple = ()
-    authenticated_utc: "datetime | None" = None
     fetched_utc: "datetime | None" = None
     active_levels: dict = field(default_factory=dict)
     trained_levels: dict = field(default_factory=dict)
     queue: tuple = ()
     error: str = ""
-    needs_reauth: bool = False
-    # base64 text of the DPAPI blob; "" when the token is absent or was
-    # deleted by a definitive auth failure.
-    refresh_token_blob: str = ""
     # Per-endpoint ETags. These are request optimisation ONLY -- they are
     # not freshness state. fetched_utc is the single freshness fact, and it
     # means "both halves were confirmed current at this time".
@@ -86,6 +73,19 @@ class Character:
     # prunes it atomically and there is no second collection to keep in
     # step with the roster.
     group: str = ""
+    # Total skill points per skill, keyed the same as active_levels/
+    # trained_levels. Complete is a separate flag rather than "non-empty",
+    # because a character with zero trained skills is a real, valid state
+    # and must not be indistinguishable from "never downloaded".
+    skill_points: dict = field(default_factory=dict)
+    skill_points_complete: bool = False
+    # ESI's five learning attributes, keyed by name. Populated from a
+    # separate endpoint from skills/skillqueue, so it carries its own
+    # freshness fact and ETag rather than reusing fetched_utc/skills_etag.
+    attributes: dict = field(default_factory=dict)
+    attributes_fetched_utc: "datetime | None" = None
+    attributes_error: str = ""
+    attributes_etag: str = ""
 
     @property
     def has_snapshot(self) -> bool:
@@ -103,6 +103,9 @@ class SkillsState:
     characters: list = field(default_factory=list)
     selected_plan_name: str = ""
     selected_group: str = ""
+    # One-way migration marker: if authority is later missing or corrupt,
+    # stale credential fields must never be recreated from this document.
+    authority_migrated: bool = False
 
     def find(self, character_id: int):
         for character in self.characters:
@@ -205,6 +208,62 @@ def _coerce_levels(raw) -> dict:
     return out
 
 
+def _coerce_skill_points(raw) -> tuple:
+    """Skill id -> total SP, or ({}, False) if `raw` is not a structurally
+    valid map.
+
+    Unlike _coerce_levels, one bad entry invalidates the WHOLE map rather
+    than being dropped individually: active_levels/trained_levels tolerate
+    a partial drop because the evaluator already treats an absent skill id
+    as untrained, so losing one entry just understates a single skill.
+    skill_points has no such fallback meaning for "missing" -- a partial SP
+    map has no way to signal that it is partial, so a caller trusting it
+    would show a confidently wrong total rather than an honestly absent
+    one. `{}` itself is structurally valid: a character with zero trained
+    skills is a real state, not evidence of corruption.
+
+    Reuses MAX_LEVEL_ENTRIES rather than its own cap: both collections are
+    keyed by the same bounded set of real EVE skill ids, so anything that
+    bounds one legitimately bounds the other.
+    """
+    if not isinstance(raw, dict):
+        return {}, False
+    if len(raw) > MAX_LEVEL_ENTRIES:
+        return {}, False
+    out: dict = {}
+    for key, value in raw.items():
+        skill_id = _coerce_int(key)
+        sp = _coerce_int(value)
+        if skill_id is None or sp is None or skill_id <= 0 or sp < 0:
+            return {}, False
+        out[skill_id] = sp
+    return out, True
+
+
+def _coerce_attributes(raw) -> tuple:
+    """Name -> value for exactly the five ESI learning attributes, or
+    ({}, False) if `raw` is missing a name, carries an extra one, or holds
+    a non-positive or non-integer value for any of them.
+
+    Positive-only: 0 or negative is not a value ESI has ever reported for a
+    trained attribute, so it is closer to a corrupt read than a real one.
+    """
+    # ATTRIBUTE_NAMES is training.py's own canonical frozenset -- the same
+    # five names the calculator validates metadata against -- not retyped
+    # here, so persisted attributes and the calculator can never drift on
+    # what "the five attributes" means. set(raw) != ATTRIBUTE_NAMES compares
+    # fine across set/frozenset by element, so no conversion is needed.
+    if not isinstance(raw, dict) or set(raw) != ATTRIBUTE_NAMES:
+        return {}, False
+    out: dict = {}
+    for name in ATTRIBUTE_NAMES:
+        value = _coerce_int(raw.get(name))
+        if value is None or value <= 0:
+            return {}, False
+        out[name] = value
+    return out, True
+
+
 def _coerce_queue(raw) -> tuple:
     """Queue entries, validated per entry and re-sorted by position.
 
@@ -242,36 +301,12 @@ def _coerce_queue(raw) -> tuple:
     return tuple(entries)
 
 
-# TriffSkillsState.cs:159's `.Take(100)` on Scopes -- the one collection in
-# the source that gets its own cap distinct from MAX_LEVEL_ENTRIES/
-# MAX_QUEUE_ENTRIES, so it needs its own constant rather than reusing one
-# of those. A real ESI grant is a handful of scope strings; 100 is
-# headroom against a hand-edited file, not a real ceiling.
-MAX_SCOPES = 100
-
-
-def _coerce_scopes(raw) -> tuple:
-    if not isinstance(raw, list):
-        return ()
-    out = []
-    for item in raw:
-        if len(out) >= MAX_SCOPES:
-            break
-        if isinstance(item, str) and item and item not in out:
-            out.append(item)
-    return tuple(out)
-
-
 def _coerce_text(raw) -> str:
     return raw if isinstance(raw, str) else ""
 
 
 def _coerce_trimmed_text(raw) -> str:
-    """TriffSkillsState.cs:157-158,163 trims CharacterName, OwnerHash and
-    Error. Used only for those three fields -- the token blob and the two
-    ETags are opaque values, not display text, and trimming them would
-    silently corrupt a blob or ETag that happened to start or end with
-    whitespace-looking bytes."""
+    """Trim the user-visible Skills error; ETags remain opaque."""
     return _coerce_text(raw).strip()
 
 
@@ -322,13 +357,10 @@ def to_dict(state: SkillsState) -> dict:
         "version": STATE_VERSION,
         "selected_plan_name": state.selected_plan_name,
         "selected_group": state.selected_group,
+        "authority_migrated": state.authority_migrated,
         "characters": [
             {
                 "character_id": character.character_id,
-                "character_name": character.character_name,
-                "owner_hash": character.owner_hash,
-                "scopes": list(character.scopes),
-                "authenticated_utc": _iso(character.authenticated_utc),
                 "fetched_utc": _iso(character.fetched_utc),
                 # JSON object keys are strings; from_dict coerces them back.
                 "active_levels": {
@@ -348,11 +380,15 @@ def to_dict(state: SkillsState) -> dict:
                     for entry in character.queue
                 ],
                 "error": character.error,
-                "needs_reauth": character.needs_reauth,
-                "refresh_token_blob": character.refresh_token_blob,
                 "skills_etag": character.skills_etag,
                 "queue_etag": character.queue_etag,
                 "group": character.group,
+                "skill_points": {str(k): v for k, v in character.skill_points.items()},
+                "skill_points_complete": character.skill_points_complete,
+                "attributes": dict(character.attributes),
+                "attributes_fetched_utc": _iso(character.attributes_fetched_utc),
+                "attributes_error": character.attributes_error,
+                "attributes_etag": character.attributes_etag,
             }
             for character in state.characters
         ],
@@ -375,6 +411,7 @@ def from_dict(raw: object) -> SkillsState:
         raw.get("selected_plan_name")
     )
     result.selected_group = _coerce_group_name(raw.get("selected_group"))
+    result.authority_migrated = raw.get("authority_migrated") is True
 
     characters = raw.get("characters")
     if not isinstance(characters, list):
@@ -399,22 +436,37 @@ def from_dict(raw: object) -> SkillsState:
         # never be refreshed and never be forgotten.
         if character_id is None or character_id <= 0:
             continue
+        points, points_valid = _coerce_skill_points(item.get("skill_points"))
+        # A skills_etag earned against a response body is only trustworthy
+        # once skill_points is itself trustworthy and marked complete -- a
+        # document written before this package tracked SP at all has an
+        # ETag but no SP map, and a malformed-but-marked-complete map must
+        # not leave a stale ETag standing in for data this load just
+        # discarded. Either case must fall through to a real request, not
+        # a 304 that hides the backfill.
+        points_complete = item.get("skill_points_complete") is True and points_valid
+        skills_etag = _coerce_text(item.get("skills_etag")) if points_complete else ""
+        attrs, attrs_valid = _coerce_attributes(item.get("attributes"))
+        attrs_fetched = _parse_utc(item.get("attributes_fetched_utc"))
+        attrs_complete = attrs_valid and attrs_fetched is not None
         by_id[character_id] = Character(
             character_id=character_id,
-            character_name=_coerce_trimmed_text(item.get("character_name")),
-            owner_hash=_coerce_trimmed_text(item.get("owner_hash")),
-            scopes=_coerce_scopes(item.get("scopes")),
-            authenticated_utc=_parse_utc(item.get("authenticated_utc")),
             fetched_utc=_parse_utc(item.get("fetched_utc")),
             active_levels=_coerce_levels(item.get("active_levels")),
             trained_levels=_coerce_levels(item.get("trained_levels")),
             queue=_coerce_queue(item.get("queue")),
             error=_coerce_trimmed_text(item.get("error")),
-            needs_reauth=item.get("needs_reauth") is True,
-            refresh_token_blob=_coerce_text(item.get("refresh_token_blob")),
-            skills_etag=_coerce_text(item.get("skills_etag")),
+            skills_etag=skills_etag,
             queue_etag=_coerce_text(item.get("queue_etag")),
             group=_coerce_group_name(item.get("group")),
+            skill_points=points if points_valid else {},
+            skill_points_complete=points_complete,
+            attributes=attrs if attrs_complete else {},
+            attributes_fetched_utc=attrs_fetched if attrs_complete else None,
+            attributes_error=_coerce_trimmed_text(item.get("attributes_error")),
+            attributes_etag=(
+                _coerce_text(item.get("attributes_etag")) if attrs_complete else ""
+            ),
         )
     result.characters = list(by_id.values())[:MAX_CHARACTERS]
     return result
@@ -550,8 +602,7 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
     the directory holding a `.bak` and a `.new` staging file but no
     `eve_skills.json`. Without this, the next load() would take the
     FileNotFoundError branch, believe it is a first launch, and hand back
-    an empty roster with every DPAPI-wrapped refresh token silently gone
-    from view -- while a perfectly good `.bak` sits right beside it.
+    an empty derived roster while a perfectly good `.bak` sits beside it.
     """
     recovered = None
     for attempt in range(2):
@@ -713,8 +764,8 @@ def save(state: SkillsState, path: Path) -> None:
     makes no backup because it is shared with the Wingman/engine boundary,
     where a stray .bak sitting beside a polled INI would be its own problem
     -- the engine reads that directory. The rotation here is a few lines and
-    only this subsystem wants it, because this is the only file holding
-    something (the refresh tokens) that a refresh cannot rebuild.
+    only this subsystem wants it, because plan/group choices and the last
+    coherent offline snapshot should survive one failed replacement.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -769,8 +820,8 @@ def save(state: SkillsState, path: Path) -> None:
         # (uploader.py:286-293 makes the same point about the Google
         # token file). It costs nothing to still call it (POSIX gets
         # the real protection it describes), but the actual protection
-        # for this document on Windows is the %LOCALAPPDATA% directory
-        # ACL plus DPAPI-wrapping the refresh token itself (tokens.py,
-        # dpapi.py), not these mode bits.
+        # for this document on Windows is the %LOCALAPPDATA% directory ACL,
+        # not these POSIX mode bits. Credentials live in eve_authority.json
+        # and remain DPAPI-wrapped independently of this Skills document.
         with contextlib.suppress(OSError):
             os.chmod(bak, stat_module.S_IMODE(path.stat().st_mode))

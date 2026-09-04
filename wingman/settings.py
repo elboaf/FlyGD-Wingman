@@ -11,7 +11,7 @@ import re
 import threading
 from pathlib import Path
 
-from . import bookmarks, paths
+from . import atomicio, bookmarks, paths
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
 from .preview import gestures as preview_gestures
@@ -847,7 +847,6 @@ def save(data: dict, path: Path | None = None) -> None:
 
 def _save_locked(data: dict, path: Path | None = None) -> None:
     path = path or paths.settings_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     # Guarantee the persisted shape is normalized even when save() is called
     # directly (bypassing the _normalize() that update() runs first).
@@ -855,7 +854,7 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     # after this pattern was established; extending the others is a separate
     # decision that would need its own tests.
     payload["fleet_bar"] = validated_fleet_bar(payload.get("fleet_bar"))
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomicio.write_atomic(path, json.dumps(payload, indent=2), encoding="utf-8")
 
 
 @contextlib.contextmanager

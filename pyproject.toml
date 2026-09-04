@@ -84,8 +84,10 @@ packages = [
     "wingman.preview",
     "wingman.alerts",
     "wingman.evesettings",
+    "wingman.eveauth",
     "wingman.eveskills",
     "wingman.telemetry",
+    "wingman.evefittings",
 ]
 
 [tool.setuptools.dynamic]

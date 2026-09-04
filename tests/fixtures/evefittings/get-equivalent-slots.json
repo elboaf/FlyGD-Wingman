@@ -1,0 +1,26 @@
+[
+  {
+    "fitting_id": 900002,
+    "ship_type_id": 600001,
+    "name": "Synthetic Fit A",
+    "description": "Sanitized fixture with synthetic names and IDs only.",
+    "items": [
+      { "flag": "HiSlot0", "quantity": 1, "type_id": 700001 },
+      { "flag": "HiSlot1", "quantity": 1, "type_id": 700002 },
+      { "flag": "MedSlot0", "quantity": 1, "type_id": 700003 },
+      { "flag": "LoSlot0", "quantity": 1, "type_id": 700004 }
+    ]
+  },
+  {
+    "fitting_id": 900003,
+    "ship_type_id": 600001,
+    "name": "Synthetic Fit B (reordered slots)",
+    "description": "Same canonical content as Fit A with different numbered-slot placement.",
+    "items": [
+      { "flag": "HiSlot3", "quantity": 1, "type_id": 700002 },
+      { "flag": "HiSlot7", "quantity": 1, "type_id": 700001 },
+      { "flag": "MedSlot4", "quantity": 1, "type_id": 700003 },
+      { "flag": "LoSlot6", "quantity": 1, "type_id": 700004 }
+    ]
+  }
+]

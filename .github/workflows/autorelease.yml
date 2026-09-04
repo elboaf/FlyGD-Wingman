@@ -1,0 +1,194 @@
+# .github/workflows/autorelease.yml
+#
+# Cut a release by bumping the version. Any push to main that touches
+# wingman/__init__.py (the one place the version lives; everything else
+# derives from it) runs this workflow, which tests, builds and publishes
+# the release -- creating the vX.Y.Z tag itself, at publish time.
+#
+# WHY THIS DOES NOT "JUST PUSH A TAG AND LET release.yml RUN":
+# GitHub never lets an event created by a workflow's GITHUB_TOKEN trigger
+# another workflow (recursive-run prevention). A tag this workflow pushed
+# would therefore NOT fire release.yml -- silently. The alternatives are a
+# PAT for the tag push (another secret to rotate, with the permissions of
+# a human) or workflow_run chaining (indirection with its own failure
+# modes). Doing the whole job here against the same shared build action is
+# the honest shape: one workflow, no token tricks, and release.yml stays
+# exactly as it is for manually pushed tags.
+#
+# THE BUMP IS THE SHIP BUTTON. The in-app updater offers every new release
+# to every user, so the `release` job runs in the `release` GitHub
+# environment: create that environment once (Settings > Environments) and
+# add required reviewers to it, and publishing pauses for a human click.
+# Without the environment configured the workflow still runs -- the gate
+# simply is not armed. Tag pushes through release.yml remain the
+# no-approval path for whoever prefers it.
+#
+# GUARDS: the version in __init__.py must be strictly higher than the
+# newest existing vX.Y.Z tag. A push that touches __init__.py without
+# raising the version (a comment, a re-merge, a reverted bump) is a no-op
+# reported in the run summary, not a failed run and never a re-release of
+# an already-published version.
+#
+# DRY RUN: workflow_dispatch with dry_run=true runs every step except the
+# publish -- the pipeline can be exercised end to end from a branch without
+# creating a tag or a release. (If the `release` environment has required
+# reviewers, a dry run still asks them; approve it and nothing ships.)
+name: Version release
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["wingman/__init__.py"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run everything except the publish step"
+        type: boolean
+        default: false
+
+# Serialized, never cancelled: two bumps landing close together queue
+# rather than race at the publish step, and a superseded run is never
+# killed mid-publish -- cancel-in-progress would strand a half-written
+# release with no retry short of another bump.
+concurrency:
+  group: autorelease
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+      reason: ${{ steps.version.outputs.reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The comparison is against the newest tag ON THE REMOTE, which
+          # a shallow default clone does not carry.
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Resolve the version and compare against the newest tag
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import os
+          import re
+          import subprocess
+
+          # Parsed, not imported: importing wingman needs nothing today, but
+          # the version is one regex away and stays import-free forever.
+          source = open("wingman/__init__.py", encoding="utf-8").read()
+          found = re.search(r'^__version__ = "(\d+)\.(\d+)\.(\d+)"', source, re.M)
+          if not found:
+              print("::error::wingman/__init__.py carries no parseable version")
+              raise SystemExit(1)
+          version = tuple(int(g) for g in found.groups())
+
+          listed = subprocess.run(
+              ["git", "tag", "--list", "v[0-9]*"], capture_output=True, text=True
+          ).stdout.split()
+          tags = []
+          for tag in listed:
+              m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
+              if m:
+                  tags.append((tuple(int(g) for g in m.groups()), tag))
+          newest = max(tags) if tags else ((0, 0, 0), "v0.0.0")
+
+          reason = (
+              f"version {found.group(0)} (source) vs newest tag "
+              f"{newest[1]} ({'.'.join(map(str, newest[0]))})"
+          )
+          if version > newest[0]:
+              verdict = "true"
+          else:
+              # Not an error: re-merges and comment edits land here, and a
+              # green-but-skipped run is the honest report of "nothing to
+              # release". A re-release of a published version would be.
+              verdict = "false"
+              reason += " -- not a raise; skipping the release"
+          print(reason)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={'.'.join(map(str, version))}\n")
+              out.write(f"release={verdict}\n")
+              out.write(f"reason={reason}\n")
+          EOF
+
+  # Mirrors release.yml's test job, for the same reason that job carries:
+  # the release path must not ship without the suite having run. ci.yml
+  # DOES run on pushes to main, but it is not a `needs` of anything here
+  # and could be mid-cancel; this job is the gate this workflow owns.
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+      - name: Install
+        # --locked, not --frozen: --locked fails if uv.lock disagrees with
+        # pyproject.toml, which is the whole point. --frozen would install
+        # a stale lockfile silently.
+        run: uv sync --locked --extra dev
+      - name: Test
+        run: uv run --no-sync python -m pytest tests/ -v
+
+  release:
+    needs: [decide, test]
+    if: needs.decide.outputs.release == 'true'
+    # The reviewer gate, when the environment has reviewers configured --
+    # see the header. Everything below this line publishes to users.
+    environment: release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Verify source version matches the release we are about to cut
+        # The same guard release.yml aims at its pushed tag, aimed at the
+        # version this workflow derived the tag from: AppVersion in the
+        # installer must agree with the release it is attached to.
+        run: python packaging/write_version_iss.py --expect-tag "v${{ needs.decide.outputs.version }}"
+
+      - uses: ./.github/actions/build-installer
+        with:
+          # Always true for a release: shipping an installer that cannot
+          # sign in is worse than not shipping. The action throws if the
+          # secrets are absent.
+          inject-credentials: "true"
+          oauth-client-id: ${{ secrets.OAUTH_CLIENT_ID }}
+          oauth-client-secret: ${{ secrets.OAUTH_CLIENT_SECRET }}
+
+      - name: Publish
+        # dry_run dispatches stop here: everything before this built and
+        # verified the release; this is the only step that touches the
+        # outside world.
+        if: ${{ inputs.dry_run != true }}
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+        with:
+          # tag_name without a target: the action creates the tag at this
+          # commit. THIS is why the workflow cannot simply push the tag and
+          # defer to release.yml -- a tag created with GITHUB_TOKEN would
+          # never trigger it (recursive-run prevention).
+          tag_name: v${{ needs.decide.outputs.version }}
+          files: dist/FlyGD-Wingman-Setup-*.exe
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            [FlyGD Wingman](https://wingman.zoolanders.vip/) — your OBS
+            recording wingman. Watches your OBS recording folder, and uploads
+            the recordings you select to your own YouTube channel.
+
+            Windows will show a "Windows protected your PC" warning because
+            the installer is unsigned. Click **More info** then **Run anyway**.
+
+            [Privacy Policy](https://wingman.zoolanders.vip/privacy) ·
+            [Terms of Service](https://wingman.zoolanders.vip/terms)

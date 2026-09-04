@@ -82,6 +82,125 @@ def test_the_scan_found_both_sides():
     assert "get_settings" in stubbed and "list_rows" in stubbed
 
 
+def _fittings_screenshot_fixture() -> dict:
+    marker = "DEV_FITTINGS_SCREENSHOT_FIXTURE"
+    assert marker in DEV_JS
+    raw = DEV_JS[DEV_JS.index(marker) :]
+    opening = raw.index("{")
+    closing = _matching_brace(raw, opening)
+    return json.loads(raw[opening : closing + 1])
+
+
+def test_fittings_preflight_double_rejects_empty_and_duplicate_name_rechecks():
+    body = _fixture_body("api.fittings_preflight_copy = function")
+
+    assert "Select fittings and target characters first." in body
+    assert "is already used on" in body
+    assert re.search(r"accepted:\s*false", body)
+    assert re.search(r"requires_resolution:\s*false", body)
+
+
+def test_every_fittings_bridge_method_has_a_dev_double():
+    called = _called()["fittings.js"]
+    assert called
+    assert called <= _stubbed(), sorted(called - _stubbed())
+
+
+def test_fittings_fixture_covers_library_import_and_access_scenarios():
+    """Pin the visual states Task 12 must exercise in the real browser."""
+    for token in (
+        "name: 'Alliance'",
+        "name: 'Unfiled'",
+        "name: 'Superseded'",
+        "superseded_by: 'fit-merlin-fleet'",
+        "discovered_batch_id: 'batch-3'",
+        "source_name: 'Merlin - Old Doctrine'",
+        "status: 'enable'",
+        "status: 'reauthenticate'",
+        "stale: true",
+        "location: 'Invalid'",
+        "deployable: false",
+    ):
+        assert token in DEV_JS, token
+    assert "for (var index = 0; index < 108; index += 1)" in DEV_JS
+    assert "fit-conflict-existing" in DEV_JS
+    assert "fit-conflict-source" in DEV_JS
+
+
+def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
+    fixture = _fittings_screenshot_fixture()
+    result = fixture["copy_result"]
+    statuses = [row["status"] for row in result["results"]]
+    assert set(statuses) == {
+        "success",
+        "unknown",
+        "unattempted_throttle",
+        "failed",
+    }
+    assert "counts.ready > 20" in DEV_JS
+    assert "Split this copy into batches of 20 fittings or fewer." in DEV_JS
+    assert "phase: 'progress'" in DEV_JS
+    assert "phase: 'complete'" in DEV_JS
+    assert result["write_count"] == sum(
+        bool(row["attempted"]) for row in result["results"]
+    )
+    assert "FIT_COPY_UNKNOWN_CHARACTER" in DEV_JS
+    assert "fitCopyThrottled" in DEV_JS
+    assert "return row.attempted;" in DEV_JS
+    assert any(status == "success" for status in statuses)
+    assert any(status != "success" for status in statuses)
+
+
+def test_fittings_screenshot_fixture_is_browser_consumed_and_semantically_valid():
+    fixture = _fittings_screenshot_fixture()
+    assert fixture["kind"] == "fittings-screenshot-v1"
+    assert "DEV_FITTINGS_COPY_RESULT_FIXTURE" not in DEV_JS
+    assert "window.onFittingsScreenshotState(" in DEV_JS
+    assert "DEV_FITTINGS_SCREENSHOT_FIXTURE" in DEV_JS[DEV_JS.index("window.DEV = {") :]
+
+    character_ids = {row["character_id"] for row in fixture["characters"]}
+    entry_ids = {row["id"] for row in fixture["entries"]}
+    generated = [row for row in fixture["entries"] if row["id"].startswith("fit-gen-")]
+    assert len(generated) >= 21
+    assert sum(not row["deployable"] for row in generated) == 1
+    results = fixture["copy_result"]["results"]
+    assert [
+        (row["entry_id"], row["character_id"], row["status"], row["attempted"])
+        for row in results
+    ] == [
+        ("fit-gen-1", 90000014, "success", True),
+        ("fit-gen-1", 90000015, "unknown", True),
+        ("fit-gen-1", 90000016, "failed", True),
+        ("fit-gen-2", 90000014, "unattempted_throttle", False),
+        ("fit-gen-2", 90000015, "unattempted_throttle", False),
+        ("fit-gen-2", 90000016, "unattempted_throttle", False),
+    ]
+    by_character = {row["character_id"]: row for row in fixture["characters"]}
+    for row in results:
+        assert row["character_id"] in character_ids
+        assert row["entry_id"] in entry_ids
+        assert row["status"] != "failed" or row["attempted"]
+        assert row["status"] != "unattempted_throttle" or not row["attempted"]
+        if row["attempted"]:
+            character = by_character[row["character_id"]]
+            assert character["status"] == "enabled"
+            assert character["fetched_utc"]
+            assert not character["stale"]
+    failed = next(
+        row for row in fixture["copy_result"]["results"] if row["status"] == "failed"
+    )
+    assert failed["character_id"] == fixture["copy_roles"]["throttle_character_id"]
+    unknown = next(
+        row for row in fixture["copy_result"]["results"] if row["status"] == "unknown"
+    )
+    assert unknown["character_id"] == fixture["copy_roles"]["unknown_character_id"]
+    assert not next(
+        row
+        for row in fixture["characters"]
+        if row["character_id"] == unknown["character_id"]
+    )["stale"]
+
+
 def test_every_bridge_method_the_page_calls_has_a_double():
     """The general form of the `get_bookmarks` gap, and the reason this
     file exists rather than two fixture assertions.
@@ -155,6 +274,7 @@ def test_no_load_time_read_is_left_undoubled():
         "skills_state",
         "get_bookmarks",
         "get_preview_hotkey_state",
+        "update_status",
     }
     stubbed = _stubbed()
     undoubled = sorted(reads - stubbed)
@@ -162,6 +282,112 @@ def test_no_load_time_read_is_left_undoubled():
         "a screen's own content comes from these, so the harness renders "
         "that screen as a finished-looking shell without them: " + repr(undoubled)
     )
+
+
+def test_update_status_methods_share_one_dev_fixture():
+    assert "function devUpdateState()" in DEV_JS
+    assert "api.update_status = function ()" in DEV_JS
+    assert "api.check_for_updates = function ()" in DEV_JS
+    assert "Promise.resolve(devUpdateState())" in DEV_JS
+
+
+def test_update_action_methods_have_dev_doubles():
+    """Task 7 adds two click-only actions the About card calls;
+    test_every_bridge_method_the_page_calls_has_a_double already fails
+    generically if these are missing a double, but the specific assertion
+    here is what keeps a future refactor from silently reintroducing the
+    gap by renaming `devUpdateState` out from under one of the two.
+    """
+    assert "api.download_update = function" in DEV_JS
+    assert "api.install_update = function" in DEV_JS
+
+
+def test_dev_update_permissions_match_the_production_state_matrix():
+    match = re.search(
+        r"var DEV_UPDATE_PERMISSIONS = JSON\.parse\('(.*?)'\);",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, "dev.js must declare one exact updater permission matrix"
+    assert json.loads(match.group(1)) == {
+        "idle": {"can_check": True, "can_download": False, "can_install": False},
+        "checking": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "current": {
+            "can_check": True,
+            "can_download": False,
+            "can_install": False,
+        },
+        "unavailable": {
+            "can_check": True,
+            "can_download": False,
+            "can_install": False,
+        },
+        "available": {
+            "can_check": True,
+            "can_download": True,
+            "can_install": False,
+        },
+        "check_failed": {
+            "can_check": True,
+            "can_download": True,
+            "can_install": False,
+        },
+        "download_failed": {
+            "can_check": True,
+            "can_download": True,
+            "can_install": False,
+        },
+        "downloading": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "ready": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": True,
+        },
+        "handing_off": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "revalidating": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "launching": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+        "closed": {
+            "can_check": False,
+            "can_download": False,
+            "can_install": False,
+        },
+    }
+
+
+def test_dev_update_state_selects_by_query_string():
+    """`?dev=1&update=<state>` must return the exact production payload
+    shape for whichever state is asked for, not a single fixed fixture --
+    the checklist needs `available`, `downloading`, `ready` and a failure
+    state reachable without touching Python.
+    """
+    fn = DEV_JS[DEV_JS.index("function devUpdateState()") :]
+    fn = fn[: fn.index("\n  }\n")]
+    assert "location.search" in fn, (
+        "devUpdateState must read ?update=... from the query string rather "
+        "than always returning the same fixed state"
+    )
+    for state in ("available", "downloading", "ready", "error"):
+        assert f"'{state}'" in fn, f"devUpdateState has no branch for {state!r}"
 
 
 def _identity_scenarios() -> dict:
@@ -460,6 +686,387 @@ def test_profiles_delayed_mutation_logs_every_received_argument():
     )
 
 
+def _eve_select_stub_body() -> str:
+    match = re.search(
+        r"api\.eve_settings_select = function \(server, profile\) \{(.*?)\n  \};",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, "dev.js must double eve_settings_select(server, profile)"
+    return re.sub(r"(?m)^\s*//.*$", "", match.group(1))
+
+
+def test_eve_select_double_treats_an_empty_profile_as_the_servers_first():
+    """'' is not "no profile" on this endpoint.
+
+    Api.eve_settings_select hands discover() `profile or None`, and an empty
+    token is its one deliberate fallback: the requested server's FIRST
+    profile. evesettings.js now depends on that -- its server `change`
+    handler sends '' on purpose rather than carrying the old server's
+    profile path, which the endpoint would refuse -- so a double that
+    assigns the token straight onto eve.profile models a contract the
+    bridge does not have. In the harness that reads as a server change
+    emptying the Profile select and disabling every control gated on
+    `state.profile`, which is not what a real server change does.
+
+    The fixture carries one server and one flat `profiles` list, which IS
+    the list offered for the selected server, so its first entry is the
+    faithful answer here without inventing a per-server association the
+    payload does not carry.
+    """
+    body = _eve_select_stub_body()
+    assert "eve.profile = profile;" not in body, (
+        "the double must not assign the raw token: an empty profile is a "
+        "request for the server's first profile, not a request for none"
+    )
+    assert "eve.profiles" in body, (
+        "the empty-profile fallback must be derived from the profiles the "
+        "fixture offers for that server, not hard-coded"
+    )
+    assert re.search(r"\bif \(!profile\)|profile \|\|", body), (
+        "the double must branch on the empty token explicitly"
+    )
+
+
+def test_eve_select_double_still_honours_an_explicit_profile():
+    """The fallback is for the empty token alone. A named profile -- what
+    the Profile select itself sends -- is still taken verbatim, or every
+    selection would answer with the same first profile and the two-profile
+    fixture the copy checkpoints need would be unreachable.
+    """
+    body = _eve_select_stub_body()
+    assert "eve.server = server;" in body
+    assert re.search(r"eve\.profile = (?!profile;)\w+;", body), (
+        "the double must still record a resolved profile onto the fixture"
+    )
+    # It answers the way the real endpoint answers an ACCEPTED change; the
+    # double never second-guesses Python's own refusals.
+    assert "Promise.resolve(true)" in body
+
+
+# Task 7: the whole-profile copy double. Named by the scenario a session
+# needs to eyeball rather than by an implementation detail, so a driver or
+# a branch that stops being reachable from any of these names is caught
+# rather than silently orphaned.
+PROFILE_COPY_SCENARIOS = {
+    "multiple": "multiple profiles with Default selected",
+    "new-disclosure": "new profile disclosure",
+    "replace-disclosure": "replace profile disclosure",
+    "invalid-name": "invalid name",
+    "collision": "case-insensitive collision",
+    "busy": "accepted busy operation",
+    "created": "successful create with selected destination",
+    "replaced": "successful replace with retained source",
+    "eve-running": "EVE-running refusal",
+    "rollback-failed": "rollback failure",
+    "unsaved-selection": "created profile with unsaved selection",
+}
+
+
+def _profile_copy_stub_body() -> str:
+    match = re.search(
+        r"api\.eve_settings_copy_profile = function "
+        r"\(expectedSource, mode, destination\) \{(.*?)\n  \};",
+        DEV_JS,
+        re.DOTALL,
+    )
+    assert match, (
+        "dev.js must double eve_settings_copy_profile(expectedSource, mode, destination)"
+    )
+    return match.group(1)
+
+
+def _profile_copy_driver_body() -> str:
+    match = re.search(
+        r"function paintProfileCopyScenario\(\) \{(.*?)\n  \}", DEV_JS, re.DOTALL
+    )
+    assert match, (
+        "dev.js must drive every profile-copy checkpoint through real controls"
+    )
+    return match.group(1)
+
+
+def test_profile_copy_double_validates_the_frozen_source_before_anything_else():
+    """The stub's own contract, from the brief: a stale expected-source token
+    is refused inline, exactly as Api.eve_settings_copy_profile refuses it,
+    and never reaches a scenario branch."""
+    body = _profile_copy_stub_body()
+    guard = (
+        "if (expectedSource !== eve.profile) {\n"
+        "      return Promise.resolve({ accepted: false, "
+        "error: 'The selected profile changed.' });\n"
+        "    }"
+    )
+    assert guard in body
+    assert body.index(guard) < body.index("profileCopyScenario")
+
+
+def test_profile_copy_double_completes_through_the_single_profiles_handler():
+    """onEveSettingsDone is the one completion channel for every Profiles
+    mutation (test_bridge_contract.py pins this on the Python side); a
+    second handler here would let this double drift from what the bridge
+    can ever actually send."""
+    body = _profile_copy_stub_body()
+    assert "window.onEveSettingsDone(" in body
+    assert not re.search(r"window\.on(?!EveSettingsDone\b)\w*\(", body), (
+        "the profile-copy double must not push any handler but onEveSettingsDone"
+    )
+
+
+def test_profile_copy_scenario_selector_covers_every_named_checkpoint_once():
+    assert ".get('profile')" in DEV_JS
+    stub = _profile_copy_stub_body()
+    driver = _profile_copy_driver_body()
+    for key in PROFILE_COPY_SCENARIOS:
+        mentions = DEV_JS.count("'" + key + "'")
+        assert mentions >= 1, key
+    # "multiple" names the base fixture rather than a branch of its own, so
+    # it is a driver no-op; every other scenario must appear in BOTH the
+    # stub (what happens) and the driver (how a session reaches it).
+    for key in PROFILE_COPY_SCENARIOS:
+        if key == "multiple":
+            continue
+        assert "'" + key + "'" in driver, key
+    for key in (
+        "invalid-name",
+        "collision",
+        "busy",
+        "created",
+        "eve-running",
+        "rollback-failed",
+        "unsaved-selection",
+    ):
+        assert "'" + key + "'" in stub, key
+
+
+def test_profile_copy_scenario_requested_reopens_the_profiles_route():
+    assert "var profileCopyScenario = identitySearch.get('profile') || '';" in DEV_JS
+    assert "|| profileCopyScenario)" in DEV_JS
+
+
+def test_profile_copy_driver_opens_and_submits_through_real_controls():
+    """Every checkpoint but the two disclosures is reached by opening the
+    real panel and pressing the real submit button -- never a harness-only
+    shortcut a real session could not also take."""
+    driver = _profile_copy_driver_body()
+    assert "WM.el('es-profile-copy-open').click()" in driver
+    assert "WM.el('es-profile-copy-submit').click()" in driver
+    assert "WM.el('es-profile-copy-replace').click()" in driver
+
+
+# Round 1 fix: what the scripted driver actually sends over the bridge for
+# every scenario that submits. Pinned here so the stub's own wiring check
+# (below) cannot silently drift from what paintProfileCopyScenario() really
+# does -- a driver change that stops matching this table, or a stub that
+# stops enforcing it, both fail loudly rather than one quietly rendering
+# the wrong checkpoint's outcome.
+PROFILE_COPY_SCENARIO_REQUESTS = {
+    "invalid-name": {"mode": "new", "destination": ""},
+    "collision": {"mode": "new", "destination": "dEfAuLt"},
+    "busy": {"mode": "new", "destination": "New Ops"},
+    "created": {"mode": "new", "destination": "New Ops"},
+    "unsaved-selection": {"mode": "new", "destination": "New Ops"},
+    "eve-running": {"mode": "new", "destination": "New Ops"},
+    "replaced": {"mode": "replace", "destination": "fleet"},
+    "rollback-failed": {"mode": "replace", "destination": "fleet"},
+}
+
+
+def _profile_copy_scenario_requests() -> dict:
+    match = re.search(
+        r"var PROFILE_COPY_SCENARIO_REQUESTS = \{(.*?)\n  \};", DEV_JS, re.DOTALL
+    )
+    assert match, (
+        "dev.js must declare the scripted per-scenario mode/destination table "
+        "the wiring check below validates against"
+    )
+    body = match.group(1)
+    entries = re.findall(
+        r"'([a-z-]+)':\s*\{\s*mode:\s*'([a-z]+)',\s*destination:\s*'([^']*)'\s*\}",
+        body,
+    )
+    assert entries, "the scenario request table must be parseable"
+    return {
+        key: {"mode": mode, "destination": destination}
+        for key, mode, destination in entries
+    }
+
+
+def test_profile_copy_scripted_requests_match_the_scenario_driver_exactly():
+    """Pins the exact mode/destination each scripted checkpoint sends,
+    including the collision fixture's case-varied 'dEfAuLt' against the
+    existing 'Default' profile -- a same-case duplicate would never
+    exercise the case-insensitive comparison this checkpoint exists to
+    show."""
+    assert _profile_copy_scenario_requests() == PROFILE_COPY_SCENARIO_REQUESTS
+
+
+def test_profile_copy_collision_scenario_types_a_case_varied_name():
+    """The collision checkpoint must not merely retype the exact existing
+    name -- it has to prove the comparison is case-insensitive, which only
+    a differently-cased collision can show."""
+    driver = _profile_copy_driver_body()
+    assert "WM.el('es-profile-copy-name').value = 'dEfAuLt';" in driver
+    assert "WM.el('es-profile-copy-name').value = 'Default';" not in driver
+    requests = _profile_copy_scenario_requests()
+    assert requests["collision"]["destination"] == "dEfAuLt"
+    assert requests["collision"]["destination"].casefold() == "default"
+    # And the existing profile it collides with really is spelled
+    # differently on disk, not the same string the driver typed.
+    assert "{ path: 'default', name: 'Default', file_count: 72 }" in DEV_JS
+
+
+def test_profile_copy_double_refuses_a_scripted_mode_or_destination_mismatch():
+    """A sender-wiring regression -- sendProfileCopy shipping the wrong mode,
+    or reading the wrong field's value -- must be refused rather than
+    silently accepted and rendered as if the intended checkpoint had fired.
+    This is a bridge-argument check only: it must not evaluate whether a
+    name is well-formed or a destination genuinely exists, which stays
+    Python's job."""
+    stub = _profile_copy_stub_body()
+    assert "PROFILE_COPY_SCENARIO_REQUESTS[profileCopyScenario]" in stub
+    assert "mode !== expectedRequest.mode" in stub
+    assert "destination !== expectedRequest.destination" in stub
+    # The check must run before ANY scenario-specific branch, so a mismatch
+    # is refused instead of falling into some other checkpoint's canned
+    # response.
+    wiring_check = stub.index("expectedRequest")
+    assert wiring_check < stub.index("profileCopyScenario === 'invalid-name'")
+    assert wiring_check < stub.index("profileCopyScenario === 'collision'")
+    assert wiring_check < stub.index("profileCopyScenario === 'busy'")
+    # No production validation logic (name rules, real collisions) may leak
+    # into this generic check -- it only ever compares against the fixed
+    # per-scenario table above.
+    guard = stub[
+        wiring_check : stub.index("\n    if (profileCopyScenario === 'invalid-name')")
+    ]
+    assert "validate_friendly_name" not in guard
+    assert "MAX_FRIENDLY_NAME_CHARS" not in guard
+
+
+def test_profile_copy_invalid_name_and_collision_are_canned_not_computed():
+    """Scenario-specific branches may return the approved inline errors, but
+    must not perform filesystem-like validation in JavaScript -- so neither
+    branch may examine the destination or mode it was actually sent."""
+    stub = _profile_copy_stub_body()
+    invalid = re.search(
+        r"if \(profileCopyScenario === 'invalid-name'\) \{(.*?)\n    \}",
+        stub,
+        re.DOTALL,
+    )
+    assert invalid, "the invalid-name checkpoint must have its own branch"
+    assert "Profile name cannot be empty." in invalid.group(1)
+    assert "destination" not in invalid.group(1)
+    collision = re.search(
+        r"if \(profileCopyScenario === 'collision'\) \{(.*?)\n    \}",
+        stub,
+        re.DOTALL,
+    )
+    assert collision, "the collision checkpoint must have its own branch"
+    assert "already exists" in collision.group(1)
+
+
+def test_profile_copy_busy_scenario_never_settles():
+    """The accepted-busy checkpoint exists to show the disabled controls
+    while a copy is in flight, so its own branch must suppress the
+    completion push the way the character-copy busy fixture already does."""
+    stub = _profile_copy_stub_body()
+    assert "if (profileCopyScenario === 'busy') return;" in stub
+    assert stub.index("if (profileCopyScenario === 'busy') return;") < stub.index(
+        "window.onEveSettingsDone("
+    )
+
+
+def test_profile_copy_created_scenario_selects_the_new_destination():
+    """Mirrors Api.eve_settings_copy_profile: a successful creation adds the
+    new profile to the list AND moves the selection onto it."""
+    stub = _profile_copy_stub_body()
+    created = re.search(
+        r"if \(profileCopyScenario === 'created'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert created, "the created checkpoint must have its own branch"
+    body = created.group(1)
+    assert "eve.profiles = eve.profiles.concat(" in body
+    assert "eve.profile = createdProfile.path;" in body
+
+
+def test_profile_copy_replaced_scenario_never_moves_the_selection():
+    """Replacement never moves the selection (design's own rule), so the
+    only `eve.profile =` assignment anywhere in the double must belong to
+    the created/unsaved-selection creation paths, never to replace."""
+    stub = _profile_copy_stub_body()
+    assignments = re.findall(r"eve\.profile = [^;]+;", stub)
+    assert assignments == ["eve.profile = createdProfile.path;"], assignments
+
+
+def test_profile_copy_eve_running_refusal_matches_the_python_message():
+    stub = _profile_copy_stub_body()
+    running = re.search(
+        r"if \(profileCopyScenario === 'eve-running'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert running, "the eve-running checkpoint must have its own branch"
+    body = running.group(1)
+    assert "payload.ok = false;" in body
+    assert "payload.published = false;" in body
+    assert "EVE is running. Close EVE and retry." in body
+
+
+def test_profile_copy_rollback_failure_names_backups_as_the_recovery_path():
+    """The message a caught, unrecovered publication failure shows: the
+    archive is now the only way back, and Backups is where it is restored
+    from -- see Api._eve_copy_profile_worker's own \"Restore ... from
+    Backups\" wording."""
+    stub = _profile_copy_stub_body()
+    rollback = re.search(
+        r"if \(profileCopyScenario === 'rollback-failed'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert rollback, "the rollback-failed checkpoint must have its own branch"
+    body = rollback.group(1)
+    assert "payload.ok = false;" in body
+    assert "payload.published = false;" in body
+    assert "could not put it back" in body
+    assert "from Backups." in body
+
+
+def test_profile_copy_unsaved_selection_matches_the_python_warning():
+    """Api._eve_select_created_profile's own failure text: the profile
+    exists and is offered back, but the selection itself was not saved."""
+    stub = _profile_copy_stub_body()
+    unsaved = re.search(
+        r"if \(profileCopyScenario === 'unsaved-selection'\) \{(.*?)\n      \}",
+        stub,
+        re.DOTALL,
+    )
+    assert unsaved, "the unsaved-selection checkpoint must have its own branch"
+    body = unsaved.group(1)
+    assert "payload.selection_persisted = false;" in body
+    assert "could not remember the selection" in body
+    assert "Select it from Profile." in body
+    # And it must NOT move the selection -- that is exactly what it failed
+    # to do.
+    assert "eve.profile = " not in body
+
+
+def test_the_base_profiles_fixture_offers_a_second_profile_for_replace_targets():
+    """Every profile-copy checkpoint needs a real replace target, and
+    'multiple profiles with Default selected' names this as its own
+    checkpoint: the single-profile fixture before this task could never
+    show the Replace disclosure's destination dropdown populated."""
+    match = re.search(r"profiles: \[(.*?)\],\n", DEV_JS, re.DOTALL)
+    assert match, "dev.js must declare the fixture's profiles list"
+    paths = re.findall(r"path: '([^']+)'", match.group(1))
+    names = re.findall(r"name: '([^']+)'", match.group(1))
+    assert len(paths) >= 2, "the fixture needs a second profile as a replace target"
+    assert "Default" in names
+    assert "server: 'tq', profile: 'default'," in DEV_JS
+
+
 def _dev_preview_fixture() -> dict:
     """Parse DEV_PREVIEW_HOTKEYS_FIXTURE from dev.js as a Python dict.
 
@@ -584,6 +1191,27 @@ def test_preview_fixture_covers_the_roster_states_screenshots_need():
         gesture in {hotkeys["cycle_next"], hotkeys["cycle_prev"]}
         for gesture in direct.values()
     ), "fixture needs a direct-character/cycle-keybind conflict"
+
+
+def test_preview_fixture_covers_a_named_group_cycle_conflict():
+    """The same screenshot fixture must also exercise a named-group
+    keybind collision, not just the direct-character/cycle conflict above.
+
+    The warning-ownership fix (Task 2) applies uniformly to character,
+    cycle, and named-group rows; only a real collision in each keeps the
+    screenshot actually showing one.
+    """
+    fixture = _dev_preview_fixture()
+    groups = fixture["hotkeys"]["groups"]
+    by_cycle = {}
+    for group in groups:
+        cycle = group.get("cycle")
+        if cycle:
+            by_cycle.setdefault(cycle, []).append(group["name"])
+    assert any(len(names) >= 2 for names in by_cycle.values()), (
+        "fixture needs two named groups sharing one cycle keybind, so a "
+        "named-group conflict warning actually renders in the screenshot"
+    )
 
 
 def test_the_bookmark_fixture_uses_real_ahk_strings():
@@ -1668,3 +2296,121 @@ def test_preview_delete_removes_matched_group_and_only_its_memberships():
         normal.index(locate) < normal.index(remove) < normal.index("Object.keys(gbc)")
     )
     assert normal.index("Object.keys(gbc)") < normal.index("_devPushHotkeys();")
+
+
+# ---- dev harness: identification generation contract (Round 1 HIGH) ------
+
+
+def test_dev_fake_state_exposes_account_identity_available():
+    """The page now gates canIdentify and es-account-tools on
+    state.account_identity_available (Task 6).  The dev harness always
+    points at a Tranquility fixture, so this flag must be true or every
+    identity scenario renders with all controls hidden.
+    """
+    assert "account_identity_available: true" in DEV_JS, (
+        "dev.js does not set account_identity_available: true in the eve fake "
+        "state; identity controls will be hidden in every dev fixture"
+    )
+
+
+def test_dev_identification_generation_counter_exists():
+    """Task 5 added identification_generation to every identification
+    response.  The dev harness must carry a monotonic counter so that
+    acceptIdentification() in evesettings.js does not reject every stub
+    response as having no numeric generation field.
+    """
+    assert "var devIdentificationGeneration = 0;" in DEV_JS, (
+        "dev.js has no devIdentificationGeneration counter; every "
+        "identification stub response will be rejected by acceptIdentification()"
+    )
+
+
+def test_dev_identification_start_returns_identification_generation():
+    """Start bumps the counter and returns it; a stale check from before
+    the start is then rejected on the next acceptIdentification call.
+    """
+    start_body = DEV_JS.split("api.eve_settings_identification_start", 1)[1].split(
+        "\n  };\n", 1
+    )[0]
+    assert "devIdentificationGeneration += 1" in start_body, (
+        "eve_settings_identification_start does not bump devIdentificationGeneration"
+    )
+    assert "identification_generation: devIdentificationGeneration" in start_body, (
+        "eve_settings_identification_start does not include identification_generation "
+        "in its resolve payload"
+    )
+
+
+def test_dev_identification_cancel_returns_identification_generation():
+    """Cancel bumps the counter (matching Python semantics) and returns it
+    so that acceptIdentification() on the resolved promise advances the
+    retained generation and any racing check resolving later is rejected.
+    """
+    cancel_body = DEV_JS.split("api.eve_settings_identification_cancel", 1)[1].split(
+        "\n  };\n", 1
+    )[0]
+    assert "devIdentificationGeneration += 1" in cancel_body, (
+        "eve_settings_identification_cancel does not bump devIdentificationGeneration"
+    )
+    assert "identification_generation: devIdentificationGeneration" in cancel_body, (
+        "eve_settings_identification_cancel does not include "
+        "identification_generation in its resolve payload"
+    )
+
+
+def test_dev_push_eve_names_carries_generation_and_deleted_ids():
+    """The devPushEveNames helper (used by DEV console helpers that mutate
+    eve state) must pass identification_generation and deleted_candidate_ids
+    so that onEveSettingsNames' acceptIdentification gate passes and the
+    push is not silently dropped.
+    """
+    assert "function devPushEveNames()" in DEV_JS, (
+        "dev.js has no devPushEveNames helper"
+    )
+    helper_body = DEV_JS.split("function devPushEveNames()", 1)[1].split("}", 1)[0]
+    assert "identification_generation: devIdentificationGeneration" in helper_body, (
+        "devPushEveNames does not include identification_generation"
+    )
+    assert "deleted_candidate_ids: []" in helper_body, (
+        "devPushEveNames does not include deleted_candidate_ids"
+    )
+
+
+def test_dev_console_eve_helpers_use_dev_push_eve_names():
+    """eveNoFolder, eveUnreadable, and eveSelectiveAvailable all mutate
+    eve and then push onEveSettingsNames.  After Task 6 that push must
+    carry identification_generation, so they must go through
+    devPushEveNames rather than calling window.onEveSettingsNames() bare.
+    """
+    for helper in ("eveNoFolder", "eveUnreadable", "eveSelectiveAvailable"):
+        block = DEV_JS.split(helper + ":", 1)[1].split("\n    },", 1)[0]
+        assert "devPushEveNames()" in block, (
+            f"DEV.{helper} still calls window.onEveSettingsNames() bare "
+            "instead of devPushEveNames()"
+        )
+        assert "window.onEveSettingsNames()" not in block, (
+            f"DEV.{helper} calls window.onEveSettingsNames() without a payload"
+        )
+
+
+# ---- evesettings.js: hidden-route deleted-candidate guard (Round 1 MEDIUM) -
+
+
+def test_deleted_candidate_paint_is_guarded_by_identity_route_open():
+    """When a deletion push arrives while the account-identity sub-screen
+    is closed, the page must clear local state silently rather than calling
+    paintIdentification, which tries to focus an off-screen heading.  The
+    paint/focus call must only happen when identityRouteOpen is true.
+    """
+    src = EVE_SETTINGS_JS
+    handler = src.split("WM.handle('onEveSettingsNames'", 1)[1].split("\n  });", 1)[0]
+    invalid_branch = handler.split("invalidatesCandidate", 1)[1].split("\n    }", 1)[0]
+    assert "identityRouteOpen" in invalid_branch, (
+        "the invalidatesCandidate branch in onEveSettingsNames does not check "
+        "identityRouteOpen before calling paintIdentification; a deletion push "
+        "while on another screen will try to focus an off-screen heading"
+    )
+    assert "if (identityRouteOpen)" in invalid_branch, (
+        "identityRouteOpen check must be an explicit if-guard in the "
+        "invalidatesCandidate branch"
+    )

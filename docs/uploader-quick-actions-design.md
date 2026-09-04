@@ -147,7 +147,7 @@ a note beside a live control rather than a note beside nothing.
 
 Revision 1 proposed widening `_busy()`. Rejected. `_busy()` is read by
 `__main__.py:283` (`poll_tick`, to defer list rebuilds), by
-`_confirm_quit_if_busy`, by `start_upload`'s guard, and as the default for
+`_claim_quit`, by `start_upload`'s guard, and as the default for
 every `_status`/`_progress` push — and each of those writes a *different
 sentence* about it. Widening it makes `format_quit_confirm` say "An upload
 is N% complete" during a log post, where `_last_pct` is a stale number
@@ -181,7 +181,7 @@ explicitly on every line, exactly as `_combat_log_worker` already does.
   **[r2]** — named for the fact, following `onCancelAvailable`'s precedent
   of naming the control's state rather than a vague availability.
 - **The push is not the guard.** `_push` swallows every `evaluate_js`
-  failure, and `_confirm_quit_if_busy`'s docstring records that a push into
+  failure, and `_claim_quit`'s docstring records that a push into
   a *hidden* window is swallowed outright — this is a tray app whose window
   is routinely hidden. So a disarm can be lost and the button left dead for
   the session. Two defences, both required: the disarm is in a `finally` at

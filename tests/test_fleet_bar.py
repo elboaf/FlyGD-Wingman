@@ -120,6 +120,23 @@ def test_concurrent_enable_requests_create_only_one_window(tmp_path, monkeypatch
     assert created == [True]
 
 
+def test_toggle_refuses_to_create_after_shutdown_starts(api, monkeypatch):
+    from wingman.ui import fleetbar
+
+    api._fleetbar_window = None
+    api._fleetbar_quitting = True
+    monkeypatch.setattr(
+        fleetbar,
+        "create",
+        lambda *_args, **_kwargs: pytest.fail("must not create while quitting"),
+    )
+
+    result = api.toggle_fleet_bar(True)
+
+    assert result["applied"] is False
+    assert not api._state.settings.get("fleet_bar", {}).get("enabled", False)
+
+
 def test_toggle_pushes_one_authoritative_state_to_main_page(api):
     api.toggle_fleet_bar(True)
 
@@ -282,11 +299,20 @@ def test_restore_creates_once_and_page_ready_reveals(api, monkeypatch):
     assert api._fleetbar_window.hidden is False
 
 
+def test_fit_does_not_resurrect_a_disabled_window(api):
+    api._state.settings.setdefault("fleet_bar", {})["enabled"] = False
+
+    api.fit_fleet_bar(380, 112)
+
+    assert api._fleetbar_window.resized == []
+
+
 def test_save_position_and_fit_ignore_invalid_values(api):
     api.save_fleet_bar_pos(25, -40)
     assert api._state.settings["fleet_bar"]["x"] == 25
     assert api._state.settings["fleet_bar"]["y"] == -40
 
+    api._state.settings["fleet_bar"]["enabled"] = True
     api.fit_fleet_bar(380, 112)
     api.fit_fleet_bar(0, "bad")
     api.move_fleet_bar(30, 45)
@@ -300,6 +326,7 @@ def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monke
     from wingman.ui import fleetbar
 
     calls = {}
+    styled = []
 
     def create_window(title, url, **kwargs):
         calls.update(title=title, url=url, kwargs=kwargs)
@@ -307,6 +334,10 @@ def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monke
 
     monkeypatch.setitem(
         sys.modules, "webview", SimpleNamespace(create_window=create_window)
+    )
+    monkeypatch.setattr(fleetbar.sys, "platform", "win32")
+    monkeypatch.setattr(
+        fleetbar.sigbar_mod, "_apply_tool_style", lambda bar: styled.append(bar)
     )
     api = make_api(tmp_path)
 
@@ -316,9 +347,11 @@ def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monke
     assert kwargs["frameless"] is True
     assert kwargs["easy_drag"] is False
     assert kwargs["on_top"] is True
+    assert kwargs["focus"] is False
     assert kwargs["hidden"] is True
     assert kwargs["min_size"] == (1, 1)
     assert calls["url"].endswith("fleetbar.html")
+    assert styled == [api._fleetbar_window]
 
 
 def test_settings_and_status_strip_expose_the_same_fleet_toggle():
@@ -357,7 +390,9 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
     source = inspect.getsource(main_mod.main)
     assert "telemetry.subscribe_fleet" in source
     assert "fleetbar.restore" in source
-    assert '("_fleetbar_window", "Fleet Bar")' in source
+    assert "api._fleetbar_quitting = True" in source
+    assert "fleet.destroy()" in source
+    assert "api.shutdown_previews()" in source
 
 
 def test_fleet_page_is_display_only_and_carries_stable_columns():

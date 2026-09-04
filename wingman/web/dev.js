@@ -294,6 +294,755 @@
     return Promise.resolve(skills);
   };
 
+  // Task 9's fixture library: enough entries and characters to exercise
+  // every state the workspace can render by hand -- unfiled/filed/
+  // superseded scoping, search and ship filters, a >100-row page 2, an
+  // unresolved type name, a non-deployable (Invalid-flag) fit, and all
+  // four character-access states the Characters overlay can show. This
+  // module is the only file allowed to fabricate data (see the file
+  // banner), so this is where that fabrication lives rather than in
+  // fittings.js.
+  var fittings = {
+    auth_configured: true,
+    auth_in_progress: false,
+    refreshing: false,
+    characters: [
+      { character_id: 90000010, character_name: 'Aria Voss', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000011, character_name: 'Bex Talon', status: 'enabled',
+        fetched_utc: '2026-08-20T08:00:00+00:00',
+        error: 'ESI request failed (500): Internal Server Error', stale: true },
+      { character_id: 90000012, character_name: 'Cato Rune', status: 'enable',
+        fetched_utc: '', error: '', stale: false },
+      { character_id: 90000013, character_name: 'Dess Marlow',
+        status: 'reauthenticate', fetched_utc: '', error: '', stale: false },
+      // Three more enabled/fresh characters, added so a single copy batch
+      // can show more than one outcome at once -- Aria alone (the only
+      // enabled+fresh+not-stale character above) cannot demonstrate
+      // "partial" results, because copyEligible() requires all three of
+      // those and every other character above fails at least one. Task 12
+      // scenario characters, driven by fittings_start_copy below:
+      // Eryn is the plain success case, Fio is scripted to come back
+      // Unknown (ambiguous no-response), and Gio is scripted to trip the
+      // fitting-bucket throttle stop -- matching the design doc's "a
+      // fitting-bucket 429 also stops the whole batch" policy.
+      { character_id: 90000014, character_name: 'Eryn Voss', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000015, character_name: 'Fio Kest', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false },
+      { character_id: 90000016, character_name: 'Gio Renn', status: 'enabled',
+        fetched_utc: '2026-09-03T10:00:00+00:00', error: '', stale: false }
+    ],
+    collections: [
+      { id: 'dev-alliance', name: 'Alliance' },
+      { id: 'dev-ratting', name: 'Ratting' }
+    ],
+    entries: [
+      { id: 'fit-rifter-solo', name: 'Rifter - Solo PvP', ship_type_id: 587,
+        ship_name: 'Rifter', description: 'Fast tackle, disengages on a scram.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-01T00:00:00+00:00',
+        updated_utc: '2026-08-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2456, type_name: '150mm Light AutoCannon II', quantity: 3 },
+          { location: 'medium', type_id: 3244, type_name: '1MN Afterburner II', quantity: 1 },
+          { location: 'low', type_id: 519, type_name: 'Gyrostabilizer II', quantity: 2 }
+        ],
+        aliases: [{ name: 'Rifter - Solo PvP', description: '' },
+                  { name: 'Rifter Tackle Fit', description: 'imported alias' }],
+        presences: [
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Rifter - Solo PvP',
+            first_seen_utc: '2026-08-01T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-1' },
+          { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Rifter Tackle Fit',
+            first_seen_utc: '2026-08-05T00:00:00+00:00',
+            last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
+        ] },
+      { id: 'fit-merlin-fleet', name: 'Merlin - Fleet Doctrine', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Standard fleet doctrine fit.',
+        collection_ids: ['dev-alliance'], superseded_by: null, deployable: true,
+        created_utc: '2026-09-01T00:00:00+00:00',
+        updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 },
+          { location: 'medium', type_id: 12613, type_name: 'Medium Shield Extender II', quantity: 2 },
+          { location: 'low', type_id: 519, type_name: 'Gyrostabilizer II', quantity: 1 }
+        ],
+        aliases: [{ name: 'Merlin - Fleet Doctrine', description: '' }],
+        presences: [
+          { character_id: 90000010, character_name: 'Aria Voss', source_name: 'Merlin - Old Doctrine',
+            first_seen_utc: '2026-09-01T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-3' }
+        ] },
+      { id: 'fit-merlin-old', name: 'Merlin - Old Doctrine', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Superseded by the current doctrine.',
+        collection_ids: ['dev-alliance'], superseded_by: 'fit-merlin-fleet', deployable: true,
+        created_utc: '2026-06-01T00:00:00+00:00',
+        updated_utc: '2026-09-01T00:00:00+00:00',
+        items: [
+          { location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 }
+        ],
+        aliases: [{ name: 'Merlin - Old Doctrine', description: '' }],
+        // No presence left on any character -- exercised as the entry the
+        // Delete flow can actually complete against in the harness.
+        presences: [] },
+      { id: 'fit-unresolved', name: 'Unnamed Import', ship_type_id: 99999,
+        ship_name: '', description: '',
+        collection_ids: ['dev-ratting'], superseded_by: null, deployable: true,
+        created_utc: '2026-09-02T00:00:00+00:00',
+        updated_utc: '2026-09-02T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 88888, type_name: '', quantity: 1 }],
+        aliases: [{ name: 'Unnamed Import', description: '' }],
+        presences: [] },
+      { id: 'fit-noncombat', name: 'Impairor - Rookie', ship_type_id: 590,
+        ship_name: 'Impairor', description: 'A rookie ship template; nothing to copy.',
+        collection_ids: [], superseded_by: null, deployable: false,
+        created_utc: '2026-07-01T00:00:00+00:00',
+        updated_utc: '2026-07-01T00:00:00+00:00',
+        items: [{ location: 'Invalid', type_id: 1, type_name: 'Rookie Fitting', quantity: 1 }],
+        aliases: [{ name: 'Impairor - Rookie', description: '' }],
+        presences: [] },
+      { id: 'fit-stale-owner', name: 'Punisher - Mission Runner', ship_type_id: 598,
+        ship_name: 'Punisher', description: 'Last confirmed before Bex went stale.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-10T00:00:00+00:00',
+        updated_utc: '2026-08-10T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2860, type_name: 'Small Focused Beam Laser II', quantity: 3 }],
+        aliases: [{ name: 'Punisher - Mission Runner', description: '' }],
+        presences: [
+          { character_id: 90000011, character_name: 'Bex Talon', source_name: 'Punisher - Mission Runner',
+            first_seen_utc: '2026-08-10T00:00:00+00:00',
+            last_confirmed_utc: '2026-08-20T08:00:00+00:00', discovered_batch_id: 'batch-2' }
+        ] },
+      // A deliberately engineered name conflict: two different fits (a
+      // Merlin and a Rifter, so they can never canonically match) that
+      // share one preferred name. fit-conflict-existing is already on
+      // Eryn under that name; copying fit-conflict-source (no presence
+      // anywhere) to Eryn hits devCopyPair's conflict branch below,
+      // because Eryn already has a DIFFERENT entry's presence recorded
+      // under that same casefolded name.
+      { id: 'fit-conflict-existing', name: 'Fleet Doctrine Alpha', ship_type_id: 603,
+        ship_name: 'Merlin', description: 'Occupies the name the source fit also wants.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-08-15T00:00:00+00:00',
+        updated_utc: '2026-08-15T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 3 }],
+        aliases: [{ name: 'Fleet Doctrine Alpha', description: '' }],
+        presences: [
+          { character_id: 90000014, character_name: 'Eryn Voss', source_name: 'Fleet Doctrine Alpha',
+            first_seen_utc: '2026-08-15T00:00:00+00:00',
+            last_confirmed_utc: '2026-09-03T10:00:00+00:00', discovered_batch_id: 'batch-4' }
+        ] },
+      { id: 'fit-conflict-source', name: 'Fleet Doctrine Alpha', ship_type_id: 587,
+        ship_name: 'Rifter', description: 'Wants a name Eryn already has on a different hull.',
+        collection_ids: [], superseded_by: null, deployable: true,
+        created_utc: '2026-09-02T00:00:00+00:00',
+        updated_utc: '2026-09-02T00:00:00+00:00',
+        items: [{ location: 'high', type_id: 2456, type_name: '150mm Light AutoCannon II', quantity: 3 }],
+        aliases: [{ name: 'Fleet Doctrine Alpha', description: '' }],
+        presences: [] }
+    ]
+  };
+
+  // Over one hundred filler entries so paging (page 2 of the "All
+  // fittings" scope) is reachable by hand rather than only by pytest.
+  (function () {
+    var ships = [
+      { id: 603, name: 'Merlin' }, { id: 587, name: 'Rifter' },
+      { id: 598, name: 'Punisher' }, { id: 594, name: 'Incursus' },
+      { id: 591, name: 'Tormentor' }
+    ];
+    for (var index = 0; index < 108; index += 1) {
+      var ship = ships[index % ships.length];
+      var label = (index < 9 ? '00' : index < 99 ? '0' : '') + (index + 1);
+      fittings.entries.push({
+        id: 'fit-gen-' + index, name: 'Generated Fit ' + label,
+        ship_type_id: ship.id, ship_name: ship.name,
+        // The very first generated row ("Generated Fit 001") is
+        // deliberately non-deployable, and deliberately the ONLY thing
+        // that differs from the rest of this loop. Task 12's copy-preflight
+        // and copy-limit screenshot stages need a non-deployable pair and
+        // a >20-write refusal respectively, both alongside curated fixtures
+        // that sort BEFORE this loop ("Fleet Doctrine Alpha" x2) -- and
+        // fittings_state() pages at 100, so anything sorting after this
+        // block (Impairor, Merlin, Punisher, Rifter, Unnamed above) lands
+        // on page 2 and cannot share a page, or a copy selection, with
+        // them. Reusing the first row of a block that is already on page 1
+        // avoids inventing a ninth curated fixture just to dodge paging.
+        description: index === 0 ? 'A rookie template; nothing to copy.' : '',
+        collection_ids: [], superseded_by: null, deployable: index !== 0,
+        created_utc: '2026-09-01T00:00:00+00:00', updated_utc: '2026-09-01T00:00:00+00:00',
+        items: index === 0
+          ? [{ location: 'Invalid', type_id: 1, type_name: 'Rookie Fitting', quantity: 1 }]
+          : [{ location: 'high', type_id: 2453, type_name: 'Light Neutron Blaster II', quantity: 1 }],
+        aliases: [{ name: 'Generated Fit ' + label, description: '' }],
+        presences: []
+      });
+    }
+  }());
+
+  var FIT_PAGE_SIZE = 100;
+
+  function fitScoped(collectionId) {
+    if (collectionId === 'unfiled') {
+      return fittings.entries.filter(function (e) { return !e.collection_ids.length; });
+    }
+    if (collectionId === 'superseded') {
+      return fittings.entries.filter(function (e) { return !!e.superseded_by; });
+    }
+    if (collectionId === 'all' || !collectionId) return fittings.entries.slice();
+    return fittings.entries.filter(function (e) {
+      return e.collection_ids.indexOf(collectionId) !== -1;
+    });
+  }
+
+  function fitFiltered(scoped, search, shipTypeId) {
+    var out = shipTypeId
+      ? scoped.filter(function (e) { return e.ship_type_id === shipTypeId; })
+      : scoped;
+    var needle = (search || '').trim().toLowerCase();
+    if (!needle) return out;
+    return out.filter(function (e) {
+      if (e.name.toLowerCase().indexOf(needle) !== -1) return true;
+      if ((e.ship_name || '').toLowerCase().indexOf(needle) !== -1) return true;
+      return e.aliases.some(function (a) { return a.name.toLowerCase().indexOf(needle) !== -1; });
+    });
+  }
+
+  function fitCollectionSummaries() {
+    var unfiled = fittings.entries.filter(function (e) { return !e.collection_ids.length; }).length;
+    var superseded = fittings.entries.filter(function (e) { return !!e.superseded_by; }).length;
+    var counts = {};
+    fittings.collections.forEach(function (c) { counts[c.id] = 0; });
+    fittings.entries.forEach(function (e) {
+      e.collection_ids.forEach(function (id) {
+        if (id in counts) counts[id] += 1;
+      });
+    });
+    return [
+      { id: 'all', name: 'All fittings', count: fittings.entries.length },
+      { id: 'unfiled', name: 'Unfiled', count: unfiled },
+      { id: 'superseded', name: 'Superseded', count: superseded }
+    ].concat(fittings.collections.map(function (c) {
+      return { id: c.id, name: c.name, count: counts[c.id] };
+    }));
+  }
+
+  function fitShipOptions(scoped) {
+    var byId = {};
+    scoped.forEach(function (e) {
+      if (!(e.ship_type_id in byId)) byId[e.ship_type_id] = e.ship_name;
+    });
+    return Object.keys(byId).map(function (key) {
+      return { type_id: parseInt(key, 10), name: byId[key] };
+    }).sort(function (a, b) {
+      return (a.name || '').localeCompare(b.name || '') || a.type_id - b.type_id;
+    });
+  }
+
+  function fitSummaryRow(entry) {
+    return {
+      id: entry.id, name: entry.name, ship_type_id: entry.ship_type_id,
+      ship_name: entry.ship_name, collection_ids: entry.collection_ids.slice(),
+      is_unfiled: !entry.collection_ids.length, superseded_by: entry.superseded_by,
+      presence_count: entry.presences.length, deployable: entry.deployable,
+      updated_utc: entry.updated_utc
+    };
+  }
+
+  function fitPushChanged(reason) {
+    // Mirrors production timing: Python's push is fire-and-forget through
+    // evaluate_js, never synchronous with the bridge call that triggered it.
+    setTimeout(function () {
+      if (window.onFittingsChanged) window.onFittingsChanged({ reason: reason });
+    }, 0);
+  }
+
+  api.fittings_state = function (filters) {
+    console.log('DEV api.fittings_state(', filters, ')');
+    filters = filters || {};
+    var collectionId = filters.collection_id || 'all';
+    var page = filters.page && filters.page > 0 ? filters.page : 1;
+    var scoped = fitScoped(collectionId);
+    var filtered = fitFiltered(scoped, filters.search, filters.ship_type_id);
+    filtered = filtered.slice().sort(function (a, b) {
+      var an = a.name.toLowerCase();
+      var bn = b.name.toLowerCase();
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    var start = (page - 1) * FIT_PAGE_SIZE;
+    var rows = filtered.slice(start, start + FIT_PAGE_SIZE).map(fitSummaryRow);
+    return Promise.resolve({
+      available: true,
+      warnings: [],
+      collections: fitCollectionSummaries(),
+      characters: fittings.characters.map(function (ch) {
+        return { character_id: ch.character_id, character_name: ch.character_name,
+                 status: ch.status, fetched_utc: ch.fetched_utc, error: ch.error,
+                 stale: ch.stale };
+      }),
+      ships: fitShipOptions(scoped),
+      rows: rows,
+      total: filtered.length,
+      page: page,
+      page_size: FIT_PAGE_SIZE,
+      filters: { collection_id: collectionId, search: filters.search || '',
+                 ship_type_id: filters.ship_type_id || null },
+      auth_configured: fittings.auth_configured,
+      auth_in_progress: fittings.auth_in_progress,
+      refreshing: fittings.refreshing
+    });
+  };
+
+  api.fittings_detail = function (entryId) {
+    console.log('DEV api.fittings_detail(', entryId, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (!entry) return Promise.resolve(null);
+    return Promise.resolve({
+      id: entry.id, name: entry.name, description: entry.description,
+      ship_type_id: entry.ship_type_id, ship_name: entry.ship_name,
+      items: entry.items, deployable: entry.deployable,
+      collection_ids: entry.collection_ids.slice(), superseded_by: entry.superseded_by,
+      aliases: entry.aliases, presences: entry.presences,
+      created_utc: entry.created_utc, updated_utc: entry.updated_utc
+    });
+  };
+
+  api.fittings_refresh = function (characterIds) {
+    console.log('DEV api.fittings_refresh(', characterIds, ')');
+    fittings.refreshing = true;
+    var targets = characterIds || fittings.characters
+      .filter(function (c) { return c.status === 'enabled'; })
+      .map(function (c) { return c.character_id; });
+    var total = targets.length;
+    if (!total) { fittings.refreshing = false; return Promise.resolve(true); }
+    targets.forEach(function (characterId, index) {
+      setTimeout(function () {
+        if (window.onFittingsProgress) {
+          window.onFittingsProgress({ character_id: characterId, completed: index + 1,
+                                       total: total, error: '' });
+        }
+        if (index === total - 1) {
+          fittings.refreshing = false;
+          fitPushChanged('refresh');
+        }
+      }, (index + 1) * 350);
+    });
+    return Promise.resolve(true);
+  };
+
+  api.fittings_enable_character = function (characterId) {
+    console.log('DEV api.fittings_enable_character(', characterId, ')');
+    var character = fittings.characters.filter(function (c) {
+      return c.character_id === characterId;
+    })[0];
+    if (character) character.status = 'enabled';
+    fitPushChanged('character');
+    return Promise.resolve(!!character);
+  };
+
+  api.fittings_cancel_auth = function () {
+    console.log('DEV api.fittings_cancel_auth()');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_forget_character = function (characterId) {
+    console.log('DEV api.fittings_forget_character(', characterId, ')');
+    fittings.characters = fittings.characters.filter(function (c) {
+      return c.character_id !== characterId;
+    });
+    fitPushChanged('character');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_create_collection = function (name) {
+    console.log('DEV api.fittings_create_collection(', name, ')');
+    var id = 'dev-collection-' + (fittings.collections.length + 1);
+    fittings.collections.push({ id: id, name: name });
+    fitPushChanged('collection');
+    return Promise.resolve(id);
+  };
+
+  api.fittings_rename_collection = function (collectionId, name) {
+    console.log('DEV api.fittings_rename_collection(', collectionId, name, ')');
+    var collection = fittings.collections.filter(function (c) { return c.id === collectionId; })[0];
+    if (collection) collection.name = name;
+    fitPushChanged('collection');
+    return Promise.resolve(!!collection);
+  };
+
+  api.fittings_delete_collection = function (collectionId) {
+    console.log('DEV api.fittings_delete_collection(', collectionId, ')');
+    fittings.collections = fittings.collections.filter(function (c) { return c.id !== collectionId; });
+    fittings.entries.forEach(function (e) {
+      e.collection_ids = e.collection_ids.filter(function (id) { return id !== collectionId; });
+    });
+    fitPushChanged('collection');
+    return Promise.resolve(true);
+  };
+
+  api.fittings_update_metadata = function (entryId, name, description) {
+    console.log('DEV api.fittings_update_metadata(', entryId, name, description, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) { entry.name = name; entry.description = description; }
+    fitPushChanged('metadata');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_set_membership = function (entryId, collectionId, member) {
+    console.log('DEV api.fittings_set_membership(', entryId, collectionId, member, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) {
+      var has = entry.collection_ids.indexOf(collectionId) !== -1;
+      if (member && !has) entry.collection_ids.push(collectionId);
+      if (!member && has) {
+        entry.collection_ids = entry.collection_ids.filter(function (id) { return id !== collectionId; });
+      }
+    }
+    fitPushChanged('collection_membership');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_set_supersession = function (entryId, supersededBy) {
+    console.log('DEV api.fittings_set_supersession(', entryId, supersededBy, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry) entry.superseded_by = supersededBy || null;
+    fitPushChanged('supersession');
+    return Promise.resolve(!!entry);
+  };
+
+  api.fittings_delete_entry = function (entryId) {
+    console.log('DEV api.fittings_delete_entry(', entryId, ')');
+    var entry = fittings.entries.filter(function (e) { return e.id === entryId; })[0];
+    if (entry && entry.presences.length) return Promise.resolve(false);
+    fittings.entries = fittings.entries.filter(function (e) { return e.id !== entryId; });
+    fittings.entries.forEach(function (e) {
+      if (e.superseded_by === entryId) e.superseded_by = null;
+    });
+    fitPushChanged('delete');
+    return Promise.resolve(!!entry);
+  };
+
+  // Strict JSON and the sole fabricated-data source for both ?dev=1 and
+  // the live-app screenshot tool. fittings.js accepts it only through its
+  // bounded, CDP-invoked screenshot handler; ordinary production reads and
+  // writes never consult it. Keep result rows in an order the dev copy loop
+  // can really produce: first fit succeeds/turns Unknown/hits throttle, then
+  // every pair for the second fit is unattempted.
+  var DEV_FITTINGS_SCREENSHOT_FIXTURE = {
+    "kind": "fittings-screenshot-v1",
+    "copy_roles": {
+      "unknown_character_id": 90000015,
+      "throttle_character_id": 90000016
+    },
+    "characters": [
+      {"character_id": 90000010, "character_name": "Aria Voss", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000011, "character_name": "Bex Talon", "status": "enabled", "fetched_utc": "2026-08-20T08:00:00+00:00", "error": "ESI request failed (500): Internal Server Error", "stale": true},
+      {"character_id": 90000012, "character_name": "Cato Rune", "status": "enable", "fetched_utc": "", "error": "", "stale": false},
+      {"character_id": 90000013, "character_name": "Dess Marlow", "status": "reauthenticate", "fetched_utc": "", "error": "", "stale": false},
+      {"character_id": 90000014, "character_name": "Eryn Voss", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000015, "character_name": "Fio Kest", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false},
+      {"character_id": 90000016, "character_name": "Gio Renn", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false}
+    ],
+    "collections": [
+      {"id": "all", "name": "All fittings", "count": 27},
+      {"id": "unfiled", "name": "Unfiled", "count": 25},
+      {"id": "superseded", "name": "Superseded", "count": 1},
+      {"id": "dev-alliance", "name": "Alliance", "count": 2},
+      {"id": "dev-ratting", "name": "Ratting", "count": 0}
+    ],
+    "entries": [
+      {"id": "fit-conflict-existing", "name": "Fleet Doctrine Alpha", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-08-15T00:00:00+00:00"},
+      {"id": "fit-conflict-source", "name": "Fleet Doctrine Alpha", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-02T00:00:00+00:00"},
+      {"id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-merlin-old", "name": "Merlin - Old Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": "fit-merlin-fleet", "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 2, "deployable": true, "updated_utc": "2026-08-01T00:00:00+00:00"},
+      {"id": "fit-gen-0", "name": "Generated Fit 001", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": false, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-1", "name": "Generated Fit 002", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-2", "name": "Generated Fit 003", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-3", "name": "Generated Fit 004", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-4", "name": "Generated Fit 005", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-5", "name": "Generated Fit 006", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-6", "name": "Generated Fit 007", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-7", "name": "Generated Fit 008", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-8", "name": "Generated Fit 009", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-9", "name": "Generated Fit 010", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-10", "name": "Generated Fit 011", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-11", "name": "Generated Fit 012", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-12", "name": "Generated Fit 013", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-13", "name": "Generated Fit 014", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-14", "name": "Generated Fit 015", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-15", "name": "Generated Fit 016", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-16", "name": "Generated Fit 017", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-17", "name": "Generated Fit 018", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-18", "name": "Generated Fit 019", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-19", "name": "Generated Fit 020", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-20", "name": "Generated Fit 021", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
+      {"id": "fit-gen-21", "name": "Generated Fit 022", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"}
+    ],
+    "details": {
+      "fit-rifter-solo": {
+        "id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "description": "Fast tackle, disengages on a scram.", "ship_type_id": 587, "ship_name": "Rifter", "deployable": true, "collection_ids": [], "superseded_by": null, "created_utc": "2026-08-01T00:00:00+00:00", "updated_utc": "2026-08-01T00:00:00+00:00",
+        "items": [
+          {"location": "high", "type_id": 2456, "type_name": "150mm Light AutoCannon II", "quantity": 3},
+          {"location": "medium", "type_id": 3244, "type_name": "1MN Afterburner II", "quantity": 1},
+          {"location": "low", "type_id": 519, "type_name": "Gyrostabilizer II", "quantity": 2}
+        ],
+        "aliases": [{"name": "Rifter - Solo PvP", "description": ""}, {"name": "Rifter Tackle Fit", "description": "imported alias"}],
+        "presences": [
+          {"character_id": 90000010, "character_name": "Aria Voss", "source_name": "Rifter - Solo PvP", "first_seen_utc": "2026-08-01T00:00:00+00:00", "last_confirmed_utc": "2026-09-03T10:00:00+00:00", "discovered_batch_id": "batch-1"},
+          {"character_id": 90000011, "character_name": "Bex Talon", "source_name": "Rifter Tackle Fit", "first_seen_utc": "2026-08-05T00:00:00+00:00", "last_confirmed_utc": "2026-08-20T08:00:00+00:00", "discovered_batch_id": "batch-2"}
+        ]
+      },
+      "fit-merlin-fleet": {
+        "id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "description": "Standard fleet doctrine fit.", "ship_type_id": 603, "ship_name": "Merlin", "deployable": true, "collection_ids": ["dev-alliance"], "superseded_by": null, "created_utc": "2026-09-01T00:00:00+00:00", "updated_utc": "2026-09-01T00:00:00+00:00",
+        "items": [{"location": "high", "type_id": 2453, "type_name": "Light Neutron Blaster II", "quantity": 3}, {"location": "medium", "type_id": 12613, "type_name": "Medium Shield Extender II", "quantity": 2}, {"location": "low", "type_id": 519, "type_name": "Gyrostabilizer II", "quantity": 1}],
+        "aliases": [{"name": "Merlin - Fleet Doctrine", "description": ""}],
+        "presences": [{"character_id": 90000010, "character_name": "Aria Voss", "source_name": "Merlin - Old Doctrine", "first_seen_utc": "2026-09-01T00:00:00+00:00", "last_confirmed_utc": "2026-09-03T10:00:00+00:00", "discovered_batch_id": "batch-3"}]
+      }
+    },
+    "mixed_preflight": {
+      "accepted": true, "ticket_id": "screenshot-ticket", "created_utc": "2026-09-03T10:01:00+00:00", "write_count": 0,
+      "counts": {"ready": 0, "present": 1, "conflict": 1, "unavailable": 1}, "requires_resolution": true, "error": "",
+      "pairs": [
+        {"entry_id": "fit-conflict-existing", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "present", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-0", "character_id": 90000014, "fitting_name": "Generated Fit 001", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 001", "status": "unavailable", "error": "This fitting has no safe deployment template.", "skipped": false},
+        {"entry_id": "fit-conflict-source", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "conflict", "error": "", "skipped": false}
+      ]
+    },
+    "copy_result": {
+      "status": "complete", "operation_id": "dev-operation-results", "write_count": 3,
+      "results": [
+        {"entry_id": "fit-gen-1", "character_id": 90000014, "fitting_name": "Generated Fit 002", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 002", "status": "success", "remote_fitting_id": 9101, "error": "", "attempted": true},
+        {"entry_id": "fit-gen-1", "character_id": 90000015, "fitting_name": "Generated Fit 002", "character_name": "Fio Kest", "chosen_name": "Generated Fit 002", "status": "unknown", "remote_fitting_id": null, "error": "No response was received before the request timed out.", "attempted": true},
+        {"entry_id": "fit-gen-1", "character_id": 90000016, "fitting_name": "Generated Fit 002", "character_name": "Gio Renn", "chosen_name": "Generated Fit 002", "status": "failed", "remote_fitting_id": null, "error": "The fitting write rate limit was reached; the remaining batch was stopped.", "attempted": true},
+        {"entry_id": "fit-gen-2", "character_id": 90000014, "fitting_name": "Generated Fit 003", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000015, "fitting_name": "Generated Fit 003", "character_name": "Fio Kest", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000016, "fitting_name": "Generated Fit 003", "character_name": "Gio Renn", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false}
+      ]
+    }
+  };
+
+  var fitCopyTickets = {};
+  var fitCopyTicketIndex = 0;
+  var fitCopyCancelled = false;
+  // Set once a scripted throttle pair (see FIT_COPY_THROTTLE_CHARACTER
+  // below) has fired, so every pair still queued behind it in the same
+  // batch is also reported unattempted -- matching the design doc's "a
+  // fitting-bucket 429 also stops the whole batch" policy, rather than
+  // only the one pair that tripped it.
+  var fitCopyThrottled = false;
+  // Task 12 scenario characters: fixed IDs the harness scripts a specific
+  // non-success outcome for, so a hand reviewer can reach Unknown and
+  // throttle-stop without needing a real ESI failure. Both are otherwise
+  // ordinary eligible copy targets (see the characters array above).
+  var FIT_COPY_UNKNOWN_CHARACTER =
+    DEV_FITTINGS_SCREENSHOT_FIXTURE.copy_roles.unknown_character_id; // Fio Kest
+  var FIT_COPY_THROTTLE_CHARACTER =
+    DEV_FITTINGS_SCREENSHOT_FIXTURE.copy_roles.throttle_character_id; // Gio Renn
+
+  function devCopyPair(entry, character, names) {
+    var base = {
+      entry_id: entry.id, character_id: character.character_id,
+      fitting_name: entry.name, character_name: character.character_name,
+      chosen_name: entry.name, error: '', skipped: false
+    };
+    if (!entry.deployable || character.status !== 'enabled' || character.stale
+        || !character.fetched_utc) {
+      base.status = 'unavailable';
+      base.error = !entry.deployable ? 'This fitting has no safe deployment template.'
+                                     : 'Refresh or enable this character first.';
+      return base;
+    }
+    if (entry.presences.some(function (p) {
+      return p.character_id === character.character_id;
+    })) {
+      base.status = 'present';
+      return base;
+    }
+    var conflict = fittings.entries.some(function (other) {
+      return other.id !== entry.id && other.presences.some(function (p) {
+        return p.character_id === character.character_id
+          && p.source_name.toLowerCase() === entry.name.toLowerCase();
+      });
+    });
+    if (!conflict) {
+      base.status = 'ready';
+      return base;
+    }
+    var key = entry.id + ':' + character.character_id;
+    if (!(key in names)) {
+      base.status = 'conflict';
+      return base;
+    }
+    if (names[key] === null) {
+      base.status = 'conflict';
+      base.skipped = true;
+      return base;
+    }
+    base.status = 'ready';
+    base.chosen_name = names[key];
+    return base;
+  }
+
+  api.fittings_preflight_copy = function (entryIds, characterIds, names) {
+    console.log('DEV api.fittings_preflight_copy(', entryIds, characterIds, names, ')');
+    names = names || {};
+    var entries = fittings.entries.filter(function (entry) {
+      return entryIds.indexOf(entry.id) !== -1;
+    });
+    var characters = fittings.characters.filter(function (character) {
+      return characterIds.indexOf(character.character_id) !== -1;
+    });
+    var emptyCounts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    if (!entries.length || !characters.length) {
+      return Promise.resolve({
+        accepted: false, ticket_id: '', created_utc: '', write_count: 0,
+        counts: emptyCounts, requires_resolution: false, pairs: [],
+        error: 'Select fittings and target characters first.'
+      });
+    }
+
+    var usedNames = {};
+    fittings.entries.forEach(function (entry) {
+      entry.presences.forEach(function (presence) {
+        usedNames[presence.character_id + ':' + presence.source_name.toLowerCase()] = true;
+      });
+    });
+    var invalidChoices = {};
+    var choiceError = '';
+    Object.keys(names).forEach(function (key) {
+      if (typeof names[key] !== 'string' || !names[key].trim()) return;
+      var characterId = parseInt(key.slice(key.lastIndexOf(':') + 1), 10);
+      var nameKey = characterId + ':' + names[key].trim().toLowerCase();
+      if (usedNames[nameKey]) {
+        invalidChoices[key] = true;
+        if (!choiceError) choiceError = '\u201c' + names[key].trim()
+          + '\u201d is already used on this character.';
+      } else {
+        usedNames[nameKey] = true;
+      }
+    });
+
+    var pairs = [];
+    entries.forEach(function (entry) {
+      characters.forEach(function (character) {
+        var pair = devCopyPair(entry, character, names);
+        if (invalidChoices[pair.entry_id + ':' + pair.character_id]) {
+          pair.status = 'conflict';
+          pair.chosen_name = pair.fitting_name;
+        }
+        pairs.push(pair);
+      });
+    });
+    var counts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    pairs.forEach(function (pair) { counts[pair.status] += 1; });
+    var overLimit = counts.ready > 20;
+    var accepted = !choiceError && !overLimit;
+    var requires = accepted && pairs.some(function (pair) {
+      return pair.status === 'conflict' && !pair.skipped;
+    });
+    var ticketId = accepted ? 'dev-copy-' + (++fitCopyTicketIndex) : '';
+    if (accepted) {
+      fitCopyTickets[ticketId] = { pairs: pairs, write_count: counts.ready };
+    }
+    return Promise.resolve({
+      accepted: accepted, ticket_id: ticketId,
+      created_utc: accepted ? new Date().toISOString() : '',
+      write_count: accepted ? counts.ready : 0,
+      counts: counts, requires_resolution: requires, pairs: pairs,
+      error: choiceError || (overLimit
+        ? 'Split this copy into batches of 20 fittings or fewer.' : '')
+    });
+  };
+
+  api.fittings_start_copy = function (ticketId) {
+    console.log('DEV api.fittings_start_copy(', ticketId, ')');
+    var ticket = fitCopyTickets[ticketId];
+    if (!ticket) return Promise.resolve(false);
+    delete fitCopyTickets[ticketId];
+    fitCopyCancelled = false;
+    fitCopyThrottled = false;
+    var results = [];
+    var index = 0;
+    var operationId = 'dev-operation-' + fitCopyTicketIndex;
+    function advance() {
+      if (index >= ticket.pairs.length) {
+        if (window.onFittingsProgress) {
+          window.onFittingsProgress({
+            kind: 'copy', phase: 'complete', operation_id: operationId,
+            completed: results.length, total: ticket.pairs.length,
+            result: {
+              status: fitCopyCancelled ? 'cancelled' : 'complete',
+              operation_id: operationId, results: results,
+              write_count: results.filter(function (row) {
+                return row.attempted;
+              }).length
+            }
+          });
+        }
+        return;
+      }
+      var pair = ticket.pairs[index++];
+      var result = {};
+      Object.keys(pair).forEach(function (key) { result[key] = pair[key]; });
+      result.attempted = false;
+      if (pair.status === 'ready') {
+        if (fitCopyThrottled) {
+          // The batch already stopped at an earlier pair in this same
+          // operation; everything still queued behind it is unattempted,
+          // not retried and not silently dropped.
+          result.status = 'unattempted_throttle';
+        } else if (fitCopyCancelled) {
+          result.status = 'cancelled';
+        } else if (pair.character_id === FIT_COPY_UNKNOWN_CHARACTER) {
+          result.attempted = true;
+          // Ambiguous transport failure: an HTTP response was never
+          // received, so the outcome is Unknown rather than Failed --
+          // the design doc's "timeout, no response, 408, or 5xx is
+          // Unknown unless ESI documents that the response guarantees
+          // non-creation." This pair is not retried until an
+          // authoritative refresh past the cache horizon reconciles it.
+          result.status = 'unknown';
+          result.error = 'No response was received before the request timed out.';
+        } else if (pair.character_id === FIT_COPY_THROTTLE_CHARACTER) {
+          // A fitting-bucket 429: this pair is itself unattempted, and it
+          // also stops the remainder of the batch (see fitCopyThrottled
+          // above), matching the design doc's conservative stop policy.
+          result.status = 'failed';
+          result.attempted = true;
+          result.error = 'The fitting write rate limit was reached; the '
+            + 'remaining batch was stopped.';
+          fitCopyThrottled = true;
+        } else {
+          result.status = 'success';
+          result.attempted = true;
+          result.remote_fitting_id = 9100 + index;
+        }
+      } else if (pair.status === 'conflict' && pair.skipped) {
+        result.status = 'conflict_skipped';
+      }
+      results.push(result);
+      if (window.onFittingsProgress) {
+        window.onFittingsProgress({
+          kind: 'copy', phase: 'progress', operation_id: operationId,
+          completed: results.length, total: ticket.pairs.length, result: result
+        });
+      }
+      setTimeout(advance, 250);
+    }
+    setTimeout(advance, 250);
+    return Promise.resolve(true);
+  };
+
+  api.fittings_cancel_copy = function () {
+    console.log('DEV api.fittings_cancel_copy()');
+    fitCopyCancelled = true;
+    return Promise.resolve(true);
+  };
+
   api.skills_character_detail = function (id, plan) {
     console.log('DEV api.skills_character_detail(', id, plan, ')');
     return Promise.resolve({
@@ -334,6 +1083,20 @@
   // one so the roster's catch-all bucket is visible in the browser. The
   // Unscored row is the common case, not padding: every character is
   // Unscored between authorisation and its first refresh.
+  //
+  // Task 6 adds every sort/status edge byTrainingFinishThenName and
+  // byTrainingRemainingThenName exist to handle, on top of the original
+  // nine: a third Training row so the two dated ones are out of name
+  // order (Zuelo finishes before Bel despite sorting after it
+  // alphabetically); a Missing tie (Zara/Aveline Castellane, inserted in
+  // that order so array order alone cannot stand in for the name
+  // tie-break); a Missing row with an unavailable estimate
+  // (Petra Ilyenko); and a Missing row carrying both `queued_count` and
+  // `missing_count` above zero with a long character name and the
+  // longest skill name EVE has (.skills-main's own CSS comment measures
+  // it). Every character below now carries all three of Task 5's
+  // estimate fields, matching what a real payload always sends once a
+  // plan is selected.
   var skills = {
     auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
@@ -356,29 +1119,47 @@
         needs_reauth: false, stale: false, readiness: 'Ready',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 14, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // Ready: every plan skill is already trained and active, so
+        // there is nothing left to train.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 2, character_name: 'Zuelo Parvi',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
-        estimated_finish_utc: '2026-08-26T12:00:00+00:00',
+        // Earlier than Bel Ansgar (character_id 10) below despite sorting
+        // AFTER it alphabetically -- byTrainingFinishThenName must put
+        // Zuelo first, which a name sort would get backwards.
+        estimated_finish_utc: '2026-08-25T09:00:00+00:00',
         queue_timing_unknown: false,
         active_count: 12, trained_inactive_count: 0, queued_count: 2,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        training_remaining_seconds: 45000,
+        training_remaining_label: '12h 30m', training_estimate_status: 'available' },
       { character_id: 3, character_name: 'Kaska Rin',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Training',
         estimated_finish_utc: '', queue_timing_unknown: true,
         active_count: 13, trained_inactive_count: 0, queued_count: 1,
-        missing_count: 0, unknown_count: 0, group: 'Wolfpack' },
+        missing_count: 0, unknown_count: 0, group: 'Wolfpack',
+        // A timing-unknown queue does not stop the SEPARATE plan-wide
+        // estimate from being available -- the two are different
+        // computations (EVE's queue fact vs training.estimate()).
+        training_remaining_seconds: 93600,
+        training_remaining_label: '1d 2h', training_estimate_status: 'available' },
       { character_id: 4, character_name: 'Delen Vok',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Locked',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 11, trained_inactive_count: 3, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 0, group: 'Logi Wing',
+        // Locked is an inactive-clone problem, not a training one: the
+        // trained_inactive skills are already paid for.
+        training_remaining_seconds: 0, training_remaining_label: '0m',
+        training_estimate_status: 'available' },
       { character_id: 5, character_name: 'Gustav Oswaldo',
         fetched_utc: '2026-08-23T20:00:00+00:00',
         fetched_label: 'Last fetched 17h ago',
@@ -391,7 +1172,13 @@
         // (controller._ROSTER_NAME_CAP).
         missing_names: ['Heavy Assault Cruisers V',
                         'Tactical Shield Manipulation V',
-                        'Gunnery V'] },
+                        'Gunnery V'],
+        // Task 6: stale carries a REAL training estimate, same as a fresh
+        // row -- the last successful refresh is what it is scored
+        // against, and the multi-week case (the largest duration in the
+        // fixture, so it sorts last among available estimates).
+        training_remaining_seconds: 1296000,
+        training_remaining_label: '15d 0h', training_estimate_status: 'available' },
       { character_id: 6, character_name: 'Nera Tal',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
@@ -400,28 +1187,111 @@
         active_count: 12, trained_inactive_count: 0, queued_count: 0,
         missing_count: 2, unknown_count: 0, group: 'Wolfpack',
         // Under the cap, so no remainder clause.
-        missing_names: ['Motion Prediction V', 'Sharpshooter IV'] },
+        missing_names: ['Motion Prediction V', 'Sharpshooter IV'],
+        // The short case -- smallest duration in the fixture, so it sorts
+        // first among available estimates.
+        training_remaining_seconds: 5400,
+        training_remaining_label: '1h 30m', training_estimate_status: 'available' },
       { character_id: 7, character_name: 'Orin Kesh',
         fetched_utc: '2026-08-24T08:00:00+00:00',
         fetched_label: 'Last fetched 5h ago', error: '',
         needs_reauth: false, stale: false, readiness: 'Unknown',
         estimated_finish_utc: '', queue_timing_unknown: false,
         active_count: 13, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 1, group: 'Logi Wing' },
+        missing_count: 0, unknown_count: 1, group: 'Logi Wing',
+        // A skill this build has never resolved an id for -- the
+        // metadata_unavailable case.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'metadata_unavailable' },
       { character_id: 8, character_name: 'Tavi Solen', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: 'The refresh token was rejected', needs_reauth: true,
         stale: false, readiness: 'Unscored', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' },
+        missing_count: 0, unknown_count: 0, group: '',
+        // No snapshot at all -- skill_points_complete is never true, so
+        // this is the refresh_required case, not the empty ("no plan")
+        // status: a plan IS selected here, and Unscored is the only
+        // readiness this status can pair with.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
       { character_id: 9, character_name: 'Mira Halcyon', fetched_utc: '',
         fetched_label: 'Never fetched',
         error: '', needs_reauth: false, stale: false,
         readiness: 'Ascendant', estimated_finish_utc: '',
         queue_timing_unknown: false,
         active_count: 0, trained_inactive_count: 0, queued_count: 0,
-        missing_count: 0, unknown_count: 0, group: '' }
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'refresh_required' },
+      { character_id: 10, character_name: 'Bel Ansgar',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Training',
+        // Later than Zuelo Parvi (character_id 2) above -- the two dated
+        // Training rows are deliberately out of name order.
+        estimated_finish_utc: '2026-08-27T21:00:00+00:00',
+        queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 3,
+        missing_count: 0, unknown_count: 0, group: '',
+        training_remaining_seconds: 100800,
+        training_remaining_label: '1d 4h', training_estimate_status: 'available' },
+      // The tie-break pair. Inserted Zara-then-Aveline -- alphabetically
+      // backwards -- so a fixture whose array order already matched the
+      // name order could not make byTrainingRemainingThenName's tie-break
+      // pass by accident.
+      { character_id: 11, character_name: 'Zara Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 9, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 3, unknown_count: 0, group: '',
+        missing_names: ['Advanced Spaceship Command III',
+                        'Target Painting IV'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 12, character_name: 'Aveline Castellane',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 10, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 2, unknown_count: 0, group: '',
+        missing_names: ['Signature Focusing V'],
+        training_remaining_seconds: 172800,
+        training_remaining_label: '2d 0h', training_estimate_status: 'available' },
+      { character_id: 13, character_name: 'Petra Ilyenko',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 7, trained_inactive_count: 0, queued_count: 0,
+        missing_count: 4, unknown_count: 0, group: '',
+        missing_names: ['Cynosural Field Theory V', 'Titan Synergy V'],
+        // Confirmed but unusable attributes (attributes_fetched_utc set,
+        // attributes_error non-empty) -- the unavailable case, which must
+        // sort last regardless of missing_count.
+        training_remaining_seconds: null, training_remaining_label: '',
+        training_estimate_status: 'attributes_unavailable' },
+      { character_id: 14,
+        // Long enough to exercise .skills-main's 240px --name-col ellipsis.
+        character_name: 'Konstantina Alexandrovna Winterbourne',
+        fetched_utc: '2026-08-24T08:00:00+00:00',
+        fetched_label: 'Last fetched 5h ago', error: '',
+        needs_reauth: false, stale: false, readiness: 'Missing',
+        estimated_finish_utc: '', queue_timing_unknown: false,
+        active_count: 11, trained_inactive_count: 0,
+        // Both above zero: some of this plan is already queued while the
+        // rest is entirely untrained, which is what makes the overall
+        // readiness Missing even though training has started.
+        queued_count: 2, missing_count: 3, unknown_count: 0, group: '',
+        // The exact skill .skills-main's own CSS comment measures as the
+        // longest name EVE has (39 characters).
+        missing_names: ['Heavy Assault Missile Specialization V'],
+        training_remaining_seconds: 604800,
+        training_remaining_label: '7d 0h', training_estimate_status: 'available' }
     ],
     plan_issues: [
       { file_name: 'Broken.txt', message: 'The file was rejected.',
@@ -566,6 +1436,79 @@
     };
   }
 
+  // Exact copy of Api._update_snapshot_locked's permission policy for a
+  // cached release in a frozen build. Keeping every state here makes fixture
+  // drift visible instead of letting base defaults silently grant an action.
+  var DEV_UPDATE_PERMISSIONS = JSON.parse('{"idle":{"can_check":true,"can_download":false,"can_install":false},"checking":{"can_check":false,"can_download":false,"can_install":false},"current":{"can_check":true,"can_download":false,"can_install":false},"unavailable":{"can_check":true,"can_download":false,"can_install":false},"available":{"can_check":true,"can_download":true,"can_install":false},"check_failed":{"can_check":true,"can_download":true,"can_install":false},"download_failed":{"can_check":true,"can_download":true,"can_install":false},"downloading":{"can_check":false,"can_download":false,"can_install":false},"ready":{"can_check":false,"can_download":false,"can_install":true},"handing_off":{"can_check":false,"can_download":false,"can_install":false},"revalidating":{"can_check":false,"can_download":false,"can_install":false},"launching":{"can_check":false,"can_download":false,"can_install":false},"closed":{"can_check":false,"can_download":false,"can_install":false}}');
+
+  function devUpdateState() {
+    // ?dev=1&update=<state> selects which of the card's states renders,
+    // so every state Task 7's smoke checklist calls for is reachable by
+    // hand without touching Python: current, checking, an automatic
+    // offline failure, available, downloading (with real bytes for the
+    // progress bar), ready (declared frozen so Install actually shows,
+    // which a real source checkout never is), and a manual failure.
+    var match = /[?&]update=([\w-]+)/.exec(window.location.search);
+    var state = match ? match[1] : 'available';
+    var base = {
+      installed_version: '0.0.0-dev',
+      available_version: '4.9.0',
+      downloaded_bytes: 0,
+      total_bytes: 42000000,
+      error: ''
+    };
+    var payload;
+    // update_available mirrors Api._update_snapshot_locked: true whenever
+    // a release is cached, which survives through check_failed/ready/
+    // download_failed rather than flickering off the moment a later
+    // action fails -- app.js's gear badge reads exactly this field.
+    switch (state) {
+      case 'idle':
+        payload = Object.assign({}, base, {
+          state: 'idle', available_version: '', update_available: false
+        });
+        break;
+      case 'checking':
+        payload = Object.assign({}, base, {
+          state: 'checking', available_version: '', update_available: false
+        });
+        break;
+      case 'current':
+        payload = Object.assign({}, base, {
+          state: 'current', available_version: '', update_available: false
+        });
+        break;
+      case 'unavailable':
+        payload = Object.assign({}, base, {
+          state: 'unavailable', available_version: '', update_available: false
+        });
+        break;
+      case 'downloading':
+        payload = Object.assign({}, base, {
+          state: 'downloading', downloaded_bytes: 18000000,
+          update_available: true
+        });
+        break;
+      case 'ready':
+        payload = Object.assign({}, base, {
+          state: 'ready', downloaded_bytes: 42000000, update_available: true
+        });
+        break;
+      case 'error':
+        payload = Object.assign({}, base, {
+          state: 'download_failed', update_available: true,
+          error: 'The download did not match what the release published. '
+               + 'Try downloading again.'
+        });
+        break;
+      default:
+        payload = Object.assign({}, base, {
+          state: 'available', update_available: true
+        });
+    }
+    return Object.assign(payload, DEV_UPDATE_PERMISSIONS[payload.state]);
+  }
+
   // The bar page pulls its section once at load; so does bookmarks.js
   // for the toggle's initial paint. Returns the same object the payload
   // above carries, so the two doubles cannot disagree.
@@ -595,6 +1538,24 @@
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());
+  };
+
+  api.update_status = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.check_for_updates = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.download_update = function () {
+    console.log('DEV api.download_update()');
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.install_update = function () {
+    console.log('DEV api.install_update()');
+    return Promise.resolve(devUpdateState());
   };
 
   // ---- FightRecorder: the harness has no OBS and no network, so the
@@ -1061,7 +2022,25 @@
   // the harness cannot show that a LIVE upload survives a trip to Skills
   // and a finished one does not, which is the whole of round 3's
   // finding 14.
+  // Pushes an onEveSettingsNames payload carrying the current
+  // devIdentificationGeneration so acceptIdentification() in evesettings.js
+  // accepts it. deleted_candidate_ids is always empty here — the console
+  // helpers only change structural state, not character existence.
+  function devPushEveNames() {
+    window.onEveSettingsNames({
+      identification_generation: devIdentificationGeneration,
+      deleted_candidate_ids: []
+    });
+  }
+
   window.DEV = {
+    // The same bounded fixture scripts/shoot_screens.py injects into the live
+    // app. This manual driver keeps every field browser-consumed rather than
+    // leaving a Python-only JSON island in dev.js.
+    fittingsScreenshot: function () {
+      window.onFittingsScreenshotState(
+        JSON.parse(JSON.stringify(DEV_FITTINGS_SCREENSHOT_FIXTURE)));
+    },
     // `busy` defaults to true -- a percentage arriving usually means a live
     // transfer -- but it is a PARAMETER because the two payloads that carry
     // busy=false were otherwise unreachable from this harness, and both are
@@ -1163,16 +2142,16 @@
       eve.root = ''; eve.server = ''; eve.profile = '';
       eve.servers = []; eve.profiles = [];
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveUnreadable: function () {
       eve.unreadable = true;
       eve.characters = []; eve.accounts = [];
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     eveSelectiveAvailable: function (available) {
       eve.selective_copy_available = !!available;
-      window.onEveSettingsNames();
+      devPushEveNames();
     },
     skillsEmpty: function () {
       skills.characters = [];
@@ -1199,8 +2178,12 @@
   var backupsScenario = identitySearch.get('backups') || '';
   var copyScenario = identitySearch.get('copy') || '';
   var formationsAccountScenario = identitySearch.get('formations-account') || '';
+  // Task 7: the whole-profile copy checkpoints. A named scenario drives
+  // the eve_settings_copy_profile double below through the real panel
+  // rather than through a harness-only shortcut.
+  var profileCopyScenario = identitySearch.get('profile') || '';
   var profilesScenarioRequested = !!(backupsScenario || copyScenario
-    || formationsAccountScenario);
+    || formationsAccountScenario || profileCopyScenario);
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -1262,10 +2245,20 @@
     eve_running: null,
     identification_active: selectedIdentityScenario.stage !== 'intro'
       && selectedIdentityScenario.stage !== 'manage',
+    // True unconditionally: the dev harness always points at a Tranquility
+    // fixture. Without this the canIdentify guard Task 6 added hides every
+    // identity control and all identification scenarios render as inert.
+    account_identity_available: true,
     selective_copy_available: true,
     copy_groups: selective.groups_payload,
     servers: [{ path: 'tq', name: 'Tranquility' }],
-    profiles: [{ path: 'default', name: 'Default', file_count: 72 }],
+    // Two profiles, not one: every profile-copy checkpoint needs a real
+    // Replace target, and 'multiple profiles with Default selected' is
+    // itself one of the named scenarios below.
+    profiles: [
+      { path: 'default', name: 'Default', file_count: 72 },
+      { path: 'fleet', name: 'Fleet', file_count: 58 }
+    ],
     // Name-ordered, because the payload is: R1/D4 moved the roster's sort
     // out of evesettings.tree (which has only file ids) and into
     // Api.eve_settings_state (which has the resolved labels), so a
@@ -1349,14 +2342,128 @@
   };
   api.eve_settings_select = function (server, profile) {
     console.log('DEV api.eve_settings_select(', server, ',', profile, ')');
-    eve.server = server; eve.profile = profile;
+    // '' is not "no profile": Api.eve_settings_select hands discover()
+    // `profile or None`, and an empty token is its one deliberate
+    // fallback -- "the requested server's first profile". evesettings.js
+    // relies on it, sending '' on a SERVER change rather than the old
+    // server's profile path (which the endpoint would refuse). Assigning
+    // the token straight through emptied the Profile select here and
+    // disabled every control gated on state.profile, which no real server
+    // change does. The fixture carries one server and one flat `profiles`
+    // list -- that list IS what this server offers -- so its first entry
+    // is the faithful answer without inventing a per-server association
+    // the payload does not carry.
+    var resolved = profile || (eve.profiles.length ? eve.profiles[0].path : '');
+    eve.server = server; eve.profile = resolved;
     return Promise.resolve(true);
   };
   api.eve_settings_resolve_names = function () {
     console.log('DEV api.eve_settings_resolve_names()');
     return Promise.resolve(null);
   };
+  // Task 7's specialized double. Validated the same way the bridge
+  // validates it -- against a freshly discovered tree's current
+  // selection -- so a stale token reads as the same refusal a real race
+  // would produce. Every outcome after that point is one of the eleven
+  // named checkpoints in PROFILE_COPY_SCENARIOS
+  // (tests/test_dev_harness.py), selected by ?dev=1&profile=<key> and
+  // driven through the real panel by paintProfileCopyScenario() below.
+  //
+  // Round 1 fix: PROFILE_COPY_SCENARIO_REQUESTS below pins the exact
+  // mode/destination each scripted checkpoint's driver sends, and the
+  // double refuses a request that does not match -- a sender-wiring
+  // regression (sendProfileCopy shipping the wrong mode, or reading the
+  // wrong field) is caught here rather than silently rendering some
+  // OTHER checkpoint's canned outcome. This is a bridge-argument check
+  // only: it never evaluates whether a name is well-formed or a
+  // destination genuinely collides on disk -- that stays Python's job,
+  // and a double that second-guessed it would drift from the bridge it
+  // exists to imitate.
+  var PROFILE_COPY_SCENARIO_REQUESTS = {
+    'invalid-name': { mode: 'new', destination: '' },
+    'collision': { mode: 'new', destination: 'dEfAuLt' },
+    'busy': { mode: 'new', destination: 'New Ops' },
+    'created': { mode: 'new', destination: 'New Ops' },
+    'unsaved-selection': { mode: 'new', destination: 'New Ops' },
+    'eve-running': { mode: 'new', destination: 'New Ops' },
+    'replaced': { mode: 'replace', destination: 'fleet' },
+    'rollback-failed': { mode: 'replace', destination: 'fleet' }
+  };
+  api.eve_settings_copy_profile = function (expectedSource, mode, destination) {
+    console.log('DEV api.eve_settings_copy_profile(', expectedSource, mode,
+                destination, ')');
+    if (expectedSource !== eve.profile) {
+      return Promise.resolve({ accepted: false, error: 'The selected profile changed.' });
+    }
+    var expectedRequest = PROFILE_COPY_SCENARIO_REQUESTS[profileCopyScenario];
+    if (expectedRequest
+        && (mode !== expectedRequest.mode || destination !== expectedRequest.destination)) {
+      return Promise.resolve({
+        accepted: false,
+        error: 'Dev harness: the \'' + profileCopyScenario + '\' checkpoint expected '
+          + 'mode=' + expectedRequest.mode + ' destination='
+          + JSON.stringify(expectedRequest.destination) + ', got mode=' + mode
+          + ' destination=' + JSON.stringify(destination) + '.'
+      });
+    }
+    if (profileCopyScenario === 'invalid-name') {
+      return Promise.resolve({
+        accepted: false, error: 'Profile name cannot be empty.'
+      });
+    }
+    if (profileCopyScenario === 'collision') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'A profile named \'' + destination + '\' already exists.'
+      });
+    }
+    window.setTimeout(function () {
+      // The accepted-busy checkpoint: the request was taken, but nothing
+      // ever completes, so the disabled panel stays inspectable exactly
+      // as the character-copy busy fixture already leaves it.
+      if (profileCopyScenario === 'busy') return;
+      var payload = {
+        ok: true, operation: 'profile_copy', mode: mode,
+        published: true, selection_persisted: true, error: null
+      };
+      if (profileCopyScenario === 'created') {
+        // Mirrors Api._eve_select_created_profile: a successful creation
+        // both adds the new profile and moves the selection onto it.
+        var createdProfile = { path: 'newops', name: destination, file_count: 0 };
+        eve.profiles = eve.profiles.concat([createdProfile]);
+        eve.profile = createdProfile.path;
+      } else if (profileCopyScenario === 'unsaved-selection') {
+        eve.profiles = eve.profiles.concat(
+          [{ path: 'newops', name: destination, file_count: 0 }]);
+        payload.selection_persisted = false;
+        payload.error = 'Created ' + destination + ', but Wingman '
+          + 'could not remember the selection. Select it from Profile.';
+      } else if (profileCopyScenario === 'eve-running') {
+        payload.ok = false;
+        payload.published = false;
+        payload.selection_persisted = false;
+        payload.error = 'EVE is running. Close EVE and retry.';
+      } else if (profileCopyScenario === 'rollback-failed') {
+        var target = eve.profiles.filter(function (profile) {
+          return profile.path === destination;
+        })[0];
+        payload.ok = false;
+        payload.published = false;
+        payload.error = (target ? target.name : destination) + ' may now hold '
+          + 'a mix of both profiles and Wingman could not put it back. '
+          + 'Restore core_profile_20260824-140300.zip from Backups.';
+      }
+      window.onEveSettingsDone(payload);
+    }, 250);
+    return Promise.resolve({ accepted: true, error: null });
+  };
   var pendingDevCandidate = null;
+  // Monotonic counter matching Task 5's Python generation scheme: bumped
+  // on every start and cancel so a stale promise from a superseded pass
+  // is rejected by acceptIdentification() the same way it would be in
+  // production. Carried by start/check/cancel responses and by every
+  // onEveSettingsNames push.
+  var devIdentificationGeneration = 0;
 
   function devAccount(accountId) {
     return eve.accounts.filter(function (item) { return item.id === accountId; })[0];
@@ -1452,16 +2559,25 @@
   api.eve_settings_identification_start = function () {
     pendingDevCandidate = null;
     eve.identification_active = true;
-    return Promise.resolve({ status: 'watching', error: null });
+    // Bump the generation so any in-flight check promise resolves stale.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'watching', error: null,
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_check = function () {
     var result = selectedIdentityScenario.check
       || { status: 'watching', error: null };
     pendingDevCandidate = result.status === 'candidate' ? result : null;
-    if (result.status !== 'candidate') return Promise.resolve(result);
+    if (result.status !== 'candidate') {
+      return Promise.resolve(Object.assign({}, result,
+        { identification_generation: devIdentificationGeneration }));
+    }
     var account = devAccount(result.account_id);
     return Promise.resolve({
       status: 'candidate', error: null,
+      identification_generation: devIdentificationGeneration,
       account: { id: account.id, primary: account.display_name,
                  secondary: account.display_meta, option: account.name },
       characters: result.character_ids.map(devCharacter).filter(Boolean)
@@ -1470,7 +2586,12 @@
   api.eve_settings_identification_cancel = function () {
     pendingDevCandidate = null;
     eve.identification_active = false;
-    return Promise.resolve(true);
+    // Bump so any racing check that resolves after this cancel is rejected.
+    devIdentificationGeneration += 1;
+    return Promise.resolve({
+      status: 'cancelled',
+      identification_generation: devIdentificationGeneration
+    });
   };
   api.eve_settings_identification_confirm = function (accountId, characterId, name) {
     var offered = pendingDevCandidate
@@ -1687,7 +2808,39 @@
           picker.dispatchEvent(new Event('change'));
         }, 250);
       }
+      return;
     }
+    if (profileCopyScenario) {
+      paintProfileCopyScenario();
+    }
+  }
+
+  // The eleven whole-profile-copy checkpoints, driven through the real
+  // panel controls (open, mode radios, name/destination fields, submit)
+  // rather than a harness-only shortcut. 'multiple' is the fixture's own
+  // base state -- see the profiles list above -- so it opens nothing.
+  function paintProfileCopyScenario() {
+    if (profileCopyScenario === 'multiple') return;
+    WM.el('es-profile-copy-open').click();
+    if (profileCopyScenario === 'new-disclosure') return;
+    if (profileCopyScenario === 'replace-disclosure') {
+      WM.el('es-profile-copy-replace').click();
+      return;
+    }
+    if (profileCopyScenario === 'replaced' || profileCopyScenario === 'rollback-failed') {
+      WM.el('es-profile-copy-replace').click();
+      WM.el('es-profile-copy-destination').value = 'fleet';
+    } else if (profileCopyScenario === 'collision') {
+      WM.el('es-profile-copy-name').value = 'dEfAuLt';
+    } else if (profileCopyScenario === 'invalid-name') {
+      // No field to set: the checkpoint is a blank, untouched name field,
+      // submitted as-is -- the same request an idle click would send.
+    } else if (profileCopyScenario === 'busy' || profileCopyScenario === 'created'
+        || profileCopyScenario === 'eve-running'
+        || profileCopyScenario === 'unsaved-selection') {
+      WM.el('es-profile-copy-name').value = 'New Ops';
+    }
+    WM.el('es-profile-copy-submit').click();
   }
 
   function showIdentityScenario() {

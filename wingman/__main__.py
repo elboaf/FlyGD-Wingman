@@ -599,7 +599,35 @@ def build_telemetry(state, host, alert_policy):
         return None
 
 
-def build_skills_controller(api):
+def migrate_eve_authority():
+    """Run the one-way credential split before constructing EVE controllers."""
+    from .eveauth.migration import migrate_legacy_skills
+
+    return migrate_legacy_skills(
+        paths.eve_skills_file(),
+        paths.eve_authority_file(),
+    )
+
+
+def build_authority_controller(api, migration):
+    """Build shared authority only from a completed, non-lossy migration."""
+    if not migration.completed or migration.authority is None:
+        return None
+    try:
+        from .eveauth.controller import AuthorityController
+
+        return AuthorityController(
+            state_path=paths.eve_authority_file(),
+            authority=migration.authority,
+            alert=api._alert,
+            changed=api._eve_authority_changed,
+        )
+    except Exception:
+        logger.exception("EVE authority subsystem unavailable")
+        return None
+
+
+def build_skills_controller(api, authority, *, startup_warnings=()):
     """The EVE skills controller, or None where it cannot be built.
 
     NOT Windows-gated, unlike build_preview_host: twelve of the thirteen
@@ -620,6 +648,8 @@ def build_skills_controller(api):
     try:
         from .eveskills.controller import SkillsController
 
+        if authority is None:
+            return None
         return SkillsController(
             state_path=paths.eve_skills_file(),
             cache_path=paths.eve_skills_cache_file(),
@@ -635,12 +665,102 @@ def build_skills_controller(api):
             # (D3/S6). Its docstring holds the whole account.
             push=api._push_skills,
             alert=api._alert,
+            authority=authority,
+            startup_warnings=startup_warnings,
         )
     except Exception:
         # Skills are secondary to the upload workflow. A failure to
         # construct them must not stop Wingman launching.
         logger.exception("EVE skills subsystem unavailable")
         return None
+
+
+def build_fittings_controller(api, authority):
+    """Build the local fitting owner without performing any ESI request."""
+    try:
+        from .evefittings.controller import FittingsController
+
+        if authority is None:
+            return None
+        return FittingsController(
+            state_path=paths.eve_fittings_file(),
+            names_path=paths.eve_fittings_names_file(),
+            authority=authority,
+            alert=api._alert,
+            # Bound methods, never lambdas -- test_the_builder_passes_bound_
+            # methods_not_lambdas records what a lazily-resolved name in a
+            # lambda has already cost this app once (test_skills_wiring.py).
+            changed=api._push_fittings_changed,
+            progress=api._push_fittings_progress,
+        )
+    except Exception:
+        # Fittings are additive. Corrupt or unavailable local state must not
+        # prevent recording uploads or Skills from launching.
+        logger.exception("EVE fittings subsystem unavailable")
+        return None
+
+
+def wire_eve_controllers(api):
+    """Migrate, compose, then register both EVE feature participants."""
+    try:
+        migration = migrate_eve_authority()
+    except Exception as exc:
+        logger.exception("EVE authority migration failed unexpectedly")
+        api._authority_warnings = [
+            f"EVE identity migration could not run ({exc}). Restart Wingman to retry."
+        ]
+        return None, None
+
+    startup_warnings = list(migration.warnings)
+    if not migration.completed:
+        startup_warnings.append(
+            migration.error
+            or "EVE identity migration did not complete. Restart Wingman to retry."
+        )
+        api._authority_warnings = startup_warnings
+        return None, None
+
+    authority = build_authority_controller(api, migration)
+    if authority is None:
+        startup_warnings.append(
+            "Shared EVE authority is unavailable. Restart Wingman to retry."
+        )
+        api._authority_warnings = startup_warnings
+        return None, None
+
+    skills = build_skills_controller(api, authority, startup_warnings=startup_warnings)
+    fittings = build_fittings_controller(api, authority)
+
+    # Load both feature documents before startup reconciliation. In particular,
+    # Fittings converts crash-surviving in_flight intents to Unknown on load;
+    # no route may observe either feature before all derived rows have been
+    # reconciled against the successfully loaded authority roster.
+    if skills is not None:
+        authority.register_participant(skills)
+    if fittings is not None:
+        authority.register_participant(fittings)
+
+    api._authority = authority
+    api._skills = skills
+    api._fittings = fittings
+    if skills is None:
+        api._authority_warnings = [
+            *startup_warnings,
+            "The EVE skills subsystem is unavailable.",
+        ]
+    return authority, skills
+
+
+def shutdown_eve_controllers(api) -> None:
+    """Stop feature workers before the authority they consume."""
+    fittings = api._fittings
+    if fittings is not None:
+        try:
+            fittings.shutdown()
+        except Exception:
+            logger.exception("EVE fittings subsystem did not stop cleanly")
+    api.shutdown_skills()
+    api.shutdown_authority()
 
 
 def shutdown_engine(engine) -> None:
@@ -718,16 +838,17 @@ def main() -> int:
     api_box["api"] = api
     if telemetry is not None:
         api._fleet_unsubscribe = telemetry.subscribe_fleet(api._receive_fleet_snapshot)
-    # After construction, not through the constructor: the controller needs
-    # the Api's own _push and _alert. Same shape, and same reason, as
-    # ui/window.py assigning api._window after create_window(), and as the
-    # api_box hand-off directly above.
-    api._skills = build_skills_controller(api)
+    # Migration and authority composition happen after Api construction so
+    # warnings have a durable route payload and callbacks bind eagerly. They
+    # still happen before the window starts and before any EVE feature work.
+    wire_eve_controllers(api)
 
     w = None
     scheduler = None
     window = None
     poll_state = PollState()
+    shutdown_lock = threading.Lock()
+    main_window_destroyed = False
 
     def on_open() -> None:
         # Called on the pystray thread. show() and destroy() are safe from
@@ -739,34 +860,66 @@ def main() -> int:
         if window is not None:
             window.show()
 
+    def destroy_windows() -> None:
+        """Destroy each window once, retrying only targets that failed."""
+        nonlocal main_window_destroyed
+        # Serialize the native calls, not just their bookkeeping. A concurrent
+        # updater/tray request then observes the first call's result and can
+        # retry its failure without repeating a successful destruction.
+        # LOCK ORDER: shutdown_lock, Fleet lifecycle lock, then sig-bar lock.
+        # Neither auxiliary-window path takes shutdown_lock, so a creation
+        # already in progress can finish and be observed without inversion.
+        with shutdown_lock:
+            with api._fleetbar_lifecycle_lock:
+                api._fleetbar_quitting = True
+                fleet = api._fleetbar_window
+                if fleet is not None:
+                    try:
+                        fleet.destroy()
+                    except Exception:
+                        logger.exception("Fleet Bar window did not destroy cleanly")
+                    else:
+                        api._fleetbar_window = None
+                        api._fleetbar_ready = False
+
+            with api._sigbar_lifecycle_lock:
+                # Close the lifecycle before inspecting the window. A creator
+                # that won the lock has already assigned its bar; one that lost
+                # refuses before allocating a native WebView2 window.
+                api._sigbar_quitting = True
+                # The sig bar must be destroyed FIRST. pywebview's WinForms loop
+                # is Application.Run() with no context: it pumps until
+                # Application.Exit(), which fires only when the LAST window is
+                # gone. Leaving the bar alive parks the process inside
+                # window_mod.run() forever after the user chose Quit --
+                # reproduced, not theorised.
+                bar = api._sigbar_window
+                if bar is not None:
+                    try:
+                        bar.destroy()
+                    except Exception:
+                        logger.exception("Sig bar window did not destroy cleanly")
+                    else:
+                        api._sigbar_window = None
+
+            if window is not None and not main_window_destroyed:
+                try:
+                    window.destroy()  # unblocks window_mod.run() below
+                except Exception:
+                    logger.exception("Main window did not destroy cleanly")
+                else:
+                    main_window_destroyed = True
+
     def on_quit() -> None:
-        if window is None:
-            return
         # An upload runs on a daemon thread, so destroying the window here
         # kills it mid-chunk with nothing on screen -- a multi-gigabyte
         # transfer discarded by one menu click. The decision lives on Api
-        # because it has to raise the hidden window and bound its own wait;
-        # see _confirm_quit_if_busy. A refusal leaves the app running,
-        # which is the recoverable half of the two failures.
-        if not api._confirm_quit_if_busy():
-            return
-        # Floating WebViews must be destroyed FIRST. pywebview's WinForms
-        # loop exits only when its last window is gone; leaving either one
-        # alive parks the process after the user chose Quit.
-        for attr, label in (
-            ("_sigbar_window", "Sig bar"),
-            ("_fleetbar_window", "Fleet Bar"),
-        ):
-            bar = getattr(api, attr)
-            if bar is None:
-                continue
-            try:
-                bar.destroy()
-                setattr(api, attr, None)
-            except Exception:
-                logger.exception("%s window did not destroy cleanly", label)
-        window.destroy()  # unblocks window_mod.run() below
+        # because it raises a hidden window and bounds its own wait. A
+        # handoff refusal likewise leaves every service and window intact.
+        if window is not None and api._claim_quit():
+            destroy_windows()
 
+    api._request_shutdown = destroy_windows
     icon = build_tray(on_open=on_open, on_quit=on_quit)
     threading.Thread(target=icon.run, daemon=True, name="pystray").start()
 
@@ -788,9 +941,8 @@ def main() -> int:
     # Ignoring what we do not understand is the right failure here.
     window = window_mod.create(api, hidden="--hidden" in sys.argv[1:])
 
-    # The floating sig bar reopens here, not in run()'s startup func:
-    # test_startup pins that func to `api.refresh_auth` itself, and this
-    # hook is the better home anyway -- `shown` fires on the GUI thread
+    # The floating sig bar reopens here, not in run()'s startup func. This
+    # hook is the better home -- `shown` fires on the GUI thread
     # (the same thread chrome.enable_resize rides), which is the thread a
     # second WebView2 window has to be built on. The events guard is for
     # the startup tests' window fake, which has no `events` attribute.
@@ -856,21 +1008,24 @@ def main() -> int:
         # its handlers is logged and dropped (see Api._push).
         api._push_first_run_when_ready()
 
-    # Resolve the account state off the bridge thread so the Settings route
-    # is correct the first time it is opened rather than after a click.
+    # Resolve account and update state off the bridge thread so Settings is
+    # correct the first time it opens and the gear can show availability.
     #
-    # Handed to run() rather than called here. refresh_auth's first act is
-    # a push, and a push before webview.start() blocks the MAIN thread on
-    # pywebview's twenty-second readiness timeout -- an invisible window on
-    # every launch, and the push lost to _push's bare except when the
-    # timeout finally raises. pywebview runs this on its own thread once
-    # the GUI loop owns the main one.
-    window_mod.run(api.refresh_auth)  # Blocks until the window is destroyed.
+    # Handed to run() rather than called here. Both operations push, and a
+    # push before webview.start() blocks the MAIN thread on pywebview's
+    # twenty-second readiness timeout -- an invisible window on every
+    # launch, with the push dropped when that timeout raises. pywebview runs
+    # this callback on its own thread once the GUI loop owns the main one.
+    window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
 
     icon.stop()
     if scheduler is not None:
         scheduler.stop()
     shutdown_engine(engine)
+    # Close updater state before subsystem teardown. This suppresses late
+    # worker pushes and removes a ready file on ordinary Quit while retaining
+    # the persistent on-disk marker/file pair already handed to Setup.
+    api.shutdown_updates()
     # Last, and unconditional: a preview thread that outlives the window
     # still owns HWNDs, and Wingman leaves the tray but stays in Task
     # Manager. A live loopback socket on the fixed redirect port would
@@ -878,7 +1033,7 @@ def main() -> int:
     # redirect URI is registered with CCP so there is no fallback port to
     # move to -- so both teardowns run here, unconditionally, in order.
     api.shutdown_previews()
-    api.shutdown_skills()
+    shutdown_eve_controllers(api)
     return 0
 
 

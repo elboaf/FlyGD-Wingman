@@ -1,9 +1,8 @@
-"""The roster document: one file holds identity, snapshot, queue, ETags,
-and the DPAPI-wrapped refresh token for every character, so forgetting one
-is a single atomic write with no window in which a token outlives the
-character it belongs to.
+"""The Skills document holds only derived snapshots, groups, and ETags.
 
-Normalisation is tolerant rather than versioned, matching settings.py's
+Shared identity and credentials live in eveauth; legacy fields are ignored
+here and parsed only by the ordered migration path. Normalisation remains
+tolerant rather than versioned, matching settings.py's
 validated_*() functions and the rationale preview/layout.py:26-32 records:
 a partially-written or hand-edited file should cost one character's row,
 not the launch.
@@ -55,13 +54,13 @@ def test_upsert_replaces_by_id_and_keeps_position():
     reshuffle rows under the user's cursor."""
     roster = state.SkillsState(
         characters=[
-            state.Character(character_id=1, character_name="First"),
-            state.Character(character_id=2, character_name="Second"),
+            state.Character(character_id=1, group="First"),
+            state.Character(character_id=2, group="Second"),
         ]
     )
-    roster.upsert(state.Character(character_id=1, character_name="Renamed"))
+    roster.upsert(state.Character(character_id=1, group="Renamed"))
     assert [c.character_id for c in roster.characters] == [1, 2]
-    assert roster.find(1).character_name == "Renamed"
+    assert roster.find(1).group == "Renamed"
 
 
 def test_upsert_appends_an_unknown_id():
@@ -83,8 +82,8 @@ def test_upsert_refuses_a_new_character_past_capacity():
     with pytest.raises(ValueError):
         roster.upsert(state.Character(character_id=state.MAX_CHARACTERS + 1))
     # Updating one already present must still succeed at full capacity.
-    roster.upsert(state.Character(character_id=1, character_name="Renamed"))
-    assert roster.find(1).character_name == "Renamed"
+    roster.upsert(state.Character(character_id=1, group="Renamed"))
+    assert roster.find(1).group == "Renamed"
     assert len(roster.characters) == state.MAX_CHARACTERS
 
 
@@ -110,10 +109,6 @@ def test_round_trips_a_full_character():
         characters=[
             state.Character(
                 character_id=90000001,
-                character_name="Aiga Otsolen",
-                owner_hash="abc123",
-                scopes=("esi-skills.read_skills.v1",),
-                authenticated_utc=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
                 fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=UTC),
                 active_levels={3300: 5},
                 trained_levels={3300: 5, 3301: 4},
@@ -127,14 +122,190 @@ def test_round_trips_a_full_character():
                     ),
                 ),
                 error="",
-                needs_reauth=False,
-                refresh_token_blob="QUJD",
                 skills_etag='W/"abc"',
                 queue_etag='W/"def"',
+                skill_points={3300: 256000, 3301: 40000},
+                skill_points_complete=True,
+                attributes={
+                    "charisma": 19,
+                    "intelligence": 20,
+                    "memory": 20,
+                    "perception": 27,
+                    "willpower": 21,
+                },
+                attributes_fetched_utc=datetime(2026, 8, 24, 10, 30, tzinfo=UTC),
+                attributes_error="",
+                attributes_etag='W/"attrs"',
             )
         ],
     )
     assert state.from_dict(state.to_dict(original)) == original
+
+
+def test_legacy_snapshot_clears_skills_etag_until_sp_is_downloaded():
+    """A document written before this package tracked total SP has a
+    skills_etag but no skill_points map. That ETag was earned against a
+    response body that never carried SP at all -- trusting it on the first
+    post-upgrade refresh would short-circuit the request that is supposed
+    to backfill skill_points, leaving the character permanently missing it.
+    """
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "fetched_utc": "2026-08-24T10:30:00+00:00",
+                    "active_levels": {"3300": 5},
+                    "trained_levels": {"3300": 5},
+                    "skills_etag": 'W/"legacy"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == ""
+
+
+def test_malformed_persisted_sp_invalidates_completeness_and_etag():
+    """One invalid entry discards the whole SP map (unlike active/trained
+    levels, which drop per-entry) -- and a malformed-but-marked-complete map
+    must not leave a stale skills_etag standing in for it, or the next
+    refresh would send a conditional request and get back a 304 that hides
+    the very data this load just discarded."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "skill_points": {"3300": 1000, "bad": 5},
+                    "skill_points_complete": True,
+                    "skills_etag": 'W/"must-not-hide-next-body"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == ""
+
+
+def test_an_empty_sp_map_marked_complete_stays_complete():
+    """A character with zero trained skills is a real, valid state -- an
+    empty dict is structurally valid, so `skill_points_complete: true` must
+    survive rather than being treated as "no data yet"."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "skill_points": {},
+                    "skill_points_complete": True,
+                    "skills_etag": 'W/"empty-sp"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.skill_points == {}
+    assert ch.skill_points_complete is True
+    assert ch.skills_etag == 'W/"empty-sp"'
+
+
+def test_skill_points_beyond_the_cap_invalidates_the_whole_map_and_etag():
+    """Entries beyond MAX_LEVEL_ENTRIES make the whole map invalid, the same
+    as any other structural failure -- reusing active_levels/trained_levels'
+    own cap rather than a separate one, since both collections are keyed by
+    the same bounded set of real EVE skill ids. Per the legacy-ETag rule, an
+    invalid map must not leave a stale skills_etag standing in for it."""
+    raw = {
+        "characters": [
+            {
+                "character_id": 1,
+                "skill_points": {
+                    str(n): 1 for n in range(1, state.MAX_LEVEL_ENTRIES + 2)
+                },
+                "skill_points_complete": True,
+                "skills_etag": 'W/"must-not-survive-overflow"',
+            }
+        ]
+    }
+    ch = state.from_dict(raw).characters[0]
+    assert ch.skill_points == {}
+    assert ch.skill_points_complete is False
+    assert ch.skills_etag == ""
+
+
+GOOD_ATTRIBUTES = {
+    "charisma": 19,
+    "intelligence": 20,
+    "memory": 20,
+    "perception": 27,
+    "willpower": 21,
+}
+
+
+@pytest.mark.parametrize(
+    "raw_attributes",
+    [
+        pytest.param("not-a-dict", id="non_dict"),
+        pytest.param(
+            {k: v for k, v in GOOD_ATTRIBUTES.items() if k != "willpower"},
+            id="missing_name",
+        ),
+        pytest.param({**GOOD_ATTRIBUTES, "extra": 1}, id="extra_key"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": 0}, id="zero_value"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": -5}, id="negative_value"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": True}, id="bool_value"),
+        pytest.param({**GOOD_ATTRIBUTES, "willpower": 21.5}, id="non_int_value"),
+    ],
+)
+def test_a_malformed_attributes_map_loads_as_unavailable(raw_attributes):
+    """Each param is a distinct way `attributes` can fail to be exactly the
+    five ESI learning attributes as positive, non-bool integers -- not a
+    dict at all, missing a name, carrying an extra one, non-positive, a
+    bool (an int subclass that would otherwise sail through as 1), or a
+    value that is not an integer at all. Any one of them must load as no
+    data whatsoever, never a partial attribute set standing in for a real
+    snapshot."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "attributes": raw_attributes,
+                    "attributes_fetched_utc": "2026-08-24T10:30:00+00:00",
+                    "attributes_etag": 'W/"attrs"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.attributes == {}
+    assert ch.attributes_fetched_utc is None
+    assert ch.attributes_etag == ""
+
+
+def test_valid_attributes_without_a_fetched_timestamp_load_as_unavailable():
+    """A structurally valid attributes map with no attributes_fetched_utc
+    has no freshness fact behind it -- it must not be trusted as a real
+    snapshot, and its ETag must not survive to hide the request that would
+    supply both together."""
+    loaded = state.from_dict(
+        {
+            "characters": [
+                {
+                    "character_id": 1,
+                    "attributes": dict(GOOD_ATTRIBUTES),
+                    "attributes_etag": 'W/"attrs"',
+                }
+            ]
+        }
+    )
+    ch = loaded.find(1)
+    assert ch.attributes == {}
+    assert ch.attributes_fetched_utc is None
+    assert ch.attributes_etag == ""
 
 
 def test_from_dict_never_raises_on_junk():
@@ -186,37 +357,24 @@ def test_a_later_duplicate_row_wins_over_an_earlier_one():
     can, because the two rows disagree."""
     raw = {
         "characters": [
-            {"character_id": 1, "character_name": "Stale"},
-            {"character_id": 2, "character_name": "Second"},
-            {"character_id": 1, "character_name": "Fresh"},
+            {"character_id": 1, "error": "Stale"},
+            {"character_id": 2, "error": "Second"},
+            {"character_id": 1, "error": "Fresh"},
         ]
     }
     characters = state.from_dict(raw).characters
     # Position: id 1 stays first, since that is where it was first seen.
     assert [c.character_id for c in characters] == [1, 2]
     # Data: id 1's LATER row is what won.
-    assert characters[0].character_name == "Fresh"
+    assert characters[0].error == "Fresh"
 
 
-def test_scopes_are_capped():
-    """The one collection with no other cap of its own --
-    TriffSkillsState.cs:159's `.Take(100)`."""
-    raw = {
-        "characters": [
-            {
-                "character_id": 1,
-                "scopes": [f"scope-{n}" for n in range(state.MAX_SCOPES + 20)],
-            }
-        ]
-    }
-    assert len(state.from_dict(raw).characters[0].scopes) == state.MAX_SCOPES
+def test_legacy_authority_fields_are_not_retained_by_skills_state():
+    """Only migration may parse the old combined document's authority fields.
 
-
-def test_character_name_owner_hash_and_error_are_trimmed():
-    """TriffSkillsState.cs:157-158,163 trims these three fields. The token
-    blob and the two ETags are opaque values rather than display text and
-    must NOT be trimmed -- a blob or ETag that happens to start or end
-    with whitespace-like bytes would be silently corrupted."""
+    The Skills ETag remains opaque, but only survives beside the complete
+    skill-point map added by the training-time feature.
+    """
     raw = {
         "characters": [
             {
@@ -226,15 +384,23 @@ def test_character_name_owner_hash_and_error_are_trimmed():
                 "error": "  ESI timed out  ",
                 "refresh_token_blob": "  QUJD  ",
                 "skills_etag": '  W/"abc"  ',
+                "skill_points": {"3300": 1000},
+                "skill_points_complete": True,
             }
         ]
     }
     character = state.from_dict(raw).characters[0]
-    assert character.character_name == "Aiga"
-    assert character.owner_hash == "abc123"
     assert character.error == "ESI timed out"
-    assert character.refresh_token_blob == "  QUJD  "
     assert character.skills_etag == '  W/"abc"  '
+    for field in (
+        "character_name",
+        "owner_hash",
+        "scopes",
+        "authenticated_utc",
+        "needs_reauth",
+        "refresh_token_blob",
+    ):
+        assert not hasattr(character, field)
 
 
 def test_malformed_skill_levels_drop_individually():
@@ -303,11 +469,6 @@ def test_queue_is_capped():
         ]
     }
     assert len(state.from_dict(raw).characters[0].queue) == state.MAX_QUEUE_ENTRIES
-
-
-def test_scopes_are_deduped_and_non_strings_dropped():
-    raw = {"characters": [{"character_id": 1, "scopes": ["a", "a", 7, None, "b"]}]}
-    assert state.from_dict(raw).characters[0].scopes == ("a", "b")
 
 
 def test_an_unparseable_timestamp_becomes_none():
@@ -405,7 +566,7 @@ def test_save_then_load_round_trips(tmp_path):
     target = tmp_path / "eve_skills.json"
     original = state.SkillsState(
         selected_plan_name="Interceptors",
-        characters=[state.Character(character_id=1, character_name="Aiga")],
+        characters=[state.Character(character_id=1, group="Wolfpack")],
     )
     state.save(original, target)
     loaded, warnings = state.load(target)
@@ -699,16 +860,24 @@ def test_bak_mode_is_hardened_on_the_recovery_write_back_path_too_on_posix(tmp_p
     assert stat.S_IMODE(bak.stat().st_mode) == 0o600
 
 
-def test_group_and_selected_group_survive_a_round_trip():
+def test_group_selected_group_and_authority_marker_survive_a_round_trip():
     built_state = state.SkillsState(
         characters=[state.Character(character_id=1, group="Wolfpack")],
         selected_group="Wolfpack",
+        authority_migrated=True,
     )
 
     restored = state.from_dict(state.to_dict(built_state))
 
     assert restored.characters[0].group == "Wolfpack"
     assert restored.selected_group == "Wolfpack"
+    assert restored.authority_migrated is True
+
+
+def test_pre_migration_document_defaults_authority_marker_to_false():
+    restored = state.from_dict({"characters": []})
+
+    assert restored.authority_migrated is False
 
 
 def test_an_over_long_group_name_is_cleared_not_truncated():
