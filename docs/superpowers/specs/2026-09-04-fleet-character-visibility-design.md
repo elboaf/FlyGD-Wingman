@@ -173,10 +173,15 @@ presentation lock, saves the prior accepted generation/snapshot/signature, sets
 the accepted generation to a rejecting sentinel, and clears current state. Any
 callback arriving during the settings/reconciliation phase is therefore
 discarded regardless of its generation. After `reconcile()` returns, `Api`
-installs the returned generation under the presentation lock. It then reads
-`TelemetryCoordinator.snapshot()` and routes that latest value through the
-ordinary generation check, recovering a current snapshot whose callback arrived
-during the closed handoff; otherwise the next cadence publication fills it.
+installs the returned generation under the presentation lock. If the requested
+Fleet mode is enabled, it then reads `TelemetryCoordinator.snapshot()` and
+routes that value through the ordinary generation check, recovering a current
+snapshot whose callback arrived during the closed handoff. A synthesized
+no-publication snapshot carries generation `0` and is rejected, so remembered
+characters remain Known rather than being falsely marked Offline while the
+first current publication is still pending. If Fleet mode is disabled, `Api`
+does not sample a snapshot and keeps current roster state unknown. Otherwise
+the next cadence publication fills it.
 
 If the enabled-setting transaction fails before reconciliation, the toggle is
 refused and the saved accepted generation/snapshot/signature are restored under
@@ -191,7 +196,8 @@ no exception path can leave the rejecting sentinel installed permanently.
 Startup uses the same handoff rather than treating it as a toggle-only rule:
 `Api` begins with the rejecting sentinel, startup reconciliation returns the
 persisted Fleet mode's requested generation, and only then does `Api` open
-acceptance and sample the coordinator's latest snapshot. A reconcile caused
+acceptance and, when Fleet is enabled, sample the coordinator's latest
+snapshot. A reconcile caused
 only by Preview, Alert, or folder settings does not close Fleet acceptance when
 Fleet mode itself is unchanged.
 
