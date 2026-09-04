@@ -2272,6 +2272,15 @@
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
     <div class="statusbar">
+      <!-- One quick toggle for the separate combat display. Text, not an
+           invented icon: DPS is the term the window and its column already
+           use, and this stays in the status strip rather than consuming the
+           title bar's scarce destination space. First in the strip so the
+           sig bar toggle can sit directly beside the SIG segment it
+           points at. -->
+      <button class="winbtn" id="btn-fleetbar" title="Floating Fleet DPS / EWAR bar"
+              aria-label="Floating Fleet DPS / EWAR bar"
+              aria-pressed="false">DPS</button>
       <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
            .winbtn, not a .btn: it is chrome that lives beside chrome, and
            the 44px square keeps the strip's height unchanged. `.active`
@@ -2279,20 +2288,12 @@
            style.css, which colours the glyph and not the fill, so the
            accent stays the strip's scarcity.
 
-           First child, deliberately: the strip is a plain flex row and the
-           progress track hides when nothing runs, so from the middle the
-           button floated in dead space with no visual neighbour to explain
-           it. Beside the EVE segment it reads as a control FOR that
-           segment, which is what it is. -->
+           Directly left of the EVE segment, with a ">" between the sig
+           glyph and that segment's SIG readout: the arrow says what the
+           toggle is FOR -- it floats the very segment it points at --
+           which a bare medallion beside three labels never could. -->
       <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
-              aria-pressed="false">&#8982;</button>
-      <!-- One quick toggle for the separate combat display. Text, not an
-           invented icon: DPS is the term the window and its column already
-           use, and this stays in the status strip rather than consuming the
-           title bar's scarce destination space. -->
-      <button class="winbtn" id="btn-fleetbar" title="Floating Fleet DPS / EWAR bar"
-              aria-label="Floating Fleet DPS / EWAR bar"
-              aria-pressed="false">DPS</button>
+              aria-pressed="false">&#8982;&#8250;</button>
       <span class="evestat" id="evestat" hidden>
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>

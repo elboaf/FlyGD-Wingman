@@ -20,8 +20,15 @@
     body {
       /* Measured by sigbar.js after every render and pushed back through
          fit_sig_bar, so the window hugs its text in BOTH axes and the
-         width is never a Python-side guess about font metrics. */
+         width is never a Python-side guess about font metrics. The
+         padding is the drop shadow's room: box-shadow paints outside the
+         element but never enters scrollWidth, so without margin of its
+         own the overflow:hidden window would crop the shadow to a hard
+         square edge -- the very thing the rounded shell exists to lose.
+         scrollWidth/scrollHeight include the padding, so the fit
+         round-trip still measures the true footprint. */
       width: max-content;
+      padding: 8px;
       /* The drag surface is the whole bar: nothing on it is clickable, so
          easy_drag=False plus one full-body region is honest (the sibling
          note in index.html's titlebar explains why buttons and drag
@@ -38,10 +45,16 @@
       display: flex;
       width: max-content;
       padding: 6px 12px;
-      /* Fixed, deliberately: the colour/opacity preferences were scrapped
-         for simplicity. Opaque-ish dark over whatever is underneath; the
-         text is a child of this box and always full strength. */
-      background: rgb(20 16 28 / 0.9);
+      /* A floating card, not a strip torn off the main window: the same
+         border/gradient/radius/shadow treatment as the fleet telemetry
+         window's .fleet-shell (fleetbar.html), so the two floats read as
+         siblings. The shell is opaque behind its text -- the full-opacity
+         text invariant is untouched; only the page OUTSIDE the radius is
+         transparent, which is what makes the corners look rounded. */
+      border: 1px solid var(--control-border);
+      border-radius: var(--radius-sm);
+      background: linear-gradient(180deg, var(--card-top), var(--panel) 78%);
+      box-shadow: 0 8px 24px var(--titlebar-edge);
     }
     /* style.css hides .evestat below a 720px viewport -- a rule for the
        MAIN window's narrow floor, which this bar NEVER exceeds. Without
