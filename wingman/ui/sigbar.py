@@ -78,52 +78,59 @@ def create(api):
     on the UI thread through a synchronous Invoke -- the handle exists
     by the time create_window returns.
 
-    `on_top=True` is pywebview's own pinned flag: the WinForms backend sets
-    TopMost on the form at creation, on the UI thread, which is the whole
-    feature. There is deliberately NO handler on `shown` or `moved` here --
-    see the comment at the bottom of the file for the deadlock that taught
-    this module to leave pywebview's event threads alone.
+    `on_top=True` is pywebview's own pinned flag: the WinForms backend
+    sets TopMost on the form at creation, on the UI thread, which is the
+    whole feature. There is deliberately NO handler on `shown` or
+    `moved` here -- see the comment at the bottom of the file for the
+    deadlock that taught this module to leave pywebview's event threads
+    alone.
+
+    Returns None when the app is quitting: the guided-update flow tears
+    the bar down before restarting, and a create racing that teardown
+    would leak a WebView2 window into the relaunch.
     """
     import webview
 
-    section = api._state.settings.get("sig_bar") or {}
-    x, y = section.get("x"), section.get("y")
-    if x is None or y is None:
-        x, y = _default_placement(window_mod._system_scale)
+    # Covers the native create AND publication. Shutdown taking the same lock
+    # either waits and destroys this exact bar, or wins first and closes the
+    # lifecycle before WebView2 can allocate another window.
+    with api._sigbar_lifecycle_lock:
+        if api._sigbar_quitting:
+            return None
+        section = api._state.settings.get("sig_bar") or {}
+        x, y = section.get("x"), section.get("y")
+        if x is None or y is None:
+            x, y = _default_placement(window_mod._system_scale)
 
-    bar = webview.create_window(
-        "Wingman sig bar",
-        str(window_mod._web_dir() / "sigbar.html"),
-        js_api=api,
-        width=WIDTH,
-        height=HEIGHT,
-        x=x,
-        y=y,
-        frameless=True,
-        # The page marks its whole body as the drag region; nothing on the
-        # bar is clickable, so easy_drag=False stays honest here exactly as
-        # it does on the main window.
-        easy_drag=False,
-        on_top=True,
-        # The bar is dragged by its body and must never steal focus from
-        # the client being flown.
-        focus=False,
-        # The native surface paints before the first HTML frame; a mismatch
-        # is a white flash, same as the main window's BACKGROUND note.
-        background_color=window_mod.BACKGROUND,
-        min_size=MIN_SIZE,
-        # ALWAYS hidden at creation, including the first enable: the
-        # taskbar button is created when a window first becomes visible,
-        # so a bar that shows before the tool-window style below is
-        # applied can carry a taskbar button and an aero preview that
-        # then persist. Hidden first, styled, then shown by reveal_bar,
-        # the button is never created at all.
-        hidden=True,
-    )
-    api._sigbar_window = bar
-    if sys.platform == "win32":
-        _apply_tool_style(bar)
-    return bar
+        bar = webview.create_window(
+            "Wingman sig bar",
+            str(window_mod._web_dir() / "sigbar.html"),
+            js_api=api,
+            width=WIDTH,
+            height=HEIGHT,
+            x=x,
+            y=y,
+            frameless=True,
+            # The page marks its whole body as the drag region; nothing on the
+            # bar is clickable, so easy_drag=False stays honest here exactly as
+            # it does on the main window.
+            easy_drag=False,
+            on_top=True,
+            # The bar is dragged by its body and must never steal focus
+            # from the client being flown.
+            focus=False,
+            # The native surface paints before the first HTML frame; a
+            # mismatch is a white flash, same as the main window's note.
+            background_color=window_mod.BACKGROUND,
+            min_size=MIN_SIZE,
+            # ALWAYS hidden at creation, including the first enable -- see
+            # the docstring. reveal_bar does the showing.
+            hidden=True,
+        )
+        api._sigbar_window = bar
+        if sys.platform == "win32":
+            _apply_tool_style(bar)
+        return bar
 
 
 # Native show/hide and the style patch all key off the HWND. ctypes calls
@@ -245,16 +252,27 @@ def restore(api) -> None:
     except Exception:
         logger.exception("sig bar window could not be created")
         return
+    if bar is None:
+        return
 
     def reveal() -> None:
+        shown = False
         try:
-            reveal_bar(bar)
+            with api._sigbar_lifecycle_lock:
+                # The timer belongs to this exact creation. A shutdown or a
+                # replacement makes it stale; neither may resurrect the old
+                # native window after teardown has begun.
+                if api._sigbar_quitting or api._sigbar_window is not bar:
+                    return
+                reveal_bar(bar)
+                shown = True
+        except Exception:
+            logger.exception("sig bar window could not be shown")
+        if shown:
             # Same instant-content rule as Api.toggle_sig_bar: the poll is
             # up to 3s away and an empty bar reads as broken. The render
             # this triggers also re-fits the (now visible) bar.
             api._push_eve_status()
-        except Exception:
-            logger.exception("sig bar window could not be shown")
 
     threading.Timer(0.3, reveal).start()
 

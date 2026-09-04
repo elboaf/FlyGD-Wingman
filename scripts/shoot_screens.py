@@ -716,8 +716,8 @@ def await_incumbent_exit(timeout_s: float = 120.0) -> None:
         time.sleep(1.0)
     raise BusyError(
         f"Wingman did not exit within {timeout_s:.0f}s. Either it has not "
-        "been quit yet, or it was and _confirm_quit_if_busy "
-        "(__main__.py:669) refused because an upload is in flight.\n"
+        "been quit yet, or it was and _claim_quit refused because an "
+        "upload is in flight.\n"
         "Nothing was killed and nothing needs restoring. Quit it from the "
         "tray menu -- once any upload finishes if that is what is blocking "
         "it -- then re-run."

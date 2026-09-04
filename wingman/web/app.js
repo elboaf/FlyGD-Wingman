@@ -55,7 +55,7 @@
                  'onPreviewBindCaptured',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
-                 'onSigBarState',
+                 'onSigBarState', 'onUpdateStatus',
                  'onSkills', 'onSkillsProgress'];
 
   WM.handle = function (name, fn) {
@@ -309,6 +309,22 @@
   });
 
   // ---- title bar ----------------------------------------------------
+  // Cached reads may resolve after a newer Python push. Advancing on every
+  // accepted render, including same-state progress, lets each read prove no
+  // fresher badge payload arrived while it was in flight.
+  var updateBadgeGeneration = 0;
+
+  function renderUpdateBadge(payload) {
+    updateBadgeGeneration += 1;
+    var gear = WM.el('btn-settings');
+    var available = !!payload.update_available;
+    gear.classList.toggle('update-available', available);
+    gear.title = available ? 'Settings — update available' : 'Settings';
+    gear.setAttribute('aria-label', gear.title);
+    document.dispatchEvent(new CustomEvent('wm:update-status', {detail: payload}));
+  }
+  WM.handle('onUpdateStatus', renderUpdateBadge);
+
   WM.el('btn-minimize').addEventListener('click', function () {
     WM.send('minimize');
   });
@@ -338,6 +354,15 @@
     // Save from it wrote the blanks back.
     WM.send('get_settings').then(function (payload) {
       if (payload) window.onSettings(payload);
+    });
+    // Keep this cached read for dev mode, where Python never pushes, but do
+    // not let its older snapshot repaint over an update push that won the
+    // race while the bridge promise was pending.
+    var badgeGenerationAtRead = updateBadgeGeneration;
+    WM.send('update_status').then(function (payload) {
+      if (payload && updateBadgeGeneration === badgeGenerationAtRead) {
+        window.onUpdateStatus(payload);
+      }
     });
   });
 }());

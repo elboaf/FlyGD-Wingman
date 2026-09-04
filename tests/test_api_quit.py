@@ -4,9 +4,8 @@ The upload runs on a daemon thread (`Api.start_upload`), so tray Quit ends
 the process and the upload dies mid-chunk with nothing on screen. These
 cover the guard that turns that silent discard into a decision.
 
-Driven at the Api seam rather than through `__main__.on_quit`, which is a
-closure inside main() that no test can reach. That is the point of putting
-the decision on Api: on_quit is left as glue thin enough to read.
+Driven at the Api seam so the upload/handoff decision is independent of
+window destruction. `__main__` is covered separately as lifecycle glue.
 """
 
 import threading
@@ -16,9 +15,9 @@ import pytest
 from tests.test_api import FakeWindow, make_api
 from wingman.ui import api as api_mod
 
-# Released by the autouse fixture below. The stand-in upload thread only has
-# to be alive, not to do anything, and a thread that outlived its test would
-# keep _busy() true for the next one.
+# Released by the autouse fixture below. The stand-in upload holds the same
+# claim as a real worker so Quit exercises the production synchronization
+# contract rather than relying on a thread handle's liveness.
 stop = threading.Event()
 
 
@@ -32,7 +31,15 @@ def _release_workers():
 def busy_api(tmp_path, window=None, **kw):
     """An Api that reports an upload in flight, without running one."""
     api = make_api(tmp_path, window if window is not None else FakeWindow(), **kw)
-    api._upload_thread = threading.Thread(target=lambda: stop.wait(5))
+    assert api._work_gate.claim_upload()
+
+    def hold_claim():
+        try:
+            stop.wait(5)
+        finally:
+            api._work_gate.release_upload()
+
+    api._upload_thread = threading.Thread(target=hold_claim)
     api._upload_thread.start()
     return api
 
@@ -46,9 +53,10 @@ def test_quitting_while_idle_asks_nothing_and_does_not_raise_the_window(tmp_path
     window = FakeWindow()
     api = make_api(tmp_path, window)
 
-    assert api._confirm_quit_if_busy() is True
+    assert api._claim_quit() is True
     assert window.shown == 0
     assert window.evaluated == [], "an idle quit must push no dialog"
+    assert not api._work_gate.claim_upload(), "Quit did not atomically close the gate"
 
 
 def test_a_busy_quit_raises_the_window_before_asking(tmp_path):
@@ -62,7 +70,7 @@ def test_a_busy_quit_raises_the_window_before_asking(tmp_path):
     window = FakeWindow()
     api = busy_api(tmp_path, window, id_factory=lambda: "q-1")
 
-    worker = threading.Thread(target=api._confirm_quit_if_busy)
+    worker = threading.Thread(target=api._claim_quit)
     worker.start()
     for _ in range(500):
         if window.evaluated:
@@ -78,9 +86,7 @@ def test_confirming_a_busy_quit_returns_true(tmp_path):
     api = busy_api(tmp_path, id_factory=lambda: "q-2")
     result = {}
 
-    worker = threading.Thread(
-        target=lambda: result.update(ok=api._confirm_quit_if_busy())
-    )
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
     worker.start()
     for _ in range(500):
         api.dialog_response("q-2", True)
@@ -88,15 +94,16 @@ def test_confirming_a_busy_quit_returns_true(tmp_path):
         if not worker.is_alive():
             break
     assert result == {"ok": True}
+    stop.set()
+    api._upload_thread.join(timeout=5)
+    assert not api._work_gate.claim_upload(), "confirmed Quit did not close the gate"
 
 
 def test_declining_a_busy_quit_returns_false(tmp_path):
     api = busy_api(tmp_path, id_factory=lambda: "q-3")
     result = {}
 
-    worker = threading.Thread(
-        target=lambda: result.update(ok=api._confirm_quit_if_busy())
-    )
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
     worker.start()
     for _ in range(500):
         api.dialog_response("q-3", False)
@@ -116,7 +123,123 @@ def test_an_unanswered_quit_is_read_as_do_not_quit(tmp_path, monkeypatch):
     monkeypatch.setattr(api_mod, "QUIT_CONFIRM_TIMEOUT_S", 0.05)
     api = busy_api(tmp_path)
 
-    assert api._confirm_quit_if_busy() is False
+    assert api._claim_quit() is False
+
+
+def test_quit_refusal_keeps_handoff_reason_if_state_changes_before_alert(tmp_path):
+    window = FakeWindow()
+    api = make_api(tmp_path, window)
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    assert api._work_gate.claim_handoff("handing_off")
+    after_claim = threading.Barrier(2)
+    real_claim = api._work_gate.claim_quit
+
+    def paused_claim(*, force_upload):
+        result = real_claim(force_upload=force_upload)
+        after_claim.wait(timeout=2)
+        after_claim.wait(timeout=2)
+        return result
+
+    api._work_gate.claim_quit = paused_claim
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
+    worker.start()
+    after_claim.wait(timeout=2)
+    api._work_gate.release_handoff()
+    after_claim.wait(timeout=2)
+    worker.join(timeout=2)
+
+    assert result == {"ok": False}
+    assert window.shown == 1
+    assert alerts == [("info", "Update", "Update installation is being prepared.")]
+
+
+def test_quit_already_claimed_is_idempotently_permitted(tmp_path):
+    window = FakeWindow()
+    api = make_api(tmp_path, window)
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    assert api._work_gate.claim_quit(force_upload=False)
+
+    assert api._claim_quit() is True
+
+    assert window.shown == 0
+    assert alerts == []
+
+
+def test_quit_is_refused_with_information_during_each_handoff_phase(tmp_path):
+    for phase in ("handing_off", "revalidating", "launching"):
+        window = FakeWindow()
+        api = make_api(tmp_path, window)
+        alerts = []
+        api._alert = lambda *args: alerts.append(args)
+        assert api._work_gate.claim_handoff(phase)
+
+        assert api._claim_quit() is False
+
+        assert window.shown == 1
+        assert alerts == [("info", "Update", "Update installation is being prepared.")]
+
+
+def test_forced_quit_refusal_keeps_handoff_reason_if_handoff_then_releases(tmp_path):
+    window = FakeWindow()
+    api = busy_api(tmp_path, window)
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    after_claim = threading.Barrier(2)
+    real_claim = api._work_gate.claim_quit
+
+    def approve_then_handoff(*args, **kwargs):
+        stop.set()
+        api._upload_thread.join(timeout=5)
+        assert api._work_gate.claim_handoff("handing_off")
+        return True
+
+    def paused_claim(*, force_upload):
+        result = real_claim(force_upload=force_upload)
+        if force_upload and not result:
+            after_claim.wait(timeout=2)
+            after_claim.wait(timeout=2)
+        return result
+
+    api._ask = approve_then_handoff
+    api._work_gate.claim_quit = paused_claim
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
+    worker.start()
+    after_claim.wait(timeout=2)
+    api._work_gate.release_handoff()
+    after_claim.wait(timeout=2)
+    worker.join(timeout=2)
+
+    assert result == {"ok": False}
+    assert window.shown == 2
+    assert alerts == [("info", "Update", "Update installation is being prepared.")]
+
+
+def test_handoff_winning_during_upload_confirmation_refuses_quit(tmp_path):
+    window = FakeWindow()
+    api = busy_api(tmp_path, window, id_factory=lambda: "q-4")
+    alerts = []
+    api._alert = lambda *args: alerts.append(args)
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(ok=api._claim_quit()))
+    worker.start()
+    for _ in range(500):
+        if window.evaluated:
+            break
+        worker.join(0.01)
+
+    stop.set()
+    api._upload_thread.join(timeout=5)
+    assert api._work_gate.claim_handoff("handing_off")
+    api.dialog_response("q-4", True)
+    worker.join(timeout=5)
+
+    assert result == {"ok": False}
+    assert window.shown == 2
+    assert alerts == [("info", "Update", "Update installation is being prepared.")]
 
 
 def test_the_dialog_cannot_carry_the_previous_uploads_percentage(tmp_path, monkeypatch):

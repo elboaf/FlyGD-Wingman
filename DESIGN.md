@@ -622,6 +622,12 @@ Route and section entry is how screens **fetch**. There is no polling and
 nothing is pushed at boot; a subsystem that costs nothing until you open it
 must not push state at launch.
 
+Update availability is application chrome, not General-section content.
+Wingman therefore starts one background GitHub check after the page is ready
+so the Settings gear can show availability before General opens. It does not
+run inside `get_settings()`, block hydration, poll, download, or push before
+readiness; General reads the cached state and offers an explicit retry.
+
 Leaving is load-bearing, not bookkeeping. `bookmarks.js` and `previews.js`
 each install a document-level `keydown` listener while capturing a keybind,
 and each disarms it on being left. `stopPropagation()` does not stop a

@@ -683,6 +683,79 @@
     };
   }
 
+  // Exact copy of Api._update_snapshot_locked's permission policy for a
+  // cached release in a frozen build. Keeping every state here makes fixture
+  // drift visible instead of letting base defaults silently grant an action.
+  var DEV_UPDATE_PERMISSIONS = JSON.parse('{"idle":{"can_check":true,"can_download":false,"can_install":false},"checking":{"can_check":false,"can_download":false,"can_install":false},"current":{"can_check":true,"can_download":false,"can_install":false},"unavailable":{"can_check":true,"can_download":false,"can_install":false},"available":{"can_check":true,"can_download":true,"can_install":false},"check_failed":{"can_check":true,"can_download":true,"can_install":false},"download_failed":{"can_check":true,"can_download":true,"can_install":false},"downloading":{"can_check":false,"can_download":false,"can_install":false},"ready":{"can_check":false,"can_download":false,"can_install":true},"handing_off":{"can_check":false,"can_download":false,"can_install":false},"revalidating":{"can_check":false,"can_download":false,"can_install":false},"launching":{"can_check":false,"can_download":false,"can_install":false},"closed":{"can_check":false,"can_download":false,"can_install":false}}');
+
+  function devUpdateState() {
+    // ?dev=1&update=<state> selects which of the card's states renders,
+    // so every state Task 7's smoke checklist calls for is reachable by
+    // hand without touching Python: current, checking, an automatic
+    // offline failure, available, downloading (with real bytes for the
+    // progress bar), ready (declared frozen so Install actually shows,
+    // which a real source checkout never is), and a manual failure.
+    var match = /[?&]update=([\w-]+)/.exec(window.location.search);
+    var state = match ? match[1] : 'available';
+    var base = {
+      installed_version: '0.0.0-dev',
+      available_version: '4.9.0',
+      downloaded_bytes: 0,
+      total_bytes: 42000000,
+      error: ''
+    };
+    var payload;
+    // update_available mirrors Api._update_snapshot_locked: true whenever
+    // a release is cached, which survives through check_failed/ready/
+    // download_failed rather than flickering off the moment a later
+    // action fails -- app.js's gear badge reads exactly this field.
+    switch (state) {
+      case 'idle':
+        payload = Object.assign({}, base, {
+          state: 'idle', available_version: '', update_available: false
+        });
+        break;
+      case 'checking':
+        payload = Object.assign({}, base, {
+          state: 'checking', available_version: '', update_available: false
+        });
+        break;
+      case 'current':
+        payload = Object.assign({}, base, {
+          state: 'current', available_version: '', update_available: false
+        });
+        break;
+      case 'unavailable':
+        payload = Object.assign({}, base, {
+          state: 'unavailable', available_version: '', update_available: false
+        });
+        break;
+      case 'downloading':
+        payload = Object.assign({}, base, {
+          state: 'downloading', downloaded_bytes: 18000000,
+          update_available: true
+        });
+        break;
+      case 'ready':
+        payload = Object.assign({}, base, {
+          state: 'ready', downloaded_bytes: 42000000, update_available: true
+        });
+        break;
+      case 'error':
+        payload = Object.assign({}, base, {
+          state: 'download_failed', update_available: true,
+          error: 'The download did not match what the release published. '
+               + 'Try downloading again.'
+        });
+        break;
+      default:
+        payload = Object.assign({}, base, {
+          state: 'available', update_available: true
+        });
+    }
+    return Object.assign(payload, DEV_UPDATE_PERMISSIONS[payload.state]);
+  }
+
   // The bar page pulls its section once at load; so does bookmarks.js
   // for the toggle's initial paint. Returns the same object the payload
   // above carries, so the two doubles cannot disagree.
@@ -700,6 +773,24 @@
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());
+  };
+
+  api.update_status = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.check_for_updates = function () {
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.download_update = function () {
+    console.log('DEV api.download_update()');
+    return Promise.resolve(devUpdateState());
+  };
+
+  api.install_update = function () {
+    console.log('DEV api.install_update()');
+    return Promise.resolve(devUpdateState());
   };
 
   // ---- FightRecorder: the harness has no OBS and no network, so the

@@ -20,8 +20,15 @@ Every rule below is here because it was broken and shipped:
 import pathlib
 import re
 
-WEB = pathlib.Path(__file__).resolve().parents[1] / "wingman" / "web"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+WEB = ROOT / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
+
+
+def test_design_records_the_global_badge_fetch_exception():
+    design = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    assert "update availability" in design.lower()
+    assert "after the page is ready" in design.lower()
 
 
 def _settings_route() -> str:
@@ -424,3 +431,185 @@ def test_each_folder_field_reaches_its_own_note_and_message():
             f"{name} is keyed {sorted(got)} but the folders are "
             f"{sorted(keys)}; the odd one out silently reports nothing"
         )
+
+
+# ---- Task 7: About-card update UI --------------------------------------
+
+
+def about_card_html() -> str:
+    """The `About Wingman` card's markup, comments stripped.
+
+    Same reasoning as `_settings_route`/`_panes` above: this file is read
+    lexically, so a helper narrows every assertion below to the one card
+    rather than to the whole page, which is what makes a false pass here
+    findable.
+    """
+    body = re.sub(r"<!--.*?-->", "", HTML, flags=re.DOTALL)
+    start = body.index("<h2>About Wingman</h2>")
+    end = body.index("</section>", start)
+    return body[start:end]
+
+
+def test_about_card_has_live_update_status_progress_and_actions():
+    card = about_card_html()
+    assert 'aria-label="Settings"' in HTML
+    assert 'id="update-status"' in card and 'role="status"' in card
+    assert 'id="update-progress"' in card and "<progress" in card
+    for control in ("btn-update-check", "btn-update-download", "btn-update-install"):
+        assert f'id="{control}"' in card
+    # Determinate from the start, not an indeterminate bar dressed as one:
+    # the renderer only ever sets `.max`/`.value`, never removes them.
+    assert 'max="1" value="0"' in card
+    # One accent or none, and this card offers none -- `.btn.acc` is
+    # reserved for the single primary action a screen exists to perform,
+    # and Settings has no such action.
+    assert "btn acc" not in card
+    # Start-on-login and the licence line survive; this is an addition to
+    # the card, not a replacement of it.
+    assert 'id="start-on-login"' in card
+    assert 'id="msg-about"' in card
+
+
+def test_update_progress_is_hidden_until_a_download_starts():
+    card = about_card_html()
+    assert re.search(r'<progress id="update-progress"[^>]*\bhidden\b', card), (
+        "the progress element must start hidden -- there is nothing to "
+        "show a percentage of before a download begins"
+    )
+
+
+def test_install_uses_app_confirm_before_bridge_call():
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    confirm = settings_js.index("WM.confirm('Install update?'")
+    send = settings_js.index("WM.send('install_update')", confirm)
+    assert confirm < send
+    assert "window.confirm" not in settings_js
+
+
+def test_general_entry_reads_update_status_and_no_other_section_does():
+    """The read that fills the card's content must be scoped the same way
+    every other section-owned fetch is (alerts.js, bookmarks.js,
+    previews.js): on `wm:section === 'general'`, not on every section
+    change, or a screen the user is not looking at keeps polling.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    match = re.search(
+        r"document\.addEventListener\('wm:section', function \(ev\) \{\s*"
+        r"if \(ev\.detail === 'general'\) \{([^}]*)\}",
+        settings_js,
+    )
+    assert match, "no wm:section listener scoped to 'general' was found"
+    assert "WM.send('update_status')" in match.group(1)
+
+
+def test_general_update_read_cannot_overwrite_any_newer_card_render():
+    """Pushes own freshness even when their phase does not change.
+
+    Download progress sends several `downloading` payloads, so comparing
+    states cannot detect that a cached read is stale. The card renderer must
+    advance an unconditional generation on every accepted render, while the
+    General-entry read may paint only if that generation has not changed.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    renderer = settings_js.split("function renderUpdate(p) {", 1)[1].split("\n  }", 1)[
+        0
+    ]
+    listener = settings_js.split("document.addEventListener('wm:update-status'", 1)[
+        1
+    ].split("\n  });", 1)[0]
+    general_entry = settings_js.split("document.addEventListener('wm:section'", 1)[
+        1
+    ].split("\n  });", 1)[0]
+
+    assert "var updateRenderGeneration = 0;" in settings_js
+    increment = "updateRenderGeneration += 1;"
+    assert increment in renderer
+    assert "p.state" not in renderer[: renderer.index(increment)], (
+        "generation must advance before any state comparison so same-state "
+        "progress pushes invalidate older reads"
+    )
+    assert "renderUpdate(ev.detail || {});" in listener
+    capture = "var cardGenerationAtRead = updateRenderGeneration;"
+    send = "WM.send('update_status')"
+    assert general_entry.index(capture) < general_entry.index(send)
+    assert re.search(
+        r"if \(p\s*&&\s*updateRenderGeneration\s*===\s*"
+        r"cardGenerationAtRead\)\s*\{\s*renderUpdate\(p\);\s*\}",
+        general_entry,
+    )
+
+
+def test_renderer_reads_only_payload_booleans_for_permission():
+    """Task 7's binding rule: the renderer must not reconstruct
+    can_check/can_download/can_install from `state`; it reads exactly the
+    fields Python already computed.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    renderer = settings_js[settings_js.index("function renderUpdate(") :]
+    renderer = renderer[: renderer.index("\n  }\n")]
+    for flag in ("can_check", "can_download", "can_install"):
+        assert f"p.{flag}" in renderer, (
+            f"renderUpdate must read {flag} from the payload rather than "
+            "deriving it from p.state"
+        )
+
+
+def test_update_error_takes_precedence_over_normal_state_copy():
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    status_text = settings_js[settings_js.index("function updateStatusText(") :]
+    status_text = status_text[: status_text.index("\n  }\n")]
+
+    assert status_text.index("p.error") < status_text.index("switch (p.state)")
+
+
+def test_update_actions_render_only_from_backend_pushes():
+    """Action return values can arrive after a fast worker's newer push.
+
+    Only the generation-gated General-entry read may render its method
+    return; all state-changing actions use onUpdateStatus as their
+    authoritative path.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    for method in ("check_for_updates", "download_update", "install_update"):
+        send = settings_js.index(f"WM.send('{method}')")
+        statement = settings_js[send : settings_js.index(";", send) + 1]
+        assert "renderUpdate" not in statement
+        assert ".then(" not in statement
+
+    cached_read = settings_js.index("WM.send('update_status')")
+    statement = settings_js[cached_read : settings_js.index(";", cached_read) + 1]
+    assert "renderUpdate" in statement
+
+
+def test_confirm_fires_once_on_a_true_downloading_to_installable_transition():
+    """The transition check must be one function taking the previous
+    phase, not a copy re-derived at each render entry point (the cached
+    General read and the `wm:update-status` push listener). Separate copies
+    could auto-confirm on a phase one path never crossed, while rendering
+    action returns could move the shared phase backwards after a newer push.
+    """
+    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
+    assert re.search(
+        r"function \w+\(\s*\w+\s*,\s*\w+\s*\)\s*\{[^}]*downloading[^}]*ready",
+        settings_js,
+        re.DOTALL,
+    ), (
+        "expected one function receiving (previous, next) that tests for "
+        "the downloading -> ready transition"
+    )
+    # Every call to renderUpdate must feed and update the SAME previous-phase
+    # variable, so a transition detected by one entry point cannot be missed
+    # or double-counted by another.
+    assert settings_js.count("updatePhase = ") >= 1
+    renderer = settings_js[settings_js.index("function renderUpdate(") :]
+    renderer = renderer[: renderer.index("\n  }\n")]
+    assert re.search(
+        r"justFinishedDownloading\([^)]*\)\s*&&\s*p\.can_install",
+        renderer,
+    ), "source checkouts must not receive an unusable automatic Install prompt"
+    calls = len(re.findall(r"renderUpdate\(", settings_js))
+    assert calls == 3, (
+        "expected renderUpdate only in its declaration, the cached General read, "
+        "and the push listener; action returns must not repaint stale state; "
+        f"found {calls} occurrences"
+    )
