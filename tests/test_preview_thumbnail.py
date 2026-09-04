@@ -100,9 +100,7 @@ def test_update_without_source_preserves_full_client_flags():
 def test_update_with_source_sets_rectsource_as_edges():
     dwm = FakeDwm()
     t = thumbnail.Thumbnail.register(FakeLibs(dwm), 1, 2)
-    assert t.update(
-        Rect(0, 0, 320, 180), source_rect=Rect(100, 50, 400, 225)
-    ) == 0
+    assert t.update(Rect(0, 0, 320, 180), source_rect=Rect(100, 50, 400, 225)) == 0
     props = dwm.updates[0]
     assert props.dwFlags & thumbnail.win32.DWM_TNP_RECTSOURCE
     src = props.rcSource

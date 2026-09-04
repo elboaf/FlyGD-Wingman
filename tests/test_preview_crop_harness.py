@@ -221,6 +221,27 @@ def set_clients(host, *clients):
     host._clients = {client.stable_key: client for client in clients}
 
 
+def count_display_reads(host):
+    """Replace the two display reads with counting stand-ins and hand back
+    the counters. Both are native enumerations on Windows -- EnumDisplay
+    Monitors and a run of GetSystemMetrics -- so how many times one
+    reconciliation performs them is a fact worth pinning, not an
+    implementation detail."""
+    reads = {"monitors": 0, "screen": 0}
+
+    def monitors():
+        reads["monitors"] += 1
+        return [MONITOR]
+
+    def screen():
+        reads["screen"] += 1
+        return MONITOR
+
+    host._monitors = monitors
+    host._screen = screen
+    return reads
+
+
 # --- interactive picker ----------------------------------------------------
 
 
@@ -321,6 +342,53 @@ def test_a_failed_picker_is_not_retried_every_sweep():
     host._reconcile_probe(FakeLibs())
     assert len(picker_factory.calls) == 1
     assert [f["reason"] for f in host.probe_status()["failures"]] == ["picker-failed"]
+
+
+def test_one_display_enumeration_serves_the_picker_and_the_staged_crops():
+    """A `pick` character and a load stage in the same reconciliation used
+    to read the display twice for one answer -- once for the picker and
+    once for the crop batch. The hardware cannot change between the two,
+    and a failed enumeration logs a line each time it is asked."""
+    crop_factory = RecordingCropFactory()
+    picker_factory = RecordingPickerFactory()
+    host = make_host(
+        character="Carol", crop_factory=crop_factory, picker_factory=picker_factory
+    )
+    host.set_probe_count(2)
+    set_clients(host, NAMED, OTHER, THIRD)
+    reads = count_display_reads(host)
+    host._reconcile_probe(FakeLibs())
+
+    assert len(picker_factory.calls) == 1
+    assert len(crop_factory.calls) == 2
+    assert reads == {"monitors": 1, "screen": 1}
+    # The one resolved display reached both paths, not just the crops.
+    assert picker_factory.calls[0].monitor == MONITOR
+
+
+def test_a_reconciliation_with_nothing_to_create_reads_no_display():
+    """The steady state is every 700ms with nothing to do. Enumerating the
+    displays there would be a native call per sweep for an answer nothing
+    consumes."""
+    host = make_host()
+    set_clients(host, NAMED)
+    reads = count_display_reads(host)
+    host._reconcile_probe(FakeLibs())
+    assert reads == {"monitors": 0, "screen": 0}
+
+
+def test_a_cancelled_picker_needs_no_display_read():
+    """Ending an open picker whose client vanished must not wait on an
+    enumeration: there is nothing left to place."""
+    picker_factory = RecordingPickerFactory()
+    host = make_host(character="Alice", picker_factory=picker_factory)
+    set_clients(host, NAMED)
+    host._reconcile_probe(FakeLibs())
+    set_clients(host)
+    reads = count_display_reads(host)
+    host._reconcile_probe(FakeLibs())
+    assert picker_factory.created[0].reasons == ["client-lost"]
+    assert reads == {"monitors": 0, "screen": 0}
 
 
 # --- load staging ----------------------------------------------------------

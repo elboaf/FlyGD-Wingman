@@ -224,23 +224,34 @@ class PrototypePreviewHost(PreviewHost):
                 crop.close()
                 del crops[key]
 
-        self._reconcile_picker(libs, by_key)
+        # 2. The picker DECISION, taken before the display is read so a
+        #    pass that opens a picker and stages crops shares one
+        #    enumeration. An already-open picker whose client is gone is
+        #    ended here; opening happens below.
+        picker_client = self._picker_candidate(by_key)
 
         with self._lock:
             count = self._probe_count
         desired = self._desired_keys(named, count)
 
-        # 2. Crops the current stage no longer wants (a decrease), which
+        # 3. Crops the current stage no longer wants (a decrease), which
         #    is a different reason from the closures above: the client is
         #    still there and the crop is still live.
         for key in sorted(set(crops) - set(desired)):
             crops.pop(key)[2].close()
 
-        # 3. Creations. Once per reconcile, not once per crop: the
+        # 4. Creations. The display is enumerated at most ONCE per
+        #    reconcile and shared by the picker and every crop: the
         #    hardware does not change between two keys of the same batch,
-        #    and _monitors() logs a line per failed enumeration.
+        #    _monitors() logs a line per failed enumeration, and a pass
+        #    that opened the picker AND staged crops used to enumerate
+        #    twice for one answer.
         pending = [key for key in desired if key not in crops]
-        monitor = self._probe_monitor() if pending else None
+        monitor = (
+            self._probe_monitor() if pending or picker_client is not None else None
+        )
+        if picker_client is not None:
+            self._open_picker(libs, picker_client, monitor)
         for index, key in enumerate(desired):
             if key not in pending:
                 continue
@@ -368,9 +379,15 @@ class PrototypePreviewHost(PreviewHost):
 
     # -- picker ----------------------------------------------------------
 
-    def _reconcile_picker(self, libs, by_key) -> None:
-        """Open the one interactive picker, or end the open one when the
-        client it mirrors is no longer the client it was opened for."""
+    def _picker_candidate(self, by_key):
+        """The client an interactive picker should open for, or None.
+
+        Decision only -- opening is `_open_picker`, and the two are split
+        so the caller can resolve the display once for the picker and the
+        staged crops together instead of enumerating it twice in one
+        reconcile. Ending an already-open picker whose client is gone DOES
+        happen here: it needs no display and must not wait on one.
+        """
         picker = self._probe_picker
         if picker is not None:
             current = by_key.get(picker.client.stable_key)
@@ -383,16 +400,18 @@ class PrototypePreviewHost(PreviewHost):
                 # latch, and reaching past them from here would be a
                 # second copy of both.
                 picker.cancel("client-lost")
-            return
+            return None
         if self._probe_character is None or self._probe_attempted:
-            return
-        client = self._match_character(by_key)
-        if client is None:
-            # Not an attempt: the character is not up YET. The client at
-            # character select a moment ago is usually the one that logs
-            # in next, and consuming the attempt here would mean the
-            # picker never opened at all.
-            return
+            return None
+        # None here is not an attempt: the character is not up YET. The
+        # client at character select a moment ago is usually the one that
+        # logs in next, and consuming the attempt would mean the picker
+        # never opened at all.
+        return self._match_character(by_key)
+
+    def _open_picker(self, libs, client, monitor) -> None:
+        """Open the one interactive picker on the already-resolved
+        display."""
         # Consumed before the factory runs, so a creation failure is not
         # retried on every sweep either.
         self._probe_attempted = True
@@ -400,7 +419,7 @@ class PrototypePreviewHost(PreviewHost):
         created = self._picker_factory(
             libs,
             client,
-            self._probe_monitor(),
+            monitor,
             lambda confirmed, source_rect: self._on_picker_confirm(
                 libs, token, confirmed, source_rect
             ),
