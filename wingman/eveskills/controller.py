@@ -27,7 +27,7 @@ import os
 import sys
 import threading
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,6 +35,7 @@ from pathlib import Path
 # re-export. Capability lookup and authorization now live in eveauth, so
 # Skills names that same module when requesting its read-only capability.
 from ..eveauth import application
+from ..eveauth.cleanup import CleanupVerification
 from ..eveauth.controller import ACCESS_REASON_OWNER_CHANGED, MutationResult
 from . import esi as esi_mod
 from . import evaluator, plans, planstore, skillids
@@ -64,6 +65,8 @@ MSG_OWNER_CHANGE_DETECTED = (
     "Character ownership changed. Re-authenticate this character."
 )
 MSG_OWNER_CHANGED = "Character ownership changed; cached skill data was cleared."
+MSG_CLEANUP_UNVERIFIED = "Skills cleanup could not be verified from disk."
+MSG_CLEANUP_SAVE_FAILED = "Could not save Skills cleanup."
 
 # NOT user-facing in the sense the messages above are: this one lands in
 # `attributes_error`, which is diagnostic state for the estimate, never a
@@ -326,7 +329,9 @@ class SkillsController:
         # never finishes.
         self._lock = threading.RLock()
 
-        self._state, warnings = state_mod.load(self._state_path)
+        self._state, warnings, load_health = state_mod.load_with_health(
+            self._state_path
+        )
         cache, cache_warnings = skillids.load(self._cache_path)
         self._cache = cache
         # Only the state document's and the id cache's OWN load warnings
@@ -343,6 +348,11 @@ class SkillsController:
             for character in self._authority.characters
         }
         self._reconciled_once = False
+        self._cleanup_verifiable = load_health.cleanup_verifiable
+        self._cleanup_blocked_ids: set[int] = set()
+        self._cleanup_error = (
+            "" if load_health.cleanup_verifiable else MSG_CLEANUP_UNVERIFIED
+        )
 
         self._plans: list = []
         self._plan_issues: list = []
@@ -681,10 +691,51 @@ class SkillsController:
         """
         try:
             state_mod.save(self._state, self._state_path)
-            return True
         except OSError:
             logger.exception("Could not save the EVE skills state document")
             return False
+        self._cleanup_verifiable = True
+        self._cleanup_error = ""
+        return True
+
+    def _publish_locked(self, candidate: state_mod.SkillsState) -> bool:
+        try:
+            state_mod.save(candidate, self._state_path)
+        except OSError:
+            logger.exception("Could not save the EVE skills state document")
+            return False
+        self._state = candidate
+        self._cleanup_verifiable = True
+        self._cleanup_error = ""
+        return True
+
+    @staticmethod
+    def _cleanup_blocked_ids_for_state(
+        state: state_mod.SkillsState, wanted_ids: set[int]
+    ) -> set[int]:
+        return {
+            character.character_id
+            for character in state.characters
+            if character.character_id not in wanted_ids
+        }
+
+    def _cleanup_verification_locked(
+        self, wanted_ids: set[int], *, error: str = ""
+    ) -> CleanupVerification:
+        self._cleanup_blocked_ids = self._cleanup_blocked_ids_for_state(
+            self._state, wanted_ids
+        )
+        if error:
+            self._cleanup_error = error
+        elif self._cleanup_verifiable:
+            self._cleanup_error = ""
+        else:
+            self._cleanup_error = MSG_CLEANUP_UNVERIFIED
+        return CleanupVerification(
+            verified=self._cleanup_verifiable,
+            blocked_character_ids=frozenset(self._cleanup_blocked_ids),
+            error=self._cleanup_error,
+        )
 
     # ----- payload ----------------------------------------------------
 
@@ -1503,20 +1554,45 @@ class SkillsController:
         with self._lock:
             return MutationResult(True, True, "")
 
-    def authority_removed(self, character_id: int) -> None:
+    def authority_removed(self, character_id: int) -> MutationResult:
         """Prune derived state only after shared authority is durably absent."""
+        wanted_ids = {
+            character.character_id
+            for character in self._authority.characters
+            if character.character_id != character_id
+        }
         with self._lock:
-            removed = self._state.remove(character_id)
             self._authority_owners.pop(character_id, None)
-            saved = not removed or self._save_locked()
-        self._push_state(force=True)
-        if not saved:
-            self._alert(
-                "warning",
-                "Character cleanup is incomplete",
-                "Wingman removed the EVE authorisation, but could not save "
-                "the Skills cleanup. It will retry at the next startup.",
+            candidate = replace(
+                self._state,
+                characters=[
+                    character
+                    for character in self._state.characters
+                    if character.character_id != character_id
+                ],
             )
+            if candidate == self._state:
+                return MutationResult(True, True, "")
+            saved = self._publish_locked(candidate)
+            result = (
+                MutationResult(True, True, "")
+                if saved
+                else MutationResult(True, False, MSG_CLEANUP_SAVE_FAILED)
+            )
+            self._cleanup_verification_locked(
+                wanted_ids,
+                error="" if saved else MSG_CLEANUP_SAVE_FAILED,
+            )
+        if saved:
+            self._push_state(force=True)
+            return result
+        self._alert(
+            "warning",
+            "Character cleanup is incomplete",
+            "Wingman removed the EVE authorisation, but could not save "
+            "the Skills cleanup. It will retry at the next startup.",
+        )
+        return result
 
     def grant_invalidated(self, character_id: int) -> None:
         """Discard snapshots after any definitive shared-grant invalidation."""
@@ -1560,30 +1636,40 @@ class SkillsController:
                 "could not be saved. Wingman will retry cleanup at the next startup.",
             )
 
-    def reconcile_characters(self, characters) -> None:
+    def reconcile_characters(self, characters) -> CleanupVerification:
         """Make the Skills roster the derived projection of shared authority."""
         wanted = {character.character_id: character for character in characters}
+        wanted_ids = set(wanted)
         with self._lock:
             first_reconciliation = not self._reconciled_once
             self._reconciled_once = True
             existing = {character.character_id for character in self._state.characters}
-            removed = existing - wanted.keys()
-            added = wanted.keys() - existing
-            if removed:
-                self._state.characters = [
-                    character
-                    for character in self._state.characters
-                    if character.character_id in wanted
-                ]
-            for character_id in added:
-                self._state.upsert(state_mod.Character(character_id=character_id))
+            candidate = replace(
+                self._state,
+                characters=[
+                    *[
+                        character
+                        for character in self._state.characters
+                        if character.character_id in wanted
+                    ],
+                    *[
+                        state_mod.Character(character_id=character.character_id)
+                        for character in characters
+                        if character.character_id not in existing
+                    ],
+                ],
+            )
             self._authority_owners = {
                 character_id: character.owner_hash
                 for character_id, character in wanted.items()
             }
-            changed = bool(removed or added)
-            saved = not changed or self._save_locked()
-        if changed and not first_reconciliation:
+            changed = candidate != self._state
+            saved = True if not changed else self._publish_locked(candidate)
+            verification = self._cleanup_verification_locked(
+                wanted_ids,
+                error="" if saved else MSG_CLEANUP_SAVE_FAILED,
+            )
+        if changed and saved and not first_reconciliation:
             self._push_state(force=True)
         if not saved:
             warning = (
@@ -1602,6 +1688,7 @@ class SkillsController:
             # and reauthentication: every successful consent flow refreshes
             # Skills instead of leaving the row stale until another click.
             self.refresh_characters()
+        return verification
 
     # ----- interactive sign-in --------------------------------------------
 

@@ -406,7 +406,9 @@ def test_refresh_requests_only_skills_and_ignores_missing_fitting_scopes(tmp_pat
     assert controller.state_payload()["characters"][0]["needs_reauth"] is False
 
 
-def test_startup_reconciliation_save_warning_survives_until_route_read(tmp_path):
+def test_startup_reconciliation_save_warning_survives_until_route_read(
+    tmp_path, monkeypatch
+):
     """A pre-WebView alert is dropped, so startup failures belong in state."""
     authority = FakeAuthority([])
     controller, _pushed, _alerts = build(
@@ -417,7 +419,11 @@ def test_startup_reconciliation_save_warning_survives_until_route_read(tmp_path)
     # Recreate the first registration path because build() registers once.
     controller._reconciled_once = False
     controller._state.upsert(state_mod.Character(character_id=95))
-    controller._save_locked = lambda: False
+    monkeypatch.setattr(
+        state_mod,
+        "save",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk")),
+    )
 
     controller.reconcile_characters(())
 
@@ -1872,6 +1878,47 @@ def test_prepare_forget_is_check_only_until_authority_removal(tmp_path):
 
     assert result == MutationResult(True, True, "")
     assert controller._state.find(95) is not None
+
+
+def test_failed_authority_removal_save_reports_the_exact_blocked_character(
+    tmp_path, monkeypatch
+):
+    character = state_mod.Character(character_id=42)
+    controller, _pushed, _alerts = build(tmp_path, characters=(character,))
+    monkeypatch.setattr(
+        state_mod,
+        "save",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk")),
+    )
+
+    result = controller.authority_removed(42)
+
+    assert result == MutationResult(True, False, "Could not save Skills cleanup.")
+    assert controller._state.find(42) is not None
+    verification = controller.reconcile_characters(tuple())
+    assert verification.verified is True
+    assert verification.blocked_character_ids == frozenset({42})
+
+
+def test_successful_retry_clears_the_skills_cleanup_block(tmp_path, monkeypatch):
+    character = state_mod.Character(character_id=42)
+    controller, _pushed, _alerts = build(tmp_path, characters=(character,))
+    original_save = state_mod.save
+    calls = 0
+
+    def fail_once(state, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk")
+        original_save(state, path)
+
+    monkeypatch.setattr(state_mod, "save", fail_once)
+
+    assert controller.authority_removed(42).persisted is False
+    assert controller._state.find(42) is not None
+    assert controller.reconcile_characters(tuple()).blocked_character_ids == frozenset()
+    assert controller._state.find(42) is None
 
 
 # ----- interactive sign-in ------------------------------------------------
