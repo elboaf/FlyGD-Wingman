@@ -118,6 +118,13 @@ def test_defaults_are_the_documented_values():
             "x": None,
             "y": None,
         },
+        # Off by default: starting this creates an additional WebView2 host
+        # and begins shared discovery work only fleet-multiboxers need.
+        "fleet_bar": {
+            "enabled": False,
+            "x": None,
+            "y": None,
+        },
     }
 
 
@@ -221,10 +228,19 @@ def test_load_ignores_unknown_keys(tmp_path):
 
 def test_save_then_load_roundtrips(tmp_path):
     p = tmp_path / "s.json"
-    settings.save({"privacy": "public", "category": "22", "notify_mode": "popup"}, p)
+    settings.save(
+        {
+            "privacy": "public",
+            "category": "22",
+            "notify_mode": "popup",
+            "fleet_bar": {"enabled": True, "x": -320, "y": 48},
+        },
+        p,
+    )
     assert settings.load(p)["privacy"] == "public"
     assert settings.load(p)["notify_mode"] == "popup"
     assert settings.load(p)["category"] == "22"
+    assert settings.load(p)["fleet_bar"] == {"enabled": True, "x": -320, "y": 48}
 
 
 def test_save_creates_parent_directory(tmp_path):
@@ -324,9 +340,10 @@ def test_concurrent_updates_serialise_without_corrupting_the_document(tmp_path):
     for t in threads:
         t.start()
     for t in threads:
-        # Bounded: if settings.update() ever deadlocks, this test must
-        # fail loudly instead of hanging until the CI job times out.
-        t.join(timeout=5.0)
+        # Bounded: if settings.update() ever deadlocks, this test must fail
+        # rather than hang the job. Windows performs 100 atomic replace/fsync
+        # cycles here and can exceed five seconds under runner I/O contention.
+        t.join(timeout=15.0)
         assert not t.is_alive()
 
     written = json.loads(path.read_text())

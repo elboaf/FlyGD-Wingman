@@ -1,7 +1,7 @@
-"""Wiring, with the alert service faked. What must hold: reconcile() runs
-from every one of the five places that can change AlertService._wanted()'s
-answer, set_alert_event refuses what settings.validated_alerts would
-silently drop anyway, and a test alert never persists.
+"""Shared telemetry wiring and alert bridge behavior.
+
+Runtime-affecting settings reconcile the coordinator; policy-only settings do
+not. Invalid event fields are refused and test alerts never persist.
 
 make_api is the existing helper in tests/test_api.py -- imported, not
 redefined. It takes tmp_path positionally and forwards **kwargs to Api().
@@ -11,18 +11,15 @@ import re
 
 from tests.test_api import make_api
 from wingman.alerts import service as alert_service
+from wingman.telemetry.model import StreamHealth
 
 
-class FakeAlerts:
-    """Enough of AlertService for the bridge: counts what Api asks of it,
-    the same spirit as test_preview_wiring.FakeHost."""
-
-    def __init__(self):
+class FakeTelemetry:
+    def __init__(self, health=None, characters=()):
         self.reconciled = 0
         self.stopped = 0
-        self._health = alert_service.Health(
-            running=False, last_poll=None, last_error=None, characters=()
-        )
+        self._health = health or StreamHealth(state="stopped")
+        self._characters = tuple(characters)
 
     def reconcile(self):
         self.reconciled += 1
@@ -30,8 +27,11 @@ class FakeAlerts:
     def stop(self):
         self.stopped += 1
 
-    def health(self):
+    def stream_health(self):
         return self._health
+
+    def stream_characters(self):
+        return self._characters
 
 
 class FakePreviewHost:
@@ -106,159 +106,96 @@ def _alerts_section(**over):
     return section
 
 
-# ---- reconcile() fires from all five places --------------------------------
+# ---- runtime-affecting settings reconcile shared telemetry -----------------
 
 
-def test_changing_the_gamelogs_folder_repoints_the_tailer(tmp_path):
-    """set_folder's gamelogs branch drives no watcher of its own, and the
-    docstring above it records exactly what that costs: a folder that
-    persisted while the window looked healthy and nothing ever polled."""
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
-
-    result = api.set_folder("gamelogs", str(tmp_path))
-
-    assert result["applied"]
-    assert alerts.reconciled == 1
-
-
-def test_turning_previews_off_stops_the_tailer(tmp_path):
-    """Otherwise it keeps polling and winsound keeps firing with nothing
-    on screen to explain it."""
-    alerts = FakeAlerts()
+def test_shared_telemetry_reconciles_for_folder_alert_and_preview_changes(tmp_path):
+    telemetry = FakeTelemetry()
     host = FakePreviewHost()
-    api = make_api(tmp_path, alerts=alerts, preview_host=host)
-    api._state.settings["preview"] = {"enabled": True}
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=host)
+    api._state.settings["preview"] = {"enabled": False, "alerts": _alerts_section()}
 
-    api.set_preview_enabled(False)
+    assert api.set_folder("gamelogs", str(tmp_path))["applied"]
+    assert api.set_alert_enabled(False)["applied"]
+    api.set_preview_enabled(True)
 
-    assert alerts.reconciled == 1
+    assert telemetry.reconciled == 3
 
 
-def test_alerts_off_means_no_thread_even_with_previews_on(tmp_path):
-    """set_alert_enabled is the flag AlertService._wanted() reads for
-    "alerts enabled". Turning it off must reconcile even with previews
-    staying on -- gating that call on previews' own state instead would
-    leave the thread running with no way for this endpoint to stop it."""
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
+def test_shared_telemetry_health_drives_alert_state(tmp_path):
+    telemetry = FakeTelemetry(
+        StreamHealth(state="error", detail="source read failed"),
+        characters=("Alice", "Bob"),
+    )
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
     api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
+    api._state.settings["gamelogs_dir"] = str(tmp_path)
 
-    result = api.set_alert_enabled(False)
+    state = api.get_alert_state()
 
-    assert result["applied"]
-    assert alerts.reconciled == 1
+    assert state["running"] is False
+    assert state["last_error"] == "source read failed"
+    assert state["characters"] == ["Alice", "Bob"]
 
 
-def test_start_and_shutdown_also_reconcile(tmp_path):
-    """The remaining two of the five: launch, and the final teardown.
+def test_fleet_owned_stream_does_not_make_disabled_alerts_look_armed(tmp_path):
+    telemetry = FakeTelemetry(StreamHealth(state="active"), characters=("Alice",))
+    api = make_api(tmp_path, telemetry=telemetry)
+    api._state.settings["preview"] = {
+        "enabled": True,
+        "alerts": _alerts_section(enabled=False),
+    }
 
-    Both run whether or not self._preview_host exists -- the alerts flag
-    and the gamelogs folder are settings, not a property of the host
-    object, so a Windows-only preview subsystem failing to construct must
-    not silently disable alerts wiring too.
-    """
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts, preview_host=None)
-    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
+    state = api.get_alert_state()
 
-    api.start_previews_if_enabled()
-    assert alerts.reconciled == 1
+    assert state["running"] is False
+    assert state["characters"] == []
+
+
+def test_shutdown_stops_shared_telemetry_once(tmp_path):
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
 
     api.shutdown_previews()
-    assert alerts.reconciled == 2
+
+    assert telemetry.stopped == 1
 
 
-def test_a_no_op_preview_toggle_does_not_reconcile(tmp_path):
-    """set_preview_enabled returns early when the requested value already
-    matches the stored one, so it never reaches the write or reconcile()
-    at all -- set_folder owns the folder-changed case instead, which is
-    why a no-op toggle reconciling nothing is correct, not a gap."""
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
+def test_a_no_op_preview_toggle_does_not_reconcile_shared_telemetry(tmp_path):
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry)
     api._state.settings["preview"] = {"enabled": True}
 
     api.set_preview_enabled(True)
 
-    assert alerts.reconciled == 0  # no-op path never reaches the write
+    assert telemetry.reconciled == 0
 
 
-def test_set_preview_enabled_true_actually_starts_the_tailer(tmp_path):
-    """Regression for the ordering the is_running gate depends on.
+def test_build_telemetry_reads_runtime_settings_live(monkeypatch, tmp_path):
+    from wingman import __main__ as main_mod
 
-    reconcile() must run AFTER preview_host.start(), not before: while
-    FakeAlerts only counts calls, this uses the real AlertService (wired
-    the same way build_alert_service does) against a FakePreviewHost whose
-    is_running reflects real start()/stop() counts -- if reconcile() were
-    called too early, is_running would still read False, folder() would
-    return None, and the gate would stay permanently closed.
-    """
-    from wingman.__main__ import build_alert_service
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"enabled": False, "alerts": {"enabled": False}}
+    api._state.settings["fleet_bar"] = {"enabled": False}
+    runtime = main_mod.build_telemetry(api._state, None, None)
 
-    host = FakePreviewHost()
-    api = make_api(tmp_path, preview_host=host)
-    api._alerts = build_alert_service(api._state, host)
-    api._state.settings["preview"] = {"enabled": False, "alerts": _alerts_section()}
-    api._state.settings["gamelogs_dir"] = str(tmp_path)
-
-    try:
-        api.set_preview_enabled(True)
-        assert host.is_running
-        assert api._alerts.health().running
-    finally:
-        api._alerts.stop()
+    assert runtime is not None
+    assert runtime._wants_discovery() is False
+    api._state.settings["fleet_bar"]["enabled"] = True
+    assert runtime._wants_discovery() is True
+    runtime.stop()
 
 
-def test_start_previews_if_enabled_actually_starts_the_tailer(tmp_path):
-    """The launch-path sibling of the test above.
-
-    start_previews_if_enabled (not set_preview_enabled) is what runs on
-    every app launch. If reconcile() there were ever reordered ahead of
-    host.start(), alerts would never start on launch -- only once the user
-    toggled the previews checkbox by hand -- and the failure would be
-    silent, with the settings all reading correct. Same real AlertService,
-    same live-is_running FakePreviewHost as the sibling test.
-    """
-    from wingman.__main__ import build_alert_service
+def test_build_alert_policy_has_no_private_tailer(tmp_path):
+    from wingman.__main__ import build_alert_policy
 
     host = FakePreviewHost()
-    api = make_api(tmp_path, preview_host=host)
-    api._alerts = build_alert_service(api._state, host)
-    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
-    api._state.settings["gamelogs_dir"] = str(tmp_path)
+    api = make_api(tmp_path)
+    policy = build_alert_policy(api._state, host)
 
-    try:
-        api.start_previews_if_enabled()
-        assert host.is_running
-        assert api._alerts.health().running
-    finally:
-        api._alerts.stop()
-
-
-def test_alert_config_tolerates_a_settings_document_with_no_preview_key(tmp_path):
-    """build_alert_service's config callable used to index straight
-    through settings["preview"]["alerts"], which raises KeyError on any
-    settings document that predates the alerts section (an older
-    settings.json, or -- as here -- tests/test_api.make_state's own
-    partial dict, which settings._normalize's own docstring calls out by
-    name). Only visible where AlertService is actually built: host is
-    None off Windows (build_alert_service's docstring), so the crash was
-    Windows-only in practice and slipped past ubuntu-latest CI entirely.
-    Must behave like AlertService._resolved_folder's `cfg = self._config()
-    or {}` and settings._normalize's setdefault -- absence is an empty
-    section, not an error.
-    """
-    from wingman.__main__ import build_alert_service
-
-    host = FakePreviewHost()
-    api = make_api(tmp_path, preview_host=host)
-    assert "preview" not in api._state.settings
-
-    service = build_alert_service(api._state, host)
-
-    assert service is not None
-    assert service._config() == {}
-    assert service.health().running is False
+    assert isinstance(policy, alert_service.AlertPolicy)
+    assert not hasattr(policy, "_tailer")
 
 
 # ---- a test alert is never persistent --------------------------------------
@@ -383,15 +320,14 @@ def test_set_alert_event_lets_settings_clamp_the_value(tmp_path):
 
 
 def test_set_alert_event_does_not_reconcile(tmp_path):
-    """A per-event field is read live by the poll thread through the
-    config callable on its next tick -- it cannot change whether the
-    thread itself should be running, so this is not one of the five."""
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
+    """A per-event field is read live by AlertPolicy on its next batch; it
+    cannot change whether shared telemetry itself should be running."""
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry)
 
     api.set_alert_event("combat", "cooldown_s", 5)
 
-    assert alerts.reconciled == 0
+    assert telemetry.reconciled == 0
 
 
 # ---- volume and flash speed -------------------------------------------------
@@ -400,20 +336,20 @@ def test_set_alert_event_does_not_reconcile(tmp_path):
 def test_set_alert_volume_persists_and_does_not_reconcile(tmp_path):
     """Nothing is playing between two alerts, so there is no live state to
     correct and no thread whose should-it-run answer changed."""
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry)
 
     result = api.set_alert_volume(40)
 
     assert result == {"applied": True, "persisted": True, "error": None}
     assert api._state.settings["preview"]["alerts"]["volume"] == 40
-    assert alerts.reconciled == 0
+    assert telemetry.reconciled == 0
 
 
 def test_set_alert_volume_lets_settings_clamp_the_value(tmp_path):
     """Same division of labour as set_preview_opacity: validated_alerts
     owns the 0-100 range, in one place."""
-    api = make_api(tmp_path, alerts=FakeAlerts())
+    api = make_api(tmp_path)
 
     result = api.set_alert_volume(400)
 
@@ -422,7 +358,7 @@ def test_set_alert_volume_lets_settings_clamp_the_value(tmp_path):
 
 
 def test_set_alert_event_accepts_a_flash_rate(tmp_path):
-    api = make_api(tmp_path, alerts=FakeAlerts())
+    api = make_api(tmp_path)
 
     result = api.set_alert_event("combat", "flash_rate", "fast")
 
@@ -437,7 +373,7 @@ def test_set_alert_event_no_longer_writes_a_duration(tmp_path):
     """The duration is derived from flash_rate x pulses at the one site
     that arms a ring. A writable copy here would be a second source of
     truth for how long an alert pulses."""
-    api = make_api(tmp_path, alerts=FakeAlerts())
+    api = make_api(tmp_path)
 
     result = api.set_alert_event("combat", "duration_ms", 5000)
 
@@ -482,48 +418,29 @@ def test_a_test_alert_is_not_silenced_by_a_focused_client(monkeypatch, tmp_path)
 
 
 def test_set_alert_pve_filter_persists_and_does_not_reconcile(tmp_path):
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry)
 
     result = api.set_alert_pve_filter(False)
 
     assert result == {"applied": True, "persisted": True, "error": None}
     assert api._state.settings["preview"]["alerts"]["pve_filter"] is False
-    assert alerts.reconciled == 0
+    assert telemetry.reconciled == 0
 
 
 def test_set_alert_persist_persists_and_does_not_reconcile(tmp_path):
-    alerts = FakeAlerts()
-    api = make_api(tmp_path, alerts=alerts)
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry)
 
     result = api.set_alert_persist(False)
 
     assert result == {"applied": True, "persisted": True, "error": None}
     assert api._state.settings["preview"]["alerts"]["persist_until_selected"] is False
-    assert alerts.reconciled == 0
+    assert telemetry.reconciled == 0
 
 
-def test_get_alert_state_reports_the_service_health(tmp_path):
-    alerts = FakeAlerts()
-    alerts._health = alert_service.Health(
-        running=True, last_poll=1.0, last_error="boom", characters=("Alice",)
-    )
-    api = make_api(tmp_path, alerts=alerts)
-    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
-    api._state.settings["gamelogs_dir"] = str(tmp_path)
-
-    state = api.get_alert_state()
-
-    assert state["previews_enabled"] is True
-    assert state["running"] is True
-    assert state["last_error"] == "boom"
-    assert state["characters"] == ["Alice"]
-    assert state["gamelogs_folder"] == str(tmp_path)
-    assert state["alerts"]["enabled"] is True
-
-
-def test_get_alert_state_tolerates_no_alert_service(tmp_path):
-    api = make_api(tmp_path)  # alerts defaults to None
+def test_get_alert_state_tolerates_no_telemetry_runtime(tmp_path):
+    api = make_api(tmp_path)
 
     state = api.get_alert_state()
 
@@ -539,8 +456,7 @@ def test_get_alert_state_hides_a_gamelogs_folder_that_no_longer_exists(tmp_path)
     from another machine. Without this check the card would show
     'Watching gamelogs' with the no-folder banner hidden, exactly the
     'believes alerts are armed when nothing is watching' failure the
-    feature exists to prevent. Mirrors AlertService._wanted's own is_dir()
-    check in service.py."""
+    feature exists to prevent. Mirrors the coordinator's folder resolver."""
     missing = tmp_path / "gone"
     api = make_api(tmp_path)
     api._state.settings["gamelogs_dir"] = str(missing)
@@ -630,7 +546,7 @@ def test_no_gamelogs_folder_state_is_reachable():
 
 def test_health_and_characters_render_together():
     """A character list with no liveness beside it keeps reading
-    "watching Alice, Bob" after the tailer thread has died --
+    "watching Alice, Bob" after the shared reader has failed --
     get_alert_state's `running` flag must appear in the same rendered
     sentence as the characters, never the characters alone.
 
@@ -697,7 +613,7 @@ def test_the_card_refreshes_when_previews_are_toggled_without_navigating():
     """#preview-enabled and this card share ONE section (#section-previews)
     with no navigation between them, so refresh() firing only on wm:section
     and after set_alert_enabled left the card stale the moment previews
-    were toggled off: the backend really did stop the poll thread, but the
+    were toggled off: the backend really did detach AlertPolicy, but the
     card kept showing 'Watching gamelogs' with the previews-off banner
     hidden, indefinitely. settings.js dispatches a custom event once its
     own set_preview_enabled call settles (not on the raw DOM change, so

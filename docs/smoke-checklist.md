@@ -2893,6 +2893,63 @@ manual check by construction.
       Settings page. Expected: the picker hydrates to the stored colour,
       and the bar wears it live without a restart.
 
+## Floating Fleet combat bar
+
+The Fleet Bar is a separate always-on-top WebView fed by the shared EVE
+client discovery and gamelog stream. It is display-only and must remain
+independent of both preview thumbnails and alert preferences.
+
+- [ ] **Enable from Settings › Previews.** Tick `Show the floating Fleet DPS /
+      EWAR bar`. Expected: a compact three-column window opens with
+      `CHARACTER`, `DPS`, and `INCOMING`; the Settings checkbox and status-strip
+      `DPS` button both show active.
+- [ ] **The quick toggle is the same setting.** Turn the bar off and on from
+      the status strip, then from Settings. Expected: both controls follow each
+      change immediately, no second window appears, and the hidden window
+      returns without a WebView startup pause.
+- [ ] **It runs independently.** Turn client previews and gamelog alerts off,
+      leave Fleet Bar on, and restart Wingman. Expected: the Fleet Bar restores,
+      `eve-discovery`, `gamelog-stream`, and `telemetry-dispatch` are running,
+      and no preview window or alert sound is required for values to update.
+- [ ] **Roster includes every logged-in client.** Run several clients, exclude
+      one under Preview configuration, and leave another at character select.
+      Expected: every logged-in character appears exactly once in alphabetical
+      order, including the preview-excluded one; the character-select client has
+      no row until its title identifies a character.
+- [ ] **No log is not zero.** Point Gamelogs at a folder with no current log for
+      one running character. Expected: that row remains stable and says `NO LOG`
+      rather than `0`; restoring a current log changes it to a numeric DPS value
+      without reopening the bar.
+- [ ] **Outgoing direct and drone damage both count.** Produce weapon and drone
+      hits from one character. Expected: its DPS is total outgoing damage in the
+      trailing 10 seconds divided by 10, rounded to a whole number. Incoming
+      damage does not increase it.
+- [ ] **The DPS window decays on event time.** Stop dealing damage and watch the
+      row. Expected: the value falls as events leave the fixed 10-second window
+      and reaches `0` without another combat line arriving; it never divides by
+      only the active portion of the window.
+- [ ] **Incoming tackle is the only EWAR shown in v1.** Have another ship point
+      or scram a displayed character. Expected: `SCRAM/POINT` appears under
+      `INCOMING` for up to eight seconds from the EVE event timestamp, refreshes
+      on another tackle event, and expires without another log line. JAM and
+      other effects never appear.
+- [ ] **Reader degradation is explicit and non-destructive.** Temporarily make
+      the Gamelogs folder unreadable or pause its updates. Expected: the header
+      changes to `STALE` or `ERROR` and retains the last good rows. Recovery
+      clears the diagnostic. Removing the folder entirely shows `NO LOG FOLDER`
+      and resets source bindings instead of carrying old DPS into a new folder.
+- [ ] **Drag, pinning, and persistence.** Drag from the name, number, header,
+      and empty-state surfaces. Expected: every pixel moves the bar, no text is
+      interactive, and it remains above both EVE and other applications. At
+      100%, 125%, 150%, and 200% scaling, add/remove rows near every work-area
+      edge and confirm fit/clamp never clips the bar. Quit and relaunch at each
+      scale; it restores at the saved logical position with no clipping or
+      white first-frame flash.
+- [ ] **Shutdown leaves one clean generation.** Toggle Fleet, Previews, and
+      Alerts through several combinations, then quit. Expected: no duplicate
+      discovery/gamelog/dispatcher threads ever appear, and Wingman leaves Task
+      Manager after all three shared workers and both floating WebViews stop.
+
 ## EVE preview alerts
 
 When a player shoots, scrambles or decloaks one of your logged-in
@@ -2902,10 +2959,12 @@ headless.
 
 ### Verifiable now
 
-- [ ] **With alerts off, no `wingman-alerts` thread exists.** Check Task
-      Manager's process detail tab or run `threading.enumerate()` in a
-      Python debug console. Expected: no thread named `wingman-alerts`.
-      Turn alerts on in Settings > Previews and confirm the thread appears.
+- [ ] **Alerts own no private reader thread.** Check Task Manager's process
+      detail tab or run `threading.enumerate()` in a Python debug console.
+      Expected: no thread named `wingman-alerts` exists in any setting
+      combination. With Previews and Alerts on, the shared `gamelog-stream`
+      and `telemetry-dispatch` threads run; turning Alerts off while Fleet Bar
+      remains on does not restart either one.
 - [ ] **Turn alerts on with no Gamelogs folder set.** Open Settings >
       Previews and tick Enable alerts without setting a Gamelogs folder.
       Expected: the Alerts card displays "Your EVE Gamelogs folder is not

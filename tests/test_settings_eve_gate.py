@@ -60,6 +60,22 @@ def test_hiding_is_refused_while_previews_are_running(tmp_path, monkeypatch):
     assert saved == {}
 
 
+def test_hiding_is_refused_while_fleet_bar_is_running(tmp_path, monkeypatch):
+    """Fleet Bar is a third EVE-only feature with its own runtime switch.
+    Hiding it while it is enabled would conceal the only control that stops
+    it -- the same shape as the Bookmarks and Previews guards."""
+    api, _window, saved = settings_api(
+        tmp_path, monkeypatch, settings={"fleet_bar": {"enabled": True}}
+    )
+
+    result = api.set_show_eve_tools(False)
+
+    assert result["applied"] is False
+    assert "Fleet Bar" in result["error"]
+    assert saved == {}
+    assert api._state.settings["show_eve_tools"] is True
+
+
 def test_the_refusal_names_both_when_both_are_running(tmp_path, monkeypatch):
     """ "Turn something off first" is useless if it does not say what."""
     api, _window, _saved = settings_api(

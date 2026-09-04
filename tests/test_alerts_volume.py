@@ -83,8 +83,8 @@ def test_a_sample_width_it_cannot_scale_is_left_alone():
 
 # ---- the file handed to PlaySound ------------------------------------------
 # winsound refuses SND_MEMORY together with SND_ASYNC, and the synchronous
-# form would block the alert poll thread for the length of the sound. So
-# the scaled audio has to reach the device as a FILE.
+# form would block the shared telemetry dispatcher for the length of the
+# sound. So the scaled audio has to reach the device as a FILE.
 
 
 def test_full_volume_plays_the_file_that_ships(tmp_path):

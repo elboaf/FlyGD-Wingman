@@ -65,14 +65,17 @@ WM_APP = 0x8000
 
 # Host commands, marshalled in from other threads.
 WM_APP_SHUTDOWN = WM_APP + 1
-WM_APP_SWEEP_NOW = WM_APP + 2
-WM_APP_REBIND = WM_APP + 3
-WM_APP_ALERT = WM_APP + 4
-WM_APP_RESTYLE = WM_APP + 5
-WM_APP_RESET_LAYOUTS = WM_APP + 6
-WM_APP_RESIZE_ONE = WM_APP + 7
-WM_APP_RESIZE_ALL = WM_APP + 8
-WM_APP_APPLY_LAYOUTS = WM_APP + 9
+WM_APP_REBIND = WM_APP + 2
+WM_APP_ALERT = WM_APP + 3
+WM_APP_RESTYLE = WM_APP + 4
+WM_APP_RESET_LAYOUTS = WM_APP + 5
+WM_APP_RESIZE_ONE = WM_APP + 6
+WM_APP_RESIZE_ALL = WM_APP + 7
+WM_APP_APPLY_LAYOUTS = WM_APP + 8
+# The shared roster, handed over by another thread. Carries no payload: a
+# snapshot cannot ride in wparam/lparam, so it travels in a field under the
+# host's lock and this only says "there is a newer one to read".
+WM_APP_ROSTER = WM_APP + 9
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02

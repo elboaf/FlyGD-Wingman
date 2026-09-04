@@ -4,14 +4,13 @@
 // keybind block in settings.js. Not folded into either: this owns none
 // of the win32/AutoHotkey machinery those files do, and gets its own
 // bridge endpoints for the same reason set_preview_enabled does --
-// toggling `enabled` here starts or stops a polling thread (the gamelog
-// tailer), not merely a settings write.
+// toggling `enabled` changes whether shared telemetry feeds AlertPolicy,
+// while Fleet Bar may independently keep the reader running.
 //
 // A READ, not a push: get_alert_state exists precisely so this can ask
 // on wm:section, the same reasoning get_preview_hotkey_state documents --
-// the tailer can start before the webview exists (start_previews_if_
-// enabled runs before window_mod.run()), so a health change discovered
-// at launch would be pushed into a window that is not there yet.
+// shared telemetry can start before the webview exists, so a health change
+// discovered at launch would be pushed into a window that is not there yet.
 (function () {
   var enabledBox = WM.el('alert-enabled');
   if (!enabledBox) { return; }
@@ -575,7 +574,7 @@
 
   // The health line and the characters are ALWAYS one sentence, on
   // purpose: a list rendered on its own keeps reading "watching Alice,
-  // Bob" after the tailer thread has died, which is a healthy-looking
+  // Bob" after the shared reader has failed, which is a healthy-looking
   // card sitting above a feature that stopped alerting.
   //
   // NAMES, not a count. "5 characters online" is the number you already
@@ -593,12 +592,12 @@
   // Round 5, A1. `running` is only two thirds of the answer, and the line
   // shipped four rounds saying it was all of it.
   //
-  // service.py's _resolved_folder gates the THREAD on three things --
-  // previews on, master switch on, a folder that still resolves -- so
+  // Api.get_alert_state gates `running` on three things -- previews on,
+  // master switch on, a healthy shared reader with a real folder -- so
   // `running: true` proves all three. It proves nothing at all about the
   // event table, which service.py's _handle consults separately and which
   // drops every event whose spec is not `enabled`. Untick all three rows
-  // and the tailer genuinely is reading gamelogs, genuinely has thirteen
+  // and shared telemetry genuinely is reading gamelogs and has thirteen
   // characters, and cannot raise an alert for any of them: the card
   // rendered "Watching gamelogs — Aiga Otsolen, ... and 7 more" over a
   // feature that was switched off. That is the exact shape PRODUCT.md
@@ -697,23 +696,23 @@
 
   // The first setInterval in the page, so it is worth saying why.
   //
-  // get_alert_state is deliberately a READ, not a push -- the tailer can
-  // start before the webview exists, so a health change discovered at
+  // get_alert_state is deliberately a READ, not a push -- shared telemetry
+  // can start before the webview exists, so a health change discovered at
   // launch would be pushed into a window that is not there. That is still
   // right. What it left was a card that reads its state exactly three
   // times: on section entry, on a previews toggle, and immediately after
   // the alerts switch.
   //
   // That last one is the bug this fixes, and it was reported from a real
-  // session: enabling alerts refreshes AT ONCE, while AlertService has
-  // only just been reconciled and its tailer's first rescan is up to
-  // POLL_INTERVAL_S away. So the card read `running: true, characters:
+  // session: enabling alerts refreshes AT ONCE, while shared telemetry has
+  // only just been reconciled and its first rescan is up to one poll away.
+  // So the card read `running: true, characters:
   // []`, rendered "no characters online yet", and nothing ever read
   // again -- five characters online and the card saying none, for as long
   // as you left it open.
   //
   // The same gap hid the failure the health line exists to catch: a
-  // tailer that dies at minute 40 of a sit kept reading as healthy,
+  // reader that dies at minute 40 of a sit kept reading as healthy,
   // because nothing asked again.
   //
   // Only while the section is showing. Nothing needs to be current when

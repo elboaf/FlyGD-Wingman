@@ -139,9 +139,9 @@ _PREVIEW_DEFAULTS_VERSION = 2
 def _preview_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global.
 
-    Off by default, like eve_bookmarks: enabling it starts a thread, a
-    700ms sweep, and a foreground hook. A user who never previews EVE
-    clients should pay none of that.
+    Off by default, like eve_bookmarks: enabling it starts the preview pump,
+    the shared 700ms discovery cadence, and a foreground hook. A user with
+    both Preview and Fleet off should pay none of that.
     """
     return {
         "enabled": False,
@@ -302,6 +302,13 @@ def _sig_bar_defaults() -> dict:
     }
 
 
+def _fleet_bar_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global."""
+    # Off by default: this starts shared discovery/log work and creates an
+    # additional WebView2 host only after the user asks for it.
+    return {"enabled": False, "x": None, "y": None}
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -330,9 +337,9 @@ DEFAULTS = {
     # Settings > General.
     #
     # This governs VISIBILITY ONLY. It never starts or stops anything --
-    # eve_bookmarks.enabled and preview.enabled remain the sole runtime
-    # switches, read at launch by start_engine_if_enabled and
-    # start_previews_if_enabled. See Api.set_show_eve_tools for the guard
+    # eve_bookmarks.enabled, preview.enabled, and fleet_bar.enabled are the
+    # runtime switches, read at launch by start_engine_if_enabled and shared
+    # telemetry reconciliation. See Api.set_show_eve_tools for the guard
     # that keeps this from hiding a running feature's off switch.
     "show_eve_tools": True,
     # Whether the user dismissed the first-run folder screen without
@@ -368,6 +375,11 @@ DEFAULTS = {
     # The floating sig bar's section: built by _sig_bar_defaults() for the
     # same fresh-dict-every-call reason as the three sections above.
     "sig_bar": _sig_bar_defaults(),
+    # The fleet combat bar's section: built by _fleet_bar_defaults() for
+    # the same fresh-dict-every-call reason as the sections above.  Off by
+    # default: starting it opens a second WebView2 host and begins shared
+    # discovery work that only fleet-multiboxers need.
+    "fleet_bar": _fleet_bar_defaults(),
 }
 
 VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -381,6 +393,7 @@ def _fresh_defaults() -> dict:
     data["preview"] = _preview_defaults()
     data["eve_settings"] = _eve_settings_defaults()
     data["sig_bar"] = _sig_bar_defaults()
+    data["fleet_bar"] = _fleet_bar_defaults()
     return data
 
 
@@ -691,6 +704,21 @@ def validated_sig_bar(raw) -> dict:
     return section
 
 
+def validated_fleet_bar(raw) -> dict:
+    """Same posture as validated_sig_bar: a malformed section falls back
+    whole, a malformed single value falls back alone."""
+    section = _fleet_bar_defaults()
+    if not isinstance(raw, dict):
+        return section
+    if isinstance(raw.get("enabled"), bool):
+        section["enabled"] = raw["enabled"]
+    for key in ("x", "y"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            section[key] = value
+    return section
+
+
 def validated_eve(raw) -> dict:
     section = _eve_defaults()
     if not isinstance(raw, dict):
@@ -785,6 +813,7 @@ def _normalize(data: dict) -> dict:
     data["preview"] = validated_preview(data.get("preview"))
     data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
     data["sig_bar"] = validated_sig_bar(data.get("sig_bar"))
+    data["fleet_bar"] = validated_fleet_bar(data.get("fleet_bar"))
     return data
 
 
@@ -819,6 +848,12 @@ def save(data: dict, path: Path | None = None) -> None:
 def _save_locked(data: dict, path: Path | None = None) -> None:
     path = path or paths.settings_file()
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
+    # Guarantee the persisted shape is normalized even when save() is called
+    # directly (bypassing the _normalize() that update() runs first).
+    # Other nested sections are not touched here -- only fleet_bar was added
+    # after this pattern was established; extending the others is a separate
+    # decision that would need its own tests.
+    payload["fleet_bar"] = validated_fleet_bar(payload.get("fleet_bar"))
     atomicio.write_atomic(path, json.dumps(payload, indent=2), encoding="utf-8")
 
 

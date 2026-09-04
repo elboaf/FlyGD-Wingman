@@ -88,6 +88,7 @@ missing when the title bar filled up:
 | Previews | primary | twice, ever | a Settings section |
 | Bookmarks | primary | twice, ever | a Settings section |
 | Alerts | part of previews | twice, ever | a Settings section |
+| Fleet combat bar | part of client awareness | twice, ever | Settings › Previews and a status-strip toggle |
 | Skills | secondary | rarely | a destination |
 | Fittings | secondary | rarely | a destination |
 
@@ -162,6 +163,16 @@ is a specific power and a specific hazard, and it decides two arguments:
 The corollary for the UI: an alert you configured and cannot tell is
 running is the failure mode, not a missed pulse. The card says whether it
 is watching and which characters it can see, in one sentence, on purpose.
+
+### The Fleet combat bar is observation, not automation
+
+The Fleet combat bar is a display-only companion to client previews: one
+stable row per running, logged-in client, with recent outgoing DPS and
+incoming tackle read from EVE's gamelogs. It belongs under Settings ›
+Previews because it is another floating desktop window, but its runtime is
+independent — turning previews or alerts off must not stop it. A missing log
+is shown as missing data, never as a fabricated zero, and the bar never
+moves an EVE client or sends input to one.
 
 
 ## What it must not become

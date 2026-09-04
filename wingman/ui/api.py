@@ -11,10 +11,10 @@ with nothing in the traceback naming the attribute responsible. Every
 non-method attribute here is therefore underscore-prefixed, and
 `test_api.py` asserts it rather than trusting anyone to remember.
 
-**Workers never touch the page directly.** They call `_push`, which is the
-successor to `UploaderWindow._ui` -- but semantic where `_ui` marshalled
-widget method calls. `evaluate_js` is safe to call from any thread; there
-is no UI thread to marshal onto.
+**Workers use semantic push chokepoints.** Most call `_push`; the independent
+Fleet page uses `_push_fleet_snapshot`. Both serialize a complete semantic
+payload and call `evaluate_js`, which is safe from any thread; there is no UI
+thread to marshal onto.
 
 `_window` is assigned by ui.window.create() after construction rather than
 passed in: create_window() needs js_api before a window object exists.
@@ -586,10 +586,10 @@ class Api:
         timer=threading.Timer,
         preview_host=None,
         skills=None,
+        telemetry=None,
         authority=None,
         fittings=None,
         authority_warnings=(),
-        alerts=None,
         update_service=updates_mod,
         update_spawn=threading.Thread,
         is_frozen=lambda: bool(getattr(sys, "frozen", False)),
@@ -600,6 +600,17 @@ class Api:
         # _window above: a public attribute here reaches the js_api proxy
         # walk and the same RecursionError follows.
         self._sigbar_window = None
+        # Independent display-only Fleet window. Like the sig bar this must
+        # stay private or pywebview recursively walks its WinForms native.
+        self._fleetbar_window = None
+        self._fleetbar_ready = False
+        self._fleet_snapshot = None
+        self._fleet_unsubscribe = None
+        # pywebview serves bridge calls concurrently. Window construction,
+        # show/hide, page-ready reveal, and shutdown must have one lifecycle
+        # owner or a late enable can orphan an untracked topmost WebView.
+        self._fleetbar_lifecycle_lock = threading.RLock()
+        self._fleetbar_quitting = False
         # Creation, assignment, showing, delayed reveal, and shutdown's
         # destroy/clear are one lifecycle transaction at a time. RLock lets
         # toggle_sig_bar hold the boundary while sigbar.create enforces it
@@ -697,12 +708,10 @@ class Api:
         # exist and silently drops the only actionable recovery message.
         self._authority_warnings = list(authority_warnings)
 
-        # None off the happy path -- pre-Windows-check, off Linux in tests,
-        # and when the gamelogs feature is otherwise unavailable. Every
-        # call site below tolerates its absence: reconcile() is the only
-        # method ever invoked on it, and every one of the alert bridge
-        # methods below guards on it first.
-        self._alerts = alerts
+        # Shared client/log infrastructure. None off Windows, in most tests,
+        # or when optional construction failed; every call site degrades to
+        # an inert preview/alert/fleet state.
+        self._telemetry = telemetry
 
         self._rows = rows if rows is not None else RowSnapshot()
         self._durations_file = durations_file or paths.durations_file()
@@ -3541,19 +3550,22 @@ class Api:
         """Show or hide the EVE destinations and sections.
 
         VISIBILITY ONLY. It never starts or stops anything: eve_bookmarks
-        .enabled and preview.enabled stay the sole runtime switches.
+        .enabled, preview.enabled, and fleet_bar.enabled stay the sole
+        runtime switches.
 
         The guard is the whole design. Hiding a feature that is RUNNING
-        would conceal its off switch -- previews would keep painting and
-        eighteen global keybinds would keep firing in EVE, with no
-        reachable control to stop them. Making this a kill switch instead
-        was rejected: it would silently stop those from what reads as a
-        display preference, and re-enabling could not know which of the two
-        to restore without a third persisted value.
+        would conceal its off switch -- previews would keep painting,
+        eighteen global keybinds would keep firing in EVE, or the fleet
+        bar would keep running, with no reachable control to stop them.
+        Making this a kill switch instead was rejected: it would silently
+        stop those from what reads as a display preference, and re-enabling
+        could not know which of the three to restore without additional
+        persisted values.
 
-        So it simply refuses while either is on, and says which. Turning
-        them off first is one extra step, and it is the honest order --
-        that friction is what stops this being a kill switch by accident.
+        So it simply refuses while any of the three is on, and says which.
+        Turning them off first is one extra step, and it is the honest
+        order -- that friction is what stops this being a kill switch by
+        accident.
         """
         enabled = bool(enabled)
         if not enabled:
@@ -3562,6 +3574,8 @@ class Api:
                 running.append("Bookmarks")
             if self._state.settings.get("preview", {}).get("enabled"):
                 running.append("Previews")
+            if self._state.settings.get("fleet_bar", {}).get("enabled"):
+                running.append("Fleet Bar")
             if running:
                 return self._field_refused(
                     "Turn off " + " and ".join(running) + " first — hiding "
@@ -3733,6 +3747,198 @@ class Api:
             time.sleep(0.25)
         logger.debug("sig bar resize never stuck at %sx%s", width, height)
 
+    # ----- floating Fleet DPS/EWAR bar ---------------------------------
+
+    def fleet_bar_settings(self) -> dict:
+        """Copy of the persisted window state for both main-page toggles."""
+        return dict(self._state.settings.get("fleet_bar") or {})
+
+    def _push_fleet_bar_state(self) -> None:
+        self._push("onFleetBarState", self.fleet_bar_settings())
+
+    def _fleet_payload(self, snapshot) -> dict:
+        return {
+            "rows": [
+                {
+                    "character": row.character,
+                    "dps": row.dps,
+                    "ewar": list(row.ewar),
+                    "log_status": row.log_status,
+                }
+                for row in snapshot.rows
+            ],
+            "stream_health": {
+                "state": snapshot.stream_health.state,
+                "detail": snapshot.stream_health.detail,
+            },
+            "metric_error": snapshot.metric_error,
+        }
+
+    def fleet_bar_snapshot(self) -> dict:
+        """Current complete display payload, also used by the bar at boot."""
+        snapshot = self._fleet_snapshot
+        if snapshot is None:
+            return {
+                "rows": [],
+                "stream_health": {"state": "stopped", "detail": None},
+                "metric_error": None,
+            }
+        return self._fleet_payload(snapshot)
+
+    def _push_fleet_snapshot(self) -> None:
+        bar = self._fleetbar_window
+        if bar is None:
+            return
+        payload = self.fleet_bar_snapshot()
+        script = (
+            f"window.onFleetSnapshot && window.onFleetSnapshot({json.dumps(payload)})"
+        )
+        try:
+            bar.evaluate_js(script)
+        except Exception:
+            logger.debug("Fleet Bar snapshot push failed", exc_info=True)
+
+    def _receive_fleet_snapshot(self, snapshot) -> None:
+        """Coordinator subscriber; safe on its dispatcher thread."""
+        self._fleet_snapshot = snapshot
+        self._push_fleet_snapshot()
+
+    def toggle_fleet_bar(self, on) -> dict:
+        """Serialize the persisted/runtime/window transition."""
+        with self._fleetbar_lifecycle_lock:
+            if self._fleetbar_quitting:
+                return self._field_refused("Wingman is shutting down.")
+            return self._toggle_fleet_bar(bool(on))
+
+    def _toggle_fleet_bar(self, on: bool) -> dict:
+        from wingman.ui import fleetbar
+
+        previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
+        if on != previous:
+            # A snapshot belongs to one enabled generation. Re-enabling
+            # opens on WAITING until the coordinator publishes fresh state,
+            # never on rows cached before the disabled interval.
+            self._fleet_snapshot = None
+        settings_mod.update_section(self._state.settings, "fleet_bar", {"enabled": on})
+        self._reconcile_eve_runtime()
+        bar = self._fleetbar_window
+        try:
+            if on:
+                if not fleetbar.is_alive(bar):
+                    # The page reveals itself through fleet_bar_ready only
+                    # after its first snapshot has rendered and fitted.
+                    self._fleetbar_ready = False
+                    bar = fleetbar.create(self, hidden=True)
+                elif self._fleetbar_ready:
+                    fleetbar.reveal_bar(bar)
+                    self._push_fleet_snapshot()
+            elif fleetbar.is_alive(bar):
+                fleetbar.hide_bar(bar)
+        except Exception:
+            logger.exception("Fleet Bar window toggle failed")
+            if on:
+                failed = self._fleetbar_window
+                self._fleetbar_window = None
+                self._fleetbar_ready = False
+                if failed is not None:
+                    try:
+                        failed.destroy()
+                    except Exception:
+                        logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
+                # A display feature that did not display is not enabled.
+                # Roll the runtime choice back so both controls stay honest
+                # and a later click retries construction from a clean state.
+                settings_mod.update_section(
+                    self._state.settings, "fleet_bar", {"enabled": False}
+                )
+                self._fleet_snapshot = None
+                self._reconcile_eve_runtime()
+                self._push_fleet_bar_state()
+                return self._field_refused("The Fleet Bar could not be opened.")
+        self._push_fleet_bar_state()
+        return self._field_ok()
+
+    def fleet_bar_ready(self) -> None:
+        """Reveal the current enabled page after its first successful fit."""
+        from wingman.ui import fleetbar
+
+        with self._fleetbar_lifecycle_lock:
+            bar = self._fleetbar_window
+            if self._fleetbar_quitting or not fleetbar.is_alive(bar):
+                return
+            # Readiness belongs to this page instance, not to today's toggle
+            # state. If the user disabled it during boot, a later re-enable
+            # can show the already-fitted page without waiting for an event
+            # the page emits only once.
+            self._fleetbar_ready = True
+            if not self.fleet_bar_settings().get("enabled"):
+                return
+            try:
+                fleetbar.reveal_bar(bar)
+                self._push_fleet_snapshot()
+            except Exception:
+                logger.exception("Fleet Bar window could not be revealed")
+                self._toggle_fleet_bar(False)
+
+    def save_fleet_bar_pos(self, x, y) -> None:
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            return
+        settings_mod.update_section(self._state.settings, "fleet_bar", {"x": x, "y": y})
+
+    def move_fleet_bar(self, x, y) -> None:
+        """Keep dynamic growth inside the current browser-reported work area."""
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            return
+        with self._fleetbar_lifecycle_lock:
+            bar = self._fleetbar_window
+            if (
+                bar is None
+                or self._fleetbar_quitting
+                or not self.fleet_bar_settings().get("enabled")
+            ):
+                return
+            try:
+                bar.move(x, y)
+            except Exception:
+                logger.debug("Fleet Bar visibility move failed", exc_info=True)
+                return
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"x": x, "y": y}
+            )
+
+    def fit_fleet_bar(self, width, height) -> None:
+        """Resize to measured content without resurrecting a disabled bar."""
+        try:
+            width, height = int(width), int(height)
+        except (TypeError, ValueError):
+            return
+        if width <= 0 or height <= 0:
+            return
+        for _ in range(12):
+            with self._fleetbar_lifecycle_lock:
+                bar = self._fleetbar_window
+                if (
+                    bar is None
+                    or self._fleetbar_quitting
+                    or not self.fleet_bar_settings().get("enabled")
+                ):
+                    return
+                try:
+                    bar.resize(width, height)
+                except Exception:
+                    logger.debug("Fleet Bar resize failed", exc_info=True)
+                try:
+                    if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+                        return
+                except Exception:  # noqa: BLE001 -- headless/test windows may expose no readable native size; the resize call remains the contract.
+                    return
+            time.sleep(0.25)
+        logger.debug("Fleet Bar resize never stuck at %sx%s", width, height)
+
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.
 
@@ -3757,12 +3963,11 @@ class Api:
                 return self._field_refused("That folder does not exist.")
             result = self._write_setting("gamelogs_dir", text or None)
             # This IS the watcher this branch's docstring says it drives
-            # none of: AlertService reads gamelogs_dir through the same
-            # `folder` callable reconcile() re-evaluates, so a repointed
+            # none of: shared telemetry reads gamelogs_dir through the same
+            # folder callable reconcile() re-evaluates, so a repointed
             # or newly-set folder is exactly the case that used to persist
             # while nothing ever polled it.
-            if self._alerts is not None:
-                self._alerts.reconcile()
+            self._reconcile_eve_runtime()
             return result
 
         text = str(path or "").strip()
@@ -3865,16 +4070,19 @@ class Api:
 
     # ---- EVE client previews ------------------------------------------
 
-    def start_previews_if_enabled(self) -> None:
-        """Start the preview thread only if the user asked for it.
+    def _reconcile_eve_runtime(self) -> None:
+        """Bring the sole shared EVE telemetry runtime in line with settings."""
+        if self._telemetry is not None:
+            self._telemetry.reconcile()
 
-        Called on launch. Lazy on purpose: enabling costs a thread, a
-        700ms discovery sweep and a foreground hook, and a user who never
-        previews EVE clients should pay none of it.
+    def start_previews_if_enabled(self) -> None:
+        """Start Preview if enabled, then reconcile all shared EVE telemetry.
+
+        Fleet can independently start discovery and gamelog workers while
+        Preview stays off. The preview pump and foreground hook remain lazy.
         """
         if self._preview_host is None:
-            if self._alerts is not None:
-                self._alerts.reconcile()
+            self._reconcile_eve_runtime()
             return
         section = self._state.settings.get("preview", {})
         # Pushed before start(): the first registration pass runs inside
@@ -3883,12 +4091,9 @@ class Api:
         self._preview_host.set_hotkeys(section.get("hotkeys") or {})
         if section.get("enabled"):
             self._preview_host.start()
-        if self._alerts is not None:
-            # After start(), not before: the folder callable __main__ wires
-            # up gates on the host's live is_running, and reconciling
-            # before start() would evaluate it against the pre-launch
-            # state.
-            self._alerts.reconcile()
+        # After host start(), so Preview roster delivery has a live pump.
+        # Telemetry predicates read persisted settings directly.
+        self._reconcile_eve_runtime()
 
     def set_preview_enabled(self, enabled: bool) -> None:
         """Toggle previews and persist the choice.
@@ -3924,11 +4129,7 @@ class Api:
                 self._preview_host.start()
             else:
                 self._preview_host.stop()
-        if self._alerts is not None:
-            # Alerts gate on preview.enabled through the `folder` callable
-            # (decision: no previews, no polling thread), so a toggle here
-            # is one of the five places that answer can change.
-            self._alerts.reconcile()
+        self._reconcile_eve_runtime()
         # Truthy on success: WM.send resolves to null on a bridge failure
         # and cannot otherwise distinguish that from a method that simply
         # returned None (settings.js:181 documents the same trap).
@@ -3947,17 +4148,18 @@ class Api:
                 self._preview_host.stop()
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        if self._alerts is not None:
-            # reconcile(), not a direct stop(): the folder callable
-            # __main__ wires up gates on the host's live is_running, which
-            # preview_host.stop() above has already flipped false, so this
-            # is the same "no previews, no polling thread" answer every
-            # other call site relies on -- run after the host teardown,
-            # not before, or it would see the pre-shutdown state.
+        if self._telemetry is not None:
             try:
-                self._alerts.reconcile()
+                self._telemetry.stop()
             except Exception:
-                logger.exception("Alert service did not stop cleanly")
+                logger.exception("EVE telemetry runtime did not stop cleanly")
+        unsubscribe = self._fleet_unsubscribe
+        self._fleet_unsubscribe = None
+        if unsubscribe is not None:
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception("Fleet snapshot subscriber did not detach cleanly")
 
     def capture_preview_bind(self, parts) -> dict:
         return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
@@ -4984,20 +5186,14 @@ class Api:
     def set_alert_enabled(self, enabled) -> dict:
         """Turn the gamelog alert poller on or off."""
         result = self._write_alert_setting(("enabled",), bool(enabled))
-        if self._alerts is not None:
-            # One of the five places reconcile() must run from: alerts
-            # gate on this flag (composed with the preview/folder state in
-            # the `folder` callable __main__ wires up), so this toggle is
-            # exactly the case that can change AlertService._wanted()'s
-            # answer.
-            self._alerts.reconcile()
+        self._reconcile_eve_runtime()
         return result
 
     def set_alert_pve_filter(self, enabled) -> dict:
         """Suppress alerts that look like NPC fire rather than a player's.
 
-        Read live by the poll thread through the same config callable on
-        its next tick -- no reconcile() needed, this cannot change whether
+        Read live by AlertPolicy on its next telemetry batch -- no
+        reconcile() needed, this cannot change whether
         the thread itself should run.
         """
         return self._write_alert_setting(("pve_filter",), bool(enabled))
@@ -5010,8 +5206,8 @@ class Api:
     def set_alert_volume(self, value) -> dict:
         """Persist how loud every alert sound is, 0-100.
 
-        Read live by the poll thread through the same config callable on
-        its next alert -- no reconcile() and no push: nothing is playing
+        Read live by AlertPolicy on its next telemetry batch -- no
+        reconcile() and no push: nothing is playing
         between two alerts, so there is no live state to correct.
 
         Deliberately does NOT clamp here, matching set_preview_opacity and
@@ -5048,8 +5244,7 @@ class Api:
     def test_alert(self, event) -> dict:
         """Fire one alert manually on every currently previewed character,
         bypassing cooldowns entirely. Reaches the host directly rather
-        than through AlertService: the service owns the poll path, and
-        Test is not a poll.
+        than through AlertPolicy: Test is not a gamelog event.
 
         NEVER persistent, regardless of persist_until_selected -- always
         `persisted: False`, on every path including success, since
@@ -5059,8 +5254,8 @@ class Api:
         they alt-tabbed to that client by hand.
 
         The sound plays exactly once regardless of how many previews are
-        open, matching AlertService._handle's one-sound-per-dispatched-
-        event behaviour -- N previews must not mean N overlapping sounds.
+        open, matching AlertPolicy's one-sound-per-dispatched-event
+        behaviour -- N previews must not mean N overlapping sounds.
 
         With no live preview to ring -- previews off (no host at all) or
         a host present but no named EVE client -- the sound still plays
@@ -5124,18 +5319,23 @@ class Api:
         alerts = section.get("alerts", {})
         gamelogs = self._state.settings.get("gamelogs_dir")
         folder = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
-        # Same test as AlertService._wanted(): a folder that was valid and
-        # stopped being one (an unmounted drive, an unlinked OneDrive
+        # Same test as the coordinator's resolver: a folder that was valid
+        # and stopped being one (an unmounted drive, an unlinked OneDrive
         # folder, a settings.json carried from another machine) must show
         # the no-folder banner, not the healthy card, even though the
         # setting still holds a path.
         if folder is not None and not folder.is_dir():
             folder = None
-        if self._alerts is not None:
-            health = self._alerts.health()
-            running = health.running
-            last_error = health.last_error
-            characters = list(health.characters)
+        alerts_wanted = bool(
+            self._preview_host is not None
+            and section.get("enabled")
+            and alerts.get("enabled")
+        )
+        if self._telemetry is not None and alerts_wanted:
+            health = self._telemetry.stream_health()
+            running = health.state in {"running", "active"}
+            last_error = health.detail if health.state in {"stale", "error"} else None
+            characters = list(self._telemetry.stream_characters())
         else:
             running, last_error, characters = False, None, []
         return {

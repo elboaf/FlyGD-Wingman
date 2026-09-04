@@ -147,6 +147,14 @@ def test_outgoing_damage_does_not_alert():
     assert patterns.match_line(OUTGOING, CHARACTER) is None
 
 
+def test_malformed_timestamp_still_alerts():
+    match = patterns.match_line(
+        "[ 2026.02.30 12:34:56 ] (combat) Sleepless Patroller misses you completely",
+        CHARACTER,
+    )
+    assert match == patterns.Match("combat", "Sleepless Patroller")
+
+
 @pytest.mark.parametrize("line", ["", "   ", "[ 2026.08.24 20:42:50 ] (None) x"])
 def test_uninteresting_lines_return_none(line):
     assert patterns.match_line(line, CHARACTER) is None
@@ -312,6 +320,18 @@ def test_scramble_ownership_does_not_leak_across_similar_names():
 FIXTURES = Path(__file__).parent / "fixtures" / "gamelogs"
 
 
+def _fixture_listener_and_combat(path: Path) -> tuple[str, str]:
+    with open(path, encoding="utf-8-sig", errors="replace") as fh:
+        body = fh.read().splitlines()
+    who = next(
+        line.split(":", 1)[1].strip()
+        for line in body
+        if line.strip().startswith("Listener:")
+    )
+    combat = next(line for line in body if "(combat)" in line)
+    return who, combat
+
+
 def _corpus_lines():
     """(listener, line) for every line in the corpus.
 
@@ -349,6 +369,14 @@ PLAYER_SOURCES = [
     "Doran Velk",
     "Doran Velk Proteus",
 ]
+
+
+@pytest.mark.parametrize(
+    "name", ["outgoing_direct.txt", "outgoing_drone.txt"], ids=["direct", "drone"]
+)
+def test_outgoing_telemetry_fixtures_do_not_alert(name):
+    who, combat = _fixture_listener_and_combat(FIXTURES / name)
+    assert patterns.match_line(combat, who) is None
 
 
 @pytest.mark.skipif(not FIXTURES.is_dir(), reason="no gamelog corpus committed")

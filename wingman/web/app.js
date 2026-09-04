@@ -56,7 +56,7 @@
                  'onPreviewBindCaptured',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
-                 'onSigBarState', 'onUpdateStatus',
+                 'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
                  'onSkills', 'onSkillsProgress',
                  'onFittingsChanged', 'onFittingsProgress',
                  'onFittingsScreenshotState'];
@@ -248,8 +248,8 @@
 
   // ---- the EVE gate ---------------------------------------------------
   // Visibility only. Nothing here starts or stops a feature; Python's
-  // set_show_eve_tools refuses to turn the gate off while either is
-  // running, precisely so this can never hide a live feature's off switch.
+  // set_show_eve_tools refuses to turn the gate off while Bookmarks,
+  // Previews, or Fleet Bar is running, so it cannot hide a live off switch.
   //
   // With both destinations hidden the nav has one entry left, so it hides
   // altogether -- which is the single-screen app the README describes.
@@ -269,7 +269,7 @@
   // that the merge axis is the product's own independence claim.
   WM.EVE_SECTIONS = ['bookmarks', 'previews', 'alerts'];
 
-  WM.apply_eve_gate = function (shown) {
+  WM.apply_eve_gate = function (shown, fleetEnabled) {
     WM.eve_shown = shown !== false;
     WM.EVE_ROUTES.forEach(function (name) {
       var btn = document.querySelector('.navbtn[data-route="' + name + '"]');
@@ -282,6 +282,12 @@
     // One destination left is not a choice, so the whole bar goes. This
     // also hands its width back to the drag region.
     WM.el('routenav').classList.toggle('single', !WM.eve_shown);
+    // Hidden with the EVE tools while off, but kept as an escape hatch for
+    // a hand-edited inconsistent settings file that starts the bar while
+    // hiding its Settings section.
+    var fleetButton = WM.el('btn-fleetbar');
+    var fleetOn = fleetEnabled === undefined ? WM.fleet_bar_on : fleetEnabled;
+    if (fleetButton) { fleetButton.hidden = !WM.eve_shown && !fleetOn; }
     // Hiding a screen you can still reach would strand you on it, so every
     // route into one has to be cut -- not just the one you are standing on.
     //
@@ -303,7 +309,8 @@
 
   document.addEventListener('wm:settings', function (ev) {
     var cfg = (ev.detail || {}).settings || {};
-    WM.apply_eve_gate(cfg.show_eve_tools !== false);
+    WM.apply_eve_gate(cfg.show_eve_tools !== false,
+                      !!(cfg.fleet_bar && cfg.fleet_bar.enabled));
     // The version rides the settings payload rather than a push of its
     // own: get_settings is a RETURN, deliberately (api.py argues a push of
     // the whole settings dict would throw away unsaved edits in an open

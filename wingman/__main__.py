@@ -545,53 +545,57 @@ def build_preview_host(state, api_box):
         return None
 
 
-def build_alert_service(state, host):
-    """The gamelog alert poller, or None where it has nowhere to render.
-
-    `host` is the PreviewHost build_preview_host just returned, or None.
-    Alerts dispatch through `host.raise_alert` -- a None host (off
-    Windows, or when preview construction itself failed) has no window to
-    ring, so there is nothing this subsystem could do; return None rather
-    than build a poller whose on_alert callback would be missing.
-
-    Constructed unconditionally otherwise, alerts-enabled or not: like
-    PreviewHost, reconcile() -- not construction -- is what starts its
-    thread, called from Api once previews decide their own live state.
-    """
+def build_alert_policy(state, host):
+    """Alert decisions without a private file-reader thread."""
     if host is None:
         return None
-    from .alerts.service import AlertService
-
-    def folder():
-        # None unless previews are actually running AND a Gamelogs folder
-        # resolves. AlertService._wanted() has no way to see preview state
-        # on its own, so this composition is the whole of "no previews, no
-        # polling thread" -- and it is why shutdown_previews's reconcile()
-        # call (api.py) tears this down too: host.stop() flips
-        # host.is_running false before that reconcile() runs.
-        #
-        # host.is_running, not the persisted preview.enabled setting: the
-        # two agree everywhere except the moment of shutdown, and it is
-        # exactly that moment reconcile() has to answer correctly.
-        if not host.is_running:
-            return None
-        gamelogs = state.settings.get("gamelogs_dir")
-        return Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
-
     try:
-        return AlertService(
+        from .alerts.service import AlertPolicy, play_sound
+
+        return AlertPolicy(
             config=lambda: state.settings.get("preview", {}).get("alerts", {}),
-            folder=folder,
-            on_alert=host.raise_alert,
-            # What makes an alert on the client you are already looking at
-            # silent. Read live, never captured: the foreground changes
-            # constantly and the host is the only thing that knows.
+            sound=play_sound,
             focused=host.focused_character,
+            on_alert=host.raise_alert,
         )
     except Exception:
-        # Same posture as build_preview_host: alerts are secondary, and a
-        # failure to construct the poller must not stop Wingman launching.
-        logger.exception("Alert subsystem unavailable")
+        logger.exception("Alert policy unavailable")
+        return None
+
+
+def build_telemetry(state, host, alert_policy):
+    """Shared EVE discovery/gamelog runtime, or None off Windows."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from .telemetry.clients import ClientDiscovery
+        from .telemetry.coordinator import TelemetryCoordinator
+        from .telemetry.gamelogs import GameLogStream
+        from .telemetry.metrics import FleetMetrics
+
+        def gamelogs_folder():
+            configured = state.settings.get("gamelogs_dir")
+            return Path(configured) if configured else combatlog.find_gamelogs_dir()
+
+        return TelemetryCoordinator(
+            preview_enabled=lambda: bool(
+                state.settings.get("preview", {}).get("enabled")
+            ),
+            fleet_enabled=lambda: bool(
+                state.settings.get("fleet_bar", {}).get("enabled")
+            ),
+            alerts_enabled=lambda: bool(
+                state.settings.get("preview", {}).get("alerts", {}).get("enabled")
+            ),
+            gamelogs_folder=gamelogs_folder,
+            discovery=ClientDiscovery(),
+            stream=GameLogStream(),
+            metrics=FleetMetrics(),
+            preview_host=host,
+            alert_policy=alert_policy,
+        )
+    except Exception:
+        logger.exception("Shared EVE telemetry unavailable")
         return None
 
 
@@ -822,12 +826,18 @@ def main() -> int:
 
     api_box = {}
     preview_host = build_preview_host(state, api_box)
+    alert_policy = build_alert_policy(state, preview_host)
+    telemetry = build_telemetry(state, preview_host, alert_policy)
+    if telemetry is not None and preview_host is not None:
+        preview_host.set_discovery_request(telemetry.request_discovery)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
-        alerts=build_alert_service(state, preview_host),
+        telemetry=telemetry,
     )
     api_box["api"] = api
+    if telemetry is not None:
+        api._fleet_unsubscribe = telemetry.subscribe_fleet(api._receive_fleet_snapshot)
     # Migration and authority composition happen after Api construction so
     # warnings have a durable route payload and callbacks bind eagerly. They
     # still happen before the window starts and before any EVE feature work.
@@ -856,10 +866,22 @@ def main() -> int:
         # Serialize the native calls, not just their bookkeeping. A concurrent
         # updater/tray request then observes the first call's result and can
         # retry its failure without repeating a successful destruction.
-        # LOCK ORDER: shutdown_lock, then Api._sigbar_lifecycle_lock. Sig-bar
-        # create/show paths never take shutdown_lock, so a creation already in
-        # progress can finish and be observed here without an inversion.
+        # LOCK ORDER: shutdown_lock, Fleet lifecycle lock, then sig-bar lock.
+        # Neither auxiliary-window path takes shutdown_lock, so a creation
+        # already in progress can finish and be observed without inversion.
         with shutdown_lock:
+            with api._fleetbar_lifecycle_lock:
+                api._fleetbar_quitting = True
+                fleet = api._fleetbar_window
+                if fleet is not None:
+                    try:
+                        fleet.destroy()
+                    except Exception:
+                        logger.exception("Fleet Bar window did not destroy cleanly")
+                    else:
+                        api._fleetbar_window = None
+                        api._fleetbar_ready = False
+
             with api._sigbar_lifecycle_lock:
                 # Close the lifecycle before inspecting the window. A creator
                 # that won the lock has already assigned its bar; one that lost
@@ -927,12 +949,21 @@ def main() -> int:
     shown = getattr(window, "events", None)
     if shown is not None:
 
-        def _restore_sigbar(api=api):
-            from .ui import sigbar
+        def _restore_floating_bars(api=api):
+            from .ui import fleetbar, sigbar
 
-            sigbar.restore(api)
+            for restore, label in (
+                (sigbar.restore, "Sig bar"),
+                (fleetbar.restore, "Fleet Bar"),
+            ):
+                try:
+                    restore(api)
+                except Exception:
+                    # Auxiliary chrome is independent: one broken WebView
+                    # must not prevent the other from restoring.
+                    logger.exception("%s restore failed", label)
 
-        shown.shown += _restore_sigbar
+        shown.shown += _restore_floating_bars
 
     def start_watching(directory) -> None:
         """Create the watcher and start the poll loop. Idempotent.

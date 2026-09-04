@@ -59,6 +59,21 @@ class Client(NamedTuple):
     stable_key: str
 
 
+class EnumerationResult(NamedTuple):
+    """A raw scan's outcome, distinguishing a genuinely empty roster from
+    a failed one.
+
+    A plain `list` cannot carry that distinction, and callers that prune
+    state on absence (ClientDiscovery's stable-session pruning) must never
+    treat a failed scan as authoritative proof that nothing is running.
+    `success=False` always carries an empty `clients` list -- the shape
+    `list_clients()`'s existing callers already tolerate on failure.
+    """
+
+    success: bool
+    clients: list
+
+
 def _character(title: str):
     if title.startswith(TITLE_PREFIX):
         name = title[len(TITLE_PREFIX) :].strip()
@@ -66,16 +81,23 @@ def _character(title: str):
     return None
 
 
-def list_clients(*, enumerator=None, pids=None, image_name=None, strict=False) -> list:
-    """Every visible EVE client window, as Client records.
+def enumerate_clients(
+    *, enumerator=None, pids=None, image_name=None, strict=False
+) -> EnumerationResult:
+    """Every visible EVE client window, with a flag distinguishing a
+    genuinely empty scan from one where the top-level enumerator call
+    itself failed.
 
     Collaborators are injected for testing, following evewindows.py's
     pattern. `image_name` returns None when the process cannot be opened,
     which is routine for processes owned by another user -- treated as
-    "not a client", never as an error.
+    "not a client", never as an error. A per-window inspection failure
+    (`pids`/`image_name` raising) only drops that one window -- it is not
+    an enumeration failure, since the top-level window list was obtained
+    successfully.
     """
     if sys.platform != "win32" and enumerator is None:
-        return []
+        return EnumerationResult(True, [])
     enumerator = enumerator or evewindows._enumerate_windows
     pids = pids or _pid_for_window
     image_name = image_name or _image_name_for_pid
@@ -85,7 +107,7 @@ def list_clients(*, enumerator=None, pids=None, image_name=None, strict=False) -
         if strict:
             raise
         logger.exception("Could not enumerate windows")
-        return []
+        return EnumerationResult(False, [])
 
     out = []
     for hwnd, title in windows:
@@ -102,7 +124,21 @@ def list_clients(*, enumerator=None, pids=None, image_name=None, strict=False) -
             continue
         character = _character(title)
         out.append(Client(hwnd, title, pid, character, character or f"hwnd:0x{hwnd:x}"))
-    return out
+    return EnumerationResult(True, out)
+
+
+def list_clients(*, enumerator=None, pids=None, image_name=None, strict=False) -> list:
+    """Every visible EVE client window, as Client records.
+
+    Compatibility adapter over `enumerate_clients()`: existing callers
+    (Preview reconciliation, Alerts) have never needed to distinguish "no
+    clients" from "enumeration failed" and this preserves that -- both
+    collapse to an empty list here, exactly as before this function grew
+    a failure-aware sibling.
+    """
+    return enumerate_clients(
+        enumerator=enumerator, pids=pids, image_name=image_name, strict=strict
+    ).clients
 
 
 _IMAGE_CACHE = {}
@@ -171,7 +207,7 @@ def _image_name_for_pid(pid: int):
 
 
 def flush_image_cache_periodically() -> None:
-    """PIDs are reused. Called once per sweep by the host."""
+    """PIDs are reused. Called once per shared discovery scan."""
     global _CACHE_SWEEPS
     _CACHE_SWEEPS += 1
     if _CACHE_SWEEPS >= _CACHE_FLUSH_EVERY:

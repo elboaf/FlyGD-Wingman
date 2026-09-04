@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Wingman Fleet Bar</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    html, body {
+      overflow: hidden;
+      background: transparent;
+    }
+    [hidden] { display: none !important; }
+    body {
+      width: 380px;
+      cursor: default;
+      user-select: none;
+    }
+    .fleet-shell {
+      /* style.css's .pywebview-drag-region is title-bar geometry as well as
+         drag behavior (flex:1, height:100%, display:flex). This page needs
+         only the behavior; reset the geometry or the table fills the whole
+         WebView and lays its header, rows and note side by side. */
+      display: block;
+      width: 380px;
+      height: max-content;
+      flex: none;
+      overflow: hidden;
+      border: 1px solid var(--control-border);
+      border-radius: var(--radius-sm);
+      background: linear-gradient(180deg, var(--card-top), var(--panel) 78%);
+      box-shadow: 0 8px 24px var(--titlebar-edge);
+    }
+    .fleet-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      min-height: 29px;
+      padding: 7px 10px 6px;
+      border-bottom: 1px solid var(--panel-border);
+      color: var(--text-label);
+      font-size: var(--fs-label);
+      font-weight: 650;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .fleet-health {
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-label);
+      font-weight: 400;
+      letter-spacing: .04em;
+    }
+    .fleet-health.warn { color: var(--warn); }
+    .fleet-health.err { color: var(--err); }
+    .fleet-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 70px 118px;
+      align-items: center;
+    }
+    .fleet-head {
+      min-height: 24px;
+      padding: 0 10px;
+      background: var(--sunken);
+      border-bottom: 1px solid var(--row-line);
+      color: var(--text-faint);
+      font-size: var(--fs-label);
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .fleet-head span:nth-child(2),
+    .fleet-head span:nth-child(3) { text-align: right; }
+    .fleet-row {
+      min-height: 30px;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--row-line);
+      color: var(--text);
+      font-size: var(--fs-body);
+    }
+    .fleet-row:last-child { border-bottom: 0; }
+    .fleet-character {
+      overflow: hidden;
+      padding-right: 10px;
+      font-weight: 620;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fleet-dps, .fleet-ewar {
+      overflow: hidden;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: var(--fs-mono);
+      text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fleet-dps.live { color: var(--text); }
+    .fleet-ewar.active { color: var(--warn); }
+    .fleet-empty, .fleet-note {
+      color: var(--text-faint);
+      font-size: var(--fs-muted);
+    }
+    .fleet-empty { padding: 11px 10px 12px; }
+    .fleet-note {
+      padding: 6px 10px 7px;
+      border-top: 1px solid var(--panel-border);
+      background: var(--sunken);
+    }
+    .fleet-note.err { color: var(--err); }
+  </style>
+</head>
+<body>
+  <section class="fleet-shell pywebview-drag-region" aria-label="Fleet combat telemetry">
+    <header class="fleet-title">
+      <span>Fleet telemetry</span>
+      <span class="fleet-health" id="fleet-health">WAITING</span>
+    </header>
+    <div role="table" aria-label="Character DPS and incoming EWAR">
+      <div class="fleet-grid fleet-head" role="row">
+        <span role="columnheader">CHARACTER</span>
+        <span role="columnheader">DPS</span>
+        <span role="columnheader">INCOMING</span>
+      </div>
+      <div id="fleet-rows" role="rowgroup"></div>
+    </div>
+    <div class="fleet-empty" id="fleet-empty" role="status">Waiting for EVE clients&hellip;</div>
+    <div class="fleet-note" id="fleet-note" role="status" hidden></div>
+  </section>
+  <script src="fleetbar.js"></script>
+</body>
+</html>

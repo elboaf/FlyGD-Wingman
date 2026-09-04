@@ -17,6 +17,7 @@
   };
 
   var api = {};
+  var fleetBar = { enabled: true, x: null, y: null };
   ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
    // The Uploader's three quick actions. Doubled rather than added to
@@ -1395,7 +1396,10 @@
           // of off, for the same reason hide_on_lost_focus is: the
           // harness is where the card's controls are eyeballed, and a
           // default-valued fixture cannot show they read the payload.
-          sig_bar: { enabled: true, x: null, y: null }
+          sig_bar: { enabled: true, x: null, y: null },
+          // Separate from previews.enabled on purpose: the approved runtime
+          // contract allows this bar to stay live with previews off.
+          fleet_bar: fleetBar
         }, patch || {}),
       // discord.describe()'s shape for the fake webhook stored above, not
       // a prose invention: it is host/api/webhooks/<id>… by construction,
@@ -1511,6 +1515,18 @@
   api.sig_bar_settings = function () {
     console.log('DEV api.sig_bar_settings()');
     return Promise.resolve(settingsPayload().settings.sig_bar);
+  };
+
+  api.fleet_bar_settings = function () {
+    console.log('DEV api.fleet_bar_settings()');
+    return Promise.resolve(fleetBar);
+  };
+
+  api.toggle_fleet_bar = function (enabled) {
+    console.log('DEV api.toggle_fleet_bar(', enabled, ')');
+    fleetBar.enabled = !!enabled;
+    if (window.onFleetBarState) { window.onFleetBarState(fleetBar); }
+    return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
   // A RETURN, not a push, because that is what the bridge does. The first

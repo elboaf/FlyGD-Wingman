@@ -17,9 +17,9 @@ Why the result lands on DISK rather than being played from memory:
 `winsound` refuses `SND_MEMORY | SND_ASYNC` outright -- CPython's own
 documentation says the module "does not support playing from a memory
 image asynchronously" and raises RuntimeError for that combination. The
-only synchronous alternative would block the alert poll thread for up to
-the length of the sound (1.5s for `obey` or `glassy-knock`, against a 1s
-poll), so the
+only synchronous alternative would block the shared telemetry dispatcher
+for up to the length of the sound (1.5s for `obey` or `glassy-knock`),
+delaying every preview/metric consumer, so the
 scaled bytes are written once to a cache file and played by name, which
 is exactly what shipped before volume existed.
 """

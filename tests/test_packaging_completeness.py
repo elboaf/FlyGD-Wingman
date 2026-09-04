@@ -198,6 +198,17 @@ CODEC = (
 )
 
 
+def test_fleet_runtime_and_pages_are_in_declared_package_and_frozen_web_tree():
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])
+    assert "wingman.telemetry" in declared
+    assert (ROOT / "wingman" / "ui" / "fleetbar.py").is_file()
+    assert (ROOT / "wingman" / "web" / "fleetbar.html").is_file()
+    assert (ROOT / "wingman" / "web" / "fleetbar.js").is_file()
+    spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
+    assert '(str(WEB), "web")' in spec
+
+
 def test_the_spec_bundles_the_settings_codec_and_its_licence():
     spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
     assert 'BIN / "wingman-settings-codec.exe"' in spec
