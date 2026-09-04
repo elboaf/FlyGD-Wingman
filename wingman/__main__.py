@@ -771,6 +771,8 @@ def main() -> int:
         telemetry=telemetry,
     )
     api_box["api"] = api
+    if telemetry is not None:
+        api._fleet_unsubscribe = telemetry.subscribe_fleet(api._receive_fleet_snapshot)
     # After construction, not through the constructor: the controller needs
     # the Api's own _push and _alert. Same shape, and same reason, as
     # ui/window.py assigning api._window after create_window(), and as the
@@ -803,18 +805,21 @@ def main() -> int:
         # which is the recoverable half of the two failures.
         if not api._confirm_quit_if_busy():
             return
-        # The sig bar must be destroyed FIRST. pywebview's WinForms loop is
-        # Application.Run() with no context: it pumps until Application.
-        # Exit(), which fires only when the LAST window is gone. Leaving
-        # the bar alive parks the process inside window_mod.run() forever
-        # after the user chose Quit -- reproduced, not theorised.
-        bar = api._sigbar_window
-        if bar is not None:
+        # Floating WebViews must be destroyed FIRST. pywebview's WinForms
+        # loop exits only when its last window is gone; leaving either one
+        # alive parks the process after the user chose Quit.
+        for attr, label in (
+            ("_sigbar_window", "Sig bar"),
+            ("_fleetbar_window", "Fleet Bar"),
+        ):
+            bar = getattr(api, attr)
+            if bar is None:
+                continue
             try:
                 bar.destroy()
-                api._sigbar_window = None
+                setattr(api, attr, None)
             except Exception:
-                logger.exception("Sig bar window did not destroy cleanly")
+                logger.exception("%s window did not destroy cleanly", label)
         window.destroy()  # unblocks window_mod.run() below
 
     icon = build_tray(on_open=on_open, on_quit=on_quit)
@@ -847,12 +852,13 @@ def main() -> int:
     shown = getattr(window, "events", None)
     if shown is not None:
 
-        def _restore_sigbar(api=api):
-            from .ui import sigbar
+        def _restore_floating_bars(api=api):
+            from .ui import fleetbar, sigbar
 
             sigbar.restore(api)
+            fleetbar.restore(api)
 
-        shown.shown += _restore_sigbar
+        shown.shown += _restore_floating_bars
 
     def start_watching(directory) -> None:
         """Create the watcher and start the poll loop. Idempotent.

@@ -402,6 +402,11 @@ class Api:
         # _window above: a public attribute here reaches the js_api proxy
         # walk and the same RecursionError follows.
         self._sigbar_window = None
+        # Independent display-only Fleet window. Like the sig bar this must
+        # stay private or pywebview recursively walks its WinForms native.
+        self._fleetbar_window = None
+        self._fleet_snapshot = None
+        self._fleet_unsubscribe = None
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -2860,6 +2865,114 @@ class Api:
             time.sleep(0.25)
         logger.debug("sig bar resize never stuck at %sx%s", width, height)
 
+    # ----- floating Fleet DPS/EWAR bar ---------------------------------
+
+    def _fleet_payload(self, snapshot) -> dict:
+        return {
+            "rows": [
+                {
+                    "character": row.character,
+                    "dps": row.dps,
+                    "ewar": list(row.ewar),
+                    "log_status": row.log_status,
+                }
+                for row in snapshot.rows
+            ],
+            "stream_health": {
+                "state": snapshot.stream_health.state,
+                "detail": snapshot.stream_health.detail,
+            },
+            "metric_error": snapshot.metric_error,
+        }
+
+    def fleet_bar_snapshot(self) -> dict:
+        """Current complete display payload, also used by the bar at boot."""
+        snapshot = self._fleet_snapshot
+        if snapshot is None and self._telemetry is not None:
+            try:
+                snapshot = self._telemetry.snapshot()
+            except Exception:
+                logger.exception("Could not read Fleet Bar snapshot")
+        if snapshot is None:
+            return {
+                "rows": [],
+                "stream_health": {"state": "stopped", "detail": None},
+                "metric_error": None,
+            }
+        return self._fleet_payload(snapshot)
+
+    def _push_fleet_snapshot(self) -> None:
+        bar = self._fleetbar_window
+        if bar is None:
+            return
+        payload = self.fleet_bar_snapshot()
+        script = (
+            f"window.onFleetSnapshot && window.onFleetSnapshot({json.dumps(payload)})"
+        )
+        try:
+            bar.evaluate_js(script)
+        except Exception:
+            logger.debug("Fleet Bar snapshot push failed", exc_info=True)
+
+    def _receive_fleet_snapshot(self, snapshot) -> None:
+        """Coordinator subscriber; safe on its dispatcher thread."""
+        self._fleet_snapshot = snapshot
+        self._push_fleet_snapshot()
+
+    def toggle_fleet_bar(self, on) -> dict:
+        """Persist, reconcile, and show or hide the independent Fleet Bar."""
+        from wingman.ui import fleetbar
+
+        on = bool(on)
+        settings_mod.update_section(self._state.settings, "fleet_bar", {"enabled": on})
+        self._reconcile_eve_runtime()
+        bar = self._fleetbar_window
+        try:
+            if on:
+                if bar is None:
+                    fleetbar.create(self, hidden=False)
+                else:
+                    bar.show()
+                self._push_fleet_snapshot()
+            elif bar is not None:
+                bar.hide()
+        except Exception:
+            # The persisted runtime choice stands. A later toggle retries
+            # display construction without losing telemetry state.
+            logger.exception("Fleet Bar window toggle failed")
+        return self._field_ok()
+
+    def save_fleet_bar_pos(self, x, y) -> None:
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            return
+        settings_mod.update_section(self._state.settings, "fleet_bar", {"x": x, "y": y})
+
+    def fit_fleet_bar(self, width, height) -> None:
+        """Resize to the page's measured client area, retrying during boot."""
+        bar = self._fleetbar_window
+        if bar is None:
+            return
+        try:
+            width, height = int(width), int(height)
+        except (TypeError, ValueError):
+            return
+        if width <= 0 or height <= 0:
+            return
+        for _ in range(12):
+            try:
+                bar.resize(width, height)
+            except Exception:
+                logger.debug("Fleet Bar resize failed", exc_info=True)
+            try:
+                if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+                    return
+            except Exception:  # noqa: BLE001 -- headless/test windows may expose no readable native size; the resize call remains the contract.
+                return
+            time.sleep(0.25)
+        logger.debug("Fleet Bar resize never stuck at %sx%s", width, height)
+
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.
 
@@ -3081,6 +3194,13 @@ class Api:
                     runtime.reconcile()
             except Exception:
                 logger.exception("EVE telemetry runtime did not stop cleanly")
+        unsubscribe = self._fleet_unsubscribe
+        self._fleet_unsubscribe = None
+        if unsubscribe is not None:
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception("Fleet snapshot subscriber did not detach cleanly")
 
     def capture_preview_bind(self, parts) -> dict:
         return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
