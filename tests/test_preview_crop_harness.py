@@ -1188,8 +1188,20 @@ def test_a_stage_is_awaited_until_its_crops_are_live(monkeypatch):
 def test_an_unfillable_stage_gives_up_instead_of_waiting_forever(monkeypatch):
     host = FakeProbeHost(clients=("A",), live_at={1: 0})
     monkeypatch.setattr(harness.time, "sleep", lambda _seconds: None)
-    clock = iter([0.0, 0.0, harness.STAGE_TIMEOUT_S + 1])
-    monkeypatch.setattr(harness.time, "monotonic", lambda: next(clock))
+    # The first two readings establish the deadline and one in-loop check
+    # still short of it; every reading after that -- however many times
+    # _await_stage's loop calls time.monotonic(), a detail this test must
+    # not pin -- returns the same past-the-deadline value, so a call count
+    # different from exactly three fails the timeout assertion below
+    # instead of raising StopIteration from an exhausted iterator.
+    readings = [0.0, 0.0, harness.STAGE_TIMEOUT_S + 1]
+
+    def fake_monotonic():
+        if readings:
+            return readings.pop(0)
+        return harness.STAGE_TIMEOUT_S + 1
+
+    monkeypatch.setattr(harness.time, "monotonic", fake_monotonic)
     assert harness._await_stage(host, 1)["live"] == 0
 
 

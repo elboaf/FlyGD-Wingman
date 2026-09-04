@@ -397,6 +397,13 @@ It does not support:
 - Automatic restart restoration.
 - Multiple crops for one character or persisted crop management; simultaneous
   ephemeral crops exist only in the staged load-test path.
+- Picker resize while selecting. The Phase 0 picker is fixed-size for the
+  life of one picker session -- sized once at creation from `fit_within` and
+  never re-sized afterward. This is an explicit Phase 0 exclusion, not an
+  oversight: the corresponding functional gate below is deferred to Phase 1
+  as a pre-release blocker, and the coordinate-mapping requirement in
+  `croppicker.py`'s architecture section above is a production requirement
+  the Phase 0 prototype does not attempt to satisfy.
 - Alerts, labels, custom styles, opacity, or click-through.
 - Import/export or profiles.
 - Frozen frames.
@@ -615,6 +622,10 @@ or an explicitly reviewed exception for every applicable gate.
 - Mapping remains correct when the picker is on a monitor with negative virtual
   coordinates.
 - Picker resize before and during selection has defined, correct behavior.
+  **Deferred to Phase 1 as a pre-release gate** -- the Phase 0 picker is
+  fixed-size for the life of a session (see the Phase 0 exclusions above), so
+  this gate cannot be exercised by the prototype at all and must be proven
+  against the production picker before any release that ships crops.
 - Crop output scales to destination size without changing the source region.
 - No crop action changes the real EVE client's position, size, resolution, or
   maximized state.

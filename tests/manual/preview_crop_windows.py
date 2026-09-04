@@ -705,6 +705,15 @@ class PrototypeCropPicker:
             return None
 
         libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
+        # SW_SHOWNOACTIVATE deliberately does not activate or focus the
+        # window -- see the class docstring's reasoning for why the picker
+        # (unlike PrototypeCropWindow's crop) must still end up focused:
+        # Enter and Escape are WM_KEYDOWN, routed only to the focused
+        # window. Without this call, Escape pressed before the user's first
+        # click -- exactly when there has been no WM_LBUTTONDOWN yet to
+        # focus it from _on_message -- would go wherever focus already was
+        # and silently fail to cancel the picker at all.
+        libs.user32.SetFocus(self.hwnd)
         return self
 
     # -- selection -----------------------------------------------------

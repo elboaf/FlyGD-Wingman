@@ -62,9 +62,23 @@ def _bypass_class_registration(monkeypatch):
     """Every test drives a class that is already "registered" as far as
     create() is concerned -- see the module docstring above. Both the crop
     window's class and the picker's separate one (_ensure_picker_class) hit
-    the same WINFUNCTYPE wall on Linux."""
+    the same WINFUNCTYPE wall on Linux.
+
+    Also clears windows._CROPS and windows._PICKERS before and after every
+    test. Both registries are module-level dicts keyed by HWND, and
+    FakeUser32's fake HWNDs always start counting from 1000 -- so a crop or
+    picker left registered by one test would already occupy the exact key
+    the next test's registry-before-register assertions probe, letting a
+    stale entry from a PRIOR test make THIS test's
+    registry_present_at_register check pass regardless of whether create()
+    actually registered anything."""
     monkeypatch.setattr(windows, "_ensure_class", lambda libs: None)
     monkeypatch.setattr(windows, "_ensure_picker_class", lambda libs: None)
+    windows._CROPS.clear()
+    windows._PICKERS.clear()
+    yield
+    windows._CROPS.clear()
+    windows._PICKERS.clear()
 
 
 class FakeUser32:
@@ -711,6 +725,20 @@ def test_picker_creation_native_facts_match_the_brief():
     ) == (0, 0, 1280, 720)
 
 
+def test_picker_creation_focuses_the_picker_after_showing_it_noactivate():
+    """Regression coverage for the SetFocus call added to create(): a
+    picker shown only with SW_SHOWNOACTIVATE never becomes the focused
+    window, so Escape pressed before the user's first click -- the one
+    case _on_message's own WM_LBUTTONDOWN-triggered SetFocus cannot cover,
+    since it has not fired yet -- would silently go nowhere. Both facts
+    must hold together: the show stays SW_SHOWNOACTIVATE (never steals
+    activation from whatever the user was doing) and SetFocus still runs
+    exactly once, after it, targeting the picker's own HWND."""
+    picker, libs = make_picker()
+    assert libs.user32.shows[-1] == (picker.hwnd, win32.SW_SHOWNOACTIVATE)
+    assert libs.user32.focus_calls == [picker.hwnd]
+
+
 def test_picker_rect_is_sized_by_fit_within_and_centered_with_margin():
     libs = FakeLibs()
     libs.user32.client_rect = (0, 0, 2560, 1440)
@@ -768,12 +796,19 @@ def test_picker_left_button_down_sets_focus_to_the_picker_hwnd():
     focus already was. The picker is a Wingman-owned HWND (unlike
     PrototypeCropWindow's WS_EX_NOACTIVATE crop, this is deliberately not
     NOACTIVATE -- see the class docstring), so focusing it here is safe
-    and required, never the EVE client HWND."""
+    and required, never the EVE client HWND.
+
+    create() itself now also focuses the picker once (see
+    test_picker_creation_focuses_the_picker_after_showing_it_noactivate),
+    so this asserts the INCREMENT the press itself causes, not the raw
+    list -- a regression here would still show a call from creation even
+    if WM_LBUTTONDOWN stopped focusing altogether."""
     picker, libs = make_picker()
+    before = list(libs.user32.focus_calls)
 
     picker._on_message(win32.WM_LBUTTONDOWN, 1, _pack_lparam(10, 10))
 
-    assert libs.user32.focus_calls == [picker.hwnd]
+    assert libs.user32.focus_calls == [*before, picker.hwnd]
 
 
 def test_picker_drag_builds_sorted_selection_and_pushes_overlay(monkeypatch):

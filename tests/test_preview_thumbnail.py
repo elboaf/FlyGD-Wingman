@@ -103,6 +103,11 @@ def test_update_with_source_sets_rectsource_as_edges():
     assert t.update(Rect(0, 0, 320, 180), source_rect=Rect(100, 50, 400, 225)) == 0
     props = dwm.updates[0]
     assert props.dwFlags & thumbnail.win32.DWM_TNP_RECTSOURCE
+    # SOURCECLIENTAREAONLY must remain set alongside RECTSOURCE: crop
+    # coordinates are relative to the EVE client area, not outer-window
+    # chrome, and a source-rect update that dropped this flag would mirror
+    # the wrong pixels the moment a client had any non-client chrome.
+    assert props.dwFlags & thumbnail.win32.DWM_TNP_SOURCECLIENTAREAONLY
     src = props.rcSource
     assert (src.left, src.top, src.right, src.bottom) == (100, 50, 500, 275)
 

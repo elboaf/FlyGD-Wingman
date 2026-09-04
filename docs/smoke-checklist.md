@@ -3128,11 +3128,12 @@ the full `--i-understand-this-is-an-ephemeral-windows-probe` flag.
       locked variant of this grammar is a Phase 1 pre-release gate, not a
       step here — the probe's CLI wires no lock roster (see the deferred
       list below).
-- [ ] **Source aspect preservation.** Resize a crop by its right-drag corner.
-      Expected: the crop's destination rectangle keeps the aspect ratio of
-      the SOURCE region that was selected (or, for a load-stage crop, the
-      central region it derived) — the picture never stretches or
-      letterboxes as the crop window is resized.
+- [ ] **Source aspect preservation.** Resize a crop with a right-drag from
+      anywhere on it -- the reduced grammar has no corner handle; any
+      right-button drag resizes. Expected: the crop's destination rectangle
+      keeps the aspect ratio of the SOURCE region that was selected (or,
+      for a load-stage crop, the central region it derived) — the picture
+      never stretches or letterboxes as the crop window is resized.
 - **Lock and hide-on-lost-focus inherited behavior** — *moved to the Phase 1
   pre-release gates below.* The probe's CLI constructs the host with no
   `locked`, `lock_default` or `hide_on_lost_focus` provider, so neither
