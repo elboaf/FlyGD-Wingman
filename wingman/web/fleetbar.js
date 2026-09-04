@@ -114,8 +114,11 @@
 
     var detail = payload.metric_error ||
       ((health.state === 'stale' || health.state === 'error') ? health.detail : null);
-    note.hidden = !detail;
-    note.textContent = detail || '';
+    var noteText = detail || '';
+    note.hidden = !noteText;
+    if (note.textContent !== noteText) {
+      note.textContent = noteText;
+    }
     note.classList.toggle('err', Boolean(payload.metric_error) || health.state === 'error');
     return fit();
   }

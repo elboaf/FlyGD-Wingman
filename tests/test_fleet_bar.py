@@ -547,6 +547,14 @@ def test_fleet_page_changes_empty_live_text_only_for_a_new_message():
     )
     assert render.count("empty.textContent =") == 1
 
+    assert "var noteText = detail || '';" in render
+    assert re.search(
+        r"if\s*\(note\.textContent !== noteText\)\s*\{\s*"
+        r"note\.textContent = noteText;\s*\}",
+        render,
+    )
+    assert render.count("note.textContent =") == 1
+
 
 def test_fleet_settings_groups_running_offline_and_hidden(api):
     api._state.settings["fleet_bar"].update(
