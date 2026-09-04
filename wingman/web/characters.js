@@ -34,6 +34,7 @@
   var requestSequence = 0;
   var filterText = '';
   var state = emptyState();
+  var authRequestPending = false;
   var localNotice = '';
   var localNoticeKind = '';
   var menuCharacterId = 0;
@@ -48,6 +49,7 @@
   if (menuSummary) { menuSummary.hidden = true; }
   forget.setAttribute('role', 'menuitem');
   forget.className = 'danger';
+  forget.disabled = true;
 
   function emptyState() {
     return {
@@ -190,11 +192,22 @@
     authenticate.title = state.auth_configured
       ? '' : 'This build has no EVE application id configured.';
     authenticate.disabled = !state.auth_configured
-      || state.authorization_activity === 'waiting';
+      || state.authorization_activity === 'waiting'
+      || authRequestPending;
 
     cancel.textContent = 'Cancel';
     cancel.hidden = state.authorization_activity !== 'waiting';
-    cancel.disabled = state.authorization_activity !== 'waiting';
+    cancel.disabled = state.authorization_activity !== 'waiting'
+      || authRequestPending;
+
+    Array.prototype.forEach.call(
+      section.querySelectorAll ? section.querySelectorAll('.characters-auth-action') : [],
+      function (button) {
+        button.disabled = !state.auth_configured
+          || state.authorization_activity === 'waiting'
+          || authRequestPending;
+      }
+    );
 
     filter.disabled = !state.available || !state.characters.length;
     filterClear.disabled = !filterText.trim();
@@ -233,6 +246,7 @@
     menu.open = false;
     menuCharacterId = 0;
     menuCharacterName = '';
+    forget.disabled = true;
     menuTrigger = null;
     if (restoreFocus && trigger && !trigger.disabled && trigger.focus) {
       trigger.focus();
@@ -247,6 +261,7 @@
     trigger.setAttribute('aria-expanded', 'true');
     forget.textContent = 'Forget character';
     forget.setAttribute('aria-label', 'Forget ' + menuCharacterName);
+    forget.disabled = false;
     menu.hidden = false;
     menu.open = true;
     menu.style.left = '0px';
@@ -311,15 +326,21 @@
 
     var actions = WM.make('div', 'characters-actions');
     if (rowNeedsAuthentication(row)) {
-      var auth = WM.make('button', 'btn', 'Authenticate character…');
-      auth.disabled = !state.auth_configured || state.authorization_activity === 'waiting';
+      var auth = WM.make('button', 'btn characters-auth-action', 'Authenticate character…');
+      auth.disabled = !state.auth_configured
+        || state.authorization_activity === 'waiting'
+        || authRequestPending;
       auth.setAttribute('aria-label', 'Authenticate ' + (row.character_name || 'character'));
       auth.addEventListener('click', function () {
         announce('');
         resetNotice();
         renderNotice();
+        authRequestPending = true;
+        renderButtons();
         WM.send('eve_characters_authenticate').then(function (result) {
           if (!result || !result.accepted) {
+            authRequestPending = false;
+            renderButtons();
             showNotice(startAuthenticationError(result), 'err');
           }
         });
@@ -387,6 +408,7 @@
   }
 
   function render(payload) {
+    authRequestPending = false;
     state = normalizeState(payload);
     renderButtons();
     renderActivity();
@@ -404,6 +426,7 @@
   }
 
   function forgetCurrentCharacter() {
+    if (forget.disabled || !menuCharacterId) return;
     var characterId = menuCharacterId;
     var characterName = menuCharacterName || 'This character';
     closeMenu(true);
@@ -466,8 +489,12 @@
     announce('');
     resetNotice();
     renderNotice();
+    authRequestPending = true;
+    renderButtons();
     WM.send('eve_characters_authenticate').then(function (result) {
       if (!result || !result.accepted) {
+        authRequestPending = false;
+        renderButtons();
         showNotice(startAuthenticationError(result), 'err');
       }
     });
@@ -477,8 +504,12 @@
     announce('');
     resetNotice();
     renderNotice();
+    authRequestPending = true;
+    renderButtons();
     WM.send('eve_characters_cancel_auth').then(function (result) {
       if (!result || !result.accepted) {
+        authRequestPending = false;
+        renderButtons();
         showNotice(cancelAuthenticationError(result), 'err');
       }
     });

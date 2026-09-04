@@ -178,15 +178,48 @@ def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state(
     assert "Authenticate character\u2026" in JS
     assert "Waiting for EVE SSO\u2026" in JS
     assert "authorization_activity = 'waiting'" not in JS
+    assert "var authRequestPending = false;" in JS
+    assert re.search(
+        r"authenticate\.disabled = !state\.auth_configured\s*"
+        r"\|\| state\.authorization_activity === 'waiting'\s*"
+        r"\|\| authRequestPending;",
+        JS,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"cancel\.disabled = state\.authorization_activity !== 'waiting'\s*"
+        r"\|\| authRequestPending;",
+        JS,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"authRequestPending = false;\s*state = normalizeState\(payload\);",
+        JS,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"authRequestPending = true;\s*renderButtons\(\);\s*"
+        r"WM\.send\('eve_characters_authenticate'\)",
+        JS,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"authRequestPending = true;\s*renderButtons\(\);\s*"
+        r"WM\.send\('eve_characters_cancel_auth'\)",
+        JS,
+        re.DOTALL,
+    )
     assert re.search(
         r"WM\.send\('eve_characters_authenticate'\)\.then\(function \(result\) \{\s*"
-        r"if \(!result \|\| !result\.accepted\) \{",
+        r"if \(!result \|\| !result\.accepted\) \{\s*authRequestPending = false;"
+        r"\s*renderButtons\(\);",
         JS,
         re.DOTALL,
     )
     assert re.search(
         r"WM\.send\('eve_characters_cancel_auth'\)\.then\(function \(result\) \{\s*"
-        r"if \(!result \|\| !result\.accepted\) \{",
+        r"if \(!result \|\| !result\.accepted\) \{\s*authRequestPending = false;"
+        r"\s*renderButtons\(\);",
         JS,
         re.DOTALL,
     )
@@ -198,6 +231,17 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
     assert "aria-haspopup', 'menu'" in JS
     assert "menu.setAttribute('role', 'menu');" in JS
     assert "forget.setAttribute('role', 'menuitem');" in JS
+    assert "forget.disabled = true;" in JS
+    assert re.search(
+        r"openMenu\(trigger, row, focusLast\) \{.*?forget\.disabled = false;",
+        JS,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"closeMenu\(restoreFocus\) \{.*?forget\.disabled = true;",
+        JS,
+        re.DOTALL,
+    )
     assert "aria-expanded" in JS
     assert "ArrowDown" in JS
     assert "ArrowUp" in JS
@@ -217,6 +261,274 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
     assert "if (!result.persisted)" in JS
     assert "requestState();" in JS
     assert ".focus();" in JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_characters_forget_is_operable_and_auth_commands_guard_duplicates_immediately():
+    script = textwrap.dedent(
+        rf"""
+        const vm = require('vm');
+
+        function ClassList(initial) {{
+          this._set = new Set(initial || []);
+        }}
+        ClassList.prototype.add = function (name) {{ this._set.add(name); }};
+        ClassList.prototype.remove = function (name) {{ this._set.delete(name); }};
+        ClassList.prototype.contains = function (name) {{ return this._set.has(name); }};
+        ClassList.prototype.toggle = function (name, force) {{
+          if (force === undefined) {{
+            if (this._set.has(name)) {{ this._set.delete(name); return false; }}
+            this._set.add(name); return true;
+          }}
+          if (force) this._set.add(name); else this._set.delete(name);
+          return !!force;
+        }};
+
+        function makeNode(tag, id, classes) {{
+          const node = {{
+            tagName: (tag || 'div').toUpperCase(),
+            id: id || '',
+            className: classes || '',
+            dataset: {{}},
+            hidden: false,
+            disabled: false,
+            open: false,
+            textContent: '',
+            title: '',
+            value: '',
+            style: {{}},
+            attributes: {{}},
+            children: [],
+            parentNode: null,
+            listeners: {{}},
+            classList: new ClassList((classes || '').split(/\s+/).filter(Boolean)),
+            appendChild: function (child) {{ child.parentNode = this; this.children.push(child); return child; }},
+            removeChild: function (child) {{
+              const at = this.children.indexOf(child);
+              if (at !== -1) this.children.splice(at, 1);
+              child.parentNode = null;
+              return child;
+            }},
+            addEventListener: function (type, fn) {{
+              (this.listeners[type] || (this.listeners[type] = [])).push(fn);
+            }},
+            dispatchEvent: function (ev) {{
+              ev.target = ev.target || this;
+              ev.preventDefault = ev.preventDefault || function () {{ this.defaultPrevented = true; }};
+              (this.listeners[ev.type] || []).forEach((fn) => fn.call(this, ev));
+            }},
+            setAttribute: function (name, value) {{ this.attributes[name] = String(value); }},
+            getAttribute: function (name) {{ return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; }},
+            focus: function () {{ document.activeElement = this; }},
+            contains: function (target) {{
+              for (let cur = target; cur; cur = cur.parentNode) if (cur === this) return true;
+              return false;
+            }},
+            querySelectorAll: function (selector) {{
+              const out = [];
+              function walk(node) {{
+                node.children.forEach(function (child) {{
+                  if (selector === '[role="menuitem"]' && child.attributes.role === 'menuitem') out.push(child);
+                  walk(child);
+                }});
+              }}
+              walk(this);
+              return out;
+            }},
+            querySelector: function (selector) {{
+              if (selector === 'summary') {{
+                return this.children.find((child) => child.tagName === 'SUMMARY') || null;
+              }}
+              return null;
+            }},
+            getBoundingClientRect: function () {{
+              return {{ left: 100, top: 100, bottom: 120, width: 80, height: 20 }};
+            }}
+          }};
+          Object.defineProperty(node, 'firstChild', {{
+            get: function () {{ return this.children.length ? this.children[0] : null; }}
+          }});
+          return node;
+        }}
+
+        const nodes = {{}};
+        function add(tag, id, classes) {{
+          const node = makeNode(tag, id, classes);
+          if (id) nodes[id] = node;
+          return node;
+        }}
+
+        const documentListeners = {{}};
+        const document = {{
+          activeElement: null,
+          getElementById: function (id) {{ return nodes[id] || null; }},
+          createElement: function (tag) {{ return makeNode(tag, '', ''); }},
+          addEventListener: function (type, fn) {{
+            (documentListeners[type] || (documentListeners[type] = [])).push(fn);
+          }},
+          dispatchEvent: function (ev) {{
+            (documentListeners[ev.type] || []).forEach((fn) => fn(ev));
+          }}
+        }};
+
+        const windowListeners = {{}};
+        const window = {{
+          document,
+          innerWidth: 800,
+          innerHeight: 600,
+          addEventListener: function (type, fn) {{
+            (windowListeners[type] || (windowListeners[type] = [])).push(fn);
+          }},
+          dispatchEvent: function (ev) {{
+            (windowListeners[ev.type] || []).forEach((fn) => fn(ev));
+          }}
+        }};
+
+        function CustomEvent(type, init) {{
+          this.type = type;
+          this.detail = init && init.detail;
+        }}
+
+        const section = add('div', 'section-characters', 'settings active');
+        const count = add('p', 'characters-count', 'hint');
+        const authenticate = add('button', 'characters-authenticate', 'btn');
+        const activity = add('p', 'characters-activity', 'hint');
+        const cancel = add('button', 'characters-cancel', 'btn');
+        const notice = add('p', 'characters-notice', 'field-msg');
+        const live = add('p', 'characters-live', 'hint');
+        const filter = add('input', 'characters-filter', 'field');
+        const filterClear = add('button', 'characters-filter-clear', 'linkbtn');
+        const roster = add('div', 'characters-roster', '');
+        const empty = add('div', 'characters-empty', 'empty');
+        roster.appendChild(empty);
+        const menu = add('details', 'characters-menu', 'bk-menu');
+        const summary = add('summary', '', '');
+        summary.textContent = 'More';
+        const forget = add('button', 'characters-menu-forget', '');
+        forget.disabled = true;
+        menu.appendChild(summary);
+        menu.appendChild(forget);
+
+        section.appendChild(count);
+        section.appendChild(authenticate);
+        section.appendChild(activity);
+        section.appendChild(cancel);
+        section.appendChild(notice);
+        section.appendChild(filter);
+        section.appendChild(filterClear);
+        section.appendChild(live);
+        section.appendChild(roster);
+        section.appendChild(menu);
+
+        let authResolve;
+        let cancelResolve;
+        let statePayload = {{
+          available: true,
+          auth_configured: true,
+          authorization_activity: 'idle',
+          authorization_notice: '',
+          warnings: [],
+          characters: [{{
+            character_id: 4,
+            character_name: 'Needs Reauth',
+            authenticated_utc: '2026-09-04T12:00:00+00:00',
+            skills: 'sign_in',
+            fittings: 'sign_in',
+            needs_reauth: true,
+            persistence_error: ''
+          }}]
+        }};
+
+        window.WM = {{
+          current_route: 'settings',
+          current_section: 'characters',
+          el: function (id) {{ return document.getElementById(id); }},
+          make: function (tag, cls, text) {{
+            const node = makeNode(tag, '', cls || '');
+            if (cls) node.className = cls;
+            if (text !== undefined && text !== null) node.textContent = String(text);
+            return node;
+          }},
+          send: function (method) {{
+            if (method === 'eve_characters_state') return Promise.resolve(statePayload);
+            if (method === 'eve_characters_authenticate') {{
+              return new Promise(function (resolve) {{ authResolve = resolve; }});
+            }}
+            if (method === 'eve_characters_cancel_auth') {{
+              return new Promise(function (resolve) {{ cancelResolve = resolve; }});
+            }}
+            if (method === 'eve_characters_forget') {{
+              return Promise.resolve({{ applied: true, persisted: true, error: '' }});
+            }}
+            throw new Error('unexpected method ' + method);
+          }},
+          confirm: function () {{ return Promise.resolve(true); }}
+        }};
+
+        global.window = window;
+        global.document = document;
+        global.CustomEvent = CustomEvent;
+        global.console = console;
+
+        vm.runInThisContext({json.dumps(JS)}, {{ filename: 'characters.js' }});
+
+        function tick() {{ return new Promise((resolve) => setTimeout(resolve, 0)); }}
+        function findByClass(node, cls) {{
+          if ((node.className || '').split(/\s+/).indexOf(cls) !== -1) return node;
+          for (const child of node.children) {{
+            const found = findByClass(child, cls);
+            if (found) return found;
+          }}
+          return null;
+        }}
+
+        (async function () {{
+          document.dispatchEvent(new CustomEvent('wm:section', {{ detail: 'characters' }}));
+          await tick();
+          const menuTrigger = findByClass(roster, 'characters-menu-trigger');
+          menuTrigger.dispatchEvent({{ type: 'click' }});
+          const forgetEnabledWhenOpen = !forget.disabled && !menu.hidden;
+
+          authenticate.dispatchEvent({{ type: 'click' }});
+          const authDisabledImmediately = authenticate.disabled;
+
+          authResolve({{ accepted: true, error: '' }});
+          statePayload = Object.assign({{}}, statePayload, {{ authorization_activity: 'waiting' }});
+          document.dispatchEvent(new CustomEvent('wm:eve-authority', {{ detail: {{}} }}));
+          await tick();
+
+          cancel.dispatchEvent({{ type: 'click' }});
+          const cancelDisabledImmediately = cancel.disabled;
+
+          console.log(JSON.stringify({{
+            forgetEnabledWhenOpen,
+            authDisabledImmediately,
+            cancelDisabledImmediately
+          }}));
+        }})();
+        """
+    )
+
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(script)
+        path = pathlib.Path(fh.name)
+    try:
+        proc = subprocess.run(
+            ["node", str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        path.unlink(missing_ok=True)
+
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    result = json.loads(proc.stdout)
+    assert result == {
+        "forgetEnabledWhenOpen": True,
+        "authDisabledImmediately": True,
+        "cancelDisabledImmediately": True,
+    }
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
