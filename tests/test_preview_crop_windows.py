@@ -27,6 +27,14 @@ spec = importlib.util.spec_from_file_location("preview_crop_windows", module_pat
 windows = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(windows)
 
+# Loaded the same way, so the picker confirmation tests below cross-check
+# against the SAME map_selection the model's own suite exercises, rather
+# than trusting the picker to reimplement its arithmetic correctly.
+model_path = Path(__file__).parent / "manual" / "preview_crop_model.py"
+model_spec = importlib.util.spec_from_file_location("preview_crop_model", model_path)
+model = importlib.util.module_from_spec(model_spec)
+model_spec.loader.exec_module(model)
+
 
 CLIENT = discovery.Client(
     hwnd=555,
@@ -36,12 +44,27 @@ CLIENT = discovery.Client(
     stable_key="Test Pilot",
 )
 
+# A plain, unremarkable monitor for the picker's placement tests -- see
+# test_picker_rect_centers_correctly_on_a_negative_origin_monitor below for
+# the one that is deliberately not at the origin.
+MONITOR = Rect(0, 0, 1920, 1080)
+
+
+def _pack_lparam(x, y):
+    """Pack (x, y) the way Windows delivers WM_* mouse lParams: low word
+    x, high word y, both client-relative. The inverse of the picker's own
+    _client_point."""
+    return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+
 
 @pytest.fixture(autouse=True)
 def _bypass_class_registration(monkeypatch):
     """Every test drives a class that is already "registered" as far as
-    create() is concerned -- see the module docstring above."""
+    create() is concerned -- see the module docstring above. Both the crop
+    window's class and the picker's separate one (_ensure_picker_class) hit
+    the same WINFUNCTYPE wall on Linux."""
     monkeypatch.setattr(windows, "_ensure_class", lambda libs: None)
+    monkeypatch.setattr(windows, "_ensure_picker_class", lambda libs: None)
 
 
 class FakeUser32:
@@ -55,6 +78,10 @@ class FakeUser32:
         self.captures = []
         self.cursor = (0, 0)
         self._next_hwnd = 1000
+        # (left, top, right, bottom) of the SOURCE client's area, read by
+        # PrototypeCropPicker at creation and again on confirm. None
+        # simulates a client that has vanished (GetClientRect failing).
+        self.client_rect = (0, 0, 1280, 720)
 
     def CreateWindowExW(self, *args, **kwargs):
         self.events.append("create-window")
@@ -85,6 +112,14 @@ class FakeUser32:
 
     def GetCursorPos(self, ptr):
         ptr._obj.x, ptr._obj.y = self.cursor
+        return True
+
+    def GetClientRect(self, hwnd, ptr):
+        if self.client_rect is None:
+            return False
+        left, top, right, bottom = self.client_rect
+        ptr._obj.left, ptr._obj.top = left, top
+        ptr._obj.right, ptr._obj.bottom = right, bottom
         return True
 
     def PeekMessageW(self, *args):
@@ -443,4 +478,294 @@ def test_wm_destroy_clears_registry_and_thumbnail_without_double_destroying():
     assert crop.hwnd is None
     assert crop._thumb is None
     assert hwnd not in windows._CROPS
+    assert libs.events.count("destroy-window") == destroy_calls_before
+
+
+# --- PrototypeCropPicker -----------------------------------------------
+
+
+def make_picker(libs=None, client=None, monitor=None, on_confirm=None, on_cancel=None):
+    libs = libs or FakeLibs()
+    client = client or CLIENT
+    monitor = monitor or MONITOR
+    on_confirm = on_confirm or (lambda client, source_rect: None)
+    on_cancel = on_cancel or (lambda reason: None)
+    picker = windows.PrototypeCropPicker.create(
+        libs, client, monitor, on_confirm, on_cancel
+    )
+    assert picker is not None
+    return picker, libs
+
+
+def test_picker_source_client_rect_failure_returns_none_without_hwnd_leak():
+    libs = FakeLibs()
+    libs.user32.client_rect = None
+    picker = windows.PrototypeCropPicker.create(
+        libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
+    )
+    assert picker is None
+    assert "create-window" not in libs.events
+
+
+def test_picker_degenerate_source_client_rect_returns_none():
+    """A zero-area client area (character select, or a client that quit
+    mid-open) must not be sized against -- fit_within((0, h), ...) would
+    divide by zero."""
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 0, 720)
+    picker = windows.PrototypeCropPicker.create(
+        libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
+    )
+    assert picker is None
+    assert "create-window" not in libs.events
+
+
+def test_picker_registration_failure_closes_overlay_and_picker():
+    libs = FakeLibs(register_hr=0x80004005)
+    picker = windows.PrototypeCropPicker.create(
+        libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
+    )
+    assert picker is None
+    assert "register" not in libs.events
+    assert libs.events[-2:] == ["destroy-window", "destroy-window"]
+
+
+def test_picker_initial_update_failure_closes_overlay_dwm_and_picker():
+    libs = FakeLibs(update_hr=0x80004005)
+    picker = windows.PrototypeCropPicker.create(
+        libs, CLIENT, MONITOR, lambda c, r: None, lambda reason: None
+    )
+    assert picker is None
+    assert libs.events[-3:] == ["unregister", "destroy-window", "destroy-window"]
+
+
+def test_picker_creation_orders_hwnds_registry_overlay_register_update_show():
+    libs = FakeLibs(crops=windows._PICKERS)
+    _picker, _libs = make_picker(libs=libs)
+    assert libs.dwmapi.registry_present_at_register is True
+    assert libs.events == [
+        "create-window",  # picker HWND
+        "create-window",  # overlay HWND
+        "show",  # overlay shown
+        "register",
+        "update",
+        "show",  # picker itself shown last
+    ]
+
+
+def test_picker_creation_is_silent(caplog):
+    with caplog.at_level("WARNING"):
+        picker, _libs = make_picker()
+    assert picker is not None
+    assert caplog.records == []
+
+
+def test_picker_rect_is_sized_by_fit_within_and_centered_with_margin():
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 2560, 1440)
+    picker, libs = make_picker(libs=libs, monitor=Rect(0, 0, 1920, 1080))
+    assert model.fit_within((2560, 1440), windows.PICKER_MAX) == (
+        picker.rect.w,
+        picker.rect.h,
+    )
+    assert (picker.rect.w, picker.rect.h) == (1200, 675)
+    assert (picker.rect.x, picker.rect.y) == (360, 202)
+
+
+def test_picker_rect_pins_to_monitor_origin_when_margin_cannot_fit():
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(libs=libs, monitor=Rect(0, 0, 1000, 700))
+    assert (picker.rect.x, picker.rect.y) == (0, 0)
+
+
+def test_picker_rect_centers_correctly_on_a_negative_origin_monitor():
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(libs=libs, monitor=Rect(-1920, 0, 1920, 1080))
+    assert picker.rect.x == -1920 + (1920 - 1200) // 2
+    assert picker.rect.y == (1080 - 675) // 2
+
+
+def test_picker_drag_builds_sorted_selection_and_pushes_overlay(monkeypatch):
+    pushes = []
+    monkeypatch.setattr(
+        windows.layered,
+        "push",
+        lambda libs, hwnd, img, x, y: pushes.append((hwnd, img.size, x, y)),
+    )
+    picker, _libs = make_picker()
+    # Dragged from bottom-right to top-left: the rect must come out
+    # normalized (sorted), not with a negative width/height.
+    picker._on_message(win32.WM_LBUTTONDOWN, 1, _pack_lparam(300, 200))
+    picker._on_message(win32.WM_MOUSEMOVE, 1, _pack_lparam(100, 50))
+    assert picker.selection == Rect(100, 50, 200, 150)
+    assert pushes[-1][0] == picker._overlay_hwnd
+    assert pushes[-1][1] == (picker.rect.w, picker.rect.h)
+    assert pushes[-1][2:] == (picker.rect.x, picker.rect.y)
+
+
+def test_picker_mouse_move_without_a_prior_press_is_ignored(monkeypatch):
+    monkeypatch.setattr(windows.layered, "push", lambda *a, **k: None)
+    picker, _libs = make_picker()
+    picker._on_message(win32.WM_MOUSEMOVE, 0, _pack_lparam(100, 50))
+    assert picker.selection is None
+
+
+def test_render_selection_overlay_masks_outside_and_clears_inside():
+    img = windows._render_selection_overlay((40, 30), Rect(10, 10, 10, 10))
+    assert img.getpixel((0, 0)) == (0, 0, 0, windows.PICKER_MASK_ALPHA)
+    assert img.getpixel((15, 15)) == (0, 0, 0, 0)  # inside, off the border
+    assert img.getpixel((10, 15)) == windows.PICKER_BORDER  # left edge
+
+
+def test_render_selection_overlay_with_no_selection_is_fully_masked():
+    img = windows._render_selection_overlay((10, 10), None)
+    assert img.getpixel((5, 5)) == (0, 0, 0, windows.PICKER_MASK_ALPHA)
+
+
+def test_picker_enter_without_a_selection_is_a_noop():
+    confirmed, cancelled = [], []
+    picker, _libs = make_picker(
+        on_confirm=lambda c, r: confirmed.append((c, r)), on_cancel=cancelled.append
+    )
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+    assert confirmed == []
+    assert cancelled == []
+    assert picker.hwnd is not None
+
+
+def test_picker_enter_with_a_valid_selection_confirms_once():
+    confirmed = []
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(
+        libs=libs, on_confirm=lambda c, r: confirmed.append((c, r))
+    )
+    picker.selection = Rect(0, 0, picker.rect.w, picker.rect.h)
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    assert len(confirmed) == 1
+    client, source_rect = confirmed[0]
+    assert client is CLIENT  # identity passed through unchanged
+    assert source_rect == Rect(0, 0, 1280, 720)
+    assert picker.hwnd is None
+    assert picker._overlay_hwnd is None
+    assert picker._thumb is None
+
+
+def test_picker_enter_maps_a_partial_selection_the_same_way_the_model_does():
+    confirmed = []
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(
+        libs=libs, on_confirm=lambda c, r: confirmed.append((c, r))
+    )
+    picker.selection = Rect(0, 0, 600, 337)
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    expected = model.map_selection(
+        Rect(0, 0, 600, 337), Rect(0, 0, picker.rect.w, picker.rect.h), (1280, 720)
+    )
+    assert confirmed[0][1] == expected
+
+
+def test_picker_enter_with_a_too_small_selection_keeps_the_picker_open():
+    confirmed = []
+    picker, _libs = make_picker(on_confirm=lambda c, r: confirmed.append((c, r)))
+    picker.selection = Rect(0, 0, 1, 1)
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    assert confirmed == []
+    assert picker.hwnd is not None
+
+
+def test_picker_confirm_against_a_vanished_client_cancels_client_unavailable():
+    cancelled = []
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(libs=libs, on_cancel=cancelled.append)
+    picker.selection = Rect(0, 0, picker.rect.w, picker.rect.h)
+
+    libs.user32.client_rect = None  # client vanished before Enter
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    assert cancelled == ["client-unavailable"]
+    assert picker.hwnd is None
+
+
+def test_picker_confirm_against_a_resized_client_cancels_client_resized():
+    """Phase 0 does not guess a remap when the client's shape has changed
+    since the picker opened -- it cancels instead."""
+    cancelled = []
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(libs=libs, on_cancel=cancelled.append)
+    picker.selection = Rect(0, 0, picker.rect.w, picker.rect.h)
+
+    libs.user32.client_rect = (0, 0, 1024, 768)  # resized since creation
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    assert cancelled == ["client-resized"]
+    assert picker.hwnd is None
+
+
+def test_picker_escape_cancels_exactly_once():
+    cancelled = []
+    picker, _libs = make_picker(on_cancel=cancelled.append)
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_ESCAPE, 0)
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_ESCAPE, 0)  # already torn down
+
+    assert cancelled == ["cancelled"]
+    assert picker.hwnd is None
+    assert picker._overlay_hwnd is None
+
+
+def test_picker_close_cancels_exactly_once():
+    cancelled = []
+    picker, _libs = make_picker(on_cancel=cancelled.append)
+
+    picker._on_message(win32.WM_CLOSE, 0, 0)
+    picker._on_message(win32.WM_CLOSE, 0, 0)
+
+    assert cancelled == ["cancelled"]
+    assert picker.hwnd is None
+
+
+def test_picker_escape_after_confirm_does_not_double_fire():
+    """Guards the shared _completed flag from both directions: a picker
+    that already confirmed must not also cancel if a stray Escape
+    arrives before the WndProc is fully torn down."""
+    confirmed, cancelled = [], []
+    libs = FakeLibs()
+    libs.user32.client_rect = (0, 0, 1280, 720)
+    picker, libs = make_picker(
+        libs=libs,
+        on_confirm=lambda c, r: confirmed.append((c, r)),
+        on_cancel=cancelled.append,
+    )
+    picker.selection = Rect(0, 0, picker.rect.w, picker.rect.h)
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_RETURN, 0)
+
+    picker._on_message(windows.WM_KEYDOWN, windows.VK_ESCAPE, 0)
+
+    assert len(confirmed) == 1
+    assert cancelled == []
+
+
+def test_picker_wm_destroy_clears_registry_and_thumbnail_without_double_destroying():
+    picker, libs = make_picker()
+    hwnd = picker.hwnd
+    assert hwnd in windows._PICKERS
+    destroy_calls_before = libs.events.count("destroy-window")
+
+    picker._on_message(win32.WM_DESTROY, 0, 0)
+
+    assert picker.hwnd is None
+    assert picker._thumb is None
+    assert hwnd not in windows._PICKERS
     assert libs.events.count("destroy-window") == destroy_calls_before
