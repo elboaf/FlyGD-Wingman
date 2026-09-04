@@ -309,8 +309,11 @@ class TelemetryCoordinator:
             want_discovery = self._wants_discovery()
             folder = self._resolved_folder() if self._wants_stream_consumer() else None
 
-            if want_discovery or folder is not None:
-                self._start_dispatcher()
+            # Producers must never run without the sole consumer of their
+            # queue. A retained timed-out dispatcher can refuse a restart;
+            # leave producers stopped and retry next reconcile.
+            if (want_discovery or folder is not None) and not self._start_dispatcher():
+                return
 
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)
@@ -322,49 +325,72 @@ class TelemetryCoordinator:
                 # snapshots at one hertz for the rest of the session.
                 self._stop_dispatcher()
 
+    @staticmethod
+    def _completed(result) -> bool:
+        """Treat legacy ``None`` lifecycle results as successful.
+
+        The shared services now return booleans so timeout refusal is
+        observable. Test doubles and transitional adapters that still
+        return None preserve their former successful meaning.
+        """
+        return result is not False
+
     def _reconcile_discovery(self, wanted: bool) -> None:
         with self._lock:
             started = self._discovery_started
             unsub = self._discovery_unsub
-            if wanted and not started:
-                self._discovery_started = True
-            elif not wanted and started:
-                self._discovery_started = False
-                self._discovery_unsub = None
-        if wanted and not started:
-            # Subscribe BEFORE start: a scan that completes between the two
-            # would otherwise publish a roster nobody is listening for, and
-            # discovery's first scan is immediate.
-            unsub = self._discovery.subscribe(self._on_roster)
-            with self._lock:
-                self._discovery_unsub = unsub
-            self._discovery.start()
-        elif not wanted and started:
+
+        # ``started`` with no subscription means the previous stop timed
+        # out: its worker remains authoritative but detached. Retry that
+        # stop before either accepting off or starting a fresh generation.
+        if started and (not wanted or unsub is None):
             if unsub is not None:
                 unsub()
-            self._discovery.stop()
+                with self._lock:
+                    self._discovery_unsub = None
+            if not self._completed(self._discovery.stop()):
+                return
+            with self._lock:
+                self._discovery_started = False
+            started = False
+
+        if wanted and not started:
+            # Subscribe BEFORE start: the first scan is immediate. Publish
+            # the marker only after start accepts this generation.
+            unsub = self._discovery.subscribe(self._on_roster)
+            if not self._completed(self._discovery.start()):
+                unsub()
+                return
+            with self._lock:
+                self._discovery_started = True
+                self._discovery_unsub = unsub
 
     def _reconcile_stream(self, folder: Path | None) -> None:
         with self._lock:
             current = self._stream_folder
             unsub = self._stream_unsub
-        if current is not None and folder != current:
-            # Either the stream is no longer wanted, or the configured
-            # folder moved -- both mean the running worker is watching the
-            # wrong thing and has to be replaced, not adjusted.
+
+        # A missing subscription denotes a timed-out detached generation.
+        # A folder move uses the same stop-before-start path.
+        if current is not None and (folder != current or unsub is None):
             if unsub is not None:
                 unsub()
+                with self._lock:
+                    self._stream_unsub = None
+            if not self._completed(self._stream.stop()):
+                return
             with self._lock:
                 self._stream_folder = None
-                self._stream_unsub = None
-            self._stream.stop()
             current = None
+
         if folder is not None and current is None:
             unsub = self._stream.subscribe(self._on_stream_event)
+            if not self._completed(self._stream.start(folder)):
+                unsub()
+                return
             with self._lock:
                 self._stream_folder = folder
                 self._stream_unsub = unsub
-            self._stream.start(folder)
 
     def request_discovery(self) -> None:
         """Ask for an immediate roster scan.  Safe from any thread.
@@ -453,15 +479,15 @@ class TelemetryCoordinator:
     # Dispatcher
     # ------------------------------------------------------------------
 
-    def _start_dispatcher(self) -> None:
+    def _start_dispatcher(self) -> bool:
         with self._lifecycle_lock:
             if self._running:
-                return
+                return True
             if self._worker is not None and self._worker.is_alive():
                 # A worker a previous stop() failed to join is still
                 # draining this queue; a second one would deliver the same
                 # batch twice.  Same refusal ClientDiscovery.start makes.
-                return
+                return False
             self._running = True
             self._stop_event = threading.Event()
             stop_ev = self._stop_event
@@ -473,6 +499,7 @@ class TelemetryCoordinator:
             )
             self._worker = worker
             worker.start()
+            return True
 
     def _stop_dispatcher(self, timeout: float = 5.0) -> None:
         with self._lifecycle_lock:

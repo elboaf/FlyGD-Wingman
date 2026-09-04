@@ -560,6 +560,39 @@ class TestWorker:
         assert disco._worker is worker
         disco.stop()
 
+    def test_lifecycle_reports_completion(self):
+        disco = ClientDiscovery(_enumerate_clients=_result_seq([]))
+        assert disco.start() is True
+        assert disco.start() is True
+        assert disco.stop() is True
+        assert disco.stop() is True
+
+    def test_timeout_reports_false_and_blocks_restart(self):
+        gate = threading.Event()
+        created = []
+
+        def blocking(*, target, args, name, daemon):
+            def wrapper():
+                gate.wait(timeout=10)
+                target(*args)
+
+            worker = threading.Thread(target=wrapper, name=name, daemon=daemon)
+            created.append(worker)
+            return worker
+
+        disco = ClientDiscovery(
+            _enumerate_clients=_result_seq([]), _thread_factory=blocking
+        )
+        assert disco.start() is True
+        assert disco.stop(timeout=0.01) is False
+        assert disco.start() is False
+        assert len(created) == 1
+        gate.set()
+        assert disco.stop(timeout=5) is True
+        assert disco.start() is True
+        assert len(created) == 2
+        assert disco.stop(timeout=5) is True
+
     def test_stop_idempotent(self):
         disco = ClientDiscovery(_enumerate_clients=_result_seq([]))
         disco.start()

@@ -245,18 +245,20 @@ class GameLogStream:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, folder: Path) -> None:
-        """Begin streaming.  Spawns a worker via the thread factory.
+    def start(self, folder: Path) -> bool:
+        """Begin streaming and report whether a worker is authoritative.
 
-        Idempotent.  Refuses to launch while a timed-out worker is alive.
+        Idempotent. Refuses with ``False`` while a timed-out worker remains
+        alive, allowing the coordinator to retry instead of recording a
+        start the stream declined. Existing callers may ignore the result.
         """
         with self._lifecycle_lock:
             with self._lock:
                 # Refuse if already running OR a timed-out worker is alive.
                 if self._started:
-                    return
+                    return True
                 if self._worker is not None and self._worker.is_alive():
-                    return
+                    return False
                 self._folder = Path(folder)
                 self._started = True
                 self._started_mono = self._clock()
@@ -276,25 +278,28 @@ class GameLogStream:
             with self._lock:
                 self._worker = worker
             worker.start()
+            return True
 
-    def stop(self, timeout: float = 3.0) -> None:
-        """Signal the worker and join with a bounded timeout.  Idempotent.
+    def stop(self, timeout: float = 3.0) -> bool:
+        """Stop streaming and report whether no worker remains alive.
 
-        On timeout the worker is RETAINED and ``_started`` stays False so
-        a later ``stop`` can retry joining.  ``start`` checks
-        ``is_alive()`` and refuses to launch a second worker.
+        On timeout the worker is retained and ``False`` lets a coordinator
+        retry joining it. ``start`` refuses a second generation meanwhile.
         """
         with self._lifecycle_lock:
             with self._lock:
                 worker = self._worker
                 stop_ev = self._stop_event
                 self._started = False
-            if worker is not None:
-                stop_ev.set()
-                worker.join(timeout)
-                with self._lock:
-                    if not worker.is_alive():
-                        self._worker = None
+            if worker is None:
+                return True
+            stop_ev.set()
+            worker.join(timeout)
+            with self._lock:
+                if worker.is_alive():
+                    return False
+                self._worker = None
+            return True
 
     def _run(self, stop_event: threading.Event) -> None:
         """Worker loop: immediate rescan, then 1-second poll / 5-second rescan."""

@@ -996,9 +996,16 @@ class TestWorker:
     def test_start_stop_cycle(self, tmp_path):
         stream = GameLogStream()
         for _ in range(2):
-            stream.start(tmp_path)
+            assert stream.start(tmp_path) is True
             assert stream._worker.is_alive()
-            stream.stop()
+            assert stream.stop() is True
+
+    def test_lifecycle_reports_idempotent_completion(self, tmp_path):
+        stream = GameLogStream()
+        assert stream.start(tmp_path) is True
+        assert stream.start(tmp_path) is True
+        assert stream.stop() is True
+        assert stream.stop() is True
 
     def test_timeout_retains_worker(self, tmp_path):
         gate = threading.Event()
@@ -1011,11 +1018,12 @@ class TestWorker:
             return threading.Thread(target=wrapper, name=name, daemon=daemon)
 
         stream = GameLogStream(_thread_factory=blocking)
-        stream.start(tmp_path)
-        stream.stop(timeout=0.01)
+        assert stream.start(tmp_path) is True
+        assert stream.stop(timeout=0.01) is False
         assert stream._worker is not None and stream._worker.is_alive()
+        assert stream.start(tmp_path) is False
         gate.set()
-        stream._worker.join(timeout=5)
+        assert stream.stop(timeout=5) is True
 
     def test_timeout_blocks_start(self, tmp_path):
         """After a timed-out stop, start() refuses to launch a second worker."""

@@ -127,11 +127,13 @@ class _AttemptSignallingLock:
 class FakeDiscovery:
     """ClientDiscovery's coordinator-facing surface."""
 
-    def __init__(self):
+    def __init__(self, *, start_results=None, stop_results=None):
         self.starts = 0
         self.stops = 0
         self.scans = 0
         self.subscribers = []
+        self.start_results = list(start_results or [])
+        self.stop_results = list(stop_results or [])
 
     def subscribe(self, callback):
         self.subscribers.append(callback)
@@ -144,9 +146,11 @@ class FakeDiscovery:
 
     def start(self):
         self.starts += 1
+        return self.start_results.pop(0) if self.start_results else True
 
     def stop(self, timeout=5.0):
         self.stops += 1
+        return self.stop_results.pop(0) if self.stop_results else True
 
     def request_scan(self):
         self.scans += 1
@@ -164,13 +168,15 @@ class FakeStream:
     land behind the roster envelope that asked for it.
     """
 
-    def __init__(self, health=STREAM_HEALTH):
+    def __init__(self, health=STREAM_HEALTH, *, start_results=None, stop_results=None):
         self.starts = []
         self.stops = 0
         self.requested = []
         self.subscribers = []
         self.sources = {}
         self._health = health
+        self.start_results = list(start_results or [])
+        self.stop_results = list(stop_results or [])
 
     def subscribe(self, callback):
         self.subscribers.append(callback)
@@ -183,9 +189,11 @@ class FakeStream:
 
     def start(self, folder):
         self.starts.append(folder)
+        return self.start_results.pop(0) if self.start_results else True
 
     def stop(self, timeout=3.0):
         self.stops += 1
+        return self.stop_results.pop(0) if self.stop_results else True
 
     def request_source(self, character):
         self.requested.append(character)
@@ -787,6 +795,45 @@ class TestLifecycle:
 
         assert h.discovery.scans == 1
 
+    def test_refused_service_starts_are_not_recorded_and_retry(self, tmp_path):
+        discovery = FakeDiscovery(start_results=[False, True])
+        stream = FakeStream(start_results=[False, True])
+        h = _harness(tmp_path, fleet=True, discovery=discovery, stream=stream)
+
+        h.coordinator.reconcile()
+        assert discovery.starts == 1
+        assert stream.starts == [tmp_path]
+        assert discovery.subscribers == []
+        assert stream.subscribers == []
+
+        h.coordinator.reconcile()
+        assert discovery.starts == 2
+        assert stream.starts == [tmp_path, tmp_path]
+        assert len(discovery.subscribers) == 1
+        assert len(stream.subscribers) == 1
+
+    def test_timed_out_service_stops_are_retried_before_restart(self, tmp_path):
+        discovery = FakeDiscovery(stop_results=[False, True])
+        stream = FakeStream(stop_results=[False, True])
+        h = _harness(tmp_path, fleet=True, discovery=discovery, stream=stream)
+        h.coordinator.reconcile()
+
+        h.flags["fleet"] = False
+        h.coordinator.reconcile()
+        assert discovery.stops == 1
+        assert stream.stops == 1
+        assert discovery.subscribers == []
+        assert stream.subscribers == []
+
+        h.flags["fleet"] = True
+        h.coordinator.reconcile()
+        assert discovery.stops == 2
+        assert stream.stops == 2
+        assert discovery.starts == 2
+        assert stream.starts == [tmp_path, tmp_path]
+        assert len(discovery.subscribers) == 1
+        assert len(stream.subscribers) == 1
+
 
 class TestDispatcherThread:
     def test_dispatcher_thread_is_non_daemon_and_single(self, tmp_path):
@@ -862,6 +909,22 @@ class TestDispatcherThread:
                 coordinator.dispatch_once(0)
         finally:
             coordinator.stop(timeout=5)
+
+    def test_refused_dispatcher_restart_does_not_start_producers(self, tmp_path):
+        class AliveWorker:
+            def is_alive(self):
+                return True
+
+        discovery = FakeDiscovery()
+        stream = FakeStream()
+        h = _harness(tmp_path, fleet=True, discovery=discovery, stream=stream)
+        h.coordinator._worker = AliveWorker()
+        h.coordinator._running = False
+
+        h.coordinator.reconcile()
+
+        assert discovery.starts == 0
+        assert stream.starts == []
 
     def test_manual_dispatch_calls_have_one_owner(self, tmp_path):
         class BlockingMetrics(RecordingMetrics):

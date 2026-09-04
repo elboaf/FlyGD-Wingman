@@ -208,18 +208,19 @@ class ClientDiscovery:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
-        """Begin scanning.  Spawns a worker via the thread factory.
+    def start(self) -> bool:
+        """Begin scanning and report whether a worker is authoritative.
 
-        Idempotent.  Refuses to launch while a timed-out worker is alive,
-        the same guarantee ``GameLogStream.start`` makes.
+        Idempotent. Refuses with ``False`` while a timed-out worker is
+        alive, so a coordinator never records a start the service declined.
+        Existing callers may continue to ignore the return value.
         """
         with self._lifecycle_lock:
             with self._lock:
                 if self._started:
-                    return
+                    return True
                 if self._worker is not None and self._worker.is_alive():
-                    return
+                    return False
                 self._started = True
                 self._stop_event = threading.Event()
                 self._wake_event = threading.Event()
@@ -234,12 +235,13 @@ class ClientDiscovery:
             with self._lock:
                 self._worker = worker
             worker.start()
+            return True
 
-    def stop(self, timeout: float = 5.0) -> None:
-        """Signal the worker and join with a bounded timeout.  Idempotent.
+    def stop(self, timeout: float = 5.0) -> bool:
+        """Stop scanning and report whether no worker remains alive.
 
-        On timeout the worker is retained and ``_started`` stays False so a
-        later ``stop`` can retry joining, matching ``GameLogStream.stop``.
+        On timeout the worker is retained and ``False`` lets a coordinator
+        retry the stop instead of launching a second generation.
         """
         with self._lifecycle_lock:
             with self._lock:
@@ -247,13 +249,16 @@ class ClientDiscovery:
                 stop_ev = self._stop_event
                 wake_ev = self._wake_event
                 self._started = False
-            if worker is not None:
-                stop_ev.set()
-                wake_ev.set()  # unblock a pending wait immediately
-                worker.join(timeout)
-                with self._lock:
-                    if not worker.is_alive():
-                        self._worker = None
+            if worker is None:
+                return True
+            stop_ev.set()
+            wake_ev.set()  # unblock a pending wait immediately
+            worker.join(timeout)
+            with self._lock:
+                if worker.is_alive():
+                    return False
+                self._worker = None
+            return True
 
     def request_scan(self) -> None:
         """Wake the owned context for an immediate scan.
