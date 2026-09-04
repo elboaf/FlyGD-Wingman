@@ -789,6 +789,15 @@ class PrototypeCropPicker:
         if msg == win32.WM_LBUTTONDOWN:
             self._start = _client_point(lparam)
             self._dragging = True
+            # Enter/Escape are delivered via WM_KEYDOWN, which Windows only
+            # ever routes to the FOCUSED window -- without this, a click
+            # that captures the mouse (for the drag below) never made the
+            # picker itself the focused window, so a subsequent Enter went
+            # wherever focus already was and silently produced no crop.
+            # This is the picker's own HWND, a Wingman-owned tool popup
+            # (deliberately not WS_EX_NOACTIVATE, unlike PrototypeCropWindow
+            # -- see the class docstring), never the EVE client's HWND.
+            self._libs.user32.SetFocus(self.hwnd)
             self._libs.user32.SetCapture(self.hwnd)
             return 0
         if msg == win32.WM_MOUSEMOVE and self._dragging:

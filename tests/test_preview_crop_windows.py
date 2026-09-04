@@ -76,6 +76,13 @@ class FakeUser32:
         self.shows = []
         self.positions = []
         self.captures = []
+        # Every SetFocus(hwnd) call, in order -- see
+        # test_picker_left_button_down_sets_focus_to_the_picker_hwnd for why
+        # this needs its own list rather than folding into self.captures:
+        # focus and capture are two distinct Win32 calls with two distinct
+        # failure modes (a captured-but-unfocused picker never receives
+        # WM_KEYDOWN at all).
+        self.focus_calls = []
         self.cursor = (0, 0)
         self._next_hwnd = 1000
         # (left, top, right, bottom) of the SOURCE client's area, read by
@@ -140,6 +147,10 @@ class FakeUser32:
 
     def SetCapture(self, hwnd):
         self.captures.append(("set", hwnd))
+        return hwnd
+
+    def SetFocus(self, hwnd):
+        self.focus_calls.append(hwnd)
         return hwnd
 
     def ReleaseCapture(self):
@@ -746,6 +757,23 @@ def test_picker_rect_centers_correctly_on_a_negative_origin_monitor():
     picker, libs = make_picker(libs=libs, monitor=Rect(-1920, 0, 1920, 1080))
     assert picker.rect.x == -1920 + (1920 - 1200) // 2
     assert picker.rect.y == (1080 - 675) // 2
+
+
+def test_picker_left_button_down_sets_focus_to_the_picker_hwnd():
+    """WM_LBUTTONDOWN previously called SetCapture but never SetFocus, so
+    Enter/Escape (delivered via WM_KEYDOWN, which only ever reaches the
+    FOCUSED window's WndProc) never reached the picker after a user
+    clicked and dragged a selection -- a click captured the mouse without
+    making the picker the focused window, so the keystroke went wherever
+    focus already was. The picker is a Wingman-owned HWND (unlike
+    PrototypeCropWindow's WS_EX_NOACTIVATE crop, this is deliberately not
+    NOACTIVATE -- see the class docstring), so focusing it here is safe
+    and required, never the EVE client HWND."""
+    picker, libs = make_picker()
+
+    picker._on_message(win32.WM_LBUTTONDOWN, 1, _pack_lparam(10, 10))
+
+    assert libs.user32.focus_calls == [picker.hwnd]
 
 
 def test_picker_drag_builds_sorted_selection_and_pushes_overlay(monkeypatch):
