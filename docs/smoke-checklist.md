@@ -4028,12 +4028,20 @@ these items are blocked on the registration.
       exactly `esi-fittings.read_fittings.v1`,
       `esi-fittings.write_fittings.v1`, `esi-skills.read_skills.v1`, and
       `esi-skills.read_skillqueue.v1`, and after approving, **the browser tab
-      shows Wingman's own completion page** rather than a connection error or a
-      raw JSON blob. The returned character appears in Settings > Characters;
-      Skills then shows it as `Unscored` until plans are evaluated. Nothing in
-      the suite can reach login.eveonline.com, so this is the only proof the
-      PKCE challenge, the state comparison, the loopback listener and the code
-      exchange all agree with the live server.
+      shows Wingman's dark **Authorization received** page, with the purple
+      success mark and no unstyled white-page flash, connection error, or raw
+      JSON blob. The page says Wingman will finish connecting the character and
+      that the tab can be closed. The returned character appears in Settings >
+      Characters; Skills then shows it as `Unscored` until plans are evaluated.
+      Nothing in the suite can reach login.eveonline.com, so this is the only
+      proof the PKCE challenge, the state comparison, the loopback listener and
+      the code exchange all agree with the live server.
+- [ ] **A refused authorisation looks and behaves like failure.** Start another
+      authorisation and deny it at EVE's consent screen. Expected: the callback
+      tab shows Wingman's dark **Authorization not accepted** page with the red
+      failure mark and tells the user to return to Wingman and try again. No
+      character is added, and the app reports the refusal rather than waiting
+      for the five-minute timeout.
 - [ ] **The window stays responsive for the whole five minutes.** Start an
       authorisation and do not complete it. Drag the window, switch routes,
       scroll the recording list. If any of that freezes, the loopback wait
