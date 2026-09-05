@@ -567,19 +567,28 @@
 
     <div class="settings" id="section-characters">
 
-      <section class="card">
+      <!-- Authorization starts one EVE-owned flow. EVE chooses the character,
+           so per-row sign-in controls would promise precision the API cannot
+           provide. Keep the action here and render row cells as states. -->
+      <section class="card characters-auth-card">
         <h2>EVE authorization</h2>
-        <p class="hint" id="characters-count">0 characters</p>
         <div class="row">
-          <span class="lab">Account</span>
-          <button class="btn" id="characters-authenticate" disabled>Authenticate account</button>
+          <button class="btn" id="characters-authenticate" disabled>Authenticate character…</button>
           <button class="btn" id="characters-cancel" hidden disabled>Cancel</button>
           <div class="ctxmenu" id="characters-menu" hidden>
             <button id="characters-menu-forget" type="button" disabled>Forget character</button>
           </div>
         </div>
-        <p class="hint" id="characters-activity">Authorize an EVE account to let Wingman read its character roster.</p>
+        <p class="hint" id="characters-activity">Use EVE sign-in to add a character or update access for Skills and Fittings.</p>
         <p class="field-msg" id="characters-notice" role="status" hidden></p>
+      </section>
+
+      <!-- Unlike the form-shaped Settings cards, this is a scanning surface.
+           It uses the pane width so names and access states do not compete
+           while empty page space sits beside them. -->
+      <section class="card characters-roster-card">
+        <h2>Character access</h2>
+        <p class="hint" id="characters-count">0 characters</p>
         <div class="row">
           <label class="lab" for="characters-filter">Filter roster</label>
           <input class="field" id="characters-filter" type="text"
@@ -587,8 +596,11 @@
           <button class="linkbtn" id="characters-filter-clear" hidden disabled>Clear filter</button>
         </div>
         <p class="hint" id="characters-live" role="status" aria-live="polite"></p>
-        <div id="characters-roster" role="list" aria-label="Authorized characters">
-          <div class="empty" id="characters-empty">No authorized characters yet.</div>
+        <div id="characters-roster" role="table" aria-label="Character roster"
+             aria-colcount="5">
+          <div class="empty" id="characters-empty" role="row">
+            <span role="cell">No characters yet.</span>
+          </div>
         </div>
       </section>
 

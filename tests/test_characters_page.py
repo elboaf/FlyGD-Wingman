@@ -1,10 +1,9 @@
-"""The Characters Settings section, checked lexically and through app.js.
+"""The Characters Settings section, checked lexically and in a Node DOM stub.
 
-Task 7 added only the Settings shell. Task 8 is the first live behaviour:
-fresh reads on entry, stale-reply suppression, dense roster rendering,
-authorization actions, one fixed menu, and the three forget outcomes.
-Like the rest of Wingman's web tests, these are lexical because pytest never
-renders the page.
+The tests cover fresh reads on entry, stale-reply suppression, dense roster
+rendering, authorization actions, one fixed menu, and the three forget outcomes.
+They exercise behavior but do not render CSS; browser and WebView2 smoke checks
+remain necessary for layout changes.
 """
 
 import json
@@ -22,6 +21,7 @@ WEB = ROOT / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 APP = (WEB / "app.js").read_text(encoding="utf-8")
 JS = (WEB / "characters.js").read_text(encoding="utf-8")
+CSS = (WEB / "style.css").read_text(encoding="utf-8")
 
 
 def _settings_route() -> str:
@@ -43,11 +43,35 @@ def _characters_pane() -> str:
     return match.group(1)
 
 
-def test_characters_shell_has_the_approved_heading_and_required_ids():
+def test_characters_shell_splits_authorization_from_the_wide_roster():
     pane = _characters_pane()
     headings = [h.strip() for h in re.findall(r"<h2>([^<]+)</h2>", pane)]
-    assert headings, "Characters has no card heading"
-    assert headings[0] == "EVE authorization"
+    assert headings == ["EVE authorization", "Character access"]
+    assert pane.count('<section class="card characters-') == 2
+    assert 'class="card characters-auth-card"' in pane
+    assert 'class="card characters-roster-card"' in pane
+
+    auth_card, roster_card = pane.split(
+        '<section class="card characters-roster-card">', 1
+    )
+    assert 'id="characters-authenticate"' in auth_card
+    assert 'id="characters-count"' not in auth_card
+    assert 'id="characters-count"' in roster_card
+    assert 'id="characters-filter"' in roster_card
+    assert 'id="characters-roster"' in roster_card
+
+    assert "#section-characters { height: 100%; max-width: none; }" in CSS
+    assert re.search(r"\.characters-auth-card\s*\{[^}]*max-width:\s*620px", CSS)
+    assert re.search(
+        r"\.characters-roster-card\s*\{[^}]*flex:\s*1[^}]*min-height:\s*0",
+        CSS,
+    )
+    shared_grid = re.search(
+        r"\.characters-head,\s*\.characters-row\s*\{([^}]*)\}", CSS, re.DOTALL
+    )
+    assert shared_grid
+    assert "max-content" not in shared_grid.group(1)
+    assert "minmax(150px, 1fr) 92px 106px 138px 32px" in shared_grid.group(1)
 
     for element_id in (
         "characters-count",
@@ -174,21 +198,54 @@ def test_characters_filter_and_empty_states_are_rendered_locally():
     assert "filterClear.hidden = !filterText.trim();" in JS
     assert "filter.value = '';" in JS
     assert "filter.focus();" in JS
-    assert "No authorized characters yet." in JS
+    assert "No characters yet." in JS
+    assert "No authorized characters yet." not in JS
     assert "No characters match \u201c" in JS
     assert "The shared EVE character authority is unavailable." in JS
+    assert "return 'Character roster';" in JS
 
 
-# Task 6's management_state() intentionally collapsed capability state to the
-# shared vocabulary `authorized` / `sign_in`; this screen must render those
-# exact words rather than inventing a third label per feature.
-def test_characters_render_uses_shared_status_words_and_authenticated_time():
+# The wire vocabulary stays `authorized` / `sign_in`, but the latter is a
+# condition, not a row action. The page gives it non-imperative wording and
+# distinguishes a rejected grant from a capability that was never granted.
+def test_characters_render_uses_clear_status_words_and_bare_authenticated_time():
     assert "row.skills === 'authorized'" in JS
     assert "row.fittings === 'authorized'" in JS
     assert "return 'Authorized';" in JS
-    assert "return 'Sign in';" in JS
+    assert "return 'Access needed';" in JS
+    assert "return 'Access expired';" in JS
+    assert "return 'Sign in';" not in JS
     assert "authenticated_utc" in JS
-    assert "Authenticated" in JS
+    assert "'Authenticated ' + authenticated" not in JS
+    assert "authenticated ? authenticated : ''" in JS
+
+
+def test_characters_roster_exposes_table_semantics():
+    pane = _characters_pane()
+    roster = re.search(r'<div[^>]+id="characters-roster"[^>]*>', pane)
+    assert roster
+    assert 'role="table"' in roster.group(0)
+    assert 'aria-colcount="5"' in roster.group(0)
+    assert "head.setAttribute('role', 'row');" in JS
+    assert "cell.setAttribute('role', 'columnheader');" in JS
+    assert "node.setAttribute('role', 'row');" in JS
+    assert "name.setAttribute('role', 'cell');" in JS
+    assert "authenticatedCell.setAttribute('role', 'cell');" in JS
+    assert "actions.setAttribute('role', 'cell');" in JS
+    status_cell = re.search(r"function makeStatusCell\(.*?\n  \}", JS, re.DOTALL)
+    assert status_cell
+    assert "cell.setAttribute('role', 'cell');" in status_cell.group(0)
+
+
+def test_characters_authorization_copy_covers_both_maintenance_cases():
+    pane = _characters_pane()
+    copy = (
+        "Use EVE sign-in to add a character or update access for Skills and Fittings."
+    )
+    assert copy in pane
+    assert copy in JS
+    assert "Wingman shares one EVE sign-in across Skills and Fittings." not in JS
+    assert "Account</span>" not in pane
 
 
 # The start/cancel calls return only {accepted, error}. A successful click is
