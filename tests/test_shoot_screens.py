@@ -43,7 +43,7 @@ def test_gate_on_shoots_every_screen():
 
 
 def test_gate_off_shoots_only_the_four_reachable_screens():
-    """With EVE undetected the app hides three shot routes and three sections.
+    """With EVE undetected the app hides every EVE-gated screen.
 
     Photographing them anyway would produce a set showing screens the user
     cannot reach -- the same kind of lie as a ?dev=1 capture, which is the
@@ -116,6 +116,14 @@ def test_gated_column_matches_the_apps_own_gate():
         assert screen.gated == expected, (
             f"{screen.key} gated flag disagrees with app.js"
         )
+
+
+def test_floor_sized_screens_use_the_explicit_inventory_flag():
+    assert {screen.key for screen in shoot.SCREENS if screen.at_floor} == {
+        "settings-previews-narrow",
+        "settings-characters-narrow",
+        "fittings-narrow",
+    }
 
 
 def test_preview_capture_variants_cover_the_scroller_and_picker():
@@ -794,9 +802,7 @@ def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
     tmp_path, monkeypatch
 ):
     """walk() must call set_device_metrics_override before capturing the
-    narrow screen and clear_device_metrics_override after it -- in that
-    order -- so the screenshot is taken at 840x625 and the real viewport
-    is restored for every subsequent capture.
+    floor-sized screens and clear_device_metrics_override after each one.
     """
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
     cdp = _TrackedCDP()
@@ -805,31 +811,20 @@ def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
     assert eve_shown is True
     assert not skipped
 
-    # The narrow screen must have been shot successfully.
+    # The existing Preview floor stage must still succeed.
     narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
     assert narrow is not None, "narrow screen not found in shots"
     assert narrow["error"] is None, f"narrow screen failed: {narrow['error']}"
 
-    # Verify exact operation ordering: set -> screenshot -> clear.
-    # The ops list records set:WxH and clear; screenshots do not write to ops
-    # so we verify set comes before clear and that both are present.
-    assert "set:840x625" in cdp._ops, (
-        "walk() must call set_device_metrics_override(width=840, height=625) "
-        "before the narrow screenshot"
-    )
-    assert "clear" in cdp._ops, (
-        "walk() must call clear_device_metrics_override() after the narrow screenshot"
-    )
-    set_idx = cdp._ops.index("set:840x625")
-    clear_idx = cdp._ops.index("clear")
-    assert set_idx < clear_idx, (
-        "set_device_metrics_override must be called before clear_device_metrics_override"
-    )
-    # No stray set/clear for non-narrow screens.
-    assert cdp._ops.count("clear") == 1, "clear must only be called once (for narrow)"
-    assert cdp._ops.count("set:840x625") == 1, (
-        "set must only be called once (for narrow)"
-    )
+    floor_count = sum(screen.at_floor for screen in shoot.SCREENS)
+    assert cdp._ops.count("set:840x625") == floor_count, cdp._ops
+    assert cdp._ops.count("clear") == floor_count, cdp._ops
+    for set_index, clear_index in zip(
+        [i for i, op in enumerate(cdp._ops) if op == "set:840x625"],
+        [i for i, op in enumerate(cdp._ops) if op == "clear"],
+        strict=True,
+    ):
+        assert set_index < clear_index, cdp._ops
 
 
 def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
@@ -1065,19 +1060,29 @@ class _OrderedCDP(_TrackedCDP):
         return super().screenshot()
 
 
+def _preview_narrow_set_index(ops: list[str]) -> int:
+    """Locate the floor override used by settings-previews-narrow.
+
+    With Task 11 there are multiple floor-sized captures. The Preview one is
+    the override whose segment contains eval:setup (onPreviewHotkeys-based
+    fixture injection) before its matching clear.
+    """
+    for index, op in enumerate(ops):
+        if op != "set:840x625":
+            continue
+        tail = ops[index + 1 :]
+        if "clear" not in tail:
+            continue
+        clear_offset = next(i for i, item in enumerate(tail) if item == "clear")
+        segment = tail[:clear_offset]
+        if "eval:setup" in segment:
+            return index
+    raise AssertionError(f"preview-narrow set:840x625 not found in ops: {ops!r}")
+
+
 def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkeypatch):
     """walk() MUST apply set_device_metrics_override before evaluating the
-    narrow stage's setup script (which injects the fixture and scrolls).
-
-    The required order is:
-      set:840x625 -> eval:setup (onPreviewHotkeys + scroll) -> screenshot -> clear
-
-    The current bug: walk() evaluates the setup script first, THEN sets
-    device metrics -- so the fixture injection and scroll happen at the
-    previous viewport size, not at 840x625.
-
-    This test records the exact CDP call sequence and asserts the ordering
-    constraint is satisfied.
+    Preview narrow stage's setup script (which injects the fixture and scrolls).
     """
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
     cdp = _OrderedCDP()
@@ -1088,17 +1093,7 @@ def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkey
         f"narrow screen must succeed: {narrow}"
     )
 
-    # Locate the index of each required operation for the narrow stage.
-    # Because groups stage also has eval:setup before narrow, we want the
-    # LAST set:840x625 (the narrow override) and the eval:setup that follows it.
-    try:
-        set_idx = max(i for i, op in enumerate(cdp._ops) if op == "set:840x625")
-    except ValueError:
-        raise AssertionError(
-            "set:840x625 not found in ops -- walk() never called set_device_metrics_override"
-        )
-
-    # The eval:setup for the narrow stage must come AFTER the set:840x625.
+    set_idx = _preview_narrow_set_index(cdp._ops)
     post_set_ops = cdp._ops[set_idx + 1 :]
     assert "eval:setup" in post_set_ops, (
         f"walk() runs the narrow setup script BEFORE applying set_device_metrics_override.\n"
@@ -1106,7 +1101,6 @@ def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkey
         "Required order: set:840x625 -> eval:setup -> screenshot -> clear"
     )
 
-    # screenshot must come after eval:setup (post-set)
     post_set_setup_idx = next(
         i for i, op in enumerate(post_set_ops) if op == "eval:setup"
     )
@@ -1115,7 +1109,6 @@ def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkey
         "screenshot must occur after eval:setup (narrow setup script)"
     )
 
-    # clear must come after screenshot
     screenshot_idx = next(
         i for i, op in enumerate(post_setup_ops) if op == "screenshot"
     )
@@ -1128,12 +1121,8 @@ def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkey
 def test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure(
     tmp_path, monkeypatch
 ):
-    """Even when the narrow screenshot fails the ordering must hold:
+    """Even when the Preview narrow screenshot fails the ordering must hold:
     set:840x625 -> eval:setup -> (screenshot raises) -> clear.
-
-    A fail-then-clear order that skips the setup would mean the page
-    never received the fixture injection, making the cleared viewport the
-    only visible effect.
     """
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
     cdp = _OrderedCDP(fail_narrow_screenshot=True)
@@ -1144,11 +1133,7 @@ def test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure(
         "narrow screen must be recorded as failed"
     )
 
-    try:
-        set_idx = max(i for i, op in enumerate(cdp._ops) if op == "set:840x625")
-    except ValueError:
-        raise AssertionError("set:840x625 not found in ops")
-
+    set_idx = _preview_narrow_set_index(cdp._ops)
     post_set_ops = cdp._ops[set_idx + 1 :]
     assert "eval:setup" in post_set_ops, (
         f"eval:setup must still occur after set:840x625 even on failure.\n"
@@ -1372,7 +1357,7 @@ def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
     )
 
     ops = cdp._ops
-    set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
+    set_idx = _preview_narrow_set_index(ops)
     assert ops[set_idx : set_idx + 4] == [
         "set:840x625",
         "eval:setup",
@@ -1403,13 +1388,10 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
         f"ops: {ops!r}"
     )
     assert "clear" in ops, "clear must appear in ops"
-    # Find the narrow override (last set:840x625) and verify the attempt/clear ordering
-    # within that segment.  _FailOnceCDP records ALL screenshots so we anchor to
-    # the narrow override's set op.
-    try:
-        narrow_set_idx = max(i for i, op in enumerate(ops) if op == "set:840x625")
-    except ValueError:
-        raise AssertionError(f"set:840x625 not found in ops: {ops!r}")
+    # Find the Preview narrow override and verify the attempt/clear ordering
+    # within that segment. _FailOnceCDP records ALL screenshots, so we anchor
+    # to the floor override whose segment contains eval:setup.
+    narrow_set_idx = _preview_narrow_set_index(ops)
     post_set = ops[narrow_set_idx + 1 :]
     assert "screenshot_attempt" in post_set, (
         f"screenshot_attempt must appear after the narrow set:840x625, got ops: {ops!r}\n"
@@ -1422,6 +1404,52 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
         f"post-set ops: {post_set!r}\n"
         "Ensure the screenshot call is inside the try block, not after the finally."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 12: deterministic Fittings capture inventory
+# ---------------------------------------------------------------------------
+
+
+def _character_capture_scripts():
+    return {
+        screen.key: shoot.screen_setup_script(screen)
+        for screen in shoot.SCREENS
+        if screen.key.startswith("settings-characters")
+    }
+
+
+def test_character_capture_inventory_covers_current_authority_states():
+    assert set(_character_capture_scripts()) == {
+        "settings-characters",
+        "settings-characters-waiting",
+        "settings-characters-narrow",
+    }
+
+
+def test_character_capture_staging_is_read_only_and_scenario_backed():
+    scenarios = shoot.load_dev_characters_scenarios(str(ROOT))
+    expected = {
+        "settings-characters": scenarios["partial"],
+        "settings-characters-waiting": scenarios["waiting"],
+        "settings-characters-narrow": scenarios["maximum-50"],
+    }
+    for key, payload in expected.items():
+        script = _character_capture_scripts()[key]
+        assert script is not None, key
+        assert "window.onEveAuthorityScreenshotState(payload);" in script, key
+        match = re.search(r"var payload = (\{.*?\});", script, re.DOTALL)
+        assert match, key
+        assert json.loads(match.group(1)) == payload, key
+        for writer in (
+            "eve_characters_authenticate",
+            "eve_characters_cancel_auth",
+            "eve_characters_forget",
+        ):
+            assert writer not in script, (key, writer)
+    narrow = _character_capture_scripts()["settings-characters-narrow"]
+    assert "characters-menu-trigger" in narrow
+    assert "Characters overflow menu did not open" in narrow
 
 
 # ---------------------------------------------------------------------------
@@ -1443,7 +1471,7 @@ def test_fittings_capture_inventory_covers_every_required_visual_state():
         "fittings-superseded",
         "fittings-alliance",
         "fittings-detail",
-        "fittings-characters",
+        "fittings-narrow",
         "fittings-copy-preflight",
         "fittings-copy-limit",
         "fittings-copy-progress",

@@ -292,20 +292,86 @@ def test_update_status_methods_share_one_dev_fixture():
     assert "Promise.resolve(devUpdateState())" in DEV_JS
 
 
+def _character_scenarios() -> dict:
+    marker = "var DEV_CHARACTERS_SCENARIOS = "
+    assert marker in DEV_JS, "dev.js must declare one shared characters scenario table"
+    raw = DEV_JS[DEV_JS.index(marker) + len(marker) :]
+    opening = raw.index("{")
+    closing = _matching_brace(raw, opening)
+    return json.loads(raw[opening : closing + 1])
+
+
 def test_characters_methods_share_one_dev_fixture_and_event_path():
-    assert "var DEV_CHARACTERS_FIXTURE = {" in DEV_JS
-    assert (
-        "var _devCharacters = JSON.parse(JSON.stringify(DEV_CHARACTERS_FIXTURE));"
-        in DEV_JS
-    )
+    assert "var DEV_CHARACTERS_SCENARIOS = {" in DEV_JS
+    assert "var charactersScenario =" in DEV_JS
+    assert "DEV_CHARACTERS_SCENARIOS.partial" in DEV_JS
+    assert "function devCharactersScenario(name)" in DEV_JS
     assert "function devCharactersState()" in DEV_JS
-    assert "function devPushCharactersChanged()" in DEV_JS
-    assert "window.onEveAuthorityChanged({});" in DEV_JS
+    assert "function devPushCharactersChanged(reason)" in DEV_JS
+    assert "window.onEveAuthorityChanged({ reason: reason });" in DEV_JS
     assert "api.eve_characters_state = function ()" in DEV_JS
     assert "Promise.resolve(devCharactersState())" in DEV_JS
     assert "api.eve_characters_authenticate = function ()" in DEV_JS
     assert "api.eve_characters_cancel_auth = function ()" in DEV_JS
     assert "api.eve_characters_forget = function (characterId)" in DEV_JS
+    assert "eveCharacters: function (name)" in DEV_JS
+
+
+def test_character_scenarios_are_exact_safe_and_maximum_bounded():
+    scenarios = _character_scenarios()
+    assert set(scenarios) == {
+        "full",
+        "partial",
+        "reauthentication",
+        "warning",
+        "empty",
+        "waiting",
+        "terminal-failure",
+        "partial-cleanup",
+        "maximum-50",
+        "unavailable",
+    }
+
+    allowed_state = {
+        "available",
+        "auth_configured",
+        "authorization_activity",
+        "authorization_notice",
+        "warnings",
+        "characters",
+    }
+    allowed_row = {
+        "character_id",
+        "character_name",
+        "authenticated_utc",
+        "skills",
+        "fittings",
+        "needs_reauth",
+        "persistence_error",
+    }
+
+    def assert_safe(value):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                lowered = key.lower()
+                assert "credential" not in lowered, key
+                assert "hash" not in lowered, key
+                assert lowered != "raw_scopes", key
+                assert_safe(nested)
+        elif isinstance(value, list):
+            for item in value:
+                assert_safe(item)
+
+    for name, scenario in scenarios.items():
+        assert set(scenario) == allowed_state, name
+        assert_safe(scenario)
+        for row in scenario["characters"]:
+            assert set(row) == allowed_row, (name, row)
+
+    maximum = scenarios["maximum-50"]["characters"]
+    assert len(maximum) == 50
+    ids = [row["character_id"] for row in maximum]
+    assert len(set(ids)) == 50
 
 
 def test_update_action_methods_have_dev_doubles():

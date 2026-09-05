@@ -83,6 +83,62 @@ def test_smoke_network_checks_scope_ccp_after_the_startup_update_check():
     assert "only the Skills interaction" in flat
 
 
+def test_readme_eve_authorization_docs_point_to_settings_characters_and_current_contract():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    flat = " ".join(readme.split())
+    assert (
+        "Settings → Characters is the only place to authorize, reconnect, or "
+        "forget EVE characters." in flat
+    )
+    for scope in (
+        "esi-characters.read_skills.v1",
+        "esi-skills.read_skillqueue.v1",
+        "esi-fittings.read_fittings.v1",
+        "esi-fittings.write_fittings.v1",
+    ):
+        assert scope in readme
+    for phrase in (
+        "Existing Skills-only consent remains valid for Skills.",
+        "Wingman matches the character EVE returns against the sign-in that started the flow, not against a specific scope combination.",
+        "If Wingman already knows that character's owner and EVE returns a different one, the sign-in is refused.",
+        "If no owner is saved yet, the returned owner is accepted for compatibility with older Skills-only records.",
+        "If you cancel before EVE replies, the cancellation wins.",
+        "If EVE replies first, that reply wins and the later cancel is ignored.",
+        "If cleanup is only partly saved, Wingman keeps the character blocked from being added again until reconciliation proves what survived.",
+    ):
+        assert phrase in flat
+    for removed in (
+        "Enable fittings",
+        "Whether pressed from Skills or Fittings",
+    ):
+        assert removed not in readme
+
+
+def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_checks():
+    smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
+    flat_smoke = " ".join(smoke.split())
+    assert "Settings > Characters" in smoke
+    assert "50-row keyboard/menu checks" in flat_smoke
+    assert "Fittings spacing at 100%, 125%, 150%, and 200% scaling" in flat_smoke
+
+    path = ROOT / "scripts" / "shoot_screens.py"
+    spec = importlib.util.spec_from_file_location("shoot_screens", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    prompt = (ROOT / ".pi" / "prompts" / "screenshots.md").read_text(encoding="utf-8")
+    flat_prompt = " ".join(prompt.split())
+    assert f"walks **{len(module.SCREENS)} screens**" in flat_prompt
+    for phrase in (
+        "Settings — Characters",
+        "Settings — Characters (waiting)",
+        "Settings — Characters (narrow 840x625)",
+        "Fittings — Narrow (840x625)",
+    ):
+        assert phrase in flat_prompt
+    assert "Fittings — Characters" not in flat_prompt
+
+
 def test_external_privacy_policy_is_not_a_repository_release_gate():
     documents = {
         "plan": ROOT

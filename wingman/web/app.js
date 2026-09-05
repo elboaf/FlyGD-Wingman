@@ -275,10 +275,11 @@
                    'accountidentity', 'backups'];
   // Alerts and Characters are EVE-gated for the same reason Bookmarks and
   // Previews are: with the gate off they configure nothing that can happen
-  // without an EVE install or an authenticated EVE account. This is also
-  // what takes the rail to TWO entries in that mode -- six, less these four
-  // -- which is the whole of E1's argument that the merge axis is the
-  // product's own independence claim.
+  // without an EVE install or an authenticated EVE account. Of the six
+  // Settings entries, these four are the EVE-gated ones, so hiding them
+  // leaves the two non-EVE entries -- Uploading and General -- which is the
+  // whole of E1's argument that the merge axis is the product's own
+  // independence claim.
   WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'alerts'];
 
   WM.apply_eve_gate = function (shown, fleetEnabled) {

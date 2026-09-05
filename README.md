@@ -36,7 +36,7 @@ half needs no Google account. Neither requires the other.
 
 <p align="center">
   <img src="docs/assets/wingman-screenshot.png" width="850"
-       alt="The FlyGD Wingman window: a dark, frameless title bar carrying three destinations — Uploader, Profiles and Skills — and a settings gear. The Uploader is a two-pane layout: the left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description, a stitch option and a combat-log option — above Publish, with the destination channel and buttons to upload the selection, retry, or delete.">
+       alt="The FlyGD Wingman window: a dark, frameless title bar carrying the app's destinations and a settings gear. The Uploader is a two-pane layout: the left pane lists OBS recordings with filename, how long ago each was modified, size and length; the right pane has Upload — title, description, a stitch option and a combat-log option — above Publish, with the destination channel and buttons to upload the selection, retry, or delete.">
 </p>
 
 ## What Wingman does
@@ -86,27 +86,39 @@ The EVE tools are on by default. If you only want the uploader, turn them off in
 **Settings → General** and Profiles, Skills, Fittings, and the EVE Settings
 sections are hidden; the window drops to the Uploader alone.
 
-### Fittings and EVE access
+### EVE authorization, Skills, and Fittings
 
-Fittings is additive and explicit. Wingman reads a character only after you
-press **Enable fittings** on that character's row and complete EVE's consent
-screen. It requests these two scopes for that character:
+Settings → Characters is the only place to authorize, reconnect, or forget EVE
+characters.
+
+Wingman can hold these four CCP scopes across Skills and Fittings:
 
 ```text
+esi-characters.read_skills.v1
+esi-skills.read_skillqueue.v1
 esi-fittings.read_fittings.v1
 esi-fittings.write_fittings.v1
 ```
 
-The read scope imports that character's Personal Fittings. The write scope is
-used only after you select library entries, select target characters, review
-the exact remote-write count, and confirm the copy. Wingman does not
-continuously synchronize fits and never automatically deletes or replaces a
-fit on a character. It does not call ESI's remote fitting-delete route.
+The first two scopes power Skills. The fitting read scope imports a
+character's Personal Fittings. The fitting write scope is used only after you
+select library entries, select target characters, review the exact
+remote-write count, and confirm the copy. Wingman does not continuously
+synchronize fits, never automatically deletes or replaces a fit on a
+character, and does not call ESI's remote fitting-delete route.
 
 Existing Skills-only consent remains valid for Skills. A character stays
-**Skills only** in Fittings until you enable the additional capability, and the
-upgrade is bound to that exact character. Choosing a different character on
-EVE's consent screen is refused rather than adding or upgrading it silently.
+**Skills only** in Fittings until you reconnect that same character from
+Settings → Characters and add the fitting scopes.
+
+Wingman matches the character EVE returns against the sign-in that started the
+flow, not against a specific scope combination. If Wingman already knows that
+character's owner and EVE returns a different one, the sign-in is refused. If
+no owner is saved yet, the returned owner is accepted for compatibility with
+older Skills-only records.
+
+If you cancel before EVE replies, the cancellation wins. If EVE replies first,
+that reply wins and the later cancel is ignored.
 
 EVE exposes Personal Fittings, not alliance or corporation fittings. To bring
 an alliance doctrine into Wingman:
@@ -118,16 +130,18 @@ an alliance doctrine into Wingman:
    descriptions as needed.
 
 A fitting create can time out after EVE received it but before Wingman received
-the response. That result is **Unknown**, not Failed. Wingman does not retry it:
-the fitting/character pair remains blocked until a fresh authoritative read
+the response. That result is **Unknown**, not Failed. Wingman does not retry
+it: the fitting/character pair remains blocked until a fresh authoritative read
 after EVE's five-minute cache horizon proves whether the fitting exists. This
 prevents an automatic retry from creating a duplicate.
 
-**Forget character is global.** Whether pressed from Skills or Fittings, it
-removes that character's shared EVE credential and its Skills and Fittings
-snapshots. Library entries learned from the character remain. If an Unknown
-fitting write is still unresolved, Forget is refused until reconciliation so
-the evidence and credential needed to resolve it are not discarded.
+**Forget character is global from Settings → Characters.** It removes that
+character's shared EVE credential and its Skills and Fittings snapshots.
+Library entries learned from the character remain. If an Unknown fitting write
+is still unresolved, Forget is refused until reconciliation so the evidence and
+credential needed to resolve it are not discarded. If cleanup is only partly
+saved, Wingman keeps the character blocked from being added again until
+reconciliation proves what survived.
 
 Fittings state is local and persistent under `%LOCALAPPDATA%\FlyGD Wingman\`:
 
@@ -350,7 +364,7 @@ These features make the following network connections:
 | Destination | When | What is sent |
 |---|---|---|
 | GitHub release APIs and release downloads | Wingman's release API is checked once each time Wingman starts, including when Windows starts it hidden at sign-in. **Check again** repeats that check and **Download update** explicitly downloads its installer; there is no polling or automatic download. Separately, FightRecorder stays local until you choose **Check for updates**, **Install**, or **Update** on its Settings card; those actions check its GitHub release and Install/Update downloads the plugin DLL. | The automatic Wingman check identifies the installed Wingman version in its User-Agent, and each request carries ordinary network connection metadata and identifies the repository or release asset requested. FightRecorder checks do not send the installed plugin version. No Wingman settings, EVE or Google account data, filenames, recordings, or telemetry are sent. |
-| CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You add or reconnect a Skills character; Wingman refreshes that character's skills, queue, and attributes or resolves uncached skill plans through unauthenticated universe ID/name (`/universe/ids`), type metadata, and group metadata lookups. Profiles looks up local character IDs first through unauthenticated `/characters/{id}/` requests, then uses `/universe/names` for remaining display names. | EVE SSO receives Wingman's registered client ID, redirect URI, requested read-only skills/queue scopes and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills, queue, and attributes requests carry the character ID and EVE bearer access token. Unauthenticated name and metadata lookups carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
+| CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You authorize or reconnect a character from Settings → Characters; Wingman refreshes that character's skills, queue, and attributes, refreshes its Personal Fittings when you ask Fittings to do so, or resolves uncached skill plans through unauthenticated universe ID/name (`/universe/ids`), type metadata, and group metadata lookups. Profiles looks up local character IDs first through unauthenticated `/characters/{id}/` requests, then uses `/universe/names` for remaining display names. | EVE SSO receives Wingman's registered client ID, redirect URI, requested read-only skills/queue scopes, requested fitting read/write scopes, and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills, queue, and attributes requests carry the character ID and EVE bearer access token. Authenticated ESI fitting reads and writes carry the character ID and EVE bearer access token. Unauthenticated name and metadata lookups carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
 | A Discord webhook you configure | You press **Upload** while a webhook is configured, after the video publishes successfully | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
 

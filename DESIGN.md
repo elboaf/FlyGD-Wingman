@@ -314,13 +314,13 @@ a pill and a button, `Copy` over a radio pair) or by labelling a text input,
 which has no self-describing text.
 
 The third is round 5's E1, and it renames most of the first column: the
-rail is **five** entries now, not seven. `Account`, `Uploads`, `Folders`
-and `Discord` are one entry, `Uploading`; `Alerts` is a new one of its own
-(D1); `Bookmarks`, `Previews` and `General` are unchanged. The rows above
-still describe the same cards, which is why the measurement stands — the
-first control's left edge is a property of the card, not of the rail entry
-it is reached through. With the EVE gate off the rail is two entries,
-`Uploading` and `General`.
+rail is **six** entries now, not seven. `Account`, `Uploads`, `Folders`
+and `Discord` are one entry, `Uploading`; `Characters` and `Alerts` are
+entries of their own; `Bookmarks`, `Previews` and `General` are unchanged.
+The rows above still describe the same cards, which is why the measurement
+stands — the first control's left edge is a property of the card, not of
+the rail entry it is reached through. With the EVE gate off the rail is
+two entries, `Uploading` and `General`.
 
 **If you out-specify the label column, restore its collapse yourself.**
 `#eve-binds` and `#preview-binds` both take the column away from their

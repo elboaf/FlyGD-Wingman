@@ -1102,8 +1102,8 @@ behavior that only shows up at size.
       that path still exists after the dialog — a failed post must never
       delete the archive.
 - [ ] **Settings at 100% and 150% Windows display scaling.** Open Settings
-      at each scale factor and walk every rail entry — Account, Uploads,
-      Folders, Discord, Bookmarks, Previews, General. Confirm each
+      at each scale factor and walk every rail entry — Uploading,
+      Characters, Bookmarks, Previews, Alerts, General. Confirm each
       section's content is fully visible with nothing clipped, and that the
       rail itself is never pushed off the top by a long section. A previous
       release shipped with a section clipped off the bottom at high DPI,
@@ -1577,9 +1577,9 @@ Bookmarks and Previews stopped being top-level destinations and became
 sections here. Nothing in pytest executes the page, so the wiring below is
 only ever checked by hand.
 
-- [ ] **Settings opens on Account, not General.** Press the gear from any
-      destination. Expected: the Account pane is showing and Account is the
-      highlighted rail entry, on the FIRST open of a session.
+- [ ] **Settings opens on Uploading, not General.** Press the gear from any
+      destination. Expected: the Uploading pane is showing and Uploading is
+      the highlighted rail entry, on the FIRST open of a session.
       General's whole content is one checkbox for turning the EVE half off;
       it is a legitimate control and a poor first impression of the app's
       configuration surface. This is also the fact `WM.current_section`
@@ -1587,18 +1587,17 @@ only ever checked by hand.
       tests/test_page_conventions.py now holds them in step. If the pane
       and the highlight ever disagree with each other, that test has been
       bypassed rather than the markup being wrong.
-- [ ] **Seven rail entries, General last** — Account, Uploads, Folders,
-      Discord, Bookmarks, Previews, General — and clicking each shows its
-      content with exactly one entry highlighted. Notifications was the
-      eighth and is gone: its one radio pair now sits under Uploads as the
-      second card, `When a recording finishes`. Check it is there and that
-      picking an option still sticks across a restart.
-      General is last because its only content is the switch that hides
-      Bookmarks and Previews: untick it and the rail must lose its tail,
-      not open a hole in its middle. If that count is wrong,
-      trust the rail and fix this line: it said seven for exactly as long
-      as it took to add General one commit later, which is the drift this
-      checklist exists to catch elsewhere.
+- [ ] **Six rail entries, General last** — Uploading, Characters,
+      Bookmarks, Previews, Alerts, General — and clicking each shows its
+      content with exactly one entry highlighted. The old Account, Uploads,
+      Folders and Discord entries are one Uploading section now; their cards
+      still have to be there, and `When a recording finishes` still sits in
+      that section. Check it is there and that picking an option still sticks
+      across a restart.
+      General is last because its only content is the switch that hides the
+      EVE-gated tail of the rail: untick it and Characters, Bookmarks,
+      Previews and Alerts disappear together, without opening a hole in the
+      middle. If that count is wrong, trust the rail and fix this line.
 - [ ] **Rail selection and keyboard focus are different states.** Click
       Previews, then press Tab until another rail entry receives focus.
       Expected: Previews keeps the filled current-location treatment while
@@ -3753,22 +3752,45 @@ behavior, or restart durability and cannot substitute for these items.
       authority document nor a migration-complete marker. Restore one valid
       source and relaunch; migration then completes. Never infer absence from an
       access error.
-- [ ] **Skills-only remains Skills-only.** Before pressing Enable fittings,
-      open Skills and refresh the migrated character successfully. Open
-      Fittings > Characters: the same row reads **Skills only**, no fitting GET
-      occurs, and no fitting scopes were silently added to the existing grant.
-- [ ] **Enable fittings is bound to the row that started it.** Press **Enable
-      fittings** on one Skills-only row. The EVE consent page asks for fitting
-      read and write access in addition to that character's enabled
-      capabilities. Complete it with THE SAME character. Expected: only that
-      row becomes enabled and can refresh Personal Fittings; Skills remains
-      usable in the same session and after restart.
-- [ ] **The wrong character is refused.** Start Enable fittings on character A,
-      choose character B on EVE's account/character screen, and complete the
-      callback. Expected: a specific wrong-character refusal, no new B row, no
-      upgrade to A or B, and A's prior Skills-only credential still refreshes
-      Skills. Repeat once by cancelling the browser flow; the row returns to a
-      usable Skills-only state and no partial authority mutation survives.
+- [ ] **Settings > Characters is the only EVE authorization surface.** Open
+      Skills and Fittings and follow any authorize/reconnect/forget handoff.
+      Expected: the write happens in Settings > Characters, and that card says
+      the shared sign-in is used by Skills and Fittings.
+- [ ] **Skills-only remains Skills-only until Settings > Characters adds the
+      fitting scopes.** Start from a migrated or existing Skills-only
+      character, refresh it in Skills successfully, then open Settings >
+      Characters and Fittings. Expected: the row still reads **Skills only**,
+      no fitting GET occurs before reconnect, and no fitting scopes were
+      silently added to the existing grant.
+- [ ] **Settings > Characters can request all four Skills-and-Fittings
+      scopes.** Reconnect a Skills-only character from Settings > Characters.
+      The EVE consent page requests `esi-characters.read_skills.v1`,
+      `esi-skills.read_skillqueue.v1`, `esi-fittings.read_fittings.v1`, and
+      `esi-fittings.write_fittings.v1` as appropriate for that character's
+      enabled capabilities. Complete it with THE SAME character. Expected:
+      Skills remains usable in the same session and after restart, and
+      Fittings can then refresh that character's Personal Fittings.
+- [ ] **Returned-character matching is generic and owner-safe.** Start sign-in
+      from Settings > Characters. Completing it with the wrong character is
+      refused even if the returned grant would otherwise be useful. If
+      Wingman already knows that character's owner and EVE returns a
+      different one, the sign-in is refused and the prior data remains. If no
+      owner is saved yet, the returned owner is accepted for compatibility
+      with older Skills-only records.
+- [ ] **Cancel and callback races resolve deterministically.** Start sign-in
+      from Settings > Characters and exercise both orders once. Expected: if
+      you cancel before EVE replies, the cancellation wins. If EVE replies
+      first, that reply wins and the later cancel is ignored.
+- [ ] **Partial cleanup blocks re-add until reconciliation.** Produce a
+      cleanup-save failure after forgetting a character from Settings >
+      Characters. Expected: the row is gone, the warning explains that some
+      cleanup was not saved, and Wingman refuses to add that character back
+      until reconciliation proves what survived.
+- [ ] **50-row keyboard/menu checks.** With deterministic staging or an
+      equivalent large live roster, open Settings > Characters at the
+      840x625 floor. Expected: the roster scrolls, the last visible row's
+      More menu opens by mouse and keyboard, Escape closes it, focus returns
+      to the trigger, and no horizontal overflow appears.
 
 ### Library, import and curation
 
@@ -3900,6 +3922,11 @@ behavior, or restart durability and cannot substitute for these items.
       `skills.js`, then open Fittings offline. Expected: local persisted content
       renders; a missing script produces an inert/blank route and is a release
       blocker even if the installer build succeeded.
+- [ ] **Fittings spacing at 100%, 125%, 150%, and 200% scaling.** At each
+      Windows display scaling factor, restart, open Fittings, and shrink the
+      window to the 840x625 floor. Expected: the left inset, rail width, rail/
+      content gap, and `Copy selected` placement stay intact, with no overlap,
+      clipped action, or horizontal overflow.
 - [ ] **Four-destination title-bar geometry holds at every supported scaling.**
       At 100%, 125%, 150% and 200%, restart, shrink to the 840x625 logical floor,
       and record CSS-pixel rectangles for titlebar, drag region, nav, gear,

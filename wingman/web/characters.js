@@ -1,7 +1,10 @@
 /* Shared EVE character management inside Settings.
  *
  * The bridge event is only a semantic "something changed" signal; every
- * render still comes from a fresh read of eve_characters_state(). A stale
+ * production render still comes from a fresh read of eve_characters_state().
+ * The screenshot tool's bounded onEveAuthorityScreenshotState hook is the one
+ * deliberate exception: it stages a deterministic read-only fixture in the
+ * live page without calling a real sign-in, cancel, or forget writer. A stale
  * read must not repaint over a newer one, and a hidden section must not do
  * work the user cannot see.
  */
@@ -387,6 +390,15 @@
       render(payload);
     });
   }
+
+  window.onEveAuthorityScreenshotState = function (payload) {
+    if (!isVisible()) return;
+    requestSequence += 1;
+    authRequestPending = false;
+    resetNotice();
+    announce('');
+    render(payload);
+  };
 
   function forgetCurrentCharacter() {
     if (forget.disabled || !menuCharacterId) return;
