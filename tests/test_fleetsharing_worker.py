@@ -23,7 +23,11 @@ from wingman.fleetsharing.client import FleetRelayError
 from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
 from wingman.fleetsharing.state import DeviceIdentity, SharingState
 from wingman.fleetsharing.worker import (
+    BASE_BACKOFF_S,
     CATALOGUE_REFRESH_INTERVAL_S,
+    HEARTBEAT_INTERVAL_S,
+    INERT_POLL_S,
+    MAX_SNAPSHOT_AGE_S,
     FleetSharingWorker,
     SharingStatus,
     _noop_thread_factory,
@@ -101,17 +105,45 @@ class BlockingRelayClient:
 
 
 def _worker(
-    client, *, state=PAIRED_STATE, clock=None, thread_factory=_noop_thread_factory
+    client,
+    *,
+    state=PAIRED_STATE,
+    clock=None,
+    thread_factory=_noop_thread_factory,
+    sharing_enabled=lambda: True,
+    save_state=None,
 ):
     mono = clock or (lambda: 1000.0)
-    return FleetSharingWorker(
+    kwargs = dict(
         load_state=lambda: state,
         client_factory=lambda origin: client,
         unwrap_private_key=_unwrap,
+        sharing_enabled=sharing_enabled,
         _thread_factory=thread_factory,
         _clock=mono,
         _jitter=lambda: 0.0,
     )
+    if save_state is not None:
+        kwargs["save_state"] = save_state
+    return FleetSharingWorker(**kwargs)
+
+
+class _InMemoryStateStore:
+    """A tiny stand-in for `wingman.fleetsharing.state.load`/`save` bound to
+    one file: `load()`/`save(state)` round-trip through the SAME in-memory
+    value, so two separate `FleetSharingWorker` instances sharing one store
+    can simulate "the same device session, before and after a Wingman
+    restart" without touching a real filesystem.
+    """
+
+    def __init__(self, state):
+        self._state = state
+
+    def load(self):
+        return self._state
+
+    def save(self, state):
+        self._state = state
 
 
 # ---------------------------------------------------------------------------
@@ -409,9 +441,373 @@ class TestBasicLifecycle:
         assert made == [{"name": "fleet-sharing-worker", "daemon": False}]
 
 
+class TestSharingEnabledGating:
+    """fleet_sharing.enabled gates real work; unpaired gets the same slow,
+    non-interruptible poll for the same reason -- see INERT_POLL_S."""
+
+    def test_disabled_worker_never_calls_load_state(self):
+        load_calls = []
+
+        def load_state():
+            load_calls.append(1)
+            return PAIRED_STATE
+
+        worker = FleetSharingWorker(
+            load_state=load_state,
+            client_factory=lambda origin: FakeRelayClient(),
+            unwrap_private_key=_unwrap,
+            sharing_enabled=lambda: False,
+            _thread_factory=_noop_thread_factory,
+            _clock=lambda: 1000.0,
+            _jitter=lambda: 0.0,
+        )
+
+        worker.iterate_once()
+
+        assert load_calls == []
+        assert worker.status() == SharingStatus(state="stopped")
+
+    def test_disabled_worker_reports_the_slow_non_interruptible_inert_poll(self):
+        worker = _worker(FakeRelayClient(), sharing_enabled=lambda: False)
+
+        wait_s, interruptible = worker._iterate()
+
+        assert wait_s == INERT_POLL_S
+        assert interruptible is False
+
+    def test_unpaired_worker_reports_the_same_slow_inert_poll(self):
+        worker = _worker(FakeRelayClient(), state=SharingState())
+
+        wait_s, interruptible = worker._iterate()
+
+        assert wait_s == INERT_POLL_S
+        assert interruptible is False
+
+    def test_a_raising_sharing_enabled_predicate_fails_closed_to_stopped(self):
+        def broken():
+            raise RuntimeError("settings unavailable")
+
+        worker = _worker(FakeRelayClient(), sharing_enabled=broken)
+
+        worker.iterate_once()
+
+        assert worker.status() == SharingStatus(state="stopped")
+
+
+class TestSnapshotStaleness:
+    def test_a_snapshot_older_than_the_max_age_is_dropped_not_published(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.submit(_snapshot(42))
+
+        mono[0] += MAX_SNAPSHOT_AGE_S + 0.01
+        worker.iterate_once()
+
+        assert client.publish_calls == []
+
+    def test_a_snapshot_within_the_max_age_still_publishes(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.submit(_snapshot(42))
+
+        mono[0] += MAX_SNAPSHOT_AGE_S - 0.01
+        worker.iterate_once()
+
+        assert len(client.publish_calls) == 1
+
+    def test_a_dropped_stale_snapshot_does_not_force_a_withdrawal(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+        assert client.publish_calls[-1][1] != ()
+        published_so_far = len(client.publish_calls)
+
+        mono[0] += MAX_SNAPSHOT_AGE_S + 0.01
+        worker.iterate_once()
+
+        # Neither a stale re-publish NOR a forced empty withdrawal happens.
+        assert len(client.publish_calls) == published_so_far
+
+
+class TestClientConstructionGuard:
+    def test_a_client_factory_that_raises_reports_error_without_crashing(self):
+        def bad_factory(origin):
+            raise ValueError("not a bare https origin")
+
+        worker = _worker(FakeRelayClient(), thread_factory=_noop_thread_factory)
+        worker._client_factory = bad_factory
+
+        worker.iterate_once()  # must not raise
+
+        assert worker.status() == SharingStatus(
+            state="error", detail="invalid relay origin"
+        )
+
+    def test_the_worker_recovers_once_the_client_factory_stops_raising(self):
+        good_client = FakeRelayClient()
+        calls = {"n": 0}
+
+        def flaky_factory(origin):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ValueError("not a bare https origin")
+            return good_client
+
+        worker = _worker(good_client, thread_factory=_noop_thread_factory)
+        worker._client_factory = flaky_factory
+
+        worker.iterate_once()
+        assert worker.status().state == "error"
+
+        worker.iterate_once()
+        assert worker.status().state == "active"
+        assert good_client.fetch_calls == [1]
+
+    def test_an_unexpected_exception_anywhere_in_a_pass_is_caught_not_fatal(self):
+        """A general safety net beyond the specific client-construction
+        guard above: ANY unexpected exception during a pass -- here, a
+        persisted identity object missing the attribute this worker
+        reads -- must report `error` and back off, never kill the worker's
+        own thread."""
+
+        class _BrokenIdentity:
+            pass  # deliberately has no protected_private_key_b64 attribute
+
+        broken_state = SharingState(
+            identity=_BrokenIdentity(),  # type: ignore[arg-type]
+            relay_origin="https://relay.test",
+            session_id="session-1",
+        )
+        worker = _worker(FakeRelayClient(), state=broken_state)
+
+        worker.iterate_once()  # must not raise AttributeError
+
+        assert worker.status().state == "error"
+
+
+class TestHeartbeat:
+    def test_an_unchanged_nonempty_projection_is_republished_as_a_heartbeat(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+        assert len(client.publish_calls) == 1
+
+        mono[0] += HEARTBEAT_INTERVAL_S
+        worker.submit(_snapshot(42))  # unchanged content, a fresh submission
+        worker.iterate_once()
+
+        assert len(client.publish_calls) == 2
+        assert client.publish_calls[-1][1] == (PublishRow(1, 42, ()),)
+
+    def test_an_unchanged_projection_is_not_republished_before_the_interval(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+        assert len(client.publish_calls) == 1
+
+        mono[0] += HEARTBEAT_INTERVAL_S - 0.5
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+
+        assert len(client.publish_calls) == 1
+
+    def test_an_empty_projection_never_needs_a_heartbeat(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.submit(_snapshot(42, character="Nobody"))  # never matches
+        worker.iterate_once()
+        assert client.publish_calls == []
+
+        mono[0] += HEARTBEAT_INTERVAL_S * 5
+        worker.submit(_snapshot(42, character="Nobody"))
+        worker.iterate_once()
+
+        assert client.publish_calls == []
+
+
+class TestRevisionPersistence:
+    def test_revision_resumes_from_the_persisted_value_across_a_restart(self):
+        store = _InMemoryStateStore(PAIRED_STATE)
+        client_a = FakeRelayClient()
+        worker_a = FleetSharingWorker(
+            load_state=store.load,
+            save_state=store.save,
+            client_factory=lambda origin: client_a,
+            unwrap_private_key=_unwrap,
+            _thread_factory=_noop_thread_factory,
+            _clock=lambda: 1000.0,
+            _jitter=lambda: 0.0,
+        )
+        worker_a.submit(_snapshot(42))
+        worker_a.iterate_once()  # revision 1: fetch_catalogue; 2: publish
+        assert store.load().last_revision == 2
+
+        # A fresh worker instance, same session id, same persisted store --
+        # simulating a Wingman restart with a still-valid device session.
+        client_b = FakeRelayClient()
+        worker_b = FleetSharingWorker(
+            load_state=store.load,
+            save_state=store.save,
+            client_factory=lambda origin: client_b,
+            unwrap_private_key=_unwrap,
+            _thread_factory=_noop_thread_factory,
+            _clock=lambda: 1000.0,
+            _jitter=lambda: 0.0,
+        )
+        worker_b.submit(_snapshot(42))
+        worker_b.iterate_once()
+
+        # Must NOT restart at revision 1/2 -- authGD already saw those.
+        assert client_b.fetch_calls == [3]
+        assert client_b.publish_calls[0][0] == 4
+        assert store.load().last_revision == 4
+
+    def test_revision_restarts_at_zero_when_the_session_id_genuinely_changes(self):
+        store = _InMemoryStateStore(PAIRED_STATE)
+        client = FakeRelayClient()
+        worker = FleetSharingWorker(
+            load_state=store.load,
+            save_state=store.save,
+            client_factory=lambda origin: client,
+            unwrap_private_key=_unwrap,
+            _thread_factory=_noop_thread_factory,
+            _clock=lambda: 1000.0,
+            _jitter=lambda: 0.0,
+        )
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+        assert client.fetch_calls == [1]
+
+        # A genuinely new pairing while THIS worker instance keeps running --
+        # a different session id must start its own revision sequence.
+        current = store.load()
+        store.save(
+            SharingState(
+                identity=current.identity,
+                relay_origin=current.relay_origin,
+                session_id="session-2",
+                last_revision=current.last_revision,
+            )
+        )
+        client.fetch_calls.clear()
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+
+        assert client.fetch_calls == [1]  # revision 1 again, not 3
+
+    def test_a_failing_save_state_aborts_the_pass_without_crashing(self):
+        def raising_save(_state):
+            raise OSError("disk full")
+
+        client = FakeRelayClient()
+        worker = _worker(client, save_state=raising_save)
+
+        worker.iterate_once()
+
+        assert client.fetch_calls == []
+        assert worker.status().state == "error"
+
+
+class TestActiveStatusRequiresContact:
+    def test_a_pass_with_nothing_due_does_not_reassign_status(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+
+        worker.iterate_once()  # mandatory first catalogue fetch: real contact
+        assert worker.status().state == "active"
+
+        # Simulate an externally observed non-active status -- proves the
+        # NEXT no-op pass (catalogue still fresh, nothing submitted) does
+        # not blindly reassert "active" over it.
+        worker._set_status(SharingStatus(state="verifying"))
+
+        worker.iterate_once()
+
+        assert worker.status() == SharingStatus(state="verifying")
+
+    def test_active_is_reasserted_only_immediately_after_real_contact(self):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.iterate_once()
+        assert worker.status().state == "active"
+
+        worker._set_status(SharingStatus(state="verifying"))
+        worker.submit(_snapshot(42))  # forces a real publish this pass
+        worker.iterate_once()
+
+        assert worker.status().state == "active"
+
+
 # ---------------------------------------------------------------------------
 # Real-thread concurrency proofs
 # ---------------------------------------------------------------------------
+
+
+class TestDeadlineBasedBackoff:
+    """Real threads, real time.monotonic -- proves a steady flood of
+    submit() calls during backoff cannot collapse the backoff wait to
+    zero, only a genuinely elapsed deadline (or stop()) ends it."""
+
+    def test_a_steady_stream_of_submits_does_not_shorten_the_backoff_wait(self):
+        class FailOnceRelayClient:
+            def __init__(self, catalogue=CATALOGUE):
+                self.catalogue = catalogue
+                self.publish_calls: list[float] = []
+
+            def fetch_catalogue(self, *, session_id, private_key, revision):
+                return self.catalogue
+
+            def publish_snapshot(self, *, session_id, private_key, revision, rows):
+                self.publish_calls.append(time.monotonic())
+                if len(self.publish_calls) == 1:
+                    raise FleetRelayError(500, "server_error", "boom")
+
+        client = FailOnceRelayClient()
+        worker = FleetSharingWorker(
+            load_state=lambda: PAIRED_STATE,
+            client_factory=lambda origin: client,
+            unwrap_private_key=_unwrap,
+        )
+        assert worker.start()
+        try:
+            worker.submit(_snapshot(10))
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and len(client.publish_calls) < 1:
+                time.sleep(0.01)
+            assert len(client.publish_calls) == 1, "first (failing) attempt never ran"
+            first_attempt = client.publish_calls[0]
+
+            # Flood submit() well inside the backoff window (BASE_BACKOFF_S
+            # is 1.0s): an interruptible wait would let these wake the loop
+            # and retry almost immediately.
+            flood_until = time.monotonic() + 0.5
+            while time.monotonic() < flood_until:
+                worker.submit(_snapshot(11))
+                time.sleep(0.01)
+
+            assert len(client.publish_calls) == 1, (
+                "backoff was not honoured -- a flood of submit() calls "
+                "triggered an early retry"
+            )
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and len(client.publish_calls) < 2:
+                time.sleep(0.01)
+            assert len(client.publish_calls) == 2
+            assert client.publish_calls[1] - first_attempt >= BASE_BACKOFF_S * 0.9
+        finally:
+            worker.stop(timeout=5)
 
 
 class TestRealThreadConcurrency:

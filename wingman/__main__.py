@@ -602,7 +602,7 @@ def build_telemetry(state, host, alert_policy):
         return None
 
 
-def build_fleet_sharing_worker():
+def build_fleet_sharing_worker(state):
     """The fleet-sharing publication worker.
 
     Platform-neutral, unlike build_preview_host: the only Windows-specific
@@ -610,20 +610,35 @@ def build_fleet_sharing_worker():
     through wingman.fleetsharing.state's own injected seam -- and only
     once a persisted device identity actually exists on disk, which no
     code path in this tracer writes (fleet_sharing has no pairing UI yet).
-    Built and started unconditionally so it idles in its "stopped" status
-    and never touches the network until a future pairing feature
-    populates fleet_sharing.json; wiring it to actual settings/predicates
-    is unnecessary because the worker itself reads the persisted session
-    state live on every pass, not a settings callable.
+
+    Constructed unconditionally (mirroring build_preview_host's own
+    "always construct, start only when enabled" split, and
+    start_engine_if_enabled's identical convention for the hotkey engine):
+    this is a cheap object with no thread of its own. main() below only
+    calls .start() -- which is what actually spawns the worker's OS
+    thread -- while fleet_sharing.enabled is true, so a disabled install
+    never runs an idle background thread at all. The worker's own
+    sharing_enabled callable re-checks the same live setting on every pass
+    it does run, as defence in depth for any caller (every direct
+    construction in this module's own tests, or a future toggle that
+    flips the setting without a restart) that starts it anyway.
     """
     try:
         from .fleetsharing.client import FleetRelayClient
         from .fleetsharing.state import load as load_sharing_state
+        from .fleetsharing.state import save as save_sharing_state
         from .fleetsharing.worker import FleetSharingWorker
+
+        def sharing_enabled() -> bool:
+            return bool(state.settings.get("fleet_sharing", {}).get("enabled"))
 
         return FleetSharingWorker(
             load_state=lambda: load_sharing_state(paths.fleet_sharing_file()),
+            save_state=lambda sharing_state: save_sharing_state(
+                paths.fleet_sharing_file(), sharing_state
+            ),
             client_factory=FleetRelayClient,
+            sharing_enabled=sharing_enabled,
         )
     except Exception:
         logger.exception("Fleet sharing worker unavailable")
@@ -861,14 +876,20 @@ def main() -> int:
     telemetry = build_telemetry(state, preview_host, alert_policy)
     if telemetry is not None and preview_host is not None:
         preview_host.set_discovery_request(telemetry.request_discovery)
-    # Private to main(): no other module holds this reference. Built and
-    # started whenever telemetry itself exists, since a worker with no
-    # coordinator to subscribe to has nothing to receive -- see
-    # build_fleet_sharing_worker for why it is otherwise platform-neutral
-    # and safe to start unconditionally.
-    sharing_worker = build_fleet_sharing_worker()
+    # Private to main(): no other module holds this reference. Built
+    # unconditionally (build_fleet_sharing_worker spawns no thread on its
+    # own), but .start() -- which does spawn its OS thread -- only runs
+    # while fleet_sharing.enabled is true AND telemetry exists to
+    # subscribe to, so a disabled install never runs an idle background
+    # thread at all; see build_fleet_sharing_worker's own docstring.
+    sharing_worker = build_fleet_sharing_worker(state)
     sharing_unsubscribe = None
-    if telemetry is not None and sharing_worker is not None and sharing_worker.start():
+    if (
+        telemetry is not None
+        and sharing_worker is not None
+        and bool(state.settings.get("fleet_sharing", {}).get("enabled"))
+        and sharing_worker.start()
+    ):
         sharing_unsubscribe = telemetry.subscribe_fleet(sharing_worker.submit)
     api = api_mod.Api(
         state,

@@ -23,7 +23,8 @@ def test_build_fleet_sharing_worker_is_platform_neutral_and_starts_stopped(
     monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
     from wingman.fleetsharing.worker import FleetSharingWorker, SharingStatus
 
-    worker = main_mod.build_fleet_sharing_worker()
+    state = AppState(recording_dir=None, settings={"fleet_sharing": {"enabled": True}})
+    worker = main_mod.build_fleet_sharing_worker(state)
 
     assert isinstance(worker, FleetSharingWorker)
     worker.iterate_once()
@@ -35,17 +36,23 @@ def test_main_starts_and_stops_the_sharing_worker_around_telemetry_teardown():
     test_main_wires_subscription_restore_and_shutdown_destruction: the
     sharing worker's stop/unsubscribe must run BEFORE
     api.shutdown_previews() (which is what actually calls
-    telemetry.stop()), and worker.submit -- never anything else -- must be
-    the coordinator callback."""
+    telemetry.stop()), worker.submit -- never anything else -- must be
+    the coordinator callback, and starting the worker's own thread must
+    be gated on the fleet_sharing.enabled setting so a disabled install
+    never spawns it."""
     source = inspect.getsource(main_mod.main)
 
     assert "sharing_worker.start()" in source
+    assert 'state.settings.get("fleet_sharing", {}).get("enabled")' in source
     assert "telemetry.subscribe_fleet(sharing_worker.submit)" in source
     assert "sharing_unsubscribe()" in source
     assert "sharing_worker.stop()" in source
     assert source.index("sharing_worker.stop()") < source.index(
         "api.shutdown_previews()"
     )
+    assert source.index(
+        'state.settings.get("fleet_sharing", {}).get("enabled")'
+    ) < source.index("sharing_worker.start()")
 
 
 def test_build_fittings_controller_loads_local_state_without_network(

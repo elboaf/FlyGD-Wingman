@@ -51,11 +51,22 @@ class SharingState:
     below that; a document with only some of these fields present loses
     the incomplete parts on the next load rather than persisting a
     half-identity.
+
+    `last_revision` is the highest signed-request revision this device has
+    ever ATTEMPTED (persisted before the network call, not after) for
+    *this* `session_id` -- `FleetSharingWorker` reads it to resume a still-
+    valid session's revision sequence across a Wingman restart instead of
+    restarting it at zero, which authGD's own strictly-increasing-revision
+    check would otherwise reject as a replay of an already-seen value. It
+    is meaningless once `session_id` itself changes (a new session starts
+    its own sequence at zero) and defaults to `0` for a device that has
+    never sent a signed request.
     """
 
     identity: DeviceIdentity | None = None
     relay_origin: str | None = None
     session_id: str | None = None
+    last_revision: int = 0
 
 
 EMPTY = SharingState()
@@ -105,11 +116,24 @@ def _to_dict(state: SharingState) -> dict:
         "identity": identity,
         "relay_origin": state.relay_origin,
         "session_id": state.session_id,
+        "last_revision": state.last_revision,
     }
 
 
 def _coerce_text(raw: object) -> str | None:
     return raw if isinstance(raw, str) and raw else None
+
+
+def _coerce_revision(raw: object) -> int:
+    """`0` for anything that is not a non-negative `int` -- a corrupted or
+    hand-edited value must never seed a negative or non-numeric revision
+    into `FleetSharingWorker`'s resume logic; `0` is always the safe
+    (if occasionally replay-refused) fallback a fresh session would use
+    anyway.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return 0
+    return raw
 
 
 def _from_dict(raw: object) -> SharingState:
@@ -132,6 +156,7 @@ def _from_dict(raw: object) -> SharingState:
         identity=identity,
         relay_origin=_coerce_text(raw.get("relay_origin")),
         session_id=_coerce_text(raw.get("session_id")),
+        last_revision=_coerce_revision(raw.get("last_revision")),
     )
 
 

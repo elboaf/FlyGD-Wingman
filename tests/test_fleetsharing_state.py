@@ -104,12 +104,20 @@ def test_persisted_document_holds_only_the_documented_fields(tmp_path):
         ),
         relay_origin="https://relay.example.test",
         session_id="opaque-session-id",
+        last_revision=7,
     )
 
     save(target, original)
 
     document = json.loads(target.read_text(encoding="utf-8"))
-    assert set(document) == {"version", "identity", "relay_origin", "session_id"}
+    assert set(document) == {
+        "version",
+        "identity",
+        "relay_origin",
+        "session_id",
+        "last_revision",
+    }
+    assert document["last_revision"] == 7
     assert set(document["identity"]) == {
         "protected_private_key_b64",
         "public_key_spki_b64",
@@ -134,7 +142,50 @@ def test_a_document_with_no_identity_yet_persists_null_fields(tmp_path):
     assert document["identity"] is None
     assert document["relay_origin"] is None
     assert document["session_id"] is None
+    assert document["last_revision"] == 0
     assert load(target) == SharingState()
+
+
+def test_last_revision_round_trips(tmp_path):
+    target = tmp_path / "fleet_sharing.json"
+    save(target, SharingState(session_id="sess", last_revision=42))
+    assert load(target).last_revision == 42
+
+
+@pytest.mark.parametrize("malformed", [-1, "5", 5.0, True, None])
+def test_load_coerces_a_malformed_last_revision_to_zero(tmp_path, malformed):
+    target = tmp_path / "fleet_sharing.json"
+    target.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "identity": None,
+                "relay_origin": None,
+                "session_id": "sess",
+                "last_revision": malformed,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load(target).last_revision == 0
+
+
+def test_load_defaults_last_revision_to_zero_when_the_field_is_absent(tmp_path):
+    target = tmp_path / "fleet_sharing.json"
+    target.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "identity": None,
+                "relay_origin": None,
+                "session_id": "sess",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load(target).last_revision == 0
 
 
 def test_load_returns_empty_state_for_a_missing_file(tmp_path):

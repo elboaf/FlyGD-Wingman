@@ -4,11 +4,11 @@
 `FleetSnapshot` on its OWN dispatcher thread, and that thread also owns the
 one-second cadence every other consumer (Preview, Alerts, the Fleet Bar
 window) depends on. `FleetSharingWorker.submit` is the only thing the
-coordinator ever calls: it swaps an immutable "latest" reference under a
-small lock and sets an `Event`, nothing else -- no HTTP, no signing, no
-DPAPI, no disk read. A relay that is slow, down, or blocked mid-request
-therefore costs this worker's own publication, never the coordinator's
-cadence or local DPS decay.
+coordinator ever calls: it swaps an immutable "latest" reference (with its
+own submission timestamp) under a small lock and sets an `Event`, nothing
+else -- no HTTP, no signing, no DPAPI, no disk read. A relay that is slow,
+down, or blocked mid-request therefore costs this worker's own
+publication, never the coordinator's cadence or local DPS decay.
 
 Everything that actually touches the network -- device-state loading, key
 unwrapping, catalogue refresh, sparse projection, revision allocation,
@@ -18,44 +18,97 @@ iteration at a time, serialized against the deterministic `iterate_once`
 test seam by `_iteration_lock` (mirroring
 `TelemetryCoordinator._dispatch_lock`/`dispatch_once`).
 
+Gating
+------
+`sharing_enabled()` is read live, fail-closed, before anything else this
+worker's own thread does: a raised exception or a `False` result skips
+`load_state()` entirely (no disk stat/read at all) and enters the same
+inert "stopped" state an unpaired device reports, at a slow
+`INERT_POLL_S` cadence rather than the healthy one-second poll. Production
+wiring (`wingman.__main__.build_fleet_sharing_worker`) additionally never
+calls `start()` at all while the setting is off, so a disabled install
+never spawns this thread in the first place; the live predicate here is
+defence in depth for whatever calls `start()` anyway (every existing test
+that constructs this worker directly, and any future toggle that flips
+the setting without a restart).
+
 Revision handling
 ------------------
 Every signed request this worker sends -- both `fetch_catalogue` and
 `publish_snapshot` -- consumes a freshly incremented revision, whether or
-not the attempt succeeds. A retry after a failed or uncertain attempt
-therefore always carries a NEW revision and a freshly signed request; it
-never resends the previous attempt's exact signed bytes, matching
-`client.py`'s own reasoning for never retrying a publish internally (a
-signed publish's revision is strictly increasing, so replaying an
-unknown-delivery request risks a duplicate write). The revision sequence
-restarts at zero only when the device session id itself changes (a fresh
-pairing), matching "a new session starts a new revision sequence" from the
-design.
+not the attempt succeeds, and that new revision is PERSISTED (via
+`save_state`, into `wingman.fleetsharing.state.SharingState.last_revision`)
+BEFORE the network call is ever made -- never after. A crash between the
+persisted write and the network reply can only waste one revision number,
+never reuse one authGD may already have seen; persisting only after a
+reply would risk exactly that reuse across a restart. A retry after a
+failed or uncertain attempt therefore always carries a NEW revision and a
+freshly signed request; it never resends the previous attempt's exact
+signed bytes, matching `client.py`'s own reasoning for never retrying a
+publish internally. The in-memory sequence resumes from the persisted
+`last_revision` the first time THIS PROCESS observes a given session id
+(a genuine restart with the same still-valid session), and restarts at
+zero only when the session id actually changes during THIS process's own
+lifetime (a fresh pairing), matching "a new session starts a new revision
+sequence" from the design. If persisting the new revision fails, the
+network call is skipped entirely for that pass and the failure is treated
+like any other relay error (status `"error"`, bounded backoff) rather than
+proceeding with an unpersisted revision.
 
-Coalescing
-----------
-`submit` overwrites a single mutable "latest" slot -- there is no queue of
-snapshots, so three rapid submissions collapse to whichever was latest by
-the time the worker thread is free to look. The projected publish rows
-are also compared against the last rows this worker actually sent: an
-unchanged projection is never re-sent, but any change -- including a
-transition to an empty row list -- is sent immediately, so a normal local
-omission withdraws its remote row promptly rather than waiting out a
-cadence.
+Coalescing, staleness, and heartbeats
+--------------------------------------
+`submit` overwrites a single mutable "latest" slot together with the
+monotonic time it was submitted -- there is no queue of snapshots, so
+three rapid submissions collapse to whichever was latest by the time the
+worker thread is free to look. A submission older than
+`MAX_SNAPSHOT_AGE_S` by the time this worker gets to it is dropped rather
+than published: local combat state moves fast (a `SCRAM/POINT` or a
+non-zero DPS reading can end within a second), and this worker's own
+publish cadence can lag behind submission (backoff, an inert poll while
+unpaired) for far longer than that -- publishing a snapshot that old would
+risk re-arming a remote row with a value nobody currently believes is
+true. A dropped snapshot is simply treated as "nothing new to publish"
+this pass, exactly like an idle cycle with no submission at all; it never
+forces a withdrawal either, matching the design's own "a network loss does
+not [clear rows]" posture generalized to a local data gap.
+
+The projected publish rows are also compared against the last rows this
+worker actually sent: an unchanged projection is not re-sent on every
+pass, but any CHANGE -- including a transition to an empty row list -- is
+sent immediately, so a normal local omission withdraws its remote row
+promptly rather than waiting out a cadence. An UNCHANGED but NON-EMPTY
+projection is still re-sent as a heartbeat at least every
+`HEARTBEAT_INTERVAL_S` (safely under authGD's own three-second staleness
+boundary): the design's server-clock liveness rule ages a row to `stale`
+by three seconds of receive-time inactivity even when nothing about the
+underlying combat state has changed, so a steady, unchanging fight would
+otherwise flicker stale/live under readers' own eyes for no reason. An
+empty (already-withdrawn) projection never needs a heartbeat -- there is
+nothing left on the relay to keep alive.
 
 Status
 ------
 `status()` reports one of `SharingStatus.state`'s six values, updated by
 this worker's own thread as it moves through a pass: `"stopped"` while
-unpaired, `"connecting"` on a session's first-ever contact attempt,
-`"verifying"` on a later periodic catalogue refresh, `"active"` once the
-catalogue is current and any owed publish has succeeded, `"refused"` after
-a `forbidden`/`unauthorized` relay response (eligibility or the device
-session itself may be gone -- the cached catalogue is discarded so the
-next successful contact re-verifies it from scratch), and `"error"` for
-every other relay/transport/protocol failure. Every failure enters a
-bounded exponential backoff with jitter before the next attempt; a success
-resets it.
+disabled or unpaired, `"connecting"` on a session's first-ever contact
+attempt, `"verifying"` on a later periodic catalogue refresh, `"refused"`
+after a `forbidden`/`unauthorized` relay response (eligibility or the
+device session itself may be gone -- the cached catalogue is discarded so
+the next successful contact re-verifies it from scratch), and `"error"`
+for every other relay/transport/protocol failure, INCLUDING a relay
+client that could not even be constructed for the paired origin (a
+corrupted or malformed `relay_origin` reports `"error"` and backs off; it
+never raises out of this worker's own loop). `"active"` is reported ONLY
+immediately following a pass that made real, successful relay contact
+(a catalogue fetch or a publish/heartbeat) -- never asserted merely
+because a pass happened to raise no exception. A pass that had nothing
+due (catalogue fresh, nothing changed, no heartbeat owed) makes no status
+claim of its own and simply leaves whatever was last reported in place.
+Every failure enters a bounded exponential backoff with jitter before the
+next attempt, and that backoff (like the inert disabled/unpaired poll) is
+enforced against an actual wall-clock deadline: a steady stream of
+`submit()` calls during backoff wakes the loop but does not let it
+retry early, only a genuinely elapsed deadline (or `stop()`) does.
 """
 
 from __future__ import annotations
@@ -65,7 +118,7 @@ import random
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..telemetry.model import FleetSnapshot
@@ -88,8 +141,18 @@ MAX_BACKOFF_S = 30.0
 
 # The design's own "bounded one-second cadence" for a healthy poll/publish
 # loop -- also the idle wake interval so a catalogue-refresh interval or a
-# newly-unpaired transition is noticed promptly even with no new submit().
+# newly-paired transition is noticed promptly even with no new submit().
 IDLE_POLL_S = 1.0
+
+# While disabled (fleet_sharing.enabled is false) or unpaired: there is
+# nothing useful this worker can do but watch for that to change, and
+# doing so every second forever -- a disk stat/read on every single pass,
+# for the overwhelming majority of real installs, which ship no pairing UI
+# at all -- is needless work this worker does not need to perform that
+# often. Slower than IDLE_POLL_S, but still bounded so a future pairing
+# completing (or the setting being turned on) is noticed within seconds,
+# not forgotten.
+INERT_POLL_S = 15.0
 
 # How often an established session refreshes its device catalogue even
 # with no relay-side push to signal a change (a linked-character add,
@@ -98,6 +161,22 @@ IDLE_POLL_S = 1.0
 # one minute bounds how long a stale link can misroute or drop a row
 # without hammering the relay every publish cycle.
 CATALOGUE_REFRESH_INTERVAL_S = 60.0
+
+# A submitted snapshot older than this by the time this worker gets around
+# to it is never published -- see the module docstring's "Coalescing,
+# staleness, and heartbeats" section. Comfortably above IDLE_POLL_S (a
+# submission arrives roughly every second in healthy operation, so this
+# never fires under ordinary conditions) and comfortably below authGD's
+# own ten-second hard-expiry, so a snapshot old enough to be refused here
+# would already be close to expiring server-side even if it had been sent.
+MAX_SNAPSHOT_AGE_S = 5.0
+
+# An unchanged, non-empty publication is re-sent no less often than this,
+# safely under authGD's own three-second stale boundary (design: "live for
+# the first 3 seconds, stale through 10 seconds"). Two full idle-poll
+# cycles of slack rather than an exact 2.9s -- this only needs to beat the
+# server's OWN clock, not this worker's.
+HEARTBEAT_INTERVAL_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -141,6 +220,17 @@ def _real_thread_factory(
     return threading.Thread(target=target, args=args, name=name, daemon=daemon)
 
 
+def _no_op_save_state(_state: state_mod.SharingState) -> None:
+    """Default `save_state`: revision persistence becomes a no-op.
+
+    Production wiring always supplies a real writer
+    (`wingman.fleetsharing.state.save`, bound to
+    `paths.fleet_sharing_file()`); tests that do not care about
+    cross-restart revision recovery can omit it entirely and keep their
+    existing construction unchanged.
+    """
+
+
 class FleetSharingWorker:
     """One device's non-blocking publisher.
 
@@ -155,12 +245,19 @@ class FleetSharingWorker:
     every other settings/state read in this codebase: a future pairing
     feature can populate `wingman.fleetsharing.state`'s document at any
     time, and this worker must notice on its very next pass rather than on
-    a restart. *client_factory(origin) -> relay client* builds the signed
-    transport for the paired relay origin; production wiring supplies
-    `FleetRelayClient` itself, tests supply a fake. *unwrap_private_key*
-    defaults to `wingman.fleetsharing.state.unwrap_private_key` (the DPAPI
-    seam); it is only ever reached once a persisted device identity
-    actually exists, which no code path in this tracer writes yet.
+    a restart. *save_state* is the symmetric write seam used to persist an
+    about-to-be-used revision before it is ever sent (see the module
+    docstring's "Revision handling"). *client_factory(origin) -> relay
+    client* builds the signed transport for the paired relay origin;
+    production wiring supplies `FleetRelayClient` itself, tests supply a
+    fake -- a `client_factory` that raises for a malformed origin reports
+    `"error"` status and backs off rather than propagating out of this
+    worker's loop. *unwrap_private_key* defaults to
+    `wingman.fleetsharing.state.unwrap_private_key` (the DPAPI seam); it is
+    only ever reached once a persisted device identity actually exists.
+    *sharing_enabled* defaults to always-true, matching every existing
+    caller's expectations; production wiring supplies a live
+    `fleet_sharing.enabled` settings read.
     """
 
     def __init__(
@@ -171,6 +268,8 @@ class FleetSharingWorker:
         unwrap_private_key: Callable[
             [str], bytes | None
         ] = state_mod.unwrap_private_key,
+        sharing_enabled: Callable[[], bool] = lambda: True,
+        save_state: Callable[[state_mod.SharingState], None] = _no_op_save_state,
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _clock: Callable[[], float] = time.monotonic,
         _jitter: Callable[[], float] = random.random,
@@ -178,15 +277,18 @@ class FleetSharingWorker:
         self._load_state = load_state
         self._client_factory = client_factory
         self._unwrap_private_key = unwrap_private_key
+        self._sharing_enabled = sharing_enabled
+        self._save_state = save_state
         self._thread_factory = _thread_factory
         self._clock = _clock
         self._jitter = _jitter
 
-        # submit()'s one-slot mailbox. Never touched by anything but
-        # submit() and the read inside _iterate(): no network, crypto, or
-        # DPAPI call may ever happen under this lock.
+        # submit()'s one-slot mailbox: (snapshot, submitted-at monotonic
+        # time). Never touched by anything but submit() and the read
+        # inside _iterate(): no network, crypto, or DPAPI call may ever
+        # happen under this lock.
         self._lock = threading.Lock()
-        self._latest: FleetSnapshot | None = None
+        self._latest: tuple[FleetSnapshot, float] | None = None
         self._pending = threading.Event()
 
         self._status_lock = threading.Lock()
@@ -201,6 +303,7 @@ class FleetSharingWorker:
         self._catalogue: FleetCatalogue | None = None
         self._catalogue_refreshed_at: float | None = None
         self._last_published: tuple[PublishRow, ...] = ()
+        self._last_publish_at: float | None = None
         self._backoff = 0.0
         self._client = None
         self._client_origin: str | None = None
@@ -223,7 +326,7 @@ class FleetSharingWorker:
         coordinator's one-second cadence for anyone else.
         """
         with self._lock:
-            self._latest = snapshot
+            self._latest = (snapshot, self._clock())
         self._pending.set()
 
     def status(self) -> SharingStatus:
@@ -285,8 +388,9 @@ class FleetSharingWorker:
         if worker is None:
             return True
         stop_ev.set()
-        # Wakes an idle wait immediately; a request already blocked inside
-        # the relay client cannot be woken by this, which is exactly what
+        # Wakes an idle/backoff/inert wait immediately regardless of the
+        # deadline it is honouring; a request already blocked inside the
+        # relay client cannot be woken by this, which is exactly what
         # makes the bound below observable instead of silent.
         self._pending.set()
         worker.join(timeout)
@@ -297,14 +401,31 @@ class FleetSharingWorker:
         return True
 
     def _run(self, stop_event: threading.Event) -> None:
-        wait_s = 0.0
+        deadline = self._clock()
+        interruptible = True
         while not stop_event.is_set():
-            self._pending.wait(wait_s)
+            remaining = deadline - self._clock()
+            while remaining > 0 and not stop_event.is_set():
+                woke = self._pending.wait(remaining)
+                if stop_event.is_set():
+                    return
+                if woke:
+                    self._pending.clear()
+                    if interruptible:
+                        # A healthy idle-poll wait: a fresh submission is
+                        # itself the reason to look again right away.
+                        remaining = 0.0
+                        break
+                    # A backoff or inert (disabled/unpaired) wait: a
+                    # steady stream of submissions must not collapse this
+                    # deadline to zero -- keep waiting out what is left.
+                remaining = deadline - self._clock()
             if stop_event.is_set():
                 return
             self._pending.clear()
             with self._iteration_lock:
-                wait_s = self._iterate()
+                wait_s, interruptible = self._iterate()
+            deadline = self._clock() + wait_s
 
     def iterate_once(self) -> None:
         """Drive one iteration synchronously. Deterministic test seam.
@@ -324,11 +445,31 @@ class FleetSharingWorker:
     # One pass: caller owns _iteration_lock
     # ------------------------------------------------------------------
 
-    def _iterate(self) -> float:
+    def _iterate(self) -> tuple[float, bool]:
+        """Run one pass, converting any unexpected exception into a bounded
+        backoff rather than letting it kill this worker's own thread --
+        the same "a corrupted or unreachable relay costs a retry, not a
+        crash" posture already applied to every specific failure below,
+        extended here as a last-resort net around the whole pass (a
+        malformed `relay_origin` reaching `_client_factory`, in
+        particular, is exactly the kind of failure this net exists for).
+        """
+        try:
+            return self._iterate_inner()
+        except Exception:
+            logger.exception("Fleet sharing worker iteration failed unexpectedly")
+            self._set_status(SharingStatus(state="error", detail="unexpected failure"))
+            return self._enter_backoff()
+
+    def _iterate_inner(self) -> tuple[float, bool]:
+        if not self._safe_sharing_enabled():
+            self._enter_stopped()
+            return INERT_POLL_S, False
+
         sharing_state = self._safe_load_state()
         if not self._is_paired(sharing_state):
             self._enter_stopped()
-            return IDLE_POLL_S
+            return INERT_POLL_S, False
 
         private_key = self._safe_unwrap(
             sharing_state.identity.protected_private_key_b64
@@ -340,33 +481,77 @@ class FleetSharingWorker:
             return self._enter_backoff()
 
         if sharing_state.session_id != self._session_id:
-            # A fresh pairing (or a first-ever load): the revision sequence
-            # and any cached catalogue/published rows belong to no session
-            # this worker has ever authenticated as.
-            self._begin_session(sharing_state.session_id)
+            # self._session_id is None either on this process's very
+            # first observation of any session (in which case resuming
+            # from the persisted last_revision is safe and required -- see
+            # the module docstring's "Revision handling") or after this
+            # worker has explicitly forgotten a session (_enter_stopped);
+            # a session actually changing while one was already tracked in
+            # memory is a genuinely new pairing, which starts its own
+            # revision sequence at zero.
+            last_revision = (
+                sharing_state.last_revision if self._session_id is None else 0
+            )
+            self._begin_session(sharing_state.session_id, last_revision=last_revision)
 
         client = self._client_for(sharing_state.relay_origin)
-
-        if self._catalogue_needs_refresh() and not self._refresh_catalogue(
-            client, sharing_state.session_id, private_key
-        ):
+        if client is None:
+            self._set_status(
+                SharingStatus(state="error", detail="invalid relay origin")
+            )
             return self._enter_backoff()
+
+        contacted = False
+
+        if self._catalogue_needs_refresh():
+            if not self._refresh_catalogue(client, sharing_state, private_key):
+                return self._enter_backoff()
+            contacted = True
 
         with self._lock:
             latest = self._latest
+            if latest is not None and (self._clock() - latest[1]) > MAX_SNAPSHOT_AGE_S:
+                # Too old to trust by the time this worker got to it --
+                # dropped, not published; see "Coalescing, staleness, and
+                # heartbeats" above. Consumed here so a stale value is not
+                # re-evaluated (and re-logged) on every subsequent pass.
+                self._latest = None
+                latest = None
 
         if latest is not None:
-            rows = projection.project_snapshot(latest, self._catalogue)
-            if rows != self._last_published:
-                if not self._publish(
-                    client, sharing_state.session_id, private_key, rows
-                ):
+            snapshot, _submitted_at = latest
+            rows = projection.project_snapshot(snapshot, self._catalogue)
+            changed = rows != self._last_published
+            due_for_heartbeat = (
+                not changed
+                and rows
+                and (
+                    self._last_publish_at is None
+                    or (self._clock() - self._last_publish_at) >= HEARTBEAT_INTERVAL_S
+                )
+            )
+            if changed or due_for_heartbeat:
+                if not self._publish(client, sharing_state, private_key, rows):
                     return self._enter_backoff()
                 self._last_published = rows
+                self._last_publish_at = self._clock()
+                contacted = True
 
-        self._set_status(SharingStatus(state="active"))
-        self._backoff = 0.0
-        return IDLE_POLL_S
+        if contacted:
+            # "active" is asserted ONLY immediately following a pass that
+            # actually made successful relay contact -- never merely
+            # because nothing raised. A pass with nothing due leaves
+            # whatever status was last reported untouched.
+            self._set_status(SharingStatus(state="active"))
+            self._backoff = 0.0
+        return IDLE_POLL_S, True
+
+    def _safe_sharing_enabled(self) -> bool:
+        try:
+            return bool(self._sharing_enabled())
+        except Exception:
+            logger.exception("Could not read the fleet sharing enabled predicate")
+            return False
 
     @staticmethod
     def _is_paired(sharing_state: state_mod.SharingState | None) -> bool:
@@ -383,9 +568,9 @@ class FleetSharingWorker:
         self._set_status(SharingStatus(state="stopped"))
         self._backoff = 0.0
 
-    def _begin_session(self, session_id: str | None) -> None:
+    def _begin_session(self, session_id: str | None, *, last_revision: int = 0) -> None:
         self._session_id = session_id
-        self._revision = 0
+        self._revision = last_revision
         self._catalogue = None
         self._catalogue_refreshed_at = None
         # () rather than None: a fresh session has no rows on the relay to
@@ -393,12 +578,28 @@ class FleetSharingWorker:
         # a network call. Any NON-empty first projection still counts as
         # "changed" against this baseline and is sent immediately.
         self._last_published = ()
+        self._last_publish_at = None
 
     def _client_for(self, origin: str):
-        if self._client is None or self._client_origin != origin:
-            self._client = self._client_factory(origin)
-            self._client_origin = origin
-        return self._client
+        if self._client is not None and self._client_origin == origin:
+            return self._client
+        try:
+            client = self._client_factory(origin)
+        except Exception:
+            # A corrupted/malformed persisted relay_origin (or any other
+            # construction failure) must cost this pass a bounded backoff,
+            # never this worker's own thread -- see the module docstring's
+            # "Gating"/"_iterate" note and the class docstring's
+            # `client_factory` paragraph.
+            logger.exception(
+                "Could not build a fleet relay client for the paired origin"
+            )
+            self._client = None
+            self._client_origin = None
+            return None
+        self._client = client
+        self._client_origin = origin
+        return client
 
     def _catalogue_needs_refresh(self) -> bool:
         if self._catalogue is None or self._catalogue_refreshed_at is None:
@@ -407,7 +608,9 @@ class FleetSharingWorker:
             self._clock() - self._catalogue_refreshed_at
         ) >= CATALOGUE_REFRESH_INTERVAL_S
 
-    def _refresh_catalogue(self, client, session_id: str, private_key: bytes) -> bool:
+    def _refresh_catalogue(
+        self, client, sharing_state: state_mod.SharingState, private_key: bytes
+    ) -> bool:
         # "verifying" for a periodic re-check of an already-established
         # session; "connecting" the first time this session has ever
         # reached the relay (no catalogue yet at all).
@@ -416,10 +619,14 @@ class FleetSharingWorker:
                 state="verifying" if self._catalogue is not None else "connecting"
             )
         )
-        self._revision += 1
+        revision = self._next_revision(sharing_state)
+        if revision is None:
+            return False
         try:
             catalogue = client.fetch_catalogue(
-                session_id=session_id, private_key=private_key, revision=self._revision
+                session_id=sharing_state.session_id,
+                private_key=private_key,
+                revision=revision,
             )
         except FleetRelayError as exc:
             self._handle_relay_error(exc)
@@ -435,16 +642,18 @@ class FleetSharingWorker:
     def _publish(
         self,
         client,
-        session_id: str,
+        sharing_state: state_mod.SharingState,
         private_key: bytes,
         rows: tuple[PublishRow, ...],
     ) -> bool:
-        self._revision += 1
+        revision = self._next_revision(sharing_state)
+        if revision is None:
+            return False
         try:
             client.publish_snapshot(
-                session_id=session_id,
+                session_id=sharing_state.session_id,
                 private_key=private_key,
-                revision=self._revision,
+                revision=revision,
                 rows=rows,
             )
         except FleetRelayError as exc:
@@ -455,6 +664,25 @@ class FleetSharingWorker:
             self._set_status(SharingStatus(state="error", detail="unexpected failure"))
             return False
         return True
+
+    def _next_revision(self, sharing_state: state_mod.SharingState) -> int | None:
+        """Increment and PERSIST the revision before returning it -- never
+        after the network call. `None` if persistence itself fails; the
+        caller must then skip the network call entirely for this pass
+        rather than send an unpersisted revision (see the module
+        docstring's "Revision handling").
+        """
+        candidate = self._revision + 1
+        try:
+            self._save_state(replace(sharing_state, last_revision=candidate))
+        except Exception:
+            logger.exception("Could not persist the fleet sharing device revision")
+            self._set_status(
+                SharingStatus(state="error", detail="revision persistence failed")
+            )
+            return None
+        self._revision = candidate
+        return candidate
 
     def _handle_relay_error(self, exc: FleetRelayError) -> None:
         logger.warning("Fleet sharing relay request failed: %s", exc.code)
@@ -469,11 +697,15 @@ class FleetSharingWorker:
         else:
             self._set_status(SharingStatus(state="error", detail=exc.code))
 
-    def _enter_backoff(self) -> float:
+    def _enter_backoff(self) -> tuple[float, bool]:
         self._backoff = min(
             MAX_BACKOFF_S, self._backoff * 2 if self._backoff else BASE_BACKOFF_S
         )
-        return self._backoff + self._jitter() * BASE_BACKOFF_S
+        # Not interruptible: a steady stream of submit() calls must not
+        # collapse this wait -- only the deadline elapsing (or stop())
+        # ends it. See the module docstring's "Status" paragraph and
+        # _run()'s own handling of the returned flag.
+        return self._backoff + self._jitter() * BASE_BACKOFF_S, False
 
     def _safe_load_state(self) -> state_mod.SharingState | None:
         try:
