@@ -189,18 +189,67 @@ def test_save_sig_bar_persists_ints_and_ignores_junk(api):
     assert api._state.settings["sig_bar"]["x"] == 12
 
 
-def test_fit_sig_bar_resizes_and_tolerates_junk(api):
+def test_fit_sig_bar_rebuilds_on_shape_change_and_tolerates_junk(api, monkeypatch):
+    """A visible bar whose measured size moved is REBUILT (recreate), not
+    resized in place: a live resize of a visible transparent window
+    mispaints its backing. Unchanged sizes, junk, and no window at all
+    are no-ops."""
+    from wingman.ui import sigbar
+
     api._sigbar_window.hidden = False  # visible: fits apply
-    api.fit_sig_bar(240, 40)
-    assert api._sigbar_window.resized == [(240, 40)]
+    api._sigbar_window.width = 240
+    api._sigbar_window.height = 40
+    rebuilt = []
+
+    def fake_recreate(inner, size=None):
+        rebuilt.append(size)
+        win = SigBarWindow()
+        win.hidden = False
+        if size is not None:
+            win.resize(*size)
+        inner._sigbar_window = win
+        return win
+
+    monkeypatch.setattr(sigbar, "recreate", fake_recreate)
+
+    api.fit_sig_bar(240, 40)  # already at that size: no rebuild
+    assert rebuilt == []
+    api.fit_sig_bar(300, 40)  # shape change: rebuild at the measured size
+    assert rebuilt == [(300, 40)]
+    api.fit_sig_bar(300, 40)  # the new window already fits: no rebuild
+    assert rebuilt == [(300, 40)]
     api.fit_sig_bar(0, 40)
-    api.fit_sig_bar("wide", 40)
-    assert api._sigbar_window.resized == [(240, 40)]
+    api.fit_sig_bar("wide", 40)  # junk ignored
+    assert rebuilt == [(300, 40)]
     api._sigbar_window = None
     api.fit_sig_bar(240, 40)  # must not raise
 
 
-def test_fit_never_resizes_a_hidden_bar(api):
+def test_fit_rebuilds_at_most_once_per_measured_size(api, monkeypatch):
+    """The anti-loop guard: if the rebuilt window still reads the wrong
+    size (its hidden pre-reveal resize failed), repeating fits for that
+    size must not rebuild again on every poll tick for the rest of the
+    session."""
+    from wingman.ui import sigbar
+
+    api._sigbar_window.hidden = False
+    rebuilt = []
+
+    def stubborn_recreate(inner, size=None):
+        rebuilt.append(size)
+        win = SigBarWindow()  # never adopts the size
+        win.hidden = False
+        inner._sigbar_window = win
+        return win
+
+    monkeypatch.setattr(sigbar, "recreate", stubborn_recreate)
+    api.fit_sig_bar(300, 40)
+    api.fit_sig_bar(300, 40)
+    api.fit_sig_bar(300, 40)
+    assert rebuilt == [(300, 40)]
+
+
+def test_fit_never_touches_a_hidden_bar(api):
     """THE resurrection bug: pywebview's resize is a raw SetWindowPos
     carrying SWP_SHOWWINDOW, so a fit against a hidden bar SHOWS it. The
     page renders on every 3s poll -- including the pushes aimed at a bar

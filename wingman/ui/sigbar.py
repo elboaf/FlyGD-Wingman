@@ -138,40 +138,49 @@ def create(api):
         api._sigbar_window = bar
         if sys.platform == "win32":
             _apply_tool_style(bar)
-            _apply_backing(bar)
         return bar
 
 
-def _apply_backing(bar) -> None:
-    """Keep the bar's resize flash dark instead of white.
+def recreate(api, size=None):
+    """Rebuild the bar window instead of resizing it in place.
 
-    pywebview's transparent-window path sets the
-    SupportsTransparentBackColor STYLE on the form but never assigns
-    BackColor itself, so WinForms erased every resize with the default
-    CONTROL colour until WebView2's next composited frame replaced it:
-    a white box for seconds whenever the page's fit round-trip widened
-    the bar. BackColor.Transparent is NOT the answer -- a top-level form
-    has no parent to simulate transparency against, and the attempt made
-    every MOVE paint white permanently (field-tested the hard way).
+    The field result that motivated this: resizing a VISIBLE transparent
+    window leaves its backing painted (white or stale) until the window
+    is toggled off and on -- i.e. until the native surface is rebuilt.
+    So a shape change rebuilds by design: destroy, create hidden at the
+    stored position, apply the measured size WHILE STILL HIDDEN (the
+    moment a resize is safe), then reveal. The cost is one WebView2
+    window build (~a few hundred ms) on the rare ticks where the text
+    width actually changes -- cheaper than shipping a permanently
+    miscomposited bar.
 
-    The erase cannot be suppressed from off the UI thread (a WndProc
-    subclass must run on the owning thread, and pywebview's UI thread is
-    the one this module's bottom comment forbids touching). So the erase
-    is allowed but aimed at the app's own near-black window tone: the
-    flash becomes a dark square under a dark shell and reads as the
-    shadow it sits in. pythonnet/System.Drawing are already loaded by
-    pywebview's WinForms backend here; best-effort, because the failure
-    mode is only the flash this fixes.
+    `size` is the (width, height) the page measured. Best-effort: if the
+    hidden resize fails the bar still comes back at its opening guess
+    and the next shape change tries again. Returns the new bar, or None
+    (refused: quitting, or creation failed).
     """
-    try:
-        import clr
-
-        clr.AddReference("System.Drawing")
-        from System.Drawing import ColorTranslator
-
-        bar.native.BackColor = ColorTranslator.FromHtml(window_mod.BACKGROUND)
-    except Exception:
-        logger.exception("sig bar backing could not be set")
+    with api._sigbar_lifecycle_lock:
+        if api._sigbar_quitting:
+            return None
+        old = api._sigbar_window
+        if old is not None:
+            try:
+                old.destroy()
+            except Exception:
+                logger.exception("sig bar destroy during refit failed")
+        api._sigbar_window = None
+        bar = create(api)  # re-enters this lock; RLock by design
+        if bar is None:
+            return None
+        if size is not None:
+            try:
+                width, height = (int(size[0]), int(size[1]))
+                if width > 0 and height > 0:
+                    bar.resize(width, height)
+            except Exception:
+                logger.debug("sig bar refit resize failed", exc_info=True)
+        reveal_bar(bar)
+        return bar
 
 
 # Native show/hide and the style patch all key off the HWND. ctypes calls

@@ -62,10 +62,40 @@ def create(api, hidden: bool = True):
         api._fleetbar_window = bar
         if sys.platform == "win32":
             sigbar_mod._apply_tool_style(bar)
-            # Same resize-flash fix as the sig bar: the table fits its
-            # height on every snapshot, and each fit repaints the form's
-            # backing until WebView2's next frame.
-            sigbar_mod._apply_backing(bar)
+        return bar
+
+
+def recreate(api, size=None):
+    """Rebuild the Fleet Bar instead of resizing it in place.
+
+    Same field result as the sig bar's recreate (ui/sigbar.py): a live
+    resize of a visible transparent window mispaints its backing, so a
+    shape change destroys and rebuilds the window, applying the measured
+    size while it is still hidden. The table's height changes only when
+    pilots join or leave, so rebuilds are rare. Returns the new bar, or
+    None (refused or failed).
+    """
+    with api._fleetbar_lifecycle_lock:
+        if api._fleetbar_quitting:
+            return None
+        old = api._fleetbar_window
+        if old is not None:
+            try:
+                old.destroy()
+            except Exception:
+                logger.exception("Fleet Bar destroy during refit failed")
+        api._fleetbar_window = None
+        bar = create(api)
+        if bar is None:
+            return None
+        if size is not None:
+            try:
+                width, height = (int(size[0]), int(size[1]))
+                if width > 0 and height > 0:
+                    bar.resize(width, height)
+            except Exception:
+                logger.debug("Fleet Bar refit resize failed", exc_info=True)
+        sigbar_mod.reveal_bar(bar)
         return bar
 
 
