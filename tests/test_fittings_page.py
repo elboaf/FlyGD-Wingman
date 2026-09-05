@@ -472,7 +472,20 @@ def test_copy_selected_remains_the_only_accent_action():
         HTML,
     )
     assert route
-    assert len(re.findall(r'class="[^"]*\bacc\b', route.group(0))) == 1
+    assert len(re.findall(r'class="[^\"]*\bacc\b', route.group(0))) == 1
+
+
+def test_fittings_primary_action_includes_workspace_primary_token():
+    """The Fittings primary action must carry the workspace-primary token.
+
+    This should fail if workspace-primary is removed even while the
+    shared .eve-workspace class and the acc token remain.
+    """
+    btn = re.search(r'<button[^>]*id="fittings-copy-selected"[^>]*>', HTML)
+    assert btn, "fittings-copy-selected button is missing from index.html"
+    assert re.search(r'class="[^"]*\bworkspace-primary\b', btn.group(0)), (
+        "fittings-copy-selected must include the workspace-primary token: " + btn.group(0)
+    )
 
 
 def test_render_pager_defaults_page_when_the_payload_has_none():
