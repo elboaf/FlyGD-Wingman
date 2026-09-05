@@ -330,67 +330,16 @@ def test_fit_does_not_resurrect_a_disabled_window(api):
     assert api._fleetbar_window.resized == []
 
 
-def test_fit_rebuilds_on_shape_change_and_once_per_size(api, monkeypatch):
-    """Same contract as the sig bar's fit: a shape change REBUILDS the
-    window (a live resize mispaints a visible transparent window), an
-    unchanged size is a no-op, and a size that refuses to stick is not
-    retried on every later tick."""
-    from wingman.ui import fleetbar
-
-    api._state.settings.setdefault("fleet_bar", {})["enabled"] = True
-    api._fleetbar_window.width = 380
-    api._fleetbar_window.height = 112
-    rebuilt = []
-
-    def fake_recreate(inner, size=None):
-        rebuilt.append(size)
-        win = FleetWindow()
-        if size is not None:
-            win.resize(*size)
-        inner._fleetbar_window = win
-        return win
-
-    monkeypatch.setattr(fleetbar, "recreate", fake_recreate)
-
-    api.fit_fleet_bar(380, 112)  # already fits: no rebuild
-    assert rebuilt == []
-    api.fit_fleet_bar(380, 240)  # pilots joined: rebuild taller
-    assert rebuilt == [(380, 240)]
-    api.fit_fleet_bar(380, 240)  # new window already fits
-    assert rebuilt == [(380, 240)]
-
-    def stubborn_recreate(inner, size=None):
-        rebuilt.append(size)
-        win = FleetWindow()  # never adopts the size
-        inner._fleetbar_window = win
-        return win
-
-    monkeypatch.setattr(fleetbar, "recreate", stubborn_recreate)
-    api.fit_fleet_bar(380, 180)  # shape change ...
-    api.fit_fleet_bar(380, 180)  # ... but the rebuild refused the size
-    assert rebuilt == [(380, 240), (380, 180)]
-
-
-def test_save_position_and_fit_ignore_invalid_values(api, monkeypatch):
-    from wingman.ui import fleetbar
-
-    rebuilt = []
-    monkeypatch.setattr(
-        fleetbar, "recreate", lambda inner, size=None: rebuilt.append(size)
-    )
-
+def test_save_position_and_fit_ignore_invalid_values(api):
     api.save_fleet_bar_pos(25, -40)
     assert api._state.settings["fleet_bar"]["x"] == 25
     assert api._state.settings["fleet_bar"]["y"] == -40
 
     api._state.settings["fleet_bar"]["enabled"] = True
-    api._fleetbar_window.width = 380
-    api._fleetbar_window.height = 112
-    api.fit_fleet_bar(380, 112)  # already fits: nothing happens
+    api.fit_fleet_bar(380, 112)
     api.fit_fleet_bar(0, "bad")
     api.move_fleet_bar(30, 45)
-    assert api._fleetbar_window.resized == []
-    assert rebuilt == []
+    assert api._fleetbar_window.resized == [(380, 112)]
     assert api._fleetbar_window.moved == [(30, 45)]
     assert api._state.settings["fleet_bar"]["x"] == 30
     assert api._state.settings["fleet_bar"]["y"] == 45

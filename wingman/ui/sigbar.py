@@ -119,16 +119,12 @@ def create(api):
             # The bar is dragged by its body and must never steal focus
             # from the client being flown.
             focus=False,
-            # True per-pixel transparency: pywebview's WinForms+EdgeChromium
-            # path sets SupportsTransparentBackColor and makes the WebView2
-            # background Color.Transparent, so the page's rounded shell is
-            # the WINDOW's shape -- without it the form's own square
-            # background paints behind the CSS border-radius corners.
-            # background_color is ignored on this path, which is fine: the
-            # first paint risk it covers is hidden-at-creation.
-            transparent=True,
             # The native surface paints before the first HTML frame; a
             # mismatch is a white flash, same as the main window's note.
+            # Deliberately NOT transparent=True: per-pixel window
+            # transparency on the WinForms/EdgeChromium backend mispaints
+            # the backing on resize and move (field result, PR #164's
+            # attempts) -- the bar is an opaque dark strip by choice.
             background_color=window_mod.BACKGROUND,
             min_size=MIN_SIZE,
             # ALWAYS hidden at creation, including the first enable -- see
@@ -138,48 +134,6 @@ def create(api):
         api._sigbar_window = bar
         if sys.platform == "win32":
             _apply_tool_style(bar)
-        return bar
-
-
-def recreate(api, size=None):
-    """Rebuild the bar window instead of resizing it in place.
-
-    The field result that motivated this: resizing a VISIBLE transparent
-    window leaves its backing painted (white or stale) until the window
-    is toggled off and on -- i.e. until the native surface is rebuilt.
-    So a shape change rebuilds by design: destroy, create hidden at the
-    stored position, apply the measured size WHILE STILL HIDDEN (the
-    moment a resize is safe), then reveal. The cost is one WebView2
-    window build (~a few hundred ms) on the rare ticks where the text
-    width actually changes -- cheaper than shipping a permanently
-    miscomposited bar.
-
-    `size` is the (width, height) the page measured. Best-effort: if the
-    hidden resize fails the bar still comes back at its opening guess
-    and the next shape change tries again. Returns the new bar, or None
-    (refused: quitting, or creation failed).
-    """
-    with api._sigbar_lifecycle_lock:
-        if api._sigbar_quitting:
-            return None
-        old = api._sigbar_window
-        if old is not None:
-            try:
-                old.destroy()
-            except Exception:
-                logger.exception("sig bar destroy during refit failed")
-        api._sigbar_window = None
-        bar = create(api)  # re-enters this lock; RLock by design
-        if bar is None:
-            return None
-        if size is not None:
-            try:
-                width, height = (int(size[0]), int(size[1]))
-                if width > 0 and height > 0:
-                    bar.resize(width, height)
-            except Exception:
-                logger.debug("sig bar refit resize failed", exc_info=True)
-        reveal_bar(bar)
         return bar
 
 

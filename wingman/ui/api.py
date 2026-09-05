@@ -3813,34 +3813,33 @@ class Api:
         settings_mod.update_section(self._state.settings, "sig_bar", {"x": x, "y": y})
 
     def fit_sig_bar(self, width, height) -> None:
-        """Fit the bar window to its content, as measured by the page.
+        """Resize the bar window to its content, as measured by the page.
 
-        The page measures in CSS pixels and pywebview sizes in logical
+        The page measures in CSS pixels and pywebview resizes in logical
         units -- the same units (see ui/window.py's placement notes), so
         the values are handed through unscaled.
 
-        A shape change REBUILDS the window rather than resizing it in
-        place (sigbar.recreate): a live resize of a visible transparent
-        window leaves its backing mispainted until the surface is
-        recreated -- field result, twice. The rebuild applies the
-        measured size while the new window is still hidden, which is the
-        one moment a resize is safe. No change in size is a no-op, so
-        the steady 3s-poll fits cost nothing and rebuilds happen only on
-        the rare ticks where the text width actually moved.
+        Verify-and-retry, not fire-and-forget: pywebview's resize is
+        intermittently lost while the window is still materialising --
+        reproduced, three correct resizes inside the first half-second all
+        no-oped while the identical call at five seconds stuck. The page
+        sends one fit per poll tick, so an unverified call could leave the
+        bar at its broken birth size for the session. The caller is a
+        per-call bridge thread, so parking here costs nothing else.
         """
         from wingman.ui import sigbar
 
         bar = self._sigbar_window
         if bar is None:
             return
-        # NEVER fit a hidden bar: pywebview's resize is a raw SetWindowPos
-        # carrying SWP_SHOWWINDOW, so a fit against a hidden window SHOWS
-        # it. The page renders on every push -- including the 3s poll
-        # aimed at a bar the user toggled off -- and each render re-fits,
-        # which is how a toggled-off bar kept reappearing on the next poll
-        # with the GUI still reporting it off. The reveal path pushes
-        # status the moment it shows the bar, so the first fit a visible
-        # bar receives is only ever one tick away.
+        # NEVER resize a hidden bar: pywebview's resize is a raw
+        # SetWindowPos carrying SWP_SHOWWINDOW, so a fit against a hidden
+        # window SHOWS it. The page renders on every push -- including the
+        # 3s poll aimed at a bar the user toggled off -- and each render
+        # re-fits, which is how a toggled-off bar kept reappearing on the
+        # next poll with the GUI still reporting it off. The reveal path
+        # pushes status the moment it shows the bar, so the first fit a
+        # visible bar receives is only ever one tick away.
         if not sigbar.is_visible(bar):
             return
         try:
@@ -3849,33 +3848,23 @@ class Api:
             return
         if width <= 0 or height <= 0:
             return
-        try:
-            # +-1: logical->physical->logical round-trips through two
-            # integer truncations, which drifts a pixel at fractional
-            # scalings.
-            if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+        for _ in range(12):
+            try:
+                bar.resize(width, height)
+            except Exception:
+                # Before `shown`, resize can raise; the retry below is the
+                # whole reason this loop exists.
+                logger.debug("sig bar resize failed", exc_info=True)
+            try:
+                # +-1: logical->physical->logical round-trips through two
+                # integer truncations, which drifts a pixel at fractional
+                # scalings.
+                if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+                    return
+            except Exception:  # noqa: BLE001 -- no readable size (test doubles, headless): nothing to verify against, and the first call is then the whole contract.
                 return
-        except Exception:  # noqa: BLE001 -- no readable size (test doubles, headless): nothing to compare against, and the refit below remains the contract.
-            return
-        if getattr(bar, "_wingman_refit_for", None) == (width, height):
-            # Already rebuilt once for this size and it still reads
-            # different -- the hidden pre-reveal resize did not stick.
-            # Returning (not looping) is deliberate: the next shape
-            # change retries, while a loop would rebuild on every poll
-            # tick for the rest of the session.
-            return
-        logger.debug("sig bar refit: rebuilding at %sx%s", width, height)
-        bar._wingman_refit_for = (width, height)
-        rebuilt = sigbar.recreate(self, (width, height))
-        if rebuilt is not None:
-            # The marker belongs to the NEW window too: recreate replaced
-            # the object, and without it a size that refused to stick
-            # would rebuild again on every later fit for it.
-            rebuilt._wingman_refit_for = (width, height)
-            # The rebuilt page reloads cold: without this push it shows
-            # placeholders until the next poll tick. Same instant-content
-            # rule as toggle_sig_bar.
-            self._push_eve_status()
+            time.sleep(0.25)
+        logger.debug("sig bar resize never stuck at %sx%s", width, height)
 
     # ----- floating Fleet DPS/EWAR bar ---------------------------------
 
@@ -4041,49 +4030,33 @@ class Api:
             )
 
     def fit_fleet_bar(self, width, height) -> None:
-        """Fit to measured content without resurrecting a disabled bar.
-
-        Same shape-change-rebuild rule as fit_sig_bar: the table's height
-        moves when pilots join or leave, and a live resize of a visible
-        transparent window mispaints its backing (fleetbar.recreate
-        rebuilds instead). Unchanged sizes and disabled bars are no-ops.
-        """
+        """Resize to measured content without resurrecting a disabled bar."""
         try:
             width, height = int(width), int(height)
         except (TypeError, ValueError):
             return
         if width <= 0 or height <= 0:
             return
-        from wingman.ui import fleetbar
-
-        with self._fleetbar_lifecycle_lock:
-            bar = self._fleetbar_window
-            if (
-                bar is None
-                or self._fleetbar_quitting
-                or not self.fleet_bar_settings().get("enabled")
-            ):
-                return
-            try:
-                if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+        for _ in range(12):
+            with self._fleetbar_lifecycle_lock:
+                bar = self._fleetbar_window
+                if (
+                    bar is None
+                    or self._fleetbar_quitting
+                    or not self.fleet_bar_settings().get("enabled")
+                ):
                     return
-            except Exception:  # noqa: BLE001 -- headless/test windows may expose no readable size; the refit below remains the contract.
-                return
-            if getattr(bar, "_wingman_refit_for", None) == (width, height):
-                # See fit_sig_bar: one rebuild per measured size, never a
-                # per-tick rebuild loop.
-                return
-            logger.debug("Fleet Bar refit: rebuilding at %sx%s", width, height)
-            bar._wingman_refit_for = (width, height)
-        rebuilt = fleetbar.recreate(self, (width, height))
-        if rebuilt is not None:
-            # Marker on the NEW window too -- see fit_sig_bar.
-            rebuilt._wingman_refit_for = (width, height)
-            # Instant content for the cold-reloaded page, same rule as
-            # fit_sig_bar. _push_fleet_snapshot targets the bar window
-            # directly; a push that lands before the page has loaded is
-            # dropped and the next telemetry tick replaces it.
-            self._push_fleet_snapshot()
+                try:
+                    bar.resize(width, height)
+                except Exception:
+                    logger.debug("Fleet Bar resize failed", exc_info=True)
+                try:
+                    if abs(bar.width - width) <= 1 and abs(bar.height - height) <= 1:
+                        return
+                except Exception:  # noqa: BLE001 -- headless/test windows may expose no readable native size; the resize call remains the contract.
+                    return
+            time.sleep(0.25)
+        logger.debug("Fleet Bar resize never stuck at %sx%s", width, height)
 
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.

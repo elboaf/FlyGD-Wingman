@@ -49,10 +49,9 @@ def create(api, hidden: bool = True):
             easy_drag=False,
             on_top=True,
             focus=False,
-            # True per-pixel transparency, for the same reason as the sig
-            # bar's: without it the form paints its square background
-            # behind the shell's CSS rounded corners.
-            transparent=True,
+            # NOT transparent=True, for the same field reason as the sig
+            # bar's: per-pixel window transparency mispaints the backing
+            # on resize and move. Opaque dark window.
             background_color=window_mod.BACKGROUND,
             min_size=MIN_SIZE,
             # Tool-window styling must land before the first show or Windows
@@ -62,40 +61,6 @@ def create(api, hidden: bool = True):
         api._fleetbar_window = bar
         if sys.platform == "win32":
             sigbar_mod._apply_tool_style(bar)
-        return bar
-
-
-def recreate(api, size=None):
-    """Rebuild the Fleet Bar instead of resizing it in place.
-
-    Same field result as the sig bar's recreate (ui/sigbar.py): a live
-    resize of a visible transparent window mispaints its backing, so a
-    shape change destroys and rebuilds the window, applying the measured
-    size while it is still hidden. The table's height changes only when
-    pilots join or leave, so rebuilds are rare. Returns the new bar, or
-    None (refused or failed).
-    """
-    with api._fleetbar_lifecycle_lock:
-        if api._fleetbar_quitting:
-            return None
-        old = api._fleetbar_window
-        if old is not None:
-            try:
-                old.destroy()
-            except Exception:
-                logger.exception("Fleet Bar destroy during refit failed")
-        api._fleetbar_window = None
-        bar = create(api)
-        if bar is None:
-            return None
-        if size is not None:
-            try:
-                width, height = (int(size[0]), int(size[1]))
-                if width > 0 and height > 0:
-                    bar.resize(width, height)
-            except Exception:
-                logger.debug("Fleet Bar refit resize failed", exc_info=True)
-        sigbar_mod.reveal_bar(bar)
         return bar
 
 
