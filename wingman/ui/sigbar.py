@@ -138,37 +138,40 @@ def create(api):
         api._sigbar_window = bar
         if sys.platform == "win32":
             _apply_tool_style(bar)
-            _apply_transparent_backing(bar)
+            _apply_backing(bar)
         return bar
 
 
-def _apply_transparent_backing(bar) -> None:
-    """Stop WinForms flashing the bar white while it is being resized.
+def _apply_backing(bar) -> None:
+    """Keep the bar's resize flash dark instead of white.
 
     pywebview's transparent-window path sets the
     SupportsTransparentBackColor STYLE on the form but never assigns
-    BackColor itself, so the form still erases with the default control
-    colour on every resize. The bar resizes constantly -- the page's fit
-    round-trip retargets the window whenever the text changes -- and each
-    resize painted that default backing across the whole new area until
-    WebView2's next composited frame replaced it: a white box for a few
-    seconds, on a window whose entire aesthetic is that nothing outside
-    the rounded shell is visible.
+    BackColor itself, so WinForms erased every resize with the default
+    CONTROL colour until WebView2's next composited frame replaced it:
+    a white box for seconds whenever the page's fit round-trip widened
+    the bar. BackColor.Transparent is NOT the answer -- a top-level form
+    has no parent to simulate transparency against, and the attempt made
+    every MOVE paint white permanently (field-tested the hard way).
 
-    Assigning Color.Transparent (legal because of the style flag) makes
-    the erase paint nothing at all. pythonnet/System.Drawing are already
-    loaded by pywebview's WinForms backend at this point; best-effort,
-    because the failure mode is only the flash this fixes.
+    The erase cannot be suppressed from off the UI thread (a WndProc
+    subclass must run on the owning thread, and pywebview's UI thread is
+    the one this module's bottom comment forbids touching). So the erase
+    is allowed but aimed at the app's own near-black window tone: the
+    flash becomes a dark square under a dark shell and reads as the
+    shadow it sits in. pythonnet/System.Drawing are already loaded by
+    pywebview's WinForms backend here; best-effort, because the failure
+    mode is only the flash this fixes.
     """
     try:
         import clr
 
         clr.AddReference("System.Drawing")
-        from System.Drawing import Color
+        from System.Drawing import ColorTranslator
 
-        bar.native.BackColor = Color.Transparent
+        bar.native.BackColor = ColorTranslator.FromHtml(window_mod.BACKGROUND)
     except Exception:
-        logger.exception("sig bar transparent backing could not be set")
+        logger.exception("sig bar backing could not be set")
 
 
 # Native show/hide and the style patch all key off the HWND. ctypes calls
