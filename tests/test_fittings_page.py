@@ -120,6 +120,29 @@ def test_entry_asks_python_for_state_exactly_once():
     assert "var asked" in FITTINGS_JS or "asked = " in FITTINGS_JS
 
 
+def test_returning_from_settings_after_an_authority_change_rereads_fittings_state():
+    """Task 9 fix round 1: while Settings owns sign-in/forget, Fittings must
+    not stay stale after an off-route authority change. The route still
+    ignores `wm:eve-authority` while hidden, so leaving must clear the
+    one-entry latch and returning must ask Python again exactly once."""
+    route_listener = re.search(
+        r"document\.addEventListener\('wm:route', function \(event\) \{(?P<body>.*?)\n  \}\);",
+        FITTINGS_JS,
+        re.S,
+    )
+    assert route_listener, "fittings.js no longer has the route listener this regression guards"
+    body = route_listener.group("body")
+    assert "if (event.detail !== 'fittings') {" in body
+    assert "asked = false;" in body
+    assert "if (asked) return;\n    asked = true;\n    requestState();" in body
+    assert (
+        "document.addEventListener('wm:eve-authority', function () {\n"
+        "    if (WM.current_route !== 'fittings') return;\n"
+        "    requestState();\n"
+        "  });"
+    ) in FITTINGS_JS
+
+
 def test_fittings_state_bridge_call_matches_a_real_api_method():
     """The other half of test_bridge_contract.py's
     test_every_bridge_method_the_page_calls_exists_on_the_api, pinned here

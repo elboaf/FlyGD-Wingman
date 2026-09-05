@@ -256,6 +256,9 @@
       if (copyPhase === 'progress') WM.send('fittings_cancel_copy');
       closeCopyOverlay(true);
       clearSelection();
+      // Settings owns sign-in and Forget, so a hidden-route authority change
+      // must be picked up by the next real Fittings entry.
+      asked = false;
       return;
     }
     if (asked) return;

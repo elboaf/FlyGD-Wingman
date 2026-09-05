@@ -1851,7 +1851,7 @@ def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
     controller = None
 
     def forget_during_the_fetch(path):
-        controller.forget(95)
+        controller._authority.forget(95)
 
     esi.on_get = forget_during_the_fetch
     controller, _, _ = build(
@@ -1938,58 +1938,38 @@ def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
     assert controller._cache.get("navigation") == 3327
 
 
-# ----- forget -----------------------------------------------------------
+# ----- shared-authority forget integration -----------------------------
 
 
-def test_forget_removes_the_character_and_its_token_in_one_write(tmp_path):
+def test_authority_forget_removes_the_character_and_its_token_in_one_write(tmp_path):
     """The roster row and its wrapped refresh token live in the same
     document, so removing the row removes the token with it -- there is no
     separate credential store to leave an orphaned secret behind in."""
     controller, _, _ = build(tmp_path, characters=[with_snapshot()])
 
-    assert controller.forget(95) is True
+    assert controller._authority.forget(95) == MutationResult(True, True, "")
 
     assert controller.state_payload()["characters"] == []
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     assert reloaded.characters == []
 
 
-def test_forgetting_a_character_that_is_not_there_is_an_idempotent_success(tmp_path):
-    """The page can hold a stale roster across a refresh that already
-    dropped the row. A double click on forget must not be a failure."""
+def test_authority_forgetting_a_character_that_is_not_there_is_idempotent(tmp_path):
+    """The shared Forget action can race a stale roster. Forgetting an
+    already-removed character still reports success."""
     controller, _, _ = build(tmp_path)
 
-    assert controller.forget(95) is True
+    assert controller._authority.forget(95) == MutationResult(True, True, "")
 
 
-def test_forget_rejects_a_payload_that_is_not_an_id(tmp_path):
-    """Arrives from JavaScript, where a missing dataset attribute is
-    undefined -> None. Refused rather than coerced into some other
-    character's id."""
+def test_authority_forget_pushes_skills_state(tmp_path):
+    """Authority owns the command, but Skills still has to repaint when its
+    participant row disappears."""
     controller, pushed, _ = build(tmp_path, characters=[with_snapshot()])
 
-    assert controller.forget(None) is False
-    assert controller.forget("not-a-number") is False
-    assert controller.state_payload()["characters"] != []
-    assert pushed == []
-
-
-def test_forget_always_pushes(tmp_path):
-    """A removal the page never sees is a character that never goes away
-    on screen."""
-    controller, pushed, _ = build(tmp_path, characters=[with_snapshot()])
-
-    controller.forget(95)
+    controller._authority.forget(95)
 
     assert any(handler == "onSkills" for handler, _ in pushed)
-
-
-def test_forget_rejects_a_non_positive_id(tmp_path):
-    controller, _, _alerts = build(tmp_path, characters=[with_snapshot()])
-
-    assert controller.forget(0) is False
-    assert controller.forget(-5) is False
-    assert controller.state_payload()["characters"][0]["character_id"] == 95
 
 
 def test_prepare_forget_is_check_only_until_authority_removal(tmp_path):
@@ -2062,8 +2042,8 @@ class FakeListener:
     `bound` records the order events happen in relative to the browser
     launch, which is the only thing the race-avoidance test cares about.
     `on_wait`, when given, runs from inside `wait()` -- the same spot a
-    real cancel_auth() call would land in, from another thread, while the
-    real listener blocks on accept().
+    real cancel_authorization() call would land in, from another thread,
+    while the real listener blocks on accept().
     """
 
     def __init__(self, events, callback=None, error_to_raise=None, on_wait=None):
@@ -2086,8 +2066,9 @@ class FakeListener:
     def wait(self, expected_state, *, timeout_s=None):
         if self.on_wait is not None:
             self.on_wait()
-        # Checked AFTER on_wait(), since that is where a real cancel_auth()
-        # call lands from another thread while the real listener blocks in
+        # Checked AFTER on_wait(), since that is where a real
+        # cancel_authorization() call lands from another thread while the
+        # real listener blocks in
         # accept(). Ignoring this and falling through to error_to_raise or
         # the callback -- the old behaviour -- meant a test built on top of
         # a cancelling on_wait never actually reached the CallbackCancelled
@@ -2243,10 +2224,10 @@ def test_only_one_interactive_sign_in_at_a_time(tmp_path, monkeypatch):
     assert any("already in progress" in title for _, title, _ in alerts)
 
 
-def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
-    """cancel_auth() reaches the listener while it is still blocked in
-    wait() -- the same spot a real accept() loop parks in for up to five
-    minutes."""
+def test_cancel_authorization_cancels_the_listener(tmp_path, monkeypatch):
+    """cancel_authorization() reaches the listener while it is still
+    blocked in wait() -- the same spot a real accept() loop parks in for
+    up to five minutes."""
     events = []
     controller = None
 
@@ -2492,7 +2473,7 @@ def test_forgetting_a_character_mid_auth_is_not_undone(tmp_path, monkeypatch):
     controller = None
 
     def forget_during_wait():
-        controller.forget(95)
+        controller._authority.forget(95)
 
     controller, _, alerts, _, _ = build_auth(
         tmp_path,

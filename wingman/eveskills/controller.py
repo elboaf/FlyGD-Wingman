@@ -1532,19 +1532,6 @@ class SkillsController:
 
     # ----- shared-authority participant --------------------------------
 
-    def forget(self, character_id) -> bool:
-        """Compatibility delegate for callers predating shared authority."""
-        if isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        return result.applied
-
     def prepare_forget(self, character_id: int) -> MutationResult:
         """Check-only preflight; cleanup cannot start before authority saves."""
         del character_id
