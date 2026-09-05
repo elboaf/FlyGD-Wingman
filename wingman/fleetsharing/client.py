@@ -21,14 +21,15 @@ way a caller would want to know about them, never silently guessed at.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
-from . import crypto
+from . import crypto, projection
 from .model import CatalogueCharacter, FleetCatalogue, PublishRow
 
 TIMEOUT_S = 5.0
@@ -85,6 +86,22 @@ def _issued_at(now: datetime) -> str:
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
     return now.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# A pairing id is an opaque server-issued token (authGD's actual shape is
+# a UUID, `tests/fixtures/fleet-pairing-v1.json`); restricting it to the
+# URL-unreserved charset (RFC 3986) before it is ever spliced into a
+# request path refuses a hostile or corrupted value -- an embedded "/",
+# "..", or newline -- outright, rather than relying solely on
+# `urllib.parse.quote` (applied afterwards, in `complete_pairing`) to make
+# it harmless.
+_PAIRING_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _validate_pairing_id(pairing_id: str) -> str:
+    if not isinstance(pairing_id, str) or not _PAIRING_ID_RE.fullmatch(pairing_id):
+        raise ValueError("Fleet relay pairing id has an unexpected shape.")
+    return pairing_id
 
 
 def _classify_status(status: int) -> str:
@@ -202,6 +219,50 @@ class FleetRelayClient:
         self._origin = f"https://{parsed.netloc}"
         self._transport = transport
 
+    def _validate_approval_url(self, raw_url: str) -> str:
+        """Refuse an `approval_url` that is not this exact relay origin.
+
+        A Member opens `approval_url` in their own browser to approve a
+        pairing request (a later task's concern) -- this client is the
+        only place that ever sees the raw server-supplied string, so it
+        is the only place that can refuse a relay response trying to
+        redirect that browser to an attacker-controlled origin (a
+        malicious or compromised relay, or a response-shape bug).
+        authGD's own route actually returns a bare same-origin path
+        (`/fleet/pair/<id>`, Task 6's `pairing-requests/route.ts`), which
+        this resolves against the configured origin; an absolute URL is
+        accepted only when it is `https`, carries no userinfo, and
+        resolves to this exact configured origin.
+        """
+        parsed = urlsplit(raw_url)
+        if parsed.scheme == "" and parsed.netloc == "":
+            if not raw_url.startswith("/"):
+                raise FleetRelayError(
+                    None,
+                    "malformed_response",
+                    "Fleet relay approval URL was not a same-origin path.",
+                )
+            return self._origin + raw_url
+        if parsed.scheme != "https":
+            raise FleetRelayError(
+                None,
+                "malformed_response",
+                "Fleet relay approval URL was not https.",
+            )
+        if parsed.username is not None or parsed.password is not None:
+            raise FleetRelayError(
+                None,
+                "malformed_response",
+                "Fleet relay approval URL carried userinfo.",
+            )
+        if parsed.netloc.casefold() != urlsplit(self._origin).netloc.casefold():
+            raise FleetRelayError(
+                None,
+                "malformed_response",
+                "Fleet relay approval URL was not the configured relay origin.",
+            )
+        return raw_url
+
     # -- pairing: unauthenticated by design, matching authGD's own routes --
 
     def begin_pairing(self, public_key_spki: bytes) -> PairingBegin:
@@ -221,9 +282,10 @@ class FleetRelayClient:
             }
         ).encode("utf-8")
         data = self._send(PAIRING_REQUESTS_PATH, "POST", body, headers=None)
+        approval_url = self._validate_approval_url(_require_str(data, "approval_url"))
         return PairingBegin(
             pairing_id=_require_str(data, "pairing_id"),
-            approval_url=_require_str(data, "approval_url"),
+            approval_url=approval_url,
             expires_at=_require_str(data, "expires_at"),
         )
 
@@ -239,11 +301,12 @@ class FleetRelayClient:
         caller decides whether/how to persist them
         (`wingman.fleetsharing.state`).
         """
+        pairing_id = _validate_pairing_id(pairing_id)
         signature = crypto.sign_request(private_key, challenge)
         body = json.dumps(
             {"protocol": crypto.PROTOCOL_VERSION, "completion_signature": signature}
         ).encode("utf-8")
-        path = f"{PAIRING_REQUESTS_PATH}/{pairing_id}/complete"
+        path = f"{PAIRING_REQUESTS_PATH}/{quote(pairing_id, safe='')}/complete"
         data = self._send(path, "POST", body, headers=None)
         return PairingComplete(
             session_id=_require_str(data, "session_id"),
@@ -280,7 +343,18 @@ class FleetRelayClient:
         Sends *rows* as an atomic, complete replacement of this device's
         projection, matching the design's "Publication" rule -- an empty
         *rows* is a normal withdrawal, not a special case.
+
+        Validated against authGD's own wire limits
+        (`projection.validate_publish_batch`) before any network call: at
+        most 32 rows, unique `character_id`s, `0 <= dps <= 10_000_000`, and
+        `ewar` exactly `()` or `("SCRAM/POINT",)`. This is defence in
+        depth against a corrupted or hand-built batch, never a case
+        `project_snapshot` itself produces for any single valid input --
+        raises `ValueError` before this method ever touches the
+        transport, exactly the same as the origin/pairing-id validation
+        elsewhere in this class.
         """
+        projection.validate_publish_batch(rows)
         body = json.dumps(
             {
                 "protocol": crypto.PROTOCOL_VERSION,

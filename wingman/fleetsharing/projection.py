@@ -28,6 +28,17 @@ from .model import FleetCatalogue, PublishRow
 # updated for, not a case that can currently occur.
 _ALLOWED_EWAR = frozenset({"SCRAM/POINT"})
 
+# authGD's own wire limits on a published batch (Task 3's
+# `fleet_telemetry_row` CHECK constraint and Task 6's route-level bounds):
+# at most 32 rows per publish, `0 <= dps <= 10_000_000`, and `ewar` exactly
+# `()` or `("SCRAM/POINT",)` -- never a longer tuple, even one made only of
+# repeated "SCRAM/POINT" entries. `validate_publish_batch` below is the
+# client-side belt-and-suspenders check against these limits before a
+# batch ever reaches the network.
+MAX_PUBLISH_ROWS = 32
+MAX_PUBLISH_DPS = 10_000_000
+_VALID_PUBLISH_EWAR_SHAPES = frozenset({(), ("SCRAM/POINT",)})
+
 
 def _normalize(name: str) -> str:
     """The one Unicode-safe normalization this whole module uses.
@@ -95,3 +106,46 @@ def project_snapshot(
         rows.append(PublishRow(character_id=matches[0], dps=row.dps, ewar=ewar))
 
     return tuple(sorted(rows, key=lambda published: published.character_id))
+
+
+def validate_publish_batch(rows: tuple[PublishRow, ...]) -> tuple[PublishRow, ...]:
+    """Refuse a batch that cannot possibly satisfy authGD's own wire
+    limits before a caller (`wingman.fleetsharing.client.FleetRelayClient.
+    publish_snapshot`) ever sends it.
+
+    `project_snapshot` already produces rows shaped this way for any
+    single valid input, so this is defence in depth against a corrupted
+    or hand-constructed batch -- e.g. a snapshot whose two local rows
+    both normalize to the same catalogue character name by construction
+    error elsewhere, or a row whose `ewar` accumulated a duplicate
+    "SCRAM/POINT" tag -- reaching the network at all. Matches this
+    module's own "never guess, never silently coerce" posture: a caller
+    gets an immediate `ValueError` naming the row at fault, not a request
+    authGD's schema would reject anyway.
+
+    Returns *rows* unchanged when the whole batch is valid, so a caller
+    can use this as a pass-through validation step.
+    """
+    if len(rows) > MAX_PUBLISH_ROWS:
+        raise ValueError(
+            f"Fleet sharing batch has {len(rows)} rows, more than the "
+            f"{MAX_PUBLISH_ROWS}-row limit."
+        )
+    seen_ids: set[int] = set()
+    for row in rows:
+        if row.character_id in seen_ids:
+            raise ValueError(
+                f"Fleet sharing batch has duplicate character_id {row.character_id}."
+            )
+        seen_ids.add(row.character_id)
+        if not (0 <= row.dps <= MAX_PUBLISH_DPS):
+            raise ValueError(
+                f"Fleet sharing batch row for character_id {row.character_id} "
+                f"has dps {row.dps}, outside 0..{MAX_PUBLISH_DPS}."
+            )
+        if row.ewar not in _VALID_PUBLISH_EWAR_SHAPES:
+            raise ValueError(
+                f"Fleet sharing batch row for character_id {row.character_id} "
+                f"has an invalid ewar shape {row.ewar!r}."
+            )
+    return rows

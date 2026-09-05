@@ -200,6 +200,26 @@ class TestSignedRequests:
             {"character_id": 7, "dps": 0, "ewar": ["SCRAM/POINT"]}
         ]
 
+    def test_publish_snapshot_rejects_an_invalid_batch_before_any_network_call(self):
+        """`projection.validate_publish_batch` is the belt-and-suspenders
+        gate against authGD's own wire limits -- a duplicate
+        `character_id` here must never reach the transport at all."""
+        transport = FakeTransport({"protocol": 1})
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+        rows = (
+            PublishRow(character_id=1, dps=1, ewar=()),
+            PublishRow(character_id=1, dps=2, ewar=()),
+        )
+
+        with pytest.raises(ValueError, match="duplicate character_id"):
+            relay.publish_snapshot(
+                session_id="s",
+                private_key=crypto.generate_private_key(),
+                revision=1,
+                rows=rows,
+            )
+        assert transport.requests == []
+
 
 class TestResponseValidation:
     def test_rejects_a_response_with_the_wrong_protocol_major(self):
@@ -283,15 +303,51 @@ class TestResponseValidation:
             )
         assert "super-secret-session-id" not in str(excinfo.value)
 
-    def test_error_message_never_contains_the_signature(self):
+    def test_error_message_excludes_the_actual_signature_even_when_the_error_body_echoes_it(
+        self,
+    ):
+        """A genuine leak test, not a tautology: the fake transport's
+        HTTPError body is set to the *exact* signature this request would
+        really send (independently recomputed the same way `_send_signed`
+        does), so a code change that started reading `exc.read()`/the
+        response body into `FleetRelayError`'s message would make this
+        fail. The prior version of this test
+        (`test_error_message_never_contains_the_signature`) only asserted
+        "no 80+ character word appears", which passed unconditionally
+        because nothing in the exception path ever touched the response
+        body -- it could not have caught that regression.
+        """
         private_key = crypto.generate_private_key()
-        relay = FleetRelayClient(ORIGIN, transport=error_transport(500))
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        canonical = crypto.canonical_fleet_request(
+            protocol=crypto.PROTOCOL_VERSION,
+            method="GET",
+            path=client_mod.CATALOGUE_PATH,
+            session_id="s",
+            issued_at="2026-01-01T00:00:00.000Z",
+            revision=1,
+            body_sha256=hashlib.sha256(b"").hexdigest(),
+        )
+        signature = crypto.sign_request(private_key, canonical)
+
+        def transport(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                500,
+                "Error",
+                {},
+                io.BytesIO(signature.encode("ascii")),
+            )
+
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
         with pytest.raises(FleetRelayError) as excinfo:
-            relay.fetch_catalogue(session_id="s", private_key=private_key, revision=1)
-        message = str(excinfo.value)
-        # No unpadded base64url token of plausible signature length (64
-        # raw bytes -> 86 chars) appears anywhere in the message.
-        assert not any(len(word) >= 80 for word in message.split())
+            relay.fetch_catalogue(
+                session_id="s", private_key=private_key, revision=1, now=now
+            )
+
+        assert signature not in str(excinfo.value)
+        assert signature not in excinfo.value.code
 
 
 class TestPairing:
@@ -325,6 +381,91 @@ class TestPairing:
         assert result.pairing_id == "p-1"
         assert result.approval_url == "https://relay.example.test/fleet/pair/p-1"
         assert result.expires_at == "2026-01-01T00:10:00.000Z"
+
+    def test_begin_pairing_resolves_a_relative_approval_url_against_the_configured_origin(
+        self,
+    ):
+        """authGD's own route actually returns a bare same-origin path
+        (`/fleet/pair/<id>`, Task 6's
+        `pairing-requests/route.ts`), not an absolute URL."""
+        transport = FakeTransport(
+            {
+                "protocol": 1,
+                "pairing_id": "p-1",
+                "approval_url": "/fleet/pair/p-1",
+                "expires_at": "2026-01-01T00:10:00.000Z",
+            }
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        result = relay.begin_pairing(
+            crypto.public_key_spki(crypto.generate_private_key())
+        )
+
+        assert result.approval_url == ORIGIN + "/fleet/pair/p-1"
+
+    def test_begin_pairing_rejects_an_approval_url_on_a_different_origin(self):
+        transport = FakeTransport(
+            {
+                "protocol": 1,
+                "pairing_id": "p-1",
+                "approval_url": "https://evil.example.test/fleet/pair/p-1",
+                "expires_at": "2026-01-01T00:10:00.000Z",
+            }
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        with pytest.raises(FleetRelayError) as excinfo:
+            relay.begin_pairing(crypto.public_key_spki(crypto.generate_private_key()))
+        assert excinfo.value.code == "malformed_response"
+
+    def test_begin_pairing_rejects_a_plain_http_approval_url(self):
+        transport = FakeTransport(
+            {
+                "protocol": 1,
+                "pairing_id": "p-1",
+                "approval_url": "http://relay.example.test/fleet/pair/p-1",
+                "expires_at": "2026-01-01T00:10:00.000Z",
+            }
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        with pytest.raises(FleetRelayError) as excinfo:
+            relay.begin_pairing(crypto.public_key_spki(crypto.generate_private_key()))
+        assert excinfo.value.code == "malformed_response"
+
+    def test_begin_pairing_rejects_an_approval_url_carrying_userinfo(self):
+        transport = FakeTransport(
+            {
+                "protocol": 1,
+                "pairing_id": "p-1",
+                "approval_url": "https://attacker:pw@relay.example.test/fleet/pair/p-1",
+                "expires_at": "2026-01-01T00:10:00.000Z",
+            }
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        with pytest.raises(FleetRelayError) as excinfo:
+            relay.begin_pairing(crypto.public_key_spki(crypto.generate_private_key()))
+        assert excinfo.value.code == "malformed_response"
+
+    def test_begin_pairing_rejects_a_scheme_relative_approval_url(self):
+        """`//evil.example/x` parses with an empty scheme but a non-empty
+        netloc -- a browser resolves it against the current page's own
+        scheme, so it must not be treated as a same-origin path."""
+        transport = FakeTransport(
+            {
+                "protocol": 1,
+                "pairing_id": "p-1",
+                "approval_url": "//evil.example.test/fleet/pair/p-1",
+                "expires_at": "2026-01-01T00:10:00.000Z",
+            }
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        with pytest.raises(FleetRelayError) as excinfo:
+            relay.begin_pairing(crypto.public_key_spki(crypto.generate_private_key()))
+        assert excinfo.value.code == "malformed_response"
 
     def test_complete_pairing_signs_the_given_challenge_and_returns_only_session_and_catalogue(
         self,
@@ -364,6 +505,74 @@ class TestPairing:
             characters=(CatalogueCharacter(character_id=42, character_name="Alice"),),
         )
         assert vars(result).keys() == {"session_id", "catalogue"}
+
+    def test_complete_pairing_rejects_a_pairing_id_containing_a_path_separator(self):
+        relay = FleetRelayClient(ORIGIN, transport=FakeTransport({"protocol": 1}))
+
+        with pytest.raises(ValueError, match="unexpected shape"):
+            relay.complete_pairing(
+                "../snapshot",
+                crypto.pairing_challenge_preimage("../snapshot"),
+                crypto.generate_private_key(),
+            )
+
+    def test_complete_pairing_rejects_a_pairing_id_containing_a_newline(self):
+        transport = FakeTransport({"protocol": 1})
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        with pytest.raises(ValueError, match="unexpected shape"):
+            relay.complete_pairing(
+                "p-1\r\nX-Injected: 1",
+                crypto.pairing_challenge_preimage("p-1"),
+                crypto.generate_private_key(),
+            )
+        # Rejected before any request was ever built.
+        assert transport.requests == []
+
+    def test_complete_pairing_rejects_an_empty_pairing_id(self):
+        relay = FleetRelayClient(ORIGIN, transport=FakeTransport({"protocol": 1}))
+
+        with pytest.raises(ValueError, match="unexpected shape"):
+            relay.complete_pairing(
+                "", crypto.pairing_challenge_preimage(""), crypto.generate_private_key()
+            )
+
+    def test_complete_pairing_percent_quotes_the_validated_pairing_id_in_the_path(
+        self, monkeypatch
+    ):
+        """`_validate_pairing_id` only ever accepts an already URL-safe
+        charset today, which never actually needs percent-encoding -- but
+        the request path must still be built with `urllib.parse.quote`
+        rather than plain string interpolation, so a future loosening of
+        that charset (or any caller that gets a validated-but-encodable
+        value past it) cannot silently reintroduce a path-injection
+        hazard. Proven directly by relaxing validation and confirming the
+        built request path percent-encodes a `/` rather than treating it
+        as an extra path segment.
+        """
+        monkeypatch.setattr(
+            client_mod, "_validate_pairing_id", lambda pairing_id: pairing_id
+        )
+        transport = FakeTransport(
+            {
+                "protocol": 1,
+                "session_id": "s",
+                "catalogue": {"revision": 1, "characters": []},
+            }
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        relay.complete_pairing(
+            "weird/id",
+            crypto.pairing_challenge_preimage("weird/id"),
+            crypto.generate_private_key(),
+        )
+
+        request = transport.requests[0]
+        assert (
+            request.full_url
+            == ORIGIN + "/api/fleet/v1/pairing-requests/weird%2Fid/complete"
+        )
 
     def test_complete_pairing_request_never_carries_the_raw_private_key(self):
         private_key = crypto.generate_private_key()

@@ -10,8 +10,15 @@ catalogue character, and never carries anything beyond `character_id`,
 
 import dataclasses
 
+import pytest
+
 from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
-from wingman.fleetsharing.projection import project_snapshot
+from wingman.fleetsharing.projection import (
+    MAX_PUBLISH_DPS,
+    MAX_PUBLISH_ROWS,
+    project_snapshot,
+    validate_publish_batch,
+)
 from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
 
 HEALTH = StreamHealth(state="active")
@@ -148,3 +155,71 @@ def test_publish_row_carries_only_character_id_dps_and_ewar():
     behaviour."""
     fields = {f.name for f in dataclasses.fields(PublishRow)}
     assert fields == {"character_id", "dps", "ewar"}
+
+
+class TestValidatePublishBatch:
+    """authGD's own wire limits on a batch about to be published
+    (Task 3's `fleet_telemetry_row` CHECK constraint and Task 6's
+    route-level bounds): at most 32 rows, unique `character_id`s,
+    `0 <= dps <= 10_000_000`, and `ewar` exactly `()` or
+    `("SCRAM/POINT",)`.
+    """
+
+    def test_accepts_a_batch_within_every_limit(self):
+        rows = (
+            PublishRow(character_id=1, dps=0, ewar=()),
+            PublishRow(character_id=2, dps=MAX_PUBLISH_DPS, ewar=("SCRAM/POINT",)),
+        )
+        assert validate_publish_batch(rows) == rows
+
+    def test_accepts_exactly_the_row_limit(self):
+        rows = tuple(
+            PublishRow(character_id=i, dps=1, ewar=()) for i in range(MAX_PUBLISH_ROWS)
+        )
+        assert validate_publish_batch(rows) == rows
+
+    def test_rejects_more_rows_than_the_limit(self):
+        rows = tuple(
+            PublishRow(character_id=i, dps=1, ewar=())
+            for i in range(MAX_PUBLISH_ROWS + 1)
+        )
+        with pytest.raises(ValueError, match="33 rows"):
+            validate_publish_batch(rows)
+
+    def test_rejects_dps_above_the_max(self):
+        rows = (PublishRow(character_id=1, dps=MAX_PUBLISH_DPS + 1, ewar=()),)
+        with pytest.raises(ValueError, match="dps"):
+            validate_publish_batch(rows)
+
+    def test_rejects_a_negative_dps(self):
+        rows = (PublishRow(character_id=1, dps=-1, ewar=()),)
+        with pytest.raises(ValueError, match="dps"):
+            validate_publish_batch(rows)
+
+    def test_rejects_a_duplicate_character_id(self):
+        rows = (
+            PublishRow(character_id=1, dps=10, ewar=()),
+            PublishRow(character_id=1, dps=20, ewar=()),
+        )
+        with pytest.raises(ValueError, match="duplicate character_id 1"):
+            validate_publish_batch(rows)
+
+    def test_rejects_an_ewar_tuple_with_a_repeated_scram_point_entry(self):
+        """project_snapshot's own EWAR filter
+        (`tag in _ALLOWED_EWAR`) would let a duplicated local tag
+        through as `("SCRAM/POINT", "SCRAM/POINT")` -- a shape that is
+        not `[]` or `["SCRAM/POINT"]` on the wire and that authGD's own
+        CHECK constraint would reject; this is the client-side guard
+        against that ever reaching the network."""
+        rows = (PublishRow(character_id=1, dps=0, ewar=("SCRAM/POINT", "SCRAM/POINT")),)
+        with pytest.raises(ValueError, match="ewar shape"):
+            validate_publish_batch(rows)
+
+    def test_rejects_an_ewar_tuple_carrying_an_unrecognised_tag(self):
+        rows = (PublishRow(character_id=1, dps=0, ewar=("NEUT",)),)
+        with pytest.raises(ValueError, match="ewar shape"):
+            validate_publish_batch(rows)
+
+    def test_returns_the_same_rows_unchanged_on_success(self):
+        rows = (PublishRow(character_id=1, dps=5, ewar=()),)
+        assert validate_publish_batch(rows) is rows
