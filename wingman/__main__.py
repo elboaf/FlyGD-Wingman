@@ -587,6 +587,9 @@ def build_telemetry(state, host, alert_policy):
             alerts_enabled=lambda: bool(
                 state.settings.get("preview", {}).get("alerts", {}).get("enabled")
             ),
+            sharing_enabled=lambda: bool(
+                state.settings.get("fleet_sharing", {}).get("enabled")
+            ),
             gamelogs_folder=gamelogs_folder,
             discovery=ClientDiscovery(),
             stream=GameLogStream(),
@@ -596,6 +599,34 @@ def build_telemetry(state, host, alert_policy):
         )
     except Exception:
         logger.exception("Shared EVE telemetry unavailable")
+        return None
+
+
+def build_fleet_sharing_worker():
+    """The fleet-sharing publication worker.
+
+    Platform-neutral, unlike build_preview_host: the only Windows-specific
+    piece anywhere behind it is DPAPI key unwrapping, reached lazily
+    through wingman.fleetsharing.state's own injected seam -- and only
+    once a persisted device identity actually exists on disk, which no
+    code path in this tracer writes (fleet_sharing has no pairing UI yet).
+    Built and started unconditionally so it idles in its "stopped" status
+    and never touches the network until a future pairing feature
+    populates fleet_sharing.json; wiring it to actual settings/predicates
+    is unnecessary because the worker itself reads the persisted session
+    state live on every pass, not a settings callable.
+    """
+    try:
+        from .fleetsharing.client import FleetRelayClient
+        from .fleetsharing.state import load as load_sharing_state
+        from .fleetsharing.worker import FleetSharingWorker
+
+        return FleetSharingWorker(
+            load_state=lambda: load_sharing_state(paths.fleet_sharing_file()),
+            client_factory=FleetRelayClient,
+        )
+    except Exception:
+        logger.exception("Fleet sharing worker unavailable")
         return None
 
 
@@ -830,6 +861,15 @@ def main() -> int:
     telemetry = build_telemetry(state, preview_host, alert_policy)
     if telemetry is not None and preview_host is not None:
         preview_host.set_discovery_request(telemetry.request_discovery)
+    # Private to main(): no other module holds this reference. Built and
+    # started whenever telemetry itself exists, since a worker with no
+    # coordinator to subscribe to has nothing to receive -- see
+    # build_fleet_sharing_worker for why it is otherwise platform-neutral
+    # and safe to start unconditionally.
+    sharing_worker = build_fleet_sharing_worker()
+    sharing_unsubscribe = None
+    if telemetry is not None and sharing_worker is not None and sharing_worker.start():
+        sharing_unsubscribe = telemetry.subscribe_fleet(sharing_worker.submit)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
@@ -1026,6 +1066,21 @@ def main() -> int:
     # worker pushes and removes a ready file on ordinary Quit while retaining
     # the persistent on-disk marker/file pair already handed to Setup.
     api.shutdown_updates()
+    # Sharing detaches and stops before telemetry itself is torn down
+    # below (inside shutdown_previews()): a coordinator torn down with
+    # this subscriber still attached would have nowhere to route its last
+    # queued snapshots, and a worker stopped after unsubscribing can no
+    # longer receive one mid-teardown.
+    if sharing_unsubscribe is not None:
+        try:
+            sharing_unsubscribe()
+        except Exception:
+            logger.exception("Fleet sharing subscriber did not detach cleanly")
+    if sharing_worker is not None:
+        try:
+            sharing_worker.stop()
+        except Exception:
+            logger.exception("Fleet sharing worker did not stop cleanly")
     # Last, and unconditional: a preview thread that outlives the window
     # still owns HWNDs, and Wingman leaves the tray but stays in Task
     # Manager. A live loopback socket on the fixed redirect port would

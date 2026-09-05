@@ -290,6 +290,7 @@ class _Harness:
             "preview": kw.pop("preview", False),
             "fleet": kw.pop("fleet", True),
             "alerts": kw.pop("alerts", False),
+            "sharing": kw.pop("sharing", False),
         }
         self.folder = kw.pop("folder", tmp_path)
         self.discovery = kw.pop("discovery", None) or FakeDiscovery()
@@ -303,6 +304,7 @@ class _Harness:
             preview_enabled=lambda: self.flags["preview"],
             fleet_enabled=lambda: self.flags["fleet"],
             alerts_enabled=lambda: self.flags["alerts"],
+            sharing_enabled=lambda: self.flags["sharing"],
             gamelogs_folder=lambda: self.folder,
             discovery=self.discovery,
             stream=self.stream,
@@ -333,17 +335,37 @@ def _harness(tmp_path, **kw):
 
 class TestRuntimePredicates:
     @pytest.mark.parametrize(
-        "preview,fleet,alerts,want_discovery,want_stream,want_policy",
+        "preview,fleet,alerts,sharing,want_discovery,want_stream,want_policy",
         [
-            (False, False, False, False, False, False),
-            (False, True, False, True, True, False),
-            (False, False, True, False, False, False),
-            (True, False, False, True, False, False),
-            (True, False, True, True, True, True),
+            (False, False, False, False, False, False, False),
+            (False, True, False, False, True, True, False),
+            (False, False, True, False, False, False, False),
+            (True, False, False, False, True, False, False),
+            (True, False, True, False, True, True, True),
+            # Sharing alone starts discovery and the stream -- the same
+            # shape as fleet-alone above -- but never attaches Alert
+            # policy, matching the design's "metrics-active" predicate
+            # being independent of Alert eligibility.
+            (False, False, False, True, True, True, False),
+            # Sharing alongside fleet changes nothing about discovery/
+            # stream, both already true from fleet alone.
+            (False, True, False, True, True, True, False),
+            # Sharing alongside Preview+Alerts leaves Alert policy exactly
+            # as it was without sharing: sharing is not part of that
+            # predicate at all.
+            (True, False, True, True, True, True, True),
         ],
     )
     def test_runtime_predicates(
-        self, tmp_path, preview, fleet, alerts, want_discovery, want_stream, want_policy
+        self,
+        tmp_path,
+        preview,
+        fleet,
+        alerts,
+        sharing,
+        want_discovery,
+        want_stream,
+        want_policy,
     ):
         policy = FakePolicy()
         h = _harness(
@@ -351,6 +373,7 @@ class TestRuntimePredicates:
             preview=preview,
             fleet=fleet,
             alerts=alerts,
+            sharing=sharing,
             alert_policy=policy,
             preview_host=FakePreviewHost(),
         )
@@ -367,6 +390,42 @@ class TestRuntimePredicates:
             h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
             h.pump()
         assert (len(policy.calls) == 1) is want_policy
+
+    def test_sharing_only_mode_feeds_metrics_and_a_fleet_subscriber_but_not_preview_or_alerts(
+        self, tmp_path
+    ):
+        preview = FakePreviewHost()
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=False,
+            fleet=False,
+            alerts=False,
+            sharing=True,
+            preview_host=preview,
+            alert_policy=policy,
+        )
+        h.subscribe()
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.pump()
+
+        assert h.discovery.starts == 1
+        assert len(h.stream.starts) == 1
+        assert preview.rosters == []
+        assert policy.calls == []
+        assert h.metrics.envelopes != []
+        assert h.snapshots != []
+
+    def test_all_consumers_false_including_sharing_stays_fully_stopped(self, tmp_path):
+        h = _harness(tmp_path, preview=False, fleet=False, alerts=False, sharing=False)
+
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 0
+        assert h.stream.starts == []
 
     def test_alert_policy_resets_across_disable_and_reenable(self, tmp_path):
         policy = FakePolicy()
