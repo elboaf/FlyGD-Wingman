@@ -3730,17 +3730,19 @@ close-EVE requirement beside Save.
 ## EVE Fittings
 
 These checks require a real Windows/WebView2 install and, where stated, a live
-EVE character. The registered EVE application used for the pass must accept
-both `esi-fittings.read_fittings.v1` and
-`esi-fittings.write_fittings.v1`. The `?dev=1` harness is useful for visual
-states, but it does not verify consent, ESI reads, ESI writes, DPAPI, cache
-behavior, or restart durability and cannot substitute for these items.
+EVE character. The registered EVE application used for the pass must accept the
+same full authorization set declared in `wingman/eveauth/application.py`:
+`esi-fittings.read_fittings.v1`, `esi-fittings.write_fittings.v1`,
+`esi-skills.read_skills.v1`, and `esi-skills.read_skillqueue.v1`. The `?dev=1`
+harness is useful for visual states, but it does not verify consent, ESI reads,
+ESI writes, DPAPI, cache behavior, or restart durability and cannot substitute
+for these items.
 
-### Migration and capability consent
+### Migration and centralized authorization
 
 - [ ] **A pre-feature Skills document migrates without losing Skills.** Start
       from a real `eve_skills.json` made by the last release before shared EVE
-      authority, with at least one working Skills-only character. Keep copies
+      authority, with at least one working two-scope Skills grant. Keep copies
       of the primary and `.bak`, launch once, and inspect
       `%LOCALAPPDATA%\FlyGD Wingman\`. Expected: `eve_authority.json` now owns
       identity/scopes/credential; `eve_skills.json` retains plans, groups,
@@ -3756,28 +3758,36 @@ behavior, or restart durability and cannot substitute for these items.
 - [ ] **Settings > Characters is the only EVE authorization surface.** Open
       Skills and Fittings and follow any authorize/reconnect/forget handoff.
       Expected: the write happens in Settings > Characters, and that card says
-      the shared sign-in is used by Skills and Fittings.
-- [ ] **Skills-only remains Skills-only until Settings > Characters adds the
-      fitting scopes.** Start from a migrated or existing Skills-only
-      character, refresh it in Skills successfully, then open Settings >
-      Characters and Fittings. Expected: the row still reads **Skills only**,
-      no fitting GET occurs before reconnect, and no fitting scopes were
-      silently added to the existing grant.
-- [ ] **Settings > Characters can request all four Skills-and-Fittings
-      scopes.** Reconnect a Skills-only character from Settings > Characters.
-      The EVE consent page requests `esi-characters.read_skills.v1`,
-      `esi-skills.read_skillqueue.v1`, `esi-fittings.read_fittings.v1`, and
-      `esi-fittings.write_fittings.v1` as appropriate for that character's
-      enabled capabilities. Complete it with THE SAME character. Expected:
-      Skills remains usable in the same session and after restart, and
-      Fittings can then refresh that character's Personal Fittings.
-- [ ] **Returned-character matching is generic and owner-safe.** Start sign-in
-      from Settings > Characters. Completing it with the wrong character is
-      refused even if the returned grant would otherwise be useful. If
-      Wingman already knows that character's owner and EVE returns a
-      different one, the sign-in is refused and the prior data remains. If no
-      owner is saved yet, the returned owner is accepted for compatibility
-      with older Skills-only records.
+      the shared sign-in is used by Skills and Fittings. Neither destination
+      exposes a per-row or per-feature authorization button.
+- [ ] **An older two-scope Skills grant stays scoped until reconnected.** Start
+      from a migrated or existing grant that has only `esi-skills.read_skills.v1`
+      and `esi-skills.read_skillqueue.v1`. Refresh it in Skills successfully,
+      then open Settings > Characters and Fittings. Expected: Skills reads as
+      Authorized, Fittings reads as Sign in, no fitting GET occurs before
+      reconnect, and no fitting scopes were silently added to the existing
+      grant.
+- [ ] **Settings > Characters requests exactly the full four-scope set.** Start
+      authorization or reconnect from Settings > Characters. The EVE consent
+      page requests `esi-fittings.read_fittings.v1`,
+      `esi-fittings.write_fittings.v1`, `esi-skills.read_skills.v1`, and
+      `esi-skills.read_skillqueue.v1`, with no additional Wingman scopes.
+      Completing the flow with any EVE character is evaluated by the returned
+      identity and cleanup/owner checks below.
+- [ ] **A returned unknown character is accepted only after cleanup is verified.**
+      Start sign-in from Settings > Characters and choose a character not
+      currently in Wingman's authority roster. Expected: Wingman adds it when
+      both Skills and Fittings cleanup verification report no orphan state for
+      that character ID. If either required cleanup slot is unavailable or
+      reports that ID blocked, the sign-in is refused and authority state is
+      unchanged.
+- [ ] **A known unequal owner is refused without mutation.** Start sign-in from
+      Settings > Characters for a character Wingman already knows, using a
+      controlled setup that can return a different known owner hash for the same
+      character ID. Expected: the sign-in is refused with a forget-first
+      instruction, the previous grant and feature snapshots remain, and no
+      cleanup runs. If either owner hash is absent, the validated character-ID
+      match remains compatible and preserves or records the non-empty owner.
 - [ ] **Cancel and callback races resolve deterministically.** Start sign-in
       from Settings > Characters and exercise both orders once. Expected: if
       you cancel before EVE replies, the cancellation wins. If EVE replies
@@ -3906,7 +3916,7 @@ behavior, or restart durability and cannot substitute for these items.
       and refused cleanup.** Exercise all three outcomes on a character that
       both Skills and Fittings know about. Expected: complete cleanup
       removes the shared credential and both feature snapshots; partial
-      cleanup removes the row but leaves the add blocked until
+      cleanup removes the row but leaves re-add blocked until
       reconciliation proves what survived; refused cleanup leaves the row,
       keeps the shared credential, and leaves both feature snapshots intact
       with a refusal explaining why cleanup cannot proceed yet.
@@ -3918,7 +3928,7 @@ behavior, or restart durability and cannot substitute for these items.
       cleanup. In a multi-pair batch, forgetting between pairs prevents
       every later POST for that character.
 - [ ] **Every durable boundary survives restart.** Repeat restart checks after
-      capability enable, successful import, metadata edit, collection create/
+      full authorization, successful import, metadata edit, collection create/
       rename/delete, membership change, supersession, definite copy result,
       Unknown creation, reconciliation, and global Forget. The UI must never
       show an in-memory success that disappears or becomes retryable after
@@ -3958,26 +3968,29 @@ authorisation server, a browser, a Windows-only crypto API, and a frozen
 bundle.
 
 **Register the EVE application first.** Until someone creates it at
-developers.eveonline.com, sets the redirect URI to
-`http://127.0.0.1:51779/callback/`, requests the two read-only scopes, and
-puts the client id in `wingman/eveskills/application.py`, none
-of the SSO items below can run at all — `Add character` is disabled and says
-so. Every module below the auth stack is testable with stubs before that
-happens, which is why the rest of the feature can be built and merged
-against a placeholder id; only these items are blocked on the registration.
+EVE Developers, sets the redirect URI to
+`http://127.0.0.1:51779/callback/`, accepts the four scopes declared in
+`wingman/eveauth/application.py`, and puts the client id there, none of the
+SSO items below can run at all — Settings > Characters keeps authentication
+disabled and says this build has no EVE application id configured. Every module
+below the auth stack is testable with stubs before that happens, which is why
+the rest of the feature can be built and merged against a placeholder id; only
+these items are blocked on the registration.
 
 ### The SSO round trip
 
-- [ ] **LOAD-BEARING: a real authorisation completes against CCP.** Click
-      `Add character`. Expected: the default browser opens EVE's own login
-      page, the consent screen names exactly the two scopes
-      (`esi-skills.read_skills.v1` and `esi-skills.read_skillqueue.v1`) and
-      no others, and after approving, **the browser tab shows Wingman's own
-      completion page** rather than a connection error or a raw JSON blob.
-      The character appears in the roster as `Unscored`. Nothing in the
-      suite can reach login.eveonline.com, so this is the only proof the
-      PKCE challenge, the state comparison, the loopback listener and the
-      code exchange all agree with the live server.
+- [ ] **LOAD-BEARING: a real authorisation completes against CCP.** In
+      Settings > Characters, press **Authenticate character…**. Expected: the
+      default browser opens EVE's own login page, the consent screen names
+      exactly `esi-fittings.read_fittings.v1`,
+      `esi-fittings.write_fittings.v1`, `esi-skills.read_skills.v1`, and
+      `esi-skills.read_skillqueue.v1`, and after approving, **the browser tab
+      shows Wingman's own completion page** rather than a connection error or a
+      raw JSON blob. The returned character appears in Settings > Characters;
+      Skills then shows it as `Unscored` until plans are evaluated. Nothing in
+      the suite can reach login.eveonline.com, so this is the only proof the
+      PKCE challenge, the state comparison, the loopback listener and the code
+      exchange all agree with the live server.
 - [ ] **The window stays responsive for the whole five minutes.** Start an
       authorisation and do not complete it. Drag the window, switch routes,
       scroll the recording list. If any of that freezes, the loopback wait
@@ -3992,24 +4005,24 @@ against a placeholder id; only these items are blocked on the registration.
 
 ### DPAPI, on Windows only
 
-- [ ] **LOAD-BEARING: the refresh token survives a restart.** Add a
-      character, quit Wingman fully (tray Quit, not just closing the
-      window), relaunch, and click `Refresh characters`. It refreshes
-      without asking you to sign in again. This is the DPAPI round trip:
-      `dpapi.py` is the one module CI never executes, because it is
+- [ ] **LOAD-BEARING: the refresh token survives a restart.** Authenticate a
+      character, quit Wingman fully (tray Quit, not just closing the window),
+      relaunch, and click `Refresh characters` in Skills or Fittings. It
+      refreshes without asking you to sign in again. This is the DPAPI round
+      trip: `dpapi.py` is the one module CI never executes, because it is
       `CryptProtectData` and CI is Linux.
-- [ ] **A token another user cannot read costs one character, not the
-      file.** Open `%LOCALAPPDATA%\FlyGD Wingman\eve_skills.json`,
-      corrupt one character's `refresh_token_blob` (change a few base64
-      characters), and relaunch. Expected: that character shows
-      `needs_reauth` with a re-authenticate banner; **every other character
-      is untouched and still refreshes.** This is what keeping the roster
-      metadata in plaintext beside the wrapped token buys.
+- [ ] **A token another user cannot read costs one character, not the file.**
+      Open `%LOCALAPPDATA%\FlyGD Wingman\eve_authority.json`, corrupt one
+      character's `refresh_token_blob` (change a few base64 characters), and
+      relaunch. Expected: that character shows Sign in / needs attention in
+      Settings > Characters and the Skills row points back to Settings; **every
+      other character is untouched and still refreshes.** This is what keeping
+      the roster metadata in plaintext beside the wrapped token buys.
 
 ### A live refresh
 
 - [ ] **An account with more than one character refreshes all of them.**
-      Add at least three, click `Refresh characters`, and watch the notices
+      Authorize at least three, click `Refresh characters`, and watch the notices
       strip count `Refreshed 1 of 3`, `2 of 3`, `3 of 3` as it goes. A
       counter that jumps straight to the total means progress is being
       pushed after the loop rather than per character.
@@ -4139,7 +4152,7 @@ against a placeholder id; only these items are blocked on the registration.
       unaffected.
 - [ ] **The roster has its own persistent heading, like Groups and Plans.**
       Above the filter bar and the character list, a `Characters` heading
-      (the route's own vocabulary — Add character, Filter characters, N
+      (the route's own vocabulary — Manage characters, Filter characters, N
       characters added) sits in the same `.rail-head` treatment the Groups
       and Plans blocks already use, with only a hairline boundary added.
       It is inert text — no tabindex, no click handler — confirming the
@@ -4155,10 +4168,10 @@ against a placeholder id; only these items are blocked on the registration.
       Confirm the `N` in `and N more` matches the character's real missing
       count minus the two names shown, not the number of names the
       payload happened to include.
-- [ ] **An empty roster names the control.** With no characters
-      authorised, the roster reads `No characters yet. Press “Add
-      character” to sign one in with EVE SSO.` — the name on the button,
-      not a direction to look left.
+- [ ] **An empty roster names the control.** With no characters authorised,
+      the roster reads `No characters yet. Press “Manage characters…” to
+      authenticate one in Settings.` — the name on the button, not a direction
+      to look left.
 - [ ] **The unscored group does not blame the wrong thing.** Empty the
       plans folder and reload plans. Every character collapses into one
       group; its heading is `Not scored yet` and the hint beside the roster
@@ -4579,12 +4592,12 @@ behaviour a lexical guard cannot reach.
       control is inert is exactly what a missing script looks like —
       PyInstaller exits 0 when a `datas` entry resolves to nothing, and
       pywebview reports no error for a script that 404s.
-- [ ] **The frozen Skills interaction reaches only CCP after startup traffic
-      is excluded.** Start the installed build with an HTTPS capture running
-      and wait for the automatic GitHub startup check to finish. Clear the
-      capture after the automatic GitHub startup check finishes, then perform
-      only the Skills interaction: add or refresh a character and inspect its
-      plan. Expected: only the Skills interaction contacts the network, and its
+- [ ] **The frozen EVE interaction reaches only CCP after startup traffic is
+      excluded.** Start the installed build with an HTTPS capture running and
+      wait for the automatic GitHub startup check to finish. Clear the capture
+      after the automatic GitHub startup check finishes, then perform a Settings
+      > Characters authorization or Skills refresh interaction and inspect a
+      plan. Expected: only that EVE interaction contacts the network, and its
       hosts are `login.eveonline.com` and `esi.evetech.net`; there is no FlyGD,
       Google, Discord, or unrelated GitHub request in the cleared capture.
 

@@ -607,11 +607,10 @@
    * of them -- the trailing OTHER bucket exists so that a readiness string
    * this page does not recognise still produces a row.
    *
-   * That is not tidiness. The expanded row is the ONLY surface in the
-   * whole application for forgetting a character or re-authenticating it,
-   * so a character with no row is a character that cannot be repaired --
-   * not from here, not from Settings, not from anywhere but deleting
-   * eve_skills.json by hand.
+   * That is not tidiness. Settings > Characters is the repair surface, but
+   * Skills still has to render every character that needs repair. A missing
+   * row hides the status that sends the user there and makes a broken token
+   * look like an empty roster instead of an actionable character problem.
    *
    * And the group most likely to be affected is the most common one:
    * "Unscored" is the state of EVERY character between authorisation and

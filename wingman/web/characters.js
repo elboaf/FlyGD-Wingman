@@ -166,11 +166,18 @@
   }
 
   function renderNotice() {
-    var text = localNotice || state.authorization_notice;
-    var kind = localNotice ? localNoticeKind : '';
+    var primary = localNotice || state.authorization_notice;
+    var warnings = state.available && state.warnings ? state.warnings : [];
+    var parts = [];
+    if (primary) parts.push(primary);
+    warnings.forEach(function (warning) {
+      if (warning) parts.push(warning);
+    });
+    var kind = localNotice ? localNoticeKind
+      : (primary ? '' : (parts.length ? 'warn' : ''));
     notice.className = 'field-msg' + (kind ? ' ' + kind : '');
-    notice.textContent = text;
-    notice.hidden = !text;
+    notice.textContent = parts.join('\n');
+    notice.hidden = !parts.length;
   }
 
   function renderActivity() {
@@ -236,6 +243,7 @@
     menuCharacterId = 0;
     menuCharacterName = '';
     forget.disabled = true;
+    menu.setAttribute('aria-label', 'Character actions');
     menuTrigger = null;
     if (restoreFocus && trigger && !trigger.disabled && trigger.focus) {
       trigger.focus();
@@ -246,6 +254,7 @@
     var rect = trigger.getBoundingClientRect();
     menuCharacterId = row.character_id;
     menuCharacterName = row.character_name || 'this character';
+    menu.setAttribute('aria-label', 'Actions for ' + menuCharacterName);
     menuTrigger = trigger;
     trigger.setAttribute('aria-expanded', 'true');
     forget.textContent = 'Forget character';
@@ -375,6 +384,7 @@
 
   function render(payload) {
     authRequestPending = false;
+    closeMenu(false);
     state = normalizeState(payload);
     renderButtons();
     renderActivity();

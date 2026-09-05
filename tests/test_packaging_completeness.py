@@ -19,6 +19,8 @@ import tomllib
 
 import pytest
 
+from wingman.eveauth import application as eveauth_application
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
 MANUAL_UPDATE_HARNESS = ROOT / "tests" / "manual" / "update_harness.py"
@@ -80,7 +82,9 @@ def test_smoke_network_checks_scope_ccp_after_the_startup_update_check():
     smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
     flat = " ".join(smoke.split())
     assert "Clear the capture after the automatic GitHub startup check finishes" in flat
-    assert "only the Skills interaction" in flat
+    assert "Settings > Characters authorization or Skills refresh interaction" in flat
+    assert "only that EVE interaction contacts the network" in flat
+    assert "only the Skills interaction" not in flat
 
 
 def test_readme_eve_authorization_docs_point_to_settings_characters_and_current_contract():
@@ -90,26 +94,27 @@ def test_readme_eve_authorization_docs_point_to_settings_characters_and_current_
         "Settings → Characters is the only place to authorize, reconnect, or "
         "forget EVE characters." in flat
     )
-    for scope in (
-        "esi-characters.read_skills.v1",
-        "esi-skills.read_skillqueue.v1",
-        "esi-fittings.read_fittings.v1",
-        "esi-fittings.write_fittings.v1",
-    ):
+    assert len(eveauth_application.FULL_AUTH_SCOPES) == 4
+    for scope in sorted(eveauth_application.FULL_AUTH_SCOPES):
         assert scope in readme
     for phrase in (
-        "Existing Skills-only consent remains valid for Skills.",
-        "Wingman matches the character EVE returns against the sign-in that started the flow, not against a specific scope combination.",
-        "If Wingman already knows that character's owner and EVE returns a different one, the sign-in is refused.",
-        "If no owner is saved yet, the returned owner is accepted for compatibility with older Skills-only records.",
-        "If you cancel before EVE replies, the cancellation wins.",
-        "If EVE replies first, that reply wins and the later cancel is ignored.",
+        "Every new EVE sign-in from Settings → Characters requests the full Skills-and-Fittings set",
+        "If EVE returns a character Wingman does not know yet, Wingman adds it only after Skills and Fittings cleanup both verify no orphan state blocks that ID.",
+        "If Wingman already has that character with a known owner and EVE returns a different known owner, the sign-in is refused and the existing grant stays in place.",
+        "Older grants that contain only the two Skills scopes keep working for Skills.",
+        "Reconnecting any character now uses the same full four-scope request; there is no per-feature authorization button.",
         "If cleanup is only partly saved, Wingman keeps the character blocked from being added again until reconciliation proves what survived.",
     ):
         assert phrase in flat
     for removed in (
+        "esi-characters.read_skills.v1",
+        "Existing Skills-only consent remains valid for Skills.",
+        "**Skills only**",
         "Enable fittings",
+        "Choosing a different character on EVE's consent screen is refused",
+        "wrong character is refused",
         "Whether pressed from Skills or Fittings",
+        "eve_skills.json` holds Skills-only snapshots",
     ):
         assert removed not in readme
 
@@ -128,7 +133,7 @@ def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_check
         in flat_smoke
     )
     assert (
-        "partial cleanup removes the row but leaves the add blocked until reconciliation proves what survived"
+        "partial cleanup removes the row but leaves re-add blocked until reconciliation proves what survived"
         in flat_smoke
     )
     assert "refused cleanup leaves the row" in flat_smoke
@@ -139,6 +144,27 @@ def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_check
         not in flat_smoke
     )
     assert "Open Settings on Account, Discord or General" not in flat_smoke
+    for scope in sorted(eveauth_application.FULL_AUTH_SCOPES):
+        assert scope in smoke
+    for removed in (
+        "esi-characters.read_skills.v1",
+        "Skills-only remains Skills-only",
+        "row still reads **Skills only**",
+        "Reconnect a Skills-only character",
+        "as appropriate for that character's enabled capabilities",
+        "Complete it with THE SAME character",
+        "Completing it with the wrong character is refused",
+        "requests the two read-only scopes",
+        "wingman/eveskills/application.py",
+        "`Add character` is disabled",
+        "Click `Add character`",
+        "consent screen names exactly the two scopes",
+        "Open `%LOCALAPPDATA%\\FlyGD Wingman\\eve_skills.json`, corrupt one character's `refresh_token_blob`",
+        "capability enable",
+        "only the Skills interaction",
+        "leaves the add blocked",
+    ):
+        assert removed not in smoke
 
     path = ROOT / "scripts" / "shoot_screens.py"
     spec = importlib.util.spec_from_file_location("shoot_screens", path)

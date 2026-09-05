@@ -744,11 +744,12 @@ def wire_eve_controllers(api):
     api._authority = authority
     api._skills = skills
     api._fittings = fittings
+    authority_warnings = list(startup_warnings)
     if skills is None:
-        api._authority_warnings = [
-            *startup_warnings,
-            "The EVE skills subsystem is unavailable.",
-        ]
+        authority_warnings.append("The EVE skills subsystem is unavailable.")
+    if fittings is None:
+        authority_warnings.append("The EVE fittings subsystem is unavailable.")
+    api._authority_warnings = authority_warnings
     return authority, skills
 
 

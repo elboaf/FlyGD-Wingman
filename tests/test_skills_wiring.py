@@ -114,6 +114,10 @@ def test_production_wiring_migrates_credentials_and_surfaces_recovery_warning(
         "using eve_skills.json.bak" in warning
         for warning in api.skills_state()["warnings"]
     )
+    assert any(
+        "using eve_skills.json.bak" in warning
+        for warning in api.eve_characters_state()["warnings"]
+    )
 
 
 def test_wiring_orders_migration_authority_and_feature_registration(monkeypatch):
@@ -214,6 +218,30 @@ def test_missing_skills_controller_leaves_unknown_ids_blocked(monkeypatch, tmp_p
         False,
         "Skills cleanup is unavailable.",
     )
+
+
+def test_missing_fittings_controller_is_visible_in_character_payload(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(main_mod.paths, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        main_mod,
+        "build_fittings_controller",
+        lambda *_args, **_kwargs: None,
+    )
+    from tests.test_api import make_api
+
+    api = make_api(tmp_path)
+    authority, skills = main_mod.wire_eve_controllers(api)
+
+    assert authority is not None and skills is not None
+    assert api._fittings is None
+    assert api.eve_characters_state()["warnings"] == [
+        "The EVE fittings subsystem is unavailable."
+    ]
+    assert api.fittings_state()["warnings"] == [
+        "The EVE fittings subsystem is unavailable."
+    ]
 
 
 def test_failed_migration_builds_no_empty_authority_and_surfaces_error(monkeypatch):

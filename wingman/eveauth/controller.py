@@ -196,7 +196,6 @@ class AuthorityController:
             for name in self._participants
         }
 
-        self._auth_latch = threading.Lock()
         self._auth_in_progress = False
         self._active_attempt: _AuthorizationAttempt | None = None
         self._next_attempt_id = 1

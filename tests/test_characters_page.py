@@ -196,7 +196,8 @@ def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state(
         re.DOTALL,
     )
     assert re.search(
-        r"authRequestPending = false;\s*state = normalizeState\(payload\);",
+        r"authRequestPending = false;\s*closeMenu\(false\);\s*"
+        r"state = normalizeState\(payload\);",
         JS,
         re.DOTALL,
     )
@@ -233,6 +234,8 @@ def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state(
 def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
     assert "aria-haspopup', 'menu'" in JS
     assert "menu.setAttribute('role', 'menu');" in JS
+    assert "menu.setAttribute('aria-label', 'Character actions');" in JS
+    assert "menu.setAttribute('aria-label', 'Actions for ' + menuCharacterName);" in JS
     assert "forget.setAttribute('role', 'menuitem');" in JS
     assert "forget.disabled = true;" in JS
     assert re.search(
@@ -264,10 +267,16 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
     assert "if (!result.persisted)" in JS
     assert "requestState();" in JS
     assert ".focus();" in JS
+    assert re.search(
+        r"function render\(payload\) \{\s*authRequestPending = false;\s*"
+        r"closeMenu\(false\);",
+        JS,
+        re.DOTALL,
+    )
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates_immediately():
+def test_characters_warnings_menu_and_global_auth_commands_behave_together():
     script = textwrap.dedent(
         rf"""
         const vm = require('vm');
@@ -425,12 +434,13 @@ def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates
 
         let authResolve;
         let cancelResolve;
+        let forgetResult = {{ applied: true, persisted: true, error: '' }};
         let statePayload = {{
           available: true,
           auth_configured: true,
           authorization_activity: 'idle',
-          authorization_notice: '',
-          warnings: [],
+          authorization_notice: 'Last sign-in failed.',
+          warnings: ['Restored eve_authority.json from backup.', 'The EVE fittings subsystem is unavailable.'],
           characters: [{{
             character_id: 4,
             character_name: 'Needs Reauth',
@@ -461,7 +471,7 @@ def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates
               return new Promise(function (resolve) {{ cancelResolve = resolve; }});
             }}
             if (method === 'eve_characters_forget') {{
-              return Promise.resolve({{ applied: true, persisted: true, error: '' }});
+              return Promise.resolve(forgetResult);
             }}
             throw new Error('unexpected method ' + method);
           }},
@@ -488,10 +498,43 @@ def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates
         (async function () {{
           document.dispatchEvent(new CustomEvent('wm:section', {{ detail: 'characters' }}));
           await tick();
+          const initialNotice = notice.textContent;
           const menuTrigger = findByClass(roster, 'characters-menu-trigger');
           menuTrigger.dispatchEvent({{ type: 'click' }});
           const forgetEnabledWhenOpen = !forget.disabled && !menu.hidden;
+          const openMenuLabel = menu.getAttribute('aria-label');
           const rowAuthButtonPresent = !!findByClass(roster, 'characters-auth-action');
+
+          statePayload = Object.assign({{}}, statePayload, {{
+            authorization_notice: '',
+            characters: [{{
+              character_id: 5,
+              character_name: 'Replacement Pilot',
+              authenticated_utc: '2026-09-04T12:30:00+00:00',
+              skills: 'authorized',
+              fittings: 'authorized',
+              needs_reauth: false,
+              persistence_error: ''
+            }}]
+          }});
+          document.dispatchEvent(new CustomEvent('wm:eve-authority', {{ detail: {{}} }}));
+          await tick();
+          const menuClosedAfterAuthorityRender = menu.hidden && forget.disabled
+            && menuTrigger.getAttribute('aria-expanded') === 'false';
+          const menuLabelAfterAuthorityRender = menu.getAttribute('aria-label');
+
+          const replacementTrigger = findByClass(roster, 'characters-menu-trigger');
+          replacementTrigger.dispatchEvent({{ type: 'click' }});
+          forgetResult = {{
+            applied: true,
+            persisted: false,
+            error: 'Cleanup was not saved.'
+          }};
+          forget.dispatchEvent({{ type: 'click' }});
+          await tick();
+          await tick();
+          await tick();
+          const localNoticeWithWarnings = notice.textContent;
 
           authenticate.dispatchEvent({{ type: 'click' }});
           const authDisabledImmediately = authenticate.disabled;
@@ -505,8 +548,13 @@ def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates
           const cancelDisabledImmediately = cancel.disabled;
 
           console.log(JSON.stringify({{
+            initialNotice,
             forgetEnabledWhenOpen,
+            openMenuLabel,
             rowAuthButtonPresent,
+            menuClosedAfterAuthorityRender,
+            menuLabelAfterAuthorityRender,
+            localNoticeWithWarnings,
             authDisabledImmediately,
             cancelDisabledImmediately
           }}));
@@ -529,12 +577,24 @@ def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates
 
     assert proc.returncode == 0, proc.stderr or proc.stdout
     result = json.loads(proc.stdout)
-    assert result == {
-        "forgetEnabledWhenOpen": True,
-        "rowAuthButtonPresent": False,
-        "authDisabledImmediately": True,
-        "cancelDisabledImmediately": True,
-    }
+    assert "Last sign-in failed." in result["initialNotice"]
+    assert "Restored eve_authority.json from backup." in result["initialNotice"]
+    assert "The EVE fittings subsystem is unavailable." in result["initialNotice"]
+    assert result["forgetEnabledWhenOpen"] is True
+    assert result["openMenuLabel"] == "Actions for Needs Reauth"
+    assert result["rowAuthButtonPresent"] is False
+    assert result["menuClosedAfterAuthorityRender"] is True
+    assert result["menuLabelAfterAuthorityRender"] == "Character actions"
+    assert "Cleanup was not saved." in result["localNoticeWithWarnings"]
+    assert (
+        "Restored eve_authority.json from backup." in result["localNoticeWithWarnings"]
+    )
+    assert (
+        "The EVE fittings subsystem is unavailable."
+        in result["localNoticeWithWarnings"]
+    )
+    assert result["authDisabledImmediately"] is True
+    assert result["cancelDisabledImmediately"] is True
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

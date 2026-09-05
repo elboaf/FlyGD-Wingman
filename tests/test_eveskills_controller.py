@@ -2558,27 +2558,6 @@ def test_an_unexpected_exception_during_sign_in_alerts(tmp_path, monkeypatch):
     assert controller.state_payload()["characters"] == []
 
 
-def test_a_spawn_failure_releases_the_latch(tmp_path, monkeypatch):
-    """Nothing runs _auth_worker's own finally if starting the thread
-    itself raises -- authenticate() has to release the latch and clear the
-    in-progress flag itself in that window, or sign-in is dead until
-    restart."""
-
-    class RaisingSpawn:
-        def __call__(self, target, daemon=True):
-            raise OSError("could not start thread")
-
-    controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, spawn=RaisingSpawn()
-    )
-
-    controller._authority.start_full_authorization()
-
-    assert any("Sign-in failed" in title for _, title, _ in alerts)
-    assert controller._authority.auth_in_progress is False
-    assert controller._authority._auth_latch.acquire(blocking=False)
-
-
 # ----- character_detail ---------------------------------------------------
 
 
