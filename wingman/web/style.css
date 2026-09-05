@@ -926,8 +926,9 @@ button.btn:disabled,
 
 /* Except on the sections that TRAVEL, which is where Settings stops
    qualifying. Bookmarks holds eighteen keybind rows and Previews one row
-   per known character -- the two the .settings-pane scroll note below was
-   written about -- so both overflow the pane and scroll.
+   per known character, so both overflow the pane and scroll. Characters
+   also uses the pane width for its roster now, leaving no outer gutter in
+   which the watermark could appear without competing with live content.
 
    THE TEST IS MOTION, not the card gap on its own. The 12px `.settings`
    gap is a window onto the ship on the short sections too, and that is
@@ -965,6 +966,7 @@ button.btn:disabled,
    long past 105, and the alternative is a JS class on #route-settings for
    a case no supported install reaches. */
 #route-settings:has(#section-uploading.active)::after,
+#route-settings:has(#section-characters.active)::after,
 #route-settings:has(#section-bookmarks.active)::after,
 #route-settings:has(#section-previews.active)::after,
 #route-settings:has(#section-alerts.active)::after { content: none; }
@@ -2218,14 +2220,17 @@ button.btn:disabled,
    and Alerts -- so this is no longer the two-section safeguard it was;
    the ::after exclusion above carries those measurements. */
 
-/* Character names, like bookmarks' action names, are long -- but they take
-   the stacked label treatment anyway, like every other settings row on the
-   route. They did not until round 3's B1; the #eve-binds block below
-   carries the reasoning and the measurements for both lists. */
-#section-characters { min-height: 100%; }
-#section-characters > .card {
+/* Character authorization is a short setup action, but the roster is a
+   scanning surface. The shared Settings measure remains right for the first
+   card; the section and roster deliberately use the pane width so five
+   columns do not compete while an outer gutter sits empty. Only the roster
+   grows, preserving its single internal scroller for long character lists. */
+#section-characters { height: 100%; max-width: none; }
+.characters-auth-card { max-width: 620px; }
+.characters-roster-card {
   display: flex; flex: 1; min-height: 0; flex-direction: column;
 }
+
 #characters-roster {
   display: flex; flex: 1; min-height: 0; flex-direction: column;
   gap: 0; overflow-y: auto; scrollbar-gutter: stable;
@@ -2238,12 +2243,16 @@ button.btn:disabled,
 }
 #characters-empty[hidden] { display: none; }
 /* One compact table, not one card per row: the screen's job is to scan a
-   roster and act on one character, so the rows share one set of tracks and
-   the menu carries the rare destructive action outside the scan line. */
+   roster and act on one character. Explicit metadata tracks keep each
+   independently rendered row aligned with the header; max-content here would
+   size those tracks from different text in every grid. At the 840px floor,
+   row padding leaves 572px; the four fixed tracks and gaps use 408px, leaving
+   the character column 164px. The menu carries the rare destructive action
+   outside the scan line. */
 .characters-head,
 .characters-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) max-content max-content max-content auto;
+  grid-template-columns: minmax(150px, 1fr) 92px 106px 138px 32px;
   gap: 10px;
   align-items: center;
 }
@@ -2280,7 +2289,8 @@ button.btn:disabled,
   white-space: nowrap;
 }
 .characters-status.authorized { color: var(--ok); }
-.characters-status.sign-in { color: var(--warn); }
+.characters-status.access-needed,
+.characters-status.access-expired { color: var(--warn); }
 .characters-authenticated {
   color: var(--text-faint); font-size: var(--fs-muted); white-space: nowrap;
 }

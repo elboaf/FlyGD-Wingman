@@ -3800,14 +3800,15 @@ for these items.
       access error.
 - [ ] **Settings > Characters is the only EVE authorization surface.** Open
       Skills and Fittings and follow any authorize/reconnect/forget handoff.
-      Expected: the write happens in Settings > Characters, and that card says
-      the shared sign-in is used by Skills and Fittings. Neither destination
-      exposes a per-row or per-feature authorization button.
+      Expected: the write happens in Settings > Characters, and the
+      authorization card says EVE sign-in adds a character or updates access
+      for Skills and Fittings. Neither destination nor the roster exposes a
+      per-row or per-feature authorization button.
 - [ ] **An older two-scope Skills grant stays scoped until reconnected.** Start
       from a migrated or existing grant that has only `esi-skills.read_skills.v1`
       and `esi-skills.read_skillqueue.v1`. Refresh it in Skills successfully,
       then open Settings > Characters and Fittings. Expected: Skills reads as
-      Authorized, Fittings reads as Sign in, no fitting GET occurs before
+      Authorized, Fittings reads as Access needed, no fitting GET occurs before
       reconnect, and no fitting scopes were silently added to the existing
       grant.
 - [ ] **Settings > Characters requests exactly the full four-scope set.** Start
@@ -3842,9 +3843,11 @@ for these items.
       until reconciliation proves what survived.
 - [ ] **50-row keyboard/menu checks.** With deterministic staging or an
       equivalent large live roster, open Settings > Characters at the
-      840x625 floor. Expected: the roster scrolls, the last visible row's
-      More menu opens by mouse and keyboard, Escape closes it, focus returns
-      to the trigger, and no horizontal overflow appears.
+      840x625 floor. Expected: authorization remains in its compact card, the
+      Character access card uses the remaining pane width and height, the
+      roster scrolls internally, the last visible row's More menu opens by
+      mouse and keyboard, Escape closes it, focus returns to the trigger, and
+      no horizontal or outer-pane overflow appears.
 
 ### Library, import and curation
 

@@ -104,9 +104,10 @@
       && section.classList.contains('active');
   }
 
-  function statusLabel(value) {
+  function statusLabel(value, needsReauth) {
     if (value === 'authorized') return 'Authorized';
-    return 'Sign in';
+    if (needsReauth) return 'Access expired';
+    return 'Access needed';
   }
 
   function formatAuthenticated(iso) {
@@ -124,17 +125,15 @@
   }
 
   function rosterLabel(total, shown) {
-    if (!filterText.trim()) return 'Authorized characters';
-    return shown + ' of ' + total + ' authorized characters matching '
-      + filterText.trim();
+    if (!filterText.trim()) return 'Character roster';
+    return shown + ' of ' + total + ' characters matching ' + filterText.trim();
   }
 
   function rowFilterText(row) {
     return [
       asText(row.character_name),
-      statusLabel(row.skills),
-      statusLabel(row.fittings),
-      row.needs_reauth ? 'Sign in' : '',
+      statusLabel(row.skills, row.needs_reauth),
+      statusLabel(row.fittings, row.needs_reauth),
       formatAuthenticated(row.authenticated_utc)
     ].join(' ').toLowerCase();
   }
@@ -193,10 +192,10 @@
       return;
     }
     if (!state.characters.length) {
-      activity.textContent = 'Authorize an EVE account to let Wingman read its character roster.';
+      activity.textContent = 'Use EVE sign-in to add your first character.';
       return;
     }
-    activity.textContent = 'Wingman shares one EVE sign-in across Skills and Fittings.';
+    activity.textContent = 'Use EVE sign-in to add a character or update access for Skills and Fittings.';
   }
 
   function renderButtons() {
@@ -222,9 +221,12 @@
   }
 
   function renderEmpty(message) {
-    empty.textContent = asText(message);
+    clearNode(empty);
     empty.hidden = !message;
     if (!message) return;
+    var cell = WM.make('span', '', asText(message));
+    cell.setAttribute('role', 'cell');
+    empty.appendChild(cell);
     clearNode(roster);
     roster.appendChild(empty);
   }
@@ -284,17 +286,23 @@
 
   function makeHeader() {
     var head = WM.make('div', 'characters-head');
+    head.setAttribute('role', 'row');
     ['Character', 'Skills', 'Fittings', 'Authenticated', 'Actions']
       .forEach(function (label) {
-        head.appendChild(WM.make('span', '', label));
+        var cell = WM.make('span', '', label);
+        cell.setAttribute('role', 'columnheader');
+        head.appendChild(cell);
       });
     return head;
   }
 
-  function makeStatusCell(value) {
-    return WM.make('span', 'characters-status '
-      + (value === 'authorized' ? 'authorized' : 'sign-in'),
-      statusLabel(value));
+  function makeStatusCell(value, needsReauth) {
+    var stateClass = value === 'authorized' ? 'authorized'
+      : (needsReauth ? 'access-expired' : 'access-needed');
+    var cell = WM.make('span', 'characters-status ' + stateClass,
+                       statusLabel(value, needsReauth));
+    cell.setAttribute('role', 'cell');
+    return cell;
   }
 
   function startAuthenticationError(result) {
@@ -311,9 +319,10 @@
 
   function makeRow(row) {
     var node = WM.make('div', 'characters-row');
-    node.setAttribute('role', 'listitem');
+    node.setAttribute('role', 'row');
 
     var name = WM.make('div', 'characters-name');
+    name.setAttribute('role', 'cell');
     var nameText = WM.make('span', 'characters-name-text',
                            row.character_name || String(row.character_id));
     var authenticated = formatAuthenticated(row.authenticated_utc);
@@ -322,12 +331,15 @@
       name.appendChild(WM.make('span', 'characters-name-note', row.persistence_error));
     }
     node.appendChild(name);
-    node.appendChild(makeStatusCell(row.skills));
-    node.appendChild(makeStatusCell(row.fittings));
-    node.appendChild(WM.make('span', 'characters-authenticated',
-                             authenticated ? 'Authenticated ' + authenticated : ''));
+    node.appendChild(makeStatusCell(row.skills, row.needs_reauth));
+    node.appendChild(makeStatusCell(row.fittings, row.needs_reauth));
+    var authenticatedCell = WM.make('span', 'characters-authenticated',
+                                    authenticated ? authenticated : '');
+    authenticatedCell.setAttribute('role', 'cell');
+    node.appendChild(authenticatedCell);
 
     var actions = WM.make('div', 'characters-actions');
+    actions.setAttribute('role', 'cell');
     var more = WM.make('button', 'linkbtn characters-menu-trigger', '⋯');
     more.type = 'button';
     more.title = 'More actions';
@@ -374,7 +386,7 @@
       return;
     }
     if (!characters.length) {
-      renderEmpty('No authorized characters yet.');
+      renderEmpty('No characters yet.');
       return;
     }
     if (!rows.length) {
