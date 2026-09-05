@@ -14,7 +14,7 @@ from wingman.ui import window as window_mod
 
 logger = logging.getLogger(__name__)
 
-WIDTH = 380
+WIDTH = 420
 HEIGHT = 90
 MIN_SIZE = (1, 1)
 DEFAULT_MARGIN = 60

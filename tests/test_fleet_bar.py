@@ -459,7 +459,7 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
     api._fleet_expected_generation = 1
     snapshot = FleetSnapshot(
         rows=(
-            FleetRow("Alice", 43, ("SCRAM/POINT",)),
+            FleetRow("Alice", 43, ("SCRAM", "NEUT")),
             FleetRow("Bravo", None, (), "NO LOG"),
         ),
         stream_health=StreamHealth(state="stale", detail="3.2s since poll"),
@@ -476,7 +476,7 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
             {
                 "character": "Alice",
                 "dps": 43,
-                "ewar": ["SCRAM/POINT"],
+                "ewar": ["SCRAM", "NEUT"],
                 "log_status": None,
             },
             {
@@ -1112,4 +1112,4 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     assert "fleet_bar_ready" in js  # hidden until initial render and fit complete
     assert "screen.availLeft" in js and "move_fleet_bar" in js
     assert "unavailable ? row.log_status" in js  # NO LOG belongs under EWAR
-    assert "SCRAM/POINT" not in js  # rendered from telemetry, never guessed here
+    assert "SCRAM" not in js  # rendered from telemetry, never guessed here

@@ -788,7 +788,9 @@ class TestSequencing:
         h.coordinator.reconcile()
 
         h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
-        h.stream.publish(_fact("Alice", "incoming_tackle", source="Bob"))
+        h.stream.publish(_fact("Alice", "incoming_scram", source="Bob"))
+        h.stream.publish(_fact("Alice", "incoming_point", source="Carol"))
+        h.stream.publish(_fact("Alice", "incoming_neut", source="Dave"))
         h.stream.publish(_fact("Alice", "incoming_miss", source="Rat"))
         h.stream.publish(_fact("Alice", "decloak"))
         h.stream.publish(_fact("Alice", "outgoing_damage", amount=10))
@@ -800,6 +802,7 @@ class TestSequencing:
         assert [(e.character, e.event, e.source) for e in events] == [
             ("Alice", "combat", "Rat"),
             ("Alice", "warp_scramble", "Bob"),
+            ("Alice", "warp_scramble", "Carol"),
             ("Alice", "combat", "Rat"),
             ("Alice", "decloak", ""),
         ]
