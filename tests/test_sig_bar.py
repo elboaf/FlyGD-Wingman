@@ -63,7 +63,19 @@ def api(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sigbar, "reveal_bar", reveal)
     monkeypatch.setattr(sigbar, "hide_bar", hide)
-    return built
+    yield built
+    # The focus-gate timer chain is self-re-arming and daemon; a test that
+    # ends with the bar enabled would leave it ticking into LATER tests,
+    # where it can construct whatever threading.Timer they have patched
+    # (the startup suite counts Timer constructions -- see the ubuntu-only
+    # failure this teardown exists to prevent). Close the lifecycle and
+    # cancel: a tick racing this teardown sees quitting under the lock and
+    # never re-arms.
+    with built._sigbar_lifecycle_lock:
+        built._sigbar_quitting = True
+        if built._sigbar_focus_timer is not None:
+            built._sigbar_focus_timer.cancel()
+            built._sigbar_focus_timer = None
 
 
 def state_pushes(window):
@@ -293,3 +305,122 @@ def test_toggle_off_ignores_a_dead_window_without_error(api):
 def test_a_live_window_still_counts_as_alive(api):
     api.toggle_sig_bar(True)
     assert api._sig_bar_alive(api._sigbar_window) is True
+
+
+# ---- focus gate --------------------------------------------------------
+
+
+def _scoped(api, monkeypatch, focused):
+    """Point eve_bookmarks at two checked characters and fake the focus.
+
+    Alice is checked, Bob is not; `focused` is the full window title the
+    gate should believe is foreground (None = a non-EVE foreground).
+    """
+    from wingman import settings as settings_mod
+
+    settings_mod.update_section(
+        api._state.settings,
+        "eve_bookmarks",
+        {"windows": {"EVE - Alice": True, "EVE - Bob": False}},
+    )
+    from wingman import evewindows
+
+    monkeypatch.setattr(evewindows, "focused_eve_title", lambda: focused)
+    return api
+
+
+def test_gate_hides_the_bar_when_an_unchecked_client_holds_focus(api, monkeypatch):
+    api.toggle_sig_bar(True)  # arms the timer; revealed by the toggle
+    try:
+        _scoped(api, monkeypatch, "EVE - Bob")
+        api._apply_sig_bar_focus_gate()
+        assert api._sigbar_window.hidden is True
+    finally:
+        api.toggle_sig_bar(False)  # disarm so no timer outlives the test
+
+
+def test_gate_hides_the_bar_when_no_eve_client_holds_focus(api, monkeypatch):
+    api.toggle_sig_bar(True)
+    try:
+        _scoped(api, monkeypatch, None)
+        api._apply_sig_bar_focus_gate()
+        assert api._sigbar_window.hidden is True
+    finally:
+        api.toggle_sig_bar(False)
+
+
+def test_gate_reveals_the_bar_when_a_checked_client_holds_focus(api, monkeypatch):
+    api._sigbar_window.hidden = True
+    api.toggle_sig_bar(True)
+    try:
+        _scoped(api, monkeypatch, "EVE - Alice")
+        api._sigbar_window.hidden = True  # as if the gate hid it earlier
+        api._apply_sig_bar_focus_gate()
+        assert api._sigbar_window.hidden is False
+    finally:
+        api.toggle_sig_bar(False)
+
+
+def test_gate_is_inert_with_an_empty_window_map(api, monkeypatch):
+    """No checkboxes ever touched: the bar keeps its long-shipping
+    always-show behaviour, even with nothing EVE in the foreground."""
+    api.toggle_sig_bar(True)
+    try:
+        from wingman import evewindows
+
+        monkeypatch.setattr(evewindows, "focused_eve_title", lambda: None)
+        api._apply_sig_bar_focus_gate()
+        assert api._sigbar_window.hidden is False
+    finally:
+        api.toggle_sig_bar(False)
+
+
+def test_gate_is_inert_when_no_box_is_checked(api, monkeypatch):
+    """The bookmarks tab persists UNCHECKED windows as False entries, so
+    an all-False map is "opened the tab", not "scoped the bar". It kept
+    the always-show behaviour -- reading it as scoped is what hid the
+    bar entirely in the first test build."""
+    from wingman import settings as settings_mod
+
+    settings_mod.update_section(
+        api._state.settings,
+        "eve_bookmarks",
+        {"windows": {"EVE - Alice": False, "EVE - Bob": False}},
+    )
+    api.toggle_sig_bar(True)
+    try:
+        from wingman import evewindows
+
+        monkeypatch.setattr(evewindows, "focused_eve_title", lambda: "EVE - Alice")
+        api._apply_sig_bar_focus_gate()
+        assert api._sigbar_window.hidden is False
+    finally:
+        api.toggle_sig_bar(False)
+
+
+def test_gate_leaves_a_disabled_bar_hidden(api, monkeypatch):
+    """The gate never shows a bar the user toggled off -- enabled is the
+    master switch, focus only scopes an enabled bar."""
+    _scoped(api, monkeypatch, "EVE - Alice")
+    api._sigbar_window.hidden = True
+    api._apply_sig_bar_focus_gate()
+    assert api._sigbar_window.hidden is True
+
+
+def test_toggle_on_applies_the_gate_immediately(api, monkeypatch):
+    """Enabling while a non-allowed client holds the foreground must not
+    flash the bar for one cadence before hiding it."""
+    _scoped(api, monkeypatch, "EVE - Bob")
+    api.toggle_sig_bar(True)
+    try:
+        assert api._sigbar_window.hidden is True
+    finally:
+        api.toggle_sig_bar(False)
+
+
+def test_toggle_arms_and_disarms_the_focus_timer(api):
+    api.toggle_sig_bar(True)
+    armed = api._sigbar_focus_timer
+    assert armed is not None and armed.is_alive()
+    api.toggle_sig_bar(False)
+    assert api._sigbar_focus_timer is None

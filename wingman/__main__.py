@@ -887,6 +887,11 @@ def main() -> int:
                 # that won the lock has already assigned its bar; one that lost
                 # refuses before allocating a native WebView2 window.
                 api._sigbar_quitting = True
+                # Disarm the focus gate under the same boundary: a tick
+                # racing this teardown would reveal the bar quitting is
+                # about to destroy. The scheduler sees quitting and only
+                # cancels -- it never arms.
+                api._schedule_sig_bar_focus_poll()
                 # The sig bar must be destroyed FIRST. pywebview's WinForms loop
                 # is Application.Run() with no context: it pumps until
                 # Application.Exit(), which fires only when the LAST window is
@@ -962,6 +967,12 @@ def main() -> int:
                     # Auxiliary chrome is independent: one broken WebView
                     # must not prevent the other from restoring.
                     logger.exception("%s restore failed", label)
+            try:
+                # Arms only when the restored sig bar was left enabled --
+                # the scheduler itself enforces that, so no state peeking.
+                api._schedule_sig_bar_focus_poll()
+            except Exception:
+                logger.exception("Sig bar focus gate could not be armed")
 
         shown.shown += _restore_floating_bars
 

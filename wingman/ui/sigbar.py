@@ -119,6 +119,14 @@ def create(api):
             # The bar is dragged by its body and must never steal focus
             # from the client being flown.
             focus=False,
+            # True per-pixel transparency: pywebview's WinForms+EdgeChromium
+            # path sets SupportsTransparentBackColor and makes the WebView2
+            # background Color.Transparent, so the page's rounded shell is
+            # the WINDOW's shape -- without it the form's own square
+            # background paints behind the CSS border-radius corners.
+            # background_color is ignored on this path, which is fine: the
+            # first paint risk it covers is hidden-at-creation.
+            transparent=True,
             # The native surface paints before the first HTML frame; a
             # mismatch is a white flash, same as the main window's note.
             background_color=window_mod.BACKGROUND,
