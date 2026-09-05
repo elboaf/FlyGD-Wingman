@@ -40,6 +40,7 @@
   var authRequestPending = false;
   var localNotice = '';
   var localNoticeKind = '';
+  var readErrorNotice = '';
   var menuCharacterId = 0;
   var menuCharacterName = '';
   var menuTrigger = null;
@@ -161,6 +162,15 @@
     renderNotice();
   }
 
+  function showReadError(text) {
+    readErrorNotice = asText(text).slice(0, 500);
+    authRequestPending = false;
+    closeMenu(false);
+    renderButtons();
+    renderActivity();
+    renderNotice();
+  }
+
   function announce(text) {
     live.textContent = asText(text);
   }
@@ -170,11 +180,12 @@
     var warnings = state.available && state.warnings ? state.warnings : [];
     var parts = [];
     if (primary) parts.push(primary);
+    if (readErrorNotice) parts.push(readErrorNotice);
     warnings.forEach(function (warning) {
       if (warning) parts.push(warning);
     });
-    var kind = localNotice ? localNoticeKind
-      : (primary ? '' : (parts.length ? 'warn' : ''));
+    var kind = readErrorNotice ? 'err'
+      : (localNotice ? localNoticeKind : (primary ? '' : (parts.length ? 'warn' : '')));
     notice.className = 'field-msg' + (kind ? ' ' + kind : '');
     notice.textContent = parts.join('\n');
     notice.hidden = !parts.length;
@@ -384,6 +395,7 @@
 
   function render(payload) {
     authRequestPending = false;
+    readErrorNotice = '';
     closeMenu(false);
     state = normalizeState(payload);
     renderButtons();
@@ -397,6 +409,10 @@
     var wanted = requestSequence;
     WM.send('eve_characters_state').then(function (payload) {
       if (wanted !== requestSequence || !isVisible()) return;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        showReadError('Could not refresh the authorized characters. Keeping the previous roster.');
+        return;
+      }
       render(payload);
     });
   }

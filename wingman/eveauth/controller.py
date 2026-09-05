@@ -614,16 +614,12 @@ class AuthorityController:
                 except Exception:
                     logger.warning("EVE participant cleanup failed", exc_info=True)
                     verification = self._blocked_unavailable_cleanup(capability, wanted)
-                    self._store_cleanup_verification(capability, verification)
                     cleanup_errors.append(verification.error)
                     continue
-                self._store_cleanup_verification(
+                self._cleanup_verification_for_removal(
                     capability,
-                    self._cleanup_verification_for_removal(
-                        capability,
-                        wanted,
-                        result,
-                    ),
+                    wanted,
+                    result,
                 )
                 if not result.applied or not result.persisted:
                     cleanup_errors.append(
@@ -633,7 +629,6 @@ class AuthorityController:
                 if capability in participants_by_capability:
                     continue
                 verification = self._blocked_unavailable_cleanup(capability, wanted)
-                self._store_cleanup_verification(capability, verification)
                 cleanup_errors.append(verification.error)
             self._changed_safely()
             if cleanup_errors:
@@ -991,11 +986,13 @@ class AuthorityController:
     ) -> CleanupVerification:
         with self._lock:
             previous = self._cleanup_verification[capability]
-        return CleanupVerification(
-            False,
-            frozenset({*previous.blocked_character_ids, character_id}),
-            self._cleanup_unavailable(capability).error,
-        )
+            verification = CleanupVerification(
+                False,
+                frozenset({*previous.blocked_character_ids, character_id}),
+                self._cleanup_unavailable(capability).error,
+            )
+            self._cleanup_verification[capability] = verification
+            return verification
 
     def _store_cleanup_verification(
         self, capability: str, verification: CleanupVerification
@@ -1024,22 +1021,26 @@ class AuthorityController:
     ) -> CleanupVerification:
         with self._lock:
             previous = self._cleanup_verification[capability]
-        blocked_ids = set(previous.blocked_character_ids)
-        if result.applied and result.persisted:
-            blocked_ids.discard(character_id)
-            return CleanupVerification(True, frozenset(blocked_ids), "")
-        blocked_ids.add(character_id)
-        if result.applied:
-            return CleanupVerification(
-                True,
-                frozenset(blocked_ids),
-                result.error or "A feature cleanup is incomplete.",
-            )
-        return CleanupVerification(
-            False,
-            frozenset(blocked_ids),
-            result.error or self._cleanup_unavailable(capability).error,
-        )
+            blocked_ids = set(previous.blocked_character_ids)
+            if result.applied and result.persisted:
+                blocked_ids.discard(character_id)
+                verification = CleanupVerification(True, frozenset(blocked_ids), "")
+            elif result.applied:
+                blocked_ids.add(character_id)
+                verification = CleanupVerification(
+                    True,
+                    frozenset(blocked_ids),
+                    result.error or "A feature cleanup is incomplete.",
+                )
+            else:
+                blocked_ids.add(character_id)
+                verification = CleanupVerification(
+                    False,
+                    frozenset(blocked_ids),
+                    result.error or self._cleanup_unavailable(capability).error,
+                )
+            self._cleanup_verification[capability] = verification
+            return verification
 
     def _reconcile_participant(
         self,

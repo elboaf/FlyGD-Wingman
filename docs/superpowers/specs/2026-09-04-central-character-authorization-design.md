@@ -118,7 +118,14 @@ Existing guarantees remain:
 - feature endpoint failures do not independently invalidate a grant; and
 - only validated SSO outcomes and identity checks alter shared authority.
 
-No authority-state or settings-schema migration is required.
+No `settings.json` schema migration is required.
+
+Legacy credential migration is one-way and fail-closed: if an old `eve_skills.json`
+still carries refresh credentials, Wingman first persists the extracted authority
+into `eve_authority.json` and only then marks Skills stripped. If loading or
+saving the authority side is unavailable, unreadable, or degrades to dropped
+rows, Wingman leaves the legacy Skills document unchanged rather than discarding
+credentials or resurrecting them from a partial move.
 
 ## Shared character-management interface
 

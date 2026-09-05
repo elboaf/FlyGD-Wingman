@@ -451,8 +451,12 @@
   };
   var _devCharacters = devCharactersScenario(charactersScenario);
 
+  function devCharactersText(value) {
+    return value == null ? '' : String(value);
+  }
+
   function devCharactersScenario(name) {
-    var scenario = DEV_CHARACTERS_SCENARIOS[asText(name)]
+    var scenario = DEV_CHARACTERS_SCENARIOS[devCharactersText(name)]
       || DEV_CHARACTERS_SCENARIOS.partial;
     return JSON.parse(JSON.stringify(scenario));
   }
@@ -2361,7 +2365,7 @@
     },
     eveCharacters: function (name) {
       _devCharacters = devCharactersScenario(name);
-      devPushCharactersChanged('scenario:' + asText(name || 'partial'));
+      devPushCharactersChanged('scenario:' + devCharactersText(name || 'partial'));
     }
   };
 

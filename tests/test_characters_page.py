@@ -115,7 +115,9 @@ def test_characters_re_read_on_entry_and_visible_authority_change_with_stale_gua
         r"requestSequence \+= 1;\s*var wanted = requestSequence;\s*"
         r"WM\.send\('eve_characters_state'\)\.then\(function \(payload\) \{\s*"
         r"if \(wanted !== requestSequence \|\| !isVisible\(\)\) return;\s*"
-        r"render\(payload\);",
+        r"if \(!payload \|\| typeof payload !== 'object' \|\| Array\.isArray\(payload\)\) \{\s*"
+        r"showReadError\('Could not refresh the authorized characters\. Keeping the previous roster\.'\);\s*"
+        r"return;\s*\}\s*render\(payload\);",
         JS,
         re.DOTALL,
     )
@@ -196,7 +198,7 @@ def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state(
         re.DOTALL,
     )
     assert re.search(
-        r"authRequestPending = false;\s*closeMenu\(false\);\s*"
+        r"authRequestPending = false;\s*readErrorNotice = '';\s*closeMenu\(false\);\s*"
         r"state = normalizeState\(payload\);",
         JS,
         re.DOTALL,
@@ -269,7 +271,7 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
     assert ".focus();" in JS
     assert re.search(
         r"function render\(payload\) \{\s*authRequestPending = false;\s*"
-        r"closeMenu\(false\);",
+        r"readErrorNotice = '';\s*closeMenu\(false\);",
         JS,
         re.DOTALL,
     )
@@ -536,6 +538,35 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
           await tick();
           const localNoticeWithWarnings = notice.textContent;
 
+          statePayload = null;
+          document.dispatchEvent(new CustomEvent('wm:eve-authority', {{ detail: {{}} }}));
+          await tick();
+          const preservedRosterRowCount = roster.children.length;
+          const preservedRosterName = findByClass(roster, 'characters-name-text').textContent;
+          const readErrorNotice = notice.textContent;
+          const emptyHiddenAfterReadError = empty.hidden;
+
+          statePayload = {{
+            available: true,
+            auth_configured: true,
+            authorization_activity: 'idle',
+            authorization_notice: '',
+            warnings: ['Restored eve_authority.json from backup.', 'The EVE fittings subsystem is unavailable.'],
+            characters: [{{
+              character_id: 6,
+              character_name: 'Recovered Pilot',
+              authenticated_utc: '2026-09-04T12:45:00+00:00',
+              skills: 'authorized',
+              fittings: 'authorized',
+              needs_reauth: false,
+              persistence_error: ''
+            }}]
+          }};
+          document.dispatchEvent(new CustomEvent('wm:eve-authority', {{ detail: {{}} }}));
+          await tick();
+          const recoveredRosterName = findByClass(roster, 'characters-name-text').textContent;
+          const noticeAfterRecovery = notice.textContent;
+
           authenticate.dispatchEvent({{ type: 'click' }});
           const authDisabledImmediately = authenticate.disabled;
 
@@ -555,6 +586,12 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
             menuClosedAfterAuthorityRender,
             menuLabelAfterAuthorityRender,
             localNoticeWithWarnings,
+            preservedRosterRowCount,
+            preservedRosterName,
+            readErrorNotice,
+            emptyHiddenAfterReadError,
+            recoveredRosterName,
+            noticeAfterRecovery,
             authDisabledImmediately,
             cancelDisabledImmediately
           }}));
@@ -593,6 +630,13 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
         "The EVE fittings subsystem is unavailable."
         in result["localNoticeWithWarnings"]
     )
+    assert result["preservedRosterRowCount"] == 2
+    assert result["preservedRosterName"] == "Replacement Pilot"
+    assert result["emptyHiddenAfterReadError"] is True
+    assert "Cleanup was not saved." in result["readErrorNotice"]
+    assert "Could not refresh the authorized characters." in result["readErrorNotice"]
+    assert result["recoveredRosterName"] == "Recovered Pilot"
+    assert result["noticeAfterRecovery"] == result["localNoticeWithWarnings"]
     assert result["authDisabledImmediately"] is True
     assert result["cancelDisabledImmediately"] is True
 

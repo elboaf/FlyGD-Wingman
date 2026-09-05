@@ -528,6 +528,53 @@ def test_cleanup_exception_preserves_prior_blocked_ids(tmp_path):
     )
 
 
+def test_concurrent_partial_forgets_keep_every_blocked_id(tmp_path):
+    authority, _, _, _ = build(
+        tmp_path,
+        characters=[stored_character(42), stored_character(43)],
+    )
+    authority.register_participant(
+        application.SKILLS,
+        Participant(
+            cleanup=MutationResult(True, False, "Could not save Skills cleanup."),
+        ),
+    )
+    authority.register_participant(application.FITTINGS, Participant())
+
+    original = authority._cleanup_verification_for_removal
+    barrier = threading.Barrier(2)
+
+    def split_removal_update(capability, character_id, result):
+        verification = original(capability, character_id, result)
+        if capability == application.SKILLS:
+            barrier.wait(timeout=2)
+        return verification
+
+    authority._cleanup_verification_for_removal = split_removal_update
+    results = {}
+    first = threading.Thread(
+        target=lambda: results.setdefault(42, authority.forget(42))
+    )
+    second = threading.Thread(
+        target=lambda: results.setdefault(43, authority.forget(43))
+    )
+
+    first.start()
+    second.start()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert results[42] == MutationResult(True, False, "Could not save Skills cleanup.")
+    assert results[43] == MutationResult(True, False, "Could not save Skills cleanup.")
+    assert authority._cleanup_verification[application.SKILLS] == CleanupVerification(
+        True,
+        frozenset({42, 43}),
+        "Could not save Skills cleanup.",
+    )
+
+
 def test_register_participant_verifies_only_after_both_named_slots_are_clean(tmp_path):
     authority, _, _, _ = build(tmp_path)
 
