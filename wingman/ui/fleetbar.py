@@ -62,6 +62,10 @@ def create(api, hidden: bool = True):
         api._fleetbar_window = bar
         if sys.platform == "win32":
             sigbar_mod._apply_tool_style(bar)
+            # Same resize-flash fix as the sig bar: the table fits its
+            # height on every snapshot, and each fit repaints the form's
+            # default backing until WebView2's next frame.
+            sigbar_mod._apply_transparent_backing(bar)
         return bar
 
 

@@ -138,7 +138,37 @@ def create(api):
         api._sigbar_window = bar
         if sys.platform == "win32":
             _apply_tool_style(bar)
+            _apply_transparent_backing(bar)
         return bar
+
+
+def _apply_transparent_backing(bar) -> None:
+    """Stop WinForms flashing the bar white while it is being resized.
+
+    pywebview's transparent-window path sets the
+    SupportsTransparentBackColor STYLE on the form but never assigns
+    BackColor itself, so the form still erases with the default control
+    colour on every resize. The bar resizes constantly -- the page's fit
+    round-trip retargets the window whenever the text changes -- and each
+    resize painted that default backing across the whole new area until
+    WebView2's next composited frame replaced it: a white box for a few
+    seconds, on a window whose entire aesthetic is that nothing outside
+    the rounded shell is visible.
+
+    Assigning Color.Transparent (legal because of the style flag) makes
+    the erase paint nothing at all. pythonnet/System.Drawing are already
+    loaded by pywebview's WinForms backend at this point; best-effort,
+    because the failure mode is only the flash this fixes.
+    """
+    try:
+        import clr
+
+        clr.AddReference("System.Drawing")
+        from System.Drawing import Color
+
+        bar.native.BackColor = Color.Transparent
+    except Exception:
+        logger.exception("sig bar transparent backing could not be set")
 
 
 # Native show/hide and the style patch all key off the HWND. ctypes calls
