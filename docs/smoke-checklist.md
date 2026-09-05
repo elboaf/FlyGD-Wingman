@@ -451,9 +451,9 @@ somewhere stale and nothing on that screen is worth reviewing.
       list footer beside Select all / Select none, where the files it
       deletes are.
 - [ ] **Settings rows stay usable at the window floor.** With the window at
-      its floor, open Settings > Folders and Settings > Discord. Expected:
-      the path and the masked webhook are both wide enough to read, with
-      their buttons still beside them on the row.
+      its floor, open Settings > Uploading. Expected: the recording-folder
+      path and the masked webhook are both wide enough to read, with their
+      buttons still beside them on the row.
       **This item used to read "at 150% scaling, with the window at its
       floor (560 CSS px)" and could not be performed.** The floor is 840
       CSS px at EVERY scaling, so a 560px viewport does not exist and
@@ -1113,14 +1113,15 @@ behavior that only shows up at size.
       checks — this item covers the rail specifically, not a duplicate of
       those.
 - [ ] **The Settings rail is as tall as its entries, and the ship fills the
-      rest.** Round 5's G3-rail and G2. Open Settings on Account, Discord or
-      General: the rail ends just below **General** rather than running to
-      the status strip, and the space below and right of it is page wash
-      with the ship watermark in the lower right — not a bordered box beside
-      a void. Then click **Bookmarks** and **Previews**: those two scroll,
-      so the watermark is **absent** on them by design. Scroll one of them
-      to the bottom and confirm no part of the ship appears between the
-      cards. The rail must still not scroll away at the top on any section.
+      rest.** Round 5's G3-rail and G2. Open Settings on Uploading,
+      Characters, or General: the rail ends just below **General** rather
+      than running to the status strip, and the space below and right of it
+      is page wash with the ship watermark in the lower right — not a
+      bordered box beside a void. Then click **Bookmarks** and
+      **Previews**: those two scroll, so the watermark is **absent** on
+      them by design. Scroll one of them to the bottom and confirm no part
+      of the ship appears between the cards. The rail must still not scroll
+      away at the top on any section.
 - [ ] **One upload at a time, both halves included.** Start an upload with
       a webhook configured, and while the Discord half is still posting press
       **Upload** again. Expected: the "An upload is already in progress"
@@ -3893,19 +3894,29 @@ behavior, or restart durability and cannot substitute for these items.
 
 ### Forget, restart and release integration
 
-- [ ] **Forget is global and preserves curated library content.** Forget one
-      character from Fittings, then repeat from Skills after re-adding it.
-      Expected both entry points remove the shared credential, Skills snapshot,
-      fitting snapshot and that character's presence, while independent library
+- [ ] **Forget from Settings > Characters is global and preserves curated
+      library content.** Use Settings > Characters to forget one character
+      after both Skills and Fittings have data for it. Expected: complete
+      cleanup removes the shared credential, Skills snapshot, fitting
+      snapshot and that character's presence, while independent library
       entries, aliases, collections and other characters remain. Re-adding
       requires EVE sign-in. Restart after the durable removal and verify no
       orphan credential or presence resurrects.
-- [ ] **Forget waits for active work and blocks on ambiguity.** Start a fitting
-      refresh or POST and press Forget on that same character. Expected: Forget
-      does not race the request. A definite completed outcome permits ordered
-      credential-first cleanup; an Unknown outcome refuses cleanup. In a
-      multi-pair batch, forgetting between pairs prevents every later POST for
-      that character.
+- [ ] **Forget from Settings > Characters distinguishes complete, partial,
+      and refused cleanup.** Exercise all three outcomes on a character that
+      both Skills and Fittings know about. Expected: complete cleanup
+      removes the shared credential and both feature snapshots; partial
+      cleanup removes the row but leaves the add blocked until
+      reconciliation proves what survived; refused cleanup leaves the row,
+      keeps the shared credential, and leaves both feature snapshots intact
+      with a refusal explaining why cleanup cannot proceed yet.
+- [ ] **Forget from Settings > Characters waits for active work and blocks on
+      ambiguity.** Start a fitting refresh or POST, switch to Settings >
+      Characters, and press Forget on that same character. Expected:
+      Forget does not race the request. A definite completed outcome
+      permits ordered credential-first cleanup; an Unknown outcome refuses
+      cleanup. In a multi-pair batch, forgetting between pairs prevents
+      every later POST for that character.
 - [ ] **Every durable boundary survives restart.** Repeat restart checks after
       capability enable, successful import, metadata edit, collection create/
       rename/delete, membership change, supersession, definite copy result,
@@ -4015,17 +4026,20 @@ against a placeholder id; only these items are blocked on the registration.
       precedence is unit-tested; that the *inputs* are the right ESI fields
       is not.
 
-### Forget and re-add
+### Settings > Characters cleanup and re-add
 
-- [ ] **Forget is one write and it sticks.** Expand a character, use
-      `Forget character`, confirm. The row disappears. Quit and relaunch:
-      it is still gone, and no orphaned token remains — grep the state file
-      for its character id and find nothing.
+- [ ] **Forget is one write and it sticks.** In Settings > Characters, open
+      the character's More menu, use `Forget character`, and confirm. The
+      row disappears. Quit and relaunch: it is still gone, and no orphaned
+      token remains — grep the state file for its character id and find
+      nothing.
 - [ ] **A forgotten character can be added back.** Re-authorise the same
-      character. It returns as a single row, `Unscored`, not a duplicate.
+      character from Settings > Characters. It returns as a single row, not
+      a duplicate.
 - [ ] **Forget during a refresh stays forgotten.** Start a refresh over
-      several characters and forget one while it is in flight. It must not
-      reappear when the refresh commits.
+      several characters in Skills or Fittings, then forget one from
+      Settings > Characters while it is in flight. It must not reappear
+      when the refresh commits.
 
 ### Corruption recovery
 
@@ -4156,12 +4170,11 @@ against a placeholder id; only these items are blocked on the registration.
       removes it when clicked.
 - [ ] **A small roster opens expanded** (round 5's S1). With six or fewer
       characters, open Skills from cold. Expected: every row is already
-      open, so `Forget character` and any re-authenticate banner — the
-      only surface in the whole app for either — are on screen without
-      hunting for a chevron, and the requirement lists fill a pane that
-      was ~70% empty. Collapse a row, leave the route and come back: it
-      stays collapsed. The expansion is one-shot, on the first payload
-      that carries anyone; it must not re-open rows you closed.
+      open, so the requirement lists are on screen without hunting for a
+      chevron, and the pane does not waste most of its height on collapsed
+      rows. Collapse a row, leave the route and come back: it stays
+      collapsed. The expansion is one-shot, on the first payload that
+      carries anyone; it must not re-open rows you closed.
 - [ ] **A large roster does not.** With seven or more characters, the same
       cold open leaves every row collapsed — the cap is about how many
       requirement evaluations the page orders without being asked, and a
@@ -4186,11 +4199,11 @@ against a placeholder id; only these items are blocked on the registration.
       `13h 25m` or `timing unknown`. The catch-all bucket is the deliberate
       exception — its rows show the raw readiness string, because the
       heading says `Unrecognised` for all of them.
-- [ ] **`Forget character` is a red-outlined button, not red text**
-      (round 3, S3/S4). It is the app's one destructive treatment, the same
-      one Profiles' `Delete` wears. The inline two-step below it is
-      unchanged and must stay: this row is the only place a character can
-      be forgotten or re-authenticated, so a dialog would cover it.
+- [ ] **Skills hands character management off to Settings > Characters.**
+      Expand a row and inspect the rail action and any empty/reauth copy.
+      Expected: Skills explains that authorization and forgetting live in
+      Settings > Characters, and it does not render inline auth or forget
+      controls of its own.
 - [ ] **LOAD-BEARING: a character's fetch line survives a second render**
       (round 3, D3/S6). Expand a character that HAS been refreshed and
       confirm it reads `Last fetched 5h ago`. Then cause any mutation that
@@ -4222,19 +4235,19 @@ against a placeholder id; only these items are blocked on the registration.
       confirm the game accepts it and drops the skills already trained (that
       is why the whole plan is enough and no per-character diffing is done).
       With no plan selected the button is disabled rather than absent.
-- [ ] **The two-step Forget cannot be triggered by one mis-click.** First
-      click arms the control (it changes to a confirm state); a second,
-      separate click is required to actually forget the character;
-      clicking anywhere else first disarms it without forgetting anyone.
+- [ ] **The Settings handoff is immediate, not an armed destructive
+      control.** From Skills, activate `Manage characters…`. Expected:
+      Settings opens on Characters immediately; there is no inline two-step
+      forget state left behind on the Skills row.
 - [ ] **`?dev=1` with the catch-all bucket renders, including the
       unrecognised readiness value.** Launch with `?dev=1` appended to the
       URL. `dev.js`'s character id 9 has readiness `'Ascendant'`,
       deliberately a value the UI does not recognise. **This character MUST
-      still render a row with a working Forget control** rather than being
-      silently dropped or breaking the rest of the list — that is the
-      lockout guard: an unrecognised readiness value from a future API
-      change must degrade to an unstyled bucket, not vanish the row a user
-      needs in order to remove a broken character.
+      still render a row** rather than being silently dropped or breaking
+      the rest of the list — that is the lockout guard: an unrecognised
+      readiness value from a future API change must degrade to an unstyled
+      bucket, not vanish the row a user still needs to inspect and manage
+      from Settings > Characters.
 - [ ] **`DEV.skillsAuth(true)` and `DEV.skillsProgress(3, 9)` behave in a
       live browser**, not just in reasoning: with `?dev=1` loaded, run each
       from devtools and confirm the roster and progress indicator update

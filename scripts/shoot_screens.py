@@ -66,6 +66,13 @@ SCREENS = (
         True,
     ),
     Screen(
+        "settings-characters-partial-cleanup",
+        "Settings - Characters (partial cleanup)",
+        "settings",
+        "characters",
+        True,
+    ),
+    Screen(
         "settings-characters-narrow",
         "Settings - Characters (narrow 840x625)",
         "settings",
@@ -760,6 +767,21 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  }\n"
             "  if (!cancel || cancel.hidden || cancel.disabled) {\n"
             "    throw new Error('Characters cancel control is unavailable');\n"
+            "  }",
+        )
+    if screen.key == "settings-characters-partial-cleanup":
+        return _fixture_characters_setup(
+            "partial-cleanup",
+            "  var count = document.getElementById('characters-count');\n"
+            "  var notice = document.getElementById('characters-notice');\n"
+            "  if (!count || count.textContent.indexOf('2 character') !== 0) {\n"
+            "    throw new Error('Characters partial-cleanup count did not render');\n"
+            "  }\n"
+            "  if (!notice || notice.textContent.indexOf('cleanup was not saved') === -1) {\n"
+            "    throw new Error('Characters partial-cleanup notice did not render');\n"
+            "  }\n"
+            "  if (roster.textContent.indexOf('Skills Only') !== -1) {\n"
+            "    throw new Error('Forgotten character still renders after partial cleanup');\n"
             "  }",
         )
     if screen.key == "settings-characters-narrow":

@@ -120,6 +120,25 @@ def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_check
     assert "Settings > Characters" in smoke
     assert "50-row keyboard/menu checks" in flat_smoke
     assert "Fittings spacing at 100%, 125%, 150%, and 200% scaling" in flat_smoke
+    assert "Open Settings on Uploading, Characters, or General" in flat_smoke
+    assert "Uploading, Characters, Bookmarks, Previews, Alerts, General" in flat_smoke
+    assert "Forget from Settings > Characters" in flat_smoke
+    assert (
+        "complete cleanup removes the shared credential, Skills snapshot, fitting snapshot and that character's presence"
+        in flat_smoke
+    )
+    assert (
+        "partial cleanup removes the row but leaves the add blocked until reconciliation proves what survived"
+        in flat_smoke
+    )
+    assert "refused cleanup leaves the row" in flat_smoke
+    assert "keeps the shared credential" in flat_smoke
+    assert "leaves both feature snapshots intact" in flat_smoke
+    assert (
+        "Forget one character from Fittings, then repeat from Skills after re-adding it."
+        not in flat_smoke
+    )
+    assert "Open Settings on Account, Discord or General" not in flat_smoke
 
     path = ROOT / "scripts" / "shoot_screens.py"
     spec = importlib.util.spec_from_file_location("shoot_screens", path)
@@ -132,6 +151,7 @@ def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_check
     for phrase in (
         "Settings — Characters",
         "Settings — Characters (waiting)",
+        "Settings — Characters (partial cleanup)",
         "Settings — Characters (narrow 840x625)",
         "Fittings — Narrow (840x625)",
     ):

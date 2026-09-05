@@ -61,13 +61,13 @@ short form; `wslpath` derives the Windows argument after `cd`:
 
 Say briefly what to expect: it asks them to right-click the Wingman tray icon
 and choose Quit (only the tray menu can exit it — `close()` hides; see
-`wingman/ui/api.py`), then launches from the selected checkout, walks **32
+`wingman/ui/api.py`), then launches from the selected checkout, walks **33
 screens**, including **Settings — Characters**, **Settings — Characters
-(waiting)**, **Settings — Characters (narrow 840x625)** and **Fittings —
-Narrow (840x625)**, and relaunches their app afterward. The set also includes
-the focused **Profiles — Identify accounts** and **Profiles — Backups**
-routes. If Wingman is not running when they start, it says so and skips the
-restore.
+(waiting)**, **Settings — Characters (partial cleanup)**, **Settings —
+Characters (narrow 840x625)** and **Fittings — Narrow (840x625)**, and
+relaunches their app afterward. The set also includes the focused
+**Profiles — Identify accounts** and **Profiles — Backups** routes. If
+Wingman is not running when they start, it says so and skips the restore.
 
 Mention `--port` if the default is busy, `--settle-ms` if a screen looks
 half-drawn, and `--out` only when relevant.

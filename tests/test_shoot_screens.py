@@ -1423,6 +1423,7 @@ def test_character_capture_inventory_covers_current_authority_states():
     assert set(_character_capture_scripts()) == {
         "settings-characters",
         "settings-characters-waiting",
+        "settings-characters-partial-cleanup",
         "settings-characters-narrow",
     }
 
@@ -1432,6 +1433,7 @@ def test_character_capture_staging_is_read_only_and_scenario_backed():
     expected = {
         "settings-characters": scenarios["partial"],
         "settings-characters-waiting": scenarios["waiting"],
+        "settings-characters-partial-cleanup": scenarios["partial-cleanup"],
         "settings-characters-narrow": scenarios["maximum-50"],
     }
     for key, payload in expected.items():
@@ -1447,6 +1449,10 @@ def test_character_capture_staging_is_read_only_and_scenario_backed():
             "eve_characters_forget",
         ):
             assert writer not in script, (key, writer)
+    partial_cleanup = _character_capture_scripts()[
+        "settings-characters-partial-cleanup"
+    ]
+    assert "cleanup was not saved" in partial_cleanup
     narrow = _character_capture_scripts()["settings-characters-narrow"]
     assert "characters-menu-trigger" in narrow
     assert "Characters overflow menu did not open" in narrow

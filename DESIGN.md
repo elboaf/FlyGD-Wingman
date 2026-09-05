@@ -440,8 +440,9 @@ one site pending its conversion and must not gain a second.
 primitive in its own lane so that three screen lanes would convert to one
 thing rather than invent a third answer between them. Until they do,
 `Delete selected` on the Uploader and `Remove` on Settings › Discord are
-still plain `.btn`s that destroy something, and `Forget character` on
-Skills is still red text.
+still plain `.btn`s that destroy something. The current EVE credential
+cleanup lives under Settings › Characters rather than on the Skills page,
+so this rule must not drift back toward a second inline destructive style.
 
 **Destructive treatment, confirmation, and mechanism are three questions,
 not one.** Conflating them is how `Restore` nearly got red-outlined:
