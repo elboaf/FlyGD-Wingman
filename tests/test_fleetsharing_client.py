@@ -220,6 +220,47 @@ class TestSignedRequests:
             )
         assert transport.requests == []
 
+    def test_renew_session_sends_an_empty_signed_body_and_returns_expires_at(self):
+        private_key = crypto.generate_private_key()
+        public_key = load_der_public_key(crypto.public_key_spki(private_key))
+        transport = FakeTransport(
+            {"protocol": 1, "expires_at": "2026-01-01T00:30:00.000Z"}
+        )
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+
+        expires_at = relay.renew_session(
+            session_id="sess-abc", private_key=private_key, revision=7, now=now
+        )
+
+        assert expires_at == "2026-01-01T00:30:00.000Z"
+        request = transport.requests[0]
+        assert request.full_url == ORIGIN + "/api/fleet/v1/session"
+        assert request.get_method() == "PUT"
+        assert request.data is None
+        headers = _headers_of(request)
+        assert headers["x-fleet-session"] == "sess-abc"
+        assert headers["x-fleet-revision"] == "7"
+        assert headers["x-fleet-body-sha256"] == hashlib.sha256(b"").hexdigest()
+
+        canonical = (
+            "fleet-v1\nPUT\n/api/fleet/v1/session\nsess-abc\n"
+            "2026-01-01T00:00:00.000Z\n7\n" + hashlib.sha256(b"").hexdigest()
+        ).encode("utf-8")
+        public_key.verify(_b64url_decode(headers["x-fleet-signature"]), canonical)
+
+    def test_renew_session_rejects_a_response_missing_expires_at(self):
+        transport = FakeTransport({"protocol": 1})
+        relay = FleetRelayClient(ORIGIN, transport=transport)
+
+        with pytest.raises(FleetRelayError) as excinfo:
+            relay.renew_session(
+                session_id="s",
+                private_key=crypto.generate_private_key(),
+                revision=1,
+            )
+        assert excinfo.value.code == "malformed_response"
+
 
 class TestResponseValidation:
     def test_rejects_a_response_with_the_wrong_protocol_major(self):

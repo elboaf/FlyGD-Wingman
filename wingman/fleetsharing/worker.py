@@ -34,26 +34,49 @@ the setting without a restart).
 
 Revision handling
 ------------------
-Every signed request this worker sends -- both `fetch_catalogue` and
-`publish_snapshot` -- consumes a freshly incremented revision, whether or
-not the attempt succeeds, and that new revision is PERSISTED (via
-`save_state`, into `wingman.fleetsharing.state.SharingState.last_revision`)
-BEFORE the network call is ever made -- never after. A crash between the
-persisted write and the network reply can only waste one revision number,
-never reuse one authGD may already have seen; persisting only after a
-reply would risk exactly that reuse across a restart. A retry after a
-failed or uncertain attempt therefore always carries a NEW revision and a
-freshly signed request; it never resends the previous attempt's exact
-signed bytes, matching `client.py`'s own reasoning for never retrying a
-publish internally. The in-memory sequence resumes from the persisted
-`last_revision` the first time THIS PROCESS observes a given session id
-(a genuine restart with the same still-valid session), and restarts at
-zero only when the session id actually changes during THIS process's own
-lifetime (a fresh pairing), matching "a new session starts a new revision
-sequence" from the design. If persisting the new revision fails, the
-network call is skipped entirely for that pass and the failure is treated
-like any other relay error (status `"error"`, bounded backoff) rather than
-proceeding with an unpersisted revision.
+Every signed request this worker sends -- `fetch_catalogue`,
+`publish_snapshot`, AND `renew_session` alike -- consumes a freshly
+incremented revision, whether or not the attempt succeeds, and that new
+revision is PERSISTED (via `save_state`, into
+`wingman.fleetsharing.state.SharingState.last_revision`) BEFORE the
+network call is ever made -- never after. All three draw from the exact
+SAME sequence, never one each: authGD's own fleet-v1 protocol shares one
+monotonic `last_revision` counter per session across every signed request
+kind, and a client that let two of them race in flight at once could see
+its own strictly-increasing revision refused purely by commit order
+(`docs/fleet-protocol.md`, authGD repo) -- which is exactly why this
+worker's single `_iterate()` pass runs catalogue refresh, session
+renewal, and publish strictly one at a time, serialized by
+`_iteration_lock`, rather than any two of them ever running concurrently.
+A crash between the persisted write and the network reply can only waste
+one revision number, never reuse one authGD may already have seen;
+persisting only after a reply would risk exactly that reuse across a
+restart. A retry after a failed or uncertain attempt therefore always
+carries a NEW revision and a freshly signed request; it never resends the
+previous attempt's exact signed bytes, matching `client.py`'s own
+reasoning for never retrying a publish internally. The in-memory sequence
+resumes from the persisted `last_revision` the first time THIS PROCESS
+observes a given session id (a genuine restart with the same still-valid
+session), and restarts at zero only when the session id actually changes
+during THIS process's own lifetime (a fresh pairing), matching "a new
+session starts a new revision sequence" from the design. If persisting the
+new revision fails, the network call is skipped entirely for that pass and
+the failure is treated like any other relay error (status `"error"`,
+bounded backoff) rather than proceeding with an unpersisted revision.
+
+Session renewal
+----------------
+`PUT /api/fleet/v1/session` extends this device's OWN session in place
+without a new browser approval, on a fixed `SESSION_RENEWAL_INTERVAL_S`
+cadence checked every pass (`_session_needs_renewal`) -- comfortably under
+authGD's own 30-minute session TTL, so a healthy device never sees that
+cliff. This worker never tracks the `expires_at` authGD's response
+reports: like `CATALOGUE_REFRESH_INTERVAL_S`, renewal runs on its own
+fixed schedule rather than one derived from a server-reported value, which
+would need this worker to trust its own clock against authGD's. Checked
+(and, if due, sent) BEFORE catalogue refresh and publish in every pass --
+still just one more sequential step in the same single-file pass every
+other signed request already goes through, never a concurrent one.
 
 Coalescing, staleness, and heartbeats
 --------------------------------------
@@ -161,6 +184,17 @@ INERT_POLL_S = 15.0
 # one minute bounds how long a stale link can misroute or drop a row
 # without hammering the relay every publish cycle.
 CATALOGUE_REFRESH_INTERVAL_S = 60.0
+
+# How often an established session renews itself in place (`PUT
+# /api/fleet/v1/session`) without waiting for a browser to re-approve it.
+# authGD's own session TTL (`DEVICE_SESSION_TTL_MS`, fleet-pairing.ts) is
+# 30 minutes; ten comfortably clears that with margin to spare for a
+# missed cycle or two (backoff, a slow relay) before the session would
+# actually lapse. Renewal counts as real relay contact for `_iterate_inner`'s
+# "active" status rule, and consumes a revision from the SAME shared
+# sequence catalogue/publish already use (`docs/fleet-protocol.md`, authGD
+# repo) -- never a sequence of its own.
+SESSION_RENEWAL_INTERVAL_S = 600.0
 
 # A submitted snapshot older than this by the time this worker gets around
 # to it is never published -- see the module docstring's "Coalescing,
@@ -302,6 +336,7 @@ class FleetSharingWorker:
         self._revision = 0
         self._catalogue: FleetCatalogue | None = None
         self._catalogue_refreshed_at: float | None = None
+        self._session_renewed_at: float | None = None
         self._last_published: tuple[PublishRow, ...] = ()
         self._last_publish_at: float | None = None
         self._backoff = 0.0
@@ -503,6 +538,11 @@ class FleetSharingWorker:
 
         contacted = False
 
+        if self._session_needs_renewal():
+            if not self._renew_session(client, sharing_state, private_key):
+                return self._enter_backoff()
+            contacted = True
+
         if self._catalogue_needs_refresh():
             if not self._refresh_catalogue(client, sharing_state, private_key):
                 return self._enter_backoff()
@@ -573,6 +613,20 @@ class FleetSharingWorker:
         self._revision = last_revision
         self._catalogue = None
         self._catalogue_refreshed_at = None
+        # `self._clock()`, not `None`: unlike the catalogue (which genuinely
+        # has no in-memory data yet either way), this worker has no way to
+        # learn how much of authGD's 30-minute session TTL was already spent
+        # before this process observed this session id (a fresh pairing, or
+        # an already-live session resumed across a restart) -- treating
+        # "just observed" as the renewal baseline avoids forcing an
+        # unconditional extra network call on every single session
+        # observation, at the cost of not renewing a resumed, near-expiry
+        # session as promptly as a freshly-paired one. If that session has
+        # in fact already lapsed, the next signed request of any kind simply
+        # reports the same `unauthorized`/`forbidden` refusal a revoked
+        # device would (`_handle_relay_error`) -- never a crash, and no
+        # worse than this worker's pre-renewal behaviour.
+        self._session_renewed_at = self._clock()
         # () rather than None: a fresh session has no rows on the relay to
         # withdraw yet, so an equally-empty first projection must not cost
         # a network call. Any NON-empty first projection still counts as
@@ -607,6 +661,34 @@ class FleetSharingWorker:
         return (
             self._clock() - self._catalogue_refreshed_at
         ) >= CATALOGUE_REFRESH_INTERVAL_S
+
+    def _session_needs_renewal(self) -> bool:
+        return (
+            self._session_renewed_at is None
+            or (self._clock() - self._session_renewed_at) >= SESSION_RENEWAL_INTERVAL_S
+        )
+
+    def _renew_session(
+        self, client, sharing_state: state_mod.SharingState, private_key: bytes
+    ) -> bool:
+        revision = self._next_revision(sharing_state)
+        if revision is None:
+            return False
+        try:
+            client.renew_session(
+                session_id=sharing_state.session_id,
+                private_key=private_key,
+                revision=revision,
+            )
+        except FleetRelayError as exc:
+            self._handle_relay_error(exc)
+            return False
+        except Exception:
+            logger.exception("Fleet sharing session renewal failed unexpectedly")
+            self._set_status(SharingStatus(state="error", detail="unexpected failure"))
+            return False
+        self._session_renewed_at = self._clock()
+        return True
 
     def _refresh_catalogue(
         self, client, sharing_state: state_mod.SharingState, private_key: bytes

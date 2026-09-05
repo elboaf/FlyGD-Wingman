@@ -28,6 +28,7 @@ from wingman.fleetsharing.worker import (
     HEARTBEAT_INTERVAL_S,
     INERT_POLL_S,
     MAX_SNAPSHOT_AGE_S,
+    SESSION_RENEWAL_INTERVAL_S,
     FleetSharingWorker,
     SharingStatus,
     _noop_thread_factory,
@@ -68,8 +69,10 @@ class FakeRelayClient:
         self.catalogue = catalogue
         self.fetch_calls: list[int] = []
         self.publish_calls: list[tuple[int, tuple[PublishRow, ...]]] = []
+        self.renew_calls: list[int] = []
         self.fetch_error: Exception | None = None
         self.publish_error: Exception | None = None
+        self.renew_error: Exception | None = None
 
     def fetch_catalogue(self, *, session_id, private_key, revision):
         assert isinstance(private_key, bytes)
@@ -83,6 +86,13 @@ class FakeRelayClient:
         self.publish_calls.append((revision, rows))
         if self.publish_error is not None:
             raise self.publish_error
+
+    def renew_session(self, *, session_id, private_key, revision):
+        assert isinstance(private_key, bytes)
+        self.renew_calls.append(revision)
+        if self.renew_error is not None:
+            raise self.renew_error
+        return "2026-01-01T00:30:00.000Z"
 
 
 class BlockingRelayClient:
@@ -102,6 +112,9 @@ class BlockingRelayClient:
         if not self.entered.is_set():
             self.entered.set()
             assert self.release.wait(5), "test fixture deadlocked"
+
+    def renew_session(self, *, session_id, private_key, revision):
+        return "2026-01-01T00:30:00.000Z"
 
 
 def _worker(
@@ -229,6 +242,104 @@ class TestCatalogueRefresh:
         worker.iterate_once()
 
         assert statuses == ["connecting", "verifying"]
+
+
+class TestSessionRenewal:
+    def test_no_renewal_on_the_very_first_pass_of_a_freshly_observed_session(self):
+        """Unlike the catalogue (which genuinely has no in-memory data at
+        all until the first fetch), a freshly observed session's renewal
+        baseline is set to "just observed" -- see `_begin_session`'s own
+        comment -- so first contact must not cost an unconditional extra
+        network call."""
+        client = FakeRelayClient()
+        worker = _worker(client)
+
+        worker.iterate_once()
+
+        assert client.renew_calls == []
+
+    def test_session_is_renewed_on_its_own_cadence_independent_of_the_shorter_catalogue_refresh(
+        self,
+    ):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+
+        worker.iterate_once()  # session begins; catalogue fetched (rev 1)
+        assert client.renew_calls == []
+
+        # Short of the renewal interval, but past the (much shorter)
+        # catalogue interval -- catalogue refreshes on its own cadence,
+        # renewal must not fire early just because catalogue did.
+        mono[0] += SESSION_RENEWAL_INTERVAL_S - 10
+        worker.iterate_once()
+        assert client.renew_calls == []
+        assert client.fetch_calls == [1, 2]
+
+        # Past the renewal interval (measured from session start, NOT from
+        # catalogue's own, more-recently-reset timestamp) -- renewal fires
+        # even though catalogue was JUST refreshed and is not yet due again.
+        mono[0] += 11
+        worker.iterate_once()
+
+        assert client.renew_calls == [3]
+        assert client.fetch_calls == [1, 2]  # unchanged: catalogue was not due
+
+    def test_a_successful_renewal_counts_as_real_relay_contact_for_the_active_status(
+        self,
+    ):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.iterate_once()
+        worker._set_status(SharingStatus(state="verifying"))
+
+        mono[0] += SESSION_RENEWAL_INTERVAL_S
+        worker.iterate_once()
+
+        assert worker.status().state == "active"
+
+    def test_a_failed_renewal_aborts_the_pass_before_catalogue_refresh_or_publish_are_attempted(
+        self,
+    ):
+        """The concrete enforcement of "never two fleet-v1 signed requests
+        for this device in flight at once" (docs/fleet-protocol.md, authGD
+        repo): a failed renewal must not let this SAME pass go on to also
+        attempt a catalogue refresh or a publish -- the next pass, one at
+        a time, is the only thing allowed to try again."""
+        client = FakeRelayClient()
+        client.renew_error = FleetRelayError(500, "server_error", "boom")
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.iterate_once()  # session begins; catalogue fetched (rev 1)
+
+        mono[0] += SESSION_RENEWAL_INTERVAL_S
+        worker.submit(_snapshot(42))  # would otherwise also publish this pass
+        worker.iterate_once()
+
+        assert client.renew_calls == [2]
+        assert client.fetch_calls == [1]  # unattempted: aborted before it
+        assert client.publish_calls == []  # unattempted: aborted before it
+        assert worker.status() == SharingStatus(state="error", detail="server_error")
+
+    def test_renewal_consumes_a_revision_from_the_same_shared_sequence_as_catalogue_and_publish(
+        self,
+    ):
+        client = FakeRelayClient()
+        mono = [1000.0]
+        worker = _worker(client, clock=lambda: mono[0])
+        worker.iterate_once()  # rev 1: catalogue
+
+        mono[0] += SESSION_RENEWAL_INTERVAL_S
+        worker.submit(_snapshot(42))
+        worker.iterate_once()
+
+        # Renewal (checked first), then catalogue refresh (also due), then
+        # publish -- three signed requests in one pass, one shared,
+        # strictly increasing sequence across all of them.
+        assert client.renew_calls == [2]
+        assert client.fetch_calls == [1, 3]
+        assert client.publish_calls[-1][0] == 4
 
 
 class TestProjectionAndPublication:

@@ -1,16 +1,27 @@
 """Signed HTTP transport for authGD's fleet-relay protocol boundary.
 
 A pure protocol boundary only: pairing (unauthenticated by design,
-matching authGD's own `pairing-requests` routes) and the two signed
+matching authGD's own `pairing-requests` routes) and the three signed
 device requests Wingman's sparse projection actually needs -- fetching
-the device's authenticated character catalogue and publishing a
-snapshot. Nothing here polls, retries, subscribes to the telemetry
-coordinator, tracks a revision counter across calls, or reads/renders a
-remote row: those belong to a later coordinator-wiring task. Every
-request is exactly one attempt -- a signed publish carries a strictly
-increasing revision, so silently retrying a request whose delivery is
-unknown would risk exactly the duplicate-write hazard
-`wingman.eveesi.EsiClient.post_once` documents for ESI mutations.
+the device's authenticated character catalogue, publishing a snapshot,
+and renewing the device's own session in place. Nothing here polls,
+retries, subscribes to the telemetry coordinator, tracks a revision
+counter across calls, or reads/renders a remote row: those belong to a
+later coordinator-wiring task. Every request is exactly one attempt --
+a signed publish carries a strictly increasing revision, so silently
+retrying a request whose delivery is unknown would risk exactly the
+duplicate-write hazard `wingman.eveesi.EsiClient.post_once` documents
+for ESI mutations.
+
+authGD's fleet-v1 protocol shares ONE monotonic revision counter and ONE
+cadence bucket per session across every signed request kind -- catalogue,
+snapshot, and session renewal alike (`docs/fleet-protocol.md`, authGD
+repo). That means a caller must never have more than one signed request
+for the same device in flight at once: this module is a stateless
+transport with no queue of its own, so the caller
+(`wingman.fleetsharing.worker.FleetSharingWorker`) is what enforces that
+rule by running every signed request for one device strictly
+sequentially, one at a time.
 
 Every response is required to be `protocol: 1`-flagged JSON, matching the
 design's "explicit major integer" compatibility rule: an unsupported
@@ -38,6 +49,7 @@ MAX_RESPONSE_BYTES = 64 * 1024
 CATALOGUE_PATH = "/api/fleet/v1/catalogue"
 SNAPSHOT_PATH = "/api/fleet/v1/snapshot"
 PAIRING_REQUESTS_PATH = "/api/fleet/v1/pairing-requests"
+SESSION_PATH = "/api/fleet/v1/session"
 
 
 class FleetRelayError(Exception):
@@ -371,6 +383,38 @@ class FleetRelayClient:
         self._send_signed(
             SNAPSHOT_PATH, "PUT", body, session_id, private_key, revision, now
         )
+
+    def renew_session(
+        self,
+        *,
+        session_id: str,
+        private_key: bytes,
+        revision: int,
+        now: datetime | None = None,
+    ) -> str:
+        """PUT /api/fleet/v1/session, signed with all five headers.
+
+        Extends this device's OWN currently-valid session in place -- no
+        new browser approval, and no new session id either: authGD's own
+        `renewFleetDeviceSession` never rotates, because
+        `fleet_publisher_lease`/`fleet_telemetry_row` both cascade on
+        `fleet_device_session`, and rotating would cascade-delete this
+        device's own live telemetry the instant it renews. Carries an
+        EMPTY signed body, the same convention `fetch_catalogue` uses.
+
+        Consumes a revision from the SAME shared sequence every other
+        signed request for this session uses (`docs/fleet-protocol.md`,
+        authGD repo) -- never a sequence of its own. Returns the new
+        `expires_at` (RFC3339 UTC) authGD reports back; this client does
+        not interpret it any further than requiring it be present and a
+        string -- deciding WHEN to renew again is
+        `wingman.fleetsharing.worker.FleetSharingWorker`'s job, on its own
+        fixed cadence, not something this stateless transport tracks.
+        """
+        data = self._send_signed(
+            SESSION_PATH, "PUT", b"", session_id, private_key, revision, now
+        )
+        return _require_str(data, "expires_at")
 
     # -- shared transport --
 
