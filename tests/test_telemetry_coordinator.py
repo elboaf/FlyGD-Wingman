@@ -20,6 +20,7 @@ import pytest
 from wingman.telemetry.coordinator import (
     PUBLISH_INTERVAL_S,
     TelemetryCoordinator,
+    _FleetMode,
     _noop_thread_factory,
 )
 from wingman.telemetry.metrics import NO_LOG, FleetMetrics
@@ -428,6 +429,25 @@ class TestRuntimePredicates:
         assert h.discovery.starts == 1
         assert len(h.stream.starts) == 1
 
+    def test_all_off_reconcile_does_not_start_a_dispatcher_for_no_fleet_consumers(
+        self, tmp_path
+    ):
+        """Generation bookkeeping must not pay a create-and-stop startup cost."""
+        h = _harness(tmp_path, preview=False, fleet=False, alerts=False)
+        made = []
+
+        def record_factory(**kwargs):
+            made.append(kwargs)
+            return _noop_thread_factory(**kwargs)
+
+        h.coordinator._thread_factory = record_factory
+        h.coordinator.reconcile()
+
+        assert made == []
+        assert h.coordinator._worker is None
+        assert h.coordinator._running is False
+        assert h.coordinator.requested_fleet_generation() == 0
+
     def test_reconcile_reads_predicates_while_holding_its_pass_lock(self, tmp_path):
         h = _harness(tmp_path, preview=False, fleet=False, alerts=False)
         gate = _AttemptSignallingLock()
@@ -441,6 +461,136 @@ class TestRuntimePredicates:
 
         assert reads_under_lock
         assert all(reads_under_lock)
+
+
+class TestFleetGeneration:
+    def test_fleet_generation_is_reserved_even_when_dispatcher_cannot_start(
+        self, tmp_path
+    ):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._start_dispatcher = lambda: False
+
+        generation = h.coordinator.reconcile()
+
+        assert generation == 1
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.coordinator._fleet_requested is True
+
+    def test_idempotent_reconcile_reuses_requested_fleet_generation(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+
+        first = h.coordinator.reconcile()
+        second = h.coordinator.reconcile()
+
+        assert first == second == 1
+
+    def test_each_fleet_mode_transition_reserves_a_new_generation(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        first = h.coordinator.reconcile()
+        h.flags["fleet"] = False
+        second = h.coordinator.reconcile()
+        h.flags["fleet"] = True
+        third = h.coordinator.reconcile()
+
+        assert (first, second, third) == (1, 2, 3)
+
+    def test_failed_start_keeps_the_reserved_generation_for_a_later_reconcile(
+        self, tmp_path
+    ):
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._start_dispatcher = lambda: False
+
+        first = h.coordinator.reconcile()
+        h.coordinator._start_dispatcher = (
+            TelemetryCoordinator._start_dispatcher.__get__(h.coordinator)
+        )
+        h.flags["preview"] = True
+        second = h.coordinator.reconcile()
+        h.coordinator.dispatch_once(0)
+        h.discovery.publish(_roster(_session("Alice")))
+        h.coordinator.dispatch_once(0)
+
+        assert (first, second) == (1, 1)
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.coordinator.snapshot().activation_generation == 1
+
+    def test_late_dead_dispatcher_preserves_the_reserved_fleet_generation(
+        self, tmp_path
+    ):
+        class DeadWorker:
+            def is_alive(self):
+                return False
+
+        class FailingWorker:
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+            def is_alive(self):
+                return False
+
+        h = _harness(tmp_path, fleet=True)
+        h.coordinator._worker = DeadWorker()
+        h.coordinator._running = False
+        h.coordinator._fleet_active = True
+        h.coordinator._fleet_requested = True
+        h.coordinator._fleet_active_generation = 1
+        h.coordinator._fleet_requested_generation = 1
+        h.coordinator._queue.put(_FleetMode(True, 1))
+        h.subscribe()
+        h.coordinator._thread_factory = lambda **_kwargs: FailingWorker()
+
+        first = h.coordinator.reconcile()
+
+        h.coordinator._thread_factory = _noop_thread_factory
+        second = h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        h.pump()
+
+        assert (first, second) == (1, 1)
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.snapshots
+        assert h.snapshots[-1].activation_generation == 1
+
+    def test_empty_and_disabled_snapshots_keep_generation_zero(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+
+        assert h.coordinator.snapshot().activation_generation == 0
+
+        h.coordinator.reconcile()
+        assert h.coordinator.snapshot().activation_generation == 0
+
+        h.flags["fleet"] = False
+        h.coordinator.reconcile()
+        assert h.coordinator.snapshot().activation_generation == 0
+
+    def test_initial_fleet_activation_keeps_synthetic_snapshot_until_roster_consumed(
+        self, tmp_path
+    ):
+        """Remembered names stay unknown until this activation has a roster."""
+        h = _harness(tmp_path, fleet=True)
+        h.subscribe()
+
+        h.coordinator.reconcile()
+        h.pump()
+
+        assert h.snapshots == []
+        assert h.coordinator.snapshot().activation_generation == 0
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert [snapshot.activation_generation for snapshot in h.snapshots] == [1]
+
+    def test_published_snapshot_carries_the_activated_generation(self, tmp_path):
+        h = _harness(tmp_path, fleet=True)
+        h.subscribe()
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+
+        assert h.snapshots[-1].activation_generation == 1
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +659,24 @@ class TestSequencing:
         assert second.payload == _lifecycle("Alice", generation=3)
         assert second.sequence > first.sequence
 
+    def test_initial_source_before_roster_is_republished_after_roster(self, tmp_path):
+        """An early source event must not leave the first Fleet row at NO LOG."""
+        metrics = FleetMetrics(_clock=lambda: 1000.0, _utc_now=lambda: NOW)
+        h = _harness(tmp_path, fleet=True, metrics=metrics)
+        h.stream.sources["Alice"] = _lifecycle("Alice", generation=3)
+
+        h.coordinator.reconcile()
+        h.stream.publish(_lifecycle("Alice", generation=3))
+        h.pump()  # mode then source: no roster session exists yet
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()  # roster requests the source again after its session exists
+
+        assert h.stream.requested == ["Alice"]
+        assert [
+            (row.character, row.log_status) for row in h.coordinator.snapshot().rows
+        ] == [("Alice", None)]
+
     def test_unchanged_session_does_not_republish(self, tmp_path):
         h = _harness(tmp_path, fleet=True)
         h.coordinator.reconcile()
@@ -575,6 +743,7 @@ class TestSequencing:
         h = _harness(tmp_path, fleet=True, metrics=RecordingMetrics(rows))
         h.subscribe()
         h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
         h.pump()
 
         h.stream._health = StreamHealth(state="stale", detail="3.2s since poll")
@@ -786,25 +955,28 @@ class TestConsumerFailureIsolation:
 
     def test_metrics_failure_does_not_kill_the_dispatcher(self, tmp_path):
         h = _harness(tmp_path, fleet=True)
-        h.metrics.raise_on_consume = True
         h.coordinator.reconcile()
         h.subscribe()
-
-        h.stream.publish(_lifecycle("Alice"))
+        h.discovery.publish(_roster(_session("Alice")))
         h.pump()
-        assert len(h.snapshots) == 1
 
-        h.metrics.raise_on_consume = False
+        h.metrics.raise_on_consume = True
         h.stream.publish(_lifecycle("Alice", generation=2))
         h.pump()
-
         assert len(h.snapshots) == 2
+
+        h.metrics.raise_on_consume = False
+        h.stream.publish(_lifecycle("Alice", generation=3))
+        h.pump()
+
+        assert len(h.snapshots) == 3
 
     def test_unsubscribed_fleet_callback_stops_receiving(self, tmp_path):
         h = _harness(tmp_path, fleet=True)
         h.coordinator.reconcile()
         unsub = h.subscribe()
 
+        h.discovery.publish(_roster(_session("Alice")))
         h.pump()
         assert len(h.snapshots) == 1
 
@@ -1233,7 +1405,7 @@ class TestCadence:
         )
         h.coordinator.reconcile()
         h.subscribe()
-
+        h.discovery.publish(_roster(_session("Alice")))
         h.pump()
 
         assert h.snapshots[-1].stream_health == StreamHealth(state="stale")

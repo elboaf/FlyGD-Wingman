@@ -7,6 +7,7 @@
     window.addEventListener('pywebviewready', function () { resolve(); },
                             { once: true });
   });
+  var lastRevision = -1;
 
   function send(method) {
     var args = Array.prototype.slice.call(arguments, 1);
@@ -64,7 +65,17 @@
 
   function render(payload) {
     payload = payload || {};
+    var revision = payload.revision;
+    if (typeof revision !== 'number' || !isFinite(revision) || revision < 0 ||
+        Math.floor(revision) !== revision) {
+      return Promise.resolve(null);
+    }
+    if (revision < lastRevision) {
+      return Promise.resolve(null);
+    }
+    lastRevision = revision;
     var rows = Array.isArray(payload.rows) ? payload.rows : [];
+    var runningCount = Number(payload.running_count) || 0;
     var health = payload.stream_health || { state: 'stopped', detail: null };
     var rowsNode = document.getElementById('fleet-rows');
     var empty = document.getElementById('fleet-empty');
@@ -90,6 +101,12 @@
     });
 
     empty.hidden = rows.length !== 0;
+    var emptyText = runningCount > 0
+      ? 'All running characters are hidden.'
+      : 'Waiting for EVE clients\u2026';
+    if (empty.textContent !== emptyText) {
+      empty.textContent = emptyText;
+    }
     healthNode.textContent = healthLabel(health);
     healthNode.classList.toggle('warn', health.state === 'stale' ||
       health.state === 'missing_folder');
@@ -97,8 +114,11 @@
 
     var detail = payload.metric_error ||
       ((health.state === 'stale' || health.state === 'error') ? health.detail : null);
-    note.hidden = !detail;
-    note.textContent = detail || '';
+    var noteText = detail || '';
+    note.hidden = !noteText;
+    if (note.textContent !== noteText) {
+      note.textContent = noteText;
+    }
     note.classList.toggle('err', Boolean(payload.metric_error) || health.state === 'error');
     return fit();
   }
@@ -112,7 +132,8 @@
   var fontsReady = (document.fonts && document.fonts.ready)
     ? document.fonts.ready : Promise.resolve();
   Promise.all([send('fleet_bar_snapshot'), fontsReady]).then(function (values) {
-    return render(values[0] || {});
+    if (!values[0]) return null;
+    return render(values[0]);
   }).then(function () {
     return send('fleet_bar_ready');
   });

@@ -76,6 +76,7 @@ iteration synchronously (a zero timeout is a genuinely non-blocking
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import queue
 import threading
@@ -123,6 +124,7 @@ class _FleetMode(NamedTuple):
     """Internal queue control, ordered with producer payloads."""
 
     enabled: bool
+    generation: int
 
 
 class AlertEvent(NamedTuple):
@@ -167,7 +169,7 @@ class TelemetryCoordinator:
     """Shared telemetry ownership: predicates, sequence, dispatch, cadence.
 
     Public interface:
-        reconcile()
+        reconcile() -> int
         request_discovery()
         snapshot() -> FleetSnapshot
         subscribe_fleet(callback) -> unsubscribe callable
@@ -213,10 +215,15 @@ class TelemetryCoordinator:
         self._sessions: dict[str, object] = {}
         self._fleet_active = False
         self._fleet_roster_generation: int | None = None
+        # No current-generation publication is truthful until a complete
+        # discovery roster has reached Fleet Metrics for this activation.
+        self._fleet_has_complete_roster = False
+        self._fleet_active_generation = 0
 
         self._lock = threading.Lock()
         self._latest: FleetSnapshot | None = None
         self._fleet_requested = False
+        self._fleet_requested_generation = 0
         self._alerts_requested = False
         self._discovery_started = False
         self._discovery_unsub: Callable[[], None] | None = None
@@ -239,6 +246,7 @@ class TelemetryCoordinator:
         self._dispatch_lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._running = False
+        self._dispatcher_finalized_dead = False
         self._stop_event = threading.Event()
 
     # ------------------------------------------------------------------
@@ -302,7 +310,7 @@ class TelemetryCoordinator:
     # Reconciliation
     # ------------------------------------------------------------------
 
-    def reconcile(self) -> None:
+    def reconcile(self) -> int:
         """Start or stop shared infrastructure to match the predicates.
 
         Idempotent: a service already in its wanted state is left alone, so
@@ -320,24 +328,39 @@ class TelemetryCoordinator:
             want_discovery = preview_enabled or fleet_enabled
             want_stream = fleet_enabled or (preview_enabled and alerts_enabled)
             folder = self._resolved_folder() if want_stream else None
+            fleet_generation = self._request_fleet_mode(fleet_enabled)
+            needs_dispatcher = want_discovery or folder is not None
 
             # Producers must never run without the sole consumer of their
             # queue. A retained timed-out dispatcher can refuse a restart;
-            # leave producers stopped and retry next reconcile.
-            if (want_discovery or folder is not None) and not self._start_dispatcher():
-                return
+            # leave producers stopped and retry next reconcile. Do not create
+            # one just to observe the all-off Fleet generation reservation.
+            if needs_dispatcher:
+                self._dispatcher_finalized_dead = False
+                started = self._start_dispatcher()
+                if fleet_enabled and self._dispatcher_finalized_dead:
+                    with self._lock:
+                        needs_restore = not self._fleet_requested
+                        if needs_restore:
+                            self._fleet_requested = True
+                    if needs_restore:
+                        # A dead dispatcher can drain the queued activation while
+                        # finalizing; restore the same generation so this reconcile
+                        # still publishes the reservation it already handed out.
+                        self._queue.put(_FleetMode(fleet_enabled, fleet_generation))
+                if not started:
+                    return fleet_generation
 
             self._reconcile_discovery(want_discovery)
             self._reconcile_stream(folder)
-            self._request_fleet_mode(fleet_enabled)
             self._request_alert_mode(preview_enabled and alerts_enabled)
 
-            if not want_discovery and folder is None:
-                # Nothing left to serialize.  Stopping the dispatcher here
-                # is what makes "the last consumer detaching" release the
-                # thread too, rather than leaving one publishing empty
-                # snapshots at one hertz for the rest of the session.
+            if not needs_dispatcher:
+                # Nothing left to serialize. Stopping an existing dispatcher
+                # here releases the last consumer without creating one on an
+                # all-off startup solely to stop it again.
                 self._stop_dispatcher()
+            return fleet_generation
 
     @staticmethod
     def _completed(result) -> bool:
@@ -420,13 +443,20 @@ class TelemetryCoordinator:
         if self._wants_alert_policy():
             self._queue.put(_ALERT_RESET)
 
-    def _request_fleet_mode(self, enabled: bool) -> None:
+    def _request_fleet_mode(self, enabled: bool) -> int:
         """Order a Fleet consumer transition with producer payloads."""
         with self._lock:
             if enabled == self._fleet_requested:
-                return
+                return self._fleet_requested_generation
             self._fleet_requested = enabled
-        self._queue.put(_FleetMode(enabled))
+            self._fleet_requested_generation += 1
+            generation = self._fleet_requested_generation
+        self._queue.put(_FleetMode(enabled, generation))
+        return generation
+
+    def requested_fleet_generation(self) -> int:
+        with self._lock:
+            return self._fleet_requested_generation
 
     def _request_alert_mode(self, enabled: bool) -> None:
         with self._lock:
@@ -551,6 +581,7 @@ class TelemetryCoordinator:
                 # It died after the prior bounded join returned. Finalize
                 # that generation before a replacement can consume its
                 # queued payloads or publish its cached rows.
+                self._dispatcher_finalized_dead = True
                 self._finalize_dead_dispatcher()
             self._running = True
             self._stop_event = threading.Event()
@@ -595,7 +626,9 @@ class TelemetryCoordinator:
         self._worker = None
         self._sessions = {}
         self._fleet_active = False
+        self._fleet_active_generation = 0
         self._fleet_roster_generation = None
+        self._fleet_has_complete_roster = False
         self._metrics.reset()
         with self._lock:
             self._fleet_requested = False
@@ -693,7 +726,7 @@ class TelemetryCoordinator:
     def _process(self, payload, alerts: list[AlertEvent]) -> None:
         """Stamp one payload and fan it out.  Dispatcher thread only."""
         if isinstance(payload, _FleetMode):
-            self._apply_fleet_mode(payload.enabled)
+            self._apply_fleet_mode(payload)
             return
         if payload is _FLEET_REFRESH:
             if self._fleet_active:
@@ -712,12 +745,17 @@ class TelemetryCoordinator:
             # callback for that same completed scan may already be queued;
             # consume one roster generation only once or every enable race
             # looks like a second session publication to Fleet Metrics.
-            is_new_fleet_roster = self._fleet_active and (
-                self._fleet_roster_generation is None
-                or payload.generation > self._fleet_roster_generation
+            is_new_fleet_roster = (
+                self._fleet_active
+                and payload.generation != 0
+                and (
+                    self._fleet_roster_generation is None
+                    or payload.generation > self._fleet_roster_generation
+                )
             )
             if is_new_fleet_roster and self._consume_metrics(envelope):
                 self._fleet_roster_generation = payload.generation
+                self._fleet_has_complete_roster = True
                 self._republish_sources(payload)
             return
 
@@ -753,18 +791,22 @@ class TelemetryCoordinator:
         except Exception:
             logger.exception("Alert policy raised while resetting cooldowns")
 
-    def _apply_fleet_mode(self, enabled: bool) -> None:
+    def _apply_fleet_mode(self, mode: _FleetMode) -> None:
         """Reset Fleet state and prime a newly enabled current roster."""
-        if enabled == self._fleet_active:
+        if mode.enabled == self._fleet_active:
+            if mode.enabled:
+                self._fleet_active_generation = mode.generation
             return
-        self._fleet_active = enabled
-        self._reset_fleet_state(prime=enabled)
+        self._fleet_active = mode.enabled
+        self._fleet_active_generation = mode.generation if mode.enabled else 0
+        self._reset_fleet_state(prime=mode.enabled)
 
     def _reset_fleet_state(self, *, prime: bool) -> None:
         """Clear old bindings; optionally seed from current discovery."""
         self._metrics.reset()
         self._sessions = {}
         self._fleet_roster_generation = None
+        self._fleet_has_complete_roster = False
         with self._lock:
             self._latest = None
         if not prime:
@@ -780,6 +822,7 @@ class TelemetryCoordinator:
         envelope = TelemetryEnvelope(sequence=self._sequence, payload=snapshot)
         if self._consume_metrics(envelope):
             self._fleet_roster_generation = snapshot.generation
+            self._fleet_has_complete_roster = True
             self._republish_sources(snapshot)
 
     def _apply_preview(self, snapshot: RosterSnapshot) -> None:
@@ -845,11 +888,14 @@ class TelemetryCoordinator:
         Fleet Metrics has already consumed this batch: the snapshot a
         subscriber sees is never behind the envelopes that produced it.
         """
-        if not self._fleet_active:
+        if not self._fleet_active or not self._fleet_has_complete_roster:
             return
         health = self._health()
         try:
-            snapshot = self._metrics.snapshot(self._sequence, health)
+            snapshot = dataclasses.replace(
+                self._metrics.snapshot(self._sequence, health),
+                activation_generation=self._fleet_active_generation,
+            )
         except Exception:
             logger.exception("Fleet Metrics raised while building a snapshot")
             return

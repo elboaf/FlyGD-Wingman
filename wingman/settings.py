@@ -306,7 +306,13 @@ def _fleet_bar_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global."""
     # Off by default: this starts shared discovery/log work and creates an
     # additional WebView2 host only after the user asks for it.
-    return {"enabled": False, "x": None, "y": None}
+    return {
+        "enabled": False,
+        "x": None,
+        "y": None,
+        "seen": [],
+        "hidden": [],
+    }
 
 
 DEFAULTS = {
@@ -716,6 +722,10 @@ def validated_fleet_bar(raw) -> dict:
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             section[key] = value
+    # Reuse the pure roster validation rule from preview/roster.py so the
+    # persisted schema carries only stable character names.
+    section["seen"] = preview_roster.deserialize(raw.get("seen"), cap=64)
+    section["hidden"] = preview_roster.deserialize(raw.get("hidden"), cap=64)
     return section
 
 
