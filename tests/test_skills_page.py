@@ -415,10 +415,15 @@ def test_a_character_with_no_snapshot_says_so_and_carries_the_control():
 def test_route_uses_shared_eve_workspace_class():
     """Both Skills and Fittings routes must use the shared .eve-workspace
     parent grid so their layout is identical and driven by a single rule.
+
+    The assertion is class-token-aware: it accepts any ordering or extra
+    class tokens as long as both `route` and `eve-workspace` are present.
     """
-    assert '<div class="route eve-workspace" id="route-skills">' in BODY, (
-        "route-skills does not carry the eve-workspace class"
+    match = re.search(
+        r"<div[^>]*\bclass=\"(?=[^\"]*\broute\b)(?=[^\"]*\beve-workspace\b)[^\"]*\"[^>]*\bid=\"route-skills\"",
+        BODY,
     )
+    assert match, "route-skills does not carry both route and eve-workspace class tokens"
 
 
 def test_eve_workspace_css_has_required_properties():
@@ -474,8 +479,9 @@ def test_the_plan_heading_carries_a_copy_control():
     assert head, "the Skills pane header moved"
     tag = re.search(r'<button[^>]*id="skills-copy-plan"[^>]*>', head.group(1))
     assert tag, "the plan heading has no copy control"
-    assert 'class="btn workspace-primary"' in tag.group(0) or 'class="btn"' in tag.group(0), (
-        "the copy control is not a plain .btn: " + tag.group(0)
+    # Require the workspace-primary token explicitly on the primary action.
+    assert re.search(r'class="[^"]*\bworkspace-primary\b', tag.group(0)), (
+        "the copy control must include the workspace-primary token: " + tag.group(0)
     )
     assert "disabled" in tag.group(0), "the copy control is live with no plan selected"
     assert "navigator.clipboard.writeText" in CODE, (

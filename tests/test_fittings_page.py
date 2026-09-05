@@ -35,10 +35,14 @@ def test_the_nav_button_exists_and_points_at_the_route():
 
 def test_route_uses_shared_eve_workspace_class():
     """Fittings route must use the shared .eve-workspace parent grid.
+
+    Use a class-token-aware match so ordering or extra tokens do not fail.
     """
-    assert '<div class="route eve-workspace" id="route-fittings"' in HTML, (
-        "route-fittings does not carry the eve-workspace class"
+    match = re.search(
+        r"<div[^>]*\bclass=\"(?=[^\"]*\broute\b)(?=[^\"]*\beve-workspace\b)[^\"]*\"[^>]*\bid=\"route-fittings\"",
+        HTML,
     )
+    assert match, "route-fittings does not carry both route and eve-workspace class tokens"
 
 
 def test_eve_workspace_css_has_required_properties():
