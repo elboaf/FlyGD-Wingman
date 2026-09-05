@@ -19,6 +19,8 @@ import tomllib
 
 import pytest
 
+from wingman.eveauth import application as eveauth_application
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
 MANUAL_UPDATE_HARNESS = ROOT / "tests" / "manual" / "update_harness.py"
@@ -80,7 +82,107 @@ def test_smoke_network_checks_scope_ccp_after_the_startup_update_check():
     smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
     flat = " ".join(smoke.split())
     assert "Clear the capture after the automatic GitHub startup check finishes" in flat
-    assert "only the Skills interaction" in flat
+    assert "Settings > Characters authorization or Skills refresh interaction" in flat
+    assert "only that EVE interaction contacts the network" in flat
+    assert "only the Skills interaction" not in flat
+
+
+def test_readme_eve_authorization_docs_point_to_settings_characters_and_current_contract():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    flat = " ".join(readme.split())
+    assert (
+        "Settings → Characters is the only place to authorize, reconnect, or "
+        "forget EVE characters." in flat
+    )
+    assert len(eveauth_application.FULL_AUTH_SCOPES) == 4
+    for scope in sorted(eveauth_application.FULL_AUTH_SCOPES):
+        assert scope in readme
+    for phrase in (
+        "Every new EVE sign-in from Settings → Characters requests the full Skills-and-Fittings set",
+        "If EVE returns a character Wingman does not know yet, Wingman adds it only after Skills and Fittings cleanup both verify no orphan state blocks that ID.",
+        "If Wingman already has that character with a known owner and EVE returns a different known owner, the sign-in is refused and the existing grant stays in place.",
+        "Older grants that contain only the two Skills scopes keep working for Skills.",
+        "Reconnecting any character now uses the same full four-scope request; there is no per-feature authorization button.",
+        "If cleanup is only partly saved, Wingman keeps the character blocked from being added again until reconciliation proves what survived.",
+    ):
+        assert phrase in flat
+    for removed in (
+        "esi-characters.read_skills.v1",
+        "Existing Skills-only consent remains valid for Skills.",
+        "**Skills only**",
+        "Enable fittings",
+        "Choosing a different character on EVE's consent screen is refused",
+        "wrong character is refused",
+        "Whether pressed from Skills or Fittings",
+        "eve_skills.json` holds Skills-only snapshots",
+    ):
+        assert removed not in readme
+
+
+def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_checks():
+    smoke = (ROOT / "docs" / "smoke-checklist.md").read_text(encoding="utf-8")
+    flat_smoke = " ".join(smoke.split())
+    assert "Settings > Characters" in smoke
+    assert "50-row keyboard/menu checks" in flat_smoke
+    assert "Fittings spacing at 100%, 125%, 150%, and 200% scaling" in flat_smoke
+    assert "Open Settings on Uploading, Characters, or General" in flat_smoke
+    assert "Uploading, Characters, Bookmarks, Previews, Alerts, General" in flat_smoke
+    assert "Forget from Settings > Characters" in flat_smoke
+    assert (
+        "complete cleanup removes the shared credential, Skills snapshot, fitting snapshot and that character's presence"
+        in flat_smoke
+    )
+    assert (
+        "partial cleanup removes the row but leaves re-add blocked until reconciliation proves what survived"
+        in flat_smoke
+    )
+    assert "refused cleanup leaves the row" in flat_smoke
+    assert "keeps the shared credential" in flat_smoke
+    assert "leaves both feature snapshots intact" in flat_smoke
+    assert (
+        "Forget one character from Fittings, then repeat from Skills after re-adding it."
+        not in flat_smoke
+    )
+    assert "Open Settings on Account, Discord or General" not in flat_smoke
+    for scope in sorted(eveauth_application.FULL_AUTH_SCOPES):
+        assert scope in smoke
+    for removed in (
+        "esi-characters.read_skills.v1",
+        "Skills-only remains Skills-only",
+        "row still reads **Skills only**",
+        "Reconnect a Skills-only character",
+        "as appropriate for that character's enabled capabilities",
+        "Complete it with THE SAME character",
+        "Completing it with the wrong character is refused",
+        "requests the two read-only scopes",
+        "wingman/eveskills/application.py",
+        "`Add character` is disabled",
+        "Click `Add character`",
+        "consent screen names exactly the two scopes",
+        "Open `%LOCALAPPDATA%\\FlyGD Wingman\\eve_skills.json`, corrupt one character's `refresh_token_blob`",
+        "capability enable",
+        "only the Skills interaction",
+        "leaves the add blocked",
+    ):
+        assert removed not in smoke
+
+    path = ROOT / "scripts" / "shoot_screens.py"
+    spec = importlib.util.spec_from_file_location("shoot_screens", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    prompt = (ROOT / ".pi" / "prompts" / "screenshots.md").read_text(encoding="utf-8")
+    flat_prompt = " ".join(prompt.split())
+    assert f"walks **{len(module.SCREENS)} screens**" in flat_prompt
+    for phrase in (
+        "Settings — Characters",
+        "Settings — Characters (waiting)",
+        "Settings — Characters (partial cleanup)",
+        "Settings — Characters (narrow 840x625)",
+        "Fittings — Narrow (840x625)",
+    ):
+        assert phrase in flat_prompt
+    assert "Fittings — Characters" not in flat_prompt
 
 
 def test_external_privacy_policy_is_not_a_repository_release_gate():
@@ -588,12 +690,12 @@ def test_the_build_verifies_every_eve_capability_controller_is_importable():
     assert "from wingman.eveskills.controller import SkillsController" in action
 
 
-def test_the_build_verifies_fittings_js_is_bundled():
+def test_the_build_verifies_fittings_and_characters_js_are_bundled():
     """Same silent-`datas`-failure shape as the other named web assets:
     the action already lists every script the page loads by name so a
     wrong path in uploader.spec cannot ship a build missing one of them
-    silently. `fittings.js` must be on that list alongside the scripts
-    that were there before the Fittings route existed.
+    silently. `fittings.js` and `characters.js` must be on that list
+    alongside the scripts that were there before those sections existed.
     """
     action = (
         ROOT / ".github" / "actions" / "build-installer" / "action.yml"
@@ -604,6 +706,11 @@ def test_the_build_verifies_fittings_js_is_bundled():
         "the action's bundled-web-assets check does not name fittings.js -- "
         "a missing datas entry for it would ship a build with a blank "
         "Fittings route and no CI signal at all"
+    )
+    assert "characters.js" in web_check, (
+        "the action's bundled-web-assets check does not name characters.js -- "
+        "a missing datas entry for it would ship a build with an inert "
+        "Characters Settings section and no CI signal at all"
     )
     for name in ("index.html", "style.css", "app.js", "skills.js"):
         assert name in web_check, name

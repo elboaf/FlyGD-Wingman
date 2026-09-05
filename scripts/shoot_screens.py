@@ -21,16 +21,18 @@ import sys
 import time
 import urllib.request
 from collections.abc import Callable
-from typing import NamedTuple
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 
-class Screen(NamedTuple):
+@dataclass(frozen=True)
+class Screen:
     key: str
     label: str
     route: str
-    section: str | None
-    gated: bool
+    section: str | None = None
+    gated: bool = False
+    at_floor: bool = False
 
 
 # firstrun is a real route (app.js) that this tool deliberately never
@@ -51,9 +53,32 @@ EXCLUDED_ROUTES = frozenset({"firstrun", "formations"})
 # `gated` mirrors app.js's WM.EVE_ROUTES + WM.EVE_SECTIONS. Not retyped
 # from memory: test_shoot_screens.py asserts this column against app.js.
 SCREENS = (
-    Screen("uploader", "Uploader", "main", None, False),
+    Screen("uploader", "Uploader", "main"),
+    Screen("settings-uploading", "Settings - Uploading", "settings", "uploading"),
     Screen(
-        "settings-uploading", "Settings - Uploading", "settings", "uploading", False
+        "settings-characters", "Settings - Characters", "settings", "characters", True
+    ),
+    Screen(
+        "settings-characters-waiting",
+        "Settings - Characters (waiting)",
+        "settings",
+        "characters",
+        True,
+    ),
+    Screen(
+        "settings-characters-partial-cleanup",
+        "Settings - Characters (partial cleanup)",
+        "settings",
+        "characters",
+        True,
+    ),
+    Screen(
+        "settings-characters-narrow",
+        "Settings - Characters (narrow 840x625)",
+        "settings",
+        "characters",
+        True,
+        True,
     ),
     Screen("settings-bookmarks", "Settings - Bookmarks", "settings", "bookmarks", True),
     Screen("settings-previews", "Settings - Previews", "settings", "previews", True),
@@ -105,6 +130,7 @@ SCREENS = (
         "settings",
         "previews",
         True,
+        True,
     ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen(
@@ -114,48 +140,47 @@ SCREENS = (
         "alerts",
         True,
     ),
-    Screen("settings-general", "Settings - General", "settings", "general", False),
-    Screen("profiles", "Profiles", "evesettings", None, True),
+    Screen("settings-general", "Settings - General", "settings", "general"),
+    Screen("profiles", "Profiles", "evesettings", gated=True),
     Screen(
         "profiles-account-identity",
         "Profiles - Identify accounts",
         "accountidentity",
-        None,
-        True,
+        gated=True,
     ),
-    Screen("profiles-backups", "Profiles - Backups", "backups", None, True),
-    Screen("skills", "Skills", "skills", None, True),
-    Screen("fittings", "Fittings", "fittings", None, True),
-    Screen("fittings-unfiled", "Fittings - Unfiled", "fittings", None, True),
-    Screen("fittings-superseded", "Fittings - Superseded", "fittings", None, True),
+    Screen("profiles-backups", "Profiles - Backups", "backups", gated=True),
+    Screen("skills", "Skills", "skills", gated=True),
+    Screen("fittings", "Fittings", "fittings", gated=True),
+    Screen("fittings-unfiled", "Fittings - Unfiled", "fittings", gated=True),
+    Screen("fittings-superseded", "Fittings - Superseded", "fittings", gated=True),
     Screen(
         "fittings-alliance",
         "Fittings - Recent alliance import",
         "fittings",
-        None,
-        True,
+        gated=True,
     ),
-    Screen("fittings-detail", "Fittings - Detail", "fittings", None, True),
-    Screen("fittings-characters", "Fittings - Characters", "fittings", None, True),
+    Screen("fittings-detail", "Fittings - Detail", "fittings", gated=True),
     Screen(
-        "fittings-copy-preflight",
-        "Fittings - Copy preflight",
+        "fittings-narrow",
+        "Fittings - Narrow (840x625)",
         "fittings",
-        None,
-        True,
+        gated=True,
+        at_floor=True,
+    ),
+    Screen(
+        "fittings-copy-preflight", "Fittings - Copy preflight", "fittings", gated=True
     ),
     Screen(
         "fittings-copy-limit",
         "Fittings - Copy over the 20-write limit",
         "fittings",
-        None,
-        True,
+        gated=True,
     ),
     Screen(
-        "fittings-copy-progress", "Fittings - Copy progress", "fittings", None, True
+        "fittings-copy-progress", "Fittings - Copy progress", "fittings", gated=True
     ),
-    Screen("fittings-copy-result", "Fittings - Copy results", "fittings", None, True),
-    Screen("dialog", "Dialog", "main", None, False),
+    Screen("fittings-copy-result", "Fittings - Copy results", "fittings", gated=True),
+    Screen("dialog", "Dialog", "main"),
 )
 
 # The dialog screen stages a confirm by hand -- an empty recording folder
@@ -267,6 +292,61 @@ def _fixture_preview_setup(body: str) -> str:
     )
 
 
+def load_dev_characters_scenarios(checkout: str | None = None) -> dict:
+    """Load the strict JSON-backed characters scenario table from web/dev.js."""
+    if checkout is None:
+        checkout = str(pathlib.Path(__file__).resolve().parent.parent)
+    path = pathlib.Path(checkout) / "wingman" / "web" / "dev.js"
+    source = path.read_text(encoding="utf-8")
+    marker = "DEV_CHARACTERS_SCENARIOS"
+    if marker not in source:
+        raise ValueError(f"{marker} not found in {path}")
+    raw = source[source.index(marker) :]
+    try:
+        start = raw.index("{")
+    except ValueError:
+        raise ValueError(f"{marker} found in {path} but has no opening brace")
+    depth = 0
+    end = start
+    for index, character in enumerate(raw[start:], start):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    else:
+        raise ValueError(f"{marker} object literal in {path} has unbalanced braces")
+    try:
+        return json.loads(raw[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{marker} body in {path} is not valid JSON: {exc}") from exc
+
+
+def _fixture_characters_setup(name: str, body: str = "") -> str:
+    """Run a Characters capture against one extracted, read-only scenario."""
+    scenarios = load_dev_characters_scenarios()
+    if name not in scenarios:
+        raise ValueError(f"unknown characters screenshot scenario: {name!r}")
+    payload_js = json.dumps(scenarios[name])
+    return (
+        "(function () {\n"
+        "  var payload = " + payload_js + ";\n"
+        "  if (typeof window.onEveAuthorityScreenshotState !== 'function') {\n"
+        "    throw new Error('onEveAuthorityScreenshotState is missing');\n"
+        "  }\n"
+        "  window.onEveAuthorityScreenshotState(payload);\n"
+        "  var roster = document.getElementById('characters-roster');\n"
+        "  if (!roster) { throw new Error('Characters roster is missing'); }\n"
+        "  var rendered = roster.querySelectorAll('.characters-row');\n"
+        "  if (payload.available && payload.characters.length"
+        "      && rendered.length !== payload.characters.length) {\n"
+        "    throw new Error('Characters screenshot fixture was not accepted');\n"
+        "  }\n" + body + "\n}())"
+    )
+
+
 # Every fittings-* stage below shares this route: WM.route('fittings') fires
 # unconditionally on every visit (app.js:192), but fittings.js's own
 # wm:route listener only tears down selection/overlays/filters when the
@@ -288,9 +368,6 @@ _FIT_RESET_JS = (
     "  if (copyOverlay && !copyOverlay.hidden && copyClose && !copyClose.disabled) {\n"
     "    copyClose.click();\n"
     "  }\n"
-    "  var charsOverlay = document.getElementById('fittings-characters-overlay');\n"
-    "  var charsClose = document.getElementById('fittings-characters-close');\n"
-    "  if (charsOverlay && !charsOverlay.hidden && charsClose) { charsClose.click(); }\n"
     "  var allButton = null;\n"
     "  Array.prototype.forEach.call(\n"
     "    document.querySelectorAll('#fittings-collections .rail-plan'),\n"
@@ -479,15 +556,17 @@ def _fittings_setup_script(key: str) -> str:
             "Rifter - Solo PvP",
             action="open",
         )
-    elif key == "fittings-characters":
+    elif key == "fittings-narrow":
         body += (
-            "  var open = document.getElementById('fittings-characters-open');\n"
-            "  if (!open) { throw new Error('Characters open control is missing'); }\n"
-            "  open.click();\n"
-            "  var overlay = document.getElementById('fittings-characters-overlay');\n"
-            "  if (!overlay || overlay.hidden) {\n"
-            "    throw new Error('Characters overlay did not open');\n"
+            "  var rail = document.getElementById('fittings-collections');\n"
+            "  var action = document.getElementById('fittings-copy-selected');\n"
+            "  var list = document.getElementById('fittings-list');\n"
+            "  if (!rail || !action || !list) {\n"
+            "    throw new Error('Fittings floor controls are missing');\n"
             "  }\n"
+            "  var first = document.querySelector('#fittings-list .fit-row-toggle');\n"
+            "  if (!first) { throw new Error('No fitting row rendered at the floor'); }\n"
+            "  first.scrollIntoView({block: 'start', behavior: 'instant'});\n"
         )
     elif key == "fittings-copy-preflight":
         # The injected fixture puts the present/conflict pair and its one
@@ -666,6 +745,64 @@ def _fittings_reset_script() -> str:
 
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
+    if screen.key == "settings-characters":
+        return _fixture_characters_setup(
+            "partial",
+            "  var count = document.getElementById('characters-count');\n"
+            "  var filter = document.getElementById('characters-filter');\n"
+            "  if (!count || count.textContent.indexOf('3 character') !== 0) {\n"
+            "    throw new Error('Characters summary did not render');\n"
+            "  }\n"
+            "  if (!filter || filter.disabled) {\n"
+            "    throw new Error('Characters filter is unavailable');\n"
+            "  }",
+        )
+    if screen.key == "settings-characters-waiting":
+        return _fixture_characters_setup(
+            "waiting",
+            "  var activity = document.getElementById('characters-activity');\n"
+            "  var cancel = document.getElementById('characters-cancel');\n"
+            "  if (!activity || activity.textContent.indexOf('Waiting for EVE SSO') !== 0) {\n"
+            "    throw new Error('Characters waiting state did not render');\n"
+            "  }\n"
+            "  if (!cancel || cancel.hidden || cancel.disabled) {\n"
+            "    throw new Error('Characters cancel control is unavailable');\n"
+            "  }",
+        )
+    if screen.key == "settings-characters-partial-cleanup":
+        return _fixture_characters_setup(
+            "partial-cleanup",
+            "  var count = document.getElementById('characters-count');\n"
+            "  var notice = document.getElementById('characters-notice');\n"
+            "  if (!count || count.textContent.indexOf('2 character') !== 0) {\n"
+            "    throw new Error('Characters partial-cleanup count did not render');\n"
+            "  }\n"
+            "  if (!notice || notice.textContent.indexOf('cleanup was not saved') === -1) {\n"
+            "    throw new Error('Characters partial-cleanup notice did not render');\n"
+            "  }\n"
+            "  if (roster.textContent.indexOf('Skills Only') !== -1) {\n"
+            "    throw new Error('Forgotten character still renders after partial cleanup');\n"
+            "  }",
+        )
+    if screen.key == "settings-characters-narrow":
+        return _fixture_characters_setup(
+            "maximum-50",
+            "  var roster = document.getElementById('characters-roster');\n"
+            "  var rows = roster.querySelectorAll('.characters-row');\n"
+            "  if (rows.length !== 50) {\n"
+            "    throw new Error('Characters 50-row fixture did not render');\n"
+            "  }\n"
+            "  roster.scrollTop = roster.scrollHeight;\n"
+            "  var last = rows[rows.length - 1];\n"
+            "  if (!last) { throw new Error('Last characters row is missing'); }\n"
+            "  var trigger = last.querySelector('.characters-menu-trigger');\n"
+            "  if (!trigger) { throw new Error('Characters menu trigger is missing'); }\n"
+            "  trigger.click();\n"
+            "  var menu = document.getElementById('characters-menu');\n"
+            "  if (!menu || menu.hidden || !menu.open) {\n"
+            "    throw new Error('Characters overflow menu did not open');\n"
+            "  }",
+        )
     if screen.key == "settings-previews":
         return _fixture_preview_setup(
             "  var pane = document.querySelector('.settings-pane');\n"
@@ -1332,51 +1469,36 @@ def walk(
                 if screen.section:
                     cdp.evaluate(f"WM.section({screen.section!r})")
             time.sleep(settle_ms / 1000)
-            if screen.key == "settings-previews-narrow":
-                # CDP viewport override MUST be applied before the setup
-                # script runs (finding 1, round 2): the setup script injects
-                # the fixture via onPreviewHotkeys and scrolls to the roster
-                # heading -- both must execute at 840x625 so the layout
-                # is already constrained before the scroll position is chosen.
-                # window.resizeTo is a no-op in WebView2; CDP emulation is
-                # the only mechanism that works.
-                # The clear is in a finally so the real viewport is restored
-                # even when setup or capture fails, preventing distorted
-                # captures of all later screens.
+            # Any floor-sized capture must pin 840x625 BEFORE its setup runs.
+            # That setup picks scroll positions and visible controls; doing it
+            # first would stage the screen against the wrong viewport and then
+            # photograph a different layout. The clear is in a finally so one
+            # failed floor shot cannot distort every screenshot after it.
+            if screen.at_floor:
                 cdp.set_device_metrics_override(width=840, height=625)
-                try:
-                    setup = screen_setup_script(screen)
-                    if setup:
-                        cdp.evaluate(setup)
-                        time.sleep(0.25)
-                    (out_dir / name).write_bytes(cdp.screenshot())
-                finally:
-                    cdp.clear_device_metrics_override()
-            elif screen.route == "fittings":
-                # Replace live read state through the bounded page-side
-                # screenshot handler before ANY stage action. This follows
-                # the Preview fixture precedent and cannot call Python, ESI,
-                # or a durable writer. Route leave clears the injected state.
-                cdp.evaluate(fittings_fixture_setup_script())
-                time.sleep(0.25)
-                if screen.key.startswith("fittings-"):
-                    cdp.evaluate(_fittings_reset_script())
+            try:
+                if screen.route == "fittings":
+                    # Replace live read state through the bounded page-side
+                    # screenshot handler before ANY stage action. This follows
+                    # the Preview fixture precedent and cannot call Python, ESI,
+                    # or a durable writer. Route leave clears the injected state.
+                    cdp.evaluate(fittings_fixture_setup_script())
                     time.sleep(0.25)
-                    prepare = _fittings_prepare_script(screen.key)
-                    if prepare:
-                        cdp.evaluate(prepare)
+                    if screen.key.startswith("fittings-"):
+                        cdp.evaluate(_fittings_reset_script())
                         time.sleep(0.25)
-                    setup = screen_setup_script(screen)
-                    if setup:
-                        cdp.evaluate(setup)
-                        time.sleep(0.25)
-                (out_dir / name).write_bytes(cdp.screenshot())
-            else:
+                        prepare = _fittings_prepare_script(screen.key)
+                        if prepare:
+                            cdp.evaluate(prepare)
+                            time.sleep(0.25)
                 setup = screen_setup_script(screen)
                 if setup:
                     cdp.evaluate(setup)
                     time.sleep(0.25)
                 (out_dir / name).write_bytes(cdp.screenshot())
+            finally:
+                if screen.at_floor:
+                    cdp.clear_device_metrics_override()
             if screen.key in {"dialog", "settings-previews-copy"}:
                 # Dismiss every staged overlay before the next screen. Cancel
                 # is side-effect free for both the Python-shaped confirm and

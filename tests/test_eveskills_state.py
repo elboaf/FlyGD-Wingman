@@ -548,6 +548,59 @@ def test_a_missing_primary_with_no_bak_is_still_a_silent_first_launch(tmp_path):
     assert not target.exists()
 
 
+def test_missing_primary_and_backup_is_verified_first_launch(tmp_path):
+    target = tmp_path / "eve_skills.json"
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert loaded.characters == []
+    assert warnings == []
+    assert health.cleanup_verifiable is True
+    assert health.rewrite_required is False
+
+
+def test_unreadable_primary_and_backup_is_not_cleanup_verifiable(tmp_path, monkeypatch):
+    target = tmp_path / "eve_skills.json"
+    backup = target.with_name(target.name + ".bak")
+    target.write_text("{}", encoding="utf-8")
+    backup.write_text("{}", encoding="utf-8")
+
+    def fail_read(_candidate):
+        raise PermissionError("simulated unreadable state")
+
+    monkeypatch.setattr(state, "_read_bounded", fail_read)
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert loaded.characters == []
+    assert warnings
+    assert health.cleanup_verifiable is False
+    assert health.rewrite_required is False
+
+
+def test_missing_primary_with_unreadable_backup_is_not_verified_first_launch(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "eve_skills.json"
+    backup = target.with_name(target.name + ".bak")
+    backup.write_text("{}", encoding="utf-8")
+    original_stat = type(target).stat
+
+    def fail_backup_stat(candidate, *args, **kwargs):
+        if candidate == backup:
+            raise PermissionError("backup denied")
+        return original_stat(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(type(target), "stat", fail_backup_stat)
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert loaded.characters == []
+    assert warnings and "could not be read" in warnings[0]
+    assert health.cleanup_verifiable is False
+    assert health.rewrite_required is False
+
+
 def test_a_missing_primary_with_an_unreadable_bak_starts_empty_with_a_warning(tmp_path):
     """The backup itself can be corrupt too. That is not first launch
     either -- the user should be told their roster could not be recovered,
@@ -572,6 +625,22 @@ def test_save_then_load_round_trips(tmp_path):
     loaded, warnings = state.load(target)
     assert loaded == original
     assert warnings == []
+
+
+def test_a_valid_primary_is_cleanup_verifiable(tmp_path):
+    target = tmp_path / "eve_skills.json"
+    original = state.SkillsState(
+        selected_plan_name="Interceptors",
+        characters=[state.Character(character_id=1, group="Wolfpack")],
+    )
+    state.save(original, target)
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert loaded == original
+    assert warnings == []
+    assert health.cleanup_verifiable is True
+    assert health.rewrite_required is False
 
 
 def test_save_copies_the_previous_document_to_bak(tmp_path):
@@ -629,6 +698,22 @@ def test_recovered_state_is_re_persisted_so_a_second_load_still_finds_it(tmp_pat
     second_loaded, second_warnings = state.load(target)
     assert second_loaded.selected_plan_name == "Good"
     assert second_warnings == []
+
+
+def test_successfully_recovered_backup_is_cleanup_verifiable(tmp_path):
+    target = tmp_path / "eve_skills.json"
+    original = state.SkillsState(selected_plan_name="Good")
+    state.save(original, target)
+    state.save(state.SkillsState(selected_plan_name="Newer"), target)
+    target.unlink()
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert loaded == original
+    assert warnings
+    assert target.exists()
+    assert health.cleanup_verifiable is True
+    assert health.rewrite_required is False
 
 
 def test_a_corrupt_document_with_no_usable_backup_starts_empty(tmp_path):
@@ -722,9 +807,44 @@ def test_a_failed_recovery_write_back_does_not_raise(tmp_path, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(state.atomicio, "write_atomic", _raise)
-    loaded, warnings = state.load(target)
+    loaded, warnings, health = state.load_with_health(target)
     assert loaded.selected_plan_name == "Good"
     assert any("could not be saved back" in w for w in warnings)
+    assert health.cleanup_verifiable is False
+    assert health.rewrite_required is True
+
+
+def test_tolerated_row_loss_requires_a_normalized_save_before_cleanup_is_verifiable(
+    tmp_path,
+):
+    target = tmp_path / "eve_skills.json"
+    target.write_text(
+        json.dumps(
+            {
+                "selected_plan_name": "Interceptors",
+                "characters": [
+                    {"character_id": 1, "group": "Wolfpack"},
+                    {"character_id": 0, "group": "Dropped"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded, warnings, health = state.load_with_health(target)
+
+    assert [character.character_id for character in loaded.characters] == [1]
+    assert warnings == []
+    assert health.cleanup_verifiable is False
+    assert health.rewrite_required is True
+
+    state.save(loaded, target)
+    reloaded, rewritten_warnings, rewritten_health = state.load_with_health(target)
+
+    assert reloaded == loaded
+    assert rewritten_warnings == []
+    assert rewritten_health.cleanup_verifiable is True
+    assert rewritten_health.rewrite_required is False
 
 
 def test_two_corruptions_in_the_same_second_do_not_overwrite_each_other(tmp_path):

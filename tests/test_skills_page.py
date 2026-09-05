@@ -137,24 +137,11 @@ def test_the_plan_ratio_says_what_it_counts():
 def test_the_rail_keeps_its_measured_width():
     """The rail is 214px at every width this window can be.
 
-    This test used to require a SECOND rule as well -- an
-    `@media (max-width: 720px)` block narrowing the rail to 168px -- and
-    the reason it gave was: "MIN_WIDTH is 840 PHYSICAL pixels and the app
-    is system-DPI-aware, so the CSS viewport floor is 672px at 125%
-    scaling and 560px at 150%. A 214px rail is 38% of the window at 560."
-
-    That arithmetic is wrong and the correction is now in DESIGN.md and
-    PRODUCT.md: MIN_WIDTH / MIN_HEIGHT resolve in LOGICAL units, so the CSS
-    viewport floor is 840x625 at EVERY display scaling -- measured 839x621
-    at 200%. There is no 560px viewport, the 38% case never existed, and
-    the block this test pinned could not fire at any width the window
-    reaches. Both the block and the requirement are gone.
-
-    What survives is the half that was always a real invariant: the rail's
-    width is a measured number, and moving it means re-checking the roster
-    against the 590px it leaves at the real floor.
+    The route's shared workspace rule was moved to a common class
+    (.eve-workspace) so both Skills and Fittings share the same sizing.
+    This test checks that the shared rule still reserves a 214px rail.
     """
-    block = re.search(r"#route-skills\s*\{(.*?)\}", CSS, re.DOTALL)
+    block = re.search(r"(?<![\w-])\.eve-workspace\s*\{(.*?)\}", CSS, re.DOTALL)
     assert block and "214px" in block.group(1), (
         "the default rail width moved; re-measure the roster at the 840x625 floor"
     )
@@ -229,17 +216,21 @@ def test_the_unscored_group_does_not_name_one_cause():
     )
 
 
-def test_the_empty_roster_names_the_control_not_its_location():
-    """PRODUCT.md: "Name things the way the user does." The button says
-    `Add character`; the empty state said "Add one from the actions on the
-    left", which names a location -- and on the narrowest window the rail
-    is the part most likely to be scanned past.
+def test_skills_hands_character_management_off_to_settings():
+    """Task 9: Skills no longer owns character authorization or forgetting.
+    Its one rail action is a handoff to Settings > Characters, where the
+    approved global Authenticate action lives.
     """
-    empty = re.search(r"No characters yet\.(.*?)';", CODE, re.DOTALL)
-    assert empty, "the empty-roster sentence moved or changed shape"
-    assert "Add character" in empty.group(1), (
-        "the empty roster does not name the Add character control: " + empty.group(1)
-    )
+    assert 'id="skills-manage-characters"' in RAIL
+    assert 'id="skills-add"' not in RAIL
+    assert "Manage characters…" in RAIL
+    assert "WM.openSettingsSection('characters')" in CODE
+    for removed in (
+        "skills_add_character",
+        "skills_cancel_auth",
+        "skills_forget_character",
+    ):
+        assert removed not in CODE
 
 
 def test_the_plan_file_format_is_stated_before_the_folder_is_empty():
@@ -368,25 +359,20 @@ def test_no_row_restates_the_status_of_the_group_it_is_in():
         )
 
 
-def test_the_destructive_control_is_the_apps_one_destructive_treatment():
-    """S3/S4. `Forget character` was red text with no button -- the fourth
-    of four treatments for "this destroys something", and the only one that
-    was not a control at all, in the same --err the `Missing` row about 130
-    CSS px above it used for an ordinary fact.
-
-    Treatment only: the inline two-step stays, because this row is the only
-    surface in the app for forgetting or re-authenticating a character and a
-    dialog would cover it.
+def test_skills_empty_and_reauth_copy_name_settings_without_row_actions():
+    """The route still reports that a row needs another sign-in, but it no
+    longer offers its own row buttons. Recovery and first-run copy point to
+    Settings, the canonical authorization surface.
     """
-    forget = re.search(r"'([\w ]*)', 'Forget character'", CODE)
-    assert forget, "the Forget control moved or was renamed"
-    assert forget.group(1) == "btn danger", (
-        "`Forget character` is not the shared destructive treatment: " + forget.group(1)
-    )
-    assert "confirming = ch.character_id" in CODE, (
-        "the inline two-step is gone; R3 was to convert the treatment, not "
-        "the confirmation"
-    )
+    empty = re.search(r"No characters yet\.(.*?)';", CODE, re.DOTALL)
+    assert empty, "the empty-roster sentence moved or changed shape"
+    assert "Manage characters…" in empty.group(1)
+    assert "Settings" in empty.group(1)
+    assert "This character needs to sign in to EVE again." in CODE
+    assert "Re-authenticate" not in CODE
+    assert "Forget character" not in CODE
+    assert "confirming = ch.character_id" not in CODE
+    assert "STATE.auth_in_progress" not in CODE
 
 
 def test_the_page_does_not_invent_a_fetch_history_it_was_not_sent():
@@ -426,6 +412,68 @@ def test_a_character_with_no_snapshot_says_so_and_carries_the_control():
     )
 
 
+def test_route_uses_shared_eve_workspace_class():
+    """Both Skills and Fittings routes must use the shared .eve-workspace
+    parent grid so their layout is identical and driven by a single rule.
+
+    The assertion is class-token-aware: it accepts any ordering or extra
+    class tokens as long as both `route` and `eve-workspace` are present.
+    """
+    match = re.search(
+        r"<div[^>]*\bclass=\"(?=[^\"]*\broute\b)(?=[^\"]*\beve-workspace\b)[^\"]*\"[^>]*\bid=\"route-skills\"",
+        BODY,
+    )
+    assert match, (
+        "route-skills does not carry both route and eve-workspace class tokens"
+    )
+
+
+def test_eve_workspace_css_has_required_properties():
+    """The shared .eve-workspace rule must declare the five geometry
+    properties the design brief specifies.
+    """
+    block = re.search(r"(?<![\w-])\.eve-workspace\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert block, "no .eve-workspace rule found in style.css"
+    body = block.group(1)
+    assert "display" in body and "none" in body, (
+        ".eve-workspace must default to display: none"
+    )
+    assert "grid-template-columns" in body and "214px minmax(0, 1fr)" in body, (
+        ".eve-workspace must set grid-template-columns: 214px minmax(0, 1fr)"
+    )
+    assert "gap" in body and "12px" in body, ".eve-workspace must set gap: 12px"
+    assert "padding" in body and "12px" in body, ".eve-workspace must set padding: 12px"
+    assert "min-height" in body and "0" in body, ".eve-workspace must set min-height: 0"
+
+
+def test_eve_workspace_active_sets_display_grid():
+    match = re.search(
+        r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS, re.DOTALL
+    )
+    assert match and "display" in match.group(1) and "grid" in match.group(1), (
+        ".eve-workspace.active must set display: grid"
+    )
+
+
+def test_primary_action_alignment_shared_rule():
+    """Both routes' primary actions must use a shared rule that centers
+    them vertically and pushes them to the far edge.
+    """
+    rule = re.search(
+        r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}",
+        CSS,
+        re.DOTALL,
+    )
+    assert rule, "no .skills-head > .workspace-primary rule found in style.css"
+    body = rule.group(1)
+    assert "margin-left" in body and "auto" in body, (
+        ".skills-head > .workspace-primary must set margin-left: auto"
+    )
+    assert "align-self" in body and "center" in body, (
+        ".skills-head > .workspace-primary must set align-self: center"
+    )
+
+
 def test_the_plan_heading_carries_a_copy_control():
     """S7, and the maintainer's own answer to "what do you end up doing
     twice": retyping a character's missing skills into EVE. They supplied
@@ -441,8 +489,9 @@ def test_the_plan_heading_carries_a_copy_control():
     assert head, "the Skills pane header moved"
     tag = re.search(r'<button[^>]*id="skills-copy-plan"[^>]*>', head.group(1))
     assert tag, "the plan heading has no copy control"
-    assert 'class="btn"' in tag.group(0), (
-        "the copy control is not a plain .btn: " + tag.group(0)
+    # Require the workspace-primary token explicitly on the primary action.
+    assert re.search(r'class="[^"]*\bworkspace-primary\b', tag.group(0)), (
+        "the copy control must include the workspace-primary token: " + tag.group(0)
     )
     assert "disabled" in tag.group(0), "the copy control is live with no plan selected"
     assert "navigator.clipboard.writeText" in CODE, (

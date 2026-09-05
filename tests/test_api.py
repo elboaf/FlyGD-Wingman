@@ -114,6 +114,15 @@ def test_push_survives_a_dead_window(tmp_path):
     )
 
 
+def test_eve_authority_change_pushes_only_the_shared_event(tmp_path):
+    window = FakeWindow()
+    api = make_api(tmp_path, window=window)
+
+    api._eve_authority_changed()
+
+    assert pushes(window) == [("onEveAuthorityChanged", {})]
+
+
 def test_close_hides_rather_than_destroying(tmp_path):
     """REGRESSION GUARD. This is a tray app: the Tk window bound
     WM_DELETE_WINDOW to hide(), and destroying here would return from

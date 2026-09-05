@@ -8,6 +8,8 @@
   if (window.pywebview) return;
   if (!/[?&]dev=1/.test(window.location.search)) return;
 
+  var devSearch = new URLSearchParams(window.location.search);
+
   var log = function (name) {
     return function () {
       var args = Array.prototype.slice.call(arguments);
@@ -61,8 +63,7 @@
    // has a return value the page renders.
    'play_recording', 'post_recent_logs',
    'connect_google', 'dialog_response', 'minimize', 'close',
-   'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
-   'skills_reload_plans', 'skills_open_plans_folder'
+   'skills_refresh', 'skills_reload_plans', 'skills_open_plans_folder'
   ].forEach(function (name) { api[name] = log(name); });
 
   // Answers {ok, error}, which is the shape list.js branches on: a
@@ -298,15 +299,6 @@
     skills.groups = Object.keys(byKey).sort().map(function (k) { return byKey[k]; });
   }
 
-  api.skills_forget_character = function (id) {
-    console.log('DEV api.skills_forget_character(', id, ')');
-    skills.characters = skills.characters.filter(function (ch) {
-      return ch.character_id !== id;
-    });
-    setTimeout(function () { window.onSkills(skills); }, 0);
-    return Promise.resolve(true);
-  };
-
   // NOT a generic stub, for the same reason skills_select_plan is not: the
   // page guards on the returned text and writes it to the clipboard, so a
   // null would make `Copy plan` look dead in the browser while working
@@ -325,17 +317,259 @@
     return Promise.resolve(skills);
   };
 
+  // Shared EVE character-management scenarios. Deliberately independent of
+  // Skills' own route payload and Fittings' workspace payload: the Settings
+  // roster is a fresh read of eve_characters_state(), not a projection of a
+  // sibling screen, and both the manual harness and screenshot tool must
+  // exercise that read without inventing credentials, hashes, or raw scopes.
+  var charactersScenarioRequested = devSearch.has('characters');
+  var charactersScenario = devSearch.get('characters') || 'partial';
+  var DEV_CHARACTERS_SCENARIOS = {
+    "full": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "",
+      "warnings": [],
+      "characters": [
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 9, "character_name": "Zuelo Parvi", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 11, "character_name": "Rhea Vestibule", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "partial": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "",
+      "warnings": [],
+      "characters": [
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 4, "character_name": "Skills Only", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 11, "character_name": "Rhea Vestibule", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "reauthentication": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "Character ownership changed. Re-authenticate.",
+      "warnings": [],
+      "characters": [
+        {"character_id": 4, "character_name": "Needs Reauth", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "sign_in", "fittings": "sign_in", "needs_reauth": true, "persistence_error": "Character ownership changed; cached skill data was cleared."},
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "warning": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "Wingman stores at most 50 characters. Forget one before adding another.",
+      "warnings": [],
+      "characters": [
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 4, "character_name": "Skills Only", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "empty": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "",
+      "warnings": [],
+      "characters": []
+    },
+    "waiting": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "waiting",
+      "authorization_notice": "",
+      "warnings": [],
+      "characters": [
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 4, "character_name": "Skills Only", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "terminal-failure": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "Character ownership changed. Forget the existing character before authenticating it again.",
+      "warnings": [],
+      "characters": [
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 4, "character_name": "Skills Only", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "partial-cleanup": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "This character was removed, but some cleanup was not saved. Reconcile first before adding it back.",
+      "warnings": [],
+      "characters": [
+        {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 11, "character_name": "Rhea Vestibule", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "maximum-50": {
+      "available": true,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "",
+      "warnings": [],
+      "characters": [
+        {"character_id": 90000000, "character_name": "Character 01", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000001, "character_name": "Character 02", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000002, "character_name": "Character 03", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000003, "character_name": "Character 04", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000004, "character_name": "Character 05", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000005, "character_name": "Character 06", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000006, "character_name": "Character 07", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000007, "character_name": "Character 08", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000008, "character_name": "Character 09", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000009, "character_name": "Character 10", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000010, "character_name": "Character 11", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000011, "character_name": "Character 12", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000012, "character_name": "Character 13", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000013, "character_name": "Character 14", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000014, "character_name": "Character 15", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000015, "character_name": "Character 16", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000016, "character_name": "Character 17", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000017, "character_name": "Character 18", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000018, "character_name": "Character 19", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000019, "character_name": "Character 20", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000020, "character_name": "Character 21", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000021, "character_name": "Character 22", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000022, "character_name": "Character 23", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000023, "character_name": "Character 24", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000024, "character_name": "Character 25", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000025, "character_name": "Character 26", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000026, "character_name": "Character 27", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000027, "character_name": "Character 28", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000028, "character_name": "Character 29", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000029, "character_name": "Character 30", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000030, "character_name": "Character 31", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000031, "character_name": "Character 32", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000032, "character_name": "Character 33", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000033, "character_name": "Character 34", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000034, "character_name": "Character 35", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000035, "character_name": "Character 36", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000036, "character_name": "Character 37", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000037, "character_name": "Character 38", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000038, "character_name": "Character 39", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000039, "character_name": "Character 40", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000040, "character_name": "Character 41", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000041, "character_name": "Character 42", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000042, "character_name": "Character 43", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000043, "character_name": "Character 44", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000044, "character_name": "Character 45", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000045, "character_name": "Character 46", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000046, "character_name": "Character 47", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000047, "character_name": "Character 48", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000048, "character_name": "Character 49", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
+        {"character_id": 90000049, "character_name": "Character 50", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "sign_in", "needs_reauth": false, "persistence_error": ""}
+      ]
+    },
+    "unavailable": {
+      "available": false,
+      "auth_configured": true,
+      "authorization_activity": "idle",
+      "authorization_notice": "",
+      "warnings": ["Restore eve_authority.json, then restart Wingman."],
+      "characters": []
+    }
+  };
+  var _devCharacters = devCharactersScenario(charactersScenario);
+
+  function devCharactersText(value) {
+    return value == null ? '' : String(value);
+  }
+
+  function devCharactersScenario(name) {
+    var scenario = DEV_CHARACTERS_SCENARIOS[devCharactersText(name)]
+      || DEV_CHARACTERS_SCENARIOS.partial;
+    return JSON.parse(JSON.stringify(scenario));
+  }
+
+  function devCharactersState() {
+    return JSON.parse(JSON.stringify(_devCharacters));
+  }
+
+  function devPushCharactersChanged(reason) {
+    setTimeout(function () {
+      if (window.onEveAuthorityChanged) {
+        window.onEveAuthorityChanged({ reason: reason });
+      }
+    }, 0);
+  }
+
+  api.eve_characters_state = function () {
+    console.log('DEV api.eve_characters_state()');
+    return Promise.resolve(devCharactersState());
+  };
+
+  api.eve_characters_authenticate = function () {
+    console.log('DEV api.eve_characters_authenticate()');
+    if (!_devCharacters.auth_configured) {
+      return Promise.resolve({
+        accepted: false,
+        error: 'This build has no EVE application id configured.'
+      });
+    }
+    if (_devCharacters.authorization_activity === 'waiting') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'An EVE sign-in is already in progress.'
+      });
+    }
+    _devCharacters.authorization_activity = 'waiting';
+    _devCharacters.authorization_notice = '';
+    devPushCharactersChanged('authenticate');
+    return Promise.resolve({ accepted: true, error: '' });
+  };
+
+  api.eve_characters_cancel_auth = function () {
+    console.log('DEV api.eve_characters_cancel_auth()');
+    if (_devCharacters.authorization_activity !== 'waiting') {
+      return Promise.resolve({
+        accepted: false,
+        error: 'The EVE sign-in is not running.'
+      });
+    }
+    _devCharacters.authorization_activity = 'idle';
+    _devCharacters.authorization_notice = '';
+    devPushCharactersChanged('cancel');
+    return Promise.resolve({ accepted: true, error: '' });
+  };
+
+  api.eve_characters_forget = function (characterId) {
+    console.log('DEV api.eve_characters_forget(', characterId, ')');
+    var before = _devCharacters.characters.length;
+    _devCharacters.characters = _devCharacters.characters.filter(function (row) {
+      return row.character_id !== characterId;
+    });
+    if (_devCharacters.characters.length === before) {
+      return Promise.resolve({
+        applied: false,
+        persisted: false,
+        error: 'That character is already gone.'
+      });
+    }
+    _devCharacters.authorization_notice = '';
+    devPushCharactersChanged('forget');
+    return Promise.resolve({ applied: true, persisted: true, error: '' });
+  };
+
   // Task 9's fixture library: enough entries and characters to exercise
   // every state the workspace can render by hand -- unfiled/filed/
   // superseded scoping, search and ship filters, a >100-row page 2, an
-  // unresolved type name, a non-deployable (Invalid-flag) fit, and all
-  // four character-access states the Characters overlay can show. This
-  // module is the only file allowed to fabricate data (see the file
+  // unresolved type name, a non-deployable (Invalid-flag) fit, and copy
+  // target eligibility states without route-owned authorization controls.
+  // This module is the only file allowed to fabricate data (see the file
   // banner), so this is where that fabrication lives rather than in
   // fittings.js.
   var fittings = {
-    auth_configured: true,
-    auth_in_progress: false,
     refreshing: false,
     characters: [
       { character_id: 90000010, character_name: 'Aria Voss', status: 'enabled',
@@ -621,8 +855,6 @@
       page_size: FIT_PAGE_SIZE,
       filters: { collection_id: collectionId, search: filters.search || '',
                  ship_type_id: filters.ship_type_id || null },
-      auth_configured: fittings.auth_configured,
-      auth_in_progress: fittings.auth_in_progress,
       refreshing: fittings.refreshing
     });
   };
@@ -661,30 +893,6 @@
         }
       }, (index + 1) * 350);
     });
-    return Promise.resolve(true);
-  };
-
-  api.fittings_enable_character = function (characterId) {
-    console.log('DEV api.fittings_enable_character(', characterId, ')');
-    var character = fittings.characters.filter(function (c) {
-      return c.character_id === characterId;
-    })[0];
-    if (character) character.status = 'enabled';
-    fitPushChanged('character');
-    return Promise.resolve(!!character);
-  };
-
-  api.fittings_cancel_auth = function () {
-    console.log('DEV api.fittings_cancel_auth()');
-    return Promise.resolve(true);
-  };
-
-  api.fittings_forget_character = function (characterId) {
-    console.log('DEV api.fittings_forget_character(', characterId, ')');
-    fittings.characters = fittings.characters.filter(function (c) {
-      return c.character_id !== characterId;
-    });
-    fitPushChanged('character');
     return Promise.resolve(true);
   };
 
@@ -1129,7 +1337,7 @@
   // estimate fields, matching what a real payload always sends once a
   // plan is selected.
   var skills = {
-    auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
+    refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
     selected_group: '',
     // Left EMPTY on purpose and filled by devRecountGroups() at startup
@@ -2208,10 +2416,6 @@
       window.onSkillsProgress({ character_id: 2, character_name: 'Zuelo Parvi',
                                 completed: completed, total: total, error: '' });
     },
-    skillsAuth: function (busy) {
-      skills.auth_in_progress = !!busy;
-      window.onSkills(skills);
-    },
     skillsRefreshing: function (busy) {
       skills.refresh_in_flight = !!busy;
       window.onSkills(skills);
@@ -2243,6 +2447,10 @@
       skills.plans = [];
       skills.selected_plan_name = '';
       window.onSkills(skills);
+    },
+    eveCharacters: function (name) {
+      _devCharacters = devCharactersScenario(name);
+      devPushCharactersChanged('scenario:' + devCharactersText(name || 'partial'));
     }
   };
 
@@ -2257,7 +2465,7 @@
   // Thirty-five characters, because the number is the point: the roster's
   // column count, the page-versus-inner scrolling and the commit row's
   // wrapping all only misbehave at a real roster's size.
-  var identitySearch = new URLSearchParams(window.location.search);
+  var identitySearch = devSearch;
   var identityScenarioRequested = identitySearch.has('identity');
   var identityScenario = identitySearch.get('identity') || 'idle';
   var backupsScenario = identitySearch.get('backups') || '';
@@ -2936,6 +3144,11 @@
     WM.route('evesettings');
   }
 
+  function showCharactersScenario() {
+    WM.route('settings');
+    WM.section('characters');
+  }
+
   if (identityScenarioRequested) {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', showIdentityScenario, { once: true });
@@ -2947,6 +3160,12 @@
       document.addEventListener('DOMContentLoaded', showProfilesScenario, { once: true });
     } else {
       showProfilesScenario();
+    }
+  } else if (charactersScenarioRequested) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', showCharactersScenario, { once: true });
+    } else {
+      showCharactersScenario();
     }
   }
 }());

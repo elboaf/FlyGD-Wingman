@@ -42,8 +42,7 @@
   var alternateNames = {};
   var refreshInFlight = false; // optimistic, until the next full re-fetch confirms it
   var searchDebounce = null;
-  var charactersOverlayOpen = false;
-  var confirmingForgetId = 0;
+  var requestSequence = 0; // drops stale fittings_state reads
   // Non-null only while the Windows screenshot tool has explicitly injected
   // its bounded fixture over CDP. It is cleared on route leave and never set
   // by Python, startup, or a user control.
@@ -133,8 +132,6 @@
       page: 1,
       page_size: 100,
       filters: currentFilters(),
-      auth_configured: true,
-      auth_in_progress: false,
       refreshing: false
     };
   }
@@ -172,11 +169,8 @@
     copyPreflight = null;
     alternateNames = {};
     refreshInFlight = false;
-    charactersOverlayOpen = false;
-    confirmingForgetId = 0;
     WM.el('fittings-search').value = '';
     WM.el('fittings-copy-overlay').hidden = true;
-    WM.el('fittings-characters-overlay').hidden = true;
     render(screenshotWorkspace(currentFilters()));
   }
 
@@ -185,11 +179,14 @@
       render(screenshotWorkspace(currentFilters()));
       return;
     }
+    requestSequence += 1;
+    var wanted = requestSequence;
     WM.send('fittings_state', currentFilters()).then(function (payload) {
       // A live read started before CDP injection must not repaint over the
       // deterministic screenshot state when its promise resolves later.
       if (screenshotFixture) return;
       if (!payload) { asked = false; return; }
+      if (wanted !== requestSequence || WM.current_route !== 'fittings') return;
       render(payload);
     });
   }
@@ -212,7 +209,6 @@
     renderList();
     renderPager();
     renderRailButtons();
-    if (charactersOverlayOpen) renderCharactersOverlay();
     if (expandedId) requestDetail(expandedId);
   }
 
@@ -238,7 +234,6 @@
     if (!STATE) return;
     renderNotices();
     renderRailButtons();
-    if (charactersOverlayOpen) renderCharactersOverlay();
   });
 
   // Tooling-only semantic state injection, following Previews'
@@ -255,19 +250,24 @@
   document.addEventListener('wm:route', function (event) {
     if (event.detail !== 'fittings') {
       // Cleanup for the one thing this route arms outside its own markup:
-      // a debounced search request, and the Characters overlay, which
-      // floats above the route and must not still be open on return to a
-      // completely different screen.
+      // a debounced search request.
       if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
       screenshotFixture = null;
-      closeCharactersOverlay();
       if (copyPhase === 'progress') WM.send('fittings_cancel_copy');
       closeCopyOverlay(true);
       clearSelection();
+      // Settings owns sign-in and Forget, so a hidden-route authority change
+      // must be picked up by the next real Fittings entry.
+      asked = false;
       return;
     }
     if (asked) return;
     asked = true;
+    requestState();
+  });
+
+  document.addEventListener('wm:eve-authority', function () {
+    if (WM.current_route !== 'fittings') return;
     requestState();
   });
 
@@ -381,6 +381,10 @@
     refreshAll.disabled = busy || !(STATE && STATE.characters || []).length;
   }
 
+  WM.el('fittings-manage-characters').addEventListener('click', function () {
+    WM.openSettingsSection('characters');
+  });
+
   // ---- main pane header, notices, filters ------------------------------
 
   function renderHead() {
@@ -472,8 +476,7 @@
                         || filters.collection_id !== 'all');
       empty.textContent = filtered
         ? 'No fittings match the current filters.'
-        : 'No fittings yet. Enable and refresh a character from '
-          + '\u201cCharacters\u2026\u201d to import from EVE.';
+        : 'Authenticate a character in Settings › Characters, then return and press Refresh characters.';
       return;
     }
     empty.hidden = true;
@@ -855,12 +858,6 @@
   });
 
   document.addEventListener('keydown', function (event) {
-    if (charactersOverlayOpen && event.key === 'Escape') {
-      event.preventDefault();
-      closeCharactersOverlay();
-      WM.el('fittings-characters-open').focus();
-      return;
-    }
     if (!copyOverlayOpen || event.key !== 'Escape' || copyPhase === 'progress') return;
     event.preventDefault();
     closeCopyOverlay(false);
@@ -909,7 +906,10 @@
       targets.appendChild(row);
     });
     if (!targets.children.length) {
-      targets.appendChild(WM.make('p', 'hint', 'No EVE characters available.'));
+      targets.appendChild(WM.make(
+        'p', 'hint',
+        'Authenticate a character in Settings › Characters, then return and press Refresh characters.'
+      ));
     }
     host.appendChild(targets);
     copyButtons(true, false, false);
@@ -1122,106 +1122,4 @@
     WM.el('fittings-copy-close').disabled = false;
   }
 
-  // ---- the Characters overlay --------------------------------------------
-  //
-  // App-owned, not the shared #overlay/#dialog confirm/prompt layer
-  // (panel.js's queue answers one question at a time; this shows a whole
-  // roster). A page-initiated confirmation inside it still goes through
-  // WM.confirm, never a browser dialog.
-
-  WM.el('fittings-characters-open').addEventListener('click', function () {
-    charactersOverlayOpen = true;
-    WM.el('fittings-characters-overlay').hidden = false;
-    renderCharactersOverlay();
-    WM.el('fittings-characters-close').focus();
-  });
-
-  WM.el('fittings-characters-close').addEventListener('click', closeCharactersOverlay);
-
-  function closeCharactersOverlay() {
-    if (!charactersOverlayOpen) return;
-    charactersOverlayOpen = false;
-    confirmingForgetId = 0;
-    WM.el('fittings-characters-overlay').hidden = true;
-  }
-
-  function renderCharactersOverlay() {
-    var host = WM.el('fittings-characters-body');
-    host.textContent = '';
-    var chars = (STATE && STATE.characters) || [];
-    if (!chars.length) {
-      host.appendChild(WM.make('p', 'hint',
-                               'No EVE characters yet. Add one from Skills.'));
-      return;
-    }
-    chars.forEach(function (ch) { host.appendChild(characterRowNode(ch)); });
-  }
-
-  function characterStatusLabel(ch) {
-    if (ch.status === 'reauthenticate') return 'Needs re-authentication';
-    if (ch.status === 'enable') return 'Skills only';
-    if (ch.stale) return 'Stale';
-    if (ch.fetched_utc) return 'Refreshed';
-    return 'Never refreshed';
-  }
-
-  function characterRowNode(ch) {
-    var row = WM.make('div', 'fit-char-row');
-    row.appendChild(WM.make('span', 'fit-char-name',
-                            ch.character_name || String(ch.character_id)));
-    row.appendChild(WM.make('span', 'fit-char-status', characterStatusLabel(ch)));
-
-    var actions = WM.make('div', 'fit-char-actions');
-    if (ch.status === 'reauthenticate') {
-      actions.appendChild(WM.make('span', 'hint',
-                                  'Re-authenticate this character from Skills first.'));
-    } else if (ch.status === 'enable') {
-      var enable = WM.make('button', 'btn', 'Enable fittings');
-      enable.addEventListener('click', function () {
-        WM.send('fittings_enable_character', ch.character_id);
-      });
-      actions.appendChild(enable);
-    } else if (ch.status === 'enabled') {
-      var refresh = WM.make('button', 'btn', 'Refresh');
-      refresh.disabled = refreshInFlight;
-      refresh.addEventListener('click', function () {
-        progress = null;
-        refreshInFlight = true;
-        renderRailButtons();
-        renderCharactersOverlay();
-        WM.send('fittings_refresh', [ch.character_id]);
-      });
-      actions.appendChild(refresh);
-    }
-
-    if (confirmingForgetId === ch.character_id) {
-      actions.appendChild(WM.make('span', 'forget-warn',
-                                  'Forget ' + (ch.character_name || 'this character')
-                                  + '? You will have to sign in to EVE again to add '
-                                  + 'it back.'));
-      var yes = WM.make('button', 'btn danger', 'Forget');
-      yes.addEventListener('click', function () {
-        confirmingForgetId = 0;
-        WM.send('fittings_forget_character', ch.character_id).then(requestState);
-      });
-      var no = WM.make('button', 'btn', 'Cancel');
-      no.addEventListener('click', function () {
-        confirmingForgetId = 0;
-        renderCharactersOverlay();
-      });
-      actions.appendChild(yes);
-      actions.appendChild(no);
-    } else {
-      var forget = WM.make('button', 'btn danger', 'Forget');
-      forget.addEventListener('click', function () {
-        confirmingForgetId = ch.character_id;
-        renderCharactersOverlay();
-      });
-      actions.appendChild(forget);
-    }
-
-    row.appendChild(actions);
-    if (ch.error) row.appendChild(WM.make('p', 'row-error', ch.error));
-    return row;
-  }
 }());

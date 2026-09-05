@@ -11,8 +11,8 @@
  * the page already holds.
  *
  * buildRoster() groups characters by readiness (see the lockout guard
- * comment on that function); the roster, its in-row expansion, and the
- * two-step forget confirm are what everything else here builds toward.
+ * comment on that function); the roster and its in-row expansion are what
+ * everything else here builds toward.
  */
 (function () {
   'use strict';
@@ -24,20 +24,20 @@
   var details = {};       // character_id -> character_detail() payload
   var pendingDetail = {}; // character_id -> in-flight request id
   var detailSeq = 0;
-  var confirming = 0;     // character_id whose Forget is awaiting confirmation
   var filterText = '';
   var asked = false;      // has the page asked Python for state yet
+  var requestSequence = 0; // drops stale skills_state reads
   var autoExpanded = false; // has the one-shot small-roster expansion run
   var copyStatusPlan = ''; // plan named by the current clipboard attempt
   var copyAttemptSeq = 0; // invalidates superseded asynchronous completions
 
-  /* S1. The expanded row is the ONLY surface in the whole application for
-   * forgetting a character or re-authenticating it (see THE LOCKOUT GUARD
-   * below), and it opened behind a chevron on a screen with ~900 CSS px of
-   * void under it. Rows still LOAD collapsed in the markup sense -- this
-   * expands them once, on the first payload that carries anyone -- so
-   * nothing about the disclosure or the toggle changes; what changes is
-   * the state the screen is first seen in.
+  /* S1. The expanded row still answers the route's scoped question -- why
+   * this character can or cannot fly the selected plan -- and it opened
+   * behind a chevron on a screen with ~900 CSS px of void under it. Rows
+   * still LOAD collapsed in the markup sense -- this expands them once, on
+   * the first payload that carries anyone -- so nothing about the
+   * disclosure or the toggle changes; what changes is the state the screen
+   * is first seen in.
    *
    * THE CAP IS ABOUT COST AND CONSENT, NOT ABOUT FIT. One expanded row can
    * be thirty-six requirement lines, so no cap makes the pane "fit"; what
@@ -146,6 +146,24 @@
 
   WM.handle('onSkills', render);
 
+  function requestState() {
+    requestSequence += 1;
+    var wanted = requestSequence;
+    WM.send('skills_state').then(function (payload) {
+      // A null/undefined reply means the request itself failed rather
+      // than answering with an empty state -- render() already no-ops on
+      // that, but leaving `asked` set would make every later route entry
+      // believe the initial ask already happened and skip retrying it
+      // forever, stranding the page with no state at all.
+      if (!payload) {
+        asked = false;
+        return;
+      }
+      if (wanted !== requestSequence || WM.current_route !== 'skills') return;
+      render(payload);
+    });
+  }
+
   document.addEventListener('wm:route', function (event) {
     if (event.detail !== 'skills') return;
     // The page asks; Python does not push unprompted at boot. Same rule
@@ -156,21 +174,18 @@
     // the largest payload in the app.
     if (asked) return;
     asked = true;
-    WM.send('skills_state').then(function (payload) {
-      // A null/undefined reply means the request itself failed rather
-      // than answering with an empty state -- render() already no-ops on
-      // that, but leaving `asked` set would make every later route entry
-      // believe the initial ask already happened and skip retrying it
-      // forever, stranding the page with no state at all.
-      if (!payload) asked = false;
-      render(payload);
-    });
+    requestState();
+  });
+
+  document.addEventListener('wm:eve-authority', function () {
+    if (WM.current_route !== 'skills') return;
+    requestState();
   });
 
   // ---- left rail ------------------------------------------------------
   /* The ready COUNT used to be part of this line ("2 characters - 0
    * ready") and is deliberately gone. It was scoped to the selected plan,
-   * because `readiness` is, but it sits above `Add character` and detached
+   * because `readiness` is, but it sits above `Manage characters…` and detached
    * from the plan list, where the only available reading is "0 of your 2
    * characters are ready" -- a roster statement the plan list contradicts
    * four rows down, where the selected plan's own ratio says otherwise.
@@ -184,8 +199,9 @@
    * different sets: this one is the whole roster, that one is how many
    * are Ready (or Missing, or Training). The group head is scoped by the
    * group name printed immediately left of it; this one had nothing
-   * beside it, so it is the one that says what it counts. `added` is the
-   * scope AND the verb of the button directly under it, `Add character`.
+   * beside it, so it is the one that says what it counts. `added` names
+   * scope rather than the control below it now that the button is a
+   * Settings handoff, not an add action.
    *
    * The rule the two comments at groupNode() and statusLine() establish is
    * unchanged and is why the noun stays: every number on this screen
@@ -309,26 +325,14 @@
   }
 
   function renderRailButtons() {
-    var add = WM.el('skills-add');
     var refresh = WM.el('skills-refresh');
-    // Auth is unconfigured when application.py still holds the placeholder
-    // client id -- a source checkout of a fork that has not registered its
-    // own EVE application. Disabling with a reason beats a button that
-    // opens a browser to an OAuth error.
-    add.disabled = !STATE.auth_configured;
-    add.title = STATE.auth_configured ? ''
-      : 'This build has no EVE application id configured.';
-    add.textContent = STATE.auth_in_progress
-      ? 'Cancel sign-in' : 'Add character';
     refresh.textContent = STATE.refresh_in_flight
       ? 'Refreshing…' : 'Refresh characters';
     refresh.disabled = STATE.refresh_in_flight || !characters().length;
   }
 
-  WM.el('skills-add').addEventListener('click', function () {
-    if (!STATE) return;
-    WM.send(STATE.auth_in_progress
-            ? 'skills_cancel_auth' : 'skills_add_character');
+  WM.el('skills-manage-characters').addEventListener('click', function () {
+    WM.openSettingsSection('characters');
   });
 
   WM.el('skills-refresh').addEventListener('click', function () {
@@ -349,7 +353,7 @@
     WM.send('skills_reload_plans');
   });
 
-  // None of the four button handlers above inspect the return value.
+  // None of the three button handlers above inspect the return value.
   // Every one is a mutation, and a mutation pushes onSkills on both its
   // success and failure paths -- the push is the answer, and acting on
   // the return as well would render the same state twice.
@@ -521,9 +525,6 @@
     var host = WM.el('skills-notices');
     host.textContent = '';
     var lines = [];
-    if (STATE.auth_in_progress) {
-      lines.push('Waiting for EVE SSO…');
-    }
     if (progress && progress.total) {
       lines.push('Refreshed ' + progress.completed + ' of '
                  + progress.total + ' characters');
@@ -606,11 +607,10 @@
    * of them -- the trailing OTHER bucket exists so that a readiness string
    * this page does not recognise still produces a row.
    *
-   * That is not tidiness. The expanded row is the ONLY surface in the
-   * whole application for forgetting a character or re-authenticating it,
-   * so a character with no row is a character that cannot be repaired --
-   * not from here, not from Settings, not from anywhere but deleting
-   * eve_skills.json by hand.
+   * That is not tidiness. Settings > Characters is the repair surface, but
+   * Skills still has to render every character that needs repair. A missing
+   * row hides the status that sends the user there and makes a broken token
+   * look like an empty roster instead of an actionable character problem.
    *
    * And the group most likely to be affected is the most common one:
    * "Unscored" is the state of EVERY character between authorisation and
@@ -786,13 +786,12 @@
     return mins + 'm';
   }
 
-  /* The two filters intersect. This DOES hide rows, and an expanded row is
-   * the only surface in the app for forgetting or re-authenticating a
-   * character -- but that is already true of the text filter beside it,
-   * and `All` is one click away. The LOCKOUT GUARD above buildRoster is
-   * not weakened: it forbids ENUMERATING known readiness groups, so that a
-   * character in an unrecognised state still gets a row. It says nothing
-   * about a filter the user chose. */
+  /* The two filters intersect. This DOES hide rows, but that is already
+   * true of the text filter beside it, and `All` is one click away. The
+   * LOCKOUT GUARD above buildRoster is not weakened: it forbids
+   * ENUMERATING known readiness groups, so that a character in an
+   * unrecognised state still gets a row. It says nothing about a filter
+   * the user chose. */
   function matching() {
     var needle = filterText.trim().toLowerCase();
     var group = selectedGroup().toLowerCase();
@@ -814,11 +813,10 @@
       empty.hidden = false;
       // Names the control rather than where it is: "the actions on the
       // left" is a location the rail is narrow enough to be scanned past,
-      // and PRODUCT.md's rule is to name things the way the user does --
-      // the button says "Add character", so this does too.
+      // and PRODUCT.md's rule is to name things the way the user does.
       empty.textContent =
-        'No characters yet. Press “Add character” to sign one in with '
-        + 'EVE SSO.';
+        'No characters yet. Press “Manage characters…” to authenticate one '
+        + 'in Settings.';
       return;
     }
 
@@ -827,9 +825,9 @@
     // instead of it -- see THE LOCKOUT GUARD above buildRoster. A missing
     // or empty plans folder changes what every character's readiness IS
     // (Unscored, most likely), it does not change whether that character
-    // gets a row: the row is still the only surface for forgetting it or
-    // re-authenticating it, and a character stuck at Unscored because the
-    // plans folder is empty needs that surface just as much as any other.
+    // gets a row: the route still has to answer who the selected plan fits,
+    // and a character stuck at Unscored because the plans folder is empty
+    // still belongs in that answer.
     var hint = '';
     if (!plans().length) {
       hint = 'No local plans yet. Drop a .txt plan in the plans folder, '
@@ -985,10 +983,6 @@
   function toggle(id) {
     if (expanded[id]) {
       delete expanded[id];
-      // Collapsing abandons a half-typed confirmation. Leaving it armed
-      // would mean re-opening the row a minute later shows a Forget button
-      // already primed to fire on one click.
-      if (confirming === id) confirming = 0;
     } else {
       expanded[id] = true;
       requestDetail(id);
@@ -1169,16 +1163,8 @@
       banner.appendChild(WM.make(
         'span', '',
         'This character needs to sign in to EVE again. Its stored token was '
-        + 'rejected and has been removed.'));
-      var again = WM.make('button', 'btn', 'Re-authenticate');
-      // The same call Add character makes. EVE's own flow is what decides
-      // which character comes back, and re-authorising an existing one
-      // updates it in place rather than adding a second row.
-      again.disabled = !STATE.auth_configured || STATE.auth_in_progress;
-      again.addEventListener('click', function () {
-        WM.send('skills_add_character');
-      });
-      banner.appendChild(again);
+        + 'rejected and has been removed. Manage characters in Settings to '
+        + 'authenticate it again.'));
       box.appendChild(banner);
     }
 
@@ -1197,7 +1183,6 @@
     }
 
     box.appendChild(groupPickerNode(ch));
-    box.appendChild(forgetNode(ch));
     return box;
   }
 
@@ -1313,61 +1298,4 @@
     return ['', 'I', 'II', 'III', 'IV', 'V'][level] || String(level);
   }
 
-  /* Two-step, and inline rather than window.confirm. Forget deletes the
-   * character's stored refresh token along with its snapshot -- the whole
-   * point of one document is that this is a single atomic write -- so
-   * recovering from a misclick means a full SSO round trip through a
-   * browser.
-   *
-   * `confirming` holds an id rather than a flag because arming a second
-   * row overwrites it, so only one row can ever be armed at once -- but
-   * arming happens only from the Forget-button click below, never from
-   * expansion, so an armed row stays armed while another row is opened
-   * and inspected. What actually disarms it: collapsing the armed row
-   * (toggle(), above), Cancel, or Forget itself.
-   */
-  function forgetNode(ch) {
-    var foot = WM.make('div', 'forget-row');
-    if (confirming !== ch.character_id) {
-      // .btn.danger, the app's one destructive treatment (round 3, L5).
-      // This was the last site of the retired `red text, no button`
-      // vocabulary -- and the worst of the three, because red text is not
-      // a control at all: it read as a warning label, in the same --err
-      // the row above it used for `Missing`, about 130 CSS px away.
-      // TREATMENT only. The two-step below stays: this row is the only
-      // surface in the app for forgetting or re-authenticating a
-      // character, so a dialog would cover the thing being acted on.
-      var start = WM.make('button', 'btn danger', 'Forget character');
-      start.addEventListener('click', function () {
-        confirming = ch.character_id;
-        renderRoster();
-      });
-      foot.appendChild(start);
-      return foot;
-    }
-    foot.appendChild(WM.make(
-      'span', 'forget-warn',
-      'Forget ' + (ch.character_name || 'this character')
-      + '? You will have to sign in to EVE again to add it back.'));
-    var yes = WM.make('button', 'btn danger', 'Forget');
-    yes.addEventListener('click', function () {
-      confirming = 0;
-      // False is a real answer here, unlike the other mutations: it means
-      // the character was already gone (contract: `True` / `False`). Either
-      // way the push re-syncs the roster, so the row is dropped by the
-      // render that follows rather than by this callback.
-      WM.send('skills_forget_character', ch.character_id);
-      delete expanded[ch.character_id];
-      delete details[ch.character_id];
-      delete pendingDetail[ch.character_id];
-    });
-    var no = WM.make('button', 'btn', 'Cancel');
-    no.addEventListener('click', function () {
-      confirming = 0;
-      renderRoster();
-    });
-    foot.appendChild(yes);
-    foot.appendChild(no);
-    return foot;
-  }
 }());

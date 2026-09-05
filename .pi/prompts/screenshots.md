@@ -61,10 +61,13 @@ short form; `wslpath` derives the Windows argument after `cd`:
 
 Say briefly what to expect: it asks them to right-click the Wingman tray icon
 and choose Quit (only the tray menu can exit it — `close()` hides; see
-`wingman/ui/api.py`), then launches from the selected checkout, walks **11
-screens**, and relaunches their app afterward. The set includes the focused
-**Profiles — Identify accounts** and **Profiles — Backups** routes. If Wingman
-is not running when they start, it says so and skips the restore.
+`wingman/ui/api.py`), then launches from the selected checkout, walks **33
+screens**, including **Settings — Characters**, **Settings — Characters
+(waiting)**, **Settings — Characters (partial cleanup)**, **Settings —
+Characters (narrow 840x625)** and **Fittings — Narrow (840x625)**, and
+relaunches their app afterward. The set also includes the focused
+**Profiles — Identify accounts** and **Profiles — Backups** routes. If
+Wingman is not running when they start, it says so and skips the restore.
 
 Mention `--port` if the default is busy, `--settle-ms` if a screen looks
 half-drawn, and `--out` only when relevant.
@@ -75,8 +78,8 @@ Read `<out_dir>/manifest.json` and validate and report all of these fields:
 
 - `shot_count` against `screens_total`, plus every entry in `failed` and
   `skipped`.
-- `eve_shown`. When false, **seven screens** are legitimately skipped because
-  the EVE gate hides three Settings sections and four Profiles/Skills routes;
+- `eve_shown`. When false, the set is correctly reduced to the four non-EVE
+  screens and the manifest's `skipped` list must name every EVE-gated screen;
   say so explicitly, or a set of four reads as truncated.
 - `engine_present`. When false, Settings — Bookmarks shows the shooter's
   engine-missing state rather than the real configured screen; call that out.

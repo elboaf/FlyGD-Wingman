@@ -212,6 +212,42 @@ def _with_fetch_labels(payload: dict) -> dict:
     return out
 
 
+# Shared authority warnings come from startup migration/load paths and are
+# replayed on demand through a state read, not a one-shot dialog. Keep them
+# bounded per entry and in count, matching the Skills route's payload-sized
+# posture and the authority controller's 500-character notice cap.
+EVE_CHARACTERS_MAX_WARNINGS = 20
+EVE_CHARACTERS_MAX_TEXT_CHARS = 500
+
+
+def _bound_eve_characters_text(text: str) -> str:
+    return text[:EVE_CHARACTERS_MAX_TEXT_CHARS]
+
+
+def _bound_eve_characters_warnings(warnings=None) -> list[str]:
+    if warnings is None:
+        return []
+    return [
+        _bound_eve_characters_text(warning)
+        for warning in warnings[:EVE_CHARACTERS_MAX_WARNINGS]
+    ]
+
+
+def _empty_eve_characters_state(warnings=None) -> dict:
+    """The shared character-management answer when no authority exists."""
+    raw_warnings = list(
+        warnings or ["The shared EVE character authority is unavailable."]
+    )
+    return {
+        "available": False,
+        "auth_configured": eveauth_application.is_configured(),
+        "authorization_activity": "idle",
+        "authorization_notice": "",
+        "characters": [],
+        "warnings": _bound_eve_characters_warnings(raw_warnings),
+    }
+
+
 def _empty_skills_state(warnings=None) -> dict:
     """The state payload when there is no controller at all.
 
@@ -221,8 +257,6 @@ def _empty_skills_state(warnings=None) -> dict:
     throws inside a click handler with no console attached.
     """
     return {
-        "auth_configured": False,
-        "auth_in_progress": False,
         "refresh_in_flight": False,
         "selected_plan_name": "",
         "selected_group": "",
@@ -8127,6 +8161,62 @@ class Api:
             self._eve_mutation.release()
             self._eve_done(ok)
 
+    # ---- Shared EVE characters ---
+
+    def eve_characters_state(self) -> dict:
+        """The display-safe shared authority snapshot for management UI."""
+        if self._authority is None:
+            return _empty_eve_characters_state(self._authority_warnings)
+        payload = dict(self._authority.management_state())
+        payload["available"] = True
+        payload["auth_configured"] = eveauth_application.is_configured()
+        payload["warnings"] = _bound_eve_characters_warnings(self._authority_warnings)
+        return payload
+
+    def eve_characters_authenticate(self) -> dict:
+        if self._authority is None:
+            return {
+                "accepted": False,
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
+            }
+        result = self._authority.start_full_authorization()
+        return {
+            "accepted": result.accepted,
+            "error": _bound_eve_characters_text(result.error),
+        }
+
+    def eve_characters_cancel_auth(self) -> dict:
+        if self._authority is None:
+            return {
+                "accepted": False,
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
+            }
+        result = self._authority.cancel_authorization()
+        return {
+            "accepted": result.accepted,
+            "error": _bound_eve_characters_text(result.error),
+        }
+
+    def eve_characters_forget(self, character_id) -> dict:
+        if self._authority is None:
+            return {
+                "applied": False,
+                "persisted": False,
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
+            }
+        result = self._authority.forget(character_id)
+        return {
+            "applied": result.applied,
+            "persisted": result.persisted,
+            "error": _bound_eve_characters_text(result.error),
+        }
+
     # ---- EVE skills ---
 
     def skills_state(self) -> dict:
@@ -8216,54 +8306,6 @@ class Api:
             # "Refreshing..." state is never left stranded on a worker
             # that raised before reaching that callback.
             self._push_fittings_changed({"reason": "refresh"})
-
-    def fittings_enable_character(self, character_id) -> bool:
-        """Reauthorize one exact character for Fittings plus its existing
-        capabilities. Same shared `enable_capability` upgrade path the
-        design doc specifies; Fittings is simply its first caller.
-        """
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.enable_capability(wanted, eveauth_application.FITTINGS)
-        if result.error:
-            self._alert(
-                "warning",
-                "Fittings not enabled" if not result.applied else "Fittings enabled",
-                result.error,
-            )
-        return bool(result.applied)
-
-    def fittings_cancel_auth(self) -> bool:
-        if self._authority is not None:
-            self._authority.cancel_auth()
-        return True
-
-    def fittings_forget_character(self, character_id) -> bool:
-        """Forget globally; Fittings cleanup runs as an authority participant."""
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        if result.error:
-            self._alert(
-                "warning",
-                "Character removal incomplete"
-                if result.applied
-                else "Character not forgotten",
-                result.error,
-            )
-        return result.applied
 
     # ---- EVE fittings: additive copy ---
 
@@ -8438,48 +8480,8 @@ class Api:
         return text
 
     def _eve_authority_changed(self) -> None:
-        """Publish shared auth state only after a Skills controller exists."""
-        if self._skills is not None:
-            self._skills._push_state(force=True)
-
-    def skills_add_character(self) -> bool:
-        """Start an interactive EVE sign-in. Returns before it finishes.
-
-        True even with no controller, and even though nothing happened.
-        `WM.send` resolves to null on a bridge failure and the page cannot
-        otherwise tell the two apart -- the comment on set_preview_enabled
-        above records that returning None from a no-op WAS the bug, and that
-        it cost a checkbox that reverted on every successful toggle.
-        """
-        if self._authority is not None:
-            self._authority.authenticate_skills()
-        return True
-
-    def skills_cancel_auth(self) -> bool:
-        if self._authority is not None:
-            self._authority.cancel_auth()
-        return True
-
-    def skills_forget_character(self, character_id) -> bool:
-        """Forget globally; Skills cleanup runs as an authority participant."""
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        if result.error:
-            self._alert(
-                "warning",
-                "Character removal incomplete"
-                if result.applied
-                else "Character not forgotten",
-                result.error,
-            )
-        return result.applied
+        """Publish the shared authority event for Settings and EVE routes."""
+        self._push("onEveAuthorityChanged", {})
 
     def skills_refresh(self) -> bool:
         if self._skills is not None:

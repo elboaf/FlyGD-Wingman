@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from .. import atomicio
+from ..eveauth.cleanup import LoadHealth
 from . import contracts
 from .model import (
     CANONICAL_LOCATIONS,
@@ -1045,8 +1046,29 @@ def _read_bounded(path: Path) -> str:
     return data.decode("utf-8")
 
 
-def _read_document(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
-    return _from_dict(json.loads(_read_bounded(path)), datetime.now(UTC))
+def _load_health(
+    cleanup_verifiable: bool, rewrite_required: bool = False
+) -> LoadHealth:
+    return LoadHealth(
+        cleanup_verifiable=cleanup_verifiable,
+        rewrite_required=rewrite_required,
+    )
+
+
+def _read_document(
+    path: Path, *, now: datetime | None = None
+) -> tuple[FittingsState, tuple[str, ...]]:
+    return _from_dict(json.loads(_read_bounded(path)), now or datetime.now(UTC))
+
+
+def _loaded_document_requires_rewrite(
+    path: Path, state: FittingsState, *, now: datetime
+) -> bool:
+    try:
+        raw = json.loads(_read_bounded(path))
+    except (OSError, ValueError, RecursionError):
+        return True
+    return raw != _to_dict(state, now)
 
 
 def _preserve_corrupt(path: Path) -> str:
@@ -1078,75 +1100,132 @@ def _read_backup_with_retry(
 
 def _recover_missing_primary(
     path: Path, backup: Path
-) -> tuple[FittingsState, tuple[str, ...]]:
+) -> tuple[FittingsState, tuple[str, ...], LoadHealth]:
     try:
         recovered, row_warnings = _read_backup_with_retry(backup)
     except (OSError, ValueError, RecursionError) as exc:
-        return FittingsState(), (
-            f"{path.name} was missing and {backup.name} could not be read ({exc}); starting with an empty fitting library.",
+        return (
+            FittingsState(),
+            (
+                f"{path.name} was missing and {backup.name} could not be read ({exc}); starting with an empty fitting library.",
+            ),
+            _load_health(False),
         )
     try:
         save_fittings(path, recovered)
     except (OSError, ValueError) as exc:
-        return recovered, (
-            *row_warnings,
-            f"{path.name} was missing and was read from {backup.name}, but the recovery could not be saved ({exc}).",
+        return (
+            recovered,
+            (
+                *row_warnings,
+                f"{path.name} was missing and was read from {backup.name}, but the recovery could not be saved ({exc}).",
+            ),
+            _load_health(False, rewrite_required=True),
         )
-    return recovered, (
-        *row_warnings,
-        f"{path.name} was missing and was recovered from {backup.name}.",
+    return (
+        recovered,
+        (
+            *row_warnings,
+            f"{path.name} was missing and was recovered from {backup.name}.",
+        ),
+        _load_health(True),
     )
 
 
-def _recover_corrupt_primary(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
+def _recover_corrupt_primary(
+    path: Path,
+) -> tuple[FittingsState, tuple[str, ...], LoadHealth]:
     preserved = _preserve_corrupt(path)
     backup = path.with_name(path.name + ".bak")
     try:
         recovered, row_warnings = _read_backup_with_retry(backup)
     except (OSError, ValueError, RecursionError) as exc:
-        return FittingsState(), (
-            f"{path.name} could not be read and was preserved as {preserved or 'a copy'}; its backup could not be recovered ({exc}). Starting with an empty fitting library.",
+        return (
+            FittingsState(),
+            (
+                f"{path.name} could not be read and was preserved as {preserved or 'a copy'}; its backup could not be recovered ({exc}). Starting with an empty fitting library.",
+            ),
+            _load_health(False),
         )
     if not preserved:
-        return recovered, (
-            *row_warnings,
-            f"Recovered {path.name} from {backup.name}, but the corrupt primary could not be moved aside and remains in place.",
+        return (
+            recovered,
+            (
+                *row_warnings,
+                f"Recovered {path.name} from {backup.name}, but the corrupt primary could not be moved aside and remains in place.",
+            ),
+            _load_health(False, rewrite_required=True),
         )
     try:
         save_fittings(path, recovered)
     except (OSError, ValueError) as exc:
-        return recovered, (
-            *row_warnings,
-            f"Recovered {path.name} from {backup.name}, but the recovery could not be saved ({exc}); the corrupt file was preserved as {preserved}.",
+        return (
+            recovered,
+            (
+                *row_warnings,
+                f"Recovered {path.name} from {backup.name}, but the recovery could not be saved ({exc}); the corrupt file was preserved as {preserved}.",
+            ),
+            _load_health(False, rewrite_required=True),
         )
-    return recovered, (
-        *row_warnings,
-        f"Recovered {path.name} from {backup.name}; the corrupt file was preserved as {preserved}.",
+    return (
+        recovered,
+        (
+            *row_warnings,
+            f"Recovered {path.name} from {backup.name}; the corrupt file was preserved as {preserved}.",
+        ),
+        _load_health(True),
     )
 
 
-def load_fittings(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
-    """Load local fitting state, recovering one backup and never raising."""
+def load_fittings_with_health(
+    path: Path,
+) -> tuple[FittingsState, tuple[str, ...], LoadHealth]:
+    """Load local fitting state and report whether cleanup can trust it."""
     path = Path(path)
+    now = datetime.now(UTC)
     try:
-        return _read_document(path)
+        loaded, warnings = _read_document(path, now=now)
     except FileNotFoundError:
         backup = path.with_name(path.name + ".bak")
         try:
             backup.stat()
         except FileNotFoundError:
-            return FittingsState(), ()
+            return FittingsState(), (), _load_health(True)
         except OSError as exc:
-            return FittingsState(), (
-                f"{path.name} could not be read ({exc}); starting with an empty fitting library.",
+            return (
+                FittingsState(),
+                (
+                    f"{path.name} could not be read ({exc}); starting with an empty fitting library.",
+                ),
+                _load_health(False),
             )
         return _recover_missing_primary(path, backup)
     except OSError as exc:
-        return FittingsState(), (
-            f"{path.name} could not be read ({exc}); starting with an empty fitting library.",
+        return (
+            FittingsState(),
+            (
+                f"{path.name} could not be read ({exc}); starting with an empty fitting library.",
+            ),
+            _load_health(False),
         )
     except (ValueError, RecursionError):
         return _recover_corrupt_primary(path)
+
+    rewrite_required = _loaded_document_requires_rewrite(path, loaded, now=now)
+    return (
+        loaded,
+        warnings,
+        _load_health(
+            not rewrite_required,
+            rewrite_required=rewrite_required,
+        ),
+    )
+
+
+def load_fittings(path: Path) -> tuple[FittingsState, tuple[str, ...]]:
+    """Load local fitting state, recovering one backup and never raising."""
+    loaded, warnings, _health = load_fittings_with_health(path)
+    return loaded, warnings
 
 
 def save_fittings(

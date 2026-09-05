@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
 from . import settings as settings_mod
+from .eveauth import application
 from .ui import api as api_mod
 from .ui import preflight
 from .ui import window as window_mod
@@ -736,18 +737,19 @@ def wire_eve_controllers(api):
     # no route may observe either feature before all derived rows have been
     # reconciled against the successfully loaded authority roster.
     if skills is not None:
-        authority.register_participant(skills)
+        authority.register_participant(application.SKILLS, skills)
     if fittings is not None:
-        authority.register_participant(fittings)
+        authority.register_participant(application.FITTINGS, fittings)
 
     api._authority = authority
     api._skills = skills
     api._fittings = fittings
+    authority_warnings = list(startup_warnings)
     if skills is None:
-        api._authority_warnings = [
-            *startup_warnings,
-            "The EVE skills subsystem is unavailable.",
-        ]
+        authority_warnings.append("The EVE skills subsystem is unavailable.")
+    if fittings is None:
+        authority_warnings.append("The EVE fittings subsystem is unavailable.")
+    api._authority_warnings = authority_warnings
     return authority, skills
 
 
