@@ -98,6 +98,19 @@ def links_file() -> Path:
     return state_dir() / "links.json"
 
 
+def fleet_sharing_file() -> Path:
+    """Fleet-sharing device identity, pairing/session state.
+
+    Beside settings.json and eve_authority.json, in its own document
+    rather than folded into either: save()'s settings.json projects a
+    fixed DEFAULTS shape (wingman.settings), and this holds neither a
+    Settings preference nor an EVE identity/token -- it is a device's own
+    keypair and an opaque authGD session, mirroring why eve_authority_file
+    is separate from settings_file in the first place.
+    """
+    return state_dir() / "fleet_sharing.json"
+
+
 def eve_settings_backup_dir() -> Path:
     """Where EVE settings backups live.
 

@@ -309,6 +309,19 @@ def _fleet_bar_defaults() -> dict:
     return {"enabled": False, "x": None, "y": None}
 
 
+def _fleet_sharing_defaults() -> dict:
+    """Fresh nested structure every call. Never return the module global.
+
+    Off by default, with no UI control anywhere in this tracer: `enabled`
+    is the single predicate that decides whether Wingman's local combat-
+    log-derived DPS/EWAR display is ever transmitted to authGD. Tests and
+    the isolated tracer harness are its only activation seams -- an
+    ordinary install stays local-only, matching `fleet_bar` and every
+    other section above it.
+    """
+    return {"enabled": False}
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -380,6 +393,11 @@ DEFAULTS = {
     # default: starting it opens a second WebView2 host and begins shared
     # discovery work that only fleet-multiboxers need.
     "fleet_bar": _fleet_bar_defaults(),
+    # The shared fleet-telemetry tracer's one activation predicate: built
+    # by _fleet_sharing_defaults() for the same fresh-dict-every-call
+    # reason as every section above. Off by default, and this tracer
+    # ships no UI to turn it on -- see validated_fleet_sharing.
+    "fleet_sharing": _fleet_sharing_defaults(),
 }
 
 VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -394,6 +412,7 @@ def _fresh_defaults() -> dict:
     data["eve_settings"] = _eve_settings_defaults()
     data["sig_bar"] = _sig_bar_defaults()
     data["fleet_bar"] = _fleet_bar_defaults()
+    data["fleet_sharing"] = _fleet_sharing_defaults()
     return data
 
 
@@ -719,6 +738,25 @@ def validated_fleet_bar(raw) -> dict:
     return section
 
 
+def validated_fleet_sharing(raw) -> dict:
+    """Same posture as validated_fleet_bar: a malformed section falls back
+    whole, and only a real bool can flip `enabled`.
+
+    This is the one predicate a future pairing/coordinator task reads to
+    decide whether fleet sharing may ever publish. There is deliberately
+    no UI writer for it in this tracer -- an explicit `True` round-trips
+    through load()/save() normalization like any other validated section,
+    but nothing shipped here can set it from anywhere but a test or the
+    isolated tracer harness.
+    """
+    section = _fleet_sharing_defaults()
+    if not isinstance(raw, dict):
+        return section
+    if isinstance(raw.get("enabled"), bool):
+        section["enabled"] = raw["enabled"]
+    return section
+
+
 def validated_eve(raw) -> dict:
     section = _eve_defaults()
     if not isinstance(raw, dict):
@@ -814,6 +852,7 @@ def _normalize(data: dict) -> dict:
     data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
     data["sig_bar"] = validated_sig_bar(data.get("sig_bar"))
     data["fleet_bar"] = validated_fleet_bar(data.get("fleet_bar"))
+    data["fleet_sharing"] = validated_fleet_sharing(data.get("fleet_sharing"))
     return data
 
 
@@ -850,10 +889,15 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     # Guarantee the persisted shape is normalized even when save() is called
     # directly (bypassing the _normalize() that update() runs first).
-    # Other nested sections are not touched here -- only fleet_bar was added
-    # after this pattern was established; extending the others is a separate
-    # decision that would need its own tests.
+    # Other nested sections are not touched here -- only fleet_bar and
+    # fleet_sharing get this extra guard here; extending the rest is a
+    # separate decision that would need its own tests. fleet_sharing gets
+    # it deliberately: it is the one predicate that decides whether local
+    # telemetry ever leaves the machine, and it must never come up
+    # enabled from malformed input even when a caller bypasses update()'s
+    # own _normalize() by calling save() directly.
     payload["fleet_bar"] = validated_fleet_bar(payload.get("fleet_bar"))
+    payload["fleet_sharing"] = validated_fleet_sharing(payload.get("fleet_sharing"))
     atomicio.write_atomic(path, json.dumps(payload, indent=2), encoding="utf-8")
 
 
