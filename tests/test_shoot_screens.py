@@ -1456,6 +1456,8 @@ def test_character_capture_staging_is_read_only_and_scenario_backed():
     narrow = _character_capture_scripts()["settings-characters-narrow"]
     assert "characters-menu-trigger" in narrow
     assert "Characters overflow menu did not open" in narrow
+    assert "menu.hidden" in narrow
+    assert "menu.open" not in narrow
 
 
 # ---------------------------------------------------------------------------

@@ -73,6 +73,23 @@ def test_characters_shell_has_the_approved_heading_and_required_ids():
     assert "hidden" not in tag, "#characters-live must stay mounted when idle"
 
 
+def test_characters_overflow_menu_uses_only_the_fixed_menu_pattern():
+    pane = _characters_pane()
+    menu_markup = re.search(
+        r'(<div[^>]+id="characters-menu"[^>]*>)(.*?)</div>', pane, re.DOTALL
+    )
+    assert menu_markup, "Characters has no overflow menu"
+    menu_tag, menu_body = menu_markup.groups()
+    assert 'class="ctxmenu"' in menu_tag
+    assert "bk-menu" not in menu_tag
+    assert "<summary" not in menu_body
+
+    assert re.search(
+        r"WM\.make\('button', 'linkbtn characters-menu-trigger', '⋯'\)", JS
+    )
+    assert "more.setAttribute('aria-label', 'More actions for '" in JS
+
+
 def test_characters_module_exists_and_listens_for_section_entry():
     path = WEB / "characters.js"
     assert path.is_file(), "wingman/web/characters.js does not exist"
@@ -415,12 +432,9 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
         const roster = add('div', 'characters-roster', '');
         const empty = add('div', 'characters-empty', 'empty');
         roster.appendChild(empty);
-        const menu = add('details', 'characters-menu', 'bk-menu');
-        const summary = add('summary', '', '');
-        summary.textContent = 'More';
+        const menu = add('div', 'characters-menu', 'ctxmenu');
         const forget = add('button', 'characters-menu-forget', '');
         forget.disabled = true;
-        menu.appendChild(summary);
         menu.appendChild(forget);
 
         section.appendChild(count);

@@ -2287,7 +2287,12 @@ button.btn:disabled,
 .characters-actions {
   display: flex; align-items: center; gap: 8px;
 }
-.characters-menu-trigger { white-space: nowrap; }
+/* A glyph keeps the repeated row action quiet, while an explicit square
+   target remains easy to acquire and gives the ellipsis a stable centre. */
+.characters-menu-trigger {
+  min-width: 28px; min-height: 28px; padding: 0 6px;
+  font-size: 16px; line-height: 1; white-space: nowrap;
+}
 /* The portal lives outside the roster scroller (index.html) and reuses one
    menu object for every row, so its hide rule belongs to the menu itself. */
 #characters-menu[hidden] { display: none; }
