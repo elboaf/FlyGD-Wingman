@@ -179,6 +179,7 @@ def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state(
     assert "Waiting for EVE SSO\u2026" in JS
     assert "authorization_activity = 'waiting'" not in JS
     assert "var authRequestPending = false;" in JS
+    assert "characters-auth-action" not in JS
     assert re.search(
         r"authenticate\.disabled = !state\.auth_configured\s*"
         r"\|\| state\.authorization_activity === 'waiting'\s*"
@@ -264,7 +265,7 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_characters_forget_is_operable_and_auth_commands_guard_duplicates_immediately():
+def test_characters_forget_is_operable_and_global_auth_commands_guard_duplicates_immediately():
     script = textwrap.dedent(
         rf"""
         const vm = require('vm');
@@ -488,6 +489,7 @@ def test_characters_forget_is_operable_and_auth_commands_guard_duplicates_immedi
           const menuTrigger = findByClass(roster, 'characters-menu-trigger');
           menuTrigger.dispatchEvent({{ type: 'click' }});
           const forgetEnabledWhenOpen = !forget.disabled && !menu.hidden;
+          const rowAuthButtonPresent = !!findByClass(roster, 'characters-auth-action');
 
           authenticate.dispatchEvent({{ type: 'click' }});
           const authDisabledImmediately = authenticate.disabled;
@@ -502,6 +504,7 @@ def test_characters_forget_is_operable_and_auth_commands_guard_duplicates_immedi
 
           console.log(JSON.stringify({{
             forgetEnabledWhenOpen,
+            rowAuthButtonPresent,
             authDisabledImmediately,
             cancelDisabledImmediately
           }}));
@@ -526,6 +529,7 @@ def test_characters_forget_is_operable_and_auth_commands_guard_duplicates_immedi
     result = json.loads(proc.stdout)
     assert result == {
         "forgetEnabledWhenOpen": True,
+        "rowAuthButtonPresent": False,
         "authDisabledImmediately": True,
         "cancelDisabledImmediately": True,
     }

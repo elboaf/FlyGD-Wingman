@@ -5050,7 +5050,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .skills-detail-row > select.field { flex: 0 1 200px; }
 
 .forget-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-.forget-warn { flex: 1; color: var(--warn); font-size: var(--fs-muted); }
 /* THE destructive treatment, and the only one. See the vocabulary banner
    above button.btn.
 
@@ -5062,9 +5061,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    THE RULE WAS AHEAD OF THE SITES, on purpose: the primitive landed in
    its own lane so three screen lanes would convert to one thing instead
    of inventing a third answer between them -- which is how the app got
-   five treatments. `Remove` on Settings > Discord has converted (R4).
-   `Delete selected` on the Uploader (index.html, R1's) and `Forget
-   character` on Skills (below, R3's) are the two still to come.
+   five treatments. `Remove` on Settings > Discord and `Forget character`
+   in Settings > Characters have converted; `Delete selected` on the
+   Uploader is the notable remaining site.
 
    WHEN IT ASKS FIRST is a separate question with a separate answer, and
    conflating the two is how `Restore` nearly got red-outlined. A
@@ -5117,9 +5116,8 @@ button.btn.danger:disabled {
    unchanged to index.html's #route-fittings markup, the same way
    `.rail-plan`/`.rail-item`/`.fm-item` already share one rule across three
    routes. What follows is only what Skills has no equivalent for: a
-   fitting row (name/ship/meta instead of a character's readiness), its
-   expanded detail (rack-grouped modules instead of a requirement list),
-   and the Characters overlay. */
+   fitting row (name/ship/meta instead of a character's readiness) and its
+   expanded detail (rack-grouped modules instead of a requirement list). */
 
 .fit-list { flex: 1; min-height: 0; overflow-y: auto; width: 100%; }
 .fit-row {
@@ -5130,8 +5128,7 @@ button.btn.danger:disabled {
 .fit-row-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
 /* .check is a <label>; giving it its own class alongside keeps the
    selection box out of the row's flex growth without a second wrapper
-   element -- the same shape .fit-char-row uses for its own two-column
-   layout further down. */
+   element. */
 .fit-select { flex: none; }
 .fit-row-toggle {
   display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0;
@@ -5202,24 +5199,6 @@ button.btn.danger:disabled {
    (`flex: none; display: flex; ...`) rather than at the start of its own
    CSS line, which is what that detector's regex anchors on. */
 .fit-pager[hidden] { display: none; }
-
-/* The Characters overlay: an app-owned modal reusing .overlay/.dialog
-   (style rules already shared with the confirm/prompt layer), not a
-   second dialog idiom. Its body is a plain roster, not a form, so it gets
-   its own row shape rather than .skills-detail-row's label+field layout. */
-#fittings-characters-dialog { width: min(520px, 92vw); }
-#fittings-characters-body {
-  display: flex; flex-direction: column; gap: 8px; max-height: 50vh;
-  overflow-y: auto;
-}
-.fit-char-row {
-  display: flex; flex-direction: column; gap: 4px; padding: 8px 0;
-  border-bottom: 1px solid var(--row-line);
-}
-.fit-char-row:last-child { border-bottom: 0; }
-.fit-char-name { color: var(--text); }
-.fit-char-status { color: var(--text-faint); font-size: var(--fs-muted); }
-.fit-char-actions { display: flex; align-items: center; gap: 8px; }
 
 /* Copy reuses the app-owned overlay/dialog vocabulary. These rules only
    shape its bounded roster and pair results; no second modal treatment or

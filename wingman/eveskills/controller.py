@@ -744,11 +744,10 @@ class SkillsController:
             character.character_id: character
             for character in self._authority.characters
         }
-        auth_in_progress = self._authority.auth_in_progress
         with self._lock:
-            return self._state_payload_locked(authority, auth_in_progress)
+            return self._state_payload_locked(authority)
 
-    def _state_payload_locked(self, authority, auth_in_progress) -> dict:
+    def _state_payload_locked(self, authority) -> dict:
         selected = self._selected_plan_locked()
         group = self._selected_group_locked()
         ids = self._cache.type_ids()
@@ -759,8 +758,6 @@ class SkillsController:
         # same public fact.
         metadata = self._cache.training_metadata(self._now())
         return {
-            "auth_configured": application.is_configured(),
-            "auth_in_progress": auth_in_progress,
             "refresh_in_flight": self._refresh_in_flight,
             "selected_plan_name": selected.name if selected else "",
             "selected_group": group,
@@ -1699,16 +1696,6 @@ class SkillsController:
             # additions-only in-memory rows are eligible for immediate refresh.
             self.refresh_characters()
         return verification
-
-    # ----- interactive sign-in --------------------------------------------
-
-    def authenticate(self) -> None:
-        """Compatibility delegate; the bridge calls authority directly."""
-        self._authority.authenticate_skills()
-
-    def cancel_auth(self) -> None:
-        """Compatibility delegate; the bridge calls authority directly."""
-        self._authority.cancel_auth()
 
     # ----- detail -----------------------------------------------------
 

@@ -1486,7 +1486,6 @@ class FittingsController:
         # Authority is never consulted while self._lock is held -- the same
         # lock-order rule _refresh_one and _authorised_get already follow.
         authority_characters = self._authority.characters
-        auth_in_progress = self._authority.auth_in_progress
         with self._lock:
             state = self._state
             refreshing = self._refresh_gate.locked()
@@ -1529,8 +1528,6 @@ class FittingsController:
                 "search": search,
                 "ship_type_id": ship_type_id,
             },
-            "auth_configured": application.is_configured(),
-            "auth_in_progress": auth_in_progress,
             "refreshing": refreshing,
         }
 

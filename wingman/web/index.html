@@ -1975,7 +1975,7 @@
     <aside class="skills-rail">
       <div class="rail-block">
         <p class="rail-count" id="skills-counts">No characters yet</p>
-        <button class="btn" id="skills-add">Add character</button>
+        <button class="btn" id="skills-manage-characters">Manage characters…</button>
         <button class="btn" id="skills-refresh">Refresh characters</button>
       </div>
       <!-- ABOVE the plans block, and that is load-bearing rather than
@@ -2143,7 +2143,7 @@
       <div class="rail-block">
         <p class="rail-count" id="fittings-counts"></p>
         <button class="btn" id="fittings-refresh-all">Refresh characters</button>
-        <button class="btn" id="fittings-characters-open">Characters…</button>
+        <button class="btn" id="fittings-manage-characters">Manage characters…</button>
       </div>
       <div class="rail-block rail-plans-block">
         <div class="rail-head-row">
@@ -2186,23 +2186,6 @@
         <button class="linkbtn" id="fittings-page-next">Next</button>
       </div>
     </section>
-
-    <!-- The Characters overlay: an app-owned modal, NOT the shared
-         #overlay/#dialog confirm/prompt layer (panel.js's queue answers a
-         single question at a time; this shows a whole roster). Page-
-         initiated confirmations inside it -- forgetting a character --
-         still go through WM.confirm, per DESIGN.md's "never a browser
-         dialog" rule. -->
-    <div class="overlay" id="fittings-characters-overlay" hidden>
-      <div class="dialog" id="fittings-characters-dialog" role="dialog"
-           aria-modal="true" aria-labelledby="fittings-characters-title">
-        <h2 id="fittings-characters-title">Characters</h2>
-        <div class="body" id="fittings-characters-body"></div>
-        <div class="buttons">
-          <button class="btn" id="fittings-characters-close">Close</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Additive copy is a multi-step, page-owned workflow rather than a
          single confirm/prompt question. The final send still uses WM.confirm

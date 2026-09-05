@@ -30,8 +30,7 @@
    // has a return value the page renders.
    'play_recording', 'post_recent_logs',
    'connect_google', 'dialog_response', 'minimize', 'close',
-   'skills_add_character', 'skills_cancel_auth', 'skills_refresh',
-   'skills_reload_plans', 'skills_open_plans_folder'
+   'skills_refresh', 'skills_reload_plans', 'skills_open_plans_folder'
   ].forEach(function (name) { api[name] = log(name); });
 
   // Answers {ok, error}, which is the shape list.js branches on: a
@@ -267,15 +266,6 @@
     skills.groups = Object.keys(byKey).sort().map(function (k) { return byKey[k]; });
   }
 
-  api.skills_forget_character = function (id) {
-    console.log('DEV api.skills_forget_character(', id, ')');
-    skills.characters = skills.characters.filter(function (ch) {
-      return ch.character_id !== id;
-    });
-    setTimeout(function () { window.onSkills(skills); }, 0);
-    return Promise.resolve(true);
-  };
-
   // NOT a generic stub, for the same reason skills_select_plan is not: the
   // page guards on the returned text and writes it to the clipboard, so a
   // null would make `Copy plan` look dead in the browser while working
@@ -407,14 +397,12 @@
   // Task 9's fixture library: enough entries and characters to exercise
   // every state the workspace can render by hand -- unfiled/filed/
   // superseded scoping, search and ship filters, a >100-row page 2, an
-  // unresolved type name, a non-deployable (Invalid-flag) fit, and all
-  // four character-access states the Characters overlay can show. This
-  // module is the only file allowed to fabricate data (see the file
+  // unresolved type name, a non-deployable (Invalid-flag) fit, and copy
+  // target eligibility states without route-owned authorization controls.
+  // This module is the only file allowed to fabricate data (see the file
   // banner), so this is where that fabrication lives rather than in
   // fittings.js.
   var fittings = {
-    auth_configured: true,
-    auth_in_progress: false,
     refreshing: false,
     characters: [
       { character_id: 90000010, character_name: 'Aria Voss', status: 'enabled',
@@ -700,8 +688,6 @@
       page_size: FIT_PAGE_SIZE,
       filters: { collection_id: collectionId, search: filters.search || '',
                  ship_type_id: filters.ship_type_id || null },
-      auth_configured: fittings.auth_configured,
-      auth_in_progress: fittings.auth_in_progress,
       refreshing: fittings.refreshing
     });
   };
@@ -740,30 +726,6 @@
         }
       }, (index + 1) * 350);
     });
-    return Promise.resolve(true);
-  };
-
-  api.fittings_enable_character = function (characterId) {
-    console.log('DEV api.fittings_enable_character(', characterId, ')');
-    var character = fittings.characters.filter(function (c) {
-      return c.character_id === characterId;
-    })[0];
-    if (character) character.status = 'enabled';
-    fitPushChanged('character');
-    return Promise.resolve(!!character);
-  };
-
-  api.fittings_cancel_auth = function () {
-    console.log('DEV api.fittings_cancel_auth()');
-    return Promise.resolve(true);
-  };
-
-  api.fittings_forget_character = function (characterId) {
-    console.log('DEV api.fittings_forget_character(', characterId, ')');
-    fittings.characters = fittings.characters.filter(function (c) {
-      return c.character_id !== characterId;
-    });
-    fitPushChanged('character');
     return Promise.resolve(true);
   };
 
@@ -1208,7 +1170,7 @@
   // estimate fields, matching what a real payload always sends once a
   // plan is selected.
   var skills = {
-    auth_configured: true, auth_in_progress: false, refresh_in_flight: false,
+    refresh_in_flight: false,
     selected_plan_name: 'Ishtar',
     selected_group: '',
     // Left EMPTY on purpose and filled by devRecountGroups() at startup
@@ -2232,10 +2194,6 @@
     skillsProgress: function (completed, total) {
       window.onSkillsProgress({ character_id: 2, character_name: 'Zuelo Parvi',
                                 completed: completed, total: total, error: '' });
-    },
-    skillsAuth: function (busy) {
-      skills.auth_in_progress = !!busy;
-      window.onSkills(skills);
     },
     skillsRefreshing: function (busy) {
       skills.refresh_in_flight = !!busy;

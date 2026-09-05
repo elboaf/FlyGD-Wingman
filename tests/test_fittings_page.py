@@ -367,23 +367,35 @@ def test_fittings_empty_state_starts_hidden_until_the_first_payload():
     assert empty and re.search(r"\bhidden\b", empty.group(0))
 
 
-def test_characters_overlay_focus_and_keyboard_dismissal_match_copy_overlay():
-    opening = FITTINGS_JS[
-        FITTINGS_JS.index(
-            "WM.el('fittings-characters-open').addEventListener"
-        ) : FITTINGS_JS.index("WM.el('fittings-characters-close').addEventListener")
-    ]
-    assert "WM.el('fittings-characters-close').focus();" in opening
+def test_fittings_hands_character_management_off_to_settings():
+    assert 'id="fittings-manage-characters"' in HTML
+    assert 'id="fittings-characters-open"' not in HTML
+    assert "Manage characters…" in HTML
+    assert "WM.openSettingsSection('characters')" in FITTINGS_JS
+    for removed in (
+        "fittings_enable_character",
+        "fittings_cancel_auth",
+        "fittings_forget_character",
+    ):
+        assert removed not in FITTINGS_JS
+    for removed_id in (
+        "fittings-characters-overlay",
+        "fittings-characters-dialog",
+        "fittings-characters-title",
+        "fittings-characters-body",
+        "fittings-characters-close",
+    ):
+        assert f'id="{removed_id}"' not in HTML
 
-    keydown = FITTINGS_JS[
-        FITTINGS_JS.index("document.addEventListener('keydown'") : FITTINGS_JS.index(
-            "function copyButtons"
-        )
-    ]
-    assert "charactersOverlayOpen" in keydown
-    assert "event.key !== 'Escape'" in keydown or "event.key === 'Escape'" in keydown
-    assert "closeCharactersOverlay();" in keydown
-    assert "WM.el('fittings-characters-open').focus();" in keydown
+
+def test_fittings_empty_and_copy_target_copy_name_settings_without_auth_controls():
+    assert (
+        'Authenticate a character in Settings \u203a Characters, then return and '
+        'press Refresh characters.'
+    ) in FITTINGS_JS
+    assert 'No EVE characters available.' not in FITTINGS_JS
+    assert 'Enable fittings' not in FITTINGS_JS
+    assert 'Re-authenticate this character from Skills first.' not in FITTINGS_JS
 
 
 def test_copy_selected_remains_the_only_accent_action():

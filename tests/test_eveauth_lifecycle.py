@@ -951,43 +951,11 @@ def test_full_authorization_save_failure_keeps_the_previous_skills_grant(tmp_pat
     assert any("not saved" in body.lower() for _, _, body in alerts)
 
 
-def test_authenticate_skills_is_a_full_authorization_adapter(tmp_path):
-    fake_sso = FakeAuthSso()
-    authority, _alerts, _launched, _listener = build(
-        tmp_path,
-        characters=[],
-        sso=fake_sso,
-        returned_identity=full_identity(
-            77, name="New Character", owner_hash="owner-77"
-        ),
-    )
-    authority.register_participant(application.SKILLS, Participant())
-    authority.register_participant(application.FITTINGS, Participant())
+def test_authority_no_longer_exposes_legacy_authorization_adapters(tmp_path):
+    authority, _alerts, _launched, _listener = build(tmp_path)
 
-    result = authority.authenticate_skills()
-
-    assert result == MutationResult(True, True, "")
-    assert fake_sso.authorized_scopes == [application.FULL_AUTH_SCOPES]
-    assert authority.capability_status(77, application.FITTINGS) == "enabled"
-
-
-def test_enable_capability_is_a_full_authorization_adapter(tmp_path):
-    fake_sso = FakeAuthSso()
-    authority, _alerts, _launched, _listener = build(
-        tmp_path,
-        sso=fake_sso,
-        returned_identity=full_identity(
-            77, name="New Character", owner_hash="owner-77"
-        ),
-    )
-    authority.register_participant(application.SKILLS, Participant())
-    authority.register_participant(application.FITTINGS, Participant())
-
-    result = authority.enable_capability(42, application.FITTINGS)
-
-    assert result == MutationResult(True, True, "")
-    assert fake_sso.authorized_scopes == [application.FULL_AUTH_SCOPES]
-    assert authority.capability_status(77, application.FITTINGS) == "enabled"
+    assert getattr(authority, "authenticate_skills", None) is None
+    assert getattr(authority, "enable_capability", None) is None
 
 
 def test_forget_generation_rejects_late_work_even_after_same_id_is_added(tmp_path):
@@ -1055,7 +1023,7 @@ def test_stale_legacy_cancel_auth_cannot_cancel_a_newer_listener(tmp_path):
     authority.cancel_authorization = cancel_then_restart
     started = authority.start_full_authorization()
 
-    authority.cancel_auth()
+    authority.cancel_authorization()
 
     try:
         assert started == AuthorizationCommandResult(True, "")
@@ -1188,7 +1156,7 @@ def test_shutdown_cancels_a_bound_listener_without_raising(tmp_path):
     listener = FakeListener(on_wait=stop_during_wait)
     authority, alerts, _, _ = build(tmp_path, listener=listener)
 
-    authority.authenticate_skills()
+    authority.start_full_authorization()
 
     assert listener.cancelled is True
     assert alerts == []

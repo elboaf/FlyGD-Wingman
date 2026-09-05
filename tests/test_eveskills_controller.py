@@ -19,6 +19,7 @@ from wingman.eveauth.controller import (
     AccessTokenResult,
     AuthorityCharacter,
     AuthorityController,
+    AuthorizationCommandResult,
     MutationResult,
 )
 from wingman.eveskills import application
@@ -104,11 +105,11 @@ class FakeAuthority:
         token = "access-2" if rejected_token is not None else "access-1"
         return AccessTokenResult(token, "", False)
 
-    def authenticate_skills(self):
-        return MutationResult(True, True, "")
+    def start_full_authorization(self):
+        return AuthorizationCommandResult(True, "")
 
-    def cancel_auth(self):
-        pass
+    def cancel_authorization(self):
+        return AuthorizationCommandResult(True, "")
 
     def forget(self, character_id):
         character_id = int(character_id)
@@ -2195,7 +2196,7 @@ def build_auth(
 def test_a_successful_sign_in_adds_the_character(tmp_path, monkeypatch):
     controller, _pushed, alerts, _, _ = build_auth(tmp_path, monkeypatch)
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     characters = controller.state_payload()["characters"]
     assert [c["character_id"] for c in characters] == [95]
@@ -2211,7 +2212,7 @@ def test_the_listener_is_bound_before_the_browser_launches(tmp_path, monkeypatch
         tmp_path, monkeypatch, events=events
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert events[0] == "bound"
     assert launched, "the browser was never launched"
@@ -2224,7 +2225,7 @@ def test_a_successful_sign_in_kicks_off_a_refresh(tmp_path, monkeypatch):
     esi = FakeEsi()
     controller, _pushed, _, _, _ = build_auth(tmp_path, monkeypatch, client=esi)
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"][0]["fetched_utc"] != ""
 
@@ -2236,8 +2237,8 @@ def test_only_one_interactive_sign_in_at_a_time(tmp_path, monkeypatch):
         tmp_path, monkeypatch, spawn=DeferredSpawn()
     )
 
-    controller.authenticate()
-    controller.authenticate()
+    controller._authority.start_full_authorization()
+    controller._authority.start_full_authorization()
 
     assert any("already in progress" in title for _, title, _ in alerts)
 
@@ -2250,13 +2251,13 @@ def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
     controller = None
 
     def cancel_from_inside_wait():
-        controller.cancel_auth()
+        controller._authority.cancel_authorization()
 
     controller, _, _, events, _ = build_auth(
         tmp_path, monkeypatch, events=events, on_wait=cancel_from_inside_wait
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert "cancelled" in events
 
@@ -2268,7 +2269,7 @@ def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
         callback=loopback_mod.Callback(code="", error="access_denied"),
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"] == []
     assert any("refused" in title for _, title, _ in alerts)
@@ -2300,7 +2301,7 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2330,7 +2331,7 @@ def test_re_authentication_still_kicks_off_a_skills_refresh(tmp_path, monkeypatc
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert [call[0] for call in esi.calls] == [
         "/v4/characters/95/skills/",
@@ -2364,7 +2365,7 @@ def test_an_ownership_change_refuses_the_full_auth_adapter_unchanged(
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2398,7 +2399,7 @@ def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatc
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("Too many characters" in title for _, title, _ in alerts)
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
@@ -2435,7 +2436,7 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
         validate_token=lambda *a, **k: blank_identity,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2453,7 +2454,7 @@ def test_a_sign_in_save_failure_rolls_back_a_new_character(tmp_path, monkeypatch
 
     controller._authority._save_authority = fail_authority_save
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"] == []
     assert alerts and alerts[-1][0] == "warning"
@@ -2476,7 +2477,7 @@ def test_a_sign_in_save_failure_rolls_back_an_existing_character(tmp_path, monke
 
     controller._authority._save_authority = fail_authority_save
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2501,7 +2502,7 @@ def test_forgetting_a_character_mid_auth_is_not_undone(tmp_path, monkeypatch):
         on_wait=forget_during_wait,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"] == []
     assert any("forgotten" in body.lower() for _, _, body in alerts)
@@ -2513,13 +2514,13 @@ def test_a_cancelled_sign_in_produces_no_alert(tmp_path, monkeypatch):
     controller = None
 
     def cancel_from_inside_wait():
-        controller.cancel_auth()
+        controller._authority.cancel_authorization()
 
     controller, _, alerts, _, _ = build_auth(
         tmp_path, monkeypatch, on_wait=cancel_from_inside_wait
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert alerts == []
     assert controller.state_payload()["characters"] == []
@@ -2530,7 +2531,7 @@ def test_a_timed_out_sign_in_alerts(tmp_path, monkeypatch):
         tmp_path, monkeypatch, listener_error=loopback_mod.CallbackTimeout()
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("timed out" in title.lower() for _, title, _ in alerts)
 
@@ -2542,7 +2543,7 @@ def test_an_oauth_error_during_exchange_alerts(tmp_path, monkeypatch):
         sso=FakeAuthSso(raises=sso_mod.OAuthError(400, "invalid_grant", "bad code")),
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("refused" in title.lower() for _, title, _ in alerts)
     assert controller.state_payload()["characters"] == []
@@ -2556,7 +2557,7 @@ def test_a_jwt_error_during_validation_alerts(tmp_path, monkeypatch):
         tmp_path, monkeypatch, validate_token=raising_validate
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("cannot trust" in title.lower() for _, title, _ in alerts)
     assert controller.state_payload()["characters"] == []
@@ -2570,7 +2571,7 @@ def test_an_unexpected_exception_during_sign_in_alerts(tmp_path, monkeypatch):
         tmp_path, monkeypatch, validate_token=raising_validate
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("Sign-in failed" in title for _, title, _ in alerts)
     assert controller.state_payload()["characters"] == []
@@ -2590,7 +2591,7 @@ def test_a_spawn_failure_releases_the_latch(tmp_path, monkeypatch):
         tmp_path, monkeypatch, spawn=RaisingSpawn()
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("Sign-in failed" in title for _, title, _ in alerts)
     assert controller._authority.auth_in_progress is False

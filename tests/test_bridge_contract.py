@@ -169,6 +169,21 @@ def test_eve_authority_change_handler_is_allowlisted_and_fanned_out_literally():
     assert "onEveAuthorityChanged" in allowlist()
     assert registered_names().get("onEveAuthorityChanged") == ["app.js"]
     assert "new CustomEvent('wm:eve-authority'" in app_js
+    assert "_skills._push_state(force=True)" not in api_source
+
+
+def test_obsolete_character_auth_bridge_methods_are_gone():
+    from wingman.ui.api import Api
+
+    for name in (
+        "skills_add_character",
+        "skills_cancel_auth",
+        "skills_forget_character",
+        "fittings_enable_character",
+        "fittings_cancel_auth",
+        "fittings_forget_character",
+    ):
+        assert getattr(Api, name, None) is None
 
 
 def test_startup_update_read_cannot_overwrite_a_newer_push():

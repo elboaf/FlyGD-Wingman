@@ -229,17 +229,21 @@ def test_the_unscored_group_does_not_name_one_cause():
     )
 
 
-def test_the_empty_roster_names_the_control_not_its_location():
-    """PRODUCT.md: "Name things the way the user does." The button says
-    `Add character`; the empty state said "Add one from the actions on the
-    left", which names a location -- and on the narrowest window the rail
-    is the part most likely to be scanned past.
+def test_skills_hands_character_management_off_to_settings():
+    """Task 9: Skills no longer owns character authorization or forgetting.
+    Its one rail action is a handoff to Settings > Characters, where the
+    approved global Authenticate action lives.
     """
-    empty = re.search(r"No characters yet\.(.*?)';", CODE, re.DOTALL)
-    assert empty, "the empty-roster sentence moved or changed shape"
-    assert "Add character" in empty.group(1), (
-        "the empty roster does not name the Add character control: " + empty.group(1)
-    )
+    assert 'id="skills-manage-characters"' in RAIL
+    assert 'id="skills-add"' not in RAIL
+    assert "Manage characters…" in RAIL
+    assert "WM.openSettingsSection('characters')" in CODE
+    for removed in (
+        "skills_add_character",
+        "skills_cancel_auth",
+        "skills_forget_character",
+    ):
+        assert removed not in CODE
 
 
 def test_the_plan_file_format_is_stated_before_the_folder_is_empty():
@@ -368,25 +372,20 @@ def test_no_row_restates_the_status_of_the_group_it_is_in():
         )
 
 
-def test_the_destructive_control_is_the_apps_one_destructive_treatment():
-    """S3/S4. `Forget character` was red text with no button -- the fourth
-    of four treatments for "this destroys something", and the only one that
-    was not a control at all, in the same --err the `Missing` row about 130
-    CSS px above it used for an ordinary fact.
-
-    Treatment only: the inline two-step stays, because this row is the only
-    surface in the app for forgetting or re-authenticating a character and a
-    dialog would cover it.
+def test_skills_empty_and_reauth_copy_name_settings_without_row_actions():
+    """The route still reports that a row needs another sign-in, but it no
+    longer offers its own row buttons. Recovery and first-run copy point to
+    Settings, the canonical authorization surface.
     """
-    forget = re.search(r"'([\w ]*)', 'Forget character'", CODE)
-    assert forget, "the Forget control moved or was renamed"
-    assert forget.group(1) == "btn danger", (
-        "`Forget character` is not the shared destructive treatment: " + forget.group(1)
-    )
-    assert "confirming = ch.character_id" in CODE, (
-        "the inline two-step is gone; R3 was to convert the treatment, not "
-        "the confirmation"
-    )
+    empty = re.search(r"No characters yet\.(.*?)';", CODE, re.DOTALL)
+    assert empty, "the empty-roster sentence moved or changed shape"
+    assert "Manage characters…" in empty.group(1)
+    assert "Settings" in empty.group(1)
+    assert "This character needs to sign in to EVE again." in CODE
+    assert "Re-authenticate" not in CODE
+    assert "Forget character" not in CODE
+    assert "confirming = ch.character_id" not in CODE
+    assert "STATE.auth_in_progress" not in CODE
 
 
 def test_the_page_does_not_invent_a_fetch_history_it_was_not_sent():

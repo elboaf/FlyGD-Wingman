@@ -129,11 +129,6 @@
       + filterText.trim();
   }
 
-  function rowNeedsAuthentication(row) {
-    return row.needs_reauth || row.skills !== 'authorized'
-      || row.fittings !== 'authorized';
-  }
-
   function rowFilterText(row) {
     return [
       asText(row.character_name),
@@ -199,15 +194,6 @@
     cancel.hidden = state.authorization_activity !== 'waiting';
     cancel.disabled = state.authorization_activity !== 'waiting'
       || authRequestPending;
-
-    Array.prototype.forEach.call(
-      section.querySelectorAll ? section.querySelectorAll('.characters-auth-action') : [],
-      function (button) {
-        button.disabled = !state.auth_configured
-          || state.authorization_activity === 'waiting'
-          || authRequestPending;
-      }
-    );
 
     filter.disabled = !state.available || !state.characters.length;
     filterClear.disabled = !filterText.trim();
@@ -325,29 +311,6 @@
                              authenticated ? 'Authenticated ' + authenticated : ''));
 
     var actions = WM.make('div', 'characters-actions');
-    if (rowNeedsAuthentication(row)) {
-      var auth = WM.make('button', 'btn characters-auth-action', 'Authenticate character…');
-      auth.disabled = !state.auth_configured
-        || state.authorization_activity === 'waiting'
-        || authRequestPending;
-      auth.setAttribute('aria-label', 'Authenticate ' + (row.character_name || 'character'));
-      auth.addEventListener('click', function () {
-        announce('');
-        resetNotice();
-        renderNotice();
-        authRequestPending = true;
-        renderButtons();
-        WM.send('eve_characters_authenticate').then(function (result) {
-          if (!result || !result.accepted) {
-            authRequestPending = false;
-            renderButtons();
-            showNotice(startAuthenticationError(result), 'err');
-          }
-        });
-      });
-      actions.appendChild(auth);
-    }
-
     var more = WM.make('button', 'linkbtn characters-menu-trigger', 'More');
     more.type = 'button';
     more.setAttribute('aria-haspopup', 'menu');

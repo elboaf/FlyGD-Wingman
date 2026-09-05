@@ -243,8 +243,6 @@ def _empty_skills_state(warnings=None) -> dict:
     throws inside a click handler with no console attached.
     """
     return {
-        "auth_configured": False,
-        "auth_in_progress": False,
         "refresh_in_flight": False,
         "selected_plan_name": "",
         "selected_group": "",
@@ -7866,54 +7864,6 @@ class Api:
             # that raised before reaching that callback.
             self._push_fittings_changed({"reason": "refresh"})
 
-    def fittings_enable_character(self, character_id) -> bool:
-        """Reauthorize one exact character for Fittings plus its existing
-        capabilities. Same shared `enable_capability` upgrade path the
-        design doc specifies; Fittings is simply its first caller.
-        """
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.enable_capability(wanted, eveauth_application.FITTINGS)
-        if result.error:
-            self._alert(
-                "warning",
-                "Fittings not enabled" if not result.applied else "Fittings enabled",
-                result.error,
-            )
-        return bool(result.applied)
-
-    def fittings_cancel_auth(self) -> bool:
-        if self._authority is not None:
-            self._authority.cancel_auth()
-        return True
-
-    def fittings_forget_character(self, character_id) -> bool:
-        """Forget globally; Fittings cleanup runs as an authority participant."""
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        if result.error:
-            self._alert(
-                "warning",
-                "Character removal incomplete"
-                if result.applied
-                else "Character not forgotten",
-                result.error,
-            )
-        return result.applied
-
     # ---- EVE fittings: additive copy ---
 
     def fittings_preflight_copy(
@@ -8087,49 +8037,8 @@ class Api:
         return text
 
     def _eve_authority_changed(self) -> None:
-        """Publish the shared authority event and temporary Skills compat push."""
+        """Publish the shared authority event for Settings and EVE routes."""
         self._push("onEveAuthorityChanged", {})
-        if self._skills is not None:
-            self._skills._push_state(force=True)
-
-    def skills_add_character(self) -> bool:
-        """Start an interactive EVE sign-in. Returns before it finishes.
-
-        True even with no controller, and even though nothing happened.
-        `WM.send` resolves to null on a bridge failure and the page cannot
-        otherwise tell the two apart -- the comment on set_preview_enabled
-        above records that returning None from a no-op WAS the bug, and that
-        it cost a checkbox that reverted on every successful toggle.
-        """
-        if self._authority is not None:
-            self._authority.authenticate_skills()
-        return True
-
-    def skills_cancel_auth(self) -> bool:
-        if self._authority is not None:
-            self._authority.cancel_auth()
-        return True
-
-    def skills_forget_character(self, character_id) -> bool:
-        """Forget globally; Skills cleanup runs as an authority participant."""
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        if result.error:
-            self._alert(
-                "warning",
-                "Character removal incomplete"
-                if result.applied
-                else "Character not forgotten",
-                result.error,
-            )
-        return result.applied
 
     def skills_refresh(self) -> bool:
         if self._skills is not None:

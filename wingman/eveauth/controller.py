@@ -533,18 +533,6 @@ class AuthorityController:
             return AuthorizationCommandResult(False, error)
         return AuthorizationCommandResult(True, "")
 
-    def authenticate_skills(self) -> MutationResult:
-        """Compatibility adapter until shared Settings callers land."""
-        result = self.start_full_authorization()
-        return MutationResult(result.accepted, result.accepted, result.error)
-
-    def enable_capability(self, character_id: int, capability: str) -> MutationResult:
-        """Compatibility adapter until shared Settings callers land."""
-        del character_id
-        self._capability_scopes(capability)
-        result = self.start_full_authorization()
-        return MutationResult(result.accepted, result.accepted, result.error)
-
     def cancel_authorization(self) -> AuthorizationCommandResult:
         with self._lock:
             attempt = self._active_attempt
@@ -565,10 +553,6 @@ class AuthorityController:
             self._cancel_listener_safely(listener)
         self._changed_safely()
         return AuthorizationCommandResult(True, "")
-
-    def cancel_auth(self) -> None:
-        """Compatibility adapter until shared Settings callers land."""
-        self.cancel_authorization()
 
     def forget(self, character_id: int) -> MutationResult:
         """Persist authority removal before pruning any participant state."""
@@ -678,7 +662,7 @@ class AuthorityController:
         """Stop accepting token work and cancel a pending browser authorization."""
         self._stopping.set()
         try:
-            self.cancel_auth()
+            self.cancel_authorization()
         except Exception:
             logger.warning("EVE authority shutdown was not clean", exc_info=True)
 
