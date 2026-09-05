@@ -4530,12 +4530,8 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 
    minmax(0, 1fr) rather than 1fr: a bare 1fr floors at min-content, and
    one long character name would push the roster wider than the window. */
-#route-skills {
-  display: none;
-  grid-template-columns: 214px minmax(0, 1fr);
-  gap: 12px; padding: 12px; min-height: 0;
-}
-#route-skills.active { display: grid; }
+.eve-workspace { display: none; grid-template-columns: 214px minmax(0, 1fr); gap: 12px; padding: 12px; min-height: 0; }
+.eve-workspace.active { display: grid; }
 
 .skills-rail {
   display: flex; flex-direction: column; gap: 14px; min-height: 0;
@@ -4700,7 +4696,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    children; the button carries `align-self: center` below, because a .btn
    baselined against an h1 hangs its border below the text. */
 .skills-head { display: flex; align-items: baseline; gap: 10px; flex: none; }
-#skills-copy-plan { margin-left: auto; align-self: center; }
+.skills-head > .workspace-primary { margin-left: auto; align-self: center; }
 .skills-plan-count { color: var(--text-faint); font-size: var(--fs-muted); }
 /* Task 6. The disclosure behind every training ETA and remaining-time
    figure: current attributes at Omega speed, implants and any requirement

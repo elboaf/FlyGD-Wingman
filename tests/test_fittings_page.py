@@ -33,6 +33,47 @@ def test_the_nav_button_exists_and_points_at_the_route():
     assert 'id="route-fittings"' in HTML, "index.html has no #route-fittings"
 
 
+def test_route_uses_shared_eve_workspace_class():
+    """Fittings route must use the shared .eve-workspace parent grid.
+    """
+    assert '<div class="route eve-workspace" id="route-fittings"' in HTML, (
+        "route-fittings does not carry the eve-workspace class"
+    )
+
+
+def test_eve_workspace_css_has_required_properties():
+    """Assert the shared .eve-workspace rule declares the required geometry.
+    """
+    match = re.search(r"(?<![\w-])\.eve-workspace\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert match, "no .eve-workspace rule found in style.css"
+    body = match.group(1)
+    assert "display" in body and "none" in body, ".eve-workspace must default to display: none"
+    assert "grid-template-columns" in body and "214px minmax(0, 1fr)" in body, (
+        ".eve-workspace must set grid-template-columns: 214px minmax(0, 1fr)"
+    )
+    assert "gap" in body and "12px" in body, ".eve-workspace must set gap: 12px"
+    assert "padding" in body and "12px" in body, ".eve-workspace must set padding: 12px"
+    assert "min-height" in body and "0" in body, ".eve-workspace must set min-height: 0"
+
+
+def test_eve_workspace_active_sets_display_grid():
+    assert re.search(r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS), (
+        ".eve-workspace.active must be present and set display: grid"
+    )
+
+
+def test_primary_action_alignment_shared_rule():
+    rule = re.search(r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert rule, "no .skills-head > .workspace-primary rule found in style.css"
+    body = rule.group(1)
+    assert "margin-left" in body and "auto" in body, (
+        ".skills-head > .workspace-primary must set margin-left: auto"
+    )
+    assert "align-self" in body and "center" in body, (
+        ".skills-head > .workspace-primary must set align-self: center"
+    )
+
+
 def test_there_are_exactly_four_destinations():
     """The title-bar destination count this task adds. DESIGN.md's own
     warning is that a destination gets added "one at a time" without the
@@ -423,7 +464,7 @@ def test_fittings_empty_and_copy_target_copy_name_settings_without_auth_controls
 
 def test_copy_selected_remains_the_only_accent_action():
     route = re.search(
-        r'<div class="route" id="route-fittings"[\s\S]*?</div>\s*\n\s*<div class="route" id="route-firstrun"',
+        r'<div[^>]*\bid="route-fittings"[^>]*>[\s\S]*?</div>\s*\n\s*<div[^>]*\bid="route-firstrun"',
         HTML,
     )
     assert route

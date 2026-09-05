@@ -137,24 +137,11 @@ def test_the_plan_ratio_says_what_it_counts():
 def test_the_rail_keeps_its_measured_width():
     """The rail is 214px at every width this window can be.
 
-    This test used to require a SECOND rule as well -- an
-    `@media (max-width: 720px)` block narrowing the rail to 168px -- and
-    the reason it gave was: "MIN_WIDTH is 840 PHYSICAL pixels and the app
-    is system-DPI-aware, so the CSS viewport floor is 672px at 125%
-    scaling and 560px at 150%. A 214px rail is 38% of the window at 560."
-
-    That arithmetic is wrong and the correction is now in DESIGN.md and
-    PRODUCT.md: MIN_WIDTH / MIN_HEIGHT resolve in LOGICAL units, so the CSS
-    viewport floor is 840x625 at EVERY display scaling -- measured 839x621
-    at 200%. There is no 560px viewport, the 38% case never existed, and
-    the block this test pinned could not fire at any width the window
-    reaches. Both the block and the requirement are gone.
-
-    What survives is the half that was always a real invariant: the rail's
-    width is a measured number, and moving it means re-checking the roster
-    against the 590px it leaves at the real floor.
+    The route's shared workspace rule was moved to a common class
+    (.eve-workspace) so both Skills and Fittings share the same sizing.
+    This test checks that the shared rule still reserves a 214px rail.
     """
-    block = re.search(r"#route-skills\s*\{(.*?)\}", CSS, re.DOTALL)
+    block = re.search(r"(?<![\w-])\.eve-workspace\s*\{(.*?)\}", CSS, re.DOTALL)
     assert block and "214px" in block.group(1), (
         "the default rail width moved; re-measure the roster at the 840x625 floor"
     )
@@ -425,6 +412,53 @@ def test_a_character_with_no_snapshot_says_so_and_carries_the_control():
     )
 
 
+def test_route_uses_shared_eve_workspace_class():
+    """Both Skills and Fittings routes must use the shared .eve-workspace
+    parent grid so their layout is identical and driven by a single rule.
+    """
+    assert '<div class="route eve-workspace" id="route-skills">' in BODY, (
+        "route-skills does not carry the eve-workspace class"
+    )
+
+
+def test_eve_workspace_css_has_required_properties():
+    """The shared .eve-workspace rule must declare the five geometry
+    properties the design brief specifies.
+    """
+    block = re.search(r"(?<![\w-])\.eve-workspace\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert block, "no .eve-workspace rule found in style.css"
+    body = block.group(1)
+    assert "display" in body and "none" in body, ".eve-workspace must default to display: none"
+    assert "grid-template-columns" in body and "214px minmax(0, 1fr)" in body, (
+        ".eve-workspace must set grid-template-columns: 214px minmax(0, 1fr)"
+    )
+    assert "gap" in body and "12px" in body, ".eve-workspace must set gap: 12px"
+    assert "padding" in body and "12px" in body, ".eve-workspace must set padding: 12px"
+    assert "min-height" in body and "0" in body, ".eve-workspace must set min-height: 0"
+
+
+def test_eve_workspace_active_sets_display_grid():
+    match = re.search(r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert match and "display" in match.group(1) and "grid" in match.group(1), (
+        ".eve-workspace.active must set display: grid"
+    )
+
+
+def test_primary_action_alignment_shared_rule():
+    """Both routes' primary actions must use a shared rule that centers
+    them vertically and pushes them to the far edge.
+    """
+    rule = re.search(r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert rule, "no .skills-head > .workspace-primary rule found in style.css"
+    body = rule.group(1)
+    assert "margin-left" in body and "auto" in body, (
+        ".skills-head > .workspace-primary must set margin-left: auto"
+    )
+    assert "align-self" in body and "center" in body, (
+        ".skills-head > .workspace-primary must set align-self: center"
+    )
+
+
 def test_the_plan_heading_carries_a_copy_control():
     """S7, and the maintainer's own answer to "what do you end up doing
     twice": retyping a character's missing skills into EVE. They supplied
@@ -440,7 +474,7 @@ def test_the_plan_heading_carries_a_copy_control():
     assert head, "the Skills pane header moved"
     tag = re.search(r'<button[^>]*id="skills-copy-plan"[^>]*>', head.group(1))
     assert tag, "the plan heading has no copy control"
-    assert 'class="btn"' in tag.group(0), (
+    assert 'class="btn workspace-primary"' in tag.group(0) or 'class="btn"' in tag.group(0), (
         "the copy control is not a plain .btn: " + tag.group(0)
     )
     assert "disabled" in tag.group(0), "the copy control is live with no plan selected"

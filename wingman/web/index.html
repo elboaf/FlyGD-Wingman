@@ -1971,7 +1971,7 @@
   <!-- NOT the .settings/.card wrapper the previews and bookmarks routes
        use: this is a two-pane workspace, not a form. The rail holds the
        roster's controls and the plan list; see .skills in style.css. -->
-  <div class="route" id="route-skills">
+  <div class="route eve-workspace" id="route-skills">
     <aside class="skills-rail">
       <div class="rail-block">
         <p class="rail-count" id="skills-counts">No characters yet</p>
@@ -2082,7 +2082,7 @@
              `Change…` on Profiles, at #es-folder-edit. Disabled rather
              than hidden when no plan is selected, per the control
              vocabulary's disabled-when-the-object-is-absent rule. -->
-        <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
+        <button class="btn workspace-primary" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
       <!-- The browser owns clipboard access, so its success or refusal
            belongs beside the plan action rather than on the global strip.
@@ -2138,7 +2138,7 @@
        Task 10 wires it to explicit additive preflight and execution; the
        app-owned copy overlay keeps neutral buttons so review, confirmation,
        progress, and results do not introduce a second accent claim. -->
-  <div class="route" id="route-fittings" aria-labelledby="nav-fittings">
+  <div class="route eve-workspace" id="route-fittings" aria-labelledby="nav-fittings">
     <aside class="skills-rail" id="fittings-rail">
       <div class="rail-block">
         <p class="rail-count" id="fittings-counts"></p>
@@ -2162,7 +2162,7 @@
       <header class="skills-head">
         <h1 id="fittings-collection-name">All fittings</h1>
         <span class="skills-plan-count" id="fittings-collection-count"></span>
-        <button class="btn acc" id="fittings-copy-selected" disabled>Copy selected</button>
+        <button class="btn acc workspace-primary" id="fittings-copy-selected" disabled>Copy selected</button>
       </header>
 
       <div class="skills-notices" id="fittings-notices" hidden></div>
