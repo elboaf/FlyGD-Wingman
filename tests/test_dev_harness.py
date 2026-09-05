@@ -315,6 +315,8 @@ def test_characters_methods_share_one_dev_fixture_and_event_path():
     assert "api.eve_characters_cancel_auth = function ()" in DEV_JS
     assert "api.eve_characters_forget = function (characterId)" in DEV_JS
     assert "eveCharacters: function (name)" in DEV_JS
+    body = _fixture_body("eveCharacters: function")
+    assert "devPushCharactersChanged('scenario:' + asText(name || 'partial'));" in body
 
 
 def test_character_scenarios_are_exact_safe_and_maximum_bounded():

@@ -55,17 +55,22 @@ def test_full_authorization_names_exactly_the_current_product_capabilities():
 
 def test_full_authorization_scopes_are_derived_from_the_explicit_capabilities():
     expected = application.SKILLS_SCOPES | application.FITTINGS_SCOPES
-    assert application.FULL_AUTH_SCOPES == expected
-    assert application.FULL_AUTH_SCOPES == frozenset(
-        {
-            "esi-skills.read_skills.v1",
-            "esi-skills.read_skillqueue.v1",
-            "esi-fittings.read_fittings.v1",
-            "esi-fittings.write_fittings.v1",
-        }
+    assert expected == application.FULL_AUTH_SCOPES
+    assert (
+        frozenset(
+            {
+                "esi-skills.read_skills.v1",
+                "esi-skills.read_skillqueue.v1",
+                "esi-fittings.read_fittings.v1",
+                "esi-fittings.write_fittings.v1",
+            }
+        )
+        == application.FULL_AUTH_SCOPES
     )
 
 
 def test_a_future_capability_does_not_widen_full_authorization(monkeypatch):
-    monkeypatch.setitem(application.CAPABILITY_SCOPES, "future", frozenset({"future.scope"}))
+    monkeypatch.setitem(
+        application.CAPABILITY_SCOPES, "future", frozenset({"future.scope"})
+    )
     assert "future.scope" not in application.FULL_AUTH_SCOPES

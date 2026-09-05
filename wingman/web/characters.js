@@ -88,7 +88,7 @@
       ? raw.warnings.slice(0, 20).map(asText)
       : [];
     var characters = Array.isArray(raw.characters)
-      ? raw.characters.slice(0, 50).map(normalizeRow)
+      ? raw.characters.map(normalizeRow)
       : [];
     return {
       available: raw.available !== false,

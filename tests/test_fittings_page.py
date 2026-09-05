@@ -42,16 +42,19 @@ def test_route_uses_shared_eve_workspace_class():
         r"<div[^>]*\bclass=\"(?=[^\"]*\broute\b)(?=[^\"]*\beve-workspace\b)[^\"]*\"[^>]*\bid=\"route-fittings\"",
         HTML,
     )
-    assert match, "route-fittings does not carry both route and eve-workspace class tokens"
+    assert match, (
+        "route-fittings does not carry both route and eve-workspace class tokens"
+    )
 
 
 def test_eve_workspace_css_has_required_properties():
-    """Assert the shared .eve-workspace rule declares the required geometry.
-    """
+    """Assert the shared .eve-workspace rule declares the required geometry."""
     match = re.search(r"(?<![\w-])\.eve-workspace\s*\{([^}]*)\}", CSS, re.DOTALL)
     assert match, "no .eve-workspace rule found in style.css"
     body = match.group(1)
-    assert "display" in body and "none" in body, ".eve-workspace must default to display: none"
+    assert "display" in body and "none" in body, (
+        ".eve-workspace must default to display: none"
+    )
     assert "grid-template-columns" in body and "214px minmax(0, 1fr)" in body, (
         ".eve-workspace must set grid-template-columns: 214px minmax(0, 1fr)"
     )
@@ -61,13 +64,20 @@ def test_eve_workspace_css_has_required_properties():
 
 
 def test_eve_workspace_active_sets_display_grid():
-    assert re.search(r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS), (
-        ".eve-workspace.active must be present and set display: grid"
+    match = re.search(
+        r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS, re.DOTALL
+    )
+    assert match and "display" in match.group(1) and "grid" in match.group(1), (
+        ".eve-workspace.active must set display: grid"
     )
 
 
 def test_primary_action_alignment_shared_rule():
-    rule = re.search(r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}", CSS, re.DOTALL)
+    rule = re.search(
+        r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}",
+        CSS,
+        re.DOTALL,
+    )
     assert rule, "no .skills-head > .workspace-primary rule found in style.css"
     body = rule.group(1)
     assert "margin-left" in body and "auto" in body, (
@@ -173,9 +183,11 @@ def test_returning_from_settings_after_an_authority_change_rereads_fittings_stat
     route_listener = re.search(
         r"document\.addEventListener\('wm:route', function \(event\) \{(?P<body>.*?)\n  \}\);",
         FITTINGS_JS,
-        re.S,
+        re.DOTALL,
     )
-    assert route_listener, "fittings.js no longer has the route listener this regression guards"
+    assert route_listener, (
+        "fittings.js no longer has the route listener this regression guards"
+    )
     body = route_listener.group("body")
     assert "if (event.detail !== 'fittings') {" in body
     assert "asked = false;" in body
@@ -458,12 +470,12 @@ def test_fittings_hands_character_management_off_to_settings():
 
 def test_fittings_empty_and_copy_target_copy_name_settings_without_auth_controls():
     assert (
-        'Authenticate a character in Settings \u203a Characters, then return and '
-        'press Refresh characters.'
+        "Authenticate a character in Settings \u203a Characters, then return and "
+        "press Refresh characters."
     ) in FITTINGS_JS
-    assert 'No EVE characters available.' not in FITTINGS_JS
-    assert 'Enable fittings' not in FITTINGS_JS
-    assert 'Re-authenticate this character from Skills first.' not in FITTINGS_JS
+    assert "No EVE characters available." not in FITTINGS_JS
+    assert "Enable fittings" not in FITTINGS_JS
+    assert "Re-authenticate this character from Skills first." not in FITTINGS_JS
 
 
 def test_copy_selected_remains_the_only_accent_action():
@@ -484,7 +496,8 @@ def test_fittings_primary_action_includes_workspace_primary_token():
     btn = re.search(r'<button[^>]*id="fittings-copy-selected"[^>]*>', HTML)
     assert btn, "fittings-copy-selected button is missing from index.html"
     assert re.search(r'class="[^"]*\bworkspace-primary\b', btn.group(0)), (
-        "fittings-copy-selected must include the workspace-primary token: " + btn.group(0)
+        "fittings-copy-selected must include the workspace-primary token: "
+        + btn.group(0)
     )
 
 

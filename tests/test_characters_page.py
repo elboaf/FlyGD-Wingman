@@ -149,6 +149,8 @@ def test_characters_event_path_re_reads_state_rather_than_rendering_event_payloa
 # assistive tech, and the clear action is a subordinate inline control.
 def test_characters_filter_and_empty_states_are_rendered_locally():
     assert "characters.length" in JS
+    assert "raw.characters.map(normalizeRow)" in JS
+    assert "raw.characters.slice(0, 50)" not in JS
     assert "roster.setAttribute('aria-label'" in JS
     assert "filterClear.hidden = !filterText.trim();" in JS
     assert "filter.value = '';" in JS

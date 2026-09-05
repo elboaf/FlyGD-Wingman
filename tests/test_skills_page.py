@@ -423,7 +423,9 @@ def test_route_uses_shared_eve_workspace_class():
         r"<div[^>]*\bclass=\"(?=[^\"]*\broute\b)(?=[^\"]*\beve-workspace\b)[^\"]*\"[^>]*\bid=\"route-skills\"",
         BODY,
     )
-    assert match, "route-skills does not carry both route and eve-workspace class tokens"
+    assert match, (
+        "route-skills does not carry both route and eve-workspace class tokens"
+    )
 
 
 def test_eve_workspace_css_has_required_properties():
@@ -433,7 +435,9 @@ def test_eve_workspace_css_has_required_properties():
     block = re.search(r"(?<![\w-])\.eve-workspace\s*\{([^}]*)\}", CSS, re.DOTALL)
     assert block, "no .eve-workspace rule found in style.css"
     body = block.group(1)
-    assert "display" in body and "none" in body, ".eve-workspace must default to display: none"
+    assert "display" in body and "none" in body, (
+        ".eve-workspace must default to display: none"
+    )
     assert "grid-template-columns" in body and "214px minmax(0, 1fr)" in body, (
         ".eve-workspace must set grid-template-columns: 214px minmax(0, 1fr)"
     )
@@ -443,7 +447,9 @@ def test_eve_workspace_css_has_required_properties():
 
 
 def test_eve_workspace_active_sets_display_grid():
-    match = re.search(r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS, re.DOTALL)
+    match = re.search(
+        r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS, re.DOTALL
+    )
     assert match and "display" in match.group(1) and "grid" in match.group(1), (
         ".eve-workspace.active must set display: grid"
     )
@@ -453,7 +459,11 @@ def test_primary_action_alignment_shared_rule():
     """Both routes' primary actions must use a shared rule that centers
     them vertically and pushes them to the far edge.
     """
-    rule = re.search(r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}", CSS, re.DOTALL)
+    rule = re.search(
+        r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}",
+        CSS,
+        re.DOTALL,
+    )
     assert rule, "no .skills-head > .workspace-primary rule found in style.css"
     body = rule.group(1)
     assert "margin-left" in body and "auto" in body, (

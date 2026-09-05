@@ -2361,9 +2361,7 @@
     },
     eveCharacters: function (name) {
       _devCharacters = devCharactersScenario(name);
-      if (window.onEveAuthorityChanged) {
-        window.onEveAuthorityChanged({ reason: 'scenario:' + asText(name || 'partial') });
-      }
+      devPushCharactersChanged('scenario:' + asText(name || 'partial'));
     }
   };
 
