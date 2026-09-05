@@ -32,7 +32,6 @@
     return;
   }
 
-  var menuSummary = menu.querySelector('summary');
   var active = false;
   var requestSequence = 0;
   var filterText = '';
@@ -45,12 +44,9 @@
   var menuCharacterName = '';
   var menuTrigger = null;
 
-  menu.classList.add('ctxmenu');
   menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', 'Character actions');
   menu.hidden = true;
-  menu.open = false;
-  if (menuSummary) { menuSummary.hidden = true; }
   forget.setAttribute('role', 'menuitem');
   forget.className = 'danger';
   forget.disabled = true;
@@ -250,7 +246,6 @@
     var trigger = menuTrigger;
     if (trigger) trigger.setAttribute('aria-expanded', 'false');
     menu.hidden = true;
-    menu.open = false;
     menuCharacterId = 0;
     menuCharacterName = '';
     forget.disabled = true;
@@ -272,7 +267,6 @@
     forget.setAttribute('aria-label', 'Forget ' + menuCharacterName);
     forget.disabled = false;
     menu.hidden = false;
-    menu.open = true;
     menu.style.left = '0px';
     menu.style.top = '0px';
     var menuRect = menu.getBoundingClientRect();
@@ -334,8 +328,9 @@
                              authenticated ? 'Authenticated ' + authenticated : ''));
 
     var actions = WM.make('div', 'characters-actions');
-    var more = WM.make('button', 'linkbtn characters-menu-trigger', 'More');
+    var more = WM.make('button', 'linkbtn characters-menu-trigger', '⋯');
     more.type = 'button';
+    more.title = 'More actions';
     more.setAttribute('aria-haspopup', 'menu');
     more.setAttribute('aria-controls', 'characters-menu');
     more.setAttribute('aria-expanded', 'false');

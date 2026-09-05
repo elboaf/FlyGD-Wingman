@@ -799,7 +799,7 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  if (!trigger) { throw new Error('Characters menu trigger is missing'); }\n"
             "  trigger.click();\n"
             "  var menu = document.getElementById('characters-menu');\n"
-            "  if (!menu || menu.hidden || !menu.open) {\n"
+            "  if (!menu || menu.hidden) {\n"
             "    throw new Error('Characters overflow menu did not open');\n"
             "  }",
         )
