@@ -3177,6 +3177,176 @@ Two things decide what you should see, and they are easy to conflate:
       watch for: `UpdateLayeredWindow` takes its size from the pushed image,
       so a stale frame cache resizes the window under the drag.
 
+## EVE preview crop prototype (Phase 0)
+
+This is the Phase 0 engineering probe for cropped preview regions
+(`docs/preview-evolution-crops-design.md`), run only through the
+checkout-only `tests/manual/preview_crop_harness.py` — never through the
+installed app. There is no production crop feature yet: nothing here writes
+settings, persists a layout, or survives a restart. Every threshold a result
+below is checked against is fixed in advance in
+`docs/preview-crop-prototype-results.md`; record observed values there, not
+in this checklist.
+
+Requires a Windows machine with at least one EVE client logged in to a named
+character for `pick`; the `load` path's stages (1, 2, 4, 8) each need that
+many simultaneously running named clients or it stops before them. Commands
+and safety boundaries are in `tests/manual/README.md`; both subcommands
+require the full `--i-understand-this-is-an-ephemeral-windows-probe` flag.
+
+- [ ] **Single-instance refusal.** With the installed Wingman (or its 3.x
+      predecessor) running, launch either `pick` or `load`. Expected: it
+      refuses immediately with `crop probe failure: FlyGD Wingman (or its 3.x
+      predecessor) is already running; close it before running the crop
+      probe` and opens no window. Close the installed app and confirm the
+      same command now starts.
+- [ ] **Picker correctness on each available DPI scale.** Run `pick` on a
+      monitor at 100%, 125%, 150%, and 200% display scaling (whichever this
+      machine has). Drag a selection in the picker, confirm, and compare the
+      resulting crop's edges against the picker's own selection. Expected:
+      every source edge lands within 2 source pixels of the dragged
+      selection at every scale tested. Record the scales actually available
+      on this machine and the observed deltas in the results document; a
+      scale this machine cannot produce is recorded as untested, not passing.
+- [ ] **Negative-coordinate monitor.** If this machine has a monitor
+      positioned left of or above the primary (negative virtual-desktop
+      coordinates), run `pick` with the client on that monitor. Expected: the
+      mapped source rectangle is exactly as correct as on the primary
+      monitor. Skip and record "no negative-coordinate monitor available" if
+      this machine has none.
+- [ ] **Selection cancel and client-loss cancel.** Start `pick`, begin a drag
+      selection, then press Escape. Expected: the picker closes, no crop
+      opens, and the probe keeps running — but no second picker appears. The
+      probe offers one picker per process, ever: cancelling is a decision,
+      not a transient failure, so selecting again means ending the run and
+      starting `pick` afresh (see `tests/manual/README.md`).
+      Separately, start `pick`, and while the picker is open, close the
+      target EVE client. Expected: the picker closes on its own with no crop
+      created and no crash.
+- [ ] **Crop click/move/right-resize grammar.** With a crop open (via `pick`
+      or a `load` stage), confirm: left click activates the owning EVE
+      client (foreground request through the same activation path a primary
+      preview uses); left drag moves the crop; right drag resizes it. The
+      locked variant of this grammar is a Phase 1 pre-release gate, not a
+      step here — the probe's CLI wires no lock roster (see the deferred
+      list below).
+- [ ] **Source aspect preservation.** Resize a crop with a right-drag from
+      anywhere on it -- the reduced grammar has no corner handle; any
+      right-button drag resizes. Expected: the crop's destination rectangle
+      keeps the aspect ratio of the SOURCE region that was selected (or,
+      for a load-stage crop, the central region it derived) — the picture
+      never stretches or letterboxes as the crop window is resized.
+- **Lock and hide-on-lost-focus inherited behavior** — *moved to the Phase 1
+  pre-release gates below.* The probe's CLI constructs the host with no
+  `locked`, `lock_default` or `hide_on_lost_focus` provider, so neither
+  behavior can be turned on from the harness; there is nothing to tick here.
+- [ ] **Logout to character select, exit, and same-character new-HWND
+      rebinding.** With a crop open on a named character, log that character
+      out to character select without closing the client. Expected: the crop
+      closes; it must never remain bound to the now-anonymous client. Close
+      the EVE client entirely from character select. Expected: no orphan
+      crop or HWND remains. Finally, log the SAME character back in on a new
+      client process. Expected: the crop reopens against the new HWND with
+      no operator action at all — a `load` stage crop is re-derived from the
+      new client's central region, and an interactive crop is replayed from
+      the selection the probe retained in memory. The picker does NOT reopen
+      and must not be re-run: one picker per process still holds.
+- [ ] **Minimize/restore behavior recorded as live, frozen, black, or
+      stale.** Minimize the crop's source EVE client, then restore it.
+      Record in the results document which of live / frozen / black / stale
+      the crop showed while minimized, and confirm it returns to live video
+      on restore. A frozen/black/stale result here is not a failure by
+      itself — the design doc explicitly does not require the first crop
+      release to solve minimized content — but it must not trigger a
+      repeating DWM recovery attempt (see the DWM warning item below).
+- [ ] **Partial/full occlusion.** With a crop visible, drag another window
+      to partially cover it, then fully cover it, then uncover it again.
+      Expected: the crop keeps rendering current video throughout (DWM
+      composites regardless of on-screen coverage) and shows no stale frame
+      once uncovered.
+- **Primary alert pulse while dragging a crop** — *moved to the Phase 1
+  pre-release gates below.* The probe's CLI wires no alert service, so no
+  primary preview ever pulses during a probe run; there is nothing to tick
+  here.
+- [ ] **Stages 1/2/4/8 (1 crop, 2 crops, 4 crops, 8 crops) with metrics.**
+      Run `load` with `WINGMAN_LOG_LEVEL=DEBUG` and `WINGMAN_PREVIEW_PERF=1`
+      set (see `tests/manual/README.md`). At each stage the machine can
+      fill, record CPU, GPU, working-set, HWND count, activation latency,
+      and drag inter-event-gap numbers into the matching stage column of
+      `docs/preview-crop-prototype-results.md`, checked against the
+      thresholds fixed there. Stop at the first stage the machine cannot
+      fill or that fails a threshold, and record that stopping point rather
+      than omitting it.
+- [ ] **DWM warning inspection under `WINGMAN_LOG_LEVEL=DEBUG`.** With that
+      variable set (see the DPI-line note under EVE client previews, above,
+      for the `WSLENV` caveat if launching from WSL), inspect
+      `uploader_debug.log` for `DwmRegisterThumbnail failed` or a nonzero
+      update HRESULT during normal crop operation. Expected: none during
+      successful runs; any that appear must not repeat on every ~700 ms
+      sweep — a repeating warning is a stage failure, not background noise.
+- [ ] **Full teardown and Task Manager process/thread check.** Press Enter
+      to end the probe (or Ctrl+C). Expected: the process exits fully, Task
+      Manager shows no lingering `python`/harness process, and no crop HWND
+      remains (checkable with a window-inspection tool such as Spy++ or
+      `WinObjEx64` if available; otherwise confirm no crop is visible and the
+      process is gone). Ctrl+C specifically prints the single line `crop
+      probe interrupted` and exits `130` — no traceback; a traceback here is
+      a regression, not cosmetic, because it is indistinguishable at a glance
+      from an unclean teardown.
+- [ ] **Real EVE client rectangles and maximized state never change.**
+      Explicitly compare each source EVE client's window rectangle (position
+      and size) and maximized/restored state before and after every
+      scenario above — picking, moving, resizing, staging, minimizing,
+      logging out, and closing a crop. Expected: identical in every case.
+      This is the product's hard boundary, not a performance nicety, and it
+      is checked explicitly rather than assumed from the crop behaving
+      correctly.
+
+**Deferred to Phase 1 — not proven by this prototype.** The following are
+production-only behaviors this checkout-only harness does not implement and
+cannot exercise; do not record them as passing or failing here. Each one is
+a named **pre-release gate**: it must be exercised against the production
+crop feature before any release that ships crops, and the corresponding
+blocker is listed in `docs/preview-crop-prototype-results.md`.
+
+- Restart persistence (the prototype writes no settings and restores no
+  layout across a relaunch).
+- Transactional candidate-and-swap reselection (the harness's picker
+  confirm creates a crop directly; there is no hidden-candidate/rollback
+  path to test).
+- Settings rollback on a failed persistence write (there is no persistence
+  at all).
+- Roster/master-switch (`preview.enabled`) suppression and reconciliation
+  behavior for crops (the harness subclasses `PreviewHost` directly and has
+  no Settings UI or master toggle of its own).
+- **Locked-crop inertness under `preview.locked`.** The design reuses the
+  primary preview's per-character lock roster — version 1 has no separate
+  crop-specific lock — but the probe's CLI passes no `locked` or
+  `lock_default` provider, so `_is_locked` is always false during a probe
+  run and no crop can be locked from the harness. The production gate: with
+  `preview.locked` applied to the crop's character, the crop is fully inert
+  to move/resize gestures and only activates on click, matching the primary
+  preview's locked truth table.
+- **Hide-on-lost-focus lockstep.** The CLI passes no `hide_on_lost_focus`
+  provider either, so the probe's previews and crops never hide. The
+  production gate: with the setting enabled, crops hide and reappear in
+  lockstep with the primary previews on the same foreground transitions.
+- **Primary alert pulse while dragging a crop.** The probe wires no alert
+  service, so no primary preview pulses during a probe run. The production
+  gate: with an alert armed on a client whose crop is also open, moving and
+  resizing that crop leaves the primary preview's alert ring pulsing with no
+  visible stutter attributable to the crop, and the crop still drags and
+  resizes smoothly.
+- **Stuck-capture behavior after a lost mouse capture (`WM_CAPTURECHANGED`).**
+  Neither prototype window handles that message, so a drag whose capture is
+  taken away — a UAC prompt, Win+D, a lock screen, or another window
+  grabbing capture mid-drag — may leave the crop or picker believing a drag
+  is still in progress. The production gate: after capture is stolen
+  mid-drag, the crop and picker return to a clean idle state (no phantom
+  move/resize following the pointer, no drag that must be cancelled by
+  clicking again), and the picker can still be confirmed or cancelled
+  normally.
+
 ## Profiles (the EVE settings copier)
 
 Named **EVE Settings** until it collided with the gear's own
