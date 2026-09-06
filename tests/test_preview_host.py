@@ -5011,6 +5011,136 @@ def test_standalone_empty_group_activates_nothing(monkeypatch):
     assert activated == [], "a standalone empty group action must not activate anything"
 
 
+def test_primary_failure_still_reconciles_crop_authorization(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *args: None)
+    observed = []
+    h._crop_controller = SimpleNamespace(reconcile=observed.append)
+
+    def fail(libs, snapshot):
+        raise RuntimeError("primary failed")
+
+    monkeypatch.setattr(h, "_reconcile_roster", fail)
+    snapshot = _roster(3, ("Alice", 16))
+    h.apply_roster(snapshot)
+    with pytest.raises(RuntimeError, match="primary failed"):
+        h._apply_pending_roster(None)
+    assert observed == [snapshot]
+    assert h._pending_roster is snapshot and h._last_roster_generation == 0
+
+
+def test_crop_failure_preserves_roster_retry_and_high_water_mark(monkeypatch):
+    h = _pump_host(monkeypatch, [])
+    attempts = []
+
+    def reconcile(snapshot):
+        attempts.append(snapshot)
+        if len(attempts) == 1:
+            raise RuntimeError("crop failed")
+
+    h._crop_controller = SimpleNamespace(reconcile=reconcile)
+    snapshot = _roster(3, ("Alice", 16))
+    h.apply_roster(snapshot)
+    with pytest.raises(RuntimeError, match="crop failed"):
+        h._apply_pending_roster(None)
+    assert h._last_roster_generation == 0 and h._pending_roster is snapshot
+    h._apply_pending_roster(None)
+    assert h._last_roster_generation == 3 and len(attempts) == 2
+
+
+def test_pump_offers_all_messages_to_retained_picker_before_dispatch(monkeypatch):
+    user32 = _StartupUser32()
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    offered, translated = [], []
+    messages = iter([(900, 0x0100), (0, 0), (42, host.win32.WM_APP_ROSTER)])
+
+    def get_message(pointer, *args):
+        value = next(messages, None)
+        if value is None:
+            return 0
+        pointer._obj.hwnd, pointer._obj.message = value
+        return 1
+
+    def dialog(message):
+        offered.append((message.hwnd or 0, message.message))
+        return message.message == 0x0100
+
+    h._crop_controller = SimpleNamespace(process_dialog_message=dialog)
+    monkeypatch.setattr(user32, "GetMessageW", get_message)
+    monkeypatch.setattr(
+        user32, "TranslateMessage", lambda p: translated.append(p._obj.message)
+    )
+    monkeypatch.setattr(host.win32, "bind", lambda: _FakeLibs(user32))
+    monkeypatch.setattr(h, "_create_host_window", lambda libs: 42)
+    monkeypatch.setattr(h, "_install_hook", lambda libs: None)
+    h._run()
+    assert offered == [(900, 0x0100), (0, 0), (42, host.win32.WM_APP_ROSTER)]
+    assert translated == [0, host.win32.WM_APP_ROSTER]
+
+
+def test_crop_command_and_completion_routes_apply_pending_roster_first(monkeypatch):
+    from queue import SimpleQueue
+
+    events = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    h._crop_controller = SimpleNamespace(
+        request=lambda *args: events.append(("command", args)),
+        complete=lambda result: events.append(("complete", result)),
+    )
+    monkeypatch.setattr(host.win32, "bind", lambda: None)
+    monkeypatch.setattr(
+        h, "_apply_pending_roster", lambda libs: events.append("roster")
+    )
+    h._crop_commands = [("enabled", "Alice", False, "token")]
+    h._crop_completions = SimpleQueue()
+    h._crop_completions.put("result")
+    h._host_proc(42, host.win32.WM_APP_CROP_COMMAND, 0, 0)
+    h._host_proc(42, host.win32.WM_APP_CROP_COMPLETE, 0, 0)
+    assert events == [
+        "roster",
+        ("command", ("enabled", "Alice", False, "token")),
+        "roster",
+        ("complete", "result"),
+    ]
+
+
+def test_crop_reconcile_receives_latest_full_session(monkeypatch):
+    from wingman.telemetry.model import ClientSessionId, RosterClient, RosterSnapshot
+
+    observed = []
+    h = host.PreviewHost(on_layout_changed=lambda *args: None)
+    h._crop_controller = SimpleNamespace(reconcile=observed.append)
+    monkeypatch.setattr(h, "_reconcile_roster", lambda libs, snapshot: None)
+    anonymous = RosterClient(16, 101, "EVE", None, None)
+    session = ClientSessionId(16, 101, "Alice", 3)
+    returned = RosterClient(16, 101, "EVE - Alice", "Alice", session)
+    h.apply_roster(RosterSnapshot(2, (anonymous,)))
+    h.apply_roster(RosterSnapshot(3, (returned,)))
+    h._apply_pending_roster(None)
+    assert len(observed) == 1
+    assert observed[0].clients[0].session == session
+
+
+def test_real_primary_reconcile_does_not_strip_crop_session(monkeypatch):
+    from wingman.telemetry.model import ClientSessionId, RosterClient, RosterSnapshot
+
+    created, observed = [], []
+    h = _pump_host(monkeypatch, created)
+    h._crop_controller = SimpleNamespace(reconcile=observed.append)
+    first = RosterClient(
+        16, 101, "EVE - Alice", "Alice", ClientSessionId(16, 101, "Alice", 1)
+    )
+    h.apply_roster(RosterSnapshot(1, (first,)))
+    h._apply_pending_roster(None)
+    primary = h._windows["Alice"]
+    h.apply_roster(RosterSnapshot(2, (RosterClient(16, 101, "EVE", None, None),)))
+    returned = replace(first, session=replace(first.session, first_seen_generation=3))
+    h.apply_roster(RosterSnapshot(3, (returned,)))
+    h._apply_pending_roster(None)
+    assert h._windows["Alice"] is primary
+    assert created == ["Alice"]
+    assert observed[-1].clients == (returned,)
+
+
 # ---- Shared rosters applied on the pump -----------------------------------
 #
 # The host is becoming a CONSUMER of wingman.telemetry.clients.ClientDiscovery

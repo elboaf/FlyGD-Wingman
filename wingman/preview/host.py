@@ -12,11 +12,13 @@ the old event loop, and answers it with an owned loop.
 """
 
 import ctypes
+import itertools
 import logging
 import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass, replace
+from queue import Empty, SimpleQueue
 
 from ..telemetry.model import RosterClient, RosterSnapshot
 from . import (
@@ -30,6 +32,9 @@ from . import (
     win32,
 )
 from . import window as window_mod
+from .cropcontroller import CropController
+from .croppicker import CropPicker
+from .cropwindow import CropWindow
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
@@ -91,12 +96,10 @@ def _roster_stable_key(entry) -> str:
 def _preview_client(entry) -> discovery.Client:
     """A shared-roster record in the shape preview state already speaks.
 
-    RosterClient carries no stable key -- nothing outside Preview is keyed
-    by one -- and a Fleet Metrics session Preview has no use for, while
-    every consumer in this module (windows, switching, alerts, hotkey
-    dispatch, the client registry) reads Client.stable_key. One adaptation
-    at the top of reconciliation keeps that single vocabulary rather than
-    teaching each of them a second one.
+    Primary windows, switching, alerts, hotkeys and the primary registry
+    read Client.stable_key, which RosterClient does not carry. Keep that
+    vocabulary here; the independent crop coordinator receives the original
+    snapshot and retains its full discovery-session identity.
     """
     return discovery.Client(
         entry.hwnd, entry.title, entry.pid, entry.character, _roster_stable_key(entry)
@@ -272,7 +275,18 @@ class PreviewHost:
         replace_layout=None,
         hide_on_lost_focus=None,
         request_discovery=None,
+        crop_store=None,
+        on_crops_changed=None,
     ):
+        self._crop_controller = None
+        self._crop_store = crop_store
+        self._on_crops_changed = on_crops_changed
+        self._crop_epoch = 0
+        self._crop_geometry_sequence = itertools.count(1)
+        self._crop_commands = []
+        self._crop_completions = SimpleQueue()
+        self._crop_runtime_state = {}
+        self._crop_roster = None
         self._on_layout_changed = on_layout_changed
         # Production injects the shared coordinator request. None is an inert
         # test seam; this host never enumerates clients from its pump.
@@ -337,7 +351,7 @@ class PreviewHost:
         # place (_is_locked) so the two cannot be consulted separately and
         # disagree.
         self._lock_default = lock_default
-        # preview.excluded: characters opted out of previews entirely. Read
+        # preview.excluded: characters opted out of primary previews. Read
         # live like the rest, and read in THREE places rather than one --
         # _reconcile_roster (no window), _registerable (no hotkey
         # registration) and _cycle_keys (not a stop on the walk) -- because
@@ -593,6 +607,16 @@ class PreviewHost:
             if pending is not None and snapshot.generation <= pending.generation:
                 return
             self._pending_roster = snapshot
+            if (
+                self._crop_roster is None
+                or snapshot.generation > self._crop_roster.generation
+            ):
+                self._crop_roster = snapshot
+            epoch = self._crop_epoch
+        if self._crop_store is not None:
+            # Ingress revokes admission immediately, even while this pump is
+            # busy. Store callbacks only enqueue results, never touch natives.
+            self._crop_store.observe_roster(epoch, snapshot)
         # Outside the lock, and after the swap: _post is a no-op until the
         # preview thread has created _hwnd (start() returns before that), so
         # a snapshot published in that gap carries no signal of its own --
@@ -852,6 +876,7 @@ class PreviewHost:
             )
             return
 
+        self._init_crop_controller(libs)
         # Shared discovery owns enumeration cadence. Request its first
         # snapshot only after the pump HWND exists, so apply_roster can post
         # a signal rather than relying solely on the pending slot.
@@ -884,6 +909,13 @@ class PreviewHost:
 
         msg = wintypes.MSG()
         while libs.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            # Child HWND messages and deferred cancel after HWND destruction
+            # both belong to the retained picker, not just parent messages.
+            if (
+                self._crop_controller is not None
+                and self._crop_controller.process_dialog_message(msg)
+            ):
+                continue
             libs.user32.TranslateMessage(ctypes.byref(msg))
             libs.user32.DispatchMessageW(ctypes.byref(msg))
 
@@ -943,6 +975,12 @@ class PreviewHost:
             return 0
         if msg == win32.WM_APP_ROSTER:
             self._apply_pending_roster(libs)
+            return 0
+        if msg == win32.WM_APP_CROP_COMMAND:
+            self._apply_crop_commands(libs)
+            return 0
+        if msg == win32.WM_APP_CROP_COMPLETE:
+            self._apply_crop_completions(libs)
             return 0
         if msg == win32.WM_APP_SHUTDOWN:
             self._teardown(libs)
@@ -1006,6 +1044,72 @@ class PreviewHost:
                 "SetWinEventHook failed; selection will follow periodic shared scans"
             )
 
+    def _init_crop_controller(self, libs) -> None:
+        if self._crop_store is None:
+            return
+        with self._lock:
+            self._crop_epoch += 1
+            epoch, snapshot = self._crop_epoch, self._crop_roster
+        self._crop_store.open_epoch(epoch)
+        if snapshot is not None:
+            self._crop_store.observe_roster(epoch, snapshot)
+
+        def client_size(client):
+            rect = win32.RECT()
+            if libs.user32.GetClientRect(client.hwnd, ctypes.byref(rect)):
+                return rect.right - rect.left, rect.bottom - rect.top
+            return None
+
+        self._crop_controller = CropController(
+            libs,
+            self._crop_store,
+            epoch=epoch,
+            create_crop=CropWindow.create,
+            create_picker=CropPicker.create,
+            read_client_size=client_size,
+            monitors=self._monitors,
+            activate=lambda client: self._activate_crop(libs, client.character),
+            is_locked=self._is_locked,
+            publish=self._publish_crop_state,
+            post_complete=self._queue_crop_completion,
+            next_geometry_sequence=lambda: next(self._crop_geometry_sequence),
+        )
+        self._crop_controller.set_hidden(self._previews_hidden)
+
+    def _activate_crop(self, libs, name) -> None:
+        self._apply_pending_roster(libs)
+        current = self._crop_controller.sessions.get(name)
+        if current is not None:
+            self._activate_client(libs, _preview_client(current))
+
+    def _publish_crop_state(self, state) -> None:
+        with self._lock:
+            self._crop_runtime_state = state
+        if self._on_crops_changed is not None:
+            self._on_crops_changed(state)
+
+    def _queue_crop_completion(self, result) -> None:
+        # A store callback may run during ingress cancellation. No host lock:
+        # Python owns the immutable result, and the native message is a signal.
+        self._crop_completions.put(result)
+        self._post(win32.WM_APP_CROP_COMPLETE)
+
+    def _apply_crop_commands(self, libs) -> None:
+        self._apply_pending_roster(libs)
+        with self._lock:
+            commands, self._crop_commands = self._crop_commands, []
+        for command in commands:
+            self._crop_controller.request(*command)
+
+    def _apply_crop_completions(self, libs) -> None:
+        self._apply_pending_roster(libs)
+        while True:
+            try:
+                result = self._crop_completions.get_nowait()
+            except Empty:
+                break
+            self._crop_controller.complete(result)
+
     def _sweep(self, libs) -> None:
         """Legacy reconciliation test seam; production never calls it.
 
@@ -1044,7 +1148,13 @@ class PreviewHost:
             )
             return
         try:
-            self._reconcile_roster(libs, snapshot)
+            try:
+                self._reconcile_roster(libs, snapshot)
+            finally:
+                # A primary failure must not retain a stale crop/picker's
+                # native authorization. Both consumers share the retry fence.
+                if self._crop_controller is not None:
+                    self._crop_controller.reconcile(snapshot)
         except Exception:
             # Put it back. It was popped before reconciliation ran, so
             # without this a failure would discard the roster as well as
@@ -1307,6 +1417,8 @@ class PreviewHost:
         for win in self._windows.values():
             win.set_hidden(hide)
         self._previews_hidden = hide
+        if self._crop_controller is not None:
+            self._crop_controller.set_hidden(hide)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -2406,6 +2518,8 @@ class PreviewHost:
                     win.opacity,
                 )
 
+        if self._crop_controller is not None:
+            self._crop_controller.restyle()
         # Last, after every window has been restyled: hiding one that is
         # about to be repainted anyway would push a bitmap nobody can see.
         self._apply_visibility(libs, self._foreground)

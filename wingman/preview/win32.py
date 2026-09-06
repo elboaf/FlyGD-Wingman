@@ -119,6 +119,10 @@ WM_APP_APPLY_LAYOUTS = WM_APP + 8
 # snapshot cannot ride in wparam/lparam, so it travels in a field under the
 # host's lock and this only says "there is a newer one to read".
 WM_APP_ROSTER = WM_APP + 9
+# Crop messages carry signals only; Python mailboxes own commands/results.
+WM_APP_CROP_COMMAND = WM_APP + 10
+WM_APP_CROP_COMPLETE = WM_APP + 11
+WM_APP_CROP_STOP_READY = WM_APP + 12
 
 # --- Crop context menu --------------------------------------------------
 MF_STRING = 0x0000
