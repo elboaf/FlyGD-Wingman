@@ -1,9 +1,12 @@
 """The bridge is tested headless through FakeWindow (tests/fakes.py)."""
 
+import hashlib
 import json
 import os
 import threading
+from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2912,7 +2915,7 @@ def test_a_resolver_that_raises_clears_its_running_state(tmp_path, monkeypatch):
 
 
 def _fake_codec(monkeypatch, doc, *, available=True):
-    """Route the seam at codec.read_document/write_document to an in-memory doc."""
+    """In-memory documents for ordinary API tests, not publication evidence."""
     from wingman.evesettings import codec as codec_mod
     from wingman.ui import api as api_mod
 
@@ -2921,10 +2924,16 @@ def _fake_codec(monkeypatch, doc, *, available=True):
     def read_document(path, **kw):
         return codec_mod.Document(doc=store["doc"], had_crc=False)
 
-    def write_document(path, document, *, backup, **kw):
+    def read_snapshot(path, **kw):
+        return codec_mod.DocumentSnapshot(read_document(path), "a" * 64)
+
+    def write_document(path, document, *, backup, expected_content_revision, **kw):
+        assert expected_content_revision == "a" * 64
         backup(path)
         store["written"].append((path, document))
+        return "b" * 64
 
+    monkeypatch.setattr(api_mod.evesettings_codec, "read_snapshot", read_snapshot)
     monkeypatch.setattr(api_mod.evesettings_codec, "read_document", read_document)
     monkeypatch.setattr(api_mod.evesettings_codec, "write_document", write_document)
     monkeypatch.setattr(
@@ -2972,6 +2981,7 @@ def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeyp
     got = api.eve_settings_formations(str(account))
     assert got["ok"] is True
     assert got["name"] == "Account 1 · Not identified"
+    assert got["content_revision"] == "a" * 64
     assert got["formations"] == [
         {
             "id": 0,
@@ -3009,7 +3019,7 @@ def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
     def boom(path, **kw):
         raise codec_mod.CodecError("bad header")
 
-    monkeypatch.setattr(api_mod.evesettings_codec, "read_document", boom)
+    monkeypatch.setattr(api_mod.evesettings_codec, "read_snapshot", boom)
     got = api.eve_settings_formations(str(account))
     assert got == {"ok": False, "error": "bad header"}
 
@@ -3033,12 +3043,14 @@ def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
 def test_save_backs_up_writes_and_reports_done(tmp_path, monkeypatch):
     api, account = account_setup(tmp_path, monkeypatch)
     store = _fake_codec(monkeypatch, FORMATION_DOC)
-    api._eve_client_running = lambda: False
+    api._eve_client_running_strict = lambda: False
     backups = []
     api._eve_auto_backup = lambda p: backups.append(p)
     accepted = api.eve_settings_save_formations(
         str(account),
         [{"id": None, "name": "New", "probes": [{"x": 1, "y": 0, "z": 0, "range": 2}]}],
+        "a" * 64,
+        "1:1",
     )
     assert accepted is True
     assert backups == [account]
@@ -3065,7 +3077,7 @@ def test_save_is_refused_when_the_strict_running_probe_fails(tmp_path, monkeypat
         raise OSError("window station unavailable")
 
     api._eve_client_running_strict = boom
-    api.eve_settings_save_formations(str(account), [])
+    api.eve_settings_save_formations(str(account), [], "a" * 64, "1:1")
 
     assert store["written"] == [] and backups == []
     assert len(api._alert.raised) == 1
@@ -3076,7 +3088,7 @@ def test_save_is_refused_while_an_eve_client_is_running(tmp_path, monkeypatch):
     api, account = account_setup(tmp_path, monkeypatch)
     store = _fake_codec(monkeypatch, FORMATION_DOC)
     api._eve_client_running_strict = lambda: True
-    api.eve_settings_save_formations(str(account), [])
+    api.eve_settings_save_formations(str(account), [], "a" * 64, "1:1")
     assert store["written"] == []
     assert any("Close EVE" in js for js in api._window.calls)
     assert any(
@@ -3089,11 +3101,11 @@ def test_save_rejects_an_invalid_formation_before_touching_the_file(
 ):
     api, account = account_setup(tmp_path, monkeypatch)
     store = _fake_codec(monkeypatch, FORMATION_DOC)
-    api._eve_client_running = lambda: False
+    api._eve_client_running_strict = lambda: False
     backups = []
     api._eve_auto_backup = lambda p: backups.append(p)
     api.eve_settings_save_formations(
-        str(account), [{"id": None, "name": "", "probes": []}]
+        str(account), [{"id": None, "name": "", "probes": []}], "a" * 64, "1:1"
     )
     assert store["written"] == [] and backups == []
     assert any("needs a name" in js for js in api._window.calls)
@@ -3102,8 +3114,233 @@ def test_save_rejects_an_invalid_formation_before_touching_the_file(
 def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
     api, account = account_setup(tmp_path, monkeypatch)
     _fake_codec(monkeypatch, FORMATION_DOC)
-    api._eve_client_running = lambda: False
-    api.eve_settings_save_formations(str(account), [])
+    api._eve_client_running_strict = lambda: False
+    api.eve_settings_save_formations(str(account), [], "a" * 64, "1:1")
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_formation_save_without_revision_is_refused(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "_eve_client_running_strict", lambda: False)
+    before = account.read_bytes()
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(str(account), [], "", "1:1")
+    done = fakes.payloads(sent, "onEveSettingsDone")
+    assert len(done) == 1
+    assert done[0]["ok"] is False
+    assert done[0]["error_code"] == "invalid_request"
+    assert done[0]["content_revision"] == ""
+    assert account.read_bytes() == before
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.mark.parametrize(
+    "revision,request_id",
+    [
+        ("a" * 64, ""),
+        ("a" * 64, None),
+        ("a" * 64, 1),
+        ("a" * 64, "x" * 129),
+        (None, "id"),
+        (3, "id"),
+        ("A" * 64, "id"),
+        ("a" * 63, "id"),
+        ("g" * 64, "id"),
+    ],
+)
+def test_formation_save_invalid_correlation_is_refused(
+    tmp_path, monkeypatch, revision, request_id
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    before = account.read_bytes()
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(str(account), [], revision, request_id)
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert not done["ok"] and done["error_code"] == "invalid_request"
+    assert done["content_revision"] == "" and done["warning"] == ""
+    assert done["error"]
+    assert account.read_bytes() == before
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+def test_formation_legacy_caller_is_refused(tmp_path, monkeypatch):
+    api, account = account_setup(tmp_path, monkeypatch)
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(str(account), [])
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert done["error_code"] == "invalid_request"
+
+
+def _formation_filter(monkeypatch, account, *, on_encode=None):
+    """Only fake the external filter; real byte reads, hashing and publication.
+
+    A signature plus JSON envelope stands in for sidecar bytes. The writer's
+    verifying decode consumes its actual encoded input, not a static document.
+    """
+    codec = api_mod.evesettings_codec
+    raw = b"\x7d" + json.dumps({"doc": FORMATION_DOC, "had_crc": True}).encode()
+    account.write_bytes(raw)
+
+    def runner(args, *, input, **kwargs):
+        if args[1] == "encode":
+            if on_encode:
+                on_encode()
+            output = b"\x7d" + input
+        else:
+            output = input[1:]
+        return SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+    for name in ("read_document", "read_snapshot", "write_document"):
+        monkeypatch.setattr(
+            codec,
+            name,
+            partial(getattr(codec, name), runner=runner, exe=lambda: "test-filter"),
+        )
+    return hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize("mutation", ["queued", "encode", "backup"])
+def test_formation_save_refuses_changed_bytes_at_every_boundary(
+    tmp_path, monkeypatch, mutation
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    changed = (
+        b"\x7d" + json.dumps({"doc": {"external": True}, "had_crc": False}).encode()
+    )
+
+    def mutate():
+        account.write_bytes(changed)
+
+    baseline = _formation_filter(
+        monkeypatch, account, on_encode=mutate if mutation == "encode" else None
+    )
+    api._eve_client_running_strict = lambda: False
+    queued = QueuedThreads()
+    api._spawn = queued.spawn
+    backups, prunes = [], []
+
+    def backup(path):
+        backups.append(path.read_bytes())
+        if mutation == "backup":
+            mutate()
+
+    api._eve_auto_backup = backup
+    api._eve_prune = lambda keep: prunes.append(keep)
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(str(account), [], baseline, "race:1")
+    assert not api._eve_mutation.acquire(blocking=False)
+    assert not api.eve_settings_formations(str(account))["ok"]
+    if mutation == "queued":
+        mutate()
+    queued.run_next()
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert done == {
+        "ok": False,
+        "operation": "formations_save",
+        "path": str(account),
+        "request_id": "race:1",
+        "content_revision": "",
+        "error_code": "stale_file",
+        "error": "This account's settings changed. Nothing was saved. Your edits are still here.",
+        "warning": "",
+    }
+    assert account.read_bytes() == changed
+    assert len(backups) == (1 if mutation == "backup" else 0)
+    assert prunes == []
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.mark.parametrize("housekeeping", ["none", "prune", "status"])
+def test_formation_commit_retains_digest_ids_scratch_selection_and_success(
+    tmp_path, monkeypatch, housekeeping
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    baseline = _formation_filter(monkeypatch, account)
+    api._eve_client_running_strict = lambda: False
+    before = account.read_bytes()
+    backups, prunes = [], []
+    api._eve_auto_backup = lambda path: backups.append(path.read_bytes())
+
+    def prune(keep):
+        prunes.append(keep)
+        if housekeeping == "prune":
+            raise OSError("retention unavailable")
+
+    def status(message):
+        if housekeeping == "status":
+            raise RuntimeError("status unavailable")
+
+    api._eve_prune = prune
+    api._status = status
+    api._alert = fakes.Alerts()
+    sent = fakes.record_pushes(api)
+    got = api.eve_settings_formations(str(account))
+    assert got["content_revision"] == baseline
+    wanted = [
+        {"id": None, "name": "New", "probes": [{"x": 0, "y": 0, "z": 0, "range": 2}]},
+        {"id": 0, "name": "Retained", "probes": [{"x": 1, "y": 2, "z": 3, "range": 4}]},
+    ]
+    assert api.eve_settings_save_formations(str(account), wanted, baseline, "x" * 128)
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert done["ok"] is True and done["error_code"] == done["error"] == ""
+    assert done["request_id"] == "x" * 128
+    assert done["path"] == str(account) and done["operation"] == "formations_save"
+    assert bool(done["warning"]) == (housekeeping != "none")
+    assert done["content_revision"] == hashlib.sha256(account.read_bytes()).hexdigest()
+    assert done["content_revision"] != baseline
+    assert backups == [before] and len(prunes) == 1
+    ui = api_mod.evesettings_codec.read_document(account).doc["bytes:ui"]
+    entries = ui["bytes:probescanning.customFormations"]["tuple"][1]
+    assert entries["int:0"]["tuple"][0] == "utf8:Retained"
+    assert entries["int:1"]["tuple"][0] == "utf8:New"
+    assert entries["int:-4"] == {"tuple": ["bytes:tempFormation", []]}
+    assert ui["bytes:probescanning.selectedFormationID"]["tuple"][1] == 0
+    assert not any(title == "Formations not saved" for _, title, _ in api._alert.raised)
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.mark.parametrize("failure", ["codec", "backup", "publish", "running", "probe"])
+def test_formation_save_failure_completes_once_without_pruning(
+    tmp_path, monkeypatch, failure
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    baseline = _formation_filter(monkeypatch, account)
+    before = account.read_bytes()
+    api._eve_client_running_strict = lambda: failure == "running"
+    prunes = []
+    api._eve_prune = lambda keep: prunes.append(keep)
+
+    def boom(*args, **kwargs):
+        if failure == "codec":
+            raise api_mod.evesettings_codec.CodecError("encode failed")
+        raise OSError("unavailable")
+
+    if failure == "probe":
+        api._eve_client_running_strict = boom
+    elif failure == "backup":
+        api._eve_auto_backup = boom
+    elif failure in {"codec", "publish"}:
+        if failure == "codec":
+            monkeypatch.setattr(api_mod.evesettings_codec, "write_document", boom)
+        else:
+            writer = api_mod.evesettings_codec.write_document
+            monkeypatch.setattr(
+                api_mod.evesettings_codec,
+                "write_document",
+                partial(writer, publish=boom),
+            )
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(str(account), [], baseline, "failure")
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert not done["ok"] and done["error_code"] == "save_failed"
+    assert done["content_revision"] == done["warning"] == ""
+    assert done["error"] and done["request_id"] == "failure"
+    assert account.read_bytes() == before and not prunes
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
 

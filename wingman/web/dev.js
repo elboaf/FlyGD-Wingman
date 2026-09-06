@@ -2976,8 +2976,8 @@
   //
   // Copied per account below, and the save stub writes into that account's
   // copy, so a save-then-reopen in the harness round-trips through meters
-  // the way the app does. That is the only check the unit conversion gets
-  // anywhere: nothing in the test suite executes this file or formations.js.
+  // the way the app does. The executable formation-page tests also check
+  // the unit boundary; this fixture keeps it inspectable in a real browser.
   var devFormations = [
     { id: 0, name: 'Test', probes: [
       { x: -2048, y: 0, z: 0, range: 598391482800 },
@@ -2993,11 +2993,18 @@
   // Each account has its own file and therefore its own formations. The
   // second fixture differs visibly, so ?formations-account=switch proves
   // the clean account switch replaces the editor rather than only its label.
-  var devFormationsByAccount = {};
+  var devFormationsByAccount = {}, devFormationRevisions = {}, devFormationSequence = 0;
+  // Opaque fake revisions, not hashing evidence. Real byte hashing is tested
+  // through codec.read_snapshot/write_document with only the filter injected.
+  function nextDevFormationRevision() {
+    devFormationSequence += 1;
+    return (Array(65).join('0') + devFormationSequence.toString(16)).slice(-64);
+  }
   eve.accounts.forEach(function (account, index) {
     var formations = JSON.parse(JSON.stringify(devFormations));
     if (index === 1) formations[0].name = 'Second account test';
     devFormationsByAccount[account.path] = formations;
+    devFormationRevisions[account.path] = nextDevFormationRevision();
   });
   // Deliberately SLOW, the way eveMutation deliberately is. This is a
   // read, so the obvious stub resolves at once -- and resolving at once
@@ -3014,6 +3021,7 @@
       setTimeout(function () {
         resolve({
           ok: true, path: path, name: account ? account.name : path,
+          content_revision: devFormationRevisions[path],
           formations: JSON.parse(JSON.stringify(devFormationsByAccount[path] || []))
         });
       }, 150);
@@ -3025,17 +3033,35 @@
   // harness could not show the one behaviour that makes the editor reload
   // after a save: a brand-new formation coming back with a real id.
   // Highest id wins the next number, matching `max(taken) + 1`.
-  api.eve_settings_save_formations = function (path, items) {
-    var existing = devFormationsByAccount[path] || [];
-    var next = -1;
-    existing.concat(items).forEach(function (f) {
-      if (typeof f.id === 'number' && f.id > next) { next = f.id; }
-    });
-    devFormationsByAccount[path] = JSON.parse(JSON.stringify(items)).map(function (f) {
-      if (f.id === null || f.id === undefined) { next += 1; f.id = next; }
-      return f;
-    });
-    return eveMutation('eve_settings_save_formations')(path, items);
+  api.eve_settings_save_formations = function (path, items, expectedRevision, requestId) {
+    var validId = typeof requestId === 'string' && requestId.length > 0
+      && requestId.length <= 128;
+    var done = { ok: false, operation: 'formations_save', path: path,
+      request_id: validId ? requestId : '', content_revision: '',
+      error_code: '', error: '', warning: '' };
+    if (!validId || typeof expectedRevision !== 'string'
+        || !/^[0-9a-f]{64}$/.test(expectedRevision)) {
+      done.error_code = 'invalid_request';
+      done.error = 'A content revision and request ID are required.';
+    } else if (expectedRevision !== devFormationRevisions[path]) {
+      done.error_code = 'stale_file';
+      done.error = "This account's settings changed. Nothing was saved. Your edits are still here.";
+    } else {
+      var existing = devFormationsByAccount[path] || [];
+      var next = -1;
+      existing.concat(items).forEach(function (f) {
+        if (typeof f.id === 'number' && f.id > next) { next = f.id; }
+      });
+      devFormationsByAccount[path] = JSON.parse(JSON.stringify(items)).map(function (f) {
+        if (f.id === null || f.id === undefined) { next += 1; f.id = next; }
+        return f;
+      });
+      done.ok = true;
+      done.content_revision = nextDevFormationRevision();
+      devFormationRevisions[path] = done.content_revision;
+    }
+    setTimeout(function () { window.onEveSettingsDone(done); }, 600);
+    return Promise.resolve(true);
   };
 
   window.pywebview = { api: api };

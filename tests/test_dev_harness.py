@@ -15,7 +15,11 @@ zero keybind rows, and five sessions verified through it.
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from wingman import bookmarks
 from wingman.evesettings import identity, selective
@@ -693,6 +697,63 @@ def test_dev_account_labels_use_the_python_identity_data_without_node():
     assert "devAccountLabels" not in DEV_JS
     assert "eve.accounts = devFixtureAccounts(selectedIdentityScenario);" in DEV_JS
     assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_dev_formation_revisions_and_correlated_completion():
+    # Execute the real standalone formation fixture block with only timer and
+    # completion delivery seams. No fixture save/read implementation in tests.
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const timers = [], done = [];
+const api = {};
+const window = {onEveSettingsDone: payload => done.push(payload)};
+vm.runInNewContext(source.slice(source.indexOf('  function eveMutation('),
+  source.indexOf('  window.pywebview =')), {
+  api, window, console, Promise, copyScenario: '',
+  eve: {accounts: [{path: 'A', name: 'Account A'}]},
+  setTimeout: (callback, delay) => { timers.push({callback, delay}); }
+});
+function drain() { timers.splice(0).forEach(timer => timer.callback()); }
+async function main() {
+  const read = api.eve_settings_formations('A');
+  assert.equal(timers[0].delay, 150);
+  drain(); const initial = await read;
+  assert.match(initial.content_revision, /^[0-9a-f]{64}$/);
+  const items = [{id: null, name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 4}]}];
+  assert.equal(await api.eve_settings_save_formations('A', items, initial.content_revision, 'test:1'), true);
+  drain(); assert.equal(done.length, 1);
+  assert.equal(done[0].ok, true);
+  assert.equal(done[0].operation, 'formations_save');
+  assert.equal(done[0].path, 'A'); assert.equal(done[0].request_id, 'test:1');
+  assert.notEqual(done[0].content_revision, initial.content_revision);
+  const reread = api.eve_settings_formations('A'); drain(); const saved = await reread;
+  assert.equal(saved.content_revision, done[0].content_revision);
+  assert.equal(saved.formations[0].id, 4);
+  assert.equal(saved.formations[0].probes[0].x, 2000);
+  await api.eve_settings_save_formations('A', [], initial.content_revision, 'test:2'); drain();
+  assert.equal(done.length, 2); assert.equal(done[1].error_code, 'stale_file');
+  assert.equal(done[1].content_revision, '');
+  await api.eve_settings_save_formations('A', []); drain();
+  assert.equal(done.length, 3); assert.equal(done[2].error_code, 'invalid_request');
+  const unchanged = api.eve_settings_formations('A'); drain();
+  assert.equal((await unchanged).formations[0].name, 'New');
+  console.log('PASS dev-formations');
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(WEB / "dev.js")],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS dev-formations" in result.stdout
 
 
 def test_formation_switch_fixture_keeps_its_read_delay_visible():

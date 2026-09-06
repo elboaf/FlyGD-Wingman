@@ -4403,7 +4403,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
   display: flex; flex-direction: column; gap: 10px;
 }
-#fm-commit { flex: none; }
+#fm-commit { flex: none; flex-wrap: wrap; row-gap: 4px; }
+#fm-commit .fm-save-note { flex-basis: 100%; margin-top: 0; }
+/* Keep the live region present before its text arrives, and wrap file errors
+   rather than letting a long path widen the editor at the viewport floor. */
+#fm-save-status { min-height: 1.4em; overflow-wrap: anywhere; }
 
 /* The three coordinate tracks are capped, not elastic. `1fr` handed them
    every spare pixel, which is the same thing the recording list's

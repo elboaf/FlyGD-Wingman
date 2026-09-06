@@ -14,10 +14,10 @@
  * position would move which formation the client has selected -- the bug
  * docs/eve-settings-decode-design.md names in eve-wrench.
  *
- * Deliberately dumb about validity, for evesettings.js's reason: nothing
- * in this repo executes JavaScript, so what a legal formation IS lives in
- * wingman/evesettings/formations.py, which is tested. This file captures
- * edits, sends them, and renders the answer.
+ * Deliberately dumb about file validity: what a legal formation IS lives
+ * in wingman/evesettings/formations.py. The executable page tests cover
+ * edit/correlation flow; Python still validates every document before a
+ * write. This file captures edits, sends them, and renders the answer.
  *
  * `problem()` is the one exception, and it does not move the authority.
  * A refusal from validate() discards the WHOLE save rather than the
@@ -45,7 +45,8 @@
   var AXIS_LABELS = { x: 'West', y: 'Up', z: 'North' };
 
   var state = {
-    path: '', formations: [], selected: 0, dirty: false, busy: false
+    path: '', contentRevision: '', formations: [], selected: 0,
+    dirty: false, busy: false
   };
   // Account paths in the supplied choice list are UI identities. Python
   // resolves a requested path before reading it, so the returned path can
@@ -59,6 +60,10 @@
   // without a confirm. Disabling the whole pane for the duration would
   // also fix it, and would punish the common case for the rare one.
   var revision = 0, savingAt = -1;
+  // Correlation only, never authorization. A fresh page cannot reuse a prior
+  // page's request IDs even if its generation and sequence start over.
+  var pageSession = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+  var loadGeneration = 0, readAttempt = 0, saveSequence = 0, pendingSave = null;
   var yaw = 0.6, pitch = 0.4, dragging = false, lastX = 0, lastY = 0;
 
   function probe(x, y, z) { return { x: x, y: y, z: z, range: 32 }; }
@@ -191,7 +196,7 @@
     return paths[0] || '';
   }
 
-  // Two optional arguments, both only for the reload after a save.
+  // Two optional arguments for rereads, automatic after Save or explicit.
   //
   // keepIndex: the list comes back with Python's minted ids, and dropping
   // the user back on the first formation would make a save read as a
@@ -210,21 +215,24 @@
   // nothing there worth protecting from the file being opened.
   function load(path, mode, keepIndex, protect) {
     var startedAt = revision;
+    if (mode === 'switch') { loadGeneration += 1; }
+    var generation = loadGeneration, attempt = ++readAttempt;
     state.busy = true; paintCommit();
     return WM.send('eve_settings_formations', path).then(function (reply) {
+      // Even failure belongs to the request that caused it. Check identity
+      // before clearing busy, showing a dialog, or touching either baseline.
+      if (WM.current_route !== 'formations' || generation !== loadGeneration
+          || attempt !== readAttempt) { return; }
       state.busy = false;
       if (!reply || !reply.ok) {
-        // A RELOAD that fails is not a reason to eject. The save itself
-        // succeeded; the formations on screen are the ones just written,
-        // plus any edit made since. Routing away here would discard that
-        // edit without the discard confirm -- the same silent loss as
-        // the clobber below, reached through the error path instead. The
-        // lock is the realistic cause (`Another EVE Settings operation
-        // is still running`), and it clears on its own.
+        // A failed reread is not a reason to eject: after Save the draft
+        // may include newer edits, and an explicit Reload has only agreed
+        // to discard if its replacement arrives. Routing away here would
+        // lose work through the error path instead of the clobber below.
+        // The lock is a realistic cause and clears on its own.
         //
-        // `dirty` is deliberately not touched: formationsDone cleared it
-        // before calling, and markDirty will have set it again if an edit
-        // landed. Either way it already says the truth.
+        // `dirty` is deliberately not touched: it already describes the
+        // retained document, whether just saved or still awaiting Save.
         if (mode === 'switch') {
           // Keep the old document after a failed switch. The select changed
           // before the request was sent, so put it back on the only document
@@ -236,6 +244,7 @@
           return;
         }
         if (protect) {
+          saveStatus((reply && reply.error) || 'The file could not be re-read.');
           paintCommit();
           WM.confirm('Formations',
                      (reply && reply.error) || 'The file could not be re-read.');
@@ -277,6 +286,8 @@
         return;
       }
       state.path = reply.path;
+      state.contentRevision = reply.content_revision;
+      if (mode !== 'reload') { saveStatus(''); }
       selectedAccountPath = path;
       lastSuccessfulPath = path;
       state.formations = reply.formations.map(fromMeters);
@@ -293,16 +304,51 @@
   }
 
   function save() {
-    if (state.busy || !state.path) { return; }
+    if (state.busy || !state.path || !state.contentRevision) { return; }
+    var request = {
+      id: pageSession + ':' + loadGeneration + ':' + (++saveSequence),
+      path: state.path, generation: loadGeneration, revision: revision
+    };
+    pendingSave = request;
     state.busy = true;
-    savingAt = revision;
+    savingAt = request.revision;
+    saveStatus('');
     paintCommit();
-    WM.send('eve_settings_save_formations', state.path,
-            state.formations.map(toMeters)).then(function (accepted) {
-      // The bridge returns as soon as a worker is spawned, so a falsy
-      // answer means none did and nothing will ever push. Same contract
-      // evesettings.js's mutate() is written against.
-      if (!accepted) { state.busy = false; paintCommit(); }
+    WM.send('eve_settings_save_formations', request.path,
+            state.formations.map(toMeters), state.contentRevision,
+            request.id).then(function (accepted) {
+      // Completion can beat this bool reply, even starting a reread or a
+      // second save. Only the request still pending may release its busy state.
+      if (!accepted && pendingSave === request
+          && request.generation === loadGeneration
+          && WM.current_route === 'formations') {
+        pendingSave = null;
+        state.busy = false;
+        saveStatus('The save could not be started. Your edits are still here.');
+        paintCommit();
+      }
+    });
+  }
+
+  function saveStatus(text) {
+    WM.el('fm-save-status').textContent = text;
+  }
+
+  function reload() {
+    if (state.busy || !state.path) { return; }
+    var generation = loadGeneration, path = selectedAccountPath;
+    function readAgain() {
+      if (WM.current_route !== 'formations' || generation !== loadGeneration
+          || path !== selectedAccountPath || state.busy) { return; }
+      // Confirming a discard is provisional until a read actually succeeds.
+      loadGeneration += 1;
+      load(path, 'explicit-reload', state.selected, true);
+    }
+    if (!state.dirty) { readAgain(); return; }
+    WM.confirm('Reload formations?',
+               'Discard your unsaved formation edits and read this account again?',
+               { destructive: true }).then(function (yes) {
+      if (yes) { readAgain(); }
     });
   }
 
@@ -312,9 +358,22 @@
   // busy for the rest of the session. Profiles forwards the push here
   // instead. test_page_conventions.py pins both halves.
   WM.formationsDone = function (payload) {
-    if (WM.current_route !== 'formations') { return; }
+    if (!pendingSave || !payload || payload.operation !== 'formations_save'
+        || payload.request_id !== pendingSave.id || payload.path !== pendingSave.path
+        || state.path !== pendingSave.path || pendingSave.generation !== loadGeneration
+        || WM.current_route !== 'formations') { return; }
+    savingAt = pendingSave.revision;
+    pendingSave = null;
     state.busy = false;
-    if (!(payload && payload.ok)) { paintCommit(); return; }
+    if (!payload.ok) {
+      saveStatus(payload.error || 'Formations were not saved. Your edits are still here.');
+      paintCommit();
+      return;
+    }
+    // The committed bytes become our baseline even when newer edits make
+    // reloading unsafe. Otherwise the next save would conflict with our own.
+    state.contentRevision = payload.content_revision;
+    saveStatus(payload.warning || 'Formations saved.');
     // An edit landed after the send, and the push says nothing about it.
     // Keeping it beats reloading over it: a reload here would throw away
     // work the user can see on screen, while the cost of NOT reloading is
@@ -658,9 +717,10 @@
 
   function paintCommit() {
     var why = state.busy ? '' : problem();
-    WM.setEnabled('fm-save', state.dirty && !state.busy && !why);
+    WM.setEnabled('fm-save', state.dirty && !state.busy && !!state.contentRevision && !why);
+    WM.setEnabled('fm-reload', !!state.path && !state.busy);
     WM.el('fm-dirty').textContent = state.busy
-      ? 'Saving…'
+      ? (pendingSave ? 'Saving…' : 'Loading…')
       : (why || (state.dirty ? 'Unsaved changes' : ''));
     // .hint is the faintest tone the sheet has, which is right for
     // `Unsaved changes` and wrong for the one line explaining why the
@@ -683,10 +743,12 @@
     });
 
     WM.el('fm-back').addEventListener('click', function () {
+      var generation = loadGeneration;
       if (!state.dirty) { WM.route('evesettings'); return; }
       WM.confirm('Discard changes?',
                  'Your formation edits have not been saved.',
                  { destructive: true }).then(function (yes) {
+        if (generation !== loadGeneration || WM.current_route !== 'formations') { return; }
         if (yes) { state.dirty = false; WM.route('evesettings'); }
       });
     });
@@ -751,9 +813,10 @@
 
     WM.el('fm-balance').addEventListener('click', balance);
     WM.el('fm-save').addEventListener('click', save);
+    WM.el('fm-reload').addEventListener('click', reload);
 
     WM.el('fm-account').addEventListener('change', function () {
-      var nextPath = WM.el('fm-account').value;
+      var nextPath = WM.el('fm-account').value, generation = loadGeneration;
       if (!nextPath || nextPath === selectedAccountPath || state.busy) return;
       if (!state.dirty) {
         load(nextPath, 'switch');
@@ -762,6 +825,8 @@
       WM.confirm('Discard changes?',
                  'Your formation edits have not been saved.',
                  { destructive: true }).then(function (yes) {
+        if (generation !== loadGeneration || WM.current_route !== 'formations'
+            || state.busy) { return; }
         if (yes) {
           load(nextPath, 'switch');
         } else {
@@ -793,18 +858,23 @@
       if (WM.current_route === 'formations') { renderPreview(); }
     });
 
-    // Leaving is load-bearing here for one reason only: the drag listeners
-    // are on `window`, so a pointer released outside the page while the
-    // route changed would leave the preview spinning under the next
-    // screen's mouse movement.
+    // Leaving invalidates outstanding reads, saves and confirmations. The
+    // drag listeners are also on `window`: a pointer released elsewhere
+    // must not leave the preview spinning under the next screen.
     document.addEventListener('wm:route', function (event) {
-      if (event.detail !== 'formations') { dragging = false; }
+      if (event.detail !== 'formations') {
+        dragging = false;
+        loadGeneration += 1;
+        pendingSave = null;
+      }
     });
   }
 
   // The Profiles tool's entry point, and the only way in. Keep only the
   // account identity the editor needs: Python owns the canonical name.
   WM.openFormations = function (accounts, preferredPath) {
+    loadGeneration += 1;
+    pendingSave = null;
     accountChoices = (accounts || []).map(function (account) {
       return { path: account.path, name: account.name };
     });

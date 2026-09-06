@@ -3276,6 +3276,25 @@ def test_the_formation_editor_guards_both_of_its_async_windows():
     )
 
 
+def test_formation_completion_guards_identity_before_any_busy_or_baseline_change():
+    js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
+    done = js[js.index("WM.formationsDone =") :]
+    done = done[: done.index("\n  };")]
+    before_busy = done[: done.index("state.busy = false")]
+    for key in (
+        "payload.operation",
+        "payload.request_id",
+        "payload.path",
+        "pendingSave.generation",
+        "WM.current_route",
+    ):
+        assert key in before_busy
+    assert done.index("state.contentRevision = payload.content_revision") < done.index(
+        "revision !== savingAt"
+    )
+    assert "WM.el('fm-save-status').textContent" in js
+
+
 def test_the_alert_rows_offer_exactly_the_flash_speeds_that_exist():
     """The same trap as the sound options above, one column over.
 
