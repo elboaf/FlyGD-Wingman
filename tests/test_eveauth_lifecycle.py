@@ -59,6 +59,24 @@ class StarterGate:
         return self._lock._is_owned()
 
 
+class ShutdownProbeLock:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.shutdown_entered = threading.Event()
+
+    def __enter__(self):
+        if threading.current_thread().name == "auth-shutdown":
+            self.shutdown_entered.set()
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+    def _is_owned(self):
+        return self._lock._is_owned()
+
+
 class Gate:
     def __init__(self):
         self.entered = threading.Event()
@@ -1229,6 +1247,91 @@ def test_shutdown_wins_before_authorization_attempt_is_published(tmp_path):
     assert launched == []
     assert alerts == []
     assert authority.auth_in_progress is False
+
+
+def test_authorization_start_finishes_spawning_before_shutdown_returns(tmp_path):
+    generation_entered = threading.Event()
+    release_generation = threading.Event()
+    changed_entered = threading.Event()
+    release_changed = threading.Event()
+    shutdown_finished = threading.Event()
+    order = []
+    result = {}
+
+    class RecordingSpawn:
+        def __call__(self, *, target, daemon=False):
+            del daemon
+
+            def start():
+                order.append("worker-started")
+
+            return SimpleNamespace(start=start, target=target)
+
+    def changed():
+        if threading.current_thread().name == "auth-starter":
+            changed_entered.set()
+            assert release_changed.wait(timeout=2)
+
+    authority, alerts, launched, _listener = build(
+        tmp_path,
+        spawn=RecordingSpawn(),
+        changed=changed,
+    )
+    lock = ShutdownProbeLock()
+    authority._lock = lock
+    generation_roster_locked = authority._generation_roster_locked
+
+    def gated_generation_roster():
+        generation_entered.set()
+        assert release_generation.wait(timeout=2)
+        return generation_roster_locked()
+
+    authority._generation_roster_locked = gated_generation_roster
+
+    starter = threading.Thread(
+        target=lambda: result.setdefault("value", authority.start_full_authorization()),
+        name="auth-starter",
+    )
+
+    def shut_down():
+        authority.shutdown()
+        order.append("shutdown-finished")
+        shutdown_finished.set()
+
+    shutdown = threading.Thread(target=shut_down, name="auth-shutdown")
+    starter.start()
+    assert generation_entered.wait(timeout=2)
+    shutdown.start()
+    assert lock.shutdown_entered.wait(timeout=2)
+    assert shutdown_finished.is_set() is False
+
+    release_generation.set()
+    assert changed_entered.wait(timeout=2)
+    assert shutdown_finished.wait(timeout=2)
+    release_changed.set()
+    starter.join(timeout=2)
+    shutdown.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert not shutdown.is_alive()
+    assert order == ["worker-started", "shutdown-finished"]
+    assert result["value"] == AuthorizationCommandResult(True, "")
+    assert alerts == []
+    assert launched == []
+    assert authority.auth_in_progress is False
+
+
+def test_shutdown_precedes_configuration_refusal(tmp_path, monkeypatch):
+    authority, alerts, _, _ = build(tmp_path, spawn=DeferredSpawn())
+    monkeypatch.setattr(application, "is_configured", lambda: False)
+
+    authority.shutdown()
+    result = authority.start_full_authorization()
+
+    assert result == AuthorizationCommandResult(
+        False, "EVE authority is shutting down."
+    )
+    assert alerts == []
 
 
 def test_shutdown_refuses_new_token_work(tmp_path):
