@@ -571,6 +571,11 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
+const stateMachineScenario = scenario.startsWith('state-');
+const unhandledRejections = [];
+if (scenario === 'state-stale-start-result') {
+  process.on('unhandledRejection', error => { unhandledRejections.push(error); });
+}
 
 // Only DOM mechanics live here. Fittings rendering, listeners, selection and
 // phase changes all run from the unmodified production module below.
@@ -697,17 +702,62 @@ document.querySelectorAll('.route').forEach(node => node.classList.remove('activ
 route.classList.add('active');
 const handlers = {};
 const calls = [];
+const pending = {};
+let copyTicketSequence = 0;
+function deferred(name, args) {
+  let resolve;
+  let reject;
+  const promise = new Promise((accept, refuse) => { resolve = accept; reject = refuse; });
+  const request = {args, promise, resolve, reject};
+  (pending[name] ||= []).push(request);
+  return promise;
+}
+function takePending(name) {
+  const queue = pending[name] || [];
+  assert.ok(queue.length, 'no pending ' + name + ' request');
+  return queue.shift();
+}
+const fitA = {id: 'fit-1', name: 'Sabre tackle', ship_name: 'Sabre', ship_type_id: 22456,
+  presence_count: 1, collection_ids: [], deployable: true, superseded_by: null};
+const fitB = {id: 'fit-2', name: 'Flycatcher tackle', ship_name: 'Flycatcher', ship_type_id: 22464,
+  presence_count: 1, collection_ids: [], deployable: true, superseded_by: null};
 const state = {
   available: true, warnings: [], refreshing: false,
-  collections: [{id: 'all', name: 'All fittings', count: 1}], ships: [],
+  collections: [
+    {id: 'all', name: 'All fittings', count: 2},
+    {id: 'doctrine', name: 'Doctrine', count: 2}
+  ],
+  ships: [],
   characters: [
     {character_id: 1, character_name: 'Pilot', status: 'enabled', fetched_utc: '2026-09-01', stale: false},
     {character_id: 2, character_name: 'Unavailable', status: 'disabled', fetched_utc: '', stale: false}
   ],
-  rows: [{id: 'fit-1', name: 'Sabre tackle', ship_name: 'Sabre', ship_type_id: 22456,
-    presence_count: 1, collection_ids: [], deployable: true, superseded_by: null}],
-  total: 1, page: 1, page_size: 100
+  rows: [fitA], total: 1, page: 1, page_size: 100
 };
+function workspace(label, overrides = {}) {
+  const payload = {...state, ...overrides};
+  payload.collections = (overrides.collections || state.collections).map(collection => ({
+    ...collection,
+    name: collection.id === 'all' ? label : collection.name
+  }));
+  return payload;
+}
+function detailFor(row, description) {
+  return {id: row.id, name: row.name, description, ship_type_id: row.ship_type_id,
+    items: [], aliases: [], presences: [], collection_ids: [], superseded_by: null};
+}
+function screenshotPayload() {
+  const entries = [];
+  for (let index = 1; index <= 21; index += 1) {
+    entries.push({...fitA, id: 'screenshot-' + index, name: 'Screenshot fitting ' + index,
+      presence_count: 0, is_unfiled: true});
+  }
+  return {
+    kind: 'fittings-screenshot-v1', characters: [state.characters[0]],
+    collections: state.collections, entries, details: {},
+    mixed_preflight: {pairs: []}, copy_result: {results: []}
+  };
+}
 const WM = {
   current_route: 'fittings', el,
   make(tag, cls, text) {
@@ -718,12 +768,33 @@ const WM = {
   handle(name, callback) { handlers[name] = callback; },
   send(name, ...args) {
     calls.push([name, ...args]);
-    if (name === 'fittings_state') return Promise.resolve(state);
-    if (name === 'fittings_preflight_copy') return Promise.resolve({
-      accepted: true, ticket_id: 'ticket', write_count: 1, requires_resolution: false,
-      counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
-        fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready', chosen_name: 'Sabre tackle'}]
-    });
+    if (name === 'fittings_state') {
+      return stateMachineScenario ? deferred(name, args) : Promise.resolve(state);
+    }
+    if (name === 'fittings_detail' &&
+        (scenario === 'state-detail-sequence' || scenario === 'state-rejected-mutation')) {
+      return deferred(name, args);
+    }
+    if (name === 'fittings_update_metadata' && scenario === 'state-rejected-mutation') {
+      return Promise.resolve(false);
+    }
+    if (name === 'fittings_preflight_copy' && scenario === 'state-stale-preflight') {
+      return deferred(name, args);
+    }
+    if (name === 'fittings_preflight_copy') {
+      copyTicketSequence += 1;
+      const ticketId = scenario === 'state-ticket-progress'
+          || scenario === 'state-stale-start-result'
+        ? 'ticket-' + (copyTicketSequence === 1 ? 'a' : 'b') : 'ticket';
+      return Promise.resolve({
+        accepted: true, ticket_id: ticketId, write_count: 1, requires_resolution: false,
+        counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
+          fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready', chosen_name: 'Sabre tackle'}]
+      });
+    }
+    if (name === 'fittings_start_copy' && scenario === 'state-stale-start-result') {
+      return deferred(name, args);
+    }
     if (name === 'fittings_start_copy' || name === 'fittings_cancel_copy') return Promise.resolve(true);
     throw new Error('Unexpected bridge call: ' + name);
   },
@@ -739,7 +810,482 @@ function key(name, shift = false, handled = false) {
 }
 function tick(node) { node.checked = true; node.dispatchEvent({type: 'change'}); }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+async function enterWith(payload) {
+  document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+  const request = takePending('fittings_state');
+  request.resolve(payload);
+  await flush();
+}
+function selectedCheckbox() {
+  const checkbox = el('fittings-list').querySelector('input');
+  assert.ok(checkbox, 'rendered fitting has a selection checkbox');
+  return checkbox;
+}
+async function beginCopy() {
+  tick(selectedCheckbox());
+  const invoker = el('fittings-copy-selected');
+  invoker.focus();
+  invoker.click();
+  const target = el('fittings-copy-body').querySelector('input');
+  tick(target);
+  el('fittings-copy-review').click();
+  await flush();
+  el('fittings-copy-start').click();
+  await flush();
+}
+async function runStateMachineScenario() {
+  if (scenario === 'state-route-lifecycle') {
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    const departed = takePending('fittings_state');
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    departed.resolve(workspace('Departed response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, '',
+      'a response resolving after route leave cannot repaint the departed route');
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    const current = takePending('fittings_state');
+    current.resolve(workspace('Current response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Current response');
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').length, 2,
+      'reentry requests fresh state');
+    return;
+  }
+
+  const initial = scenario === 'state-detail-sequence'
+    ? workspace('Two fittings', {rows: [fitA, fitB], total: 2})
+    : scenario === 'state-stale-preflight' || scenario === 'state-stale-progress'
+        || scenario === 'state-ticket-progress' || scenario === 'state-stale-start-result'
+      ? workspace('Two targets', {characters: [
+          state.characters[0],
+          {character_id: 2, character_name: 'Second Pilot', status: 'enabled',
+            fetched_utc: '2026-09-01', stale: false}
+        ]})
+      : workspace('Initial response');
+  await enterWith(initial);
+  if (scenario === 'state-request-sequence') {
+    handlers.onFittingsChanged();
+    handlers.onFittingsChanged();
+    const older = takePending('fittings_state');
+    const newer = takePending('fittings_state');
+    newer.resolve(workspace('Newest response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Newest response');
+    older.resolve(workspace('Older response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Newest response',
+      'an older state response cannot overwrite the newest response');
+    return;
+  }
+
+  if (scenario === 'state-selection-scope') {
+    tick(selectedCheckbox());
+    assert.equal(el('fittings-copy-selected').disabled, false);
+    el('fittings-collections').querySelectorAll('button')[1].click();
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'collection change clears selection before its request resolves');
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').at(-1)[1].collection_id,
+      'doctrine');
+    el('fittings-copy-selected').click();
+    assert.equal(calls.some(call => call[0] === 'fittings_preflight_copy'), false,
+      'cleared collection selection cannot reach preflight');
+    takePending('fittings_state').resolve(workspace('Scoped response', {
+      rows: [fitA], total: 2, page: 1, page_size: 1
+    }));
+    await flush();
+
+    tick(selectedCheckbox());
+    el('fittings-page-next').click();
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'page change clears selection before its request resolves');
+    el('fittings-copy-selected').click();
+    assert.equal(calls.some(call => call[0] === 'fittings_preflight_copy'), false,
+      'cleared page selection cannot reach preflight');
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').at(-1)[1].page, 2);
+    takePending('fittings_state').resolve(workspace('Second page', {
+      rows: [fitB], total: 2, page: 2, page_size: 1
+    }));
+    await flush();
+
+    tick(selectedCheckbox());
+    el('fittings-search').value = 'needle';
+    el('fittings-search').dispatchEvent({type: 'input'});
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'search clears selection before its debounced request');
+    el('fittings-copy-selected').click();
+    await wait(250);
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').at(-1)[1].search,
+      'needle');
+    assert.equal(calls.some(call => call[0] === 'fittings_preflight_copy'), false,
+      'scope, page, and search transitions never send stale IDs');
+    takePending('fittings_state').resolve(workspace('Search response', {
+      rows: [], total: 0, page: 1, page_size: 1
+    }));
+    await flush();
+    return;
+  }
+
+  if (scenario === 'state-detail-sequence') {
+    const toggles = el('fittings-list').querySelectorAll('.fit-row-toggle');
+    toggles[0].click();
+    const detailA = takePending('fittings_detail');
+    el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click();
+    const detailB = takePending('fittings_detail');
+    detailA.resolve(detailFor(fitA, 'Late detail A'));
+    await flush();
+    assert.equal(el('fittings-list').querySelector('.fit-description'), null,
+      'late detail for the collapsed fitting is ignored');
+    detailB.resolve(detailFor(fitB, 'Current detail B'));
+    await flush();
+    assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
+      'Current detail B');
+    assert.equal(el('fittings-list').querySelectorAll('.fit-row.open').length, 1);
+    return;
+  }
+
+  if (scenario === 'state-rejected-mutation') {
+    tick(selectedCheckbox());
+    el('fittings-list').querySelector('.fit-row-toggle').click();
+    takePending('fittings_detail').resolve(detailFor(fitA, 'Persisted detail'));
+    await flush();
+    const save = el('fittings-list').querySelectorAll('button')
+      .find(button => button.textContent === 'Save');
+    assert.ok(save, 'expanded real module renders its Save mutation control');
+    save.click();
+    await flush();
+    assert.equal((pending.fittings_state || []).length, 1,
+      'rejected mutation follows the existing state requery path');
+    assert.equal(el('fittings-copy-selected').disabled, false,
+      'rejection does not optimistically clear selection');
+    assert.equal(el('fittings-list').querySelectorAll('.fit-row.open').length, 1,
+      'rejection does not optimistically collapse detail');
+    assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
+      'Persisted detail');
+    takePending('fittings_state').resolve(workspace('Requeried response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Requeried response');
+    assert.equal(el('fittings-copy-selected').disabled, false);
+    takePending('fittings_detail').resolve(detailFor(fitA, 'Requeried detail'));
+    await flush();
+    assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
+      'Requeried detail');
+    return;
+  }
+
+  if (scenario === 'state-screenshot-progress') {
+    handlers.onFittingsScreenshotState(screenshotPayload());
+    assert.equal(el('fittings-list').querySelectorAll('.fit-row').length, 21,
+      'the bounded screenshot fixture is active');
+    tick(selectedCheckbox());
+    el('fittings-copy-selected').click();
+    assert.equal(el('fittings-copy-review').hidden, false,
+      'screenshot staging begins in targets phase');
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
+      operation_id: 'screenshot-copy', completed: 2, total: 3,
+      result: {status: 'success'}});
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '2 of 3 pairs checked', 'bounded screenshot progress renders from targets phase');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', completed: 3,
+      total: 3, result: {
+        operation_id: 'screenshot-copy', status: 'complete', write_count: 1,
+        results: [{fitting_name: 'Screenshot result', character_name: 'Pilot',
+          status: 'success'}]
+      }});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+      'Screenshot result', 'bounded screenshot result renders from targets phase');
+    return;
+  }
+
+  if (scenario === 'state-stale-preflight') {
+    tick(selectedCheckbox());
+    const invoker = el('fittings-copy-selected');
+    invoker.click();
+    const firstTargets = el('fittings-copy-body').querySelectorAll('input');
+    tick(firstTargets[0]);
+    el('fittings-copy-review').click();
+    const first = takePending('fittings_preflight_copy');
+    assert.deepEqual(first.args[1], [1]);
+    el('fittings-copy-close').click();
+
+    invoker.click();
+    const secondTargets = el('fittings-copy-body').querySelectorAll('input');
+    tick(secondTargets[1]);
+    el('fittings-copy-review').click();
+    const second = takePending('fittings_preflight_copy');
+    assert.deepEqual(second.args[1], [2]);
+
+    first.resolve({accepted: true, ticket_id: 'ticket-a', write_count: 1,
+      requires_resolution: false, counts: {ready: 1}, pairs: [{
+        entry_id: 'fit-1', character_id: 1, fitting_name: 'Stale fitting A',
+        character_name: 'Pilot', status: 'ready', chosen_name: 'Stale fitting A'
+      }]});
+    await flush();
+    assert.equal(el('fittings-copy-review').hidden, false,
+      'stale reply cannot move the reopened dialog out of targets phase');
+    assert.equal(el('fittings-copy-start').hidden, true);
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 selected. Choose target characters.');
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name'), null,
+      'the stale pair is not rendered in the current targets phase');
+
+    second.resolve({accepted: true, ticket_id: 'ticket-b', write_count: 1,
+      requires_resolution: false, counts: {ready: 1}, pairs: [{
+        entry_id: 'fit-1', character_id: 2, fitting_name: 'Current fitting B',
+        character_name: 'Second Pilot', status: 'ready', chosen_name: 'Current fitting B'
+      }]});
+    await flush();
+    assert.equal(el('fittings-copy-review').hidden, true);
+    assert.equal(el('fittings-copy-start').hidden, false,
+      'only the current dialog reply enters preflight');
+    assert.match(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      /^1 remote write/);
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+      'Current fitting B');
+    el('fittings-copy-start').click();
+    await flush();
+    const starts = calls.filter(call => call[0] === 'fittings_start_copy');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0][1], 'ticket-b', 'the stale ticket is never used');
+    return;
+  }
+
+  if (scenario === 'state-ticket-progress') {
+    await beginCopy();
+    assert.equal(calls.filter(call => call[0] === 'fittings_start_copy')[0][1],
+      'ticket-a');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-a',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
+      cancellations + 1, 'route leave cancels copy A');
+
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    takePending('fittings_state').resolve(workspace('Reentered response', {
+      characters: initial.characters
+    }));
+    await flush();
+    await beginCopy();
+    const starts = calls.filter(call => call[0] === 'fittings_start_copy');
+    assert.equal(starts[1][1], 'ticket-b');
+    const cancelB = el('fittings-copy-cancel');
+    cancelB.focus();
+
+    function assertCopyBActive(eventName) {
+      assert.equal(el('fittings-copy-title').textContent, 'Copying fittings',
+        eventName + ' cannot replace copy B');
+      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+        '0 of 1 pairs checked');
+      assert.equal(el('fittings-copy-selected').textContent, 'Copy selected (1)',
+        eventName + ' cannot clear copy B selection');
+      assert.equal(el('fittings-copy-cancel').hidden, false);
+      assert.equal(document.activeElement, cancelB,
+        eventName + ' cannot redirect focus from copy B');
+    }
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-a',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    assertCopyBActive('late copy A progress');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-a',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {
+        operation_id: 'copy-a', status: 'complete', write_count: 1, results: [{
+          fitting_name: 'Copy A result', character_name: 'Pilot', status: 'success'
+        }]
+      }});
+    assertCopyBActive('late copy A completion');
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-b',
+      operation_id: 'copy-b', completed: 1, total: 1, result: {status: 'success'}});
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 of 1 pairs checked');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-b',
+      operation_id: 'copy-b', completed: 1, total: 1, result: {
+        operation_id: 'copy-b', status: 'complete', write_count: 1, results: [{
+          fitting_name: 'Copy B result', character_name: 'Pilot', status: 'success'
+        }]
+      }});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+      'Copy B result', 'matching copy B completion renders normally');
+    return;
+  }
+
+  if (scenario === 'state-stale-start-result') {
+    await beginCopy();
+    const startA = takePending('fittings_start_copy');
+    assert.deepEqual(startA.args, ['ticket-a']);
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    takePending('fittings_state').resolve(workspace('Reentered response', {
+      characters: initial.characters
+    }));
+    await flush();
+    tick(selectedCheckbox());
+    el('fittings-copy-selected').click();
+    const targetsB = el('fittings-copy-body').querySelectorAll('input');
+    const targetB = targetsB[1];
+    tick(targetB);
+    targetB.focus();
+
+    startA.resolve(false);
+    await flush();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(unhandledRejections.length, 0,
+      'stale false start result cannot render a cleared preflight');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy fittings');
+    assert.equal(el('fittings-copy-review').hidden, false,
+      'dialog B remains in targets phase');
+    assert.equal(el('fittings-copy-start').hidden, true);
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 selected. Choose target characters.');
+    assert.equal(document.contains(targetB), true);
+    assert.equal(targetB.checked, true);
+    assert.equal(document.activeElement, targetB);
+    return;
+  }
+
+  if (scenario === 'state-stale-progress') {
+    await beginCopy();
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 of 1 pairs checked');
+    const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
+      cancellations + 1, 'route leave cancels copy A');
+    assert.equal(el('fittings-copy-overlay').hidden, true,
+      'route leave force-closes copy A');
+
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    takePending('fittings_state').resolve(workspace('Reentered response', {
+      characters: initial.characters
+    }));
+    await flush();
+    tick(selectedCheckbox());
+    el('fittings-copy-selected').click();
+    const targetsB = el('fittings-copy-body').querySelectorAll('input');
+    const targetB = targetsB[1];
+    tick(targetB);
+    targetB.focus();
+    assert.equal(targetsB[0].checked, false);
+    assert.equal(document.activeElement, targetB);
+
+    function assertTargetsDialogB(eventName) {
+      assert.equal(el('fittings-copy-title').textContent, 'Copy fittings',
+        eventName + ' cannot turn dialog B into copy A results');
+      assert.equal(el('fittings-copy-review').hidden, false,
+        eventName + ' leaves dialog B in targets phase');
+      assert.equal(el('fittings-copy-start').hidden, true);
+      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+        '1 selected. Choose target characters.', 'copy A summary is not rendered');
+      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-result'), null,
+        'copy A result is not rendered');
+      assert.equal(document.contains(targetB), true,
+        eventName + ' does not replace dialog B controls');
+      assert.equal(targetsB[0].checked, false);
+      assert.equal(targetB.checked, true, 'dialog B target selection remains present');
+      assert.equal(document.activeElement, targetB,
+        eventName + ' does not redirect focus from dialog B');
+      assert.equal(el('fittings-copy-selected').disabled, false,
+        eventName + ' does not clear dialog B fitting selection');
+    }
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    assertTargetsDialogB('late progress');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      completed: 1, total: 1, result: {
+        operation_id: 'copy-a', status: 'complete', write_count: 1, results: [{
+          fitting_name: 'Copy A result', character_name: 'Pilot', status: 'success'
+        }]
+      }});
+    assertTargetsDialogB('late completion');
+    return;
+  }
+
+  if (scenario === 'state-copy-lifecycle') {
+    await beginCopy();
+    assert.ok(calls.some(call => call[0] === 'fittings_preflight_copy'));
+    assert.ok(calls.some(call => call[0] === 'fittings_start_copy'));
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
+      completed: 1, total: 1, result: {status: 'success'}});
+    assert.equal(el('fittings-copy-status').textContent, 'Success');
+    assert.equal(el('fittings-copy-close').disabled, true);
+    key('Escape');
+    el('fittings-copy-close').click();
+    assert.equal(el('fittings-copy-overlay').hidden, false,
+      'progress cannot be dismissed by Escape or Close');
+    el('fittings-copy-cancel').click();
+    assert.ok(calls.some(call => call[0] === 'fittings_cancel_copy'));
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      result: {operation_id: 'op-1', status: 'cancelled', write_count: 1,
+        results: []}});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'completion clears selection');
+    assert.equal(el('fittings-copy-close').disabled, false,
+      'completion restores the close guard');
+    el('fittings-copy-close').click();
+
+    await beginCopy();
+    const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    el('nav-skills').focus();
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    assert.equal(el('fittings-copy-overlay').hidden, true);
+    assert.equal(document.activeElement, el('nav-skills'),
+      'route-leave cancellation does not steal focus');
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
+      cancellations + 1, 'route leave cancels an active copy');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      result: {operation_id: 'late', status: 'success', write_count: 1, results: []}});
+    assert.equal(el('fittings-copy-overlay').hidden, true,
+      'late completion cannot reopen a copy workflow after route leave');
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'late completion cannot restore departed selection');
+    assert.equal(document.activeElement, el('nav-skills'),
+      'late completion cannot steal focus from the current route');
+    return;
+  }
+
+  throw new Error('Unknown state-machine scenario: ' + scenario);
+}
 (async () => {
+  if (stateMachineScenario) {
+    await runStateMachineScenario();
+    return;
+  }
   document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
   await flush();
   const checkbox = el('fittings-list').querySelector('input');
@@ -798,7 +1344,12 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     else if (scenario === 'fallback-invisible') invoker.style.visibility = 'hidden';
     else {
       // Real completion clears selection and disables the original invoker.
-      handlers.onFittingsProgress({kind: 'copy', phase: 'complete',
+      tick(target);
+      review.click();
+      await flush();
+      el('fittings-copy-start').click();
+      await flush();
+      handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
         result: {results: [], write_count: 0, status: 'cancelled'}});
     }
     // Fallback must skip both a disabled first control and a hidden ancestor.
@@ -863,6 +1414,22 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 """
 
 
+def _run_fittings_node(tmp_path, scenario, script=WEB / "fittings.js"):
+    page = _PageTree()
+    page.feed(HTML)
+    markup = tmp_path / "page.json"
+    markup.write_text(json.dumps(page.root), encoding="utf-8")
+    harness = tmp_path / "fittings-harness.cjs"
+    harness.write_text(_COPY_ACCESSIBILITY_HARNESS, encoding="utf-8")
+    return subprocess.run(
+        ["node", str(harness), str(markup), scenario, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 @pytest.mark.parametrize(
     "scenario",
@@ -883,18 +1450,27 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     ],
 )
 def test_copy_accessibility_in_node(tmp_path, scenario):
-    page = _PageTree()
-    page.feed(HTML)
-    markup = tmp_path / "page.json"
-    markup.write_text(json.dumps(page.root), encoding="utf-8")
-    harness = tmp_path / "copy-accessibility.cjs"
-    harness.write_text(_COPY_ACCESSIBILITY_HARNESS, encoding="utf-8")
-    result = subprocess.run(
-        ["node", str(harness), str(markup), scenario, str(WEB / "fittings.js")],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    result = _run_fittings_node(tmp_path, scenario)
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"PASS {scenario}" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_fittings_state_machine_in_node(tmp_path):
+    scenarios = (
+        "state-route-lifecycle",
+        "state-request-sequence",
+        "state-selection-scope",
+        "state-detail-sequence",
+        "state-rejected-mutation",
+        "state-screenshot-progress",
+        "state-stale-preflight",
+        "state-stale-progress",
+        "state-ticket-progress",
+        "state-stale-start-result",
+        "state-copy-lifecycle",
+    )
+    for scenario in scenarios:
+        result = _run_fittings_node(tmp_path, scenario)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"PASS {scenario}" in result.stdout
