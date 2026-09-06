@@ -473,7 +473,6 @@
       check.appendChild(input);
       check.appendChild(WM.make('span', 'box'));
       input.checked = copySelection.indexOf(f) !== -1;
-      input.setAttribute('aria-label', 'Select ' + (f.name || 'Unnamed') + ' for sharing');
       input.addEventListener('change', function () {
         var selected = copySelection.indexOf(f);
         if (input.checked && selected === -1) { copySelection.push(f); }
@@ -488,16 +487,22 @@
       // toggles `active` from its data-section -- which would quietly
       // un-select whichever formation is open. Same treatment, different
       // name, so that sweep cannot reach here.
-      var item = WM.make('button', 'fm-item' + (i === state.selected ? ' active' : ''),
-                         f.name || 'Unnamed');
+      var item = WM.make('button', 'fm-item' + (i === state.selected ? ' active' : ''));
       item.type = 'button';
       item.addEventListener('click', function () {
         state.selected = i;
         renderAll();
       });
       row.appendChild(item);
+      paintListName(row, f);
       box.appendChild(row);
     });
+  }
+
+  function paintListName(row, f) {
+    var name = f.name || 'Unnamed';
+    row.querySelector('.fm-item').textContent = name;
+    row.querySelector('input').setAttribute('aria-label', 'Select ' + name + ' for sharing');
   }
 
   function renderPane() {
@@ -879,7 +884,9 @@
       if (f) {
         f.name = WM.el('fm-name').value.trim();
         markDirty();
-        renderList();
+        // Blur can commit the name between pointer-down and a sharing click.
+        // Keep those controls connected so the native click/focus can finish.
+        paintListName(WM.el('fm-list').children[state.selected], f);
       }
     });
 

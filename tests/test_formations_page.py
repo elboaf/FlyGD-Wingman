@@ -53,6 +53,7 @@ WEB = ROOT / "wingman" / "web"
         "copy-stale-clipboard-success",
         "copy-stale-clipboard-denied",
         "copy-typing-keeps-input",
+        "copy-rename-retains-controls",
         "stale-confirm-back",
         "stale-confirm-switch",
         "stale-confirm-reload",

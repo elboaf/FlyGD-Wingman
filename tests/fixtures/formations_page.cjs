@@ -24,6 +24,11 @@ class Element {
   get textContent() { return (this.text || '') + this.children.map(x => x.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
+  querySelector(selector) {
+    return descendants(this).find(element => selector.startsWith('.')
+      ? element.className.split(' ').includes(selector.slice(1))
+      : element.tagName.toLowerCase() === selector) || null;
+  }
   getBoundingClientRect() { return {width: 300, height: 200}; }
   addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
   dispatchEvent(event) {
@@ -211,6 +216,28 @@ async function copyScenario() {
     switchTo('choice-B'); confirms.at(-1).resolve(true); await tick();
     assert.equal(WM.el('fm-copy').disabled, true); click('fm-copy'); assert.equal(exportRequests.length, 1);
     return;
+  }
+  if (scenario === 'copy-rename-retains-controls') {
+    // Native Chromium establishes that change runs between pointer-down and
+    // click. Pin the control identity here without faking browser event order.
+    const checkbox = shareBoxes()[0], label = checkbox.parentNode, button = rowButtons()[0];
+    rename('Renamed <pair>');
+    assert.ok(shareBoxes()[0] === checkbox, 'rename must not detach the pending sharing click target');
+    assert.ok(checkbox.parentNode === label);
+    assert.ok(rowButtons()[0] === button, 'rename must not detach an editor navigation target either');
+    assert.equal(button.textContent, 'Renamed <pair>');
+    assert.equal(checkbox.getAttribute('aria-label'), 'Select Renamed <pair> for sharing');
+    assert.equal(checkbox.checked, true); assertShareCount(1);
+    selectShare(0, false); assertShareCount(0);
+    rename('   ');
+    assert.ok(shareBoxes()[0] === checkbox); assert.ok(rowButtons()[0] === button);
+    assert.equal(button.textContent, 'Unnamed');
+    assert.equal(checkbox.getAttribute('aria-label'), 'Select Unnamed for sharing');
+    assert.equal(checkbox.checked, false);
+    rename('Final name'); selectShare(0); click('fm-copy');
+    assert.equal(exportRequests[0].args[0][0].name, 'Final name');
+    assert.equal(WM.el('fm-dirty').textContent, 'Unsaved changes');
+    assert.equal(saves.length, 0); return;
   }
   if (scenario === 'copy-typing-keeps-input') {
     const field = WM.el('fm-name'); field.focus(); field.value = 'Unblurred';
