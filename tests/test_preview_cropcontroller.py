@@ -343,6 +343,68 @@ def test_host_isolates_command_failure_and_terminalizes_unadmitted_intent(
     assert "command handler failed" in caplog.text
 
 
+def test_repeated_enable_does_not_persist_untouched_monitor_rescue(rig):
+    saved = replace(DEFINITION, window=Rect(5000, 5000, 320, 160))
+    r = rig({"Alice": saved})
+    roster(r, 1, client())
+    window = r.controller.live["Alice"].window
+    assert window.rect == Rect(1600, 920, 320, 160)
+    for count in (1, 2):
+        token, _ = request(r, "enabled", value=True)
+        finish(r)
+        assert r.controller.live["Alice"].window is window
+        assert r.controller.live["Alice"].generation == token.generation
+        assert deserialize(r.store.snapshot()["definitions"])["Alice"] == saved
+        assert len(r.transaction.writes) == count
+    assert r.native.next_thumbnail == 9001
+
+
+@pytest.mark.parametrize(
+    "phase", ["during-save", "after-publication", "after-completion"]
+)
+def test_repeated_enable_preserves_real_movement_from_monitor_rescue(rig, phase):
+    r = rig({"Alice": replace(DEFINITION, window=Rect(5000, 5000, 320, 160))})
+    roster(r, 1, client())
+    window = r.controller.live["Alice"].window
+    assert window.rect == Rect(1600, 920, 320, 160)
+    r.transaction.release.clear()
+    token, _ = request(r, "enabled", value=True)
+    assert r.transaction.entered.wait(5)
+    moved = Rect(450, 320, 320, 160)
+    if phase == "during-save":
+        window.move(moved)
+    r.transaction.release.set()
+    result = r.completions.get(timeout=5)
+    assert result.persisted
+    if phase == "after-publication":
+        window.move(moved)
+    r.controller.complete(result)
+    if phase == "after-completion":
+        window.move(moved)
+    r.store.drain().result(5)
+    assert r.controller.live["Alice"].window is window
+    assert r.controller.live["Alice"].generation == token.generation
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"] == replace(
+        DEFINITION, window=moved
+    )
+    assert r.native.next_thumbnail == 9001
+
+
+def test_real_movement_back_to_rescue_position_is_persisted(rig):
+    r = rig({"Alice": replace(DEFINITION, window=Rect(5000, 5000, 320, 160))})
+    roster(r, 1, client())
+    window = r.controller.live["Alice"].window
+    rescued = window.rect
+    request(r, "enabled", value=True)
+    result = r.completions.get(timeout=5)
+    window.move(Rect(450, 320, 320, 160))
+    window.move(rescued)
+    r.controller.complete(result)
+    r.store.drain().result(5)
+    assert r.controller.live["Alice"].window is window
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].window == rescued
+
+
 @pytest.mark.parametrize("phase", ["during-save", "after-publication"])
 @pytest.mark.parametrize("fail", [False, True])
 def test_repeated_enable_preserves_live_window_and_latest_geometry(rig, phase, fail):

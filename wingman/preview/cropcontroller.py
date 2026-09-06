@@ -515,17 +515,11 @@ class CropController:
             and current.session == live.client.session
             and definition.source == live.source
         ):
-            # Re-enabling an already-live definition edits its generation, not
-            # its source or native identity. Keep its actual destination and
-            # advance the geometry callback authority for subsequent drags.
+            # Re-enabling edits the generation, not the source/native identity.
+            # _geometry already recorded genuine movement, including during
+            # publication. A native/saved mismatch alone can be an untouched
+            # monitor rescue, which must not become the saved arrangement.
             live.generation = op.token.generation
-            if live.window.rect != definition.window:
-                self._store.record_geometry(
-                    op.name,
-                    live.generation,
-                    self._next_geometry_sequence(),
-                    live.window.rect,
-                )
         if (
             result.persisted
             and candidate is not None
