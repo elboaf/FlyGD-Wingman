@@ -39,6 +39,44 @@ class DeferredSpawn:
         self.targets.pop(0)()
 
 
+class StarterGate:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __enter__(self):
+        if threading.current_thread().name == "auth-starter":
+            self.entered.set()
+            assert self.release.wait(timeout=2)
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+    def _is_owned(self):
+        return self._lock._is_owned()
+
+
+class ShutdownProbeLock:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.shutdown_entered = threading.Event()
+
+    def __enter__(self):
+        if threading.current_thread().name == "auth-shutdown":
+            self.shutdown_entered.set()
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+    def _is_owned(self):
+        return self._lock._is_owned()
+
+
 class Gate:
     def __init__(self):
         self.entered = threading.Event()
@@ -1181,6 +1219,194 @@ def test_cancel_authorization_reports_commit_won_after_the_linearization_point(
     assert authority.authorization_activity == "idle"
     assert authority.authorization_notice == ""
     assert authority.capability_status(42, application.FITTINGS) == "enabled"
+
+
+def test_shutdown_wins_before_authorization_attempt_is_published(tmp_path):
+    spawn = DeferredSpawn()
+    authority, alerts, launched, _listener = build(tmp_path, spawn=spawn)
+    gate = StarterGate()
+    authority._lock = gate
+    result = {}
+
+    starter = threading.Thread(
+        target=lambda: result.setdefault("value", authority.start_full_authorization()),
+        name="auth-starter",
+    )
+    starter.start()
+    assert gate.entered.wait(timeout=2)
+
+    authority.shutdown()
+    gate.release.set()
+    starter.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert result["value"] == AuthorizationCommandResult(
+        False, "EVE authority is shutting down."
+    )
+    assert spawn.targets == []
+    assert launched == []
+    assert alerts == []
+    assert authority.auth_in_progress is False
+
+
+def test_authorization_start_finishes_spawning_before_shutdown_returns(tmp_path):
+    generation_entered = threading.Event()
+    release_generation = threading.Event()
+    changed_entered = threading.Event()
+    release_changed = threading.Event()
+    shutdown_finished = threading.Event()
+    order = []
+    result = {}
+
+    class RecordingSpawn:
+        def __call__(self, *, target, daemon=False):
+            del daemon
+
+            def start():
+                order.append("worker-started")
+
+            return SimpleNamespace(start=start, target=target)
+
+    def changed():
+        if threading.current_thread().name == "auth-starter":
+            changed_entered.set()
+            assert release_changed.wait(timeout=2)
+
+    authority, alerts, launched, _listener = build(
+        tmp_path,
+        spawn=RecordingSpawn(),
+        changed=changed,
+    )
+    lock = ShutdownProbeLock()
+    authority._lock = lock
+    generation_roster_locked = authority._generation_roster_locked
+
+    def gated_generation_roster():
+        generation_entered.set()
+        assert release_generation.wait(timeout=2)
+        return generation_roster_locked()
+
+    authority._generation_roster_locked = gated_generation_roster
+
+    starter = threading.Thread(
+        target=lambda: result.setdefault("value", authority.start_full_authorization()),
+        name="auth-starter",
+    )
+
+    def shut_down():
+        authority.shutdown()
+        order.append("shutdown-finished")
+        shutdown_finished.set()
+
+    shutdown = threading.Thread(target=shut_down, name="auth-shutdown")
+    starter.start()
+    assert generation_entered.wait(timeout=2)
+    shutdown.start()
+    assert lock.shutdown_entered.wait(timeout=2)
+    assert shutdown_finished.is_set() is False
+
+    release_generation.set()
+    assert changed_entered.wait(timeout=2)
+    assert shutdown_finished.wait(timeout=2)
+    release_changed.set()
+    starter.join(timeout=2)
+    shutdown.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert not shutdown.is_alive()
+    assert order == ["worker-started", "shutdown-finished"]
+    assert result["value"] == AuthorizationCommandResult(True, "")
+    assert alerts == []
+    assert launched == []
+    assert authority.auth_in_progress is False
+
+
+def test_shutdown_finishes_while_configuration_alert_is_blocked(tmp_path, monkeypatch):
+    configuration_entered = threading.Event()
+    release_configuration = threading.Event()
+    alert_entered = threading.Event()
+    release_alert = threading.Event()
+    shutdown_finished = threading.Event()
+    spawn = DeferredSpawn()
+    alerts = []
+    result = {}
+
+    def configured():
+        configuration_entered.set()
+        assert release_configuration.wait(timeout=2)
+        return False
+
+    def alert(kind, title, body):
+        alerts.append((kind, title, body))
+        alert_entered.set()
+        assert release_alert.wait(timeout=5)
+
+    authority, _, _, _ = build(tmp_path, spawn=spawn, alert=alert)
+    lock = ShutdownProbeLock()
+    authority._lock = lock
+    monkeypatch.setattr(application, "is_configured", configured)
+
+    starter = threading.Thread(
+        target=lambda: result.setdefault("value", authority.start_full_authorization()),
+        name="auth-starter",
+    )
+
+    def shut_down():
+        authority.shutdown()
+        shutdown_finished.set()
+
+    shutdown = threading.Thread(target=shut_down, name="auth-shutdown")
+    starter.start()
+    shutdown_was_blocked = False
+    shutdown_finished_while_alert_blocked = False
+    try:
+        assert configuration_entered.wait(timeout=2)
+        shutdown.start()
+        assert lock.shutdown_entered.wait(timeout=2)
+        shutdown_was_blocked = shutdown_finished.is_set() is False
+
+        release_configuration.set()
+        assert alert_entered.wait(timeout=2)
+        shutdown_finished_while_alert_blocked = shutdown_finished.wait(timeout=2)
+    finally:
+        release_configuration.set()
+        release_alert.set()
+        starter.join(timeout=2)
+        shutdown.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert not shutdown.is_alive()
+    assert shutdown_was_blocked
+    assert shutdown_finished_while_alert_blocked
+    assert result["value"] == AuthorizationCommandResult(
+        False, "This build has no configured EVE application client id."
+    )
+    assert alerts == [
+        (
+            "warning",
+            "EVE sign-in is not configured",
+            "This build has no configured EVE application client id.",
+        )
+    ]
+    assert shutdown_finished.is_set()
+    assert spawn.targets == []
+    assert authority.auth_in_progress is False
+
+
+def test_shutdown_precedes_configuration_refusal(tmp_path, monkeypatch):
+    spawn = DeferredSpawn()
+    authority, alerts, _, _ = build(tmp_path, spawn=spawn)
+    monkeypatch.setattr(application, "is_configured", lambda: False)
+
+    authority.shutdown()
+    result = authority.start_full_authorization()
+
+    assert result == AuthorizationCommandResult(
+        False, "EVE authority is shutting down."
+    )
+    assert alerts == []
+    assert spawn.targets == []
+    assert authority.auth_in_progress is False
 
 
 def test_shutdown_refuses_new_token_work(tmp_path):

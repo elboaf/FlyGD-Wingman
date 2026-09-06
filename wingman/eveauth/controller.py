@@ -490,12 +490,24 @@ class AuthorityController:
                 False,
                 "EVE authority is shutting down.",
             )
-        if not application.is_configured():
-            error = "This build has no configured EVE application client id."
-            self._alert("warning", "EVE sign-in is not configured", error)
-            return AuthorizationCommandResult(False, error)
+        starting_thread = threading.current_thread()
+        starting_worker = False
+        inline_worker = False
+        configuration_error = ""
+        start_error = ""
         with self._lock:
-            if self._active_attempt is not None:
+            if self._stopping.is_set():
+                return AuthorizationCommandResult(
+                    False,
+                    "EVE authority is shutting down.",
+                )
+            if not application.is_configured():
+                configuration_error = (
+                    "This build has no configured EVE application client id."
+                )
+                attempt = None
+                error = ""
+            elif self._active_attempt is not None:
                 error = "An EVE sign-in is already in progress."
                 attempt = None
             else:
@@ -511,25 +523,59 @@ class AuthorityController:
                 self._authorization_activity = "waiting"
                 self._authorization_notice = ""
                 error = ""
+
+                def run_worker():
+                    nonlocal inline_worker
+                    if (
+                        starting_worker
+                        and threading.current_thread() is starting_thread
+                    ):
+                        # Synchronous test spawners must not run authorization I/O
+                        # while the publication transaction owns the state lock.
+                        inline_worker = True
+                        return
+                    # A real thread can run before Thread.start() returns. Wait
+                    # until publication releases the lock before beginning I/O.
+                    with self._lock:
+                        pass
+                    self._auth_worker(
+                        attempt=attempt,
+                        scopes=application.FULL_AUTH_SCOPES,
+                    )
+
+                try:
+                    worker = self._spawn(target=run_worker, daemon=True)
+                    starting_worker = True
+                    try:
+                        worker.start()
+                    finally:
+                        starting_worker = False
+                except Exception as exc:
+                    logger.warning(
+                        "Could not start EVE authorization worker", exc_info=True
+                    )
+                    start_error = f"Could not start EVE sign-in: {exc}"
+                    self._finalize_attempt_locked(attempt, start_error)
+        if configuration_error:
+            self._alert(
+                "warning",
+                "EVE sign-in is not configured",
+                configuration_error,
+            )
+            return AuthorizationCommandResult(False, configuration_error)
         if attempt is None:
             self._alert("warning", "Sign-in already in progress", error)
             return AuthorizationCommandResult(False, error)
-        self._changed_safely()
-        try:
-            worker = self._spawn(
-                target=lambda: self._auth_worker(
-                    attempt=attempt,
-                    scopes=application.FULL_AUTH_SCOPES,
-                ),
-                daemon=True,
+        if start_error:
+            self._changed_safely()
+            self._alert("warning", "Sign-in failed", start_error)
+            return AuthorizationCommandResult(False, start_error)
+        if inline_worker:
+            self._auth_worker(
+                attempt=attempt,
+                scopes=application.FULL_AUTH_SCOPES,
             )
-            worker.start()
-        except Exception as exc:
-            logger.warning("Could not start EVE authorization worker", exc_info=True)
-            error = f"Could not start EVE sign-in: {exc}"
-            self._finish_attempt(attempt, error)
-            self._alert("warning", "Sign-in failed", error)
-            return AuthorizationCommandResult(False, error)
+        self._changed_safely()
         return AuthorizationCommandResult(True, "")
 
     def cancel_authorization(self) -> AuthorizationCommandResult:
@@ -654,7 +700,8 @@ class AuthorityController:
 
     def shutdown(self) -> None:
         """Stop accepting token work and cancel a pending browser authorization."""
-        self._stopping.set()
+        with self._lock:
+            self._stopping.set()
         try:
             self.cancel_authorization()
         except Exception:

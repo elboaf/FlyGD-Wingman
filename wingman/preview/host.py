@@ -499,7 +499,9 @@ class PreviewHost:
     def start(self) -> None:
         with self._lock:
             if self._thread is not None:
-                return  # Idempotent: a second enable must not orphan a pump.
+                if self._thread.is_alive():
+                    return  # Even a timed-out stop still owns its live pump.
+                self._thread = None
             self._thread = threading.Thread(
                 target=self._run, daemon=True, name="wingman-preview"
             )
@@ -508,18 +510,26 @@ class PreviewHost:
     def stop(self, timeout: float = JOIN_TIMEOUT_S) -> None:
         """Idempotent, and safe when never started."""
         with self._lock:
-            thread, self._thread = self._thread, None
-        if thread is None:
-            return
-        if self._hwnd:
-            libs = win32.bind()
-            libs.user32.PostMessageW(self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0)
+            thread = self._thread
+            if thread is None:
+                return
+            # Keep selection and signaling together so a delayed stop cannot
+            # post shutdown to a replacement pump's HWND.
+            if self._hwnd:
+                libs = win32.bind()
+                libs.user32.PostMessageW(self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0)
+        # Posting is asynchronous; joining must release the lock teardown needs.
         thread.join(timeout)
         if thread.is_alive():
             # A stop() that returns while the thread still owns HWNDs
             # produces a Wingman that vanishes from the tray and lingers
             # in Task Manager.
             logger.warning("Preview thread did not exit within %.1fs", timeout)
+        else:
+            with self._lock:
+                # A concurrent start may already have replaced this dead pump.
+                if self._thread is thread:
+                    self._thread = None
 
     def _layout_changed(self, stable_key, rect, locked) -> None:
         """Record the new rect locally, then pass it outward.
