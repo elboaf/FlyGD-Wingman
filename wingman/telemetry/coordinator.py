@@ -40,15 +40,22 @@ roster scan as a new session.
 Runtime predicates (exact, per the design)
 -------------------------------------------
 ```text
-discovery:    preview.enabled || fleet_bar.enabled
-stream:       (fleet_bar.enabled || (preview.enabled && preview.alerts.enabled))
+discovery:    preview.enabled || fleet_bar.enabled || fleet_sharing.enabled
+stream:       (fleet_bar.enabled || fleet_sharing.enabled
+               || (preview.enabled && preview.alerts.enabled))
               && a Gamelogs folder that resolves to a real directory
 alert policy: preview.enabled && preview.alerts.enabled
+metrics:      fleet_bar.enabled || fleet_sharing.enabled
 ```
 
 An enabled-but-inert Alerts preference therefore starts nothing while
 Previews is off, and fleet-only mode starts discovery and the stream but
-never attaches Alert policy or posts a roster to Preview.
+never attaches Alert policy or posts a roster to Preview. Fleet sharing
+is the same shape again: it can start discovery/the stream and feed Fleet
+Metrics (so a subscriber -- the sharing worker -- receives snapshots) with
+neither the Fleet Bar window, Preview, nor Alerts ever attaching. Sharing
+never changes what `snapshot()` reports to the Fleet Bar page itself --
+that remains gated on `fleet_bar.enabled` alone, unaffected by sharing.
 
 Settings arrive through CALLABLES, never captured dicts.
 ``settings._normalize`` reassigns ``data["preview"]`` wholesale on every
@@ -189,6 +196,7 @@ class TelemetryCoordinator:
         metrics,
         preview_host=None,
         alert_policy=None,
+        sharing_enabled: Callable[[], bool] = lambda: False,
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _queue_factory: Callable[[], queue.Queue] = queue.Queue,
         _clock: Callable[[], float] = time.monotonic,
@@ -196,6 +204,7 @@ class TelemetryCoordinator:
         self._preview_enabled = preview_enabled
         self._fleet_enabled = fleet_enabled
         self._alerts_enabled = alerts_enabled
+        self._sharing_enabled = sharing_enabled
         self._gamelogs_folder = gamelogs_folder
         self._discovery = discovery
         self._stream = stream
@@ -268,7 +277,11 @@ class TelemetryCoordinator:
             return False
 
     def _wants_discovery(self) -> bool:
-        return self._flag(self._preview_enabled) or self._flag(self._fleet_enabled)
+        return (
+            self._flag(self._preview_enabled)
+            or self._flag(self._fleet_enabled)
+            or self._flag(self._sharing_enabled)
+        )
 
     def _wants_alert_policy(self) -> bool:
         return self._flag(self._preview_enabled) and self._flag(self._alerts_enabled)
@@ -281,7 +294,20 @@ class TelemetryCoordinator:
         configured folder does not resolve", which the design requires be
         visibly different states.
         """
-        return self._flag(self._fleet_enabled) or self._wants_alert_policy()
+        return (
+            self._flag(self._fleet_enabled)
+            or self._flag(self._sharing_enabled)
+            or self._wants_alert_policy()
+        )
+
+    def _wants_metrics(self) -> bool:
+        """Whether Fleet Metrics must run at all -- the Fleet Bar window or
+        fleet sharing, read live rather than passed a captured value, for
+        the same reason ``_wants_alert_policy`` re-reads instead of taking
+        a parameter: this is called from places (``_queue_stream_refreshes``
+        via ``stop()``) that do not share ``reconcile()``'s local scope.
+        """
+        return self._flag(self._fleet_enabled) or self._flag(self._sharing_enabled)
 
     def _resolved_folder(self) -> Path | None:
         """The configured Gamelogs folder, or None if it does not resolve.
@@ -325,10 +351,20 @@ class TelemetryCoordinator:
             preview_enabled = self._flag(self._preview_enabled)
             fleet_enabled = self._flag(self._fleet_enabled)
             alerts_enabled = self._flag(self._alerts_enabled)
-            want_discovery = preview_enabled or fleet_enabled
-            want_stream = fleet_enabled or (preview_enabled and alerts_enabled)
+            sharing_enabled = self._flag(self._sharing_enabled)
+            want_discovery = preview_enabled or fleet_enabled or sharing_enabled
+            want_stream = (
+                fleet_enabled or sharing_enabled or (preview_enabled and alerts_enabled)
+            )
             folder = self._resolved_folder() if want_stream else None
-            fleet_generation = self._request_fleet_mode(fleet_enabled)
+            # Fleet Metrics must run -- and publish to every fleet
+            # subscriber, including a sharing worker -- whenever EITHER the
+            # Fleet Bar window or fleet sharing wants a completed snapshot,
+            # even with no Fleet Bar window open at all. It is computed once,
+            # up front, so the dead-dispatcher restore below reserves the
+            # same combined predicate the generation was minted for.
+            want_metrics = fleet_enabled or sharing_enabled
+            fleet_generation = self._request_fleet_mode(want_metrics)
             needs_dispatcher = want_discovery or folder is not None
 
             # Producers must never run without the sole consumer of their
@@ -338,7 +374,7 @@ class TelemetryCoordinator:
             if needs_dispatcher:
                 self._dispatcher_finalized_dead = False
                 started = self._start_dispatcher()
-                if fleet_enabled and self._dispatcher_finalized_dead:
+                if want_metrics and self._dispatcher_finalized_dead:
                     with self._lock:
                         needs_restore = not self._fleet_requested
                         if needs_restore:
@@ -347,7 +383,7 @@ class TelemetryCoordinator:
                         # A dead dispatcher can drain the queued activation while
                         # finalizing; restore the same generation so this reconcile
                         # still publishes the reservation it already handed out.
-                        self._queue.put(_FleetMode(fleet_enabled, fleet_generation))
+                        self._queue.put(_FleetMode(want_metrics, fleet_generation))
                 if not started:
                     return fleet_generation
 
@@ -438,7 +474,7 @@ class TelemetryCoordinator:
 
     def _queue_stream_refreshes(self) -> None:
         """Order consumer resets behind the old stream generation."""
-        if self._flag(self._fleet_enabled):
+        if self._wants_metrics():
             self._queue.put(_FLEET_REFRESH)
         if self._wants_alert_policy():
             self._queue.put(_ALERT_RESET)

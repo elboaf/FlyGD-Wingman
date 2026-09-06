@@ -672,6 +672,20 @@ def test_shared_eve_authority_and_fittings_are_explicit_packages():
     assert {"wingman.eveauth", "wingman.evefittings"} <= declared
 
 
+def test_fleetsharing_is_an_explicit_package():
+    """wingman.fleetsharing added no web tree or frozen-build wiring of its
+    own (it is pure protocol boundary code, imported by no coordinator or
+    UI yet), so it needs only the same declared-package guarantee every
+    other subpackage gets from test_every_subpackage_is_declared -- pinned
+    explicitly here the same way eveauth/evefittings are above, rather than
+    relying solely on that generic scan.
+    """
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        declared = set(tomllib.load(handle)["tool"]["setuptools"]["packages"])
+    assert "wingman.fleetsharing" in declared
+    assert (ROOT / "wingman" / "fleetsharing" / "__init__.py").is_file()
+
+
 def test_the_build_verifies_every_eve_capability_controller_is_importable():
     """Mirrors the existing SkillsController assertion below it in the
     action, for the two packages the character-fittings feature added.

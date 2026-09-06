@@ -291,6 +291,7 @@ class _Harness:
             "preview": kw.pop("preview", False),
             "fleet": kw.pop("fleet", True),
             "alerts": kw.pop("alerts", False),
+            "sharing": kw.pop("sharing", False),
         }
         self.folder = kw.pop("folder", tmp_path)
         self.discovery = kw.pop("discovery", None) or FakeDiscovery()
@@ -304,6 +305,7 @@ class _Harness:
             preview_enabled=lambda: self.flags["preview"],
             fleet_enabled=lambda: self.flags["fleet"],
             alerts_enabled=lambda: self.flags["alerts"],
+            sharing_enabled=lambda: self.flags["sharing"],
             gamelogs_folder=lambda: self.folder,
             discovery=self.discovery,
             stream=self.stream,
@@ -334,17 +336,37 @@ def _harness(tmp_path, **kw):
 
 class TestRuntimePredicates:
     @pytest.mark.parametrize(
-        "preview,fleet,alerts,want_discovery,want_stream,want_policy",
+        "preview,fleet,alerts,sharing,want_discovery,want_stream,want_policy",
         [
-            (False, False, False, False, False, False),
-            (False, True, False, True, True, False),
-            (False, False, True, False, False, False),
-            (True, False, False, True, False, False),
-            (True, False, True, True, True, True),
+            (False, False, False, False, False, False, False),
+            (False, True, False, False, True, True, False),
+            (False, False, True, False, False, False, False),
+            (True, False, False, False, True, False, False),
+            (True, False, True, False, True, True, True),
+            # Sharing alone starts discovery and the stream -- the same
+            # shape as fleet-alone above -- but never attaches Alert
+            # policy, matching the design's "metrics-active" predicate
+            # being independent of Alert eligibility.
+            (False, False, False, True, True, True, False),
+            # Sharing alongside fleet changes nothing about discovery/
+            # stream, both already true from fleet alone.
+            (False, True, False, True, True, True, False),
+            # Sharing alongside Preview+Alerts leaves Alert policy exactly
+            # as it was without sharing: sharing is not part of that
+            # predicate at all.
+            (True, False, True, True, True, True, True),
         ],
     )
     def test_runtime_predicates(
-        self, tmp_path, preview, fleet, alerts, want_discovery, want_stream, want_policy
+        self,
+        tmp_path,
+        preview,
+        fleet,
+        alerts,
+        sharing,
+        want_discovery,
+        want_stream,
+        want_policy,
     ):
         policy = FakePolicy()
         h = _harness(
@@ -352,6 +374,7 @@ class TestRuntimePredicates:
             preview=preview,
             fleet=fleet,
             alerts=alerts,
+            sharing=sharing,
             alert_policy=policy,
             preview_host=FakePreviewHost(),
         )
@@ -368,6 +391,42 @@ class TestRuntimePredicates:
             h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
             h.pump()
         assert (len(policy.calls) == 1) is want_policy
+
+    def test_sharing_only_mode_feeds_metrics_and_a_fleet_subscriber_but_not_preview_or_alerts(
+        self, tmp_path
+    ):
+        preview = FakePreviewHost()
+        policy = FakePolicy()
+        h = _harness(
+            tmp_path,
+            preview=False,
+            fleet=False,
+            alerts=False,
+            sharing=True,
+            preview_host=preview,
+            alert_policy=policy,
+        )
+        h.subscribe()
+        h.coordinator.reconcile()
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.pump()
+
+        assert h.discovery.starts == 1
+        assert len(h.stream.starts) == 1
+        assert preview.rosters == []
+        assert policy.calls == []
+        assert h.metrics.envelopes != []
+        assert h.snapshots != []
+
+    def test_all_consumers_false_including_sharing_stays_fully_stopped(self, tmp_path):
+        h = _harness(tmp_path, preview=False, fleet=False, alerts=False, sharing=False)
+
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 0
+        assert h.stream.starts == []
 
     def test_alert_policy_resets_across_disable_and_reenable(self, tmp_path):
         policy = FakePolicy()
@@ -529,6 +588,52 @@ class TestFleetGeneration:
                 return False
 
         h = _harness(tmp_path, fleet=True)
+        h.coordinator._worker = DeadWorker()
+        h.coordinator._running = False
+        h.coordinator._fleet_active = True
+        h.coordinator._fleet_requested = True
+        h.coordinator._fleet_active_generation = 1
+        h.coordinator._fleet_requested_generation = 1
+        h.coordinator._queue.put(_FleetMode(True, 1))
+        h.subscribe()
+        h.coordinator._thread_factory = lambda **_kwargs: FailingWorker()
+
+        first = h.coordinator.reconcile()
+
+        h.coordinator._thread_factory = _noop_thread_factory
+        second = h.coordinator.reconcile()
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        h.pump()
+
+        assert (first, second) == (1, 1)
+        assert h.coordinator.requested_fleet_generation() == 1
+        assert h.snapshots
+        assert h.snapshots[-1].activation_generation == 1
+
+    def test_late_dead_dispatcher_restores_sharing_only_fleet_metrics(self, tmp_path):
+        """The dead-dispatcher restore must key off want_metrics, not fleet_enabled.
+
+        Fleet Metrics runs for a sharing-only reservation exactly as it does
+        for the Fleet Bar's own -- ``fleet_enabled`` is False here, so a
+        restore condition that still checked only that flag would leave
+        ``_fleet_requested`` cleared after the crash, and the sharing
+        worker's subscription would silently stop receiving snapshots until
+        some later, unrelated predicate happened to flip.
+        """
+
+        class DeadWorker:
+            def is_alive(self):
+                return False
+
+        class FailingWorker:
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+            def is_alive(self):
+                return False
+
+        h = _harness(tmp_path, fleet=False, sharing=True)
         h.coordinator._worker = DeadWorker()
         h.coordinator._running = False
         h.coordinator._fleet_active = True

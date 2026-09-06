@@ -1,3 +1,4 @@
+import inspect
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,6 +11,48 @@ from wingman.__main__ import (
     set_dpi_awareness,
 )
 from wingman.ui.api import Api, AppState
+
+
+def test_build_fleet_sharing_worker_is_platform_neutral_and_starts_stopped(
+    tmp_path, monkeypatch
+):
+    """No pairing UI exists yet, so a freshly built worker against an empty
+    state directory must idle in "stopped" -- and, per build_telemetry's
+    identical NOT-Windows-gated posture, this must build the same way on
+    every platform the test suite runs on, not only win32."""
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
+    from wingman.fleetsharing.worker import FleetSharingWorker, SharingStatus
+
+    state = AppState(recording_dir=None, settings={"fleet_sharing": {"enabled": True}})
+    worker = main_mod.build_fleet_sharing_worker(state)
+
+    assert isinstance(worker, FleetSharingWorker)
+    worker.iterate_once()
+    assert worker.status() == SharingStatus(state="stopped")
+
+
+def test_main_starts_and_stops_the_sharing_worker_around_telemetry_teardown():
+    """Lexical guard mirroring test_fleet_bar.py's
+    test_main_wires_subscription_restore_and_shutdown_destruction: the
+    sharing worker's stop/unsubscribe must run BEFORE
+    api.shutdown_previews() (which is what actually calls
+    telemetry.stop()), worker.submit -- never anything else -- must be
+    the coordinator callback, and starting the worker's own thread must
+    be gated on the fleet_sharing.enabled setting so a disabled install
+    never spawns it."""
+    source = inspect.getsource(main_mod.main)
+
+    assert "sharing_worker.start()" in source
+    assert 'state.settings.get("fleet_sharing", {}).get("enabled")' in source
+    assert "telemetry.subscribe_fleet(sharing_worker.submit)" in source
+    assert "sharing_unsubscribe()" in source
+    assert "sharing_worker.stop()" in source
+    assert source.index("sharing_worker.stop()") < source.index(
+        "api.shutdown_previews()"
+    )
+    assert source.index(
+        'state.settings.get("fleet_sharing", {}).get("enabled")'
+    ) < source.index("sharing_worker.start()")
 
 
 def test_build_fittings_controller_loads_local_state_without_network(

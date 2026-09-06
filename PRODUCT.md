@@ -226,8 +226,13 @@ minimum resolves in logical units, so the viewport floor is the same
 number at 100% and at 200%. `DESIGN.md` carries the measurement and the
 correction it replaces.
 
-Free and open source, GPL-3.0. No telemetry. No account except the user's
-own Google account for their own uploads, and their own Discord webhook.
+Free and open source, GPL-3.0. Fleet sharing is optional and off by default:
+a user must explicitly pair with authGD, and only currently eligible
+authGD Members in the same ESI-verified fleet then receive sparse, current
+DPS and `SCRAM/POINT` state; no raw combat logs or history
+ever leave the machine, and the feature remains display-only and
+does not automate gameplay. No account except the user's own Google
+account for their own uploads, and their own Discord webhook.
 
 No framework, no build step. Nothing in the repository executes the page,
 so every UI change needs a hand pass against `docs/smoke-checklist.md`.

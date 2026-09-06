@@ -127,6 +127,12 @@ def test_defaults_are_the_documented_values():
             "seen": [],
             "hidden": [],
         },
+        # Off by default, with no UI control anywhere in this tracer: the
+        # one predicate that decides whether local combat-log-derived
+        # telemetry is ever transmitted to authGD.
+        "fleet_sharing": {
+            "enabled": False,
+        },
     }
 
 
