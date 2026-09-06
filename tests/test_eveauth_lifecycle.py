@@ -1321,8 +1321,81 @@ def test_authorization_start_finishes_spawning_before_shutdown_returns(tmp_path)
     assert authority.auth_in_progress is False
 
 
+def test_configuration_refusal_finishes_before_waiting_shutdown(tmp_path, monkeypatch):
+    configuration_entered = threading.Event()
+    release_configuration = threading.Event()
+    alert_entered = threading.Event()
+    release_alert = threading.Event()
+    shutdown_finished = threading.Event()
+    spawn = DeferredSpawn()
+    alerts = []
+    result = {}
+
+    def configured():
+        configuration_entered.set()
+        assert release_configuration.wait(timeout=2)
+        return False
+
+    def alert(kind, title, body):
+        alerts.append((kind, title, body))
+        alert_entered.set()
+        assert release_alert.wait(timeout=2)
+
+    authority, _, _, _ = build(tmp_path, spawn=spawn, alert=alert)
+    lock = ShutdownProbeLock()
+    authority._lock = lock
+    monkeypatch.setattr(application, "is_configured", configured)
+
+    starter = threading.Thread(
+        target=lambda: result.setdefault("value", authority.start_full_authorization()),
+        name="auth-starter",
+    )
+
+    def shut_down():
+        authority.shutdown()
+        shutdown_finished.set()
+
+    shutdown = threading.Thread(target=shut_down, name="auth-shutdown")
+    starter.start()
+    shutdown_was_blocked = False
+    shutdown_waited_for_alert = False
+    try:
+        assert configuration_entered.wait(timeout=2)
+        shutdown.start()
+        assert lock.shutdown_entered.wait(timeout=2)
+        shutdown_was_blocked = shutdown_finished.is_set() is False
+
+        release_configuration.set()
+        assert alert_entered.wait(timeout=2)
+        shutdown_waited_for_alert = shutdown_finished.is_set() is False
+    finally:
+        release_configuration.set()
+        release_alert.set()
+        starter.join(timeout=2)
+        shutdown.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert not shutdown.is_alive()
+    assert shutdown_was_blocked
+    assert shutdown_waited_for_alert
+    assert result["value"] == AuthorizationCommandResult(
+        False, "This build has no configured EVE application client id."
+    )
+    assert alerts == [
+        (
+            "warning",
+            "EVE sign-in is not configured",
+            "This build has no configured EVE application client id.",
+        )
+    ]
+    assert shutdown_finished.is_set()
+    assert spawn.targets == []
+    assert authority.auth_in_progress is False
+
+
 def test_shutdown_precedes_configuration_refusal(tmp_path, monkeypatch):
-    authority, alerts, _, _ = build(tmp_path, spawn=DeferredSpawn())
+    spawn = DeferredSpawn()
+    authority, alerts, _, _ = build(tmp_path, spawn=spawn)
     monkeypatch.setattr(application, "is_configured", lambda: False)
 
     authority.shutdown()
@@ -1332,6 +1405,8 @@ def test_shutdown_precedes_configuration_refusal(tmp_path, monkeypatch):
         False, "EVE authority is shutting down."
     )
     assert alerts == []
+    assert spawn.targets == []
+    assert authority.auth_in_progress is False
 
 
 def test_shutdown_refuses_new_token_work(tmp_path):
