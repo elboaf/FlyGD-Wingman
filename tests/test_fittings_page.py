@@ -779,7 +779,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     assert.equal(key('Tab').defaultPrevented, true);
     assert.equal(document.activeElement, target);
   } else if (scenario === 'hidden-controls') {
-    target.parentNode.hidden = true;
+    target.parentNode.style.display = 'none';
     close.focus();
     key('Tab');
     assert.equal(document.activeElement, close, 'hidden ancestor excludes target');
@@ -794,7 +794,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
       const replacement = new Element('button', {id: invoker.id});
       invoker.parentNode.appendChild(replacement);
       invoker.remove();
-    } else if (scenario === 'fallback-hidden') invoker.parentNode.hidden = true;
+    } else if (scenario === 'fallback-hidden') invoker.parentNode.style.display = 'none';
     else if (scenario === 'fallback-invisible') invoker.style.visibility = 'hidden';
     else {
       // Real completion clears selection and disables the original invoker.
@@ -803,7 +803,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     }
     // Fallback must skip both a disabled first control and a hidden ancestor.
     el('fittings-refresh-all').disabled = true;
-    el('fittings-manage-characters').parentNode.hidden = true;
+    el('fittings-manage-characters').parentNode.style.display = 'none';
     close.click();
     assert.equal(overlay.hidden, true);
     assert.equal(document.activeElement, el('fittings-collections').querySelector('button'),
