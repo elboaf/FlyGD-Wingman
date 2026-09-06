@@ -205,7 +205,6 @@ class AuthorityController:
         self._listener = None
         self._listener_attempt_id: int | None = None
         self._stopping = threading.Event()
-        self._configuration_refusals: list[tuple[int, threading.Event]] = []
 
     @property
     def characters(self) -> tuple[AuthorityCharacter, ...]:
@@ -495,7 +494,6 @@ class AuthorityController:
         starting_worker = False
         inline_worker = False
         configuration_error = ""
-        configuration_refusal = None
         start_error = ""
         with self._lock:
             if self._stopping.is_set():
@@ -507,11 +505,6 @@ class AuthorityController:
                 configuration_error = (
                     "This build has no configured EVE application client id."
                 )
-                configuration_refusal = (
-                    threading.get_ident(),
-                    threading.Event(),
-                )
-                self._configuration_refusals.append(configuration_refusal)
                 attempt = None
                 error = ""
             elif self._active_attempt is not None:
@@ -564,16 +557,11 @@ class AuthorityController:
                     start_error = f"Could not start EVE sign-in: {exc}"
                     self._finalize_attempt_locked(attempt, start_error)
         if configuration_error:
-            try:
-                self._alert(
-                    "warning",
-                    "EVE sign-in is not configured",
-                    configuration_error,
-                )
-            finally:
-                configuration_refusal[1].set()
-                with self._lock:
-                    self._configuration_refusals.remove(configuration_refusal)
+            self._alert(
+                "warning",
+                "EVE sign-in is not configured",
+                configuration_error,
+            )
             return AuthorizationCommandResult(False, configuration_error)
         if attempt is None:
             self._alert("warning", "Sign-in already in progress", error)
@@ -712,25 +700,8 @@ class AuthorityController:
 
     def shutdown(self) -> None:
         """Stop accepting token work and cancel a pending browser authorization."""
-        current_thread_id = threading.get_ident()
         with self._lock:
             self._stopping.set()
-            inside_configuration_alert = any(
-                thread_id == current_thread_id
-                for thread_id, _finished in self._configuration_refusals
-            )
-            # An alert callback cannot wait for itself (or a peer callback
-            # waiting on it) to return. External shutdown still waits for all
-            # configuration refusals that won the transaction first.
-            configuration_refusals = (
-                ()
-                if inside_configuration_alert
-                else tuple(
-                    finished for _thread_id, finished in self._configuration_refusals
-                )
-            )
-        for finished in configuration_refusals:
-            finished.wait()
         try:
             self.cancel_authorization()
         except Exception:

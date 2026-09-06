@@ -1321,7 +1321,7 @@ def test_authorization_start_finishes_spawning_before_shutdown_returns(tmp_path)
     assert authority.auth_in_progress is False
 
 
-def test_configuration_refusal_finishes_before_waiting_shutdown(tmp_path, monkeypatch):
+def test_shutdown_finishes_while_configuration_alert_is_blocked(tmp_path, monkeypatch):
     configuration_entered = threading.Event()
     release_configuration = threading.Event()
     alert_entered = threading.Event()
@@ -1339,7 +1339,7 @@ def test_configuration_refusal_finishes_before_waiting_shutdown(tmp_path, monkey
     def alert(kind, title, body):
         alerts.append((kind, title, body))
         alert_entered.set()
-        assert release_alert.wait(timeout=2)
+        assert release_alert.wait(timeout=5)
 
     authority, _, _, _ = build(tmp_path, spawn=spawn, alert=alert)
     lock = ShutdownProbeLock()
@@ -1358,7 +1358,7 @@ def test_configuration_refusal_finishes_before_waiting_shutdown(tmp_path, monkey
     shutdown = threading.Thread(target=shut_down, name="auth-shutdown")
     starter.start()
     shutdown_was_blocked = False
-    shutdown_waited_for_alert = False
+    shutdown_finished_while_alert_blocked = False
     try:
         assert configuration_entered.wait(timeout=2)
         shutdown.start()
@@ -1367,7 +1367,7 @@ def test_configuration_refusal_finishes_before_waiting_shutdown(tmp_path, monkey
 
         release_configuration.set()
         assert alert_entered.wait(timeout=2)
-        shutdown_waited_for_alert = shutdown_finished.is_set() is False
+        shutdown_finished_while_alert_blocked = shutdown_finished.wait(timeout=2)
     finally:
         release_configuration.set()
         release_alert.set()
@@ -1377,7 +1377,7 @@ def test_configuration_refusal_finishes_before_waiting_shutdown(tmp_path, monkey
     assert not starter.is_alive()
     assert not shutdown.is_alive()
     assert shutdown_was_blocked
-    assert shutdown_waited_for_alert
+    assert shutdown_finished_while_alert_blocked
     assert result["value"] == AuthorizationCommandResult(
         False, "This build has no configured EVE application client id."
     )
