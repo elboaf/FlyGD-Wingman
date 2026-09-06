@@ -2,7 +2,7 @@
 
 Date: 2026-09-06
 Base: `57ce91d` — Harden accessibility, build reproducibility, and Settings docs (#171)
-Status: agreed product scope; both independent-review findings incorporated with user approval. Revised written design awaiting user review. No implementation authorized by this document.
+Status: approved after independent-review revisions. Implementation planning authorized; production implementation has not started. See [phase-1 implementation plan](probe-formation-sharing-plan.md).
 
 ## Outcome and roadmap
 
