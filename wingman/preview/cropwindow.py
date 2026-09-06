@@ -360,7 +360,9 @@ class CropWindow:
             return 0
         if msg == win32.WM_CANCELMODE:
             self._cancel_gesture()
-            return 0
+            # DefWindowProc must also cancel native menu tracking, which
+            # outlives our custom gesture while TrackPopupMenuEx is running.
+            return None
         if msg == win32.WM_CLOSE:
             self._cancel_gesture()
             self._on_disable()

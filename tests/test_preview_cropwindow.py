@@ -557,6 +557,37 @@ def test_menu_pump_cannot_disable_a_stale_window(live, action):
     assert calls[-1] == ("destroy", 0x123456789)
 
 
+def test_cancelmode_dispatch_preserves_native_menu_cancellation(live, monkeypatch):
+    from wingman.preview import cropwindow
+
+    disabled, defaults = [], []
+    window, libs = live(on_disable=lambda: disabled.append(True))
+    calls = menu_fake(libs)
+    monkeypatch.setattr(win32, "bind", lambda: libs)
+
+    def default_proc(hwnd, msg, wparam, lparam):
+        assert window._mode is window._start is window._start_rect is None
+        assert libs.user32.capture_owner is None
+        defaults.append((hwnd, msg, wparam, lparam))
+        return 0
+
+    def track(*args):
+        # A native menu is active, but the custom right-click gesture and
+        # capture have already ended. Default processing must still run.
+        assert window._mode is None
+        cropwindow._dispatch(window.hwnd, win32.WM_CANCELMODE, 0, 0)
+        assert defaults == [(1000, win32.WM_CANCELMODE, 0, 0)]
+        return 0
+
+    libs.user32.DefWindowProcW = default_proc
+    libs.user32.TrackPopupMenuEx = track
+    press(window, libs, right=True)
+    release(window, right=True)
+    assert calls[-1] == ("destroy", 0x123456789)
+    assert disabled == []
+    assert window.hwnd == 1000
+
+
 def test_activation_callback_can_close_after_gesture_reset(live):
     activated = []
 
