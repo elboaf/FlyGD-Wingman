@@ -485,16 +485,16 @@ class AuthorityController:
             yield LifecycleLease(character, capability, character.generation)
 
     def start_full_authorization(self) -> AuthorizationCommandResult:
-        if self._stopping.is_set():
-            return AuthorizationCommandResult(
-                False,
-                "EVE authority is shutting down.",
-            )
         if not application.is_configured():
             error = "This build has no configured EVE application client id."
             self._alert("warning", "EVE sign-in is not configured", error)
             return AuthorizationCommandResult(False, error)
         with self._lock:
+            if self._stopping.is_set():
+                return AuthorizationCommandResult(
+                    False,
+                    "EVE authority is shutting down.",
+                )
             if self._active_attempt is not None:
                 error = "An EVE sign-in is already in progress."
                 attempt = None

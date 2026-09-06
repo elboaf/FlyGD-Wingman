@@ -39,6 +39,26 @@ class DeferredSpawn:
         self.targets.pop(0)()
 
 
+class StarterGate:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __enter__(self):
+        if threading.current_thread().name == "auth-starter":
+            self.entered.set()
+            assert self.release.wait(timeout=2)
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+    def _is_owned(self):
+        return self._lock._is_owned()
+
+
 class Gate:
     def __init__(self):
         self.entered = threading.Event()
@@ -1181,6 +1201,34 @@ def test_cancel_authorization_reports_commit_won_after_the_linearization_point(
     assert authority.authorization_activity == "idle"
     assert authority.authorization_notice == ""
     assert authority.capability_status(42, application.FITTINGS) == "enabled"
+
+
+def test_shutdown_wins_before_authorization_attempt_is_published(tmp_path):
+    spawn = DeferredSpawn()
+    authority, alerts, launched, _listener = build(tmp_path, spawn=spawn)
+    gate = StarterGate()
+    authority._lock = gate
+    result = {}
+
+    starter = threading.Thread(
+        target=lambda: result.setdefault("value", authority.start_full_authorization()),
+        name="auth-starter",
+    )
+    starter.start()
+    assert gate.entered.wait(timeout=2)
+
+    authority.shutdown()
+    gate.release.set()
+    starter.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert result["value"] == AuthorizationCommandResult(
+        False, "EVE authority is shutting down."
+    )
+    assert spawn.targets == []
+    assert launched == []
+    assert alerts == []
+    assert authority.auth_in_progress is False
 
 
 def test_shutdown_refuses_new_token_work(tmp_path):
