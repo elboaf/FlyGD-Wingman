@@ -29,7 +29,8 @@ WS_CAPTION = 0x00C00000
 WS_SYSMENU = 0x00080000
 WS_THICKFRAME = 0x00040000
 WS_TABSTOP = 0x00010000
-BS_DEFPUSHBUTTON = 0x00000001
+BS_OWNERDRAW = 0x0000000B
+SS_NOPREFIX = 0x00000080
 WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
@@ -69,7 +70,26 @@ WM_COMMAND = 0x0111
 WM_DPICHANGED = 0x02E0
 DM_GETDEFID = 0x0400
 DM_SETDEFID = 0x0401
-BM_SETSTYLE = 0x00F4
+WM_ERASEBKGND = 0x0014
+WM_DRAWITEM = 0x002B
+WM_CTLCOLORSTATIC = 0x0138
+WM_NCHITTEST = 0x0084
+WM_NCLBUTTONDBLCLK = 0x00A3
+HTCLIENT = 1
+HTCAPTION = 2
+ODT_BUTTON = 4
+ODS_SELECTED = 0x0001
+ODS_DISABLED = 0x0004
+ODS_FOCUS = 0x0010
+ODS_NOACCEL = 0x0100
+ODS_NOFOCUSRECT = 0x0200
+DT_CENTER = 0x0001
+DT_VCENTER = 0x0004
+DT_SINGLELINE = 0x0020
+DT_HIDEPREFIX = 0x00100000
+DC_BRUSH = 18
+TRANSPARENT = 1
+CLR_INVALID = 0xFFFFFFFF
 VK_RETURN = 0x0D
 VK_ESCAPE = 0x1B
 WM_PAINT = 0x000F
@@ -205,6 +225,20 @@ class DWM_THUMBNAIL_PROPERTIES(ctypes.Structure):
 RECT = wintypes.RECT
 
 
+class DRAWITEMSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("CtlType", wintypes.UINT),
+        ("CtlID", wintypes.UINT),
+        ("itemID", wintypes.UINT),
+        ("itemAction", wintypes.UINT),
+        ("itemState", wintypes.UINT),
+        ("hwndItem", wintypes.HWND),
+        ("hDC", wintypes.HDC),
+        ("rcItem", RECT),
+        ("itemData", ctypes.c_size_t),
+    ]
+
+
 class MONITORINFO(ctypes.Structure):
     _fields_ = [
         ("cbSize", wintypes.DWORD),
@@ -319,6 +353,19 @@ def bind() -> Libs:
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
         (user32, "ClientToScreen", BOOL, [HWND, ctypes.POINTER(POINT)]),
+        (user32, "ScreenToClient", BOOL, [HWND, ctypes.POINTER(POINT)]),
+        (
+            user32,
+            "FillRect",
+            ctypes.c_int,
+            [HDC, ctypes.POINTER(RECT), wintypes.HBRUSH],
+        ),
+        (
+            user32,
+            "DrawTextW",
+            ctypes.c_int,
+            [HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(RECT), UINT],
+        ),
         (user32, "GetDpiForWindow", UINT, [HWND]),
         (
             user32,
@@ -458,6 +505,12 @@ def bind() -> Libs:
         (gdi32, "DeleteObject", BOOL, [wintypes.HGDIOBJ]),
         (gdi32, "DeleteDC", BOOL, [HDC]),
         (gdi32, "GetStockObject", wintypes.HGDIOBJ, [ctypes.c_int]),
+        (gdi32, "SetDCBrushColor", wintypes.COLORREF, [HDC, wintypes.COLORREF]),
+        (gdi32, "SetTextColor", wintypes.COLORREF, [HDC, wintypes.COLORREF]),
+        (gdi32, "SetBkColor", wintypes.COLORREF, [HDC, wintypes.COLORREF]),
+        (gdi32, "SetBkMode", ctypes.c_int, [HDC, ctypes.c_int]),
+        (gdi32, "SaveDC", ctypes.c_int, [HDC]),
+        (gdi32, "RestoreDC", BOOL, [HDC, ctypes.c_int]),
         (
             gdi32,
             "CreateFontW",

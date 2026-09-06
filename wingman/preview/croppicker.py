@@ -10,7 +10,7 @@ import ctypes
 import logging
 from ctypes import wintypes
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageColor, ImageDraw
 
 from wingman.telemetry.model import RosterClient
 
@@ -23,11 +23,35 @@ from .window import coalesce_moves
 logger = logging.getLogger(__name__)
 PICKER_CLASS = "WingmanPreviewCropPicker"
 PICKER_MAX = (1200, 800)
-_STYLE = (
-    win32.WS_CAPTION | win32.WS_SYSMENU | win32.WS_THICKFRAME | win32.WS_CLIPCHILDREN
-)
+# A client-area caption avoids the light stock title bar without depending on
+# Windows 11-only dark-title attributes. Windows still owns border resizing.
+_STYLE = win32.WS_POPUP | win32.WS_THICKFRAME | win32.WS_CLIPCHILDREN
 _EX_STYLE = win32.WS_EX_TOOLWINDOW | win32.WS_EX_TOPMOST
-_USE, _CANCEL, _RESET, _STATUS = 1, 2, 100, 101
+_USE, _CANCEL, _RESET, _STATUS, _TITLE = 1, 2, 100, 101, 102
+_BUTTONS = {_RESET: "&Reset", _USE: "&Use region", _CANCEL: "&Cancel"}
+_CAPTION_HEIGHT = 32
+_TOOLBAR_HEIGHT = _CAPTION_HEIGHT + 80
+# Mirrored from web/style.css :root, asserted against it in picker tests (as
+# ui/window.py does for BACKGROUND). No file reads on the preview pump, and no
+# independent native palette for a future retheme to miss.
+_THEME = {
+    "bg": "#0c0d10",
+    "titlebar-bottom": "#121016",
+    "titlebar-edge": "#000",
+    "text": "#e8eaed",
+    "text-dim": "#9aa2b1",
+    "text-btn": "#c8cdd6",
+    "text-faint": "#7d8492",
+    "control": "#211d28",
+    "control-hover": "#2a2634",
+    "control-border": "#302c39",
+    "brand": "#8430d9",
+    "acc-bottom": "#7a1fc8",
+    "on-accent": "#fff",
+    "focus-ring": "#c99cff",
+}
+_RGB = {name: ImageColor.getrgb(color) for name, color in _THEME.items()}
+_COLORREF = {name: r | (g << 8) | (b << 16) for name, (r, g, b) in _RGB.items()}
 _TIMER = 1
 _CLASS_REGISTERED = False
 _PICKERS = {}
@@ -59,7 +83,8 @@ def _ensure_class(libs):
     cls.lpfnWndProc = proc
     cls.hInstance = libs.kernel32.GetModuleHandleW(None)
     cls.hCursor = libs.user32.LoadCursorW(None, ctypes.c_wchar_p(0x7F00))
-    cls.hbrBackground = libs.gdi32.GetStockObject(4)  # BLACK_BRUSH, system-owned
+    # WM_ERASEBKGND paints token-backed surfaces; no class brush to leak.
+    cls.hbrBackground = None
     cls.lpszClassName = PICKER_CLASS
     _require(libs.user32.RegisterClassW(ctypes.byref(cls)), "RegisterClassW")
     # Failed registration retains neither a false success flag nor callbacks.
@@ -112,12 +137,12 @@ def _in_work_area(rect, work):
 
 
 def _render_overlay(size, selection, border):
-    image = Image.new("RGBA", size, (0, 0, 0, 140))
+    image = Image.new("RGBA", size, (*_RGB["titlebar-edge"], 140))
     if selection is not None and selection.w > 0 and selection.h > 0:
         draw = ImageDraw.Draw(image)
         box = (selection.x, selection.y, selection.right - 1, selection.bottom - 1)
         draw.rectangle(box, fill=(0, 0, 0, 0))
-        draw.rectangle(box, outline=(255, 180, 0, 255), width=border)
+        draw.rectangle(box, outline=(*_RGB["focus-ring"], 255), width=border)
     return image
 
 
@@ -139,6 +164,7 @@ class CropPicker:
         self._controls = {}
         self._thumb = None
         self._font = None
+        self._fonts = set()
         self._timer = None
         self._dpi = 96
         self._source_size = None
@@ -188,7 +214,7 @@ class CropPicker:
                 libs.user32.GetDpiForWindow(self.hwnd), "GetDpiForWindow"
             )
             work = self._work_area()
-            pad, toolbar = self._px(12), self._px(80)
+            pad, toolbar = self._px(12), self._px(_TOOLBAR_HEIGHT)
             chrome = self._outer_size((0, 0))
             space = (
                 min(PICKER_MAX[0], work.w - chrome[0] - 2 * pad - self._px(40)),
@@ -204,20 +230,21 @@ class CropPicker:
             )
             self._position(self.hwnd, rect)
             for ident, text in (
-                (_RESET, "&Reset"),
-                (_USE, "&Use region"),
-                (_CANCEL, "&Cancel"),
+                *_BUTTONS.items(),
                 (_STATUS, ""),
+                (_TITLE, f"FlyGD Wingman crop - {client.character}"),
             ):
                 style = win32.WS_CHILD | win32.WS_VISIBLE
-                if ident != _STATUS:
-                    style |= win32.WS_TABSTOP
-                if ident == _USE:
-                    style |= win32.BS_DEFPUSHBUTTON
+                if ident in _BUTTONS:
+                    # Painting only: BUTTON still owns focus, Space, mnemonics,
+                    # click notifications and its accessible name via text.
+                    style |= win32.WS_TABSTOP | win32.BS_OWNERDRAW
+                else:
+                    style |= win32.SS_NOPREFIX
                 self._controls[ident] = _require(
                     libs.user32.CreateWindowExW(
                         0,
-                        "STATIC" if ident == _STATUS else "BUTTON",
+                        "BUTTON" if ident in _BUTTONS else "STATIC",
                         text,
                         style,
                         0,
@@ -266,14 +293,23 @@ class CropPicker:
             if self._completed:
                 return None
             libs.user32.ShowWindow(self._overlay_hwnd, win32.SW_SHOWNOACTIVATE)
+            if self._completed:
+                return None
             _require(libs.user32.SetForegroundWindow(self.hwnd), "SetForegroundWindow")
             if self._completed:
                 return None
             libs.user32.SetFocus(self.hwnd)
+            if self._completed:
+                return None
             _require(libs.user32.GetFocus() == self.hwnd, "SetFocus")
         except OSError as exc:
             self._fail(exc)
             return None
+        finally:
+            # Native destruction during creation can leave no object for the
+            # pump to retain. Its enclosing call has returned now, so deliver
+            # the deferred cancellation before returning None to the caller.
+            self._notify_pending_cancel()
         return self
 
     def _px(self, logical):
@@ -329,11 +365,17 @@ class CropPicker:
             "CreateFontW",
         )
         old, self._font = self._font, font
+        # Both fonts remain owned until every child has switched. A paint
+        # failure re-entering this loop must close both before cancellation.
+        self._fonts.add(font)
         for ident in self._controls:
             self._libs.user32.SendDlgItemMessageW(
                 self.hwnd, ident, win32.WM_SETFONT, font, 1
             )
-        if old:
+            if self._completed:
+                break  # A nested owner-draw failure may close the new font.
+        if old in self._fonts:
+            self._fonts.remove(old)
             self._libs.gdi32.DeleteObject(old)
 
     def _set_status(self, message):
@@ -342,6 +384,8 @@ class CropPicker:
             self._libs.user32.SetWindowTextW(self._controls[_STATUS], message),
             "SetWindowTextW",
         )
+        if self._completed:
+            return
         valid = (
             self.selection is not None
             and map_selection(self.selection, self.destination, self._source_size)
@@ -351,7 +395,8 @@ class CropPicker:
         # Disabling the focused Use button must not strand keyboard focus.
         if not valid and self._libs.user32.GetFocus() == use:
             self._libs.user32.SetFocus(self._controls[_RESET])
-        self._libs.user32.EnableWindow(use, valid)
+        if not self._completed:
+            self._libs.user32.EnableWindow(use, valid)
 
     def _layout(self, message=None):
         size = _client_size(self._libs, self.hwnd)
@@ -364,7 +409,8 @@ class CropPicker:
         if message:
             self._end_drag()
             self.selection = None
-        pad, toolbar = self._px(12), self._px(80)
+        pad, toolbar = self._px(12), self._px(_TOOLBAR_HEIGHT)
+        caption = self._px(_CAPTION_HEIGHT)
         area = Rect(
             pad, toolbar, max(1, size[0] - 2 * pad), max(1, size[1] - toolbar - pad)
         )
@@ -376,12 +422,22 @@ class CropPicker:
         for index, ident in enumerate((_RESET, _USE, _CANCEL)):
             self._position(
                 self._controls[ident],
-                Rect(pad + index * (button_w + gap), pad, button_w, button_h),
+                Rect(pad + index * (button_w + gap), caption + pad, button_w, button_h),
             )
+            if self._completed:
+                return  # Positioning a child can synchronously request paint.
         self._position(
             self._controls[_STATUS],
-            Rect(pad, self._px(48), max(1, size[0] - 2 * pad), self._px(28)),
+            Rect(pad, caption + self._px(48), max(1, size[0] - 2 * pad), self._px(32)),
         )
+        if self._completed:
+            return
+        self._position(
+            self._controls[_TITLE],
+            Rect(pad, self._px(8), max(1, size[0] - 2 * pad), caption - self._px(8)),
+        )
+        if self._completed:
+            return
         hr = self._thumb.update(self.destination, source_rect=Rect(0, 0, *source))
         if hr:
             raise OSError(
@@ -391,6 +447,8 @@ class CropPicker:
         self._draw_selection()
 
     def _draw_selection(self):
+        if self._completed:
+            return
         d = self.destination
         local = (
             None
@@ -481,8 +539,9 @@ class CropPicker:
         controls, self._controls = self._controls, {}
         for hwnd in controls.values():
             self._libs.user32.DestroyWindow(hwnd)
-        if self._font is not None:
-            font, self._font = self._font, None
+        fonts, self._fonts = self._fonts, set()
+        self._font = None
+        for font in fonts:
             self._libs.gdi32.DeleteObject(font)
         if self._thumb is not None:
             thumb, self._thumb = self._thumb, None
@@ -530,23 +589,139 @@ class CropPicker:
             self._fail(exc)
             return None
 
+    def _enter_button(self):
+        # BS_OWNERDRAW cannot also be BS_DEFPUSHBUTTON. Supply the focused
+        # native button to dialog Enter without changing its painting style.
+        focus = self._libs.user32.GetFocus()
+        return next(
+            (ident for ident in _BUTTONS if self._controls[ident] == focus),
+            self._default_button,
+        )
+
+    def _set_color(self, operation, hdc, token):
+        result = getattr(self._libs.gdi32, operation)(hdc, _COLORREF[token])
+        _require(result != win32.CLR_INVALID, operation)
+
+    def _brush(self, hdc, token):
+        self._set_color("SetDCBrushColor", hdc, token)
+        return _require(
+            self._libs.gdi32.GetStockObject(win32.DC_BRUSH), "GetStockObject"
+        )
+
+    def _fill(self, hdc, rect, token):
+        brush = self._brush(hdc, token)
+        _require(self._libs.user32.FillRect(hdc, ctypes.byref(rect), brush), "FillRect")
+
+    def _draw_button(self, item):
+        ident, state, hdc = item.CtlID, item.itemState, item.hDC
+        if item.CtlType != win32.ODT_BUTTON or ident not in _BUTTONS:
+            return None
+        disabled = bool(state & win32.ODS_DISABLED)
+        pressed = bool(state & win32.ODS_SELECTED)
+        focused = bool(state & win32.ODS_FOCUS and not state & win32.ODS_NOFOCUSRECT)
+        if disabled:
+            fill, text = "bg", "text-faint"
+        elif ident == _USE:
+            fill, text = ("acc-bottom" if pressed else "brand"), "on-accent"
+        else:
+            fill, text = ("control-hover" if pressed else "control"), "text-btn"
+        saved = _require(self._libs.gdi32.SaveDC(hdc), "SaveDC")
+        try:
+            # Repaint the entire item, including a disappearing focus ring.
+            rim = (
+                "focus-ring"
+                if focused or (ident == self._default_button and not disabled)
+                else "control-border"
+            )
+            self._fill(hdc, item.rcItem, rim)
+            inset = self._px(2 if focused else 1)
+            r = item.rcItem
+            inner = win32.RECT(
+                r.left + inset, r.top + inset, r.right - inset, r.bottom - inset
+            )
+            if rim == "focus-ring":
+                # The ring does not reach 3:1 against the accent fill itself.
+                # Separate them with the same dark gap as the page's outline.
+                self._fill(hdc, inner, "bg")
+                gap = self._px(1)
+                inner = win32.RECT(
+                    inner.left + gap,
+                    inner.top + gap,
+                    inner.right - gap,
+                    inner.bottom - gap,
+                )
+            self._fill(hdc, inner, fill)
+            _require(
+                self._libs.gdi32.SelectObject(hdc, self._font), "SelectObject font"
+            )
+            self._set_color("SetTextColor", hdc, text)
+            _require(self._libs.gdi32.SetBkMode(hdc, win32.TRANSPARENT), "SetBkMode")
+            flags = win32.DT_CENTER | win32.DT_VCENTER | win32.DT_SINGLELINE
+            if state & win32.ODS_NOACCEL:
+                flags |= win32.DT_HIDEPREFIX
+            _require(
+                self._libs.user32.DrawTextW(
+                    hdc, _BUTTONS[ident], -1, ctypes.byref(inner), flags
+                ),
+                "DrawTextW",
+            )
+        finally:
+            _require(self._libs.gdi32.RestoreDC(hdc, saved), "RestoreDC")
+        return 1
+
     def _handle_message(self, msg, wparam, lparam):
+        if msg == win32.WM_ERASEBKGND:
+            w, h = _client_size(self._libs, self.hwnd)
+            self._fill(wparam, win32.RECT(0, 0, w, h), "bg")
+            self._fill(
+                wparam,
+                win32.RECT(0, 0, w, self._px(_CAPTION_HEIGHT)),
+                "titlebar-bottom",
+            )
+            return 1
+        if msg == win32.WM_CTLCOLORSTATIC:
+            if lparam not in (self._controls[_STATUS], self._controls[_TITLE]):
+                return None
+            title = lparam == self._controls[_TITLE]
+            background = "titlebar-bottom" if title else "bg"
+            self._set_color("SetTextColor", wparam, "text" if title else "text-dim")
+            self._set_color("SetBkColor", wparam, background)
+            return self._brush(wparam, background)
+        if msg == win32.WM_DRAWITEM:
+            return self._draw_button(
+                ctypes.cast(lparam, ctypes.POINTER(win32.DRAWITEMSTRUCT)).contents
+            )
+        if msg == win32.WM_NCHITTEST:
+            hit = self._libs.user32.DefWindowProcW(self.hwnd, msg, wparam, lparam)
+            if hit == win32.HTCLIENT:
+                point = win32.POINT(*_point(lparam))
+                _require(
+                    self._libs.user32.ScreenToClient(self.hwnd, ctypes.byref(point)),
+                    "ScreenToClient",
+                )
+                if 0 <= point.y < self._px(_CAPTION_HEIGHT):
+                    return win32.HTCAPTION
+            return hit
+        if msg == win32.WM_NCLBUTTONDBLCLK and wparam == win32.HTCAPTION:
+            return 0  # No maximize affordance, including caption double-click.
         if msg == win32.WM_DESTROY:
             self._completed = True
             self._close_resources(destroy_picker=False)
             return 0
         if msg == win32.DM_GETDEFID:
-            return self._default_button | (0x534B << 16)  # DC_HASDEFID
+            return self._enter_button() | (0x534B << 16)  # DC_HASDEFID
         if msg == win32.DM_SETDEFID:
             if wparam in (_USE, _RESET, _CANCEL) and wparam != self._default_button:
-                for ident, style in (
-                    (self._default_button, 0),
-                    (wparam, win32.BS_DEFPUSHBUTTON),
-                ):
-                    self._libs.user32.SendDlgItemMessageW(
-                        self.hwnd, ident, win32.BM_SETSTYLE, style, 1
+                previous, self._default_button = self._default_button, wparam
+                # Keep BS_OWNERDRAW: BM_SETSTYLE would restore light stock
+                # rendering. The dialog's default ID and painted rim suffice.
+                for ident in (previous, wparam):
+                    _require(
+                        self._libs.user32.InvalidateRect(
+                            self._controls[ident], None, True
+                        ),
+                        "InvalidateRect",
                     )
-                self._default_button = wparam
             return 1
         if msg == win32.WM_CLOSE:
             self.cancel()
@@ -556,7 +731,7 @@ class CropPicker:
                 self.cancel()
                 return 0
             if wparam == win32.VK_RETURN:
-                return self._handle_message(win32.WM_COMMAND, self._default_button, 0)
+                return self._handle_message(win32.WM_COMMAND, self._enter_button(), 0)
         if msg == win32.WM_COMMAND and (wparam >> 16) == 0:
             ident = wparam & 0xFFFF
             if ident == _USE:
@@ -599,12 +774,13 @@ class CropPicker:
             if self._completed:
                 return 0
             self._set_font()
-            self._layout("Picker size changed. Select the region again.")
+            if not self._completed:
+                self._layout("Picker size changed. Select the region again.")
             return 0
         if msg == win32.WM_GETMINMAXINFO:
             info = ctypes.cast(lparam, ctypes.POINTER(win32.MINMAXINFO)).contents
             work = self._work_area()
-            w, h = self._outer_size((self._px(400), self._px(240)))
+            w, h = self._outer_size((self._px(400), self._px(240 + _CAPTION_HEIGHT)))
             info.ptMinTrackSize = win32.POINT(min(work.w, w), min(work.h, h))
             return 0
         if msg == win32.WM_LBUTTONDOWN:
@@ -618,14 +794,23 @@ class CropPicker:
                 self._start = point
                 self.selection = None
                 self._set_status(_HINT)
+                if self._completed or self._start is not point:
+                    return 0
                 self._libs.user32.SetFocus(self.hwnd)
+                if self._completed or self._start is not point:
+                    return 0
                 self._libs.user32.SetCapture(self.hwnd)
                 _require(self._libs.user32.GetCapture() == self.hwnd, "SetCapture")
                 self._update_selection(point)
             return 0
         if msg == win32.WM_MOUSEMOVE and self._start is not None:
+            start = self._start
             lparam = coalesce_moves(self._libs.user32.PeekMessageW, self.hwnd, lparam)
-            self._update_selection(_point(lparam))
+            # PeekMessage dispatches nonqueued messages even with this filter.
+            # A nested resize/capture loss/cancel can end or replace the drag;
+            # matching coordinates alone do not identify the same gesture.
+            if self._ready and not self._completed and self._start is start:
+                self._update_selection(_point(lparam))
             return 0
         if msg == win32.WM_LBUTTONUP and self._start is not None:
             self._update_selection(_point(lparam))

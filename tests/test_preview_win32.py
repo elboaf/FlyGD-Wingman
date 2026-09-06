@@ -43,6 +43,9 @@ REQUIRED = {
         "ReleaseDC",
         "GetClientRect",
         "ClientToScreen",
+        "ScreenToClient",
+        "FillRect",
+        "DrawTextW",
         "GetDpiForWindow",
         "AdjustWindowRectExForDpi",
         "MonitorFromWindow",
@@ -82,6 +85,12 @@ REQUIRED = {
         "CreateDIBSection",
         "CreateFontW",
         "GetStockObject",
+        "SetDCBrushColor",
+        "SetTextColor",
+        "SetBkColor",
+        "SetBkMode",
+        "SaveDC",
+        "RestoreDC",
         "CreateCompatibleDC",
         "SelectObject",
         "DeleteObject",
@@ -238,6 +247,21 @@ def test_picker_declarations_with_injected_libraries(monkeypatch):
     H, B, U, D = wintypes.HWND, wintypes.BOOL, wintypes.UINT, wintypes.DWORD
     signatures = {
         "ClientToScreen": (B, [H, ctypes.POINTER(win32.POINT)]),
+        "ScreenToClient": (B, [H, ctypes.POINTER(win32.POINT)]),
+        "FillRect": (
+            ctypes.c_int,
+            [wintypes.HDC, ctypes.POINTER(win32.RECT), wintypes.HBRUSH],
+        ),
+        "DrawTextW": (
+            ctypes.c_int,
+            [
+                wintypes.HDC,
+                wintypes.LPCWSTR,
+                ctypes.c_int,
+                ctypes.POINTER(win32.RECT),
+                U,
+            ],
+        ),
         "GetDpiForWindow": (U, [H]),
         "AdjustWindowRectExForDpi": (B, [ctypes.POINTER(win32.RECT), D, B, D, U]),
         "MonitorFromWindow": (wintypes.HMONITOR, [H, D]),
@@ -254,6 +278,18 @@ def test_picker_declarations_with_injected_libraries(monkeypatch):
         fn = getattr(libs.user32, name)
         assert fn.restype is result, name
         assert fn.argtypes == args, name
+    for name in ("SetDCBrushColor", "SetTextColor", "SetBkColor"):
+        fn = getattr(libs.gdi32, name)
+        assert fn.restype is wintypes.COLORREF
+        assert fn.argtypes == [wintypes.HDC, wintypes.COLORREF]
+    for name, result, args in (
+        ("SetBkMode", ctypes.c_int, [wintypes.HDC, ctypes.c_int]),
+        ("SaveDC", ctypes.c_int, [wintypes.HDC]),
+        ("RestoreDC", B, [wintypes.HDC, ctypes.c_int]),
+    ):
+        fn = getattr(libs.gdi32, name)
+        assert fn.restype is result
+        assert fn.argtypes == args
     assert libs.gdi32.CreateFontW.restype is wintypes.HFONT
     assert libs.gdi32.CreateFontW.argtypes == [ctypes.c_int] * 5 + [D] * 8 + [
         wintypes.LPCWSTR
@@ -263,6 +299,31 @@ def test_picker_declarations_with_injected_libraries(monkeypatch):
     assert ctypes.sizeof(libs.user32.SendDlgItemMessageW.restype) == ctypes.sizeof(
         ctypes.c_void_p
     )
+
+
+def test_picker_drawitem_struct_retains_pointer_sized_handles_and_item_data():
+    from ctypes import wintypes
+
+    fields = dict(win32.DRAWITEMSTRUCT._fields_)
+    assert fields == {
+        "CtlType": wintypes.UINT,
+        "CtlID": wintypes.UINT,
+        "itemID": wintypes.UINT,
+        "itemAction": wintypes.UINT,
+        "itemState": wintypes.UINT,
+        "hwndItem": wintypes.HWND,
+        "hDC": wintypes.HDC,
+        "rcItem": win32.RECT,
+        "itemData": ctypes.c_size_t,
+    }
+    value = 1 << (ctypes.sizeof(ctypes.c_void_p) * 8 - 2)
+    item = win32.DRAWITEMSTRUCT()
+    item.hwndItem = item.hDC = item.itemData = value
+    assert item.hwndItem == item.hDC == item.itemData == value
+    if sys.platform == "win32":
+        assert ctypes.sizeof(item) == (
+            64 if ctypes.sizeof(ctypes.c_void_p) == 8 else 48
+        )
 
 
 def test_crop_message_and_menu_constants_match_native_declarations():

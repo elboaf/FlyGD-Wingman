@@ -1,10 +1,13 @@
 """Production picker, real mapping/DWM properties over injected native boundaries."""
 
 import ctypes
+import re
 from ctypes import wintypes
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageDraw
 
 from wingman.preview import win32
 from wingman.preview.crops import map_selection
@@ -46,6 +49,11 @@ class Native:
         self.thumbnails = set()
         self.timers = set()
         self.next_hwnd = 1000
+        self.next_font = 5000
+        self.dc = {}
+        self.dc_stack = []
+        self.canvas = Image.new("RGB", (816, 600), "white")
+        self.hit_test = 1
         self.lib = SimpleNamespace(
             user32=self,
             dwmapi=self,
@@ -130,6 +138,71 @@ class Native:
         pointer._obj.y += self.origin[1]
         return True
 
+    def ScreenToClient(self, hwnd, pointer):
+        if not self.attempt("screen-to-client", hwnd):
+            return False
+        pointer._obj.x -= self.origin[0]
+        pointer._obj.y -= self.origin[1]
+        return True
+
+    def DefWindowProcW(self, hwnd, msg, wp, lp):
+        self.attempt("default", hwnd, msg, wp, lp)
+        return self.hit_test
+
+    def InvalidateRect(self, hwnd, rect, erase):
+        assert hwnd in self.windows
+        return self.attempt("invalidate", hwnd, bool(erase))
+
+    def GetStockObject(self, ident):
+        assert ident == 18  # DC_BRUSH, system-owned and never deleted.
+        return 6000 if self.attempt("stock-brush") else 0
+
+    def SaveDC(self, hdc):
+        if not self.attempt("save-dc", hdc):
+            return 0
+        self.dc_stack.append(self.dc.copy())
+        return len(self.dc_stack)
+
+    def RestoreDC(self, hdc, level):
+        if not self.attempt("restore-dc", hdc, level):
+            return False
+        self.dc = self.dc_stack.pop()
+        return True
+
+    def SelectObject(self, hdc, handle):
+        old = self.dc.get("font", 1)
+        self.dc["font"] = handle
+        return old
+
+    def SetDCBrushColor(self, hdc, color):
+        self.dc["brush"] = color
+        return 0 if self.attempt("brush-color", hdc, color) else 0xFFFFFFFF
+
+    def SetTextColor(self, hdc, color):
+        self.dc["text"] = color
+        return 0 if self.attempt("text-color", hdc, color) else 0xFFFFFFFF
+
+    def SetBkColor(self, hdc, color):
+        self.dc["background"] = color
+        return 0 if self.attempt("background-color", hdc, color) else 0xFFFFFFFF
+
+    def SetBkMode(self, hdc, mode):
+        self.dc["mode"] = mode
+        return 2 if self.attempt("background-mode", hdc, mode) else 0
+
+    def FillRect(self, hdc, pointer, brush):
+        assert brush == 6000
+        r = pointer._obj
+        color = self.dc["brush"]
+        ImageDraw.Draw(self.canvas).rectangle(
+            (r.left, r.top, r.right - 1, r.bottom - 1),
+            fill=(color & 255, color >> 8 & 255, color >> 16 & 255),
+        )
+        return self.attempt("fill", hdc, edges(r), color)
+
+    def DrawTextW(self, hdc, text, length, pointer, flags):
+        return self.attempt("draw-text", hdc, text, flags, self.dc.copy())
+
     def MonitorFromWindow(self, hwnd, flags):
         return 100 if self.attempt("monitor", hwnd, flags) else 0
 
@@ -146,7 +219,7 @@ class Native:
         if not self.attempt("adjust", dpi):
             return False
         pointer._obj.left -= 8
-        pointer._obj.top -= 30
+        pointer._obj.top -= 30 if style & win32.WS_CAPTION else 8
         pointer._obj.right += 8
         pointer._obj.bottom += 8
         return True
@@ -203,7 +276,8 @@ class Native:
     def CreateFontW(self, *args):
         if not self.attempt("font", *args):
             return 0
-        handle = 5000 + len(self.fonts)
+        handle = self.next_font
+        self.next_font += 1
         self.fonts.add(handle)
         return handle
 
@@ -300,10 +374,10 @@ def test_creation_uses_full_client_mirror_controls_and_focus_before_click(make):
     assert not ex & (win32.WS_EX_LAYERED | win32.WS_EX_NOACTIVATE)
     assert MONITOR.x <= rect.x and rect.right <= MONITOR.right
     assert MONITOR.y <= rect.y and rect.bottom <= MONITOR.bottom
-    assert picker.destination == Rect(12, 111, 792, 445)
+    assert picker.destination == Rect(12, 127, 792, 445)
     props = native.updates[-1]
     assert edges(props.rcSource) == (0, 0, 1280, 720)
-    assert edges(props.rcDestination) == (12, 111, 804, 556)
+    assert edges(props.rcDestination) == (12, 127, 804, 572)
     assert props.fSourceClientAreaOnly and props.fVisible
     assert native.controls[1]["text"] == "&Use region"
     assert not native.controls[1]["enabled"]
@@ -314,7 +388,7 @@ def test_creation_uses_full_client_mirror_controls_and_focus_before_click(make):
     overlay, image, x, y = native.layers[-1]
     assert native.windows[overlay] == "overlay"
     assert image.size == (792, 445)
-    assert (x, y) == (-1788, 11)
+    assert (x, y) == (-1788, 27)
 
 
 def test_confirm_tears_down_entire_slot_before_callback_and_preserves_size(make):
@@ -350,7 +424,7 @@ def test_cancel_paths_cleanup_once_before_callback(make, msg, key):
         cancelled.append(reason)
 
     picker, _ = make(native, on_cancel=cancel)
-    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 120))
+    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 150))
     picker._on_message(msg, key, 0)
     picker.cancel("again")
     assert len(cancelled) == 1
@@ -361,7 +435,7 @@ def test_reset_small_selection_and_enter_without_region_stay_open(make):
     confirmed = []
     picker, native = make(on_confirm=lambda *args: confirmed.append(args))
     picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
-    drag(picker, (30, 120), (31, 121))
+    drag(picker, (30, 150), (31, 151))
     assert not native.controls[1]["enabled"]
     assert "16x16" in picker.status
     picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
@@ -385,8 +459,8 @@ def test_press_in_toolbar_or_letterbox_never_starts_selection(make, point):
 
 def test_reverse_drag_past_negative_client_origin_clamps_and_overlay_has_hole(make):
     picker, native = make()
-    drag(picker, (408, 333), (-10, -10))
-    assert picker.selection == Rect(12, 111, 396, 222)
+    drag(picker, (408, 349), (-10, -10))
+    assert picker.selection == Rect(12, 127, 396, 222)
     image = native.layers[-1][1]
     assert image.getpixel((10, 10))[3] == 0
     assert image.getpixel((790, 440))[3] > 0
@@ -395,7 +469,7 @@ def test_reverse_drag_past_negative_client_origin_clamps_and_overlay_has_hole(ma
 @pytest.mark.parametrize("message", [0x0215, 0x001F])
 def test_capture_loss_discards_partial_drag_and_keeps_os_default(make, message):
     picker, native = make()
-    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 120))
+    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 150))
     picker._on_message(win32.WM_MOUSEMOVE, 0, packed(300, 300))
     native.capture = 9999
     result = picker._on_message(message, 0, 9999)
@@ -422,8 +496,8 @@ def test_source_resize_clears_selection_and_refreshes_source_authority(make, tri
     assert picker.selection is None and not native.controls[1]["enabled"]
     assert picker.status == "Client size changed. Select the region again."
     assert edges(native.updates[-1].rcSource) == (0, 0, 1000, 1000)
-    assert picker.destination == Rect(154, 80, 508, 508)
-    drag(picker, (154, 80), (408, 334))
+    assert picker.destination == Rect(170, 112, 476, 476)
+    drag(picker, (170, 112), (408, 350))
     picker._on_message(win32.WM_COMMAND, 1, 0)
     assert confirmed == [(CLIENT, Rect(0, 0, 500, 500), (1000, 1000))]
 
@@ -434,7 +508,7 @@ def test_picker_resize_and_dpi_change_clear_selection_and_move_only_owned_hwnds(
     native.picker_size = (1000, 700)
     picker._on_message(win32.WM_SIZE, 0, 0)
     assert picker.selection is None and "Picker size changed" in picker.status
-    assert picker.destination == Rect(12, 109, 976, 549)
+    assert picker.destination == Rect(12, 125, 976, 549)
     drag(picker)
     native.dpi = 192
     native.origin = (-1850, -150)
@@ -475,6 +549,7 @@ def test_dialog_message_seam_delegates_translation_once_and_is_inert_after_close
         "create-&Use region",
         "create-&Cancel",
         "create-",
+        "create-FlyGD Wingman crop - Alice",
         "create-overlay",
         "register",
         "update",
@@ -524,7 +599,7 @@ def test_source_unavailable_at_confirmation_cancels_without_proposal(make, size)
 def test_fractional_mapping_confirms_floor_left_top_and_ceil_right_bottom(make):
     confirmed = []
     picker, _ = make(on_confirm=lambda *args: confirmed.append(args))
-    drag(picker, (13, 112), (331, 290))
+    drag(picker, (13, 128), (331, 306))
     picker._on_message(win32.WM_COMMAND, 1, 0)
     assert confirmed == [(CLIENT, Rect(1, 1, 515, 289), (1280, 720))]
 
@@ -534,19 +609,23 @@ def test_minimum_tracking_size_includes_chrome_without_overwriting_os_maximum(ma
     info = win32.MINMAXINFO()
     info.ptMaxTrackSize = win32.POINT(8000, 4000)
     picker._on_message(win32.WM_GETMINMAXINFO, 0, ctypes.addressof(info))
-    assert (info.ptMinTrackSize.x, info.ptMinTrackSize.y) == (416, 278)
+    assert (info.ptMinTrackSize.x, info.ptMinTrackSize.y) == (416, 288)
     assert (info.ptMaxTrackSize.x, info.ptMaxTrackSize.y) == (8000, 4000)
 
 
-def test_dialog_default_button_changes_keep_native_style_and_enter_contract(make):
+def test_dialog_default_button_changes_keep_owner_draw_style_and_enter_contract(make):
     picker, native = make()
     assert picker._on_message(0x0401, 100, 0) == 1  # DM_SETDEFID
     assert picker._on_message(win32.DM_GETDEFID, 0, 0) == 100 | (0x534B << 16)
-    sends = [e for e in native.events if e[0] == "send" and e[3] == 0x00F4]
-    assert sends[-2:] == [
-        ("send", picker.hwnd, 1, 0x00F4, 0, 1),
-        ("send", picker.hwnd, 100, 0x00F4, 1, 1),
+    # BM_SETSTYLE would turn BS_OWNERDRAW back into a light stock button.
+    assert not [e for e in native.events if e[0] == "send" and e[3] == 0x00F4]
+    assert [e for e in native.events if e[0] == "invalidate"][-2:] == [
+        ("invalidate", native.controls[1]["hwnd"], True),
+        ("invalidate", native.controls[100]["hwnd"], True),
     ]
+    drag(picker)
+    picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
+    assert picker.selection is None  # Enter invokes Reset, the new default.
 
 
 @pytest.mark.parametrize(
@@ -595,8 +674,8 @@ def test_external_destroy_releases_children_then_defers_cancel_until_pump_resume
 def test_confirm_during_capture_releases_before_closing_and_notifies_once(make):
     confirmed = []
     picker, native = make(on_confirm=lambda *args: confirmed.append(args))
-    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(12, 111))
-    picker._on_message(win32.WM_MOUSEMOVE, 0, packed(408, 333))
+    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(12, 127))
+    picker._on_message(win32.WM_MOUSEMOVE, 0, packed(408, 349))
     picker._on_message(win32.WM_COMMAND, 1, 0)
     native.assert_closed()
     assert confirmed == [(CLIENT, Rect(0, 0, 640, 360), (1280, 720))]
@@ -619,7 +698,7 @@ def test_failed_capture_does_not_leave_an_unguarded_selection_drag(make):
     cancelled = []
     picker, native = make(on_cancel=cancelled.append)
     native.fail = "capture"
-    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 120))
+    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 150))
     native.assert_closed()
     assert len(cancelled) == 1
 
@@ -678,6 +757,103 @@ def test_initial_bad_client_size_allocates_nothing_and_notifies_once(make, size)
     native.assert_closed()
 
 
+@pytest.mark.parametrize(
+    "interrupt",
+    ["capture", "cancelmode", "resize", "source-resize", "cancel", "new-drag"],
+)
+def test_coalescing_does_not_update_an_interrupted_or_replaced_drag(make, interrupt):
+    picker, native = make()
+    point = packed(20, 150)
+    picker._on_message(win32.WM_LBUTTONDOWN, 0, point)
+    after_interrupt = []
+
+    def peek(*args):
+        # PeekMessage dispatches nonqueued messages even with a mouse filter.
+        if interrupt == "capture":
+            native.capture = None
+            picker._on_message(win32.WM_CAPTURECHANGED, 0, 9999)
+        elif interrupt == "cancelmode":
+            picker._on_message(win32.WM_CANCELMODE, 0, 0)
+        elif interrupt == "resize":
+            native.picker_size = (1000, 700)
+            picker._on_message(win32.WM_SIZE, 0, 0)
+        elif interrupt == "source-resize":
+            native.source_size = (1000, 1000)
+            picker._on_message(win32.WM_TIMER, 1, 0)
+        elif interrupt == "cancel":
+            picker.cancel("nested-cancel")
+        else:
+            picker._on_message(win32.WM_CANCELMODE, 0, 0)
+            # Same coordinates, different gesture: equality is not identity.
+            picker._on_message(win32.WM_LBUTTONDOWN, 0, point)
+        after_interrupt.append(
+            (picker.selection, len(native.layers), len(native.events))
+        )
+        return False
+
+    native.PeekMessageW = peek
+    picker._on_message(win32.WM_MOUSEMOVE, 0, packed(300, 300))
+    assert (
+        picker.selection,
+        len(native.layers),
+        len(native.events),
+    ) == after_interrupt[0]
+    assert not native.controls[1]["enabled"] or interrupt == "cancel"
+
+
+@pytest.mark.parametrize(
+    "phase", ["picker-show", "overlay-show", "foreground", "focus"]
+)
+def test_initial_native_destruction_drains_cancel_after_native_return(make, phase):
+    from wingman.preview import croppicker
+
+    native = Native()
+    cancelled, destroyed = [], []
+    inside_native = False
+
+    def destroy_picker():
+        picker = next(iter(croppicker._PICKERS.values()))
+        hwnd = picker.hwnd
+        picker._on_message(win32.WM_DESTROY, 0, 0)
+        picker._on_message(win32.WM_NCDESTROY, 0, 0)
+        assert cancelled == []
+        del native.windows[hwnd]  # Native parent destruction completes here.
+        destroyed.append(picker)
+
+    def wrap(name, target):
+        original = getattr(native, name)
+
+        def call(hwnd, *args):
+            nonlocal inside_native
+            assert hwnd in native.windows, "creation touched a destroyed handle"
+            inside_native = True
+            result = original(hwnd, *args)
+            if target == phase or (
+                name == "ShowWindow" and phase == native.windows[hwnd] + "-show"
+            ):
+                destroy_picker()
+            inside_native = False
+            return result
+
+        setattr(native, name, call)
+
+    wrap("ShowWindow", "show")
+    wrap("SetForegroundWindow", "foreground")
+    wrap("SetFocus", "focus")
+
+    def cancel(reason):
+        assert not inside_native
+        native.assert_closed()
+        cancelled.append(reason)
+
+    picker, _ = make(native, on_cancel=cancel)
+    assert picker is None
+    assert cancelled == ["picker-destroyed"]
+    assert len(destroyed) == 1
+    destroyed[0].cancel("again")
+    assert cancelled == ["picker-destroyed"]
+
+
 def test_class_failure_is_cancelled_by_factory_before_native_allocation(
     make, monkeypatch
 ):
@@ -692,6 +868,249 @@ def test_class_failure_is_cancelled_by_factory_before_native_allocation(
     assert picker is None and len(cancelled) == 1
     assert native.created == []
     native.assert_closed()
+
+
+def draw_button(picker, native, ident, state):
+    item = win32.DRAWITEMSTRUCT()
+    item.CtlType, item.CtlID = 4, ident  # ODT_BUTTON
+    item.hwndItem = native.controls[ident]["hwnd"]
+    item.hDC = 7000
+    item.rcItem = win32.RECT(0, 0, 112, 28)
+    item.itemState = state
+    return picker._on_message(0x002B, ident, ctypes.addressof(item))
+
+
+def test_caption_replaces_light_stock_chrome_but_keeps_native_controls(make):
+    picker, native = make()
+    style = native.created[0][3]
+    assert not style & win32.WS_CAPTION
+    assert style & win32.WS_THICKFRAME
+    assert not style & (win32.WS_SYSMENU | 0x00020000 | 0x00010000)
+    assert native.controls[102]["text"] == native.created[0][2]
+    for _, cls, text, style, _, _, ident in native.created[1:]:
+        if ident in (1, 2, 100):
+            assert cls == "BUTTON" and text.startswith("&")
+            assert style & win32.WS_TABSTOP
+            assert style & 0xF == 0xB  # BS_OWNERDRAW alone, not DEFPUSHBUTTON
+        elif ident in (101, 102):
+            assert cls == "STATIC" and not style & win32.WS_TABSTOP
+            assert style & 0x80  # SS_NOPREFIX: character names can contain '&'.
+    picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 20))
+    assert picker.selection is None and native.capture is None
+
+
+@pytest.mark.parametrize("native_hit", [1, 10, 11, 12, 13, 14, 15, 16, 17])
+def test_caption_hit_test_preserves_native_resize_edges_at_negative_origin(
+    make, native_hit
+):
+    picker, native = make()
+    native.hit_test = native_hit
+    location = packed(native.origin[0] + 20, native.origin[1] + 20)
+    assert picker._on_message(0x0084, 0, location) == (
+        2 if native_hit == 1 else native_hit
+    )
+    native.hit_test = 1
+    below_caption = packed(native.origin[0] + 20, native.origin[1] + 44)
+    assert picker._on_message(0x0084, 0, below_caption) == 1
+    # A caption double click must not create an unadvertised maximize path.
+    assert picker._on_message(0x00A3, 2, location) == 0
+
+
+def test_native_erase_and_static_messages_paint_token_surfaces(make):
+    picker, native = make()
+    assert picker._on_message(0x0014, 7000, 0) == 1  # WM_ERASEBKGND
+    assert native.canvas.getpixel((0, 40)) == (12, 13, 16)  # --bg
+    assert native.canvas.getpixel((0, 10)) == (18, 16, 22)  # --titlebar-bottom
+    for ident, background, text in (
+        (101, 0x100D0C, 0xB1A29A),
+        (102, 0x161012, 0xEDEAE8),
+    ):
+        assert picker._on_message(0x0138, 7000, native.controls[ident]["hwnd"]) == 6000
+        assert native.dc["background"] == native.dc["brush"] == background
+        assert native.dc["text"] == text
+
+
+@pytest.mark.parametrize(
+    "ident,state,fill,text",
+    [
+        (100, 0, (33, 29, 40), 0xD6CDC8),
+        (100, 1, (42, 38, 52), 0xD6CDC8),  # ODS_SELECTED
+        (1, 0, (132, 48, 217), 0xFFFFFF),
+        (1, 1, (122, 31, 200), 0xFFFFFF),
+        (1, 4, (12, 13, 16), 0x92847D),  # ODS_DISABLED
+    ],
+)
+def test_native_button_paint_covers_stock_surface_and_restores_dc(
+    make, ident, state, fill, text
+):
+    picker, native = make()
+    before = native.dc.copy()
+    assert draw_button(picker, native, ident, state) == 1
+    assert native.canvas.getpixel((56, 14)) == fill
+    drawn = [e for e in native.events if e[0] == "draw-text"][-1]
+    assert drawn[2] == native.controls[ident]["text"]
+    assert drawn[4]["text"] == text and drawn[4]["font"] in native.fonts
+    assert native.dc == before and not native.dc_stack
+
+
+@pytest.mark.parametrize(
+    "state,focused,hide_accel", [(0x10, True, False), (0x310, False, True)]
+)
+def test_owner_draw_honors_native_keyboard_focus_and_mnemonic_cues(
+    make, state, focused, hide_accel
+):
+    picker, native = make()
+    assert draw_button(picker, native, 100, state) == 1
+    assert (native.canvas.getpixel((1, 1)) == (201, 156, 255)) == focused
+    drawn = [e for e in native.events if e[0] == "draw-text"][-1]
+    assert bool(drawn[3] & 0x00100000) == hide_accel  # DT_HIDEPREFIX
+
+
+@pytest.mark.parametrize("ident", [1, 2, 100])
+def test_dialog_default_query_and_enter_follow_focused_owner_draw_button(make, ident):
+    confirmed, cancelled = [], []
+    picker, native = make(
+        on_confirm=lambda *a: confirmed.append(a), on_cancel=cancelled.append
+    )
+    drag(picker)
+    native.SetFocus(native.controls[ident]["hwnd"])
+    # Owner-draw and DEFPUSHBUTTON are mutually exclusive. Dialog Enter must
+    # resolve the focused native button without requiring a style conversion.
+    assert picker._on_message(win32.DM_GETDEFID, 0, 0) == ident | (0x534B << 16)
+    picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
+    if ident == 1:
+        assert len(confirmed) == 1 and not cancelled
+    elif ident == 2:
+        assert cancelled == ["cancelled"] and not confirmed
+    else:
+        assert picker.hwnd and picker.selection is None
+        assert not confirmed and not cancelled
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "save-dc",
+        "restore-dc",
+        "stock-brush",
+        "brush-color",
+        "fill",
+        "text-color",
+        "background-mode",
+        "draw-text",
+    ],
+)
+def test_paint_failure_cancels_and_attempts_dc_restoration(make, phase):
+    cancelled = []
+    picker, native = make(on_cancel=cancelled.append)
+    native.fail = phase
+    draw_button(picker, native, 100, 0)
+    native.assert_closed()
+    assert len(cancelled) == 1
+    restores = [event for event in native.events if event[0] == "restore-dc"]
+    assert len(restores) == (0 if phase == "save-dc" else 1)
+    # A failed RestoreDC cannot prove restoration of the Windows-owned DC.
+    if phase != "restore-dc":
+        assert not native.dc_stack
+
+
+@pytest.mark.parametrize(
+    "entry", ["layout", "status", "font", "drag-status", "drag-focus"]
+)
+def test_nested_owner_draw_failure_cannot_continue_using_closed_controls(make, entry):
+    cancelled = []
+    native = Native()
+
+    def cancel(reason):
+        native.assert_closed()  # Including both fonts during a DPI replacement.
+        cancelled.append(reason)
+
+    picker, _ = make(native, on_cancel=cancel)
+    call_name = {
+        "layout": "SetWindowPos",
+        "status": "SetWindowTextW",
+        "font": "SendDlgItemMessageW",
+        "drag-status": "SetWindowTextW",
+        "drag-focus": "SetFocus",
+    }[entry]
+    original = getattr(native, call_name)
+
+    def paint(*args):
+        result = original(*args)
+        native.fail = "draw-text"
+        draw_button(picker, native, 100, 0)
+        return result
+
+    setattr(native, call_name, paint)
+    if entry.startswith("drag-"):
+        picker._on_message(win32.WM_LBUTTONDOWN, 0, packed(20, 150))
+    elif entry == "font":
+        suggested = win32.RECT(-1800, -100, -800, 600)
+        picker._on_message(win32.WM_DPICHANGED, 144, ctypes.addressof(suggested))
+    else:
+        picker._on_message(win32.WM_SIZE, 0, 0)
+    native.assert_closed()
+    assert len(cancelled) == 1
+
+
+@pytest.mark.parametrize("state,gap", [(0, 1), (0x10, 2)])
+def test_accent_button_ring_has_dark_gap_for_focus_contrast(make, state, gap):
+    picker, native = make()
+    assert draw_button(picker, native, 1, state) == 1
+    # --focus-ring against --brand is only 2.84:1. A --bg gap makes both
+    # adjacent sides of the ring 8.96:1 without inventing a brighter colour.
+    assert native.canvas.getpixel((0, 0)) == (201, 156, 255)
+    assert native.canvas.getpixel((gap, gap)) == (12, 13, 16)
+    assert native.canvas.getpixel((gap + 1, gap + 1)) == (132, 48, 217)
+
+
+@pytest.mark.parametrize(
+    "foreground,background,minimum",
+    [
+        ("text", "titlebar-bottom", 4.5),
+        ("text-dim", "bg", 4.5),
+        ("text-btn", "control", 4.5),
+        ("text-btn", "control-hover", 4.5),
+        ("text-faint", "bg", 4.5),
+        ("on-accent", "brand", 4.5),
+        ("on-accent", "acc-bottom", 4.5),
+        ("focus-ring", "bg", 3),
+    ],
+)
+def test_picker_text_and_focus_token_pairs_meet_contrast_floor(
+    foreground, background, minimum
+):
+    from wingman.preview import croppicker
+
+    def luminance(rgb):
+        channels = [v / 255 for v in rgb]
+        linear = [
+            v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+            for v in channels
+        ]
+        return sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+    low, high = sorted(
+        luminance(croppicker._RGB[token]) for token in (foreground, background)
+    )
+    assert (high + 0.05) / (low + 0.05) >= minimum
+
+
+def test_native_picker_tokens_are_asserted_against_authoritative_css():
+    from wingman.preview import croppicker
+
+    css = (Path(__file__).parents[1] / "wingman/web/style.css").read_text()
+    root = css.split(":root {", 1)[1].split("}", 1)[0]
+    tokens = dict(re.findall(r"--([\w-]+):\s*(#[a-fA-F0-9]+);", root))
+    for token, color in croppicker._THEME.items():
+        assert color == tokens[token], token
+
+
+def test_selection_overlay_uses_the_existing_focus_token():
+    from wingman.preview import croppicker
+
+    image = croppicker._render_overlay((100, 100), Rect(10, 10, 50, 50), 2)
+    assert image.getpixel((10, 10)) == (201, 156, 255, 255)
 
 
 def test_class_registration_failure_is_retryable_without_accumulating_callbacks(
