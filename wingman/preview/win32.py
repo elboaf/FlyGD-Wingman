@@ -22,6 +22,14 @@ from typing import NamedTuple
 
 # --- Window styles ------------------------------------------------------
 WS_POPUP = 0x80000000
+WS_CHILD = 0x40000000
+WS_VISIBLE = 0x10000000
+WS_CLIPCHILDREN = 0x02000000
+WS_CAPTION = 0x00C00000
+WS_SYSMENU = 0x00080000
+WS_THICKFRAME = 0x00040000
+WS_TABSTOP = 0x00010000
+BS_DEFPUSHBUTTON = 0x00000001
 WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
@@ -51,6 +59,19 @@ HWND_TOPMOST = -1
 
 # --- Messages -----------------------------------------------------------
 WM_DESTROY = 0x0002
+WM_MOVE = 0x0003
+WM_SIZE = 0x0005
+WM_GETMINMAXINFO = 0x0024
+WM_SETFONT = 0x0030
+WM_NCDESTROY = 0x0082
+WM_KEYDOWN = 0x0100
+WM_COMMAND = 0x0111
+WM_DPICHANGED = 0x02E0
+DM_GETDEFID = 0x0400
+DM_SETDEFID = 0x0401
+BM_SETSTYLE = 0x00F4
+VK_RETURN = 0x0D
+VK_ESCAPE = 0x1B
 WM_PAINT = 0x000F
 WM_CLOSE = 0x0010
 WM_CANCELMODE = 0x001F
@@ -103,6 +124,7 @@ WINEVENT_OUTOFCONTEXT = 0x0000
 
 # --- DPI ----------------------------------------------------------------
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+MONITOR_DEFAULTTONEAREST = 2
 
 # --- Virtual desktop metrics -------------------------------------------
 # The union of every monitor, in physical pixels. Origin can be NEGATIVE:
@@ -144,6 +166,16 @@ class BITMAPINFO(ctypes.Structure):
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class MINMAXINFO(ctypes.Structure):
+    _fields_ = [
+        ("ptReserved", POINT),
+        ("ptMaxSize", POINT),
+        ("ptMaxPosition", POINT),
+        ("ptMinTrackSize", POINT),
+        ("ptMaxTrackSize", POINT),
+    ]
 
 
 class SIZE(ctypes.Structure):
@@ -286,6 +318,17 @@ def bind() -> Libs:
         ),
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
+        (user32, "ClientToScreen", BOOL, [HWND, ctypes.POINTER(POINT)]),
+        (user32, "GetDpiForWindow", UINT, [HWND]),
+        (
+            user32,
+            "AdjustWindowRectExForDpi",
+            BOOL,
+            [ctypes.POINTER(wintypes.RECT), DWORD, BOOL, DWORD, UINT],
+        ),
+        (user32, "MonitorFromWindow", wintypes.HMONITOR, [HWND, DWORD]),
+        (user32, "EnableWindow", BOOL, [HWND, BOOL]),
+        (user32, "SetWindowTextW", BOOL, [HWND, wintypes.LPCWSTR]),
         (user32, "GetSystemMetrics", ctypes.c_int, [ctypes.c_int]),
         # Monitor geometry. GetSystemMetrics(SM_*VIRTUALSCREEN) gives only
         # the bounding rectangle; these two give the actual displays, which
@@ -328,6 +371,17 @@ def bind() -> Libs:
         ),
         (user32, "GetDC", HDC, [HWND]),
         (user32, "ReleaseDC", ctypes.c_int, [HWND, HDC]),
+        # --- native picker dialog navigation. IsDialogMessage consumes the
+        # message itself on success; callers must skip Translate/Dispatch.
+        (user32, "IsDialogMessageW", BOOL, [HWND, ctypes.POINTER(wintypes.MSG)]),
+        # Only our same-thread picker child controls. Do not expose a
+        # general synchronous send: client minimize must remain asynchronous.
+        (
+            user32,
+            "SendDlgItemMessageW",
+            LRESULT,
+            [HWND, ctypes.c_int, UINT, WPARAM, LPARAM],
+        ),
         # --- message pump
         (user32, "GetMessageW", ctypes.c_int, [ctypes.c_void_p, HWND, UINT, UINT]),
         (user32, "PeekMessageW", BOOL, [ctypes.c_void_p, HWND, UINT, UINT, UINT]),
@@ -367,6 +421,7 @@ def bind() -> Libs:
         # --- focus
         (user32, "SetForegroundWindow", BOOL, [HWND]),
         (user32, "SetFocus", HWND, [HWND]),
+        (user32, "GetFocus", HWND, []),
         (user32, "GetForegroundWindow", HWND, []),
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
         (user32, "IsIconic", BOOL, [HWND]),
@@ -402,6 +457,13 @@ def bind() -> Libs:
         (gdi32, "SelectObject", wintypes.HGDIOBJ, [HDC, wintypes.HGDIOBJ]),
         (gdi32, "DeleteObject", BOOL, [wintypes.HGDIOBJ]),
         (gdi32, "DeleteDC", BOOL, [HDC]),
+        (gdi32, "GetStockObject", wintypes.HGDIOBJ, [ctypes.c_int]),
+        (
+            gdi32,
+            "CreateFontW",
+            wintypes.HFONT,
+            [ctypes.c_int] * 5 + [DWORD] * 8 + [wintypes.LPCWSTR],
+        ),
         # --- DWM
         (
             dwmapi,

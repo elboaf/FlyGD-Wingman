@@ -42,6 +42,15 @@ REQUIRED = {
         "GetDC",
         "ReleaseDC",
         "GetClientRect",
+        "ClientToScreen",
+        "GetDpiForWindow",
+        "AdjustWindowRectExForDpi",
+        "MonitorFromWindow",
+        "IsDialogMessageW",
+        "SendDlgItemMessageW",
+        "GetFocus",
+        "EnableWindow",
+        "SetWindowTextW",
         "InvalidateRect",
         "LoadCursorW",
         "SetCapture",
@@ -71,6 +80,8 @@ REQUIRED = {
     ],
     "gdi32": [
         "CreateDIBSection",
+        "CreateFontW",
+        "GetStockObject",
         "CreateCompatibleDC",
         "SelectObject",
         "DeleteObject",
@@ -98,6 +109,9 @@ POINTER_SIZED_RETURNS = {
         "GetDC",
         "GetForegroundWindow",
         "SetFocus",
+        "GetFocus",
+        "SendDlgItemMessageW",
+        "MonitorFromWindow",
         "SetCapture",
         "GetCapture",
         "CreatePopupMenu",
@@ -106,7 +120,13 @@ POINTER_SIZED_RETURNS = {
         "SetThreadDpiAwarenessContext",
         "DispatchMessageW",
     ],
-    "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject"],
+    "gdi32": [
+        "CreateDIBSection",
+        "CreateCompatibleDC",
+        "SelectObject",
+        "CreateFontW",
+        "GetStockObject",
+    ],
     "kernel32": ["GetModuleHandleW"],
 }
 
@@ -199,6 +219,50 @@ def test_crop_menu_and_capture_declarations_with_injected_libraries(monkeypatch)
         assert fn.restype is result, name
         assert fn.argtypes == args, name
     assert user32.TrackPopupMenuEx.restype(257).value == 257
+
+
+def test_picker_declarations_with_injected_libraries(monkeypatch):
+    from ctypes import wintypes
+    from types import SimpleNamespace
+
+    class Library:
+        def __getattr__(self, name):
+            fn = SimpleNamespace(argtypes=None, restype=None)
+            setattr(self, name, fn)
+            return fn
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: Library(), raising=False)
+    for name in ("wndproc_type", "winevent_proc_type", "monitor_enum_proc_type"):
+        monkeypatch.setattr(win32, name, lambda: ctypes.c_void_p)
+    libs = win32.bind.__wrapped__()
+    H, B, U, D = wintypes.HWND, wintypes.BOOL, wintypes.UINT, wintypes.DWORD
+    signatures = {
+        "ClientToScreen": (B, [H, ctypes.POINTER(win32.POINT)]),
+        "GetDpiForWindow": (U, [H]),
+        "AdjustWindowRectExForDpi": (B, [ctypes.POINTER(win32.RECT), D, B, D, U]),
+        "MonitorFromWindow": (wintypes.HMONITOR, [H, D]),
+        "IsDialogMessageW": (B, [H, ctypes.POINTER(wintypes.MSG)]),
+        "SendDlgItemMessageW": (
+            win32.LRESULT,
+            [H, ctypes.c_int, U, win32.WPARAM, win32.LPARAM],
+        ),
+        "GetFocus": (H, []),
+        "EnableWindow": (B, [H, B]),
+        "SetWindowTextW": (B, [H, wintypes.LPCWSTR]),
+    }
+    for name, (result, args) in signatures.items():
+        fn = getattr(libs.user32, name)
+        assert fn.restype is result, name
+        assert fn.argtypes == args, name
+    assert libs.gdi32.CreateFontW.restype is wintypes.HFONT
+    assert libs.gdi32.CreateFontW.argtypes == [ctypes.c_int] * 5 + [D] * 8 + [
+        wintypes.LPCWSTR
+    ]
+    assert libs.gdi32.GetStockObject.restype is wintypes.HGDIOBJ
+    assert libs.gdi32.GetStockObject.argtypes == [ctypes.c_int]
+    assert ctypes.sizeof(libs.user32.SendDlgItemMessageW.restype) == ctypes.sizeof(
+        ctypes.c_void_p
+    )
 
 
 def test_crop_message_and_menu_constants_match_native_declarations():
