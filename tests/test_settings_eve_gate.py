@@ -156,7 +156,7 @@ def test_the_page_gates_both_destinations_and_every_eve_section():
     visible with the tools hidden; a section left out shows a rail entry
     for a feature the user asked not to see.
 
-    Round 5's E1 is what this now pins. The rail is five entries, and the
+    Round 5's E1 is what this now pins. The rail is six entries, and the
     claim the merge rests on is that the split runs along PRODUCT.md's own
     independence axis -- "It must not require the EVE tools to upload a
     video, or a Google account to use the EVE tools." The observable form
@@ -215,6 +215,10 @@ def test_the_page_gates_both_destinations_and_every_eve_section():
     declared = re.search(r"WM\.EVE_SECTIONS = \[([^\]]*)\]", app)
     assert declared, "app.js no longer declares WM.EVE_SECTIONS"
     gated = re.findall(r"'([\w-]+)'", declared.group(1))
+    assert "characters" in gated, (
+        "the Characters Settings section is not EVE-gated, so it stays visible "
+        "when the EVE tools are hidden"
+    )
 
     rail = re.findall(r'<button class="rail-item[^"]*" data-section="([\w-]+)">', html)
     assert rail, "index.html no longer carries a Settings rail"

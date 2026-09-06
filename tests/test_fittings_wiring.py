@@ -243,7 +243,7 @@ def test_workspace_sorting_is_stable_and_casefolded(tmp_path):
     assert [row["id"] for row in rows_again] == ["a", "b", "z"]
 
 
-def test_workspace_reports_characters_auth_and_refresh_state(tmp_path):
+def test_workspace_reports_characters_and_refresh_state_without_auth_controls(tmp_path):
     controller, _authority = make_controller(tmp_path)
     payload = controller.workspace({})
 
@@ -251,8 +251,8 @@ def test_workspace_reports_characters_auth_and_refresh_state(tmp_path):
     for row in payload["characters"]:
         assert row["status"] == "enabled"
     assert payload["refreshing"] is False
-    assert isinstance(payload["auth_configured"], bool)
-    assert payload["auth_in_progress"] is False
+    assert "auth_configured" not in payload
+    assert "auth_in_progress" not in payload
 
 
 def test_workspace_defaults_are_forgiving_of_malformed_filters(tmp_path):

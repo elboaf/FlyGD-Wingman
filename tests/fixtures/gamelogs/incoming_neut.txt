@@ -1,0 +1,8 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: Rendik Ashvale
+  Session Started: 2026.08.24 21:13:01
+------------------------------------------------------------
+[ 2026.08.24 22:01:38 ] (combat) <color=0xffe57f7f><b>237 GJ</b><color=0x77ffffff><font size=10> energy neutralized </font><b><color=0xffffffff><color=0xffffffff><fontsize=12>Doran Velk [BURN]</color><color=0xfff0f000> Curse</color><color=0xffffffff></b><color=0x77ffffff><font size=10> - Medium Energy Neutralizer II</font>
+[ 2026.08.24 22:01:39 ] (combat) <color=0xffe57f7f><b>0 GJ</b><color=0x77ffffff><font size=10> energy neutralized </font><b><color=0xffffffff><color=0xffffffff><fontsize=12>Doran Velk [BURN]</color><color=0xfff0f000> Curse</color><color=0xffffffff></b><color=0x77ffffff><font size=10> - Medium Energy Neutralizer II</font>
+[ 2026.08.24 22:01:41 ] (combat) <color=0xff7fffff><b>0 GJ</b><color=0x77ffffff><font size=10> energy neutralized </font><b><color=0xffffffff><color=0xffffffff><fontsize=12>Doran Velk [BURN]</color><color=0xfff0f000> Curse</color><color=0xffffffff></b><color=0x77ffffff><font size=10> - Small Energy Neutralizer II</font>

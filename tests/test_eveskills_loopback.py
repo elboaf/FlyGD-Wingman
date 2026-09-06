@@ -376,6 +376,68 @@ def test_the_reply_is_a_page_not_a_redirect_and_is_never_cached():
     assert b"Location:" not in reply
 
 
+def test_success_reply_is_a_self_contained_wingman_result_page():
+    """The browser should show a branded, accessible result rather than the
+    user-agent's default white document, without needing another HTTP request.
+    """
+    port = free_port()
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+        worker, sink = deliver(port, "/callback/?code=abc123&state=s")
+        listener.wait("s", timeout_s=5)
+        worker.join(5)
+
+    body = sink[0].split(b"\r\n\r\n", 1)[1].decode("utf-8")
+    assert (
+        '<meta name="viewport" content="width=device-width, initial-scale=1">' in body
+    )
+    assert '<meta name="color-scheme" content="dark">' in body
+    assert "<style>" in body
+    assert "min-height: 100vh" in body
+    assert "--bg: #0c0d10" in body
+    assert "@supports (color: oklch(0 0 0))" in body
+    assert 'class="result success"' in body
+    assert 'aria-labelledby="result-title"' in body
+    assert "WINGMAN" in body
+    assert "Authorization received" in body
+    assert "finish connecting the character" in body
+    assert " src=" not in body
+    assert " href=" not in body
+
+
+def test_failure_reply_has_a_distinct_recovery_state():
+    """A rejected or stale callback must not look like a completed sign-in."""
+    port = free_port()
+    with loopback.LoopbackListener(host="127.0.0.1", port=port, path=PATH) as listener:
+        replies = []
+
+        def both():
+            replies.append(
+                send(
+                    port,
+                    listener_request(port, "/callback/?code=wrong&state=wrong-state"),
+                )
+            )
+            replies.append(
+                send(
+                    port,
+                    listener_request(
+                        port, "/callback/?code=right&state=expected-state"
+                    ),
+                )
+            )
+
+        worker = threading.Thread(target=both)
+        worker.start()
+        listener.wait("expected-state", timeout_s=10)
+        worker.join(10)
+
+    body = replies[0].split(b"\r\n\r\n", 1)[1].decode("utf-8")
+    assert 'class="result failure"' in body
+    assert "Authorization not accepted" in body
+    assert "Return to Wingman and try again." in body
+    assert "Authorization received" not in body
+
+
 def test_the_authorization_code_is_never_echoed_into_the_page():
     """The served page ends up in a browser tab the user may screenshot,
     and the code is a live one-time credential until it is exchanged."""

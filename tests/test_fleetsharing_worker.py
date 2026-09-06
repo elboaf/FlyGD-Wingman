@@ -986,6 +986,7 @@ class TestCoordinatorIntegration:
         reference and signals."""
         from wingman.telemetry.coordinator import TelemetryCoordinator
         from wingman.telemetry.model import FleetSnapshot as TelemetryFleetSnapshot
+        from wingman.telemetry.model import RosterSnapshot
 
         class _FakeDiscovery:
             def __init__(self):
@@ -1003,6 +1004,14 @@ class TestCoordinatorIntegration:
 
             def request_scan(self):
                 pass
+
+            def snapshot(self):
+                # Enabling Fleet primes from this synchronously (see
+                # coordinator._reset_fleet_state). A non-zero generation is
+                # what tells the coordinator a real scan has already
+                # completed, which is what unblocks _publish() from
+                # withholding snapshots as a pre-roster synthetic state.
+                return RosterSnapshot(generation=1, clients=())
 
         class _FakeStream:
             def subscribe(self, callback):

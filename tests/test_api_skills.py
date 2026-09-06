@@ -7,7 +7,6 @@ there is no controller at all.
 
 from tests.fakes import FakeWindow
 from tests.test_api import make_api
-from wingman.eveauth.controller import MutationResult
 
 
 class FakeSkills:
@@ -97,8 +96,6 @@ def test_every_mutation_returns_truthy(tmp_path):
     did nothing."""
     api, _ = make(tmp_path, FakeSkills())
 
-    assert api.skills_add_character() is True
-    assert api.skills_cancel_auth() is True
     assert api.skills_refresh() is True
     assert api.skills_reload_plans() is True
     assert api.skills_open_plans_folder() is True
@@ -134,62 +131,18 @@ def test_a_refused_assignment_reports_the_controllers_answer(tmp_path):
     assert api.skills_set_character_group(7, "W" * 200) is False
 
 
-class FakeAuthority:
-    def __init__(self, forget_result=None):
-        self.calls = []
-        self.forget_result = forget_result or MutationResult(True, True, "")
+def test_skills_no_longer_exposes_character_auth_or_forget_bridge_methods(tmp_path):
+    from wingman.ui.api import Api
 
-    def authenticate_skills(self):
-        self.calls.append(("authenticate_skills",))
-        return MutationResult(True, True, "")
+    api, _ = make(tmp_path, FakeSkills())
 
-    def cancel_auth(self):
-        self.calls.append(("cancel_auth",))
-
-    def forget(self, character_id):
-        self.calls.append(("forget", character_id))
-        return self.forget_result
-
-    def shutdown(self):
-        self.calls.append(("shutdown",))
-
-
-def test_authorization_and_forget_delegate_to_shared_authority(tmp_path):
-    authority = FakeAuthority()
-    api = make_api(
-        tmp_path, window=FakeWindow(), skills=FakeSkills(), authority=authority
-    )
-
-    assert api.skills_add_character() is True
-    assert api.skills_cancel_auth() is True
-    assert api.skills_forget_character("42") is True
-
-    assert authority.calls == [
-        ("authenticate_skills",),
-        ("cancel_auth",),
-        ("forget", 42),
-    ]
-
-
-def test_forget_rejects_an_invalid_id_before_shared_authority(tmp_path):
-    authority = FakeAuthority()
-    api = make_api(
-        tmp_path, window=FakeWindow(), skills=FakeSkills(), authority=authority
-    )
-
-    assert api.skills_forget_character(None) is False
-    assert api.skills_forget_character(True) is False
-    assert authority.calls == []
-
-
-def test_forget_reports_shared_authority_refusal(tmp_path):
-    authority = FakeAuthority(MutationResult(False, False, "Reconcile first."))
-    api = make_api(
-        tmp_path, window=FakeWindow(), skills=FakeSkills(), authority=authority
-    )
-
-    assert api.skills_forget_character(42) is False
-    assert authority.calls == [("forget", 42)]
+    for name in (
+        "skills_add_character",
+        "skills_cancel_auth",
+        "skills_forget_character",
+    ):
+        assert getattr(Api, name, None) is None
+        assert getattr(api, name, None) is None
 
 
 def test_every_method_tolerates_no_controller(tmp_path):
@@ -201,9 +154,6 @@ def test_every_method_tolerates_no_controller(tmp_path):
 
     assert api.skills_state()["characters"] == []
     assert api.skills_character_detail(95, "x")["ok"] is False
-    assert api.skills_add_character() is True
-    assert api.skills_cancel_auth() is True
-    assert api.skills_forget_character(95) is False
     assert api.skills_refresh() is True
     assert api.skills_reload_plans() is True
     assert api.skills_open_plans_folder() is True
@@ -225,8 +175,6 @@ def test_the_empty_state_has_the_same_shape_as_a_real_one(tmp_path):
     payload = api.skills_state()
 
     for key in (
-        "auth_configured",
-        "auth_in_progress",
         "refresh_in_flight",
         "selected_plan_name",
         "selected_group",
@@ -238,7 +186,8 @@ def test_the_empty_state_has_the_same_shape_as_a_real_one(tmp_path):
         "plans_updated_utc",
     ):
         assert key in payload
-    assert payload["auth_configured"] is False
+    assert "auth_configured" not in payload
+    assert "auth_in_progress" not in payload
 
 
 def test_migration_failure_is_visible_in_the_unavailable_payload(tmp_path):

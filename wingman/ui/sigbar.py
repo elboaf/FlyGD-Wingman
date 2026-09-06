@@ -121,6 +121,10 @@ def create(api):
             focus=False,
             # The native surface paints before the first HTML frame; a
             # mismatch is a white flash, same as the main window's note.
+            # Deliberately NOT transparent=True: per-pixel window
+            # transparency on the WinForms/EdgeChromium backend mispaints
+            # the backing on resize and move (field result, PR #164's
+            # attempts) -- the bar is an opaque dark strip by choice.
             background_color=window_mod.BACKGROUND,
             min_size=MIN_SIZE,
             # ALWAYS hidden at creation, including the first enable -- see

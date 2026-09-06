@@ -5,25 +5,182 @@
   var button = WM.el('btn-fleetbar');
   var check = WM.el('fleetbar-enabled');
   var status = WM.el('fleetbar-enabled-status');
+  var characterHost = WM.el('fleetbar-character-list');
+  var empty = WM.el('fleetbar-characters-empty');
+  var characterStatus = WM.el('fleetbar-characters-status');
   var lastGood = false;
+  var lastState = null;
+  var lastRevision = -1;
+  var hydrated = false;
+  var pending = Object.create(null);
   var defaultStatus = status ? status.textContent : '';
 
+  if (button) { button.disabled = true; }
+  if (check) { check.disabled = true; }
+
+  function accept(section) {
+    var revision = Number(section && section.revision);
+    if (!isFinite(revision) || revision < lastRevision) return false;
+    lastRevision = revision;
+    hydrated = true;
+    return true;
+  }
+
+  function findCharacterRow(name) {
+    var rows, index;
+    if (!characterHost) return null;
+    rows = characterHost.querySelectorAll('[data-fleet-character]');
+    for (index = 0; index < rows.length; index += 1) {
+      if (rows[index].getAttribute('data-fleet-character') === name) return rows[index];
+    }
+    return null;
+  }
+
+  function findCharacterInput(name) {
+    var row = findCharacterRow(name);
+    return row ? row.querySelector('input[type="checkbox"]') : null;
+  }
+
+  function commitMessage(result) {
+    if (!characterStatus) return;
+    if (result && result.applied) {
+      characterStatus.textContent = '';
+      characterStatus.hidden = true;
+      return;
+    }
+    characterStatus.textContent = (result && result.error)
+      || 'Could not change Fleet character visibility.';
+    characterStatus.hidden = false;
+  }
+
+  function finishCharacterMutation(name, token, result, restoreFocus) {
+    var current, remembered;
+    // A later request owns the row now. It alone may re-enable or refocus it.
+    if (pending[name] !== token) return;
+    delete pending[name];
+    if (result && result.state) render(result.state);
+    else if (lastState) render(lastState);
+    current = findCharacterInput(name);
+    if (current) current.disabled = false;
+    if ((!result || result.applied === false) && current) {
+      // A bridge failure has no authoritative response, so restore the last
+      // accepted value instead of leaving the user's rejected click painted.
+      remembered = (lastState && lastState.characters || []).filter(function (row) {
+        return row.name === name;
+      })[0];
+      if (remembered) current.checked = !!remembered.visible;
+    }
+    if (restoreFocus && document.activeElement === document.body && current) {
+      current.focus();
+    }
+    commitMessage(result);
+  }
+
+  function changeCharacter(input, name) {
+    var token, restoreFocus;
+    if (!hydrated) return;
+    token = (pending[name] || 0) + 1;
+    pending[name] = token;
+    restoreFocus = document.activeElement === input;
+    input.disabled = true;
+    WM.send('set_fleet_bar_character_visible', name, input.checked).then(function (res) {
+      finishCharacterMutation(name, token, res, restoreFocus);
+    }, function () {
+      finishCharacterMutation(name, token, {
+        applied: false,
+        error: 'Could not change Fleet character visibility.'
+      }, restoreFocus);
+    });
+  }
+
+  function makeCharacterRow() {
+    var row = WM.make('div', 'fleet-character-row');
+    var label = WM.make('label', 'check');
+    var input = WM.make('input');
+    var box, name;
+    input.type = 'checkbox';
+    box = WM.make('span', 'box');
+    name = WM.make('span', 'fleet-character-name');
+    label.appendChild(input);
+    label.appendChild(box);
+    label.appendChild(name);
+    row.appendChild(label);
+    input.addEventListener('change', function () {
+      changeCharacter(input, row.getAttribute('data-fleet-character'));
+    });
+    return row;
+  }
+
+  function renderCharacters(characters) {
+    var groups, rows, groupName, group, row, input;
+    if (!characterHost) return;
+    characters = Array.isArray(characters) ? characters : [];
+    if (empty) empty.hidden = characters.length !== 0;
+    groups = characters.some(function (item) { return item.running === null; })
+      ? [{name: 'Known characters', rows: characters}]
+      : [
+        {name: 'Running', rows: characters.filter(function (item) { return item.running; })},
+        {name: 'Offline', rows: characters.filter(function (item) { return !item.running; })}
+      ];
+    rows = Object.create(null);
+    Array.prototype.forEach.call(
+      characterHost.querySelectorAll('[data-fleet-character]'),
+      function (item) { rows[item.getAttribute('data-fleet-character')] = item; }
+    );
+    groups.forEach(function (definition) {
+      if (!definition.rows.length) return;
+      groupName = definition.name;
+      group = characterHost.querySelector('[data-fleet-group="' + groupName + '"]');
+      if (!group) {
+        group = WM.make('div', 'fleet-character-group');
+        group.setAttribute('data-fleet-group', groupName);
+        group.textContent = groupName;
+      }
+      characterHost.appendChild(group);
+      definition.rows.forEach(function (item) {
+        row = rows[item.name] || makeCharacterRow();
+        delete rows[item.name];
+        row.setAttribute('data-fleet-character', item.name);
+        input = row.querySelector('input[type="checkbox"]');
+        input.checked = !!item.visible;
+        input.disabled = !!pending[item.name];
+        input.setAttribute('aria-label', 'Show ' + item.name + ' in Fleet Bar');
+        row.querySelector('.fleet-character-name').textContent = item.name;
+        characterHost.appendChild(row);
+      });
+    });
+    Object.keys(rows).forEach(function (name) { rows[name].remove(); });
+    Array.prototype.forEach.call(
+      characterHost.querySelectorAll('[data-fleet-group]'),
+      function (item) {
+        if (!characterHost.querySelector('[data-fleet-character]')
+            || !groups.some(function (definition) {
+              return definition.name === item.getAttribute('data-fleet-group')
+                && definition.rows.length;
+            })) item.remove();
+      }
+    );
+  }
+
   function render(section) {
-    lastGood = !!(section && section.enabled);
+    if (!accept(section)) return;
+    lastState = section;
+    lastGood = !!section.enabled;
     WM.fleet_bar_on = lastGood;
     if (button) {
+      button.disabled = false;
       button.classList.toggle('active', lastGood);
       button.setAttribute('aria-pressed', lastGood ? 'true' : 'false');
       button.hidden = WM.eve_shown === false && !lastGood;
     }
-    if (check && check !== document.activeElement) { check.checked = lastGood; }
+    if (check) {
+      check.disabled = false;
+      if (check !== document.activeElement) check.checked = lastGood;
+    }
+    renderCharacters(section.characters);
   }
 
   function failed() {
-    render({enabled: lastGood});
-    // render preserves a focused checkbox so a background state push cannot
-    // move the control under the pointer. This is the refusal path: the
-    // user's uncommitted value must be reverted even while it holds focus.
     if (check) { check.checked = lastGood; }
     if (status) { status.textContent = 'Could not change the Fleet Bar.'; }
   }
@@ -32,26 +189,25 @@
 
   if (button) {
     button.addEventListener('click', function () {
+      if (!hydrated) return;
       WM.send('toggle_fleet_bar', !lastGood).then(function (res) {
         if (!res || !res.applied) { failed(); }
         else if (status) { status.textContent = defaultStatus; }
-      });
+      }, failed);
     });
   }
   if (check) {
     check.addEventListener('change', function () {
+      if (!hydrated) return;
       WM.send('toggle_fleet_bar', check.checked).then(function (res) {
         if (!res || !res.applied) { failed(); }
         else if (status) { status.textContent = defaultStatus; }
-      });
+      }, failed);
     });
   }
 
-  document.addEventListener('wm:settings', function (ev) {
-    render(((ev.detail || {}).settings || {}).fleet_bar || {});
-  });
   WM.send('fleet_bar_settings').then(function (section) {
-    if (section) { render(section); }
+    if (section) render(section);
   });
 }());
 

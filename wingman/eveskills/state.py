@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import atomicio
+from ..eveauth.cleanup import LoadHealth
 from .evaluator import QueueEntry
 from .training import ATTRIBUTE_NAMES
 
@@ -525,16 +526,27 @@ def _preserve_corrupt(path: Path) -> str:
     return target.name
 
 
-def load(path: Path) -> tuple:
-    """Read the roster. Returns (state, warnings) and never raises.
+def _load_health(
+    cleanup_verifiable: bool, rewrite_required: bool = False
+) -> LoadHealth:
+    return LoadHealth(
+        cleanup_verifiable=cleanup_verifiable,
+        rewrite_required=rewrite_required,
+    )
 
-    A warning here reaches the UI notices strip, so it is written for the
-    person reading it rather than for a log.
-    """
+
+def _load_normalized_document(path: Path) -> tuple[SkillsState, bool]:
+    raw = json.loads(_read_bounded(path))
+    loaded = from_dict(raw)
+    return loaded, raw != to_dict(loaded)
+
+
+def load_with_health(path: Path) -> tuple[SkillsState, list[str], LoadHealth]:
+    """Read the roster and report whether cleanup can trust the durable load."""
     path = Path(path)
-    warnings: list = []
+    warnings: list[str] = []
     try:
-        text = _read_bounded(path)
+        loaded, rewrite_required = _load_normalized_document(path)
     except FileNotFoundError:
         # No primary. Usually first launch -- but save()'s rotate-then-swap
         # can also leave exactly this on disk if the process dies or the
@@ -542,11 +554,17 @@ def load(path: Path) -> tuple:
         # primary into *.bak* and installing the new one: at that instant
         # there is a *.bak* but no primary. A *.bak* on disk is therefore
         # the one thing that tells the two apart -- first launch never has
-        # one, so its absence is what makes this branch safe to treat as
-        # silent.
+        # one, so only a PROVEN missing backup is safe to treat as silent.
         backup = path.with_name(path.name + ".bak")
-        if not backup.exists():
-            return SkillsState(), warnings
+        try:
+            backup.stat()
+        except FileNotFoundError:
+            return SkillsState(), warnings, _load_health(True)
+        except OSError as exc:
+            warnings.append(
+                f"{path.name} could not be read ({exc}); starting with an empty roster."
+            )
+            return SkillsState(), warnings, _load_health(False)
         return _recover_missing_primary(path, backup, warnings)
     except UnicodeDecodeError:
         # A bad UTF-8 decode is unreadable CONTENT, not an access failure --
@@ -568,7 +586,7 @@ def load(path: Path) -> tuple:
             f"{path.name} could not be read ({exc.strerror}); "
             "starting with an empty roster."
         )
-        return SkillsState(), warnings
+        return SkillsState(), warnings, _load_health(False)
     except ValueError:
         # _read_bounded's own size-cap check. TriffSkillsState.cs:104 groups
         # this (InvalidDataException, ReadBoundedText's own overflow) with
@@ -581,16 +599,22 @@ def load(path: Path) -> tuple:
         # re-rejected, and re-warned about on every single launch forever.
         return _recover_from_backup(path, warnings)
 
-    try:
-        # json.JSONDecodeError is a ValueError; UnicodeDecodeError from
-        # decoding text (as opposed to the read above) is handled the same
-        # way here too, for the same reason: bad content, not bad access.
-        return from_dict(json.loads(text)), warnings
-    except ValueError:
-        return _recover_from_backup(path, warnings)
+    return loaded, warnings, _load_health(not rewrite_required, rewrite_required)
 
 
-def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
+def load(path: Path) -> tuple:
+    """Read the roster. Returns (state, warnings) and never raises.
+
+    A warning here reaches the UI notices strip, so it is written for the
+    person reading it rather than for a log.
+    """
+    loaded, warnings, _health = load_with_health(path)
+    return loaded, warnings
+
+
+def _recover_missing_primary(
+    path: Path, backup: Path, warnings: list[str]
+) -> tuple[SkillsState, list[str], LoadHealth]:
     """The primary is gone but `.bak` is not: rebuild from it and restore
     the primary, then warn.
 
@@ -607,7 +631,7 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
     recovered = None
     for attempt in range(2):
         try:
-            recovered = from_dict(json.loads(_read_bounded(backup)))
+            recovered, _rewrite_required = _load_normalized_document(backup)
             break
         except ValueError:
             # The backup's own content is bad -- permanent, retrying reads
@@ -626,7 +650,7 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
             "not be read either; starting with an empty roster. Any "
             "characters you had added will need re-authorising."
         )
-        return SkillsState(), warnings
+        return SkillsState(), warnings, _load_health(False)
 
     # Write the recovered document back to *path* immediately. save() sees
     # no existing primary (there isn't one) so it will not touch `.bak` --
@@ -641,16 +665,18 @@ def _recover_missing_primary(path: Path, backup: Path, warnings: list) -> tuple:
             "app closes before the next successful save, this recovery "
             "will be lost."
         )
-        return recovered, warnings
+        return recovered, warnings, _load_health(False, rewrite_required=True)
 
     warnings.append(
         f"{path.name} was missing (likely an interrupted save) and was "
         f"recovered from its backup, {backup.name}."
     )
-    return recovered, warnings
+    return recovered, warnings, _load_health(True)
 
 
-def _recover_from_backup(path: Path, warnings: list) -> tuple:
+def _recover_from_backup(
+    path: Path, warnings: list[str]
+) -> tuple[SkillsState, list[str], LoadHealth]:
     """The corrupt-content path shared by every unreadable-CONTENT case in
     load(): move the bad primary aside, then try to rebuild from `.bak`.
 
@@ -664,7 +690,7 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
     recovered = None
     for attempt in range(2):
         try:
-            recovered = from_dict(json.loads(_read_bounded(backup)))
+            recovered, _rewrite_required = _load_normalized_document(backup)
             break
         except ValueError:
             # The backup's own content is bad (missing, not JSON, or over
@@ -687,7 +713,7 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
             f"{preserved or 'a copy'}; starting with an empty roster. "
             "Any characters you had added will need re-authorising."
         )
-        return SkillsState(), warnings
+        return SkillsState(), warnings, _load_health(False)
 
     if not preserved:
         # _preserve_corrupt's own os.replace failed, so the corrupt content
@@ -710,7 +736,7 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
             "to disk. If the app closes before the next successful save, "
             "this recovery will be lost."
         )
-        return recovered, warnings
+        return recovered, warnings, _load_health(False, rewrite_required=True)
 
     # TriffSkillsState.cs:118-119: write the recovered document back to
     # *path* immediately, before returning. _preserve_corrupt already moved
@@ -737,14 +763,14 @@ def _recover_from_backup(path: Path, warnings: list) -> tuple:
             "If the app closes before the next successful save, this "
             "recovery will be lost."
         )
-        return recovered, warnings
+        return recovered, warnings, _load_health(False, rewrite_required=True)
 
     warnings.append(
         f"Recovered {path.name} from backup after the main file could not "
         f"be read; it was preserved as {preserved or 'a copy'}. Anything "
         "saved since the previous write is gone."
     )
-    return recovered, warnings
+    return recovered, warnings, _load_health(True)
 
 
 def save(state: SkillsState, path: Path) -> None:

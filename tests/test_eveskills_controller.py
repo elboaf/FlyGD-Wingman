@@ -19,6 +19,7 @@ from wingman.eveauth.controller import (
     AccessTokenResult,
     AuthorityCharacter,
     AuthorityController,
+    AuthorizationCommandResult,
     MutationResult,
 )
 from wingman.eveskills import application
@@ -104,11 +105,11 @@ class FakeAuthority:
         token = "access-2" if rejected_token is not None else "access-1"
         return AccessTokenResult(token, "", False)
 
-    def authenticate_skills(self):
-        return MutationResult(True, True, "")
+    def start_full_authorization(self):
+        return AuthorizationCommandResult(True, "")
 
-    def cancel_auth(self):
-        pass
+    def cancel_authorization(self):
+        return AuthorizationCommandResult(True, "")
 
     def forget(self, character_id):
         character_id = int(character_id)
@@ -122,7 +123,8 @@ class FakeAuthority:
             self._participant.authority_removed(character_id)
         return MutationResult(True, True, "")
 
-    def register_participant(self, participant):
+    def register_participant(self, capability, participant):
+        assert capability == eveauth_application.SKILLS
         self._participant = participant
         participant.reconcile_characters(self.characters)
 
@@ -248,7 +250,7 @@ def build(
         now=now,
         **kwargs,
     )
-    authority.register_participant(controller)
+    authority.register_participant(eveauth_application.SKILLS, controller)
     pushed.clear()  # Registration reconciliation is startup, not a page event.
     return controller, pushed, alerts
 
@@ -406,7 +408,9 @@ def test_refresh_requests_only_skills_and_ignores_missing_fitting_scopes(tmp_pat
     assert controller.state_payload()["characters"][0]["needs_reauth"] is False
 
 
-def test_startup_reconciliation_save_warning_survives_until_route_read(tmp_path):
+def test_startup_reconciliation_save_warning_survives_until_route_read(
+    tmp_path, monkeypatch
+):
     """A pre-WebView alert is dropped, so startup failures belong in state."""
     authority = FakeAuthority([])
     controller, _pushed, _alerts = build(
@@ -417,7 +421,11 @@ def test_startup_reconciliation_save_warning_survives_until_route_read(tmp_path)
     # Recreate the first registration path because build() registers once.
     controller._reconciled_once = False
     controller._state.upsert(state_mod.Character(character_id=95))
-    controller._save_locked = lambda: False
+    monkeypatch.setattr(
+        state_mod,
+        "save",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk")),
+    )
 
     controller.reconcile_characters(())
 
@@ -425,6 +433,129 @@ def test_startup_reconciliation_save_warning_survives_until_route_read(tmp_path)
         "reconciliation could not be saved" in warning
         for warning in controller.state_payload()["warnings"]
     )
+
+
+def test_failed_addition_reconciliation_keeps_the_new_row_live_for_refresh(
+    tmp_path, monkeypatch
+):
+    authority = FakeAuthority([])
+    esi = FakeEsi()
+    controller, _pushed, alerts = build(
+        tmp_path,
+        authority=authority,
+        client=esi,
+        spawn=DirectSpawn(),
+    )
+    authority._characters[95] = AuthorityCharacter(
+        character_id=95,
+        character_name="Aiga",
+        owner_hash="owner",
+        scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+        authenticated_utc=T0,
+        needs_reauth=False,
+        generation=0,
+    )
+    original_save = state_mod.save
+    calls = 0
+
+    def fail_once(state, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk")
+        original_save(state, path)
+
+    monkeypatch.setattr(state_mod, "save", fail_once)
+
+    controller.reconcile_characters(authority.characters)
+
+    character = controller._state.find(95)
+    assert character is not None
+    assert character.fetched_utc == T0
+    assert authority.lifecycle_calls == [(95, eveauth_application.SKILLS)]
+    assert any(call[0].endswith("/skills/") for call in esi.calls)
+    assert alerts == [
+        (
+            "warning",
+            "Skills roster not saved",
+            "Shared EVE characters are available for this session, but the "
+            "Skills roster reconciliation could not be saved.",
+        )
+    ]
+
+
+def test_failed_mixed_reconciliation_defers_both_removal_and_addition_until_retry(
+    tmp_path, monkeypatch
+):
+    authority = FakeAuthority(
+        [
+            AuthorityCharacter(
+                character_id=42,
+                character_name="Old Pilot",
+                owner_hash="old-owner",
+                scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+                authenticated_utc=T0,
+                needs_reauth=False,
+                generation=0,
+            )
+        ]
+    )
+    esi = FakeEsi()
+    controller, pushed, alerts = build(
+        tmp_path,
+        characters=[with_snapshot(character_id=42)],
+        authority=authority,
+        client=esi,
+        spawn=DirectSpawn(),
+    )
+    authority._characters = {
+        95: AuthorityCharacter(
+            character_id=95,
+            character_name="New Pilot",
+            owner_hash="new-owner",
+            scopes=tuple(sorted(eveauth_application.SKILLS_SCOPES)),
+            authenticated_utc=T0,
+            needs_reauth=False,
+            generation=0,
+        )
+    }
+    original_save = state_mod.save
+    calls = 0
+
+    def fail_once(state, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk")
+        original_save(state, path)
+
+    monkeypatch.setattr(state_mod, "save", fail_once)
+
+    verification = controller.reconcile_characters(authority.characters)
+
+    assert verification.blocked_character_ids == frozenset({42})
+    assert controller._state.find(42) is not None
+    assert controller._state.find(95) is None
+    assert pushed == []
+    assert authority.lifecycle_calls == []
+    assert esi.calls == []
+    assert alerts == [
+        (
+            "warning",
+            "Skills roster not saved",
+            "Shared EVE characters are available for this session, but the "
+            "Skills roster reconciliation could not be saved.",
+        )
+    ]
+
+    controller.reconcile_characters(authority.characters)
+
+    assert controller._state.find(42) is None
+    assert controller._state.find(95) is not None
+    assert authority.lifecycle_calls == [(95, eveauth_application.SKILLS)]
+    assert any(handler == "onSkills" for handler, _payload in pushed)
+    skill_pushes = [payload for handler, payload in pushed if handler == "onSkills"]
+    assert skill_pushes[-1]["characters"][0]["character_id"] == 95
 
 
 def test_the_state_lock_is_re_entrant(tmp_path):
@@ -1720,7 +1851,7 @@ def test_a_character_forgotten_mid_refresh_stays_forgotten(tmp_path):
     controller = None
 
     def forget_during_the_fetch(path):
-        controller.forget(95)
+        controller._authority.forget(95)
 
     esi.on_get = forget_during_the_fetch
     controller, _, _ = build(
@@ -1807,58 +1938,38 @@ def test_a_refresh_resolves_plan_names_that_are_not_in_the_cache(tmp_path):
     assert controller._cache.get("navigation") == 3327
 
 
-# ----- forget -----------------------------------------------------------
+# ----- shared-authority forget integration -----------------------------
 
 
-def test_forget_removes_the_character_and_its_token_in_one_write(tmp_path):
+def test_authority_forget_removes_the_character_and_its_token_in_one_write(tmp_path):
     """The roster row and its wrapped refresh token live in the same
     document, so removing the row removes the token with it -- there is no
     separate credential store to leave an orphaned secret behind in."""
     controller, _, _ = build(tmp_path, characters=[with_snapshot()])
 
-    assert controller.forget(95) is True
+    assert controller._authority.forget(95) == MutationResult(True, True, "")
 
     assert controller.state_payload()["characters"] == []
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     assert reloaded.characters == []
 
 
-def test_forgetting_a_character_that_is_not_there_is_an_idempotent_success(tmp_path):
-    """The page can hold a stale roster across a refresh that already
-    dropped the row. A double click on forget must not be a failure."""
+def test_authority_forgetting_a_character_that_is_not_there_is_idempotent(tmp_path):
+    """The shared Forget action can race a stale roster. Forgetting an
+    already-removed character still reports success."""
     controller, _, _ = build(tmp_path)
 
-    assert controller.forget(95) is True
+    assert controller._authority.forget(95) == MutationResult(True, True, "")
 
 
-def test_forget_rejects_a_payload_that_is_not_an_id(tmp_path):
-    """Arrives from JavaScript, where a missing dataset attribute is
-    undefined -> None. Refused rather than coerced into some other
-    character's id."""
+def test_authority_forget_pushes_skills_state(tmp_path):
+    """Authority owns the command, but Skills still has to repaint when its
+    participant row disappears."""
     controller, pushed, _ = build(tmp_path, characters=[with_snapshot()])
 
-    assert controller.forget(None) is False
-    assert controller.forget("not-a-number") is False
-    assert controller.state_payload()["characters"] != []
-    assert pushed == []
-
-
-def test_forget_always_pushes(tmp_path):
-    """A removal the page never sees is a character that never goes away
-    on screen."""
-    controller, pushed, _ = build(tmp_path, characters=[with_snapshot()])
-
-    controller.forget(95)
+    controller._authority.forget(95)
 
     assert any(handler == "onSkills" for handler, _ in pushed)
-
-
-def test_forget_rejects_a_non_positive_id(tmp_path):
-    controller, _, _alerts = build(tmp_path, characters=[with_snapshot()])
-
-    assert controller.forget(0) is False
-    assert controller.forget(-5) is False
-    assert controller.state_payload()["characters"][0]["character_id"] == 95
 
 
 def test_prepare_forget_is_check_only_until_authority_removal(tmp_path):
@@ -1872,6 +1983,47 @@ def test_prepare_forget_is_check_only_until_authority_removal(tmp_path):
 
     assert result == MutationResult(True, True, "")
     assert controller._state.find(95) is not None
+
+
+def test_failed_authority_removal_save_reports_the_exact_blocked_character(
+    tmp_path, monkeypatch
+):
+    character = state_mod.Character(character_id=42)
+    controller, _pushed, _alerts = build(tmp_path, characters=(character,))
+    monkeypatch.setattr(
+        state_mod,
+        "save",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk")),
+    )
+
+    result = controller.authority_removed(42)
+
+    assert result == MutationResult(True, False, "Could not save Skills cleanup.")
+    assert controller._state.find(42) is not None
+    verification = controller.reconcile_characters(tuple())
+    assert verification.verified is True
+    assert verification.blocked_character_ids == frozenset({42})
+
+
+def test_successful_retry_clears_the_skills_cleanup_block(tmp_path, monkeypatch):
+    character = state_mod.Character(character_id=42)
+    controller, _pushed, _alerts = build(tmp_path, characters=(character,))
+    original_save = state_mod.save
+    calls = 0
+
+    def fail_once(state, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk")
+        original_save(state, path)
+
+    monkeypatch.setattr(state_mod, "save", fail_once)
+
+    assert controller.authority_removed(42).persisted is False
+    assert controller._state.find(42) is not None
+    assert controller.reconcile_characters(tuple()).blocked_character_ids == frozenset()
+    assert controller._state.find(42) is None
 
 
 # ----- interactive sign-in ------------------------------------------------
@@ -1890,8 +2042,8 @@ class FakeListener:
     `bound` records the order events happen in relative to the browser
     launch, which is the only thing the race-avoidance test cares about.
     `on_wait`, when given, runs from inside `wait()` -- the same spot a
-    real cancel_auth() call would land in, from another thread, while the
-    real listener blocks on accept().
+    real cancel_authorization() call would land in, from another thread,
+    while the real listener blocks on accept().
     """
 
     def __init__(self, events, callback=None, error_to_raise=None, on_wait=None):
@@ -1914,8 +2066,9 @@ class FakeListener:
     def wait(self, expected_state, *, timeout_s=None):
         if self.on_wait is not None:
             self.on_wait()
-        # Checked AFTER on_wait(), since that is where a real cancel_auth()
-        # call lands from another thread while the real listener blocks in
+        # Checked AFTER on_wait(), since that is where a real
+        # cancel_authorization() call lands from another thread while the
+        # real listener blocks in
         # accept(). Ignoring this and falling through to error_to_raise or
         # the callback -- the old behaviour -- meant a test built on top of
         # a cancelling on_wait never actually reached the CallbackCancelled
@@ -1995,13 +2148,36 @@ def build_auth(
         spawn=kwargs.pop("spawn", DirectSpawn()),
         **kwargs,
     )
+
+    class CleanFittingsParticipant:
+        def prepare_forget(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def authority_removed(self, character_id):
+            del character_id
+            return MutationResult(True, True, "")
+
+        def grant_invalidated(self, character_id):
+            del character_id
+
+        def reconcile_characters(self, characters):
+            del characters
+            from wingman.eveauth import CleanupVerification
+
+            return CleanupVerification(True, frozenset())
+
+    controller._authority.register_participant(
+        eveauth_application.FITTINGS,
+        CleanFittingsParticipant(),
+    )
     return controller, pushed, alerts, events, launched
 
 
 def test_a_successful_sign_in_adds_the_character(tmp_path, monkeypatch):
     controller, _pushed, alerts, _, _ = build_auth(tmp_path, monkeypatch)
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     characters = controller.state_payload()["characters"]
     assert [c["character_id"] for c in characters] == [95]
@@ -2017,7 +2193,7 @@ def test_the_listener_is_bound_before_the_browser_launches(tmp_path, monkeypatch
         tmp_path, monkeypatch, events=events
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert events[0] == "bound"
     assert launched, "the browser was never launched"
@@ -2030,7 +2206,7 @@ def test_a_successful_sign_in_kicks_off_a_refresh(tmp_path, monkeypatch):
     esi = FakeEsi()
     controller, _pushed, _, _, _ = build_auth(tmp_path, monkeypatch, client=esi)
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"][0]["fetched_utc"] != ""
 
@@ -2042,27 +2218,27 @@ def test_only_one_interactive_sign_in_at_a_time(tmp_path, monkeypatch):
         tmp_path, monkeypatch, spawn=DeferredSpawn()
     )
 
-    controller.authenticate()
-    controller.authenticate()
+    controller._authority.start_full_authorization()
+    controller._authority.start_full_authorization()
 
     assert any("already in progress" in title for _, title, _ in alerts)
 
 
-def test_cancel_auth_cancels_the_listener(tmp_path, monkeypatch):
-    """cancel_auth() reaches the listener while it is still blocked in
-    wait() -- the same spot a real accept() loop parks in for up to five
-    minutes."""
+def test_cancel_authorization_cancels_the_listener(tmp_path, monkeypatch):
+    """cancel_authorization() reaches the listener while it is still
+    blocked in wait() -- the same spot a real accept() loop parks in for
+    up to five minutes."""
     events = []
     controller = None
 
     def cancel_from_inside_wait():
-        controller.cancel_auth()
+        controller._authority.cancel_authorization()
 
     controller, _, _, events, _ = build_auth(
         tmp_path, monkeypatch, events=events, on_wait=cancel_from_inside_wait
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert "cancelled" in events
 
@@ -2074,7 +2250,7 @@ def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
         callback=loopback_mod.Callback(code="", error="access_denied"),
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"] == []
     assert any("refused" in title for _, title, _ in alerts)
@@ -2106,7 +2282,7 @@ def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypat
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2136,7 +2312,7 @@ def test_re_authentication_still_kicks_off_a_skills_refresh(tmp_path, monkeypatc
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert [call[0] for call in esi.calls] == [
         "/v4/characters/95/skills/",
@@ -2145,10 +2321,14 @@ def test_re_authentication_still_kicks_off_a_skills_refresh(tmp_path, monkeypatc
     ]
 
 
-def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
-    """A different account now owns this character. Its cached skills,
-    queue and etags describe someone else's training."""
-    controller, _, _, _, _ = build_auth(
+def test_an_ownership_change_refuses_the_full_auth_adapter_unchanged(
+    tmp_path, monkeypatch
+):
+    """Task 5's generic full-authorization flow no longer treats the old
+    row-specific sign-in as permission to replace a transferred identity.
+    Two present, unequal owner hashes now refuse unchanged and tell the
+    user to forget first, leaving the cached snapshot intact."""
+    controller, _, alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
         characters=[with_snapshot(attributes_etag='"old-attrs"')],
@@ -2166,25 +2346,25 @@ def test_an_ownership_change_clears_the_cached_snapshot(tmp_path, monkeypatch):
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
-    assert found.active_levels == {}
-    assert found.trained_levels == {}
+    assert found.active_levels == {3327: 3}
+    assert found.trained_levels == {3327: 3}
     assert found.queue == ()
-    assert found.fetched_utc is None
-    assert found.skills_etag == ""
-    assert found.queue_etag == ""
-    assert found.skill_points == {}
-    assert found.skill_points_complete is False
-    assert found.attributes == {}
-    assert found.attributes_fetched_utc is None
+    assert found.fetched_utc == T0
+    assert found.skills_etag == '"old-s"'
+    assert found.queue_etag == '"old-q"'
+    assert found.skill_points == {3327: 1000}
+    assert found.skill_points_complete is True
+    assert found.attributes == ATTRIBUTES_BODY
+    assert found.attributes_fetched_utc == T0
     assert found.attributes_error == ""
-    assert found.attributes_etag == ""
-    assert found.error == (
-        "Character ownership changed; cached skill data was cleared."
-    )
+    assert found.attributes_etag == '"old-attrs"'
+    assert found.error == ""
+    assert controller._authority.character(95).owner_hash == "old-hash"
+    assert any("forget" in body.lower() for _, _, body in alerts)
 
 
 def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatch):
@@ -2200,7 +2380,7 @@ def test_signing_in_a_new_character_past_the_cap_is_refused(tmp_path, monkeypatc
         validate_token=lambda *a, **k: IDENTITY,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("Too many characters" in title for _, title, _ in alerts)
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
@@ -2237,7 +2417,7 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
         validate_token=lambda *a, **k: blank_identity,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2255,7 +2435,7 @@ def test_a_sign_in_save_failure_rolls_back_a_new_character(tmp_path, monkeypatch
 
     controller._authority._save_authority = fail_authority_save
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"] == []
     assert alerts and alerts[-1][0] == "warning"
@@ -2278,7 +2458,7 @@ def test_a_sign_in_save_failure_rolls_back_an_existing_character(tmp_path, monke
 
     controller._authority._save_authority = fail_authority_save
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     reloaded, _ = state_mod.load(tmp_path / "eve_skills.json")
     found = reloaded.find(95)
@@ -2293,7 +2473,7 @@ def test_forgetting_a_character_mid_auth_is_not_undone(tmp_path, monkeypatch):
     controller = None
 
     def forget_during_wait():
-        controller.forget(95)
+        controller._authority.forget(95)
 
     controller, _, alerts, _, _ = build_auth(
         tmp_path,
@@ -2303,7 +2483,7 @@ def test_forgetting_a_character_mid_auth_is_not_undone(tmp_path, monkeypatch):
         on_wait=forget_during_wait,
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert controller.state_payload()["characters"] == []
     assert any("forgotten" in body.lower() for _, _, body in alerts)
@@ -2315,13 +2495,13 @@ def test_a_cancelled_sign_in_produces_no_alert(tmp_path, monkeypatch):
     controller = None
 
     def cancel_from_inside_wait():
-        controller.cancel_auth()
+        controller._authority.cancel_authorization()
 
     controller, _, alerts, _, _ = build_auth(
         tmp_path, monkeypatch, on_wait=cancel_from_inside_wait
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert alerts == []
     assert controller.state_payload()["characters"] == []
@@ -2332,7 +2512,7 @@ def test_a_timed_out_sign_in_alerts(tmp_path, monkeypatch):
         tmp_path, monkeypatch, listener_error=loopback_mod.CallbackTimeout()
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("timed out" in title.lower() for _, title, _ in alerts)
 
@@ -2344,7 +2524,7 @@ def test_an_oauth_error_during_exchange_alerts(tmp_path, monkeypatch):
         sso=FakeAuthSso(raises=sso_mod.OAuthError(400, "invalid_grant", "bad code")),
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("refused" in title.lower() for _, title, _ in alerts)
     assert controller.state_payload()["characters"] == []
@@ -2358,7 +2538,7 @@ def test_a_jwt_error_during_validation_alerts(tmp_path, monkeypatch):
         tmp_path, monkeypatch, validate_token=raising_validate
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("cannot trust" in title.lower() for _, title, _ in alerts)
     assert controller.state_payload()["characters"] == []
@@ -2372,31 +2552,10 @@ def test_an_unexpected_exception_during_sign_in_alerts(tmp_path, monkeypatch):
         tmp_path, monkeypatch, validate_token=raising_validate
     )
 
-    controller.authenticate()
+    controller._authority.start_full_authorization()
 
     assert any("Sign-in failed" in title for _, title, _ in alerts)
     assert controller.state_payload()["characters"] == []
-
-
-def test_a_spawn_failure_releases_the_latch(tmp_path, monkeypatch):
-    """Nothing runs _auth_worker's own finally if starting the thread
-    itself raises -- authenticate() has to release the latch and clear the
-    in-progress flag itself in that window, or sign-in is dead until
-    restart."""
-
-    class RaisingSpawn:
-        def __call__(self, target, daemon=True):
-            raise OSError("could not start thread")
-
-    controller, _, alerts, _, _ = build_auth(
-        tmp_path, monkeypatch, spawn=RaisingSpawn()
-    )
-
-    controller.authenticate()
-
-    assert any("Sign-in failed" in title for _, title, _ in alerts)
-    assert controller._authority.auth_in_progress is False
-    assert controller._authority._auth_latch.acquire(blocking=False)
 
 
 # ----- character_detail ---------------------------------------------------

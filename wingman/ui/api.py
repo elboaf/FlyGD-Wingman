@@ -103,6 +103,12 @@ EVE_CONFIRM_TIMEOUT_S = 300.0
 # and click, short enough that a wedged page does not make Quit look broken.
 QUIT_CONFIRM_TIMEOUT_S = 60.0
 
+# The sig bar's focus-gate cadence. Sub-second like the preview sweep, so
+# alt-tabbing between clients flips the bar about as fast as the previews
+# flip their focus rings. Each tick is one GetForegroundWindow read plus a
+# settings lookup; a native ShowWindow only happens on a real transition.
+SIG_BAR_FOCUS_POLL_S = 0.7
+
 # set_alert_event's writable fields. Kept as a set to check against rather
 # than duplicated per-field range checks -- settings.validated_alerts owns
 # the ranges (cooldown_s/pulses clamping, color/sound/flash_rate
@@ -113,6 +119,14 @@ QUIT_CONFIRM_TIMEOUT_S = 60.0
 _ALERT_EVENT_FIELDS = frozenset(
     {"enabled", "cooldown_s", "pulses", "flash_rate", "color", "sound"}
 )
+
+
+class _FleetVisibilityNoChange(Exception):
+    """End a settings transaction without turning an idempotent request into a save."""
+
+
+class _FleetVisibilityRefused(Exception):
+    """Reject a visibility mutation from inside its serialized settings transaction."""
 
 
 def _folder_dialog_kind():
@@ -198,6 +212,42 @@ def _with_fetch_labels(payload: dict) -> dict:
     return out
 
 
+# Shared authority warnings come from startup migration/load paths and are
+# replayed on demand through a state read, not a one-shot dialog. Keep them
+# bounded per entry and in count, matching the Skills route's payload-sized
+# posture and the authority controller's 500-character notice cap.
+EVE_CHARACTERS_MAX_WARNINGS = 20
+EVE_CHARACTERS_MAX_TEXT_CHARS = 500
+
+
+def _bound_eve_characters_text(text: str) -> str:
+    return text[:EVE_CHARACTERS_MAX_TEXT_CHARS]
+
+
+def _bound_eve_characters_warnings(warnings=None) -> list[str]:
+    if warnings is None:
+        return []
+    return [
+        _bound_eve_characters_text(warning)
+        for warning in warnings[:EVE_CHARACTERS_MAX_WARNINGS]
+    ]
+
+
+def _empty_eve_characters_state(warnings=None) -> dict:
+    """The shared character-management answer when no authority exists."""
+    raw_warnings = list(
+        warnings or ["The shared EVE character authority is unavailable."]
+    )
+    return {
+        "available": False,
+        "auth_configured": eveauth_application.is_configured(),
+        "authorization_activity": "idle",
+        "authorization_notice": "",
+        "characters": [],
+        "warnings": _bound_eve_characters_warnings(raw_warnings),
+    }
+
+
 def _empty_skills_state(warnings=None) -> dict:
     """The state payload when there is no controller at all.
 
@@ -207,8 +257,6 @@ def _empty_skills_state(warnings=None) -> dict:
     throws inside a click handler with no console attached.
     """
     return {
-        "auth_configured": False,
-        "auth_in_progress": False,
         "refresh_in_flight": False,
         "selected_plan_name": "",
         "selected_group": "",
@@ -604,6 +652,16 @@ class Api:
         # stay private or pywebview recursively walks its WinForms native.
         self._fleetbar_window = None
         self._fleetbar_ready = False
+        # LOCK ORDER: shutdown_lock -> _fleetbar_lifecycle_lock ->
+        # _fleet_presentation_lock. The settings save lock and this lock are
+        # never nested, and evaluate_js is never called while this lock is
+        # held. A dispatcher callback may otherwise race a mode transition
+        # and restore rows from the retired telemetry activation.
+        self._fleet_presentation_lock = threading.Lock()
+        self._fleet_expected_generation = None  # rejecting sentinel
+        self._fleet_presentation_revision = 0
+        self._fleet_roster_signature = None
+        self._fleet_pending_seen = []
         self._fleet_snapshot = None
         self._fleet_unsubscribe = None
         # pywebview serves bridge calls concurrently. Window construction,
@@ -621,6 +679,11 @@ class Api:
         # gate; updater handoff marks quitting before it requests teardown.
         self._sigbar_lifecycle_lock = threading.RLock()
         self._sigbar_quitting = False
+        # The focus-gate timer (see _schedule_sig_bar_focus_poll): one
+        # chained threading.Timer while the bar is enabled, None while not.
+        # Guarded by _sigbar_lifecycle_lock so arm/disarm never interleaves
+        # with a toggle or shutdown mid-decision.
+        self._sigbar_focus_timer = None
         # Injectable purely to make ids predictable in a test that needs to
         # assert on one; production never overrides it.
         self._id_factory = id_factory
@@ -3651,6 +3714,19 @@ class Api:
             # reads as broken. The page pulls nothing at load, so this push
             # is its content.
             self._push_eve_status()
+            # Arm the focus gate ONLY on a successful reveal, then apply it
+            # once so an enable while a non-allowed client holds the
+            # foreground hides the freshly revealed bar immediately
+            # instead of one tick later. A toggle that was refused
+            # (shutdown won the lifecycle) must not arm: the chain
+            # outlives the call and would tick at a quitting process.
+            self._schedule_sig_bar_focus_poll()
+            self._apply_sig_bar_focus_gate()
+        elif not on:
+            # Disarm on a clean toggle-off. A refused toggle-on leaves any
+            # existing chain alone -- if the bar never showed there is
+            # nothing to disarm, and shutdown disarms its own way.
+            self._schedule_sig_bar_focus_poll()
         logger.info(
             "Sig bar toggle done: enabled=%s, visible=%s.",
             self._state.settings["sig_bar"]["enabled"],
@@ -3658,6 +3734,101 @@ class Api:
         )
         self._push_sig_bar_state()
         return self._field_ok()
+
+    def _sig_bar_focus_allows(self) -> bool:
+        """Whether the foreground may currently show the sig bar.
+
+        The rule the feature ships with: `sig_bar.enabled` is the master
+        toggle, and the eve_bookmarks window checkboxes are the per-client
+        allowlist -- the bar shows only while an EVE client whose checkbox
+        is checked holds the foreground.
+
+        The inert case is "no box CHECKED", not "map empty": the bookmarks
+        tab persists every live window as an entry, unchecked boxes stored
+        as False, so a user who has merely OPENED that tab with EVE
+        running has an all-False map. Reading that as "scoped" hid the
+        bar from a user who never opted in -- shipped as "the bar does
+        not show at all" in the first test build. The gate engages only
+        when at least one client is actually checked.
+
+        Identity is the full `EVE - <name>` title, exactly the key the
+        bookmarks tab persists -- no name stripping here, or a client at
+        character-select (whose title is not yet an engine title) would
+        drift from the checkbox that names it.
+        """
+        windows = (self._state.settings.get("eve_bookmarks") or {}).get("windows")
+        if not windows or not any(windows.values()):
+            return True
+        title = evewindows.focused_eve_title()
+        return bool(title and windows.get(title))
+
+    def _apply_sig_bar_focus_gate(self) -> None:
+        """Show/hide the live bar to match the focus rule, if it differs.
+
+        Runs on the focus timer's thread and after every toggle; both are
+        off the UI thread, and reveal_bar/hide_bar are plain ShowWindow
+        calls that pump nothing (ui/sigbar.py's native-show note). The
+        lifecycle lock keeps a toggle or a shutdown from interleaving with
+        the decision -- a gate that re-shows a bar the user just toggled
+        off, or reveals one quitting is destroying.
+        """
+        from wingman.ui import sigbar
+
+        if not (self._state.settings.get("sig_bar") or {}).get("enabled"):
+            return
+        with self._sigbar_lifecycle_lock:
+            if self._sigbar_quitting:
+                return
+            bar = self._sigbar_window
+            if not sigbar.is_alive(bar):
+                return
+            allowed = self._sig_bar_focus_allows()
+            if allowed and not sigbar.is_visible(bar):
+                sigbar.reveal_bar(bar)
+            elif not allowed and sigbar.is_visible(bar):
+                sigbar.hide_bar(bar)
+
+    def _schedule_sig_bar_focus_poll(self) -> None:
+        """(Re)arm the chained focus-gate timer, or disarm it.
+
+        Called after every toggle, at launch restore, and at shutdown: the
+        timer exists exactly while the bar is enabled and the process is
+        not quitting. Chained threading.Timers rather than one loop
+        thread, matching sigbar.restore's timer idiom: each tick is
+        self-scheduling, so disarm is always just `cancel()`.
+
+        RLock note: the tick re-enters this method, and the lock is an
+        RLock by design (toggle_sig_bar holds the boundary while
+        sigbar.create enforces it independently), so the re-entry is safe.
+        """
+        with self._sigbar_lifecycle_lock:
+            if self._sigbar_focus_timer is not None:
+                self._sigbar_focus_timer.cancel()
+                self._sigbar_focus_timer = None
+            enabled = bool((self._state.settings.get("sig_bar") or {}).get("enabled"))
+            if self._sigbar_quitting or not enabled:
+                return
+            timer = threading.Timer(SIG_BAR_FOCUS_POLL_S, self._sig_bar_focus_tick)
+            # Daemon, unlike sigbar.restore's one-shot: this chain lives
+            # for the session and re-arms itself, and a test (or a
+            # shutdown path that somehow skips the disarm) must never park
+            # interpreter exit on the next tick.
+            timer.daemon = True
+            self._sigbar_focus_timer = timer
+        timer.start()
+
+    def _sig_bar_focus_tick(self) -> None:
+        """One focus-gate cadence: re-arm first, then decide.
+
+        Re-arming before the gate runs keeps one exception in the gate
+        from killing the chain for the rest of the session -- the next
+        tick still fires, and the log carries the failure.
+        """
+        self._schedule_sig_bar_focus_poll()
+        try:
+            self._apply_sig_bar_focus_gate()
+        except Exception:
+            logger.exception("sig bar focus gate failed")
 
     @staticmethod
     def _sig_bar_alive(bar) -> bool:
@@ -3749,14 +3920,63 @@ class Api:
 
     # ----- floating Fleet DPS/EWAR bar ---------------------------------
 
-    def fleet_bar_settings(self) -> dict:
-        """Copy of the persisted window state for both main-page toggles."""
-        return dict(self._state.settings.get("fleet_bar") or {})
+    def _next_fleet_revision_locked(self) -> int:
+        self._fleet_presentation_revision += 1
+        return self._fleet_presentation_revision
 
-    def _push_fleet_bar_state(self) -> None:
-        self._push("onFleetBarState", self.fleet_bar_settings())
+    @staticmethod
+    def _fleet_unique_names(names) -> list[str]:
+        """Keep the first spelling and order from one persisted roster tier."""
+        return list(dict.fromkeys(name for name in names if isinstance(name, str)))
 
-    def _fleet_payload(self, snapshot) -> dict:
+    def _fleet_characters_locked(self, section: dict) -> list[dict]:
+        snapshot = self._fleet_snapshot
+        running = None if snapshot is None else {row.character for row in snapshot.rows}
+        names = set(section.get("seen") or ())
+        names.update(section.get("hidden") or ())
+        names.update(self._fleet_pending_seen)
+        if running is not None:
+            names.update(running)
+        hidden = set(section.get("hidden") or ())
+        key = (
+            (lambda name: (name.casefold(), name))
+            if running is None
+            else (lambda name: (name not in running, name.casefold(), name))
+        )
+        return [
+            {
+                "name": name,
+                "running": None if running is None else name in running,
+                "visible": name not in hidden,
+            }
+            for name in sorted(names, key=key)
+            if isinstance(name, str)
+        ]
+
+    def _fleet_settings_payload_locked(self, section: dict, revision: int) -> dict:
+        payload = {
+            "enabled": bool(section.get("enabled")),
+            "x": section.get("x"),
+            "y": section.get("y"),
+            "seen": list(section.get("seen") or ()),
+            "hidden": list(section.get("hidden") or ()),
+            "revision": revision,
+        }
+        payload["characters"] = self._fleet_characters_locked(section)
+        return payload
+
+    def _fleet_display_payload_locked(
+        self, snapshot, section: dict, revision: int
+    ) -> dict:
+        if snapshot is None:
+            return {
+                "rows": [],
+                "running_count": 0,
+                "revision": revision,
+                "stream_health": {"state": "stopped", "detail": None},
+                "metric_error": None,
+            }
+        hidden = set(section.get("hidden") or ())
         return {
             "rows": [
                 {
@@ -3766,7 +3986,10 @@ class Api:
                     "log_status": row.log_status,
                 }
                 for row in snapshot.rows
+                if row.character not in hidden
             ],
+            "running_count": len(snapshot.rows),
+            "revision": revision,
             "stream_health": {
                 "state": snapshot.stream_health.state,
                 "detail": snapshot.stream_health.detail,
@@ -3774,22 +3997,38 @@ class Api:
             "metric_error": snapshot.metric_error,
         }
 
+    def _fleet_payloads_locked(self) -> tuple[dict, dict]:
+        section = dict(self._state.settings.get("fleet_bar") or {})
+        revision = self._fleet_presentation_revision
+        return (
+            self._fleet_settings_payload_locked(section, revision),
+            self._fleet_display_payload_locked(self._fleet_snapshot, section, revision),
+        )
+
+    def fleet_bar_settings(self) -> dict:
+        """Immutable Fleet settings and roster state for the main-page controls."""
+        with self._fleet_presentation_lock:
+            settings_payload, _ = self._fleet_payloads_locked()
+        return settings_payload
+
+    def _push_fleet_bar_state(self, payload: dict | None = None) -> None:
+        self._push(
+            "onFleetBarState",
+            payload if payload is not None else self.fleet_bar_settings(),
+        )
+
     def fleet_bar_snapshot(self) -> dict:
         """Current complete display payload, also used by the bar at boot."""
-        snapshot = self._fleet_snapshot
-        if snapshot is None:
-            return {
-                "rows": [],
-                "stream_health": {"state": "stopped", "detail": None},
-                "metric_error": None,
-            }
-        return self._fleet_payload(snapshot)
+        with self._fleet_presentation_lock:
+            _, display_payload = self._fleet_payloads_locked()
+        return display_payload
 
-    def _push_fleet_snapshot(self) -> None:
+    def _push_fleet_snapshot(self, payload: dict | None = None) -> None:
         bar = self._fleetbar_window
         if bar is None:
             return
-        payload = self.fleet_bar_snapshot()
+        if payload is None:
+            payload = self.fleet_bar_snapshot()
         script = (
             f"window.onFleetSnapshot && window.onFleetSnapshot({json.dumps(payload)})"
         )
@@ -3798,10 +4037,215 @@ class Api:
         except Exception:
             logger.debug("Fleet Bar snapshot push failed", exc_info=True)
 
+    def _remember_fleet_roster(self, current: list[str], pending: list[str]) -> bool:
+        """Persist a roster transition without holding the presentation lock.
+
+        The current snapshot wins over names pending from a failed earlier save,
+        which win over the persisted memory.  A metric-only publication never
+        reaches here, so a disk error is retried only when the roster changes.
+        """
+        candidate = []
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                section = dict(doc.get("fleet_bar") or {})
+                persisted = list(section.get("seen") or ())
+                candidate = self._fleet_unique_names([*current, *pending, *persisted])
+                normalized = settings_mod.validated_fleet_bar(
+                    {**section, "seen": candidate}
+                )["seen"]
+                if normalized == persisted:
+                    candidate = normalized
+                    raise _FleetVisibilityNoChange()
+                section["seen"] = normalized
+                doc["fleet_bar"] = section
+                candidate = normalized
+        except _FleetVisibilityNoChange:
+            pass
+        except OSError:
+            logger.exception("Could not persist the Fleet character roster")
+            return False
+        with self._fleet_presentation_lock:
+            saved = set(candidate)
+            self._fleet_pending_seen = [
+                name for name in self._fleet_pending_seen if name not in saved
+            ]
+        return True
+
     def _receive_fleet_snapshot(self, snapshot) -> None:
         """Coordinator subscriber; safe on its dispatcher thread."""
-        self._fleet_snapshot = snapshot
-        self._push_fleet_snapshot()
+        with self._fleet_presentation_lock:
+            if (
+                snapshot.activation_generation == 0
+                or snapshot.activation_generation != self._fleet_expected_generation
+            ):
+                return
+            signature = tuple(row.character for row in snapshot.rows)
+            roster_changed = signature != self._fleet_roster_signature
+            self._fleet_snapshot = snapshot
+            self._next_fleet_revision_locked()
+            self._fleet_roster_signature = signature
+            if roster_changed:
+                self._fleet_pending_seen = self._fleet_unique_names(
+                    [*self._fleet_pending_seen, *signature]
+                )
+                current = sorted(signature, key=lambda name: (name.casefold(), name))
+                pending = list(self._fleet_pending_seen)
+        if roster_changed:
+            self._remember_fleet_roster(current, pending)
+            with self._fleet_presentation_lock:
+                settings_payload, display_payload = self._fleet_payloads_locked()
+            self._push_fleet_bar_state(settings_payload)
+        else:
+            display_payload = self.fleet_bar_snapshot()
+        # pywebview can synchronously enter page code, so the presentation
+        # lock protects state only and is deliberately released before JS.
+        self._push_fleet_snapshot(display_payload)
+
+    def set_fleet_bar_character_visible(self, name, visible) -> dict:
+        """Persist one exact character visibility choice without touching Preview."""
+        if not isinstance(name, str) or not isinstance(visible, bool):
+            return self._fleet_visibility_result(
+                False, "Choose a character from the Fleet list."
+            )
+        with self._fleet_presentation_lock:
+            section = dict(self._state.settings.get("fleet_bar") or {})
+            known = {
+                character["name"]
+                for character in self._fleet_characters_locked(section)
+            }
+        if name not in known:
+            return self._fleet_visibility_result(
+                False, "Choose a character from the Fleet list."
+            )
+        changed = False
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                section = dict(doc.get("fleet_bar") or {})
+                hidden = list(section.get("hidden") or ())
+                if visible:
+                    updated = [item for item in hidden if item != name]
+                    if updated == hidden:
+                        raise _FleetVisibilityNoChange()
+                else:
+                    if name in hidden:
+                        raise _FleetVisibilityNoChange()
+                    if len(hidden) >= 64:
+                        raise _FleetVisibilityRefused(
+                            "Show a hidden character before hiding another."
+                        )
+                    updated = [*hidden, name]
+                section["hidden"] = updated
+                doc["fleet_bar"] = section
+                changed = True
+        except _FleetVisibilityNoChange:
+            return self._fleet_visibility_result(True, None)
+        except _FleetVisibilityRefused as exc:
+            return self._fleet_visibility_result(False, str(exc))
+        except OSError:
+            logger.exception("Could not persist Fleet character visibility")
+            return self._fleet_visibility_result(
+                False, "Could not save Fleet character visibility."
+            )
+        if changed:
+            with self._fleet_presentation_lock:
+                self._next_fleet_revision_locked()
+                settings_payload, display_payload = self._fleet_payloads_locked()
+            self._push_fleet_bar_state(settings_payload)
+            self._push_fleet_snapshot(display_payload)
+            return {
+                "applied": True,
+                "persisted": True,
+                "error": None,
+                "state": settings_payload,
+            }
+        raise AssertionError("Fleet visibility transaction finished without a result")
+
+    def _fleet_visibility_result(self, applied: bool, error: str | None) -> dict:
+        return {
+            "applied": applied,
+            "persisted": applied,
+            "error": error,
+            "state": self.fleet_bar_settings(),
+        }
+
+    def _close_fleet_presentation(self):
+        """Reject callbacks and retain enough state to undo an unsaved toggle."""
+        with self._fleet_presentation_lock:
+            accepted = (
+                self._fleet_expected_generation,
+                self._fleet_snapshot,
+                self._fleet_roster_signature,
+                self._fleet_presentation_revision,
+            )
+            self._fleet_expected_generation = None
+            self._fleet_snapshot = None
+            self._fleet_roster_signature = None
+            # Pending names survive activation boundaries until their roster
+            # write succeeds; only the accepted snapshot/signature is stale.
+            self._next_fleet_revision_locked()
+        return accepted
+
+    def _restore_fleet_presentation(self, accepted) -> None:
+        """Restore a closed acceptance after its settings write was refused."""
+        with self._fleet_presentation_lock:
+            (
+                self._fleet_expected_generation,
+                self._fleet_snapshot,
+                self._fleet_roster_signature,
+                _revision,
+            ) = accepted
+            # Closing may already have been observed by a page. Restoring a
+            # failed lifecycle transition is a new semantic presentation, not
+            # permission to reuse an older revision.
+            self._next_fleet_revision_locked()
+
+    def _install_fleet_generation(self, generation: int | None) -> None:
+        """Open acceptance for one coordinator reservation, still on WAITING."""
+        with self._fleet_presentation_lock:
+            self._fleet_expected_generation = generation
+            self._fleet_snapshot = None
+            self._fleet_roster_signature = None
+            self._next_fleet_revision_locked()
+
+    def _requested_fleet_generation(self) -> int | None:
+        """Read the coordinator reservation without letting recovery re-close Fleet."""
+        if self._telemetry is None:
+            return None
+        try:
+            return self._telemetry.requested_fleet_generation()
+        except Exception:
+            logger.exception("Could not read requested Fleet telemetry generation")
+            return None
+
+    def _reconcile_fleet_generation(self, *, transition: bool) -> int | None:
+        """Reconcile Fleet without allowing a retired callback through the handoff."""
+        if transition:
+            # Startup enters through here too. A caller that must persist a
+            # transition closes first so it can restore this acceptance on a
+            # write failure; this second close keeps direct callers safe.
+            self._close_fleet_presentation()
+        failed = False
+        generation = None
+        try:
+            generation = self._reconcile_eve_runtime()
+        except Exception:
+            # The setting is already durable. Preserve that choice, reserve
+            # the coordinator's requested generation, and leave the bar in
+            # WAITING instead of reviving an older accepted snapshot.
+            failed = True
+            logger.exception("Fleet telemetry reconciliation failed")
+        finally:
+            if generation is None:
+                generation = self._requested_fleet_generation()
+            # No failure path may leave the rejecting sentinel installed.
+            self._install_fleet_generation(generation)
+        if (
+            not failed
+            and self._telemetry is not None
+            and self.fleet_bar_settings().get("enabled")
+        ):
+            self._receive_fleet_snapshot(self._telemetry.snapshot())
+        return generation
 
     def toggle_fleet_bar(self, on) -> dict:
         """Serialize the persisted/runtime/window transition."""
@@ -3814,13 +4258,26 @@ class Api:
         from wingman.ui import fleetbar
 
         previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
+        accepted = None
         if on != previous:
-            # A snapshot belongs to one enabled generation. Re-enabling
-            # opens on WAITING until the coordinator publishes fresh state,
-            # never on rows cached before the disabled interval.
-            self._fleet_snapshot = None
-        settings_mod.update_section(self._state.settings, "fleet_bar", {"enabled": on})
-        self._reconcile_eve_runtime()
+            # Close before persistence. The dispatcher can call back while
+            # settings saves, but it sees the rejecting sentinel rather than
+            # the prior activation. This never nests save and presentation
+            # locks: _close_fleet_presentation() returns before update_section.
+            accepted = self._close_fleet_presentation()
+        try:
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"enabled": on}
+            )
+        except OSError:
+            logger.exception("Could not persist the Fleet Bar setting")
+            if accepted is not None:
+                self._restore_fleet_presentation(accepted)
+            return self._field_refused("Could not save the Fleet Bar setting.")
+        if on != previous:
+            self._reconcile_fleet_generation(transition=True)
+        else:
+            self._reconcile_eve_runtime()
         bar = self._fleetbar_window
         try:
             if on:
@@ -3846,14 +4303,26 @@ class Api:
                     except Exception:
                         logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
                 # A display feature that did not display is not enabled.
-                # Roll the runtime choice back so both controls stay honest
-                # and a later click retries construction from a clean state.
-                settings_mod.update_section(
-                    self._state.settings, "fleet_bar", {"enabled": False}
-                )
-                self._fleet_snapshot = None
-                self._reconcile_eve_runtime()
-                self._push_fleet_bar_state()
+                # Close before the rollback write for the same reason as an
+                # ordinary toggle: callbacks during persistence must not
+                # repaint this just-failed activation with old rows.
+                self._close_fleet_presentation()
+                try:
+                    settings_mod.update_section(
+                        self._state.settings, "fleet_bar", {"enabled": False}
+                    )
+                except OSError:
+                    # update() restores the live section to enabled=True, so
+                    # below must reopen the existing requested generation.
+                    logger.exception(
+                        "Could not roll back the Fleet Bar setting after window creation failed"
+                    )
+                finally:
+                    # Reconcile whichever setting is now authoritative. This
+                    # is deliberately in finally: a second save failure used
+                    # to strand callbacks behind _close_fleet_presentation().
+                    self._reconcile_fleet_generation(transition=False)
+                    self._push_fleet_bar_state()
                 return self._field_refused("The Fleet Bar could not be opened.")
         self._push_fleet_bar_state()
         return self._field_ok()
@@ -4070,10 +4539,11 @@ class Api:
 
     # ---- EVE client previews ------------------------------------------
 
-    def _reconcile_eve_runtime(self) -> None:
+    def _reconcile_eve_runtime(self) -> int | None:
         """Bring the sole shared EVE telemetry runtime in line with settings."""
         if self._telemetry is not None:
-            self._telemetry.reconcile()
+            return self._telemetry.reconcile()
+        return None
 
     def start_previews_if_enabled(self) -> None:
         """Start Preview if enabled, then reconcile all shared EVE telemetry.
@@ -4082,7 +4552,7 @@ class Api:
         Preview stays off. The preview pump and foreground hook remain lazy.
         """
         if self._preview_host is None:
-            self._reconcile_eve_runtime()
+            self._start_fleet_telemetry_if_enabled()
             return
         section = self._state.settings.get("preview", {})
         # Pushed before start(): the first registration pass runs inside
@@ -4093,7 +4563,14 @@ class Api:
             self._preview_host.start()
         # After host start(), so Preview roster delivery has a live pump.
         # Telemetry predicates read persisted settings directly.
-        self._reconcile_eve_runtime()
+        self._start_fleet_telemetry_if_enabled()
+
+    def _start_fleet_telemetry_if_enabled(self) -> None:
+        """Reserve and sample Fleet only when its persisted mode is enabled."""
+        if self.fleet_bar_settings().get("enabled"):
+            self._reconcile_fleet_generation(transition=True)
+        else:
+            self._reconcile_eve_runtime()
 
     def set_preview_enabled(self, enabled: bool) -> None:
         """Toggle previews and persist the choice.
@@ -7684,6 +8161,62 @@ class Api:
             self._eve_mutation.release()
             self._eve_done(ok)
 
+    # ---- Shared EVE characters ---
+
+    def eve_characters_state(self) -> dict:
+        """The display-safe shared authority snapshot for management UI."""
+        if self._authority is None:
+            return _empty_eve_characters_state(self._authority_warnings)
+        payload = dict(self._authority.management_state())
+        payload["available"] = True
+        payload["auth_configured"] = eveauth_application.is_configured()
+        payload["warnings"] = _bound_eve_characters_warnings(self._authority_warnings)
+        return payload
+
+    def eve_characters_authenticate(self) -> dict:
+        if self._authority is None:
+            return {
+                "accepted": False,
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
+            }
+        result = self._authority.start_full_authorization()
+        return {
+            "accepted": result.accepted,
+            "error": _bound_eve_characters_text(result.error),
+        }
+
+    def eve_characters_cancel_auth(self) -> dict:
+        if self._authority is None:
+            return {
+                "accepted": False,
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
+            }
+        result = self._authority.cancel_authorization()
+        return {
+            "accepted": result.accepted,
+            "error": _bound_eve_characters_text(result.error),
+        }
+
+    def eve_characters_forget(self, character_id) -> dict:
+        if self._authority is None:
+            return {
+                "applied": False,
+                "persisted": False,
+                "error": _bound_eve_characters_text(
+                    "The shared EVE character authority is unavailable."
+                ),
+            }
+        result = self._authority.forget(character_id)
+        return {
+            "applied": result.applied,
+            "persisted": result.persisted,
+            "error": _bound_eve_characters_text(result.error),
+        }
+
     # ---- EVE skills ---
 
     def skills_state(self) -> dict:
@@ -7773,54 +8306,6 @@ class Api:
             # "Refreshing..." state is never left stranded on a worker
             # that raised before reaching that callback.
             self._push_fittings_changed({"reason": "refresh"})
-
-    def fittings_enable_character(self, character_id) -> bool:
-        """Reauthorize one exact character for Fittings plus its existing
-        capabilities. Same shared `enable_capability` upgrade path the
-        design doc specifies; Fittings is simply its first caller.
-        """
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.enable_capability(wanted, eveauth_application.FITTINGS)
-        if result.error:
-            self._alert(
-                "warning",
-                "Fittings not enabled" if not result.applied else "Fittings enabled",
-                result.error,
-            )
-        return bool(result.applied)
-
-    def fittings_cancel_auth(self) -> bool:
-        if self._authority is not None:
-            self._authority.cancel_auth()
-        return True
-
-    def fittings_forget_character(self, character_id) -> bool:
-        """Forget globally; Fittings cleanup runs as an authority participant."""
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        if result.error:
-            self._alert(
-                "warning",
-                "Character removal incomplete"
-                if result.applied
-                else "Character not forgotten",
-                result.error,
-            )
-        return result.applied
 
     # ---- EVE fittings: additive copy ---
 
@@ -7995,48 +8480,8 @@ class Api:
         return text
 
     def _eve_authority_changed(self) -> None:
-        """Publish shared auth state only after a Skills controller exists."""
-        if self._skills is not None:
-            self._skills._push_state(force=True)
-
-    def skills_add_character(self) -> bool:
-        """Start an interactive EVE sign-in. Returns before it finishes.
-
-        True even with no controller, and even though nothing happened.
-        `WM.send` resolves to null on a bridge failure and the page cannot
-        otherwise tell the two apart -- the comment on set_preview_enabled
-        above records that returning None from a no-op WAS the bug, and that
-        it cost a checkbox that reverted on every successful toggle.
-        """
-        if self._authority is not None:
-            self._authority.authenticate_skills()
-        return True
-
-    def skills_cancel_auth(self) -> bool:
-        if self._authority is not None:
-            self._authority.cancel_auth()
-        return True
-
-    def skills_forget_character(self, character_id) -> bool:
-        """Forget globally; Skills cleanup runs as an authority participant."""
-        if self._authority is None or isinstance(character_id, bool):
-            return False
-        try:
-            wanted = int(character_id)
-        except (TypeError, ValueError):
-            return False
-        if wanted <= 0:
-            return False
-        result = self._authority.forget(wanted)
-        if result.error:
-            self._alert(
-                "warning",
-                "Character removal incomplete"
-                if result.applied
-                else "Character not forgotten",
-                result.error,
-            )
-        return result.applied
+        """Publish the shared authority event for Settings and EVE routes."""
+        self._push("onEveAuthorityChanged", {})
 
     def skills_refresh(self) -> bool:
         if self._skills is not None:

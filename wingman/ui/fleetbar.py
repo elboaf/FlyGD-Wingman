@@ -14,7 +14,7 @@ from wingman.ui import window as window_mod
 
 logger = logging.getLogger(__name__)
 
-WIDTH = 380
+WIDTH = 420
 HEIGHT = 90
 MIN_SIZE = (1, 1)
 DEFAULT_MARGIN = 60
@@ -49,6 +49,9 @@ def create(api, hidden: bool = True):
             easy_drag=False,
             on_top=True,
             focus=False,
+            # NOT transparent=True, for the same field reason as the sig
+            # bar's: per-pixel window transparency mispaints the backing
+            # on resize and move. Opaque dark window.
             background_color=window_mod.BACKGROUND,
             min_size=MIN_SIZE,
             # Tool-window styling must land before the first show or Windows

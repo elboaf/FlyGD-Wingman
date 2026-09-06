@@ -269,72 +269,21 @@ def test_fittings_refresh_answers_false_with_no_controller(tmp_path):
     assert api.fittings_refresh([42]) is False
 
 
-# ---- character access: enable / cancel / forget --------------------------
+# ---- character access now lives in Settings ------------------------------
 
 
-def test_fittings_enable_character_delegates_to_shared_authority(tmp_path):
-    authority = Mock()
-    authority.enable_capability.return_value = Mock(applied=True, error="")
-    api = make_api(tmp_path, authority=authority)
+def test_fittings_no_longer_exposes_character_auth_or_forget_bridge_methods(tmp_path):
+    from wingman.ui.api import Api
 
-    assert api.fittings_enable_character(42) is True
-    from wingman.eveauth import application
-
-    authority.enable_capability.assert_called_once_with(42, application.FITTINGS)
-
-
-def test_fittings_enable_character_alerts_and_answers_false_on_error(tmp_path):
-    alerts = []
-    authority = Mock()
-    authority.enable_capability.return_value = Mock(
-        applied=False, error="Re-authenticate this EVE character first."
-    )
-    api = make_api(tmp_path, authority=authority)
-    api._alert = lambda kind, title, body: alerts.append((kind, title, body))
-
-    assert api.fittings_enable_character(42) is False
-    assert alerts
-
-
-def test_fittings_enable_character_rejects_non_positive_ids(tmp_path):
-    authority = Mock()
-    api = make_api(tmp_path, authority=authority)
-
-    assert api.fittings_enable_character(-1) is False
-    assert api.fittings_enable_character(True) is False
-    authority.enable_capability.assert_not_called()
-
-
-def test_fittings_enable_character_answers_false_with_no_authority(tmp_path):
     api = make_api(tmp_path)
-    assert api.fittings_enable_character(42) is False
 
-
-def test_fittings_cancel_auth_delegates_to_shared_authority(tmp_path):
-    authority = Mock()
-    api = make_api(tmp_path, authority=authority)
-
-    assert api.fittings_cancel_auth() is True
-    authority.cancel_auth.assert_called_once_with()
-
-
-def test_fittings_cancel_auth_tolerates_no_authority(tmp_path):
-    api = make_api(tmp_path)
-    assert api.fittings_cancel_auth() is True
-
-
-def test_fittings_forget_character_delegates_to_shared_authority(tmp_path):
-    authority = Mock()
-    authority.forget.return_value = Mock(applied=True, error="")
-    api = make_api(tmp_path, authority=authority)
-
-    assert api.fittings_forget_character(42) is True
-    authority.forget.assert_called_once_with(42)
-
-
-def test_fittings_forget_character_answers_false_with_no_authority(tmp_path):
-    api = make_api(tmp_path)
-    assert api.fittings_forget_character(42) is False
+    for name in (
+        "fittings_enable_character",
+        "fittings_cancel_auth",
+        "fittings_forget_character",
+    ):
+        assert getattr(Api, name, None) is None
+        assert getattr(api, name, None) is None
 
 
 # ---- additive copy: preflight / worker start / cancellation --------------

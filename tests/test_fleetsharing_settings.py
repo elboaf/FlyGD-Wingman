@@ -52,7 +52,13 @@ def test_explicit_true_round_trips_through_load_and_save_without_touching_fleet_
     loaded = settings.load(target)
 
     assert loaded["fleet_sharing"] == {"enabled": True}
-    assert loaded["fleet_bar"] == {"enabled": False, "x": None, "y": None}
+    assert loaded["fleet_bar"] == {
+        "enabled": False,
+        "x": None,
+        "y": None,
+        "seen": [],
+        "hidden": [],
+    }
 
 
 def test_malformed_input_cannot_enable_sharing_via_direct_save(tmp_path):
@@ -86,7 +92,13 @@ def test_enabling_sharing_does_not_affect_fleet_bar_settings(tmp_path):
 
     reloaded = settings.load(target)
     assert reloaded["fleet_sharing"] == {"enabled": True}
-    assert reloaded["fleet_bar"] == {"enabled": True, "x": 5, "y": 9}
+    assert reloaded["fleet_bar"] == {
+        "enabled": True,
+        "x": 5,
+        "y": 9,
+        "seen": [],
+        "hidden": [],
+    }
 
 
 def test_enabling_fleet_bar_does_not_affect_fleet_sharing_settings(tmp_path):
@@ -96,5 +108,11 @@ def test_enabling_fleet_bar_does_not_affect_fleet_sharing_settings(tmp_path):
         live["fleet_bar"] = {"enabled": True, "x": 1, "y": 2}
 
     reloaded = settings.load(target)
-    assert reloaded["fleet_bar"] == {"enabled": True, "x": 1, "y": 2}
+    assert reloaded["fleet_bar"] == {
+        "enabled": True,
+        "x": 1,
+        "y": 2,
+        "seen": [],
+        "hidden": [],
+    }
     assert reloaded["fleet_sharing"] == {"enabled": False}

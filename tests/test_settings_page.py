@@ -73,14 +73,23 @@ def test_the_rail_and_the_panes_are_in_the_same_order():
     drift from the rail's for free. It is still the order a reader of this
     file navigates by, and a rail item whose pane is nowhere near it is how
     the wrong card gets edited."""
-    assert [name for name, _ in _rail()] == [name for name, _ in _panes()]
+    expected = [
+        "uploading",
+        "characters",
+        "bookmarks",
+        "previews",
+        "alerts",
+        "general",
+    ]
+    assert [name for name, _ in _rail()] == expected
+    assert [name for name, _ in _panes()] == expected
 
 
 def test_general_is_the_last_rail_item():
-    """Its whole content is the switch that hides Bookmarks and Previews
-    (app.js's EVE_SECTIONS), so it sits under the two entries it removes
-    and the rail loses its tail rather than a hole in its middle. It is
-    also visited once, probably never, and was first.
+    """Its whole content is the switch that hides the EVE-only Settings
+    sections (app.js's EVE_SECTIONS), so it sits under the entries it
+    removes and the rail loses its tail rather than a hole in its middle.
+    It is also visited once, probably never, and was first.
 
     Paired with test_page_conventions.py's landing-section rules: that one
     pins where Settings opens, this one pins what the rail reads as."""

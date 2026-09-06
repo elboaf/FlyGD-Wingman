@@ -347,7 +347,7 @@
   </div>
 
   <div class="route" id="route-settings">
-    <!-- A rail, not one long column, and FIVE groups rather than the seven
+    <!-- A rail, not one long column, and SIX groups rather than the seven
          this screen carried until round 5's E1. Seven entries gave equal
          weight to five holding ten controls between them and two holding
          about seventy.
@@ -382,6 +382,7 @@
            product off, which is a legitimate control and a poor first
            impression of the app's configuration surface. -->
       <button class="rail-item active" data-section="uploading">Uploading</button>
+      <button class="rail-item" data-section="characters">Characters</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
       <!-- Its own entry since round 5's D1. It was a card at the bottom of
@@ -392,9 +393,10 @@
            sat below ~70 controls, and the folder the feature actually
            reads was three rail entries away, under Folders. -->
       <button class="rail-item" data-section="alerts">Alerts</button>
-      <!-- Last, and directly under the three entries it removes: unticking
-           the switch inside hides Bookmarks, Previews and Alerts (app.js's
-           EVE_SECTIONS) and lands you here, so the rail loses its tail
+      <!-- Last, and directly under the EVE-only entries it removes:
+           unticking the switch inside hides Characters, Bookmarks,
+           Previews and Alerts (app.js's EVE_SECTIONS) and lands you here,
+           so the rail loses its tail
            rather than a hole in its middle. It is also where a rail item
            visited once, probably never, belongs -- the landing is the
            entry above the fold, not this one. The panes below are kept in
@@ -559,6 +561,47 @@
         </div>
         <p class="sub-hint" id="webhook-status">not configured</p>
         <p class="field-msg" id="msg-discord" hidden></p>
+      </section>
+
+    </div>
+
+    <div class="settings" id="section-characters">
+
+      <!-- Authorization starts one EVE-owned flow. EVE chooses the character,
+           so per-row sign-in controls would promise precision the API cannot
+           provide. Keep the action here and render row cells as states. -->
+      <section class="card characters-auth-card">
+        <h2>EVE authorization</h2>
+        <div class="row">
+          <button class="btn" id="characters-authenticate" disabled>Authenticate character…</button>
+          <button class="btn" id="characters-cancel" hidden disabled>Cancel</button>
+          <div class="ctxmenu" id="characters-menu" hidden>
+            <button id="characters-menu-forget" type="button" disabled>Forget character</button>
+          </div>
+        </div>
+        <p class="hint" id="characters-activity">Use EVE sign-in to add a character or update access for Skills and Fittings.</p>
+        <p class="field-msg" id="characters-notice" role="status" hidden></p>
+      </section>
+
+      <!-- Unlike the form-shaped Settings cards, this is a scanning surface.
+           It uses the pane width so names and access states do not compete
+           while empty page space sits beside them. -->
+      <section class="card characters-roster-card">
+        <h2>Character access</h2>
+        <p class="hint" id="characters-count">0 characters</p>
+        <div class="row">
+          <label class="lab" for="characters-filter">Filter roster</label>
+          <input class="field" id="characters-filter" type="text"
+                 spellcheck="false" autocomplete="off" disabled>
+          <button class="linkbtn" id="characters-filter-clear" hidden disabled>Clear filter</button>
+        </div>
+        <p class="hint" id="characters-live" role="status" aria-live="polite"></p>
+        <div id="characters-roster" role="table" aria-label="Character roster"
+             aria-colcount="5">
+          <div class="empty" id="characters-empty" role="row">
+            <span role="cell">No characters yet.</span>
+          </div>
+        </div>
       </section>
 
     </div>
@@ -990,7 +1033,7 @@
         <h2>Fleet combat bar</h2>
         <p class="hint">A separate always-on-top row for every running,
           logged-in EVE client. It shows outgoing damage per second over the
-          last 10 seconds and incoming warp scramble or disruption. It works
+          last 10 seconds and incoming scram, point, or neut activity. It works
           whether client previews and alerts are on or off; a client without
           an active gamelog says NO LOG instead of showing a guessed zero.</p>
         <div class="row">
@@ -1002,6 +1045,14 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="fleetbar-enabled-status">Drag the bar anywhere
             on screen; Wingman remembers where you leave it.</span></div>
+        <details class="fleet-characters" id="fleetbar-characters">
+          <summary>Characters</summary>
+          <div class="fleet-character-list" id="fleetbar-character-list"></div>
+          <p class="hint fleet-character-empty" id="fleetbar-characters-empty">
+            Characters appear here after Wingman sees them running.
+          </p>
+          <p class="field-msg" id="fleetbar-characters-status" role="status" hidden></p>
+        </details>
       </section>
 
       <section class="card">
@@ -1939,11 +1990,11 @@
   <!-- NOT the .settings/.card wrapper the previews and bookmarks routes
        use: this is a two-pane workspace, not a form. The rail holds the
        roster's controls and the plan list; see .skills in style.css. -->
-  <div class="route" id="route-skills">
+  <div class="route eve-workspace" id="route-skills">
     <aside class="skills-rail">
       <div class="rail-block">
         <p class="rail-count" id="skills-counts">No characters yet</p>
-        <button class="btn" id="skills-add">Add character</button>
+        <button class="btn" id="skills-manage-characters">Manage characters…</button>
         <button class="btn" id="skills-refresh">Refresh characters</button>
       </div>
       <!-- ABOVE the plans block, and that is load-bearing rather than
@@ -2050,7 +2101,7 @@
              `Change…` on Profiles, at #es-folder-edit. Disabled rather
              than hidden when no plan is selected, per the control
              vocabulary's disabled-when-the-object-is-absent rule. -->
-        <button class="btn" id="skills-copy-plan" disabled>Copy plan</button>
+        <button class="btn workspace-primary" id="skills-copy-plan" disabled>Copy plan</button>
       </header>
       <!-- The browser owns clipboard access, so its success or refusal
            belongs beside the plan action rather than on the global strip.
@@ -2106,12 +2157,12 @@
        Task 10 wires it to explicit additive preflight and execution; the
        app-owned copy overlay keeps neutral buttons so review, confirmation,
        progress, and results do not introduce a second accent claim. -->
-  <div class="route" id="route-fittings" aria-labelledby="nav-fittings">
+  <div class="route eve-workspace" id="route-fittings" aria-labelledby="nav-fittings">
     <aside class="skills-rail" id="fittings-rail">
       <div class="rail-block">
         <p class="rail-count" id="fittings-counts"></p>
         <button class="btn" id="fittings-refresh-all">Refresh characters</button>
-        <button class="btn" id="fittings-characters-open">Characters…</button>
+        <button class="btn" id="fittings-manage-characters">Manage characters…</button>
       </div>
       <div class="rail-block rail-plans-block">
         <div class="rail-head-row">
@@ -2130,7 +2181,7 @@
       <header class="skills-head">
         <h1 id="fittings-collection-name">All fittings</h1>
         <span class="skills-plan-count" id="fittings-collection-count"></span>
-        <button class="btn acc" id="fittings-copy-selected" disabled>Copy selected</button>
+        <button class="btn acc workspace-primary" id="fittings-copy-selected" disabled>Copy selected</button>
       </header>
 
       <div class="skills-notices" id="fittings-notices" hidden></div>
@@ -2154,23 +2205,6 @@
         <button class="linkbtn" id="fittings-page-next">Next</button>
       </div>
     </section>
-
-    <!-- The Characters overlay: an app-owned modal, NOT the shared
-         #overlay/#dialog confirm/prompt layer (panel.js's queue answers a
-         single question at a time; this shows a whole roster). Page-
-         initiated confirmations inside it -- forgetting a character --
-         still go through WM.confirm, per DESIGN.md's "never a browser
-         dialog" rule. -->
-    <div class="overlay" id="fittings-characters-overlay" hidden>
-      <div class="dialog" id="fittings-characters-dialog" role="dialog"
-           aria-modal="true" aria-labelledby="fittings-characters-title">
-        <h2 id="fittings-characters-title">Characters</h2>
-        <div class="body" id="fittings-characters-body"></div>
-        <div class="buttons">
-          <button class="btn" id="fittings-characters-close">Close</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Additive copy is a multi-step, page-owned workflow rather than a
          single confirm/prompt question. The final send still uses WM.confirm
@@ -2272,6 +2306,15 @@
   <!-- Filled by Task 12 (status strip + progress bar). -->
   <div id="statusbar-slot">
     <div class="statusbar">
+      <!-- One quick toggle for the separate combat display. Text, not an
+           invented icon: DPS is the term the window and its column already
+           use, and this stays in the status strip rather than consuming the
+           title bar's scarce destination space. First in the strip so the
+           sig bar toggle can sit directly beside the SIG segment it
+           points at. -->
+      <button class="winbtn" id="btn-fleetbar" title="Floating Fleet DPS / EWAR bar"
+              aria-label="Floating Fleet DPS / EWAR bar"
+              aria-pressed="false">DPS</button>
       <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
            .winbtn, not a .btn: it is chrome that lives beside chrome, and
            the 44px square keeps the strip's height unchanged. `.active`
@@ -2279,20 +2322,12 @@
            style.css, which colours the glyph and not the fill, so the
            accent stays the strip's scarcity.
 
-           First child, deliberately: the strip is a plain flex row and the
-           progress track hides when nothing runs, so from the middle the
-           button floated in dead space with no visual neighbour to explain
-           it. Beside the EVE segment it reads as a control FOR that
-           segment, which is what it is. -->
+           Directly left of the EVE segment, with a ">" between the sig
+           glyph and that segment's SIG readout: the arrow says what the
+           toggle is FOR -- it floats the very segment it points at --
+           which a bare medallion beside three labels never could. -->
       <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
-              aria-pressed="false">&#8982;</button>
-      <!-- One quick toggle for the separate combat display. Text, not an
-           invented icon: DPS is the term the window and its column already
-           use, and this stays in the status strip rather than consuming the
-           title bar's scarce destination space. -->
-      <button class="winbtn" id="btn-fleetbar" title="Floating Fleet DPS / EWAR bar"
-              aria-label="Floating Fleet DPS / EWAR bar"
-              aria-pressed="false">DPS</button>
+              aria-pressed="false">&#8982;&#8250;</button>
       <span class="evestat" id="evestat" hidden>
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>
@@ -2345,6 +2380,7 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="characters.js"></script>
   <script src="bookmarks.js"></script>
   <script src="previews.js"></script>
   <script src="alerts.js"></script>

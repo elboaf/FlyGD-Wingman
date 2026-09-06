@@ -33,6 +33,61 @@ def test_the_nav_button_exists_and_points_at_the_route():
     assert 'id="route-fittings"' in HTML, "index.html has no #route-fittings"
 
 
+def test_route_uses_shared_eve_workspace_class():
+    """Fittings route must use the shared .eve-workspace parent grid.
+
+    Use a class-token-aware match so ordering or extra tokens do not fail.
+    """
+    match = re.search(
+        r"<div[^>]*\bclass=\"(?=[^\"]*\broute\b)(?=[^\"]*\beve-workspace\b)[^\"]*\"[^>]*\bid=\"route-fittings\"",
+        HTML,
+    )
+    assert match, (
+        "route-fittings does not carry both route and eve-workspace class tokens"
+    )
+
+
+def test_eve_workspace_css_has_required_properties():
+    """Assert the shared .eve-workspace rule declares the required geometry."""
+    match = re.search(r"(?<![\w-])\.eve-workspace\s*\{([^}]*)\}", CSS, re.DOTALL)
+    assert match, "no .eve-workspace rule found in style.css"
+    body = match.group(1)
+    assert "display" in body and "none" in body, (
+        ".eve-workspace must default to display: none"
+    )
+    assert "grid-template-columns" in body and "214px minmax(0, 1fr)" in body, (
+        ".eve-workspace must set grid-template-columns: 214px minmax(0, 1fr)"
+    )
+    assert "gap" in body and "12px" in body, ".eve-workspace must set gap: 12px"
+    assert "padding" in body and "12px" in body, ".eve-workspace must set padding: 12px"
+    assert "min-height" in body and "0" in body, ".eve-workspace must set min-height: 0"
+
+
+def test_eve_workspace_active_sets_display_grid():
+    match = re.search(
+        r"(?<![\w-])\.eve-workspace\.active\s*\{([^}]*)\}", CSS, re.DOTALL
+    )
+    assert match and "display" in match.group(1) and "grid" in match.group(1), (
+        ".eve-workspace.active must set display: grid"
+    )
+
+
+def test_primary_action_alignment_shared_rule():
+    rule = re.search(
+        r"(?<![\w-])\.skills-head\s*>\s*\.workspace-primary\s*\{([^}]*)\}",
+        CSS,
+        re.DOTALL,
+    )
+    assert rule, "no .skills-head > .workspace-primary rule found in style.css"
+    body = rule.group(1)
+    assert "margin-left" in body and "auto" in body, (
+        ".skills-head > .workspace-primary must set margin-left: auto"
+    )
+    assert "align-self" in body and "center" in body, (
+        ".skills-head > .workspace-primary must set align-self: center"
+    )
+
+
 def test_there_are_exactly_four_destinations():
     """The title-bar destination count this task adds. DESIGN.md's own
     warning is that a destination gets added "one at a time" without the
@@ -118,6 +173,31 @@ def test_entry_asks_python_for_state_exactly_once():
     happens exactly once per route entry."""
     assert "WM.send('fittings_state', " in FITTINGS_JS
     assert "var asked" in FITTINGS_JS or "asked = " in FITTINGS_JS
+
+
+def test_returning_from_settings_after_an_authority_change_rereads_fittings_state():
+    """Task 9 fix round 1: while Settings owns sign-in/forget, Fittings must
+    not stay stale after an off-route authority change. The route still
+    ignores `wm:eve-authority` while hidden, so leaving must clear the
+    one-entry latch and returning must ask Python again exactly once."""
+    route_listener = re.search(
+        r"document\.addEventListener\('wm:route', function \(event\) \{(?P<body>.*?)\n  \}\);",
+        FITTINGS_JS,
+        re.DOTALL,
+    )
+    assert route_listener, (
+        "fittings.js no longer has the route listener this regression guards"
+    )
+    body = route_listener.group("body")
+    assert "if (event.detail !== 'fittings') {" in body
+    assert "asked = false;" in body
+    assert "if (asked) return;\n    asked = true;\n    requestState();" in body
+    assert (
+        "document.addEventListener('wm:eve-authority', function () {\n"
+        "    if (WM.current_route !== 'fittings') return;\n"
+        "    requestState();\n"
+        "  });"
+    ) in FITTINGS_JS
 
 
 def test_fittings_state_bridge_call_matches_a_real_api_method():
@@ -367,32 +447,58 @@ def test_fittings_empty_state_starts_hidden_until_the_first_payload():
     assert empty and re.search(r"\bhidden\b", empty.group(0))
 
 
-def test_characters_overlay_focus_and_keyboard_dismissal_match_copy_overlay():
-    opening = FITTINGS_JS[
-        FITTINGS_JS.index(
-            "WM.el('fittings-characters-open').addEventListener"
-        ) : FITTINGS_JS.index("WM.el('fittings-characters-close').addEventListener")
-    ]
-    assert "WM.el('fittings-characters-close').focus();" in opening
+def test_fittings_hands_character_management_off_to_settings():
+    assert 'id="fittings-manage-characters"' in HTML
+    assert 'id="fittings-characters-open"' not in HTML
+    assert "Manage characters…" in HTML
+    assert "WM.openSettingsSection('characters')" in FITTINGS_JS
+    for removed in (
+        "fittings_enable_character",
+        "fittings_cancel_auth",
+        "fittings_forget_character",
+    ):
+        assert removed not in FITTINGS_JS
+    for removed_id in (
+        "fittings-characters-overlay",
+        "fittings-characters-dialog",
+        "fittings-characters-title",
+        "fittings-characters-body",
+        "fittings-characters-close",
+    ):
+        assert f'id="{removed_id}"' not in HTML
 
-    keydown = FITTINGS_JS[
-        FITTINGS_JS.index("document.addEventListener('keydown'") : FITTINGS_JS.index(
-            "function copyButtons"
-        )
-    ]
-    assert "charactersOverlayOpen" in keydown
-    assert "event.key !== 'Escape'" in keydown or "event.key === 'Escape'" in keydown
-    assert "closeCharactersOverlay();" in keydown
-    assert "WM.el('fittings-characters-open').focus();" in keydown
+
+def test_fittings_empty_and_copy_target_copy_name_settings_without_auth_controls():
+    assert (
+        "Authenticate a character in Settings \u203a Characters, then return and "
+        "press Refresh characters."
+    ) in FITTINGS_JS
+    assert "No EVE characters available." not in FITTINGS_JS
+    assert "Enable fittings" not in FITTINGS_JS
+    assert "Re-authenticate this character from Skills first." not in FITTINGS_JS
 
 
 def test_copy_selected_remains_the_only_accent_action():
     route = re.search(
-        r'<div class="route" id="route-fittings"[\s\S]*?</div>\s*\n\s*<div class="route" id="route-firstrun"',
+        r'<div[^>]*\bid="route-fittings"[^>]*>[\s\S]*?</div>\s*\n\s*<div[^>]*\bid="route-firstrun"',
         HTML,
     )
     assert route
-    assert len(re.findall(r'class="[^"]*\bacc\b', route.group(0))) == 1
+    assert len(re.findall(r'class="[^\"]*\bacc\b', route.group(0))) == 1
+
+
+def test_fittings_primary_action_includes_workspace_primary_token():
+    """The Fittings primary action must carry the workspace-primary token.
+
+    This should fail if workspace-primary is removed even while the
+    shared .eve-workspace class and the acc token remain.
+    """
+    btn = re.search(r'<button[^>]*id="fittings-copy-selected"[^>]*>', HTML)
+    assert btn, "fittings-copy-selected button is missing from index.html"
+    assert re.search(r'class="[^"]*\bworkspace-primary\b', btn.group(0)), (
+        "fittings-copy-selected must include the workspace-primary token: "
+        + btn.group(0)
+    )
 
 
 def test_render_pager_defaults_page_when_the_payload_has_none():

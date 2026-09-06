@@ -17,11 +17,13 @@ this package's public names for backward compatibility; new code should
 import from here directly.
 """
 
-from .application import FITTINGS, SKILLS
+from .application import FITTINGS, FULL_AUTH_CAPABILITIES, FULL_AUTH_SCOPES, SKILLS
+from .cleanup import CleanupVerification, LoadHealth
 from .controller import (
     AccessTokenResult,
     AuthorityCharacter,
     AuthorityController,
+    AuthorizationCommandResult,
     CharacterParticipant,
     LifecycleLease,
     MutationResult,
@@ -29,11 +31,16 @@ from .controller import (
 
 __all__ = [
     "FITTINGS",
+    "FULL_AUTH_CAPABILITIES",
+    "FULL_AUTH_SCOPES",
     "SKILLS",
     "AccessTokenResult",
     "AuthorityCharacter",
     "AuthorityController",
+    "AuthorizationCommandResult",
     "CharacterParticipant",
+    "CleanupVerification",
     "LifecycleLease",
+    "LoadHealth",
     "MutationResult",
 ]

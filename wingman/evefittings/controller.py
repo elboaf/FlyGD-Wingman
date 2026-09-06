@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..eveauth import application
+from ..eveauth.cleanup import CleanupVerification
 from ..eveauth.controller import MutationResult
 from ..eveesi import EsiClient
 from . import contracts, names, store
@@ -46,6 +47,8 @@ logger = logging.getLogger(__name__)
 
 MSG_REAUTH = "Re-authenticate this EVE character to refresh fittings."
 MSG_SAVE_FAILED = "The fitting refresh could not be saved."
+MSG_CLEANUP_UNVERIFIED = "Fittings cleanup could not be verified from disk."
+MSG_CLEANUP_SAVE_FAILED = "Could not save Fittings cleanup."
 _MAX_ERROR_CHARS = store.MAX_ERROR_CHARS
 SHUTDOWN_WAIT_SECONDS = 2.0
 
@@ -151,9 +154,16 @@ class FittingsController:
         self._ticket_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._operation_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._stopping = threading.Event()
-        self._state, warnings = store.load_fittings(self._state_path)
+        self._state, warnings, load_health = store.load_fittings_with_health(
+            self._state_path
+        )
         self._names, name_warnings = names.load(self._names_path)
         self._load_warnings = [*warnings, *name_warnings]
+        self._cleanup_verifiable = load_health.cleanup_verifiable
+        self._cleanup_blocked_ids: set[int] = set()
+        self._cleanup_error = (
+            "" if load_health.cleanup_verifiable else MSG_CLEANUP_UNVERIFIED
+        )
 
     @property
     def state(self) -> FittingsState:
@@ -702,7 +712,48 @@ class FittingsController:
             logger.warning("Could not save fitting state", exc_info=True)
             return False
         self._state = candidate
+        self._cleanup_verifiable = True
+        self._cleanup_error = ""
         return True
+
+    @staticmethod
+    def _cleanup_blocked_ids_for_state(
+        state: FittingsState, wanted_ids: set[int]
+    ) -> set[int]:
+        blocked_ids = {
+            item.character_id
+            for item in state.presences
+            if item.character_id not in wanted_ids
+        }
+        blocked_ids.update(
+            item.character_id
+            for item in state.snapshots
+            if item.character_id not in wanted_ids
+        )
+        blocked_ids.update(
+            item.character_id
+            for item in state.intents
+            if item.character_id not in wanted_ids
+        )
+        return blocked_ids
+
+    def _cleanup_verification_locked(
+        self, wanted_ids: set[int], *, error: str = ""
+    ) -> CleanupVerification:
+        self._cleanup_blocked_ids = self._cleanup_blocked_ids_for_state(
+            self._state, wanted_ids
+        )
+        if error:
+            self._cleanup_error = error
+        elif self._cleanup_verifiable:
+            self._cleanup_error = ""
+        else:
+            self._cleanup_error = MSG_CLEANUP_UNVERIFIED
+        return CleanupVerification(
+            verified=self._cleanup_verifiable,
+            blocked_character_ids=frozenset(self._cleanup_blocked_ids),
+            error=self._cleanup_error,
+        )
 
     def _snapshot_locked(self, character_id: int) -> CharacterSnapshot | None:
         return next(
@@ -1435,7 +1486,6 @@ class FittingsController:
         # Authority is never consulted while self._lock is held -- the same
         # lock-order rule _refresh_one and _authorised_get already follow.
         authority_characters = self._authority.characters
-        auth_in_progress = self._authority.auth_in_progress
         with self._lock:
             state = self._state
             refreshing = self._refresh_gate.locked()
@@ -1478,8 +1528,6 @@ class FittingsController:
                 "search": search,
                 "ship_type_id": ship_type_id,
             },
-            "auth_configured": application.is_configured(),
-            "auth_in_progress": auth_in_progress,
             "refreshing": refreshing,
         }
 
@@ -1967,8 +2015,15 @@ class FittingsController:
             )
         return MutationResult(True, True, "")
 
-    def authority_removed(self, character_id: int) -> None:
-        self._remove_character_state(character_id)
+    def authority_removed(self, character_id: int) -> MutationResult:
+        return self._remove_character_state(
+            character_id,
+            wanted_ids={
+                character.character_id
+                for character in self._authority.characters
+                if character.character_id != character_id
+            },
+        )
 
     def grant_invalidated(self, character_id: int) -> None:
         # A revoked grant makes the last remote snapshot unusable, but an
@@ -1976,7 +2031,7 @@ class FittingsController:
         # later authoritative refresh can prove presence or absence.
         self._remove_character_state(character_id, preserve_intents=True)
 
-    def reconcile_characters(self, characters) -> None:
+    def reconcile_characters(self, characters) -> CleanupVerification:
         wanted = {character.character_id for character in characters}
         with self._lock:
             candidate = replace(
@@ -1997,19 +2052,32 @@ class FittingsController:
                     if item.unresolved or item.character_id in wanted
                 ),
             )
-            if candidate == self._state:
-                return
-            saved = self._publish_locked(candidate)
+            saved = (
+                True if candidate == self._state else self._publish_locked(candidate)
+            )
+            verification = self._cleanup_verification_locked(
+                wanted,
+                error="" if saved else MSG_CLEANUP_SAVE_FAILED,
+            )
         if not saved:
             self._alert(
                 "warning",
                 "Fitting cleanup is not saved",
                 "Character fitting state could not be reconciled and will be retried at startup.",
             )
+        return verification
 
     def _remove_character_state(
-        self, character_id: int, *, preserve_intents: bool = False
-    ) -> None:
+        self,
+        character_id: int,
+        *,
+        preserve_intents: bool = False,
+        wanted_ids: set[int] | None = None,
+    ) -> MutationResult:
+        if wanted_ids is None:
+            wanted_ids = {
+                character.character_id for character in self._authority.characters
+            }
         with self._lock:
             intents = (
                 self._state.intents
@@ -2035,14 +2103,24 @@ class FittingsController:
                 intents=intents,
             )
             if candidate == self._state:
-                return
+                return MutationResult(True, True, "")
             saved = self._publish_locked(candidate)
+            result = (
+                MutationResult(True, True, "")
+                if saved
+                else MutationResult(True, False, MSG_CLEANUP_SAVE_FAILED)
+            )
+            self._cleanup_verification_locked(
+                wanted_ids,
+                error="" if saved else MSG_CLEANUP_SAVE_FAILED,
+            )
         if not saved:
             self._alert(
                 "warning",
                 "Character cleanup is incomplete",
                 "EVE authorization was removed, but fitting cleanup could not be saved.",
             )
+        return result
 
     def shutdown(self) -> None:
         """Cancel queued work and wait a bounded time for active requests."""

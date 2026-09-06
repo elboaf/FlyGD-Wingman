@@ -314,13 +314,13 @@ a pill and a button, `Copy` over a radio pair) or by labelling a text input,
 which has no self-describing text.
 
 The third is round 5's E1, and it renames most of the first column: the
-rail is **five** entries now, not seven. `Account`, `Uploads`, `Folders`
-and `Discord` are one entry, `Uploading`; `Alerts` is a new one of its own
-(D1); `Bookmarks`, `Previews` and `General` are unchanged. The rows above
-still describe the same cards, which is why the measurement stands — the
-first control's left edge is a property of the card, not of the rail entry
-it is reached through. With the EVE gate off the rail is two entries,
-`Uploading` and `General`.
+rail is **six** entries now, not seven. `Account`, `Uploads`, `Folders`
+and `Discord` are one entry, `Uploading`; `Characters` and `Alerts` are
+entries of their own; `Bookmarks`, `Previews` and `General` are unchanged.
+The rows above still describe the same cards, which is why the measurement
+stands — the first control's left edge is a property of the card, not of
+the rail entry it is reached through. With the EVE gate off the rail is
+two entries, `Uploading` and `General`.
 
 **If you out-specify the label column, restore its collapse yourself.**
 `#eve-binds` and `#preview-binds` both take the column away from their
@@ -440,8 +440,9 @@ one site pending its conversion and must not gain a second.
 primitive in its own lane so that three screen lanes would convert to one
 thing rather than invent a third answer between them. Until they do,
 `Delete selected` on the Uploader and `Remove` on Settings › Discord are
-still plain `.btn`s that destroy something, and `Forget character` on
-Skills is still red text.
+still plain `.btn`s that destroy something. The current EVE credential
+cleanup lives under Settings › Characters rather than on the Skills page,
+so this rule must not drift back toward a second inline destructive style.
 
 **Destructive treatment, confirmation, and mechanism are three questions,
 not one.** Conflating them is how `Restore` nearly got red-outlined:

@@ -138,7 +138,7 @@ def match_line(line: str, character: str) -> Match | None:
     for fact in parsed.facts:
         if fact.kind in {"incoming_damage", "incoming_miss"}:
             return Match("combat", fact.source)
-        if fact.kind == "incoming_tackle":
+        if fact.kind in {"incoming_scram", "incoming_point"}:
             return Match("warp_scramble", fact.source)
         if fact.kind == "decloak":
             return Match("decloak", "")

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
 from . import settings as settings_mod
+from .eveauth import application
 from .ui import api as api_mod
 from .ui import preflight
 from .ui import window as window_mod
@@ -782,18 +783,19 @@ def wire_eve_controllers(api):
     # no route may observe either feature before all derived rows have been
     # reconciled against the successfully loaded authority roster.
     if skills is not None:
-        authority.register_participant(skills)
+        authority.register_participant(application.SKILLS, skills)
     if fittings is not None:
-        authority.register_participant(fittings)
+        authority.register_participant(application.FITTINGS, fittings)
 
     api._authority = authority
     api._skills = skills
     api._fittings = fittings
+    authority_warnings = list(startup_warnings)
     if skills is None:
-        api._authority_warnings = [
-            *startup_warnings,
-            "The EVE skills subsystem is unavailable.",
-        ]
+        authority_warnings.append("The EVE skills subsystem is unavailable.")
+    if fittings is None:
+        authority_warnings.append("The EVE fittings subsystem is unavailable.")
+    api._authority_warnings = authority_warnings
     return authority, skills
 
 
@@ -948,6 +950,11 @@ def main() -> int:
                 # that won the lock has already assigned its bar; one that lost
                 # refuses before allocating a native WebView2 window.
                 api._sigbar_quitting = True
+                # Disarm the focus gate under the same boundary: a tick
+                # racing this teardown would reveal the bar quitting is
+                # about to destroy. The scheduler sees quitting and only
+                # cancels -- it never arms.
+                api._schedule_sig_bar_focus_poll()
                 # The sig bar must be destroyed FIRST. pywebview's WinForms loop
                 # is Application.Run() with no context: it pumps until
                 # Application.Exit(), which fires only when the LAST window is
@@ -1023,6 +1030,12 @@ def main() -> int:
                     # Auxiliary chrome is independent: one broken WebView
                     # must not prevent the other from restoring.
                     logger.exception("%s restore failed", label)
+            try:
+                # Arms only when the restored sig bar was left enabled --
+                # the scheduler itself enforces that, so no state peeking.
+                api._schedule_sig_bar_focus_poll()
+            except Exception:
+                logger.exception("Sig bar focus gate could not be armed")
 
         shown.shown += _restore_floating_bars
 

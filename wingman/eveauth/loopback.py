@@ -252,20 +252,149 @@ def safe_oauth_code(value: object) -> str:
     return safe or "oauth_error"
 
 
-_SUCCESS_HTML = (
-    '<!doctype html><html><head><meta charset="utf-8">'
-    "<title>FlyGD Wingman</title></head><body><p>Authentication complete. "
-    "You can close this tab and return to Wingman.</p></body></html>"
-)
-_FAILURE_HTML = (
-    '<!doctype html><html><head><meta charset="utf-8">'
-    "<title>FlyGD Wingman</title></head><body><p>Authentication was not "
-    "accepted. You can close this tab and return to Wingman.</p></body></html>"
-)
+_RESULT_STYLE = """
+    :root {
+      color-scheme: dark;
+      --bg: #0c0d10;
+      --border: #282430;
+      --text: #e8eaed;
+      --muted: #9aa2b1;
+      --brand: #ad5aff;
+      --brand-soft: rgba(173, 90, 255, 0.14);
+      --danger: #f85149;
+      --danger-soft: rgba(248, 81, 73, 0.12);
+    }
+    @supports (color: oklch(0 0 0)) {
+      :root {
+        --bg: oklch(0.145 0.012 300);
+        --border: oklch(0.31 0.035 300);
+        --text: oklch(0.94 0.008 300);
+        --muted: oklch(0.72 0.025 285);
+        --brand: oklch(0.67 0.22 303);
+        --brand-soft: oklch(0.67 0.22 303 / 0.14);
+        --danger: oklch(0.7 0.19 25);
+        --danger-soft: oklch(0.7 0.19 25 / 0.12);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 32px 20px;
+      background:
+        radial-gradient(circle at 50% 42%, var(--brand-soft), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, "Segoe UI", system-ui, sans-serif;
+    }
+    .result {
+      width: min(100%, 32rem);
+      text-align: center;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 54px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+    }
+    .brand-mark {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--brand);
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    .outcome {
+      display: grid;
+      width: 76px;
+      height: 76px;
+      margin: 0 auto 28px;
+      place-items: center;
+      border: 1px solid var(--brand);
+      border-radius: 50%;
+      background: var(--brand-soft);
+      color: var(--brand);
+      font-size: 38px;
+      font-weight: 500;
+      line-height: 1;
+    }
+    .failure .outcome {
+      border-color: var(--danger);
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      font-weight: 650;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+    }
+    .message {
+      max-width: 38ch;
+      margin: 14px auto 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    .close-note {
+      margin: 52px 0 0;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 420px) {
+      .brand { margin-bottom: 40px; }
+      h1 { font-size: 26px; }
+    }
+"""
+
+
+def _result_html(success: bool) -> str:
+    outcome = "success" if success else "failure"
+    symbol = "&#10003;" if success else "!"
+    title = "Authorization received" if success else "Authorization not accepted"
+    message = (
+        "Return to Wingman. It will finish connecting the character."
+        if success
+        else "Return to Wingman and try again."
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{title} | FlyGD Wingman</title>
+  <style>{_RESULT_STYLE}</style>
+</head>
+<body>
+  <main class="result {outcome}" aria-labelledby="result-title">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">W</span>WINGMAN</div>
+    <div class="outcome" aria-hidden="true">{symbol}</div>
+    <h1 id="result-title">{title}</h1>
+    <p class="message">{message}</p>
+    <p class="close-note">You can close this tab.</p>
+  </main>
+</body>
+</html>"""
 
 
 def _reply(connection, success: bool) -> None:
-    """Serve the tiny result page.
+    """Serve the self-contained result page.
 
     Always 200 and never a redirect: a 3xx would hand the whole query string
     -- authorization code included -- to whatever the Location header named.
@@ -273,7 +402,7 @@ def _reply(connection, success: bool) -> None:
     tab the user may well screenshot. no-store keeps the outcome out of the
     browser's history store.
     """
-    body = (_SUCCESS_HTML if success else _FAILURE_HTML).encode("utf-8")
+    body = _result_html(success).encode("utf-8")
     headers = (
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/html; charset=utf-8\r\n"

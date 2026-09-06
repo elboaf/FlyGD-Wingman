@@ -41,6 +41,59 @@ def test_invalid_timestamp_does_not_discard_alert_body_fact():
     assert [fact.kind for fact in parsed.facts] == ["incoming_miss"]
 
 
+def _fixture_line(name: str, phrase: str) -> tuple[str, str]:
+    body = (FIXTURES / name).read_text(encoding="utf-8-sig").splitlines()
+    who = next(
+        line.split(":", 1)[1].strip()
+        for line in body
+        if line.strip().startswith("Listener:")
+    )
+    return who, next(line for line in body if phrase in line)
+
+
+def test_tackle_fixtures_preserve_scram_and_point():
+    scram_who, scram_line = _fixture_line(
+        "player_scramble.txt", "Warp scramble attempt"
+    )
+    point_who, point_line = _fixture_line(
+        "player_unresolved.txt", "Warp disruption attempt"
+    )
+
+    assert [fact.kind for fact in parsing.parse_line(scram_line, scram_who).facts] == [
+        "incoming_scram"
+    ]
+    assert [fact.kind for fact in parsing.parse_line(point_line, point_who).facts] == [
+        "incoming_point"
+    ]
+
+
+def test_incoming_neut_fixture_parses_amount_and_source():
+    who, line = _fixture_line("incoming_neut.txt", "237 GJ")
+
+    parsed = parsing.parse_line(line, who)
+
+    assert len(parsed.facts) == 1
+    assert parsed.facts[0].kind == "incoming_neut"
+    assert parsed.facts[0].amount == 237
+    assert parsed.facts[0].source == "Doran Velk [BURN] Curse"
+
+
+def test_zero_gj_incoming_neut_still_reports_neut_activity():
+    who, line = _fixture_line("incoming_neut.txt", "0xffe57f7f><b>0 GJ")
+
+    parsed = parsing.parse_line(line, who)
+
+    assert len(parsed.facts) == 1
+    assert parsed.facts[0].kind == "incoming_neut"
+    assert parsed.facts[0].amount == 0
+
+
+def test_outgoing_neut_is_not_incoming_ewar_even_when_amount_is_zero():
+    who, line = _fixture_line("incoming_neut.txt", "0xff7fffff><b>0 GJ")
+
+    assert parsing.parse_line(line, who).facts == ()
+
+
 def test_outgoing_plain_amount_falls_back_to_stripped_text_capture():
     line = (
         "[ 2025.11.14 01:15:33 ] (combat) <color=0xff00ffff>1,299 "
