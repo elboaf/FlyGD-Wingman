@@ -36,6 +36,7 @@
   var selected = {};       // entry_id -> true, pruned to the rendered page
   var progress = null;     // last refresh onFittingsProgress payload
   var copyOverlayOpen = false;
+  var copyDialogGeneration = 0;
   var copyInvoker = null;
   var copyPhase = 'targets';
   var copyTargets = {};
@@ -860,6 +861,7 @@
 
   function openCopyOverlay() {
     if (!visibleSelectedIds().length) return;
+    copyDialogGeneration += 1;
     copyInvoker = WM.el('fittings-copy-selected');
     copyOverlayOpen = true;
     copyPhase = 'targets';
@@ -1000,11 +1002,12 @@
     WM.el('fittings-copy-review').disabled = true;
     WM.el('fittings-copy-status').textContent = 'Checking current fittings\u2026';
     var entryIds = visibleSelectedIds();
+    var generation = copyDialogGeneration;
     var pending = screenshotFixture
       ? Promise.resolve(screenshotPreflight(entryIds))
       : WM.send('fittings_preflight_copy', entryIds, selectedTargetIds(), choices);
     pending.then(function (payload) {
-      if (!copyOverlayOpen) return;
+      if (!copyOverlayOpen || generation !== copyDialogGeneration) return;
       if (!payload || !payload.accepted) {
         var rejection = payload && payload.error
           || 'The copy preflight could not be checked.';

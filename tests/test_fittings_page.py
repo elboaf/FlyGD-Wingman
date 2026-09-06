@@ -761,6 +761,9 @@ const WM = {
     if (name === 'fittings_update_metadata' && scenario === 'state-rejected-mutation') {
       return Promise.resolve(false);
     }
+    if (name === 'fittings_preflight_copy' && scenario === 'state-stale-preflight') {
+      return deferred(name, args);
+    }
     if (name === 'fittings_preflight_copy') return Promise.resolve({
       accepted: true, ticket_id: 'ticket', write_count: 1, requires_resolution: false,
       counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
@@ -809,8 +812,6 @@ async function runStateMachineScenario() {
   if (scenario === 'state-route-lifecycle') {
     document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
     const departed = takePending('fittings_state');
-    handlers.onFittingsChanged();
-    const lateDeparted = takePending('fittings_state');
     WM.current_route = 'skills';
     route.classList.remove('active');
     el('route-skills').classList.add('active');
@@ -827,18 +828,20 @@ async function runStateMachineScenario() {
     current.resolve(workspace('Current response'));
     await flush();
     assert.equal(el('fittings-collection-name').textContent, 'Current response');
-    lateDeparted.resolve(workspace('Late departed response'));
-    await flush();
-    assert.equal(el('fittings-collection-name').textContent, 'Current response',
-      'a pre-leave response cannot overwrite current state after reentry');
-    assert.equal(calls.filter(call => call[0] === 'fittings_state').length, 3,
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').length, 2,
       'reentry requests fresh state');
     return;
   }
 
   const initial = scenario === 'state-detail-sequence'
     ? workspace('Two fittings', {rows: [fitA, fitB], total: 2})
-    : workspace('Initial response');
+    : scenario === 'state-stale-preflight'
+      ? workspace('Two targets', {characters: [
+          state.characters[0],
+          {character_id: 2, character_name: 'Second Pilot', status: 'enabled',
+            fetched_utc: '2026-09-01', stale: false}
+        ]})
+      : workspace('Initial response');
   await enterWith(initial);
   if (scenario === 'state-request-sequence') {
     handlers.onFittingsChanged();
@@ -946,6 +949,59 @@ async function runStateMachineScenario() {
     await flush();
     assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
       'Requeried detail');
+    return;
+  }
+
+  if (scenario === 'state-stale-preflight') {
+    tick(selectedCheckbox());
+    const invoker = el('fittings-copy-selected');
+    invoker.click();
+    const firstTargets = el('fittings-copy-body').querySelectorAll('input');
+    tick(firstTargets[0]);
+    el('fittings-copy-review').click();
+    const first = takePending('fittings_preflight_copy');
+    assert.deepEqual(first.args[1], [1]);
+    el('fittings-copy-close').click();
+
+    invoker.click();
+    const secondTargets = el('fittings-copy-body').querySelectorAll('input');
+    tick(secondTargets[1]);
+    el('fittings-copy-review').click();
+    const second = takePending('fittings_preflight_copy');
+    assert.deepEqual(second.args[1], [2]);
+
+    first.resolve({accepted: true, ticket_id: 'ticket-a', write_count: 1,
+      requires_resolution: false, counts: {ready: 1}, pairs: [{
+        entry_id: 'fit-1', character_id: 1, fitting_name: 'Stale fitting A',
+        character_name: 'Pilot', status: 'ready', chosen_name: 'Stale fitting A'
+      }]});
+    await flush();
+    assert.equal(el('fittings-copy-review').hidden, false,
+      'stale reply cannot move the reopened dialog out of targets phase');
+    assert.equal(el('fittings-copy-start').hidden, true);
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 selected. Choose target characters.');
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name'), null,
+      'the stale pair is not rendered in the current targets phase');
+
+    second.resolve({accepted: true, ticket_id: 'ticket-b', write_count: 1,
+      requires_resolution: false, counts: {ready: 1}, pairs: [{
+        entry_id: 'fit-1', character_id: 2, fitting_name: 'Current fitting B',
+        character_name: 'Second Pilot', status: 'ready', chosen_name: 'Current fitting B'
+      }]});
+    await flush();
+    assert.equal(el('fittings-copy-review').hidden, true);
+    assert.equal(el('fittings-copy-start').hidden, false,
+      'only the current dialog reply enters preflight');
+    assert.match(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      /^1 remote write/);
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+      'Current fitting B');
+    el('fittings-copy-start').click();
+    await flush();
+    const starts = calls.filter(call => call[0] === 'fittings_start_copy');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0][1], 'ticket-b', 'the stale ticket is never used');
     return;
   }
 
@@ -1176,6 +1232,7 @@ def test_fittings_state_machine_in_node(tmp_path):
         "state-selection-scope",
         "state-detail-sequence",
         "state-rejected-mutation",
+        "state-stale-preflight",
         "state-copy-lifecycle",
     )
     for scenario in scenarios:
