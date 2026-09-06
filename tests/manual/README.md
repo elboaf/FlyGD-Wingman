@@ -185,8 +185,10 @@ or ShellExecute behavior.
 
 `preview_crop_harness.py` is the Phase 0 engineering probe for cropped preview
 regions (`docs/preview-evolution-crops-design.md`). It subclasses the real
-`PreviewHost`, so discovery, the message pump, activation and teardown are the
-shipped ones; only the crop windows and the crop picker are prototype code.
+`PreviewHost` and owns one shared `ClientDiscovery`, so discovery, the message
+pump, activation and teardown are the shipped ones; only the crop windows and
+the crop picker are prototype code. Startup waits for both pump readiness and
+the first roster actually applied on that pump, not merely delivered to it.
 Like `update_harness.py` it is checkout-only: no module in `wingman/` imports
 it, `packaging/uploader.spec` excludes `tests/manual`, and importing it is
 inert on Linux and Windows.
@@ -235,17 +237,22 @@ uv run --no-sync python tests/manual/preview_crop_harness.py load `
   --i-understand-this-is-an-ephemeral-windows-probe
 ```
 
-`WINGMAN_LOG_LEVEL=DEBUG` is what makes the DWM registration and update
-HRESULTs readable in `uploader_debug.log`; `WINGMAN_PREVIEW_PERF=1` adds the
-per-drag timing lines. The acknowledgement flag is spelled out in full on
-purpose: every parser sets `allow_abbrev=False`, so no prefix of it is
-accepted.
+Diagnostics go to the **console (stderr)**, not `uploader_debug.log` or any
+other app log file. The probe configures its own console logging without
+reading settings. INFO is the default (also the fallback for an invalid
+`WINGMAN_LOG_LEVEL`); `WINGMAN_LOG_LEVEL=DEBUG` includes DWM registration and
+update HRESULTs. `WINGMAN_PREVIEW_PERF=1` adds INFO-level per-drag timing lines.
+To retain diagnostics, append `2> crop-probe.log` to either command yourself.
+The acknowledgement flag is spelled out in full on purpose: every parser sets
+`allow_abbrev=False`, so no prefix of it is accepted.
 
 ### `pick`
 
 Opens one picker for the named character as soon as that client is discovered,
 and one crop when you confirm. One picker per process, ever: cancelling is a
 decision, not a transient failure, so it does not reopen on the next sweep.
+Picker and load modes are mutually exclusive; a host created with a character
+rejects `set_probe_count` rather than mixing a picker with staged crops.
 
 - Picker: left drag selects, Enter confirms, Escape cancels.
 - Crop: left click activates, left drag moves, right drag resizes (the source
@@ -261,8 +268,19 @@ down. Ctrl+C ends the run the same way: the host is stopped, the probe prints
 Walks the staged simultaneous counts 1, 2, 4 and 8, printing the probe status
 at each stage and waiting for Enter so the performance-gate metrics can be
 recorded before the next stage opens. It refuses to start with no named client
-running, stops before a stage the machine has fewer clients than, and stops at
-the first stage that records a crop failure rather than continuing past it.
+running and stops normally before an unrequested stage the machine has fewer
+clients than. A requested stage that records a crop failure or still has fewer
+live crops than requested after five seconds stops the run with exit status
+`1`; it never prints `stage N is up` for an incomplete stage. Startup failures
+and readiness timeouts also exit `1`. Every exit unsubscribes and stops discovery
+before stopping the host.
+
+Load destinations use one eight-slot grid from the first stage: rows wrap into
+columns before leaving the selected monitor, including negative-origin monitors.
+Small monitors shrink the **probe destinations only**, preserving each crop's
+source aspect. Shared slots keep mixed-aspect crops distinct, rather than
+stacking off-screen crops onto one rescued position. Record the actual crop
+sizes with performance results: a smaller destination is a different load.
 
 ## Release gate
 

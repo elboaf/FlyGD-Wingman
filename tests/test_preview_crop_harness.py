@@ -4,13 +4,11 @@ Loaded via importlib, the same pattern tests/test_preview_crop_model.py and
 tests/test_preview_crop_windows.py use: the module under test is a checkout
 tool, not a package member, and is on no import path.
 
-Nothing here creates a window. Both native controllers are injected as
-recording factories, and `_reconcile_probe` is driven directly rather than
-through `_sweep` -- real discovery needs a desktop with EVE running on it,
-which is the smoke checklist's job, not pytest's. What IS exercised is
-everything between: which clients are eligible, which crops are created,
-closed and recreated, where activation is routed, and the order teardown
-takes.
+Nothing here creates a window. Native controllers are recording factories.
+Shared discovery is driven with an injected enumerator through apply_roster
+and the pump's pending-roster drain; focused crop cases also call
+_reconcile_probe directly. These cover eligibility, creation, replacement,
+activation routing and teardown without needing a desktop or EVE.
 
 The last section covers the checkout-only CLI. It never reaches Windows
 either: the platform check, the single-instance refusal, DPI awareness and
@@ -19,6 +17,7 @@ tests run on the Linux and Windows CI jobs and neither one opens a window.
 """
 
 import importlib.util
+import os
 import subprocess
 import sys
 import textwrap
@@ -30,6 +29,8 @@ import pytest
 from wingman.preview import discovery
 from wingman.preview import host as host_mod
 from wingman.preview.geometry import Rect
+from wingman.telemetry.clients import ClientDiscovery
+from wingman.telemetry.model import RosterSnapshot
 
 
 def _load(name, relative):
@@ -190,6 +191,9 @@ class FakeUser32:
     def __init__(self, client_rects):
         self.client_rects = client_rects
 
+    def GetForegroundWindow(self):
+        return 0
+
     def GetClientRect(self, hwnd, ptr):
         rect = self.client_rects.get(int(hwnd), (0, 0, *CLIENT_SIZE))
         if rect is None:
@@ -249,6 +253,69 @@ def count_display_reads(host):
     host._monitors = monitors
     host._screen = screen
     return reads
+
+
+# --- shared discovery routing ----------------------------------------------
+
+
+def test_shared_roster_path_reaches_crop_reconciliation(monkeypatch):
+    host = harness.PrototypePreviewHost()
+    calls = []
+    monkeypatch.setattr(
+        host_mod.PreviewHost,
+        "_reconcile_roster",
+        lambda self, libs, snapshot: calls.append("primary"),
+    )
+    monkeypatch.setattr(host, "_reconcile_probe", lambda libs: calls.append("crop"))
+    host.apply_roster(RosterSnapshot(1))
+    host._apply_pending_roster(None)
+    assert calls == ["primary", "crop"]
+
+
+def test_first_empty_roster_is_ready_only_after_pump_reconciliation():
+    host = make_host()
+    host._ready.set()
+    assert host.wait_roster(0) is False
+    host.apply_roster(RosterSnapshot(1))
+    assert host.wait_roster(0) is False
+    host._apply_pending_roster(None)
+    assert host.wait_roster(0) is True
+
+
+def test_failed_reconciliation_does_not_report_roster_ready(monkeypatch):
+    host = make_host()
+    host.apply_roster(RosterSnapshot(1))
+
+    def fail(libs):
+        raise RuntimeError("probe reconciliation failed")
+
+    monkeypatch.setattr(host, "_reconcile_probe", fail)
+    with pytest.raises(RuntimeError, match="probe reconciliation failed"):
+        host._apply_pending_roster(None)
+    assert host.wait_roster(0) is False
+
+
+def test_shared_discovery_creates_crop_only_after_the_pump_applies_it():
+    crops = RecordingCropFactory()
+    # Keep primary reconciliation real but exclude its native windows.
+    host = make_host(crop_factory=crops, excluded=lambda: ["Alice"])
+    service = ClientDiscovery(_enumerate_clients=lambda: [NAMED])
+    unsubscribe = service.subscribe(host.apply_roster)
+    host.set_discovery_request(service.request_scan)
+    try:
+        host.set_probe_count(1)
+        service.scan_once()
+        assert service.snapshot().generation == 1
+        assert host.probe_status()["clients"] == []
+        assert crops.created == []
+        assert host.wait_roster(0) is False
+        host._apply_pending_roster(FakeLibs())
+        assert host.probe_status()["clients"] == ["Alice"]
+        assert host.probe_status()["crops"] == ["Alice"]
+        assert host.wait_roster(0) is True
+    finally:
+        unsubscribe()
+        service.stop()
 
 
 # --- interactive picker ----------------------------------------------------
@@ -316,6 +383,19 @@ def test_confirm_creates_exactly_one_crop_with_the_selected_source():
     assert host.probe_status()["picker_open"] is False
 
 
+def test_picker_confirmation_keeps_single_crop_size_on_a_small_monitor():
+    crops = RecordingCropFactory()
+    pickers = RecordingPickerFactory()
+    host = make_host(character="Alice", crop_factory=crops, picker_factory=pickers)
+    monitor = Rect(0, 0, 640, 360)
+    host._monitors = lambda: [monitor]
+    host._screen = lambda: monitor
+    set_clients(host, NAMED)
+    host._reconcile_probe(FakeLibs())
+    pickers.created[0].confirm(Rect(100, 50, 400, 200))
+    assert crops.created[0].rect == Rect(152, 112, 480, 240)
+
+
 def test_confirm_against_a_client_that_moved_on_creates_nothing():
     """The picker's client record is as old as the picker. A confirmation
     must be re-resolved against the CURRENT registry, or the crop mirrors
@@ -353,26 +433,34 @@ def test_a_failed_picker_is_not_retried_every_sweep():
     assert [f["reason"] for f in host.probe_status()["failures"]] == ["picker-failed"]
 
 
-def test_one_display_enumeration_serves_the_picker_and_the_staged_crops():
-    """A `pick` character and a load stage in the same reconciliation used
-    to read the display twice for one answer -- once for the picker and
-    once for the crop batch. The hardware cannot change between the two,
-    and a failed enumeration logs a line each time it is asked."""
-    crop_factory = RecordingCropFactory()
-    picker_factory = RecordingPickerFactory()
-    host = make_host(
-        character="Carol", crop_factory=crop_factory, picker_factory=picker_factory
-    )
+@pytest.mark.parametrize("state", ["waiting", "picker-open", "confirmed"])
+def test_picker_mode_rejects_load_stages_without_overwriting_resources(state):
+    crops = RecordingCropFactory()
+    pickers = RecordingPickerFactory()
+    host = make_host(character="Alice", crop_factory=crops, picker_factory=pickers)
+    set_clients(host, NAMED)
+    if state != "waiting":
+        host._reconcile_probe(FakeLibs())
+    if state == "confirmed":
+        pickers.created[0].confirm(Rect(100, 50, 400, 200))
+    before = host.probe_status()
+    with pytest.raises(ValueError, match="picker"):
+        host.set_probe_count(1)
+    assert host.probe_status() == before
+    host._reconcile_probe(FakeLibs())
+    assert len(crops.created) == (1 if state == "confirmed" else 0)
+    assert all(not crop.closed for crop in crops.created)
+
+
+def test_one_display_enumeration_serves_the_whole_load_stage():
+    crops = RecordingCropFactory()
+    host = make_host(crop_factory=crops)
     host.set_probe_count(2)
-    set_clients(host, NAMED, OTHER, THIRD)
+    set_clients(host, NAMED, OTHER)
     reads = count_display_reads(host)
     host._reconcile_probe(FakeLibs())
-
-    assert len(picker_factory.calls) == 1
-    assert len(crop_factory.calls) == 2
+    assert len(crops.calls) == 2
     assert reads == {"monitors": 1, "screen": 1}
-    # The one resolved display reached both paths, not just the crops.
-    assert picker_factory.calls[0].monitor == MONITOR
 
 
 def test_a_reconciliation_with_nothing_to_create_reads_no_display():
@@ -419,9 +507,7 @@ def test_every_other_stage_is_rejected(count):
 
 
 def test_the_desired_count_is_stored_before_the_host_window_exists():
-    """set_probe_count is called by the CLI before the pump has created
-    its message-only window. request_sweep is a no-op until then, so the
-    stored intent is the only thing that carries the request across."""
+    """A pre-start request must retain intent, even without discovery wired."""
     host = make_host()
     assert host._hwnd is None
     host.set_probe_count(4)
@@ -436,11 +522,43 @@ def test_a_load_stage_creates_the_central_half_of_the_current_client():
     host._reconcile_probe(FakeLibs())
 
     call = crop_factory.calls[0]
-    assert call.source_rect == model.central_source(CLIENT_SIZE)
-    expected_size = model.fit_within(
-        (call.source_rect.w, call.source_rect.h), harness.PROBE_SIZE_MAX
+    assert call.source_rect == Rect(320, 180, 640, 360)
+    assert call.rect == Rect(1432, 802, 480, 270)
+
+
+@pytest.mark.parametrize("monitor", [MONITOR, Rect(-640, -360, 640, 360)])
+def test_eight_mixed_aspect_crops_have_distinct_monitor_bounded_slots(monitor):
+    crops = RecordingCropFactory()
+    host = make_host(crop_factory=crops)
+    host._monitors = lambda: [monitor]
+    host._screen = lambda: monitor
+    clients = [
+        NAMED._replace(hwnd=32 + i, pid=200 + i, character=f"C{i}", stable_key=f"C{i}")
+        for i in range(8)
+    ]
+    sizes = [(1280, 720), (720, 1280)] * 4
+    libs = FakeLibs(
+        {client.hwnd: (0, 0, *size) for client, size in zip(clients, sizes)}
     )
-    assert call.rect == model.stack_from_bottom_right(0, MONITOR, expected_size)
+    set_clients(host, *clients)
+    for stage in (1, 2, 4, 8):
+        host.set_probe_count(stage)
+        host._reconcile_probe(libs)
+        assert host.probe_status()["live"] == stage
+    assert len(crops.created) == 8  # earlier stages keep their original slots
+    rectangles = [crop.rect for crop in crops.created]
+    assert len(set(rectangles)) == 8
+    for index, rect in enumerate(rectangles):
+        assert rect.w > 0 and rect.h > 0
+        assert monitor.x <= rect.x and rect.right <= monitor.right
+        assert monitor.y <= rect.y and rect.bottom <= monitor.bottom
+        for other in rectangles[:index]:
+            assert (
+                rect.right <= other.x
+                or other.right <= rect.x
+                or rect.bottom <= other.y
+                or other.bottom <= rect.y
+            )
 
 
 def test_named_clients_are_staged_in_case_insensitive_order():
@@ -665,7 +783,10 @@ def test_a_crop_opens_and_restyles_with_the_characters_lock():
 # --- teardown --------------------------------------------------------------
 
 
-def test_teardown_closes_the_picker_and_crops_before_the_base_teardown(monkeypatch):
+@pytest.mark.parametrize("mode", ["load", "picker-open", "confirmed"])
+def test_teardown_closes_the_picker_and_crops_before_the_base_teardown(
+    monkeypatch, mode
+):
     """Ordering, not merely closure: the base teardown destroys the host
     window and ends the pump, and a crop closed after that is a DWM
     relationship unwound with nothing pumping for it."""
@@ -673,12 +794,16 @@ def test_teardown_closes_the_picker_and_crops_before_the_base_teardown(monkeypat
     crop_factory = RecordingCropFactory(events=events)
     picker_factory = RecordingPickerFactory(events=events)
     host = make_host(
-        character="Carol", crop_factory=crop_factory, picker_factory=picker_factory
+        character=None if mode == "load" else "Alice",
+        crop_factory=crop_factory,
+        picker_factory=picker_factory,
     )
-    host.set_probe_count(1)
-    set_clients(host, NAMED, THIRD)
+    if mode == "load":
+        host.set_probe_count(1)
+    set_clients(host, NAMED)
     host._reconcile_probe(FakeLibs())
-    assert crop_factory.created and picker_factory.created
+    if mode == "confirmed":
+        picker_factory.created[0].confirm(Rect(100, 50, 400, 200))
 
     monkeypatch.setattr(
         host_mod.PreviewHost, "_teardown", lambda self, libs: events.append(("base",))
@@ -686,10 +811,24 @@ def test_teardown_closes_the_picker_and_crops_before_the_base_teardown(monkeypat
     host._teardown(FakeLibs())
 
     assert events[-1] == ("base",)
-    assert events.index(("picker-cancel", "host-teardown")) < events.index(("base",))
-    assert ("crop-close", "Alice") in events[: events.index(("base",))]
+    if mode == "picker-open":
+        assert events.index(("picker-cancel", "host-teardown")) < events.index(
+            ("base",)
+        )
+    else:
+        assert ("crop-close", "Alice") in events[: events.index(("base",))]
     assert host.probe_status()["crops"] == []
     assert host.probe_status()["picker_open"] is False
+
+
+def test_teardown_resets_roster_readiness_for_another_host_run(monkeypatch):
+    host = make_host()
+    host.apply_roster(RosterSnapshot(1))
+    host._apply_pending_roster(None)
+    assert host.wait_roster(0) is True
+    monkeypatch.setattr(host_mod.PreviewHost, "_teardown", lambda self, libs: None)
+    host._teardown(None)
+    assert host.wait_roster(0) is False
 
 
 def test_teardown_is_safe_with_no_picker_and_no_crops(monkeypatch):
@@ -738,15 +877,24 @@ OPT_IN = "--i-understand-this-is-an-ephemeral-windows-probe"
 class FakeProbeHost:
     """Stands in for PrototypePreviewHost over a whole CLI run.
 
-    Only the four methods the CLI is allowed to call: start, wait_ready,
-    set_probe_count, probe_status and stop. Anything else the CLI reached
-    for would fail here, which is the point -- the probe's contract with
-    the host is exactly this surface.
+    The native lifecycle is replaced, but roster delivery and readiness
+    remain separate operations, as they are on the real pump.
     """
 
-    def __init__(self, clients=("Alice",), ready=True, failures_at=None, live_at=None):
+    def __init__(
+        self,
+        clients=("Alice",),
+        ready=True,
+        roster_ready=True,
+        failures_at=None,
+        live_at=None,
+    ):
         self.character = None
         self.ready = ready
+        self.roster_ready = roster_ready
+        self.roster_timeouts = []
+        self.pending_roster = None
+        self.discovery_request = None
         self.clients = list(clients)
         self._failures_at = dict(failures_at or {})
         self._live_at = dict(live_at or {})
@@ -763,6 +911,19 @@ class FakeProbeHost:
     def wait_ready(self, timeout):
         self.wait_timeouts.append(timeout)
         return self.ready
+
+    def set_discovery_request(self, callback):
+        assert not self.started, "discovery must be wired before the pump starts"
+        self.discovery_request = callback
+
+    def apply_roster(self, snapshot):
+        self.pending_roster = snapshot
+        self.events.append(("roster-delivered",))
+
+    def wait_roster(self, timeout):
+        self.roster_timeouts.append(timeout)
+        self.events.append(("roster-applied",))
+        return self.roster_ready
 
     def set_probe_count(self, count):
         stage = model.validated_stage(count)
@@ -785,6 +946,42 @@ class FakeProbeHost:
     def stop(self):
         self.stopped += 1
         self.events.append(("stop",))
+
+
+class ProbeDiscovery(ClientDiscovery):
+    """Real subscription and publication, without a native enumeration thread."""
+
+    def __init__(self):
+        super().__init__(_enumerate_clients=lambda: [NAMED])
+        self.events = []
+        self.start_result = True
+
+    def subscribe(self, callback):
+        unsubscribe = super().subscribe(callback)
+        self.events.append(("subscribe",))
+
+        def detach():
+            self.events.append(("unsubscribe",))
+            unsubscribe()
+
+        return detach
+
+    def start(self):
+        self.events.append(("discovery-start",))
+        if self.start_result:
+            self.scan_once()
+        return self.start_result
+
+    def stop(self):
+        self.events.append(("discovery-stop",))
+        return super().stop()
+
+
+@pytest.fixture(autouse=True)
+def cli_discovery(monkeypatch):
+    service = ProbeDiscovery()
+    monkeypatch.setattr(harness, "ClientDiscovery", lambda: service)
+    return service
 
 
 def run_cli(
@@ -1088,6 +1285,66 @@ def test_a_host_that_never_becomes_ready_is_stopped_and_reported(monkeypatch, ca
     assert "crop probe failure: " in capsys.readouterr().err
 
 
+def test_cli_owns_discovery_until_after_roster_is_applied(monkeypatch, cli_discovery):
+    host = FakeProbeHost()
+    cli_discovery.events = host.events
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 0
+    assert host.pending_roster == cli_discovery.snapshot()
+    assert host.discovery_request == cli_discovery.request_scan
+    assert host.roster_timeouts == [harness.READY_TIMEOUT_S]
+    assert host.events.index(("roster-applied",)) < host.events.index(("stage", 1))
+    assert host.events[-3:] == [("unsubscribe",), ("discovery-stop",), ("stop",)]
+    host.pending_roster = None
+    cli_discovery.scan_once()
+    assert host.pending_roster is None  # unsubscribed, not merely stopped
+
+
+@pytest.mark.parametrize(
+    "failure", ["pump-timeout", "roster-timeout", "discovery-start"]
+)
+def test_failed_readiness_stops_both_owners(
+    monkeypatch, capsys, cli_discovery, failure
+):
+    host = FakeProbeHost(
+        ready=failure != "pump-timeout", roster_ready=failure != "roster-timeout"
+    )
+    cli_discovery.start_result = failure != "discovery-start"
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 1
+    assert host.stopped == 1
+    assert cli_discovery.events[-2:] == [("unsubscribe",), ("discovery-stop",)]
+    assert not result.presses
+    assert "crop probe failure: " in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("owner", ["host", "discovery"])
+def test_start_exception_unsubscribes_and_stops_both_owners(
+    monkeypatch, cli_discovery, owner
+):
+    host = FakeProbeHost()
+
+    def fail():
+        raise RuntimeError("injected start failure")
+
+    monkeypatch.setattr(host if owner == "host" else cli_discovery, "start", fail)
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 1
+    assert host.stopped == 1
+    assert cli_discovery.events[-2:] == [("unsubscribe",), ("discovery-stop",)]
+
+
+def test_discovery_stop_timeout_is_reported_without_skipping_host_stop(
+    monkeypatch, capsys, cli_discovery
+):
+    host = FakeProbeHost()
+    monkeypatch.setattr(cli_discovery, "stop", lambda: False)
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    assert result.code == 1
+    assert host.stopped == 1
+    assert "discovery" in capsys.readouterr().err
+
+
 # -- pick -------------------------------------------------------------------
 
 
@@ -1151,10 +1408,11 @@ def test_load_stops_on_the_first_stage_that_reports_a_failure(monkeypatch, capsy
         failures_at={2: [{"stable_key": "B", "reason": "crop-failed"}]},
     )
     result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
-    assert result.code == 0
+    assert result.code == 1
     assert [e for e in host.events if e[0] == "stage"] == [("stage", 1), ("stage", 2)]
     out = capsys.readouterr().out
     assert "crop-failed" in out
+    assert "stage 2 is up" not in out
     assert host.stopped == 1
 
 
@@ -1203,6 +1461,62 @@ def test_an_unfillable_stage_gives_up_instead_of_waiting_forever(monkeypatch):
 
     monkeypatch.setattr(harness.time, "monotonic", fake_monotonic)
     assert harness._await_stage(host, 1)["live"] == 0
+
+
+def test_timed_out_stage_is_failure_not_an_up_stage(monkeypatch, capsys, cli_discovery):
+    host = FakeProbeHost(live_at={1: 0})
+    tick = iter([0.0, harness.STAGE_TIMEOUT_S + 1])
+    monkeypatch.setattr(harness.time, "monotonic", lambda: next(tick))
+    result = run_cli(monkeypatch, ["load", OPT_IN], host=host)
+    captured = capsys.readouterr()
+    assert result.code == 1
+    assert result.presses == []
+    assert "stage 1 is up" not in captured.out
+    assert "live crops: 0" in captured.out
+    assert "stage 1" in captured.err
+    assert host.stopped == 1
+    assert cli_discovery.events[-2:] == [("unsubscribe",), ("discovery-stop",)]
+
+
+@pytest.mark.parametrize(
+    "level,debug", [(None, False), ("INFO", False), (" debug ", True), ("typo", False)]
+)
+def test_cli_enables_console_diagnostics_before_host_creation(level, debug):
+    probe = textwrap.dedent(
+        """
+        import importlib.util
+        import logging
+        import sys
+
+        spec = importlib.util.spec_from_file_location("preview_crop_harness", sys.argv[1])
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module._require_probe_environment = lambda: None
+        module._set_dpi_awareness = lambda: None
+        def host(**kwargs):
+            logging.getLogger("preview_crop_windows").info("crop drag perf: diagnostic")
+            logging.getLogger("wingman.preview.thumbnail").debug("DWM HRESULT diagnostic")
+            raise RuntimeError("stop before native creation")
+        module.PrototypePreviewHost = host
+        assert module.main(["load", sys.argv[2]]) == 1
+        assert "wingman.__main__" not in sys.modules
+        assert not any(isinstance(h, logging.FileHandler) for h in logging.getLogger().handlers)
+        """
+    )
+    environment = dict(os.environ)
+    environment.pop("WINGMAN_LOG_LEVEL", None)
+    if level is not None:
+        environment["WINGMAN_LOG_LEVEL"] = level
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(HARNESS_PATH), OPT_IN],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "crop drag perf: diagnostic" in result.stderr
+    assert ("DWM HRESULT diagnostic" in result.stderr) is debug
 
 
 # -- documentation ----------------------------------------------------------
