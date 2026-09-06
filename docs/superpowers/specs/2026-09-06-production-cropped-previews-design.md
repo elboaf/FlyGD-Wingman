@@ -14,7 +14,8 @@ that character returns. The normal primary preview remains unchanged.
 This spec supplements the [approved crop design](../../preview-evolution-crops-design.md),
 not the entire preview-evolution roadmap. Its architecture, persistence,
 lifecycle, failure behavior and test contracts continue to apply except for
-the explicit resource-budget and asynchronous-commit refinements below.
+the explicit resource-budget, session-identity, asynchronous-commit and
+lock-control eligibility refinements below.
 [PRODUCT.md](../../../PRODUCT.md) and [DESIGN.md](../../../DESIGN.md) remain the
 product and UI authorities. The [prototype results](../../preview-crop-prototype-results.md)
 record evidence, not a production-release approval.
@@ -82,7 +83,20 @@ create another native pump thread.
 
 `PreviewHost` owns all crop/picker HWND and DWM operations, live bindings,
 resource reservations, reconciliation, visibility, activation and teardown.
-A saved owner is a character name; a live binding includes current HWND and PID.
+A saved owner is a character name; a live crop binding also retains the current
+`RosterClient.session` (`ClientSessionId`, including `first_seen_generation`).
+HWND and PID alone are insufficient: a character may log out and return on the
+same HWND/PID while the intermediate anonymous snapshot is coalesced away.
+Shared discovery already renews session identity for that transition
+(`tests/test_client_discovery.py:125–138`).
+
+Retain this runtime-only identity for crops, pickers and pending source-bound
+operations independently of `_preview_client()`, which discards it for the
+unchanged primary-preview registry. A changed session invalidates the old live
+binding and pending selection/replacement, even when character/HWND/PID match;
+it also permits recovery of an enabled degraded crop as a meaningful lifecycle
+event. Ordinary snapshots within the same session do not trigger recreation or
+reset recovery limits. Session identity is not persisted in crop definitions.
 
 The current host consumes `RosterSnapshot` through `apply_roster()` and
 `_apply_pending_roster()`, with `_reconcile_roster()` on its pump thread.
@@ -111,7 +125,10 @@ crop geometry into the primary-layout store.
 
 Disk writes must not block the preview pump. Native preparation happens there;
 a settings worker commits; its completion returns through the pump mailbox.
-Operations carry identity/generation tokens, and settings mutation ordering
+Source-bound operations carry discovery-session identity as well as crop-edit
+generation tokens; an edit generation alone cannot detect a new login session.
+Recheck both when consuming a selection proposal or asynchronous completion,
+following the commit/cancellation outcomes below. Settings mutation ordering
 must prevent an older operation overwriting a later disable, removal or edit.
 Never hold the settings lock while waiting for the pump, or make the pump wait
 for a worker that needs a pump callback.
@@ -153,6 +170,15 @@ requires reselection, or failed to render/save. Do not misreport a refused
 operation as applied or erase a user's preference because runtime is unavailable.
 Use the existing per-field result contract and page-handler allowlist.
 
+The shared per-character lock preference must remain editable when an enabled
+saved crop uses it, even if its primary preview is excluded. Offline or
+master/cap suppression does not remove that configuration access. Update
+`previews.js`'s `renderLockBlock()` eligibility and the exclusion-based guard in
+`tests/test_page_conventions.py:2718–2729`; their current assumption that an
+excluded primary leaves nothing to lock no longer holds. Preserve existing
+eligibility for characters without an enabled crop, and keep the same resolved
+`lock_default`/character-exception policy rather than adding crop-specific locks.
+
 Retain the parent's bounded DWM recovery policy: one recovery attempt per
 failure episode, then degraded status until a meaningful lifecycle event or
 explicit retry. Log enough identity, rectangles and HRESULT context to diagnose
@@ -180,6 +206,13 @@ settings and bridge contracts, plus:
 
 - Real snapshot-to-pump reconciliation routing, not only direct crop-helper
   tests; CLI discovery startup and teardown through injected seams.
+- Coalesced logout/return on the same character/HWND/PID: a changed discovery
+  session closes/rebinds the old crop, invalidates its picker and stale
+  replacement completions, and permits degraded-crop recovery. An unchanged
+  session must not recreate crops or reset recovery limits.
+- With the primary excluded and default locking enabled, an enabled crop still
+  has a usable per-character unlock control. Cover offline/master/cap-suppressed
+  definitions and preserve exclusion gating when no enabled crop exists.
 - Every supported probe stage remains accessible on representative monitors;
   timeout/incomplete stages stop rather than claiming readiness.
 - Probe diagnostics work under the documented invocation without reading or
