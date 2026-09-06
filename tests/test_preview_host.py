@@ -82,6 +82,48 @@ def test_start_twice_does_not_spawn_two_threads(monkeypatch):
     assert len(started) == 1
 
 
+def test_start_during_timed_out_stop_does_not_spawn_a_second_pump(monkeypatch):
+    created = []
+
+    class StuckThread:
+        def __init__(self, *, target, daemon, name):
+            self.target = target
+            self.daemon = daemon
+            self.name = name
+            self.alive = False
+            self.joins = []
+            created.append(self)
+
+        def start(self):
+            self.alive = True
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return self.alive
+
+    monkeypatch.setattr(host.threading, "Thread", StuckThread)
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+
+    h.start()
+    first = h._thread
+    h.stop(timeout=0)
+    h.start()
+
+    assert created == [first]
+    assert h._thread is first
+    assert h.is_running
+    assert first.joins == [0]
+
+    first.alive = False
+    h.start()
+
+    assert len(created) == 2
+    assert h._thread is created[1]
+    assert h.is_running
+
+
 def test_shutdown_flushes_pending_layouts(monkeypatch):
     """Layout writes are debounced by a second. Quitting inside that window
     after a drag would otherwise discard the move -- and the plan called
