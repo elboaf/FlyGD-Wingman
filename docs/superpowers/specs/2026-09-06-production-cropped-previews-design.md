@@ -1,6 +1,6 @@
 # Production cropped previews — one crop per character
 
-**Status:** Design approved in conversation; written spec awaiting review.
+**Status:** Approved for implementation planning; accepted independent-review findings incorporated.
 **Date:** 2026-09-06
 **Implementation baseline:** `57ce91d` (includes PRs #162, #170 and #171).
 **Scope:** Phase 1 cropped previews only; no implementation in this change.
@@ -133,6 +133,17 @@ must prevent an older operation overwriting a later disable, removal or edit.
 Never hold the settings lock while waiting for the pump, or make the pump wait
 for a worker that needs a pump callback.
 
+Cancellation ends at **transaction admission**, not at file publication. After
+acquiring the settings transaction lock, the worker rechecks the operation's
+session, runtime epoch and edit generation, then claims the write. Cancellation
+before that claim writes nothing. An admitted transaction may finish after
+client loss or master-off; if it succeeds, retain the committed definition but
+discard any native candidate no longer authorized by current runtime state.
+Later disable/removal requests are serialized after an admitted write, so the
+older operation cannot undo them. This boundary was explicitly approved during
+implementation planning; it uses the existing atomic writer without claiming
+that an in-flight file write can be canceled.
+
 Required outcomes:
 
 - Creation/enabling while available validates native setup before persistence.
@@ -143,10 +154,10 @@ Required outcomes:
   asynchronous handoff, including movement during the operation.
 - Disable/removal persist before closing the committed crop. Write failure
   leaves it enabled and visible. Stale geometry callbacks cannot recreate it.
-- Client loss or master-off before commit cancels pending native work. If a
-  successful write has already committed when availability changes, retain the
-  committed definition but do not display a stale candidate; reconcile against
-  current availability and master state.
+- Client loss or master-off cancels pending native work and any write not yet
+  admitted. An already-admitted write may still succeed before or after that
+  availability change. Retain its committed definition but do not display a
+  stale candidate; reconcile against current availability and master state.
 - Shutdown fences new work and late completions, settles in-flight settings
   transactions, and flushes only valid current geometry before native teardown.
   No late completion may reopen a window or resurrect removed state.
@@ -219,6 +230,9 @@ settings and bridge contracts, plus:
   writing application settings.
 - Native resource counts include hidden candidates and pickers; no overlapping
   temporary users or leaked replaced crop, including concurrent requests.
+- Cancellation before admission writes nothing; client loss or master-off
+  during an admitted save retains a successful definition without displaying
+  its stale candidate. Later disable/removal wins when its own save succeeds.
 - Delayed successful/failed settings completion, client loss, master toggles,
   movement during replacement, remove/disable races and shutdown fencing.
 
