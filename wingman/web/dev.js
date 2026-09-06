@@ -2471,12 +2471,13 @@
   var backupsScenario = identitySearch.get('backups') || '';
   var copyScenario = identitySearch.get('copy') || '';
   var formationsAccountScenario = identitySearch.get('formations-account') || '';
+  var formationsShareScenario = identitySearch.get('formations-share') || '';
   // Task 7: the whole-profile copy checkpoints. A named scenario drives
   // the eve_settings_copy_profile double below through the real panel
   // rather than through a harness-only shortcut.
   var profileCopyScenario = identitySearch.get('profile') || '';
   var profilesScenarioRequested = !!(backupsScenario || copyScenario
-    || formationsAccountScenario || profileCopyScenario);
+    || formationsAccountScenario || formationsShareScenario || profileCopyScenario);
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -2994,6 +2995,12 @@
   // second fixture differs visibly, so ?formations-account=switch proves
   // the clean account switch replaces the editor rather than only its label.
   var devFormationsByAccount = {}, devFormationRevisions = {}, devFormationSequence = 0;
+  // Asserted against formation_sharing.limits_payload in test_dev_harness.py.
+  var devSharingLimits = {
+    max_bytes: 65536, max_formations: 32, max_name_codepoints: 128, max_probes: 8,
+    au_meters: 149597870700, min_range_meters: 149597870700 * 1e-6,
+    max_range_meters: 149597870700 * 65536, max_coordinate_meters: 1e16
+  };
   // Opaque fake revisions, not hashing evidence. Real byte hashing is tested
   // through codec.read_snapshot/write_document with only the filter injected.
   function nextDevFormationRevision() {
@@ -3003,6 +3010,7 @@
   eve.accounts.forEach(function (account, index) {
     var formations = JSON.parse(JSON.stringify(devFormations));
     if (index === 1) formations[0].name = 'Second account test';
+    if (formationsShareScenario === 'empty') formations = [];
     devFormationsByAccount[account.path] = formations;
     devFormationRevisions[account.path] = nextDevFormationRevision();
   });
@@ -3022,10 +3030,26 @@
         resolve({
           ok: true, path: path, name: account ? account.name : path,
           content_revision: devFormationRevisions[path],
+          sharing_limits: JSON.parse(JSON.stringify(devSharingLimits)),
           formations: JSON.parse(JSON.stringify(devFormationsByAccount[path] || []))
         });
       }, 150);
     });
+  };
+  // Visual fixture only, not Python's strict parser or Unicode casefold policy.
+  // This projects known-good scenario drafts; contract tests run the pure module.
+  api.eve_settings_export_formations = function (items) {
+    if (formationsShareScenario === 'error') {
+      return Promise.resolve({ok: false, error: 'Could not prepare these formations (dev scenario).'});
+    }
+    return Promise.resolve({ok: true, text: JSON.stringify({
+      format: 'wingman-preset', version: 1, type: 'probe-formations',
+      formations: items.map(function (f) {
+        return {name: f.name, probes: f.probes.map(function (p) {
+          return {x: p.x, y: p.y, z: p.z, range: p.range};
+        })};
+      })
+    })});
   };
   // The save MINTS an id for every `id: null`, because write_formations
   // does -- above every id the file has ever held. Without this the stub
@@ -3043,7 +3067,8 @@
         || !/^[0-9a-f]{64}$/.test(expectedRevision)) {
       done.error_code = 'invalid_request';
       done.error = 'A content revision and request ID are required.';
-    } else if (expectedRevision !== devFormationRevisions[path]) {
+    } else if (formationsShareScenario === 'stale'
+        || expectedRevision !== devFormationRevisions[path]) {
       done.error_code = 'stale_file';
       done.error = "This account's settings changed. Nothing was saved. Your edits are still here.";
     } else {
@@ -3116,6 +3141,21 @@
       var target = WM.el('es-targets').querySelector('input[type="checkbox"]');
       if (target) target.click();
       WM.el('es-copy').click();
+      return;
+    }
+    if (formationsShareScenario) {
+      WM.openFormations(eve.accounts, eve.accounts[0].path);
+      window.setTimeout(function () {
+        var boxes = WM.el('fm-list').querySelectorAll('input[type="checkbox"]');
+        Array.prototype.forEach.call(boxes, function (box) { box.click(); });
+        if (formationsShareScenario === 'stale') {
+          var name = WM.el('fm-name');
+          name.value = 'Recovery draft';
+          name.dispatchEvent(new Event('change'));
+          WM.el('fm-save').click();
+        }
+        // Never copy automatically, even in the harness. The user owns that act.
+      }, 250);
       return;
     }
     if (formationsAccountScenario) {

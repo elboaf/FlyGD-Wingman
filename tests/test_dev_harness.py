@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from wingman import bookmarks
-from wingman.evesettings import identity, selective
+from wingman.evesettings import formation_sharing, identity, selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -700,7 +700,8 @@ def test_dev_account_labels_use_the_python_identity_data_without_node():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_dev_formation_revisions_and_correlated_completion():
+@pytest.mark.parametrize("scenario", ["selected", "empty", "stale", "error"])
+def test_dev_formation_revisions_and_correlated_completion(scenario):
     # Execute the real standalone formation fixture block with only timer and
     # completion delivery seams. No fixture save/read implementation in tests.
     script = r"""
@@ -713,7 +714,7 @@ const api = {};
 const window = {onEveSettingsDone: payload => done.push(payload)};
 vm.runInNewContext(source.slice(source.indexOf('  function eveMutation('),
   source.indexOf('  window.pywebview =')), {
-  api, window, console, Promise, copyScenario: '',
+  api, window, console, Promise, copyScenario: '', formationsShareScenario: process.argv[3],
   eve: {accounts: [{path: 'A', name: 'Account A'}]},
   setTimeout: (callback, delay) => { timers.push({callback, delay}); }
 });
@@ -723,7 +724,22 @@ async function main() {
   assert.equal(timers[0].delay, 150);
   drain(); const initial = await read;
   assert.match(initial.content_revision, /^[0-9a-f]{64}$/);
-  const items = [{id: null, name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 4}]}];
+  assert.deepEqual(JSON.parse(JSON.stringify(initial.sharing_limits)), JSON.parse(process.argv[2]));
+  const items = [{id: null, name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}];
+  const exported = await api.eve_settings_export_formations(items);
+  assert.equal(done.length, 0, 'export must not fake a save completion');
+  const afterExport = api.eve_settings_formations('A'); drain();
+  assert.deepEqual(await afterExport, initial, 'export must not modify the fake account');
+  if (process.argv[3] === 'error') {
+    assert.equal(exported.ok, false); assert.ok(exported.error); return;
+  }
+  assert.deepEqual(JSON.parse(exported.text), {format: 'wingman-preset', version: 1,
+    type: 'probe-formations', formations: [{name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}]});
+  if (process.argv[3] === 'empty') { assert.deepEqual(JSON.parse(JSON.stringify(initial.formations)), []); return; }
+  if (process.argv[3] === 'stale') {
+    await api.eve_settings_save_formations('A', items, initial.content_revision, 'stale:1'); drain();
+    assert.equal(done[0].error_code, 'stale_file'); return;
+  }
   assert.equal(await api.eve_settings_save_formations('A', items, initial.content_revision, 'test:1'), true);
   drain(); assert.equal(done.length, 1);
   assert.equal(done[0].ok, true);
@@ -741,12 +757,18 @@ async function main() {
   assert.equal(done.length, 3); assert.equal(done[2].error_code, 'invalid_request');
   const unchanged = api.eve_settings_formations('A'); drain();
   assert.equal((await unchanged).formations[0].name, 'New');
-  console.log('PASS dev-formations');
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().then(() => console.log('PASS dev-formations')).catch(error => { console.error(error); process.exitCode = 1; });
 """
     result = subprocess.run(
-        ["node", "-e", script, str(WEB / "dev.js")],
+        [
+            "node",
+            "-e",
+            script,
+            str(WEB / "dev.js"),
+            json.dumps(formation_sharing.limits_payload()),
+            scenario,
+        ],
         capture_output=True,
         text=True,
         timeout=15,

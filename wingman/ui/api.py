@@ -60,6 +60,7 @@ from ..eveauth import application as eveauth_application
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import characters as evesettings_characters
 from ..evesettings import codec as evesettings_codec
+from ..evesettings import formation_sharing as _evesettings_formation_sharing
 from ..evesettings import formations as evesettings_formations
 from ..evesettings import identity as evesettings_identity
 from ..evesettings import names as evesettings_names
@@ -8101,7 +8102,18 @@ class Api:
                 "name": self._eve_label(str(target)),
                 "formations": evesettings_formations.to_payload(found),
                 "content_revision": snapshot.content_revision,
+                "sharing_limits": _evesettings_formation_sharing.limits_payload(),
             }
+
+    def eve_settings_export_formations(self, items: list) -> dict:
+        """Prepare selected draft values only; the page owns clipboard outcomes."""
+        try:
+            return {
+                "ok": True,
+                "text": _evesettings_formation_sharing.export_text(items),
+            }
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
 
     def eve_settings_save_formations(
         self,

@@ -4386,6 +4386,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .fm-rail-head > #fm-account { flex: 1; min-width: 0; }
 .fm-rail-add { flex: none; flex-wrap: wrap; row-gap: 6px; }
 .fm-rail-add > .btn { width: 100%; text-align: center; }
+.fm-list-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.fm-list-row > .check { flex: none; }
+.fm-list-row > .fm-item { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fm-share { flex: none; display: flex; flex-direction: column; gap: 4px; }
+.fm-share > .hint { margin-top: 0; }
+#fm-share-status { min-height: 1.4em; overflow-wrap: anywhere; }
 
 /* 620px, the app's form measure, and for the reason `#route-evesettings >
    .settings > .card` keeps it: this pane is a form. The roster one route

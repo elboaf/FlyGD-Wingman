@@ -4,10 +4,10 @@
  * app.js's WM.route map and index.html's #route-formations comment).
  *
  * Edit state lives here in km (positions) and AU (ranges); the bridge and
- * the .dat both speak meters, so the two conversions happen in exactly two
- * places -- load() and save() -- and nowhere else. A third one is a double
- * conversion, and the failure is silent: a formation 1000x out still draws
- * as a formation. test_page_conventions.py pins the count.
+ * the .dat both speak meters. fromMeters handles reads; toMeters handles
+ * Save and Copy snapshots. Never convert again in a caller: a formation
+ * 1000x out still draws as a formation. Executable page tests check both
+ * outgoing bridge boundaries.
  *
  * Ids travel with their formation (null = new). The client keys its
  * selectedFormationID on the id, so a save that re-numbered by list
@@ -64,6 +64,9 @@
   // page's request IDs even if its generation and sequence start over.
   var pageSession = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
   var loadGeneration = 0, readAttempt = 0, saveSequence = 0, pendingSave = null;
+  // Sharing selection is independent of the open editor row. Object identity
+  // survives rename/deletion without moving a tick onto a different formation.
+  var copySelection = [], copyAttempt = 0, sharingLimits = null;
   var yaw = 0.6, pitch = 0.4, dragging = false, lastX = 0, lastY = 0;
 
   function probe(x, y, z) { return { x: x, y: y, z: z, range: 32 }; }
@@ -147,7 +150,7 @@
     markDirty(); renderProbes(); renderPreview();
   }
 
-  /* ---- load / save: the only two places meters appear ---- */
+  /* ---- meter boundary, load / save / copy ---- */
   // The range is rounded to six decimal places OF AN AU on the way in;
   // the positions are not.
   //
@@ -291,6 +294,12 @@
       selectedAccountPath = path;
       lastSuccessfulPath = path;
       state.formations = reply.formations.map(fromMeters);
+      sharingLimits = reply.sharing_limits;
+      copySelection = [];
+      // A post-save reread can replace the document without a new generation.
+      // No export still preparing the prior document may reach the clipboard.
+      copyAttempt += 1;
+      setShareStatus('', false);
       state.selected = 0;
       if (typeof keepIndex === 'number' && state.formations.length) {
         state.selected = Math.min(Math.max(0, keepIndex),
@@ -327,6 +336,58 @@
         saveStatus('The save could not be started. Your edits are still here.');
         paintCommit();
       }
+    });
+  }
+
+  function setShareStatus(text, isError) {
+    var status = WM.el('fm-share-status');
+    status.textContent = text;
+    status.className = isError ? 'hint err' : 'hint';
+  }
+
+  function paintSharing() {
+    WM.el('fm-copy').textContent = 'Copy selected (' + copySelection.length + ')';
+    WM.setEnabled('fm-copy', !state.busy && copySelection.length > 0);
+    WM.el('fm-share-hint').textContent = sharingLimits
+      ? 'Up to ' + sharingLimits.max_formations + ' formations, '
+        + (sharingLimits.max_bytes / 1024) + ' KiB.'
+      : '';
+  }
+
+  function copySelected() {
+    if (state.busy || !copySelection.length) { return; }
+    var attempt = ++copyAttempt, generation = loadGeneration;
+    var items = state.formations.filter(function (f) {
+      return copySelection.indexOf(f) !== -1;
+    }).map(toMeters);
+    function stillCurrent() {
+      return generation === loadGeneration && attempt === copyAttempt
+        && WM.current_route === 'formations';
+    }
+    setShareStatus('Preparing formations…', false);
+    WM.send('eve_settings_export_formations', items).then(function (reply) {
+      if (!stillCurrent()) { return; }
+      if (!reply || !reply.ok) {
+        setShareStatus((reply && reply.error) || 'Could not prepare formations.', true);
+        return;
+      }
+      // Once this OS call begins it cannot be revoked. Ignore stale outcomes
+      // rather than reporting another account's copy as this account's success.
+      try {
+        navigator.clipboard.writeText(reply.text).then(function () {
+          if (stillCurrent()) { setShareStatus('Formations copied.', false); }
+        }, function () {
+          if (stillCurrent()) {
+            setShareStatus('Could not copy formations to the clipboard.', true);
+          }
+        });
+      } catch (error) {
+        if (stillCurrent()) {
+          setShareStatus('Could not copy formations to the clipboard.', true);
+        }
+      }
+    }, function () {
+      if (stillCurrent()) { setShareStatus('Could not prepare formations.', true); }
     });
   }
 
@@ -405,6 +466,22 @@
       return;
     }
     state.formations.forEach(function (f, i) {
+      var row = WM.make('div', 'fm-list-row');
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      var check = WM.make('label', 'check');
+      check.appendChild(input);
+      check.appendChild(WM.make('span', 'box'));
+      input.checked = copySelection.indexOf(f) !== -1;
+      input.setAttribute('aria-label', 'Select ' + (f.name || 'Unnamed') + ' for sharing');
+      input.addEventListener('change', function () {
+        var selected = copySelection.indexOf(f);
+        if (input.checked && selected === -1) { copySelection.push(f); }
+        else if (!input.checked && selected !== -1) { copySelection.splice(selected, 1); }
+        // Never rebuild the pane for a sharing tick: it can hold unblurred input.
+        paintSharing();
+      });
+      row.appendChild(check);
       // .fm-item, NOT .rail-item. The two share one rule in style.css
       // because they are one affordance, but app.js sweeps every
       // `.rail-item` on the page when a Settings section changes and
@@ -418,7 +495,8 @@
         state.selected = i;
         renderAll();
       });
-      box.appendChild(item);
+      row.appendChild(item);
+      box.appendChild(row);
     });
   }
 
@@ -734,6 +812,7 @@
     WM.el('fm-dirty').className = why ? 'hint err' : 'hint';
     WM.setEnabled('fm-add', !state.busy);
     WM.setEnabled('fm-account', !state.busy && accountChoices.length > 0);
+    paintSharing();
   }
 
   /* ---- wiring ---- */
@@ -781,7 +860,9 @@
                  '"' + f.name + '" is removed when you save.',
                  { destructive: true }).then(function (yes) {
         if (!yes) { return; }
-        state.formations.splice(state.selected, 1);
+        var removed = state.formations.splice(state.selected, 1)[0];
+        var selected = copySelection.indexOf(removed);
+        if (selected !== -1) { copySelection.splice(selected, 1); }
         state.selected = Math.max(0, state.selected - 1);
         markDirty();
         renderAll();
@@ -823,6 +904,7 @@
     WM.el('fm-balance').addEventListener('click', balance);
     WM.el('fm-save').addEventListener('click', save);
     WM.el('fm-reload').addEventListener('click', reload);
+    WM.el('fm-copy').addEventListener('click', copySelected);
 
     WM.el('fm-account').addEventListener('change', function () {
       var nextPath = WM.el('fm-account').value, generation = loadGeneration;

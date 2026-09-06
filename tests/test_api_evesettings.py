@@ -13,8 +13,8 @@ import pytest
 from tests import fakes
 from tests.fakes import FakeWindow
 from wingman import paths, settings
+from wingman.evesettings import formation_sharing, tree
 from wingman.evesettings import identity as evesettings_identity
-from wingman.evesettings import tree
 from wingman.preview import discovery as discovery_mod
 from wingman.ui import api as api_mod
 
@@ -2973,6 +2973,63 @@ def test_state_reports_whether_formations_are_available(tmp_path, monkeypatch):
     state = api.eve_settings_state()
     assert state["formations_available"] is True
     assert state["selective_copy_available"] is True
+
+
+def test_export_formations_does_not_need_an_account(tmp_path, monkeypatch):
+    api = build(tmp_path, monkeypatch)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    # A pure request must work even while account mutations are locked out.
+    with api._eve_mutation:
+        reply = api.eve_settings_export_formations(
+            [
+                {
+                    "id": 99,
+                    "name": "Pair",
+                    "probes": [{"x": 1000, "y": 0, "z": 0, "range": 149597870700}],
+                }
+            ]
+        )
+    assert reply["ok"] is True
+    shared = json.loads(reply["text"])
+    assert shared == {
+        "format": "wingman-preset",
+        "version": 1,
+        "type": "probe-formations",
+        "formations": [
+            {
+                "name": "Pair",
+                "probes": [{"x": 1000, "y": 0, "z": 0, "range": 149597870700}],
+            }
+        ],
+    }
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    assert api._window.calls == []
+
+
+@pytest.mark.parametrize(
+    "items", [None, {}, [], [None], [{"name": "Bad", "probes": []}]]
+)
+def test_export_formations_malformed_payload_is_a_serializable_failure(
+    tmp_path, monkeypatch, items
+):
+    api = build(tmp_path, monkeypatch)
+    reply = api.eve_settings_export_formations(items)
+    assert reply["ok"] is False
+    assert isinstance(reply["error"], str) and reply["error"]
+    assert json.loads(json.dumps(reply)) == reply
+
+
+@pytest.mark.parametrize("document", [FORMATION_DOC, {}])
+def test_formations_read_includes_authoritative_sharing_limits(
+    tmp_path, monkeypatch, document
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    _fake_codec(monkeypatch, document)
+    reply = api.eve_settings_formations(str(account))
+    assert reply["ok"] is True
+    assert reply["sharing_limits"] == formation_sharing.limits_payload()
+    if not document:
+        assert reply["formations"] == []
 
 
 def test_formations_read_returns_the_user_formations_in_meters(tmp_path, monkeypatch):

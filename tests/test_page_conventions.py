@@ -3220,14 +3220,20 @@ def test_every_bridge_handler_has_exactly_one_owner():
 def test_the_formation_editor_converts_units_only_at_the_boundary():
     """The bridge speaks meters; the editor's fields are km and AU.
 
-    Both conversions live in load() and save(), so a third one anywhere
-    else is a double conversion -- and the failure is silent, because a
-    formation that comes back 1000x out still renders as a formation.
+    Read converts through fromMeters; both Save and Copy reuse toMeters.
+    A conversion in the caller as well would silently scale a formation twice.
+    Executable page tests assert the actual values sent across both boundaries.
     """
     js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
     assert js.count("* KM") >= 1 and js.count("/ KM") >= 1
     assert js.count("* AU") >= 1 and js.count("/ AU") >= 1
     assert "149597870700" in js
+    copy = js[js.index("function copySelected(") : js.index("function saveStatus(")]
+    assert ".map(toMeters)" in copy
+    assert "eve_settings_export_formations" in copy
+    assert "eve_settings_save_formations" not in copy
+    assert "state.path" not in copy
+    assert "clipboard.readText" not in js
 
 
 def test_the_formation_editor_guards_both_of_its_async_windows():

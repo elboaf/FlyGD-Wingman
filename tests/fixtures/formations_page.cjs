@@ -46,12 +46,17 @@ document.readyState = 'complete';
 document.createElement = tag => new Element(tag);
 document.createElementNS = (ns, tag) => new Element(tag);
 const window = new Element('window');
-const reads = [], saves = [], confirms = [];
+const reads = [], saves = [], confirms = [], exportRequests = [], clipboardWrites = [];
 function deferred(args) {
-  let resolve;
-  const promise = new Promise(r => { resolve = r; });
-  return {args, promise, resolve};
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return {args, promise, resolve, reject};
 }
+const navigator = {clipboard: {writeText: text => {
+  if (scenario === 'copy-throws') throw new Error('Clipboard unavailable');
+  const write = deferred([text]); clipboardWrites.push(write); return write.promise;
+}}};
+if (scenario === 'copy-missing-clipboard') delete navigator.clipboard;
 const WM = {
   current_route: 'evesettings',
   el: id => { assert.ok(ids[id], 'Missing production markup: ' + id); return ids[id]; },
@@ -69,6 +74,7 @@ const WM = {
     const request = deferred(args);
     if (method === 'eve_settings_formations') reads.push(request);
     else if (method === 'eve_settings_save_formations') saves.push(request);
+    else if (method === 'eve_settings_export_formations') exportRequests.push(request);
     else assert.fail('Unexpected bridge call: ' + method);
     return request.promise;
   },
@@ -79,12 +85,16 @@ const WM = {
   }
 };
 vm.runInNewContext(fs.readFileSync(process.argv[4], 'utf8'), {
-  WM, document, window, console, Date, Math
+  WM, document, window, navigator, console, Date, Math
 }, {filename: process.argv[4]});
 const A = 'a'.repeat(64), B = 'b'.repeat(64), C = 'c'.repeat(64);
 const accounts = [{path: 'choice-A', name: 'Account A'}, {path: 'choice-B', name: 'Account B'}];
 function reply(revision = A, name = 'Original', path = 'resolved-A') {
-  return {ok: true, path, name: 'Account', content_revision: revision, formations: [
+  return {ok: true, path, name: 'Account', content_revision: revision,
+    sharing_limits: {max_bytes: 65536, max_formations: 32, max_name_codepoints: 128,
+      max_probes: 8, au_meters: 149597870700, min_range_meters: 149597.8707,
+      max_range_meters: 9804044142182400, max_coordinate_meters: 10000000000000000},
+    formations: [
     {id: 7, name, probes: [{x: 2000, y: 0, z: 0, range: 598391482800}]}
   ]};
 }
@@ -115,9 +125,156 @@ async function open() {
   reads.at(-1).resolve(reply());
   await tick();
 }
+function descendants(element) {
+  return element.children.flatMap(child => [child, ...descendants(child)]);
+}
+function shareBoxes() { return descendants(WM.el('fm-list')).filter(e => e.type === 'checkbox'); }
+function rowButtons() { return descendants(WM.el('fm-list')).filter(e => e.className.split(' ').includes('fm-item')); }
+function selectShare(index, checked = true) {
+  const box = shareBoxes()[index]; assert.ok(box, 'Missing sharing checkbox');
+  box.checked = checked; box.dispatchEvent({type: 'change'});
+}
+function shareStatus() { return WM.el('fm-share-status').textContent; }
+function assertShareCount(count) {
+  assert.match(WM.el('fm-copy').textContent, new RegExp('Copy selected.*' + count));
+}
+async function copyScenario() {
+  assert.equal(WM.el('fm-copy').disabled, true);
+  assert.equal(shareStatus(), '');
+  if (scenario === 'copy-empty-limits') {
+    WM.openFormations(accounts, 'choice-A');
+    const empty = reply(); empty.formations = [];
+    empty.sharing_limits.max_formations = 2; empty.sharing_limits.max_bytes = 2048;
+    reads.at(-1).resolve(empty); await tick();
+    assert.equal(WM.el('fm-copy').disabled, true); assertShareCount(0);
+    assert.match(WM.el('fm-share-hint').textContent, /2 formations/);
+    assert.match(WM.el('fm-share-hint').textContent, /2 KiB/);
+    click('fm-add'); selectShare(0); assert.equal(WM.el('fm-copy').disabled, false);
+    assert.equal(saves.length, 0); return;
+  }
+  if (scenario === 'copy-draft-selection' || scenario === 'copy-selection-identity') {
+    const data = reply();
+    data.formations.push({id: 8, name: 'Other', probes: [{x: -1000, y: 3000, z: 4000, range: 149597870700}]});
+    data.formations.push({id: 9, name: 'Unselected', probes: []});
+    WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+    for (const [i, checkbox] of shareBoxes().entries()) {
+      assert.equal(checkbox.getAttribute('aria-label'), 'Select ' + data.formations[i].name + ' for sharing');
+      const label = checkbox.parentNode;
+      assert.equal(label.tagName, 'LABEL'); assert.ok(label.className.split(' ').includes('check'));
+      assert.ok(label.children.some(e => e.className === 'box'));
+      assert.equal(label.parentNode, rowButtons()[i].parentNode, 'checkbox label must be a sibling of the editor button');
+      assert.ok(!descendants(rowButtons()[i]).includes(checkbox), 'never nest interactive controls');
+    }
+    selectShare(0); selectShare(1); assertShareCount(2);
+    rowButtons()[2].click(); assert.equal(WM.el('fm-name').value, 'Unselected');
+    assert.equal(WM.el('fm-save').disabled, true, 'unselected invalid formation still prevents Save');
+    assert.equal(WM.el('fm-copy').disabled, false, 'unselected invalid formation must not block Copy');
+    if (scenario === 'copy-selection-identity') {
+      // Remove an unselected row before the selected one: indexes cannot key selection.
+      selectShare(0, false); rowButtons()[0].click(); click('fm-delete');
+      confirms.at(-1).resolve(true); await tick(); assertShareCount(1);
+      assert.equal(shareBoxes()[0].checked, true); assert.equal(shareBoxes()[1].checked, false);
+      click('fm-copy'); assert.equal(exportRequests[0].args[0][0].name, 'Other');
+      click('fm-delete'); confirms.at(-1).resolve(true); await tick();
+      assertShareCount(0); assert.equal(WM.el('fm-copy').disabled, true); return;
+    }
+    rowButtons()[0].click(); rename('Edited <pair>');
+    const x = WM.el('fm-probes').children.find(e => e.getAttribute('aria-label') === 'Probe 1 West km');
+    x.value = '12.5'; x.dispatchEvent({type: 'input'}); x.dispatchEvent({type: 'change'});
+    const range = WM.el('fm-probes').children.find(e => e.getAttribute('aria-label') === 'Probe 1 range');
+    range.value = '0.5'; range.dispatchEvent({type: 'change'});
+    assert.equal(shareBoxes()[0].getAttribute('aria-label'), 'Select Edited <pair> for sharing');
+    rowButtons()[2].click(); click('fm-copy');
+    assert.deepEqual(JSON.parse(JSON.stringify(exportRequests[0].args)), [[
+      {id: 7, name: 'Edited <pair>', probes: [{x: 12500, y: 0, z: 0, range: 74798935350}]},
+      {id: 8, name: 'Other', probes: [{x: -1000, y: 3000, z: 4000, range: 149597870700}]}
+    ]], 'export only selected current drafts, in meters, with no destination path');
+    rowButtons()[0].click(); rename('Later edit');
+    assert.equal(exportRequests[0].args[0][0].name, 'Edited <pair>', 'Copy must snapshot the invocation');
+    const text = '{"prepared":"exact bridge text"}'; exportRequests[0].resolve({ok: true, text}); await tick();
+    assert.equal(clipboardWrites[0].args[0], text); assert.doesNotMatch(shareStatus(), /copied/i);
+    clipboardWrites[0].resolve(); await tick(); assert.equal(shareStatus(), 'Formations copied.');
+    assert.equal(WM.el('fm-dirty').textContent, 'Unselected: needs a probe');
+    assert.equal(saves.length, 0); return;
+  }
+  selectShare(0); assertShareCount(1);
+  assert.equal(WM.el('fm-copy').disabled, false);
+  assert.equal(WM.el('fm-dirty').textContent, '', 'sharing selection is not an account edit');
+  if (scenario === 'copy-busy-recovery') {
+    rename('Draft'); click('fm-save'); assert.equal(WM.el('fm-copy').disabled, true);
+    const error = "This account's settings changed. Nothing was saved. Your edits are still here.";
+    complete(saves[0], {ok: false, error_code: 'stale_file', error});
+    assert.equal(WM.el('fm-copy').disabled, false); click('fm-copy');
+    exportRequests[0].resolve({ok: true, text: 'recovery'}); await tick();
+    clipboardWrites[0].resolve(); await tick(); assert.equal(shareStatus(), 'Formations copied.');
+    assert.equal(WM.el('fm-save-status').textContent, error);
+    switchTo('choice-B'); confirms.at(-1).resolve(true); await tick();
+    assert.equal(WM.el('fm-copy').disabled, true); click('fm-copy'); assert.equal(exportRequests.length, 1);
+    return;
+  }
+  if (scenario === 'copy-typing-keeps-input') {
+    const field = WM.el('fm-name'); field.focus(); field.value = 'Unblurred';
+    field.dispatchEvent({type: 'input'}); selectShare(0, false); selectShare(0);
+    click('fm-copy'); exportRequests[0].resolve({ok: true, text: 'original'}); await tick();
+    clipboardWrites[0].resolve(); await tick();
+    assert.equal(field.value, 'Unblurred'); assert.equal(document.activeElement, field);
+    assert.equal(WM.el('fm-dirty').textContent, 'Unsaved changes'); assert.equal(saves.length, 0); return;
+  }
+  click('fm-copy'); const first = exportRequests[0];
+  if (scenario === 'copy-selection-replacement') {
+    // Automatic post-save rereads do not increment loadGeneration.
+    rename('Saved'); click('fm-save'); complete(saves[0]);
+    reads.at(-1).resolve(reply(B, 'Saved')); await tick();
+    assertShareCount(0); assert.equal(WM.el('fm-copy').disabled, true);
+    first.resolve({ok: true, text: 'old document'}); await tick();
+    assert.equal(clipboardWrites.length, 0); assert.equal(shareStatus(), ''); return;
+  }
+  if (scenario === 'copy-bridge-error' || scenario === 'copy-bridge-rejection' || scenario === 'copy-bridge-empty') {
+    if (scenario === 'copy-bridge-rejection') first.reject(new Error('Disconnected'));
+    else first.resolve(scenario === 'copy-bridge-empty' ? null : {ok: false, error: '<bad name>'});
+    await tick(); assert.equal(clipboardWrites.length, 0);
+    assert.equal(shareStatus(), scenario === 'copy-bridge-error' ? '<bad name>' : 'Could not prepare formations.');
+    assert.match(WM.el('fm-share-status').className, /err/);
+    assert.equal(WM.el('fm-share-status').children.length, 0, 'error text is not HTML'); return;
+  }
+  if (scenario === 'copy-repeated-bridge') {
+    click('fm-copy'); first.resolve({ok: true, text: 'old'}); await tick();
+    assert.equal(clipboardWrites.length, 0);
+    exportRequests[1].resolve({ok: true, text: 'latest'}); await tick();
+    assert.equal(clipboardWrites[0].args[0], 'latest');
+    clipboardWrites[0].resolve(); await tick(); assert.equal(shareStatus(), 'Formations copied.'); return;
+  }
+  if (['copy-stale-account', 'copy-stale-route', 'copy-stale-bridge-error', 'copy-stale-bridge-rejection'].includes(scenario)) {
+    if (scenario === 'copy-stale-account') switchTo('choice-B');
+    else { WM.route('evesettings'); WM.openFormations(accounts, 'choice-A'); }
+    reads.at(-1).resolve(reply(C, 'New account', 'resolved-B')); await tick();
+    if (scenario === 'copy-stale-bridge-rejection') first.reject(new Error('old failure'));
+    else first.resolve(scenario === 'copy-stale-bridge-error' ? {ok: false, error: 'old failure'} : {ok: true, text: 'old'});
+    await tick(); assert.equal(clipboardWrites.length, 0); assert.equal(shareStatus(), ''); assertShareCount(0); return;
+  }
+  first.resolve({ok: true, text: 'selected text'}); await tick();
+  if (scenario === 'copy-repeated-clipboard') {
+    click('fm-copy'); exportRequests[1].resolve({ok: true, text: 'latest'}); await tick();
+    clipboardWrites[1].resolve(); await tick(); clipboardWrites[0].reject(new Error('old denial')); await tick();
+    assert.equal(shareStatus(), 'Formations copied.'); return;
+  }
+  if (scenario.startsWith('copy-stale-clipboard-')) {
+    WM.route('evesettings'); WM.openFormations(accounts, 'choice-A');
+    reads.at(-1).resolve(reply(C, 'Reopened')); await tick();
+    if (scenario.endsWith('denied')) clipboardWrites[0].reject(new Error('old denial'));
+    else clipboardWrites[0].resolve();
+    await tick(); assert.equal(shareStatus(), ''); assert.equal(WM.el('fm-name').value, 'Reopened'); return;
+  }
+  if (scenario === 'copy-denied') { clipboardWrites[0].reject(new Error('denied')); await tick(); }
+  else assert.ok(['copy-throws', 'copy-missing-clipboard'].includes(scenario), 'unknown copy scenario');
+  assert.equal(shareStatus(), 'Could not copy formations to the clipboard.');
+  assert.match(WM.el('fm-share-status').className, /err/);
+  assert.equal(saves.length, 0); assert.equal(WM.el('fm-copy').disabled, false);
+}
 async function main() {
   await open();
-  if (scenario === 'commit-keeps-newer-edit' || scenario === 'second-save-retained-draft') {
+  if (scenario.startsWith('copy-')) await copyScenario();
+  else if (scenario === 'commit-keeps-newer-edit' || scenario === 'second-save-retained-draft') {
     rename('Submitted'); click('fm-save'); const first = saves[0];
     rename('Newer'); complete(first, {warning: 'Saved, but retention failed.'});
     assertEditable('Newer'); assert.equal(reads.length, 1);
