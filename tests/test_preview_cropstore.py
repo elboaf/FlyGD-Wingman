@@ -79,6 +79,51 @@ def startup_failure(request, monkeypatch):
         executor.shutdown(wait=False)
 
 
+def test_host_reuses_incomplete_offline_drain_on_repeated_stop(make_store, monkeypatch):
+    from wingman.preview.host import PreviewHost
+
+    store, _live = make_store(initial={"Alice": definition()})
+    entered, release = Event(), Event()
+    original = settings._save_locked
+
+    def delayed(data, path=None):
+        entered.set()
+        assert release.wait(5)
+        original(data, path)
+
+    monkeypatch.setattr(settings, "_save_locked", delayed)
+    host = PreviewHost(on_layout_changed=lambda *args: None, crop_store=store)
+    try:
+        host.request_crop("enabled", "Alice", False)
+        assert entered.wait(5)
+        assert not host.stop(timeout=0)
+        first = host._stop_future
+        assert not host.stop(timeout=0)
+        assert host._stop_future is first
+        assert host.is_stopping
+    finally:
+        release.set()
+        host.stop(final=True)
+
+
+def test_offline_host_does_not_retain_an_unbounded_native_completion_mailbox(
+    make_store,
+):
+    from wingman.preview.host import PreviewHost
+
+    store, _live = make_store(initial={"Alice": definition()})
+    host = PreviewHost(on_layout_changed=lambda *args: None, crop_store=store)
+    try:
+        for _ in range(40):
+            host.request_crop("remove", "Alice")
+            store.drain().result(3)
+        assert len(store.snapshot()["operations"]) == 32
+        assert host._crop_completions.empty()
+        assert host.crop_state()["definitions"] == {}
+    finally:
+        host.stop(final=True)
+
+
 def test_startup_failure_resolves_token_and_allows_new_submission(
     make_store, startup_failure
 ):

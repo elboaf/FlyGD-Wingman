@@ -52,7 +52,7 @@
                  'onUploadDone', 'onLogPostRunning', 'onRowRenamed',
                  'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
-                 'onBookmarks', 'onEveStatus', 'onPreviewHotkeys',
+                 'onBookmarks', 'onEveStatus', 'onPreviewHotkeys', 'onPreviewCrops',
                  'onPreviewBindCaptured', 'onEveAuthorityChanged',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',

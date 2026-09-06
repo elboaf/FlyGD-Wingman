@@ -843,6 +843,8 @@ class Api:
         # concurrent mutations cannot reorder their host deliveries past their
         # persist order.
         self._preview_hotkey_lock = threading.Lock()
+        self._preview_mode_lock = threading.Lock()
+        self._preview_mode_changing = False
 
     # ----- page -> Python -------------------------------------------------
 
@@ -4572,7 +4574,21 @@ class Api:
         else:
             self._reconcile_eve_runtime()
 
-    def set_preview_enabled(self, enabled: bool) -> None:
+    def set_preview_enabled(self, enabled: bool) -> bool:
+        # A reservation, not a lock held across settings I/O, stop.join or page
+        # callbacks. Concurrent bridge calls must not read a tentative master
+        # setting or reorder runtime delivery after their transactions.
+        with self._preview_mode_lock:
+            if self._preview_mode_changing:
+                return False
+            self._preview_mode_changing = True
+        try:
+            return self._set_preview_enabled(bool(enabled))
+        finally:
+            with self._preview_mode_lock:
+                self._preview_mode_changing = False
+
+    def _set_preview_enabled(self, enabled: bool) -> bool:
         """Toggle previews and persist the choice.
 
         start() and stop() are both idempotent, so a double-click on the
@@ -4580,6 +4596,12 @@ class Api:
         will tear down.
         """
         enabled = bool(enabled)
+        if (
+            enabled
+            and self._preview_host is not None
+            and self._preview_host.is_stopping
+        ):
+            return False
         section = self._state.settings.setdefault("preview", {})
         if section.get("enabled") == enabled:
             # A no-op toggle rewrites the whole settings document for
@@ -4598,9 +4620,9 @@ class Api:
             with settings_mod.update(self._state.settings) as cfg:
                 cfg.setdefault("preview", {})["enabled"] = enabled
         except OSError:
-            # Same posture as the channel persist above: a settings file
-            # that cannot be written must not block the feature itself.
+            # Only a committed master setting authorizes runtime changes.
             logger.exception("Could not persist the preview setting")
+            return False
         if self._preview_host is not None:
             if enabled:
                 self._preview_host.start()
@@ -4612,6 +4634,10 @@ class Api:
         # returned None (settings.js:181 documents the same trap).
         return True
 
+    def push_preview_crops(self, state: dict) -> None:
+        """Semantic committed state; safe before a crop page handler is registered."""
+        self._push("onPreviewCrops", state)
+
     def shutdown_previews(self) -> None:
         """Tear the preview thread down on the way out.
 
@@ -4622,7 +4648,7 @@ class Api:
         """
         if self._preview_host is not None:
             try:
-                self._preview_host.stop()
+                self._preview_host.stop(final=True)
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
         if self._telemetry is not None:
@@ -5339,7 +5365,8 @@ class Api:
         if host is None or not host.is_running:
             return self._field_refused("Start previews first.")
         section = self._state.settings.get("preview", {})
-        host.resize_all((section.get("width"), section.get("height")))
+        if host.resize_all((section.get("width"), section.get("height"))) is False:
+            return self._field_refused("Previews are stopping.")
         # The cards show each character's size; every one just changed.
         self.push_preview_hotkeys()
         return self._field_ok()
@@ -5368,7 +5395,8 @@ class Api:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
         host = self._preview_host
         if host is not None and host.is_running and name in host.characters():
-            host.resize_preview(name, (width, height))
+            if host.resize_preview(name, (width, height)) is False:
+                return self._field_refused("Previews are stopping.")
             return self._field_ok()
         layouts = self._state.settings.get("preview", {}).get("layouts") or {}
         if name not in layouts:
@@ -5468,7 +5496,8 @@ class Api:
         failure justifies.
         """
         if self._preview_host is not None and self._preview_host.is_running:
-            self._preview_host.reset_layouts()
+            if self._preview_host.reset_layouts() is False:
+                return self._field_refused("Previews are stopping.")
             return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:

@@ -334,6 +334,52 @@ def _harness(tmp_path, **kw):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("fail_save", [False, True])
+def test_preview_master_transaction_keeps_independent_fleet_discovery(
+    tmp_path, monkeypatch, fail_save
+):
+    from tests.test_api import make_api
+    from wingman import settings
+    from wingman.preview.host import PreviewHost
+
+    host = PreviewHost(on_layout_changed=lambda *args: None)
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True}
+    discovery, stream = FakeDiscovery(), FakeStream()
+    coordinator = TelemetryCoordinator(
+        preview_enabled=lambda: api._state.settings["preview"]["enabled"],
+        fleet_enabled=lambda: True,
+        alerts_enabled=lambda: False,
+        sharing_enabled=lambda: False,
+        gamelogs_folder=lambda: tmp_path,
+        discovery=discovery,
+        stream=stream,
+        metrics=FleetMetrics(),
+        preview_host=host,
+        _thread_factory=_noop_thread_factory,
+    )
+    api._telemetry = coordinator
+    coordinator.reconcile()
+    try:
+        if fail_save:
+
+            def fail(data, path=None):
+                raise OSError("read-only settings")
+
+            monkeypatch.setattr(settings, "_save_locked", fail)
+        assert api.set_preview_enabled(False) is not fail_save
+        assert api._state.settings["preview"]["enabled"] is fail_save
+        assert discovery.starts == 1 and discovery.stops == 0
+        assert stream.starts == [tmp_path] and stream.stops == 0
+        assert len(discovery.subscribers) == 1
+        snapshot = _roster(_session("Alice"), generation=2)
+        discovery.publish(snapshot)
+        coordinator.dispatch_once(0)
+        assert len(discovery.subscribers) == 1
+    finally:
+        coordinator.stop()
+
+
 class TestRuntimePredicates:
     @pytest.mark.parametrize(
         "preview,fleet,alerts,sharing,want_discovery,want_stream,want_policy",

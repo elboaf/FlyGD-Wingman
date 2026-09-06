@@ -102,6 +102,11 @@ def test_every_registered_handler_is_in_the_allowlist(name):
     )
 
 
+def test_crop_state_publisher_has_a_literal_allowlisted_handler():
+    assert "onPreviewCrops" in pushed_names()
+    assert "onPreviewCrops" in allowlist()
+
+
 def test_the_eve_settings_route_registers_all_three_of_its_pushes():
     """Named explicitly rather than left to the sweep above, because this
     is the route the sweep was written for and a regression here is

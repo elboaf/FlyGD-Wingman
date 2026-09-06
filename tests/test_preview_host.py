@@ -38,10 +38,807 @@ def test_reconcile_keeps_live_previews_untouched():
     assert not added and not removed and set(kept) == {"A"}
 
 
+@pytest.fixture
+def crop_pump(monkeypatch):
+    """Real pump/host/store/coordinator/native controllers over a queued user32 seam."""
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from queue import Queue
+    from threading import Event, get_ident
+
+    from tests.test_preview_cropcontroller import (
+        DEFINITION,
+        MONITOR,
+        Resources,
+        Transaction,
+        client,
+    )
+    from wingman.preview import croppicker, cropwindow
+    from wingman.preview.cropstore import CropStore
+    from wingman.telemetry.model import RosterSnapshot
+
+    opened = []
+
+    def make(*, primary_flush=None, before_window=None):
+        native = Resources()
+        transaction = Transaction({"Alice": DEFINITION})
+        store = CropStore(
+            transaction.update,
+            {"Alice": DEFINITION},
+            executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
+            flush_primary=primary_flush,
+            debounce_s=100,
+        )
+        messages = Queue()
+        actions = Queue()
+        calls = []
+        primary = []
+        h = host.PreviewHost(
+            on_layout_changed=lambda *args: primary.append(args), crop_store=store
+        )
+        native_attempt = native.attempt
+
+        def attempt(*args):
+            assert h._thread is not None and get_ident() == h._thread.ident
+            return native_attempt(*args)
+
+        monkeypatch.setattr(native, "attempt", attempt)
+        monkeypatch.setattr(croppicker, "_ensure_class", lambda libs: None)
+        monkeypatch.setattr(cropwindow, "_ensure_class", lambda libs: None)
+        monkeypatch.setattr(croppicker.layered, "push", native.push)
+        monkeypatch.setattr(host.win32, "bind", lambda: native.lib)
+        monkeypatch.setattr(h, "_monitors", lambda: [MONITOR])
+        monkeypatch.setattr(h, "_screen", lambda: MONITOR)
+        monkeypatch.setattr(h, "_reconcile_roster", lambda *args: None)
+        monkeypatch.setattr(h, "_install_hook", lambda libs: None)
+        monkeypatch.setattr(native, "IsDialogMessageW", lambda *args: False)
+        monkeypatch.setattr(
+            native, "SetThreadDpiAwarenessContext", lambda *args: 1, raising=False
+        )
+
+        def create(libs):
+            if before_window is not None:
+                before_window()
+            native.windows[42] = "host"
+            return 42
+
+        def post(hwnd, msg, wp, lp):
+            messages.put((hwnd, msg, wp, lp))
+            return 1
+
+        def get(pointer, *args):
+            message = messages.get(timeout=10)
+            if message is None:
+                return 0
+            (
+                pointer._obj.hwnd,
+                pointer._obj.message,
+                pointer._obj.wParam,
+                pointer._obj.lParam,
+            ) = message
+            return 1
+
+        def dispatch(pointer):
+            msg = pointer._obj
+            if msg.message == 0x7FFF:
+                callback, future = actions.get_nowait()
+                try:
+                    future.set_result(callback())
+                except Exception as error:  # noqa: BLE001 -- return injected pump callback failures to pytest, not a lost thread.
+                    future.set_exception(error)
+            else:
+                calls.append((msg.message, get_ident()))
+                h._host_proc(msg.hwnd, msg.message, msg.wParam, msg.lParam)
+
+        def call(callback):
+            future = Future()
+            actions.put((callback, future))
+            post(42, 0x7FFF, 0, 0)
+            return future.result(5)
+
+        monkeypatch.setattr(h, "_create_host_window", create)
+        monkeypatch.setattr(native, "PostMessageW", post)
+        monkeypatch.setattr(native, "GetMessageW", get, raising=False)
+        monkeypatch.setattr(
+            native, "TranslateMessage", lambda *args: None, raising=False
+        )
+        monkeypatch.setattr(native, "DispatchMessageW", dispatch, raising=False)
+        monkeypatch.setattr(
+            native, "PostQuitMessage", lambda *args: messages.put(None), raising=False
+        )
+        h.apply_roster(RosterSnapshot(1, (client(),)))
+        r = SimpleNamespace(
+            host=h,
+            store=store,
+            transaction=transaction,
+            native=native,
+            call=call,
+            calls=calls,
+            primary=primary,
+            entered=Event(),
+        )
+        opened.append(r)
+        return r
+
+    yield make
+    for r in opened:
+        r.transaction.release.set()
+        try:
+            r.host.stop(timeout=5, final=True)
+        finally:
+            r.store.close().result(5)
+
+
+def test_crop_shutdown_pumps_while_storage_is_blocked_and_cleans_only_once(crop_pump):
+    from threading import Event, get_ident
+
+    from wingman.telemetry.model import RosterSnapshot
+
+    entered, release = Event(), Event()
+    flush_threads = []
+
+    def flush():
+        flush_threads.append(get_ident())
+        entered.set()
+        assert release.wait(5)
+
+    r = crop_pump(primary_flush=flush)
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    thread = h._thread
+    window = r.call(lambda: h._crop_controller.live["Alice"].window)
+    try:
+        assert h.stop(timeout=0) is False
+        assert entered.wait(5)
+        assert h.is_stopping
+        assert r.call(lambda: "responsive") == "responsive"
+        assert r.call(lambda: window.hidden)
+        assert r.native.thumbnails
+        assert len(flush_threads) == 1 and flush_threads[0] != thread.ident
+        r.call(lambda: h._stop_ready.put((h._crop_epoch, h._stop_future)))
+        before = len(r.native.created)
+        h.apply_roster(RosterSnapshot(2, ()))
+        h.restyle()
+        h._post(host.win32.WM_HOTKEY)
+        r.call(lambda: None)
+        assert len(r.native.created) == before
+        assert window.hidden
+    finally:
+        release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert not r.native.windows and not r.native.thumbnails
+    assert not h.is_stopping
+    assert h._crop_store is r.store
+
+
+def test_admitted_crop_save_after_stop_is_reported_but_never_revealed(crop_pump):
+    r = crop_pump()
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    receipt = h.request_crop("select", "Alice")
+    r.call(lambda: None)
+    r.transaction.release.clear()
+
+    def confirm():
+        picker = h._crop_controller.picker
+        picker.selection = geometry.Rect(
+            picker.destination.x + 20, picker.destination.y + 20, 100, 80
+        )
+        picker._confirm()
+
+    r.call(confirm)
+    assert r.transaction.entered.wait(5)
+    candidate = r.call(lambda: h._crop_controller._temporary.candidate.window)
+    assert h.stop(timeout=0) is False
+    r.call(lambda: None)
+    assert candidate.hwnd is None
+    r.transaction.release.set()
+    thread = h._thread
+    thread.join(5)
+    assert not thread.is_alive()
+    state = h.crop_state()
+    assert state["operations"][receipt["operation_id"]]["persisted"]
+    assert state["statuses"]["Alice"] == "master-off"
+    assert not r.native.thumbnails
+
+
+def test_stop_before_hwnd_creation_is_not_lost(crop_pump):
+    from threading import Event
+
+    entered, release = Event(), Event()
+
+    def before_window():
+        entered.set()
+        assert release.wait(5)
+
+    r = crop_pump(before_window=before_window)
+    h = r.host
+    h.start()
+    assert entered.wait(5)
+    try:
+        first = h._thread
+        assert h.stop(timeout=0) is False
+        h.start()
+        assert h._thread is first and h.is_stopping
+    finally:
+        release.set()
+    first.join(5)
+    assert not first.is_alive()
+    assert not r.native.windows and not r.native.thumbnails
+
+
+@pytest.mark.parametrize("action,value", [("enabled", False), ("remove", None)])
+def test_crop_stop_preserves_held_and_undelivered_configuration(
+    crop_pump, action, value
+):
+    r = crop_pump()
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    r.transaction.release.clear()
+    first = h.request_crop("enabled", "Alice", True)
+    r.call(lambda: None)
+    assert r.transaction.entered.wait(5)
+    later = h.request_crop(action, "Alice", value)
+    r.call(lambda: None)  # now held by the real coordinator
+    last = h.request_crop("remove", "Alice")
+    assert h.stop(timeout=0) is False
+    r.call(lambda: None)
+    assert h.request_crop("enabled", "Alice", True)["pending"] is False
+    r.transaction.release.set()
+    h._thread.join(5)
+    assert not h.is_running
+    state = h.crop_state()
+    assert state["definitions"] == {}
+    for receipt in (first, later, last):
+        assert state["operations"][receipt["operation_id"]]["persisted"]
+    assert not r.native.windows and not r.native.thumbnails
+
+
+def test_crop_restart_reseeds_roster_and_ignores_old_ready(crop_pump):
+    from tests.test_preview_cropcontroller import client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = crop_pump()
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    old_epoch = h._crop_epoch
+    assert h.stop(timeout=5)
+    old_future = h._stop_future
+    h.apply_roster(RosterSnapshot(2, (client(serial=2),)))
+    h.start()
+    assert h._ready.wait(5)
+    new_window = r.call(lambda: h._crop_controller.live["Alice"].window)
+    h._stop_ready.put((old_epoch, old_future))
+    h._post(host.win32.WM_APP_CROP_STOP_READY)
+    r.call(lambda: None)
+    assert h.is_running and new_window.hwnd is not None
+    assert (
+        r.call(
+            lambda: (
+                h._crop_controller.live["Alice"].client.session.first_seen_generation
+            )
+        )
+        == 2
+    )
+    assert h._crop_store is r.store
+    assert h.stop(timeout=5)
+    destroys = [event for event in r.native.events if event[:2] == ("destroy", 42)]
+    assert len(destroys) == 2
+
+
+def test_crop_flush_failure_still_completes_native_cleanup(crop_pump, caplog):
+    def fail():
+        raise OSError("disk is read-only")
+
+    r = crop_pump(primary_flush=fail)
+    r.host.start()
+    assert r.host._ready.wait(5)
+    assert r.host.stop(timeout=5)
+    assert not r.native.windows and not r.native.thumbnails
+    assert "flush failure" in caplog.text
+
+
+def test_final_close_retains_blocked_offline_store_and_refuses_restart(
+    monkeypatch, caplog
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tests.test_preview_cropcontroller import DEFINITION, Transaction
+    from wingman.preview.cropstore import CropStore
+
+    transaction = Transaction({"Alice": DEFINITION})
+    transaction.release.clear()
+    store = CropStore(
+        transaction.update,
+        {"Alice": DEFINITION},
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *args: None, crop_store=store)
+    try:
+        receipt = h.request_crop("enabled", "Alice", False)
+        assert transaction.entered.wait(5)
+        assert h.stop(timeout=0, final=True) is False
+        assert h.is_stopping
+        h.start()
+        assert h._thread is None and h._crop_store is store
+        assert h.request_crop("remove", "Alice")["applied"] is False
+        assert "did not drain" in caplog.text
+        transaction.release.set()
+        assert h.stop(final=True)
+        assert h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+        assert h.crop_state()["statuses"]["Alice"] == "disabled"
+        with pytest.raises(RuntimeError, match="closed"):
+            store.begin("Alice", epoch=0, session=None)
+    finally:
+        transaction.release.set()
+        store.close().result(5)
+
+
+def test_primary_settings_accepted_before_stop_keep_fifo_order(crop_pump, monkeypatch):
+    from threading import Event
+
+    from tests.test_preview_store import FakeTimer
+    from wingman.preview.store import LayoutStore
+
+    r = crop_pump()
+    h = r.host
+    layouts = LayoutStore(r.transaction.update, timer=FakeTimer)
+    h._on_layout_changed = lambda name, rect, locked: layouts.record(
+        name, layout.Entry(rect, locked)
+    )
+    h._clear_layouts = layouts.clear
+    r.store._flush_primary = layouts.flush
+
+    class Primary:
+        rect = geometry.Rect(20, 30, 320, 210)
+        locked = False
+        _mode = None
+        hidden = False
+
+        def move(self, rect):
+            self.rect = rect
+
+        def set_hidden(self, value):
+            self.hidden = value
+
+        def close(self):
+            pass
+
+    entered, release = Event(), Event()
+    h.start()
+    assert h._ready.wait(5)
+    primary = Primary()
+    r.call(lambda: h._windows.update(Alice=primary))
+    # Hold one pump turn so reset/typed-size/bulk-size and stop queue together.
+    import threading
+
+    def hold():
+        entered.set()
+        assert release.wait(5)
+
+    caller = threading.Thread(target=lambda: r.call(hold))
+    caller.start()
+    assert entered.wait(5)
+    try:
+        assert h.reset_layouts() is True
+        assert h.resize_preview("Alice", (400, 250)) is True
+        assert h.resize_all((500, 300)) is True
+        assert h.stop(timeout=0) is False
+        assert h.resize_preview("Alice", (900, 900)) is False
+    finally:
+        release.set()
+        caller.join(5)
+    h._thread.join(5)
+    assert not h.is_running
+    assert r.transaction.document["preview"]["layouts"]["Alice"]["w"] == 500
+    assert r.transaction.document["preview"]["layouts"]["Alice"]["h"] == 300
+    assert primary.hidden
+
+
+def test_stop_during_epoch_open_cannot_authorize_new_source_or_new_pump(
+    crop_pump, monkeypatch
+):
+    from threading import Event, Thread
+
+    r = crop_pump()
+    h = r.host
+    entered, release = Event(), Event()
+    original = r.store.open_epoch
+
+    def opening(epoch):
+        entered.set()
+        assert release.wait(5)
+        original(epoch)
+
+    monkeypatch.setattr(r.store, "open_epoch", opening)
+    launcher = Thread(target=h.start)
+    launcher.start()
+    assert entered.wait(5)
+    try:
+        assert h.stop(timeout=0) is False
+        assert h.is_stopping
+        assert h.request_crop("select", "Alice")["pending"] is False
+        h.start()
+        assert h._thread is None
+    finally:
+        release.set()
+        launcher.join(5)
+    h._thread.join(5)
+    assert not h.is_running and not r.native.windows
+
+
+def test_offline_submission_keeps_ownership_through_start_and_final_stop(
+    crop_pump, monkeypatch
+):
+    from threading import Event, Thread, get_ident
+
+    r = crop_pump()
+    h = r.host
+    entered, release = Event(), Event()
+    original = r.store.set_enabled
+    caller_id = []
+
+    def submit(token, enabled):
+        if get_ident() in caller_id:
+            entered.set()
+            assert release.wait(5)
+        return original(token, enabled)
+
+    monkeypatch.setattr(r.store, "set_enabled", submit)
+    receipts = []
+
+    def offline():
+        caller_id.append(get_ident())
+        receipts.append(h.request_crop("enabled", "Alice", False))
+
+    caller = Thread(target=offline)
+    caller.start()
+    assert entered.wait(5)
+    try:
+        h.start()
+        assert h._ready.wait(5)
+        assert not r.native.thumbnails, (
+            "native callbacks must not overtake the offline submission owner"
+        )
+        later = h.request_crop("enabled", "Alice", True)
+        assert h.stop(timeout=0, final=True) is False
+        r.call(lambda: None)
+    finally:
+        release.set()
+        caller.join(5)
+    h._thread.join(5)
+    assert not h.is_running
+    state = h.crop_state()
+    assert state["operations"][receipts[0]["operation_id"]]["persisted"]
+    assert state["operations"][later["operation_id"]]["persisted"]
+    assert state["definitions"]["Alice"]["enabled"]
+
+
+def test_crop_delivery_revision_orders_runtime_only_transitions(crop_pump):
+    from threading import Event
+
+    from tests.test_preview_cropcontroller import client
+    from wingman.telemetry.model import RosterSnapshot
+
+    entered, release = Event(), Event()
+
+    def flush():
+        entered.set()
+        assert release.wait(5)
+
+    r = crop_pump(primary_flush=flush)
+    h = r.host
+    off = h.crop_state()
+    h.start()
+    assert h._ready.wait(5)
+    live = h.crop_state()
+    h.apply_roster(RosterSnapshot(2, ()))
+    r.call(lambda: None)
+    offline = h.crop_state()
+    h.apply_roster(RosterSnapshot(3, (client(serial=3),)))
+    r.call(lambda: None)
+    live_again = h.crop_state()
+    try:
+        assert h.stop(timeout=0) is False
+        assert entered.wait(5)
+        stopping = h.crop_state()
+        assert r.store.snapshot()["revision"] == 0
+        assert (
+            off["revision"]
+            < live["revision"]
+            < offline["revision"]
+            < live_again["revision"]
+            < stopping["revision"]
+        )
+        assert [
+            s["statuses"]["Alice"] for s in (off, live, offline, live_again, stopping)
+        ] == ["master-off", "live", "offline", "live", "stopping"]
+        assert h.crop_state()["revision"] == stopping["revision"]
+        stopping["definitions"].clear()
+        assert "Alice" in h.crop_state()["definitions"]
+    finally:
+        release.set()
+    h._thread.join(5)
+    assert h.crop_state()["revision"] > stopping["revision"]
+
+
+def test_retired_queued_selection_does_not_strand_stop(crop_pump):
+    from threading import Event, Thread
+
+    r = crop_pump()
+    h = r.host
+    entered, release = Event(), Event()
+    h.start()
+    assert h._ready.wait(5)
+
+    def hold():
+        entered.set()
+        assert release.wait(5)
+
+    caller = Thread(target=lambda: r.call(hold))
+    caller.start()
+    assert entered.wait(5)
+    try:
+        for _ in range(40):
+            h.request_crop("select", "Alice")
+        later = h.request_crop("enabled", "Alice", False)
+        assert h.stop(timeout=0) is False
+    finally:
+        release.set()
+        caller.join(5)
+    h._thread.join(5)
+    assert not h.is_running
+    assert h.crop_state()["operations"][later["operation_id"]]["persisted"]
+    assert not r.native.windows
+
+
+def test_failed_host_window_settles_configuration_accepted_during_start(
+    crop_pump, monkeypatch
+):
+    from threading import Event
+
+    r = crop_pump()
+    h = r.host
+    entered, release, persisted = Event(), Event(), Event()
+
+    def fail_window(libs):
+        entered.set()
+        assert release.wait(5)
+        return
+
+    def state_changed(state):
+        if any(op["persisted"] for op in state["operations"].values()):
+            persisted.set()
+
+    monkeypatch.setattr(h, "_create_host_window", fail_window)
+    h._on_crops_changed = state_changed
+    h.start()
+    assert entered.wait(5)
+    receipt = h.request_crop("enabled", "Alice", False)
+    release.set()
+    h._thread.join(5)
+    assert persisted.wait(1)
+    assert h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+    assert not r.native.windows
+
+
+def test_crop_state_keeps_temporary_status_and_busy_until_native_completion(crop_pump):
+    from threading import Event, Thread
+
+    r = crop_pump()
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    h.request_crop("enabled", "Alice", False)
+    r.store.drain().result(5)
+    r.call(lambda: None)
+    h.request_crop("select", "Alice")
+    r.call(lambda: None)
+    assert h.crop_state()["statuses"]["Alice"] == "selecting"
+    r.transaction.release.clear()
+
+    def confirm():
+        picker = h._crop_controller.picker
+        picker.selection = geometry.Rect(
+            picker.destination.x + 20, picker.destination.y + 20, 100, 80
+        )
+        picker._confirm()
+
+    r.call(confirm)
+    assert r.transaction.entered.wait(5)
+    assert h.crop_state()["statuses"]["Alice"] == "saving"
+    entered, release = Event(), Event()
+
+    def hold():
+        entered.set()
+        assert release.wait(5)
+
+    caller = Thread(target=lambda: r.call(hold))
+    caller.start()
+    assert entered.wait(5)
+    try:
+        r.transaction.release.set()
+        r.store.drain().result(5)
+        state = h.crop_state()
+        assert not any(op["pending"] for op in state["operations"].values())
+        assert state["statuses"]["Alice"] == "saving" and state["busy"]
+    finally:
+        release.set()
+        caller.join(5)
+    r.call(lambda: None)
+    assert h.crop_state()["statuses"]["Alice"] == "live"
+    assert not h.crop_state()["busy"]
+
+
+def test_final_freeze_records_primary_drag_without_notifying_closed_page(crop_pump):
+    r = crop_pump()
+    h = r.host
+    notifications = []
+    h._on_layouts_changed = lambda: notifications.append(True)
+    h.start()
+    assert h._ready.wait(5)
+    rect = geometry.Rect(60, 70, 400, 250)
+    primary = SimpleNamespace(
+        rect=rect,
+        locked=False,
+        _mode="move",
+        set_hidden=lambda value: None,
+        close=lambda: None,
+    )
+    r.call(lambda: h._windows.update(Alice=primary))
+    assert h.stop(timeout=5, final=True)
+    assert r.primary == [("Alice", rect, False)]
+    assert not notifications
+
+
+def test_restart_waits_for_current_roster_not_previous_runtime_authority(crop_pump):
+    from tests.test_preview_cropcontroller import client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = crop_pump()
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    assert h.stop(timeout=5)
+    # Telemetry deliberately does not deliver preview rosters while master-off.
+    # The previous session cannot authorize a reused HWND on the next launch.
+    h.start()
+    assert h._ready.wait(5)
+    assert r.call(lambda: h._crop_controller.live) == {}
+    assert h.request_crop("select", "Alice")["pending"] is False
+    h.apply_roster(RosterSnapshot(2, (client(serial=2),)))
+    r.call(lambda: None)
+    assert h.crop_state()["statuses"]["Alice"] == "live"
+
+
+def test_final_request_during_native_cleanup_still_closes_retained_store(
+    crop_pump, monkeypatch
+):
+    from threading import Event
+
+    r = crop_pump()
+    h = r.host
+    h.start()
+    assert h._ready.wait(5)
+    window = r.call(lambda: h._crop_controller.live["Alice"].window)
+    entered, release = Event(), Event()
+    original = window.close
+
+    def delayed_close():
+        entered.set()
+        assert release.wait(5)
+        original()
+
+    monkeypatch.setattr(window, "close", delayed_close)
+    try:
+        assert not h.stop(timeout=0)
+        assert entered.wait(5)
+        assert not h.stop(timeout=0, final=True)
+        assert r.store._close_future is not None
+    finally:
+        release.set()
+    h._thread.join(5)
+    assert not h.is_running
+    with pytest.raises(RuntimeError, match="closed"):
+        r.store.begin("Alice", epoch=0, session=None)
+
+
 def test_stop_before_start_is_a_no_op():
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     h.stop()
     assert not h.is_running
+
+
+def test_crop_epoch_is_open_before_thread_launch_and_retained_on_restart(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tests.test_preview_cropcontroller import DEFINITION, Transaction, client
+    from wingman.preview.cropstore import CropStore
+    from wingman.telemetry.model import RosterSnapshot
+
+    transaction = Transaction({"Alice": DEFINITION})
+    store = CropStore(
+        transaction.update,
+        {"Alice": DEFINITION},
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
+    )
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, crop_store=store)
+    h.apply_roster(RosterSnapshot(1, (client(),)))
+    authorized = []
+
+    def run():
+        token = store.begin("Alice", epoch=h._crop_epoch, session=client().session)
+        authorized.append(store.put(token, DEFINITION).result(5).persisted)
+
+    monkeypatch.setattr(h, "_run", run)
+    try:
+        h.start()
+        h._thread.join(5)
+        h.stop()
+        assert authorized == [True]
+        sequence = next(h._crop_geometry_sequence)
+        h.start()
+        h._thread.join(5)
+        h.stop()
+        assert authorized == [True, True]
+        assert next(h._crop_geometry_sequence) > sequence
+        assert h._crop_store is store
+        assert store.snapshot()["definitions"]["Alice"]["enabled"]
+    finally:
+        try:
+            h.stop(final=True)
+        finally:
+            store.close().result(5)
+
+
+def test_stopped_crop_configuration_publishes_without_host_or_store_lock(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from tests.test_preview_cropcontroller import DEFINITION, Transaction
+    from wingman.preview.cropstore import CropStore
+
+    transaction = Transaction({"Alice": DEFINITION})
+    transaction.release.clear()
+    store = CropStore(
+        transaction.update,
+        {"Alice": DEFINITION},
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
+    )
+    published = Event()
+    states = []
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, crop_store=store)
+
+    def publish(state):
+        assert h._lock.acquire(blocking=False)
+        h._lock.release()
+        states.append(h.crop_state())
+        if state["operations"] and not any(
+            op["pending"] for op in state["operations"].values()
+        ):
+            published.set()
+
+    h._on_crops_changed = publish
+    try:
+        receipt = h.request_crop("enabled", "Alice", False)
+        assert receipt["pending"] and not receipt["applied"]
+        assert transaction.entered.wait(5)
+        assert h.crop_state()["definitions"]["Alice"]["enabled"]
+        transaction.release.set()
+        assert published.wait(5)
+        assert states[-1]["statuses"]["Alice"] == "disabled"
+        assert states[-1]["operations"][receipt["operation_id"]]["persisted"]
+        assert not h.is_running
+    finally:
+        transaction.release.set()
+        try:
+            h.stop(final=True)
+        finally:
+            store.close().result(5)
 
 
 def test_stop_is_idempotent(monkeypatch):
