@@ -263,6 +263,44 @@ def test_updater_manual_docs_keep_fixture_and_windows_policy_claims_narrow():
     assert "reputation UI is mandatory" not in flat_smoke
 
 
+def test_pyinstaller_is_exactly_pinned_in_an_opt_in_build_group():
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        project = tomllib.load(fh)
+
+    assert project.get("dependency-groups", {}).get("build") == [
+        "pyinstaller==6.22.2"
+    ], "PyInstaller must be exactly pinned in the build-only group"
+    runtime = project["project"]["dependencies"]
+    dev = project["project"]["optional-dependencies"]["dev"]
+    assert not any("pyinstaller" in dep.lower() for dep in runtime + dev)
+    defaults = project.get("tool", {}).get("uv", {}).get("default-groups", ["dev"])
+    assert defaults != "all" and "build" not in defaults
+
+
+def test_pyinstaller_build_action_uses_the_lock_not_an_ad_hoc_install():
+    action = (
+        ROOT / ".github" / "actions" / "build-installer" / "action.yml"
+    ).read_text(encoding="utf-8")
+    commands = "\n".join(
+        line for line in action.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert not re.search(
+        r"\buv\s+pip\s+install\b[^\n]*pyinstaller", commands, re.IGNORECASE
+    ), "PyInstaller must not be installed outside uv.lock"
+    sync = "uv sync --locked --group build"
+    assert sync in commands
+    assert commands.index(sync) < commands.index("python -m PyInstaller")
+    after_sync = commands.split(sync, 1)[1].lstrip()
+    assert after_sync.startswith('if ($LASTEXITCODE -ne 0) { throw "uv sync failed')
+    comments = " ".join(
+        line.strip().removeprefix("#").strip()
+        for line in action.splitlines()
+        if line.lstrip().startswith("#")
+    )
+    for explanation in ("6.x", "one-folder layout", "load-bearing", "installer.iss"):
+        assert explanation in comments
+
+
 def test_every_subpackage_is_declared():
     with (ROOT / "pyproject.toml").open("rb") as fh:
         declared = set(tomllib.load(fh)["tool"]["setuptools"]["packages"])
