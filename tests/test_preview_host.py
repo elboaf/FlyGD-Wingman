@@ -518,6 +518,82 @@ def test_offline_submission_keeps_ownership_through_start_and_final_stop(
     assert state["definitions"]["Alice"]["enabled"]
 
 
+def test_offline_stop_tail_cannot_stop_replacement_or_lose_its_result(
+    crop_pump, monkeypatch
+):
+    from threading import Event, Thread, get_ident
+
+    flush_entered, flush_release = Event(), Event()
+    tail_released, tail_resume = Event(), Event()
+
+    def flush():
+        flush_entered.set()
+        assert flush_release.wait(5)
+
+    r = crop_pump(primary_flush=flush)
+    h = r.host
+    lock = h._lock
+    caller_ids, outcomes = [], []
+
+    class PauseAfterOfflineRelease:
+        def __enter__(self):
+            lock.acquire()
+            self.was_dispatching = h._crop_dispatching
+            return self
+
+        def __exit__(self, *exc):
+            pause = (
+                get_ident() in caller_ids
+                and self.was_dispatching
+                and not h._crop_dispatching
+                and not tail_released.is_set()
+            )
+            lock.release()
+            if pause:
+                # The old dispatcher has relinquished delivery, but its caller
+                # has not returned. Completing the barrier permits a new epoch.
+                tail_released.set()
+                assert tail_resume.wait(5)
+
+    monkeypatch.setattr(h, "_lock", PauseAfterOfflineRelease())
+    # Start the real lazy worker through a real offline configuration request.
+    receipt = h.request_crop("enabled", "Alice", True)
+
+    def stop():
+        caller_ids.append(get_ident())
+        outcomes.append(h.stop(timeout=5))
+
+    caller = Thread(target=stop)
+    caller.start()
+    try:
+        assert flush_entered.wait(5)
+        assert tail_released.wait(5)
+        old_epoch, old_future = h._crop_epoch, h._stop_future
+        assert not old_future.done() and h.is_stopping
+        flush_release.set()
+        assert old_future.result(5)
+        assert not h.is_stopping
+        h.start()
+        assert h._ready.wait(5)
+        replacement = h._thread
+        window = r.call(lambda: h._crop_controller.live["Alice"].window)
+        assert h._crop_epoch > old_epoch
+        assert h._stop_future is None
+        tail_resume.set()
+        caller.join(5)
+        assert not caller.is_alive()
+        # A queued old shutdown takes effect before this pump round trip.
+        r.call(lambda: None)
+        assert (outcomes, h.is_stopping, window.hidden) == ([True], False, False)
+        assert h._thread is replacement and replacement.is_alive()
+        assert window.hwnd is not None
+        assert h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+    finally:
+        flush_release.set()
+        tail_resume.set()
+        caller.join(5)
+
+
 def test_crop_delivery_revision_orders_runtime_only_transitions(crop_pump):
     from threading import Event
 

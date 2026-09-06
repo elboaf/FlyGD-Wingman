@@ -657,9 +657,7 @@ class PreviewHost:
                 if self._thread is thread:
                     self._thread = None
         if self._crop_store is not None:
-            self._drain_offline_crop_commands()
-            with self._lock:
-                future = self._stop_future
+            future = self._drain_offline_crop_commands()
             if future is None:
                 logger.warning(
                     "Preview storage submission did not finish within %.1fs", timeout
@@ -737,12 +735,12 @@ class PreviewHost:
             # selections than retained history before this pump drains them.
             logger.debug("Crop cancellation outcome already retired")
 
-    def _drain_offline_crop_commands(self) -> None:
+    def _drain_offline_crop_commands(self) -> Future | None:
         if self._crop_store is None:
-            return
+            return None
         with self._lock:
             if self._crop_dispatching or self._starting or self.is_running:
-                return
+                return self._stop_future
             self._crop_dispatching = True
             commands, self._crop_commands = self._crop_commands, []
         try:
@@ -786,10 +784,18 @@ class PreviewHost:
                 self._crop_dispatching = False
                 pending = bool(self._crop_commands)
                 stopping = self._stopping
-            self._post(win32.WM_APP_SHUTDOWN if stopping else win32.WM_APP_CROP_COMMAND)
-            self._post(win32.WM_APP_CROP_COMPLETE)
+                stop_future = self._stop_future
+                # Signal before releasing lifecycle ownership: a completed drain
+                # permits start() to replace both the HWND and the stop Future.
+                # PostMessage only queues; no store calls or callbacks under here.
+                self._post(
+                    win32.WM_APP_SHUTDOWN if stopping else win32.WM_APP_CROP_COMMAND
+                )
+                self._post(win32.WM_APP_CROP_COMPLETE)
         if pending:
-            self._drain_offline_crop_commands()
+            return self._drain_offline_crop_commands()
+        # The caller's result belongs to this drain, not a replacement runtime.
+        return stop_future
 
     def crop_state(self) -> dict:
         """Copied committed truth, ordered across storage AND runtime changes.
