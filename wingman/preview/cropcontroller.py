@@ -259,7 +259,11 @@ class CropController:
             sequence = self._next_geometry_sequence()
             self._store.record_geometry(name, live.generation, sequence, rect)
             op = self._active.get(name)
-            if op is not None and op.action == "select" and op.submitted:
+            if (
+                op is not None
+                and op.submitted
+                and (op.action == "select" or (op.action == "enabled" and op.value))
+            ):
                 committed = self._store.snapshot()["generations"].get(name)
                 if committed == op.token.generation:
                     # Publication can race the first record. Read its committed
@@ -287,6 +291,13 @@ class CropController:
 
     def request(self, action: str, name: str, value, token: CropToken) -> dict:
         """Accept a host-issued token on the pump; later same-owner edits wait."""
+        outcome = self._store.snapshot()["operations"].get(token.operation_id)
+        if outcome is None or not outcome["pending"]:
+            # Ingress can cancel a command before the pump sees it. Pending
+            # operations never age out; a missing one is terminal, not a new
+            # request to replay against today's source or definition.
+            self._emit()
+            return self._receipt(token)
         op = _Request(action, name, value, token)
         if self._stopping:
             self._cancel_token(token)
@@ -302,17 +313,34 @@ class CropController:
                         self._cancel_token(earlier.token)
                         waiting.remove(earlier)
             waiting.append(op)
-            if not active.submitted and (
+            if active.action == "select" and (
                 action == "remove" or (action == "enabled" and not value)
             ):
-                self._cancel_native(active)
+                if not active.submitted:
+                    self._cancel_native(active)
+                elif self._cancel_token(active.token):
+                    # Submission may still be waiting for the settings lock.
+                    # Only the store's admission-aware cancellation result can
+                    # authorize retiring it ahead of native completion.
+                    self._discard_prepared(active)
         else:
             self._start(op)
         self._emit()
         return self._receipt(token)
 
     def _receipt(self, token, error=None):
-        result = dict(self._store.snapshot()["operations"][token.operation_id])
+        outcome = self._store.snapshot()["operations"].get(token.operation_id)
+        if outcome is None:
+            # This reports unavailable receipt history, not a replacement
+            # persistence outcome. The committed snapshot remains authoritative.
+            return {
+                "operation_id": token.operation_id,
+                "pending": False,
+                "applied": False,
+                "persisted": False,
+                "error": error or "Crop operation result expired; refresh crop state",
+            }
+        result = dict(outcome)
         result.pop("name")
         result.pop("revision")
         if error is not None:
@@ -321,6 +349,19 @@ class CropController:
 
     def _start(self, op):
         self._active[op.name] = op
+        try:
+            self._prepare(op)
+        except Exception:
+            # Retire our reservation as well as its pending store intent, so
+            # the next command for this owner cannot wait on a broken picker.
+            # An admitted write, however, still owns its ordered completion.
+            if self._active.get(op.name) is op and (
+                not op.submitted or self._cancel_token(op.token)
+            ):
+                self._discard_prepared(op)
+            raise
+
+    def _prepare(self, op):
         if op.action != "select":
             self._submit(op)
             return
@@ -395,13 +436,13 @@ class CropController:
         self._emit()
 
     def _submit(self, op):
-        op.submitted = True
         if op.action == "select":
             future = self._store.put(op.token, op.definition)
         elif op.action == "enabled":
             future = self._store.set_enabled(op.token, op.value)
         else:
             future = self._store.remove(op.token)
+        op.submitted = True
         future.add_done_callback(lambda done: self._post_complete(done.result()))
 
     def _close_candidate(self, op):
@@ -410,7 +451,7 @@ class CropController:
 
     def _cancel_token(self, token):
         try:
-            self._store.cancel(token)
+            return self._store.cancel(token)
         except ValueError:
             # All tokens here were issued by this store. It only forgets
             # terminal outcomes, never pending work; ingress may have canceled
@@ -418,6 +459,7 @@ class CropController:
             logger.debug(
                 "Crop cancellation outcome already retired: %s", token.operation_id
             )
+            return False
 
     def _cancel_native(self, op):
         if self._temporary is op and self.picker is not None:
@@ -459,6 +501,31 @@ class CropController:
         state = self._store.snapshot()
         definition = deserialize(state["definitions"]).get(op.name)
         candidate = op.candidate
+        live = self.live.get(op.name)
+        current = self.sessions.get(op.name)
+        if (
+            result.persisted
+            and op.action == "enabled"
+            and op.value
+            and definition is not None
+            and definition.enabled
+            and state["generations"].get(op.name) == op.token.generation
+            and live is not None
+            and current is not None
+            and current.session == live.client.session
+            and definition.source == live.source
+        ):
+            # Re-enabling an already-live definition edits its generation, not
+            # its source or native identity. Keep its actual destination and
+            # advance the geometry callback authority for subsequent drags.
+            live.generation = op.token.generation
+            if live.window.rect != definition.window:
+                self._store.record_geometry(
+                    op.name,
+                    live.generation,
+                    self._next_geometry_sequence(),
+                    live.window.rect,
+                )
         if (
             result.persisted
             and candidate is not None

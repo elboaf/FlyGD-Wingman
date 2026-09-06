@@ -1049,8 +1049,13 @@ class PreviewHost:
             return
         with self._lock:
             self._crop_epoch += 1
-            epoch, snapshot = self._crop_epoch, self._crop_roster
+            epoch = self._crop_epoch
         self._crop_store.open_epoch(epoch)
+        # Ingress may have published under the new host epoch before the store
+        # opened it. Re-read afterward; subsequent ingress is now accepted by
+        # the store, whose generation fence also prevents this seed regressing it.
+        with self._lock:
+            snapshot = self._crop_roster
         if snapshot is not None:
             self._crop_store.observe_roster(epoch, snapshot)
 
@@ -1099,7 +1104,19 @@ class PreviewHost:
         with self._lock:
             commands, self._crop_commands = self._crop_commands, []
         for command in commands:
-            self._crop_controller.request(*command)
+            try:
+                self._crop_controller.request(*command)
+            except Exception:
+                # This batch was already drained. One failed request must not
+                # abandon all following accepted intents. Preserve admitted
+                # outcomes; cancel only work the store still permits canceling.
+                logger.exception("Could not process crop command for %s", command[1])
+                if self._crop_store is not None:
+                    try:
+                        self._crop_store.cancel(command[3])
+                    except ValueError:
+                        # Bounded terminal history may already have retired it.
+                        logger.debug("Failed crop command outcome already retired")
 
     def _apply_crop_completions(self, libs) -> None:
         self._apply_pending_roster(libs)

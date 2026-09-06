@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from queue import SimpleQueue
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 
 import pytest
 
@@ -71,6 +71,7 @@ class Transaction:
     def __init__(self, initial):
         self.document = {"preview": {"crops": serialize(initial)}}
         self.lock = Lock()
+        self.attempted = Event()
         self.entered = Event()
         self.release = Event()
         self.release.set()
@@ -79,6 +80,7 @@ class Transaction:
 
     @contextmanager
     def update(self):
+        self.attempted.set()
         with self.lock:
             old = deepcopy(self.document)
             try:
@@ -182,6 +184,359 @@ def confirm(r):
         picker.destination.x + 20, picker.destination.y + 20, 100, 80
     )
     picker._confirm()
+
+
+def test_host_batch_continues_same_owner_after_picker_preparation_exception(
+    rig, monkeypatch
+):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+    selecting = r.store.begin("Alice", epoch=1, session=client().session)
+    following = r.store.begin("Alice", epoch=1, session=None)
+    h._crop_commands = [
+        ("select", "Alice", None, selecting),
+        ("enabled", "Alice", True, following),
+    ]
+
+    def fail_picker(*args, **kwargs):
+        raise RuntimeError("picker preparation failed")
+
+    monkeypatch.setattr(r.controller, "_create_picker", fail_picker)
+    h._apply_crop_commands(None)
+    finish(r)
+    outcomes = r.store.snapshot()["operations"]
+    assert not outcomes[selecting.operation_id]["pending"]
+    assert outcomes[following.operation_id]["persisted"]
+    assert not r.states[-1]["busy"] and r.controller.picker is None
+    assert r.native.peak == 1
+
+
+def test_host_command_exception_does_not_undo_admitted_write(rig, monkeypatch):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+    first = r.store.begin("Alice", epoch=1, session=None)
+    following = r.store.begin("Alice", epoch=1, session=None)
+    h._crop_commands = [
+        ("enabled", "Alice", True, first),
+        ("remove", "Alice", None, following),
+    ]
+    original = r.controller.request
+    r.transaction.release.clear()
+
+    def fail_after_admission(action, name, value, token):
+        receipt = original(action, name, value, token)
+        if token == first:
+            assert r.transaction.entered.wait(5)
+            raise RuntimeError("failure after admission")
+        return receipt
+
+    monkeypatch.setattr(r.controller, "request", fail_after_admission)
+    h._apply_crop_commands(None)
+    assert r.store.snapshot()["operations"][following.operation_id]["pending"]
+    r.transaction.release.set()
+    result = r.completions.get(timeout=5)
+    assert result.token == first and result.persisted
+    r.controller.complete(result)
+    result = r.completions.get(timeout=5)
+    assert result.token == following and result.persisted
+    r.controller.complete(result)
+    assert r.store.snapshot()["definitions"] == {}
+    assert len(r.transaction.writes) == 2
+
+
+@pytest.mark.parametrize("outcome", ["canceled", "persisted"])
+def test_delayed_pruned_command_returns_expired_receipt_without_replay(rig, outcome):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    if outcome == "canceled":
+        assert r.store.cancel(token)
+    else:
+        assert r.store.put(token, DEFINITION).result(5).persisted
+    for index in range(33):
+        later = r.store.begin(str(index), epoch=1, session=None)
+        assert r.store.remove(later).result(5).persisted
+    assert token.operation_id not in r.store.snapshot()["operations"]
+    before = r.store.snapshot()
+    receipt = r.controller.request("select", "Alice", None, token)
+    assert not receipt["pending"] and receipt["error"]
+    assert receipt["operation_id"] == token.operation_id
+    assert r.controller.picker is None
+    assert r.store.snapshot() == before
+
+
+def test_retained_canceled_command_does_not_open_a_picker(rig):
+    r = rig()
+    roster(r, 1, client())
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    assert r.store.cancel(token)
+    receipt = r.controller.request("select", "Alice", None, token)
+    assert not receipt["pending"] and not receipt["persisted"]
+    assert r.controller.picker is None and not r.native.windows
+
+
+def test_pruned_ingress_command_does_not_drop_later_host_batch_intent(rig):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    latest = RosterSnapshot(2, ())
+    r.store.observe_roster(1, latest)
+    for index in range(33):
+        later = r.store.begin(str(index), epoch=1, session=None)
+        assert r.store.remove(later).result(5).persisted
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+    h._crop_epoch = 1
+    h.apply_roster(latest)
+    disable = r.store.begin("Alice", epoch=1, session=None)
+    h._crop_commands = [
+        ("select", "Alice", None, token),
+        ("enabled", "Alice", False, disable),
+    ]
+    h._apply_crop_commands(None)
+    finish(r)
+    assert r.store.snapshot()["operations"][disable.operation_id]["persisted"]
+    assert not deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+    assert not r.controller.live and not r.controller.picker
+
+
+def test_host_isolates_command_failure_and_terminalizes_unadmitted_intent(
+    rig, monkeypatch, caplog
+):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+    first = r.store.begin("Alice", epoch=1, session=None)
+    following = r.store.begin("Alice", epoch=1, session=None)
+    h._crop_commands = [
+        ("enabled", "Alice", False, first),
+        ("remove", "Alice", None, following),
+    ]
+    original = r.controller.request
+
+    def fail_first(action, name, value, token):
+        if token == first:
+            raise RuntimeError("command handler failed")
+        return original(action, name, value, token)
+
+    monkeypatch.setattr(r.controller, "request", fail_first)
+    h._apply_crop_commands(None)
+    finish(r)
+    outcomes = r.store.snapshot()["operations"]
+    assert not outcomes[first.operation_id]["pending"]
+    assert not outcomes[first.operation_id]["persisted"]
+    assert outcomes[following.operation_id]["persisted"]
+    assert r.store.snapshot()["definitions"] == {}
+    assert "command handler failed" in caplog.text
+
+
+@pytest.mark.parametrize("phase", ["during-save", "after-publication"])
+@pytest.mark.parametrize("fail", [False, True])
+def test_repeated_enable_preserves_live_window_and_latest_geometry(rig, phase, fail):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    old = r.controller.live["Alice"].window
+    r.transaction.release.clear()
+    token, _ = request(r, "enabled", value=True)
+    assert r.transaction.entered.wait(5)
+    moved = Rect(450, 320, 320, 160)
+    if phase == "during-save":
+        old.move(moved)
+    r.transaction.fail = fail
+    r.transaction.release.set()
+    result = r.completions.get(timeout=5)
+    assert result.persisted is not fail
+    r.transaction.fail = False
+    if phase == "after-publication":
+        old.move(moved)
+    r.controller.complete(result)
+    r.store.drain().result(5)
+    assert r.controller.live["Alice"].window is old
+    assert old.rect == moved
+    state = r.store.snapshot()
+    assert state["generations"]["Alice"] == (0 if fail else token.generation)
+    assert deserialize(state["definitions"])["Alice"] == replace(
+        DEFINITION, window=moved
+    )
+    # Future drags must use the newly committed generation too.
+    later = Rect(510, 340, 400, 200)
+    old.move(later)
+    r.store.drain().result(5)
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].window == later
+    assert r.native.next_thumbnail == 9001 and r.native.peak == 1
+
+
+def test_repeated_enable_publication_racing_move_survives_source_loss(rig, monkeypatch):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    old = r.controller.live["Alice"].window
+    r.transaction.release.clear()
+    request(r, "enabled", value=True)
+    assert r.transaction.entered.wait(5)
+    original = r.store.record_geometry
+    results = []
+
+    def publish_then_record(*args):
+        if not results:
+            r.transaction.release.set()
+            results.append(r.completions.get(timeout=5))
+        original(*args)
+
+    monkeypatch.setattr(r.store, "record_geometry", publish_then_record)
+    moved = Rect(450, 320, 320, 160)
+    old.move(moved)
+    roster(r, 2)
+    r.controller.complete(results[0])
+    r.store.drain().result(5)
+    assert not r.controller.live
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"] == replace(
+        DEFINITION, window=moved
+    )
+
+
+@pytest.mark.parametrize("ingress_phase", ["before-open", "after-open"])
+def test_startup_seeds_newest_roster_across_epoch_open_gap(
+    rig, monkeypatch, ingress_phase
+):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    h = PreviewHost(
+        on_layout_changed=lambda *args: None,
+        crop_store=r.store,
+        excluded=lambda: ["Alice"],
+    )
+    h._crop_epoch = 1
+    h.apply_roster(RosterSnapshot(1, (client(),)))
+    opening, arrived = Event(), Event()
+    latest = RosterSnapshot(2, (client(serial=2),))
+    original_open = r.store.open_epoch
+
+    def open_epoch(epoch):
+        if ingress_phase == "after-open":
+            original_open(epoch)
+        opening.set()
+        assert arrived.wait(5)
+        if ingress_phase == "before-open":
+            original_open(epoch)
+
+    def ingress():
+        assert opening.wait(5)
+        h.apply_roster(latest)
+        arrived.set()
+
+    monkeypatch.setattr(r.store, "open_epoch", open_epoch)
+    monkeypatch.setattr(h, "_monitors", lambda: [MONITOR])
+    worker = Thread(target=ingress)
+    worker.start()
+    try:
+        h._init_crop_controller(r.native.lib)
+        h._apply_pending_roster(r.native.lib)
+        assert h._crop_controller.sessions["Alice"] == latest.clients[0]
+        stale = r.store.begin("Alice", epoch=h._crop_epoch, session=client().session)
+        assert not r.store.put(stale, DEFINITION).result(5).persisted
+        current = r.store.begin(
+            "Alice", epoch=h._crop_epoch, session=client(serial=2).session
+        )
+        assert r.store.put(current, DEFINITION).result(5).persisted
+    finally:
+        worker.join(5)
+        assert not worker.is_alive()
+        if h._crop_controller is not None:
+            h._crop_controller.begin_stop(h._crop_epoch).result(5)
+            h._crop_controller.close_native()
+
+
+@pytest.mark.parametrize("action,value", [("enabled", False), ("remove", None)])
+@pytest.mark.parametrize("fail_later", [False, True])
+def test_disable_remove_cancels_submitted_selection_before_admission(
+    rig, action, value, fail_later
+):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    old = r.controller.live["Alice"].window
+    selecting, _ = request(r)
+    with r.transaction.lock:
+        confirm(r)
+        assert r.transaction.attempted.wait(5)
+        assert not r.transaction.entered.is_set()
+        candidate = r.controller._temporary.candidate.window
+        later, _ = request(r, action, value=value)
+        assert candidate.hwnd is None
+        assert old.hwnd is not None
+        assert not r.store.snapshot()["operations"][selecting.operation_id]["pending"]
+        r.transaction.fail = fail_later
+    result = r.completions.get(timeout=5)
+    assert result.token == selecting and not result.persisted
+    r.controller.complete(result)
+    result = r.completions.get(timeout=5)
+    assert result.token == later and result.persisted is not fail_later
+    r.transaction.fail = False
+    r.controller.complete(result)
+    r.store.drain().result(5)
+    definitions = deserialize(r.store.snapshot()["definitions"])
+    assert len(r.transaction.writes) == (0 if fail_later else 1)
+    if fail_later:
+        assert definitions["Alice"] == DEFINITION
+        assert r.controller.live["Alice"].window is old
+    elif action == "enabled":
+        assert definitions["Alice"] == replace(DEFINITION, enabled=False)
+        assert not r.controller.live
+    else:
+        assert definitions == {} and not r.controller.live
+    assert r.native.peak == 2
+
+
+@pytest.mark.parametrize("action,value", [("enabled", False), ("remove", None)])
+@pytest.mark.parametrize("fail_later", [False, True])
+def test_disable_remove_cannot_cancel_admitted_selection(
+    rig, action, value, fail_later
+):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    selecting, _ = request(r)
+    r.transaction.release.clear()
+    confirm(r)
+    assert r.transaction.entered.wait(5)
+    candidate = r.controller._temporary.candidate.window
+    later, _ = request(r, action, value=value)
+    assert candidate.hwnd is not None
+    assert r.store.snapshot()["operations"][selecting.operation_id]["pending"]
+    r.transaction.release.set()
+    result = r.completions.get(timeout=5)
+    assert result.token == selecting and result.persisted
+    replacement = deserialize(r.store.snapshot()["definitions"])["Alice"]
+    assert replacement.source != DEFINITION.source
+    assert r.store.snapshot()["operations"][later.operation_id]["pending"]
+    r.transaction.fail = fail_later
+    r.controller.complete(result)
+    result = r.completions.get(timeout=5)
+    assert result.token == later and result.persisted is not fail_later
+    r.transaction.fail = False
+    r.controller.complete(result)
+    definitions = deserialize(r.store.snapshot()["definitions"])
+    if fail_later:
+        assert definitions["Alice"] == replacement
+        assert r.controller.live["Alice"].window is candidate
+    elif action == "enabled":
+        assert definitions["Alice"] == replace(replacement, enabled=False)
+    else:
+        assert definitions == {}
+    assert len(r.transaction.writes) == (1 if fail_later else 2)
+    assert r.native.peak == 2
 
 
 def test_stopping_windows_cannot_be_revealed_by_later_visibility_updates(rig):
