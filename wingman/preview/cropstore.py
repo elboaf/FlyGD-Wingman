@@ -186,14 +186,16 @@ class CropStore:
         return self._submit(token, "remove", None)
 
     def _submit(self, token, action, value):
+        startup_failure = None
         with self._condition:
             operation = self._operation(token)
             if operation.action is None and operation.result is None:
                 operation.action, operation.value = action, value
                 self._enqueue_due_locked()
                 self._queue.append(operation)
-                self._start_locked()
-            return operation.future
+                startup_failure = self._start_locked()
+        self._complete_start(startup_failure)
+        return operation.future
 
     def _operation(self, token):
         operation = self._operations.get(token.operation_id)
@@ -232,7 +234,8 @@ class CropStore:
             self._dirty[name] = _Geometry(
                 generation, sequence, rect, monotonic() + self._debounce_s
             )
-            self._start_locked()
+            startup_failure = self._start_locked()
+        self._complete_start(startup_failure)
 
     def snapshot(self) -> dict:
         with self._condition:
@@ -258,15 +261,21 @@ class CropStore:
         """Flush earlier work; False reports geometry/primary failures since the
         previous barrier. Definition outcomes have their own result futures.
         """
+        startup_failure = None
         with self._condition:
             if self._close_future is not None:
                 return self._close_future
             future = Future()
             future.set_running_or_notify_cancel()
-            idle = self._executor is None and self._flush_primary is None
+            idle = (
+                self._executor is None
+                and not self._dirty
+                and self._flush_primary is None
+            )
             if not idle:
                 self._queue.append(_Barrier(future))
-                self._start_locked()
+                startup_failure = self._start_locked()
+        self._complete_start(startup_failure)
         if idle:
             future.set_result(True)
         return future
@@ -292,20 +301,62 @@ class CropStore:
                         (op.future, self._finish_locked(op, "Crop store closed"))
                     )
         self._deliver(canceled)
+        startup_failure = None
         with self._condition:
-            idle = self._executor is None and self._flush_primary is None
+            idle = (
+                self._executor is None
+                and not self._dirty
+                and self._flush_primary is None
+            )
             if not idle:
                 self._queue.append(_Barrier(future, closing=True))
-                self._start_locked()
+                startup_failure = self._start_locked()
+        self._complete_start(startup_failure)
         if idle:
             future.set_result(True)
         return future
 
     def _start_locked(self):
         if self._executor is None:
-            self._executor = self._executor_factory()
-            self._executor.submit(self._run)
+            try:
+                self._executor = self._executor_factory()
+                self._executor.submit(self._run, self._executor)
+            except Exception as exc:  # noqa: BLE001 -- startup failure must terminalize accepted work, not strand it.
+                executor, self._executor = self._executor, None
+                error = "Could not start crop persistence worker: " + (
+                    str(exc) or type(exc).__name__
+                )
+                completions = []
+                # Keep geometry for an explicit retry, as with a failed save.
+                # A workerless store with dirty deltas is not an idle store.
+                for delta in self._dirty.values():
+                    delta.deadline = None
+                    self._flush_ok = False
+                while self._queue:
+                    item = self._queue.popleft()
+                    if isinstance(item, _Operation) and item.result is None:
+                        completions.append(
+                            (item.future, self._finish_locked(item, error))
+                        )
+                    elif isinstance(item, _Barrier):
+                        completions.append((item.future, False))
+                        self._flush_ok = True
+                return executor, exc, completions
         self._condition.notify()
+        return None
+
+    def _complete_start(self, failure):
+        if failure is None:
+            return
+        executor, exc, completions = failure
+        logger.error("Could not start crop persistence worker", exc_info=exc)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False)
+            except Exception:
+                # Cleanup failure must not suppress the original work outcomes.
+                logger.exception("Could not retire failed crop persistence worker")
+        self._deliver(completions)
 
     def _finish_locked(self, operation, error=None):
         self._revision += 1
@@ -331,7 +382,12 @@ class CropStore:
                 self._dirty[name].deadline = None
             self._queue.append(_GeometryFlush(names))
 
-    def _run(self):
+    def _run(self, executor):
+        with self._condition:
+            # submit may enqueue before raising. A retired dispatcher's late
+            # start must never consume work intended for its replacement.
+            if executor is not self._executor:
+                return
         while True:
             with self._condition:
                 self._enqueue_due_locked()

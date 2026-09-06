@@ -47,6 +47,179 @@ def make_store():
         store.close().result(timeout=3)
 
 
+@pytest.fixture(params=["factory", "submission"])
+def startup_failure(request, monkeypatch):
+    from types import SimpleNamespace
+
+    state = SimpleNamespace(failing=True, executors=[])
+
+    def fail_start(_):
+        raise RuntimeError("worker resources exhausted")
+
+    class Executor(ThreadPoolExecutor):
+        def submit(self, fn, *args, **kwargs):
+            if state.failing:
+                # Keep submit's queued job: real thread-start failure occurs
+                # after enqueueing, so merely raising from submit misses it.
+                with monkeypatch.context() as patch:
+                    patch.setattr(Thread, "start", fail_start)
+                    return super().submit(fn, *args, **kwargs)
+            return super().submit(fn, *args, **kwargs)
+
+    def factory():
+        if state.failing and request.param == "factory":
+            raise RuntimeError("worker resources exhausted")
+        executor = Executor(max_workers=1)
+        state.executors.append(executor)
+        return executor
+
+    state.factory = factory
+    yield state
+    for executor in state.executors:
+        executor.shutdown(wait=False)
+
+
+def test_startup_failure_resolves_token_and_allows_new_submission(
+    make_store, startup_failure
+):
+    store, live = make_store(
+        initial={"Alice": definition()}, executor_factory=startup_failure.factory
+    )
+    token = store.begin("Alice", epoch=1, session=None)
+    future = store.put(token, definition(500))
+    result = future.result(timeout=3)
+    assert not result.applied and not result.persisted
+    assert "worker resources exhausted" in result.error
+    assert store.put(token, definition(500)) is future
+    outcome = store.snapshot()["operations"][token.operation_id]
+    assert not outcome["pending"] and outcome["error"] == result.error
+    assert outcome["revision"] == result.revision
+    assert store.snapshot()["definitions"]["Alice"]["window"]["x"] == 40
+    assert store.snapshot()["generations"]["Alice"] == 0
+    assert live["preview"]["crops"]["Alice"]["window"]["x"] == 40
+    for executor in startup_failure.executors:
+        with pytest.raises(RuntimeError, match="shutdown"):
+            executor.submit(lambda: None)
+
+    startup_failure.failing = False
+    later = store.begin("Alice", epoch=1, session=None)
+    assert store.set_enabled(later, False).result(timeout=3).persisted
+    assert store.put(token, definition(500)) is future
+    assert not settings.load()["preview"]["crops"]["Alice"]["enabled"]
+    assert settings.load()["preview"]["crops"]["Alice"]["window"]["x"] == 40
+    closing = store.close()
+    assert closing.result(timeout=3)
+    assert store.close() is closing
+    assert store.drain() is closing
+
+
+@pytest.mark.parametrize("barrier", ["drain", "close"])
+def test_first_primary_barrier_startup_failure_completes_false(
+    make_store, startup_failure, barrier
+):
+    flushed = []
+    store, _ = make_store(
+        executor_factory=startup_failure.factory,
+        flush_primary=lambda: flushed.append(True),
+    )
+    future = getattr(store, barrier)()
+    assert not future.result(timeout=3)
+    assert not flushed
+    startup_failure.failing = False
+    if barrier == "drain":
+        assert store.drain().result(timeout=3)
+        assert flushed == [True]
+        closing = store.close()
+        assert closing.result(timeout=3)
+    else:
+        closing = future
+        assert not store.close().result(timeout=3)
+        assert not flushed
+    assert store.close() is closing
+    assert store.drain() is closing
+
+
+@pytest.mark.parametrize("barrier", ["drain", "close"])
+def test_geometry_startup_failure_retains_delta_and_reports_failed_barrier(
+    make_store, startup_failure, barrier
+):
+    store, _ = make_store(
+        initial={"Alice": definition()},
+        executor_factory=startup_failure.factory,
+        debounce_s=3600,
+    )
+    store.record_geometry("Alice", 0, 1, Rect(91, 92, 320, 180))
+    assert store.snapshot()["definitions"]["Alice"]["window"]["x"] == 40
+    future = getattr(store, barrier)()
+    assert not future.result(timeout=3)
+    assert settings.load()["preview"]["crops"]["Alice"]["window"]["x"] == 40
+    startup_failure.failing = False
+    if barrier == "drain":
+        assert store.drain().result(timeout=3)
+        assert store.snapshot()["definitions"]["Alice"]["window"]["x"] == 91
+        assert store.snapshot()["generations"]["Alice"] == 0
+        assert settings.load()["preview"]["crops"]["Alice"]["window"]["x"] == 91
+    else:
+        assert store.close() is future
+        assert store.drain() is future
+        assert not future.result(timeout=3)
+
+
+def test_startup_failure_delivers_completion_outside_metadata_lock(make_store):
+    checked = Event()
+    failures = []
+    closes = []
+
+    def callback(future):
+        def check():
+            try:
+                assert not future.result().persisted
+                assert not store.snapshot()["operations"][token.operation_id]["pending"]
+                with settings.update(live) as document:
+                    document["channel_title"] = "still writable"
+                closes.append(store.close())
+            except Exception as exc:  # noqa: BLE001 -- propagate thread failures to the test's asserting thread.
+                failures.append(exc)
+            finally:
+                checked.set()
+
+        Thread(target=check).start()
+        if not checked.wait(3):
+            failures.append("startup completion invoked under a lock")
+
+    def factory():
+        # Observe the already accepted token before this synchronous startup
+        # attempt fails, so callback registration cannot race completion.
+        future = store.put(token, definition())
+        assert not future.done()
+        future.add_done_callback(callback)
+        raise RuntimeError("worker resources exhausted")
+
+    store, live = make_store(executor_factory=factory)
+    token = store.begin("Alice", epoch=1, session=None)
+    assert not store.put(token, definition()).result(timeout=3).persisted
+    assert checked.wait(3)
+    assert not failures
+    assert closes[0].result(timeout=3)
+
+
+def test_failed_submission_cannot_leave_a_late_dispatcher_running(make_store):
+    dispatched = []
+
+    class Executor(ThreadPoolExecutor):
+        def submit(self, fn, *args, **kwargs):
+            dispatched.append(super().submit(fn, *args, **kwargs))
+            raise RuntimeError("submission failed after scheduling")
+
+    store, _ = make_store(executor_factory=lambda: Executor(max_workers=1))
+    token = store.begin("Alice", epoch=1, session=None)
+    assert not store.put(token, definition()).result(timeout=3).persisted
+    assert dispatched[0].result(timeout=3) is None
+    assert store.snapshot()["definitions"] == {}
+    assert not paths.settings_file().exists()
+    assert store.close().result(timeout=3)
+
+
 def test_success_is_exposed_only_after_transaction_returns(make_store, monkeypatch):
     entered, release = Event(), Event()
     original = settings.atomicio.write_atomic
