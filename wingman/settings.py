@@ -14,6 +14,7 @@ from pathlib import Path
 from . import atomicio, bookmarks, paths
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
+from .preview import crops as preview_crops
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
 from .preview import roster as preview_roster
@@ -165,6 +166,8 @@ def _preview_defaults() -> dict:
         # validated_preview for the migration it gates.
         "defaults_version": _PREVIEW_DEFAULTS_VERSION,
         "layouts": {},
+        # One independent definition per named owner; absence needs no migration.
+        "crops": {},
         # The two flat cycle chords are the All-cycle (forward and back).
         # Groups and per-character membership are stored alongside them
         # and default to empty, so existing installs need no migration --
@@ -483,6 +486,11 @@ def validated_preview(raw) -> dict:
     # re-parsing the raw dict.
     parsed_layouts = preview_layout.deserialize(raw.get("layouts"))
     section["layouts"] = preview_layout.serialize(parsed_layouts)
+    # Rebuilt on every settings transaction, not just load: without this,
+    # writing an unrelated field would silently erase every saved crop.
+    section["crops"] = preview_crops.serialize(
+        preview_crops.deserialize(raw.get("crops"))
+    )
 
     raw_hotkeys = raw.get("hotkeys")
     if isinstance(raw_hotkeys, dict):
