@@ -219,6 +219,69 @@ async function main() {
     old.resolve(true); await tick();
     assert.equal(WM.current_route, 'formations'); assert.equal(reads.length, readCount);
     assertEditable('New draft'); click('fm-save'); assertSave(saves[0], B, 'New draft');
+  } else if (scenario.startsWith('typing-')) {
+    const [, field, ...timing] = scenario.split('-');
+    const duringRead = timing.join('-') === 'during-reread';
+    const labels = {x: 'West', y: 'Up', z: 'North'};
+    // Find the live control each time: asserting on a detached old input would
+    // miss exactly the renderPane/renderProbes replacement this test guards.
+    const control = () => field === 'name' ? WM.el('fm-name')
+      : WM.el('fm-probes').children.find(element =>
+        element.getAttribute('aria-label') === 'Probe 1 ' + labels[field] + ' km');
+    function type(value) {
+      control().focus();
+      control().value = value;
+      control().dispatchEvent({type: 'input'});
+    }
+    // Number inputs expose '' while a partial exponent/sign is being entered.
+    // It is activity to protect, not a zero to put into the document.
+    const raw = field === 'name' ? 'Still typing' : '';
+    rename('Submitted'); click('fm-save');
+    if (duringRead) complete(saves[0]);
+    type(raw);
+    assert.equal(saves.length, 1, 'input must never start a save');
+    if (!duringRead) complete(saves[0]);
+    if (reads.length > 1) { reads.at(-1).resolve(reply(C, 'Submitted')); await tick(); }
+    assert.equal(control().value, raw, 'an async response discarded unblurred input');
+    assert.equal(document.activeElement, control());
+    assert.equal(WM.el('fm-dirty').textContent, 'Unsaved changes');
+    assert.equal(WM.el('fm-save').disabled, false);
+    assert.equal(reads.length, duringRead ? 2 : 1);
+
+    if (field !== 'name') {
+      // A direct Save before change may only serialize the last valid model,
+      // never coerce the partial numeric text to 0 or NaN.
+      click('fm-save'); assertSave(saves.at(-1), B, 'Submitted');
+      complete(saves.at(-1), {ok: false, content_revision: '', error_code: 'save_failed', error: 'Retry later'});
+      assert.equal(control().value, raw);
+    }
+    const beforeSave = saves.length;
+    type(field === 'name' ? 'Finished name' : '12.5');
+    control().dispatchEvent({type: 'change'});
+    assert.equal(saves.length, beforeSave, 'change updates the draft, not the account file');
+    click('fm-save');
+    const saved = saves.at(-1);
+    assert.equal(saved.args[2], B, 'ignored reread must not replace the committed baseline');
+    const expectedName = field === 'name' ? 'Finished name' : 'Submitted';
+    assert.equal(saved.args[1][0].name, expectedName);
+    if (field !== 'name') assert.equal(saved.args[1][0].probes[0][field], 12500);
+    complete(saved, {content_revision: C});
+    const committed = reply(C, expectedName);
+    if (field !== 'name') committed.formations[0].probes[0][field] = 12500;
+    reads.at(-1).resolve(committed); await tick();
+    assert.equal(WM.el('fm-dirty').textContent, '');
+
+    // Explicit Reload is the intentional replacement route for a raw draft.
+    type(raw); click('fm-reload'); const readCount = reads.length;
+    confirms.at(-1).resolve(false); await tick();
+    assert.equal(control().value, raw);
+    assert.equal(reads.length, readCount);
+    assert.equal(WM.el('fm-dirty').textContent, 'Unsaved changes');
+    click('fm-reload'); confirms.at(-1).resolve(true); await tick();
+    reads.at(-1).resolve(reply(C, 'Reloaded')); await tick();
+    assert.equal(control().value, field === 'name' ? 'Reloaded' : (field === 'x' ? '2' : '0'));
+    assert.equal(WM.el('fm-dirty').textContent, '');
+    assert.equal(saves.length, beforeSave + 1, 'Reload must not write');
   } else if (scenario === 'back-dirty') {
     rename('Draft'); click('fm-back'); assert.equal(confirms.length, 1);
     confirms[0].resolve(false); await tick(); assertEditable('Draft');

@@ -3,47 +3,14 @@
 import json
 import shutil
 import subprocess
-from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 
+from tests.html_tree import PageTree
+
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "wingman" / "web"
-
-
-class _PageTree(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.root = {"tag": "document", "attrs": {}, "children": []}
-        self.stack = [self.root]
-
-    def handle_starttag(self, tag, attrs):
-        node = {"tag": tag, "attrs": dict(attrs), "children": []}
-        self.stack[-1]["children"].append(node)
-        if tag not in {
-            "area",
-            "base",
-            "br",
-            "col",
-            "embed",
-            "hr",
-            "img",
-            "input",
-            "link",
-            "meta",
-            "param",
-            "source",
-            "track",
-            "wbr",
-        }:
-            self.stack.append(node)
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, 0, -1):
-            if self.stack[index]["tag"] == tag:
-                del self.stack[index:]
-                return
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
@@ -69,10 +36,18 @@ class _PageTree(HTMLParser):
         "stale-confirm-back",
         "stale-confirm-switch",
         "stale-confirm-reload",
+        "typing-name-before-completion",
+        "typing-name-during-reread",
+        "typing-x-before-completion",
+        "typing-x-during-reread",
+        "typing-y-before-completion",
+        "typing-y-during-reread",
+        "typing-z-before-completion",
+        "typing-z-during-reread",
     ],
 )
 def test_formation_editor_runtime(tmp_path, scenario):
-    page = _PageTree()
+    page = PageTree()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
     markup = tmp_path / "page.json"
     markup.write_text(json.dumps(page.root), encoding="utf-8")

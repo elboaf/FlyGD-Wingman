@@ -9,48 +9,13 @@ import json
 import re
 import shutil
 import subprocess
-from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 
+from tests.html_tree import PageTree
+
 WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
-
-
-class _PageTree(HTMLParser):
-    """Keep real element order, ancestry, and attributes for the Node double."""
-
-    def __init__(self):
-        super().__init__()
-        self.root = {"tag": "document", "attrs": {}, "children": []}
-        self.stack = [self.root]
-
-    def handle_starttag(self, tag, attrs):
-        node = {"tag": tag, "attrs": dict(attrs), "children": []}
-        self.stack[-1]["children"].append(node)
-        if tag not in {
-            "area",
-            "base",
-            "br",
-            "col",
-            "embed",
-            "hr",
-            "img",
-            "input",
-            "link",
-            "meta",
-            "param",
-            "source",
-            "track",
-            "wbr",
-        }:
-            self.stack.append(node)
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, 0, -1):
-            if self.stack[index]["tag"] == tag:
-                del self.stack[index:]
-                return
 
 
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
@@ -883,7 +848,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     ],
 )
 def test_copy_accessibility_in_node(tmp_path, scenario):
-    page = _PageTree()
+    page = PageTree()
     page.feed(HTML)
     markup = tmp_path / "page.json"
     markup.write_text(json.dumps(page.root), encoding="utf-8")

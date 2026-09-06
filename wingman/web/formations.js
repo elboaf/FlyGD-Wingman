@@ -476,6 +476,10 @@
           'aria-label',
           'Probe ' + (i + 1) + ' ' + AXIS_LABELS[axis] + ' km'
         );
+        // Protect the raw field through both async save windows, even when
+        // a partial sign/exponent has no numeric value yet. Only `change`
+        // below updates the model; input activity must not coerce it to zero.
+        input.addEventListener('input', markDirty);
         // `change`, so a half-typed value never commits: DESIGN.md's rule
         // for free text is Enter or an explicit button, never blur alone,
         // and a number input fires change on both.
@@ -784,6 +788,11 @@
       });
     });
 
+    // A focused draft must outlive a completion/reread before blur fires.
+    // Counting activity leaves the existing change-time model update intact.
+    WM.el('fm-name').addEventListener('input', function () {
+      if (current()) { markDirty(); }
+    });
     WM.el('fm-name').addEventListener('change', function () {
       var f = current();
       if (f) {
