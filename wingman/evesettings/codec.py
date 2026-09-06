@@ -12,7 +12,9 @@ speaks the same two subcommands is a drop-in.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,13 +41,23 @@ _SIGNATURE_V1 = b"\x7d"
 
 
 class CodecError(Exception):
-    """The settings file could not be decoded or re-encoded."""
+    """The settings file could not be read or safely rewritten."""
+
+
+class ContentChangedError(CodecError):
+    """The settings file no longer has the expected readable content."""
 
 
 @dataclass(frozen=True)
 class Document:
     doc: dict
     had_crc: bool
+
+
+@dataclass(frozen=True)
+class DocumentSnapshot:
+    document: Document
+    content_revision: str
 
 
 def codec_available(*, exe=paths.codec_exe) -> bool:
@@ -75,16 +87,48 @@ def _run(mode: str, payload: bytes, *, runner, exe) -> bytes:
     return result.stdout or b""
 
 
-def read_document(
-    path: Path, *, runner=subprocess.run, exe=paths.codec_exe
-) -> Document:
-    raw = Path(path).read_bytes()
+def _decode_bytes(raw: bytes, *, runner, exe) -> Document:
     out = _run("decode", raw, runner=runner, exe=exe)
     try:
         envelope = json.loads(out)
         return Document(doc=envelope["doc"], had_crc=bool(envelope["had_crc"]))
     except (ValueError, KeyError, TypeError) as error:
         raise CodecError("The settings file could not be read.") from error
+
+
+def read_document(
+    path: Path, *, runner=subprocess.run, exe=paths.codec_exe
+) -> Document:
+    return _decode_bytes(Path(path).read_bytes(), runner=runner, exe=exe)
+
+
+def read_snapshot(
+    path: Path, *, runner=subprocess.run, exe=paths.codec_exe
+) -> DocumentSnapshot:
+    """Pair the decoded document with the revision of those exact input bytes."""
+    raw = Path(path).read_bytes()
+    document = _decode_bytes(raw, runner=runner, exe=exe)
+    return DocumentSnapshot(document, hashlib.sha256(raw).hexdigest())
+
+
+def _validate_content_revision(expected: str) -> None:
+    if not isinstance(expected, str) or re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+        raise CodecError(
+            "A content revision must be 64 lowercase hexadecimal characters."
+        )
+
+
+def require_content_revision(path: Path, expected: str) -> None:
+    """Refuse mismatching or unavailable content without exposing file contents."""
+    _validate_content_revision(expected)
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as error:
+        raise ContentChangedError(
+            "The settings file could not be read. Reload it before saving."
+        ) from error
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise ContentChangedError("The settings file changed. Reload it before saving.")
 
 
 def write_document(
@@ -95,7 +139,8 @@ def write_document(
     runner=subprocess.run,
     exe=paths.codec_exe,
     publish=atomicio.write_bytes_atomic,
-) -> None:
+    expected_content_revision: str | None = None,
+) -> str:
     """Re-encode *document* and publish it at *path*, backing up first.
 
     Order matters: encode, verify, then backup, then publish. Encoding first
@@ -108,7 +153,14 @@ def write_document(
     document we sent. A codec that returns garbage with exit 0 is the one
     failure that would replace a valid file with junk, and one extra call of
     a millisecond filter is cheap insurance against it.
+
+    A supplied revision is checked before and after backup. This is optimistic,
+    not an atomic compare-and-swap: an external writer can still race the final
+    check and publication. Return the verified output's revision, never a reread
+    that could belong to a later external write.
     """
+    if expected_content_revision is not None:
+        _validate_content_revision(expected_content_revision)
     envelope = {"had_crc": document.had_crc, "doc": document.doc}
     payload = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
     data = _run("encode", payload, runner=runner, exe=exe)
@@ -132,5 +184,11 @@ def write_document(
             "The re-encoded settings file did not read back identically; "
             "nothing was written."
         )
+    committed_revision = hashlib.sha256(data).hexdigest()
+    if expected_content_revision is not None:
+        require_content_revision(Path(path), expected_content_revision)
     backup(Path(path))
+    if expected_content_revision is not None:
+        require_content_revision(Path(path), expected_content_revision)
     publish(Path(path), data)
+    return committed_revision
