@@ -436,11 +436,12 @@ exclusion is about shape, not behaviour.
 "Red text with no button" is not a treatment; `.linkbtn.danger` survives at
 one site pending its conversion and must not gain a second.
 
-**The rule is ahead of its sites, deliberately.** Round 3 landed the
+**The rule was ahead of its sites, deliberately.** Round 3 landed the
 primitive in its own lane so that three screen lanes would convert to one
-thing rather than invent a third answer between them. Until they do,
-`Delete selected` on the Uploader and `Remove` on Settings › Discord are
-still plain `.btn`s that destroy something. The current EVE credential
+thing rather than invent a third answer between them. At that point,
+`Delete selected` on the Uploader and `Remove` were plain `.btn`s that
+destroy something. `Remove` now removes the webhook from Settings › Uploading
+and uses `.btn.danger`. The current EVE credential
 cleanup lives under Settings › Characters rather than on the Skills page,
 so this rule must not drift back toward a second inline destructive style.
 
@@ -455,10 +456,9 @@ not one.** Conflating them is how `Restore` nearly got red-outlined:
   a plain `.btn`, because it backs the profile up first and the dialog says
   so — nothing is destroyed. (The dialog text is in `ui/api.py`'s
   `eve_settings_restore`; `evesettings.js` reasons out the *treatment* at
-  the site, not the backup.) One site does not meet the rule yet: `Remove`
-  on Settings › Discord destroys the webhook credential on a single click
-  with no confirmation at all. The other five destructive actions all
-  confirm, through three different mechanisms.
+  the site, not the backup.) Removing the webhook from Settings › Uploading
+  destroys the webhook credential. It now confirms through `WM.confirm`
+  in `settings.js`; the old single-click removal did not meet this rule.
 - **Which confirmation** is decided by the thread the action runs on, and
   that is the table under *Which confirmation, and why* below.
 

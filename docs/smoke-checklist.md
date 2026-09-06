@@ -277,7 +277,7 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] **A skipped first run is not asked again.** Quit and relaunch with
       `APPDATA` still pointing at the empty folder. Expected: the first-run
       screen does NOT appear.
-      Then choose a folder in Settings > Folders and confirm
+      Then choose a folder in Settings › Uploading and confirm
       `first_run_skipped` returns to `false` in settings.json: choosing a
       folder answers the question the skip deferred.
 - [ ] **The screen says what Wingman is.** Read the two paragraphs above
@@ -643,8 +643,9 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] **The empty state names the folder it watched.** Point the app at a
       folder with no recordings in it. Expected: "No recordings in
       &lt;the full path&gt;." with the path in the monospace face, and a second
-      line offering Open folder and Settings › Folders. It must name the
-      actual folder, not "the watched folder" — this is the screen a
+      line offering Open folder and a Settings direction. The current hint
+      still names the retired Folders entry; use Settings › Uploading.
+      It must name the actual folder, not "the watched folder" — this is the screen a
       first-run user lands on straight after nominating one, so it is where
       a wrong pick shows up, and it was the one place that did not say
       which folder it meant.
@@ -779,8 +780,8 @@ somewhere stale and nothing on that screen is worth reviewing.
       sign-in finishes — the startup check completing behind it must not
       flip it to a red "Not connected" mid-sign-in.
 - [ ] **The YouTube Terms of Service link is visible and works.** In the
-      Google account section, confirm the line "Videos are uploaded to
-      YouTube and are subject to the YouTube Terms of Service:" and the
+      Google account card in Settings › Uploading, confirm the line "Videos
+      are uploaded to YouTube and are subject to the YouTube Terms of Service:" and the
       https://www.youtube.com/t/terms link beneath it are both fully
       visible (check at 150% display scaling too — this section grew by
       two lines), and that clicking the link opens YouTube's terms in a
@@ -803,8 +804,8 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] Switching notify mode to popup takes effect on the next recording,
       without a restart
 - [ ] A non-numeric category is rejected with a warning
-- [ ] **The category row does not ask for a YouTube API number.** Settings >
-      Uploads. Expected: the label reads "YouTube category", and the line
+- [ ] **The category row does not ask for a YouTube API number.** Settings ›
+      Uploading. Expected: the label reads "YouTube category", and the line
       under the row says what the number is and that 20 is the one to leave
       it on. It used to read "Category ID" with "(20 = Gaming)" beside it —
       one disclosed value out of a list this screen will not show, for an
@@ -816,7 +817,8 @@ somewhere stale and nothing on that screen is worth reviewing.
       navigation is a leak — the mockup's cleartext webhook is exactly the
       regression this port must not reintroduce.
 - [ ] **…and after a SECTION change.** Same, but instead of leaving
-      Settings, click **Folders** in the rail and come back to Discord.
+      Settings › Uploading, click **General** in the rail and come back to
+      Uploading.
       Expected: masked again. Leaving the section fires no route change at
       all, so this is a separate path from the one above.
 - [ ] **The account control tracks state through the route.** Start a
@@ -1011,7 +1013,7 @@ behavior that only shows up at size.
       (This item used to claim the amber line for the EMPTY case and to
       name a checkbox removed by Uploader 8. Both were wrong; corrected in
       round 3's L7 while rewriting the string it quoted.)
-- [ ] **An invalid webhook URL is refused.** In Settings > Discord, paste
+- [ ] **An invalid webhook URL is refused.** In Settings › Uploading, paste
       a URL that is not a Discord webhook (e.g. `https://example.com/hook`,
       or `https://discord.com.evil.example/api/webhooks/1/x`) and press
       **Enter**. Expected: an INLINE message under the field naming the
@@ -1044,9 +1046,9 @@ behavior that only shows up at size.
       Settings, then press **Upload**. Expected:
       the video uploads, and the strip finishes amber on "…combat logs
       skipped: your EVE Gamelogs folder was not found. Set it in Settings."
-      No dialog. Then open Settings → **Detect** next to Gamelogs
-      with the real folder present: it fills in the entry. Click **Detect**
-      again with the field already set to that path: a dialog says it's
+      No dialog. Then open Settings › Alerts and click **Detect** next to
+      the Gamelogs folder with the real folder present: it fills in the
+      entry. Click **Detect** again with the field already set to that path: a dialog says it's
       already set to the detected folder, rather than silently re-filling it.
 - [ ] **A normal successful upload.** Select one or more recordings from a
       real fight and press **Upload**. Expected:
@@ -1137,9 +1139,10 @@ behavior that only shows up at size.
       With a webhook configured, the panel's card holds Title, Description,
       Stitch, Upload — and, once something is selected, the selection
       summary above it — and nothing about logs.
-      Clear the webhook in Settings › Discord: a note appears under Stitch
+      Clear the webhook in Settings › Uploading: a note appears under Stitch
       reading "No Discord webhook is configured, so combat logs are not
-      posted. Set one in Settings › Discord." Put the webhook back and the
+      posted." Its setup direction still names the retired Discord entry;
+      the webhook is in Settings › Uploading. Put the webhook back and the
       note goes, with no restart.
       **The note is load-bearing, not decoration.** With no checkbox,
       `Api._post_combat_logs` is deliberately SILENT on a webhook-less
@@ -1167,7 +1170,7 @@ behavior that only shows up at size.
       only irreversible action, and deleting local files — which are
       recoverable — already confirmed.
 - [ ] **With NO webhook configured, the confirm says the logs will be
-      SKIPPED.** Clear the webhook in Settings > Discord and press Upload.
+      SKIPPED.** Clear the webhook in Settings › Uploading and press Upload.
       Expected: the "Logs:" line reads "skipped — no Discord webhook is
       configured (set one in Settings)", and the closing line names
       YouTube ONLY. It must not promise a Discord post.
@@ -1215,8 +1218,8 @@ behavior that only shows up at size.
       Selected** directly — do not open Settings. Expected: the browser
       opens for Google sign-in, and once you consent, the upload proceeds
       on its own. This is the automatic reauth path in the upload worker,
-      separate from the Settings → Connect Google Account button, and is
-      likely the most common first-run route (install, see recordings,
+      separate from the **Sign in with Google** button in Settings › Uploading,
+      and is likely the most common first-run route (install, see recordings,
       upload, never touch Settings).
 - [ ] **The finished upload's link stays put.** Complete one upload and
       leave the window open for a minute. Expected: the row keeps its ↗ and
@@ -1591,10 +1594,11 @@ only ever checked by hand.
 - [ ] **Six rail entries, General last** — Uploading, Characters,
       Bookmarks, Previews, Alerts, General — and clicking each shows its
       content with exactly one entry highlighted. The old Account, Uploads,
-      Folders and Discord entries are one Uploading section now; their cards
-      still have to be there, and `When a recording finishes` still sits in
-      that section. Check it is there and that picking an option still sticks
-      across a restart.
+      Folders and Discord entries were consolidated under Uploading; the
+      Gamelog folder card now lives in Alerts. The Google account, Recording
+      folder and Combat log webhook cards must be in Uploading, and
+      `When a recording finishes` still sits in that section. Check it is
+      there and that picking an option still sticks across a restart.
       General is last because its only content is the switch that hides the
       EVE-gated tail of the rail: untick it and Characters, Bookmarks,
       Previews and Alerts disappear together, without opening a hole in the
@@ -1610,9 +1614,10 @@ only ever checked by hand.
       repeated themselves ("Folders" / "Folders", "Discord" / "Discord
       (combat logs)"), which DESIGN.md forbids in as many words and which
       spends the one line that could say what the card does. Expected now:
-      "Where your recordings and gamelogs live" and "Where combat logs are
-      posted". tests/test_settings_page.py holds this mechanically; what it
-      cannot judge is whether the replacements read well at the window
+      "Google account", "Recording folder" and "Combat log webhook" in
+      Uploading, and "Gamelog alerts" and "Gamelog folder" in Alerts.
+      tests/test_settings_page.py holds this mechanically; what it cannot
+      judge is whether the replacements read well at the window
       floor, where they wrap.
 - [ ] **Bookmarks and Previews render their real data**, not empty shells:
       the keybind rows, the EVE window list, the per-character preview
@@ -1653,9 +1658,9 @@ only ever checked by hand.
       not neutral or accent buttons.
 - [ ] **LOAD-BEARING: an armed keybind capture is disarmed by leaving the
       section.** Go to Settings > Bookmarks, click a keybind button so it
-      reads "Press a key…", then WITHOUT pressing a key click **Folders** in
-      the rail. Now type into the Recordings field. Expected: your text
-      appears normally.
+      reads "Press a key…", then WITHOUT pressing a key click **Uploading** in
+      the rail. Now type into the Folder field in the Recording folder card.
+      Expected: your text appears normally.
       If it is swallowed, the capture is still armed: its handler
       preventDefault()s EVERY key including Tab, and stopPropagation() does
       not stop previews.js's sibling listener on the same node. An escaped
@@ -3009,17 +3014,19 @@ headless.
       and `telemetry-dispatch` threads run; turning Alerts off while Fleet Bar
       remains on does not restart either one.
 - [ ] **Turn alerts on with no Gamelogs folder set.** Open Settings >
-      Previews and tick Enable alerts without setting a Gamelogs folder.
-      Expected: the Alerts card displays "Your EVE Gamelogs folder is not
-      set. Alerts cannot run without it — set it under Settings › Folders."
-- [ ] **Set the folder.** Browse to your EVE Gamelogs folder in Settings
-      > Folders, then return to the Alerts card. Expected: it reports the
+      Alerts and tick **Watch gamelogs and raise alerts** without setting a
+      Gamelogs folder. Expected: the Gamelog alerts card displays "Your EVE
+      Gamelogs folder is not set. Alerts cannot run without it — set it in
+      the card below."
+- [ ] **Set the folder.** Browse to your EVE Gamelogs folder in Settings › Alerts,
+      then check the Gamelog alerts card above it. Expected: it reports the
       number of characters being watched — e.g. "Watching gamelogs — 3
       characters online."
 - [ ] **Change the Gamelogs folder while running.** With the Alerts card
-      open and showing a character list, change the path in Settings >
-      Folders and return. Expected: the count re-derives from the new
-      folder without restarting the app — the card updates to show the
+      open and showing a character list, change the path in Settings ›
+      Alerts' Gamelog folder card and check the alerts card again. Expected:
+      the count re-derives from the new folder without restarting the app —
+      the card updates to show the
       characters in the new Gamelogs.
 - [ ] **Run a Sleeper site.** In a wormhole, start a Sleeper combat site
       with alerts active. Expected: no combat alerts fire — incoming attacks
@@ -3415,7 +3422,7 @@ so these are the checks that matter and only a Windows machine can run them.
       folder chosen, then press `Change folder or server…`. Expected: the path in both faces
       of the card is monospace text on the card's own left edge, with no
       fill, no border and no focus ring — click it and nothing happens and
-      nothing is focused. Compare it against Settings › Folders, where the
+      nothing is focused. Compare it against Settings › Uploading, where the
       recording path in the same monospace face IS a text field you can
       type into: the two must not look alike. Drag the window to the floor
       with a deep root selected — the path ellipsises at its end and

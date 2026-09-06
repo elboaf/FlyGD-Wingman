@@ -200,8 +200,8 @@ which requires this scope. Wingman makes no other YouTube API call.
   posted there after the video publishes. Detecting a new recording produces
   a notification and a list entry — nothing more.
 - **Sign-in only happens when you ask for it**, either via
-  **Settings → Connect Google Account** or automatically at the moment of your
-  first upload if you have not connected yet.
+  **Settings › Uploading** using **Sign in with Google**, or automatically at
+  the moment of your first upload if you have not connected yet.
 - **Wingman does not request access to Gmail**, Google Drive, Google Contacts,
   Google Photos, or your Google profile.
 - **Wingman does not request the broader `youtube` or `youtube.force-ssl`
@@ -221,8 +221,8 @@ which requires this scope. Wingman makes no other YouTube API call.
 ### OAuth flow
 
 Wingman uses Google's OAuth 2.0 flow for **installed / desktop applications**.
-Pressing **Connect Google Account** opens your default browser at Google's
-consent screen; Google redirects back to a temporary loopback listener
+Pressing **Sign in with Google** in **Settings › Uploading** opens your default
+browser at Google's consent screen; Google redirects back to a temporary loopback listener
 (`http://localhost` on an ephemeral port) that the application starts for the
 duration of the sign-in and then shuts down. The client configuration embedded
 in official builds is a desktop-application OAuth client, for which Google
@@ -265,7 +265,8 @@ Wingman uploads through the YouTube Data API, so videos you upload with it are
 subject to the [YouTube Terms of Service](https://www.youtube.com/t/terms) and
 the [YouTube Community Guidelines](https://www.youtube.com/howyoutubeworks/policies/community-guidelines/).
 The link to YouTube's terms is also shown in the application itself, in
-**Settings → Google account**, next to the sign-in button.
+**Settings › Uploading**, in the **Google account** card next to the sign-in
+button.
 
 For the full data-handling statement, see the
 [FlyGD Wingman Privacy Policy](https://wingman.zoolanders.vip/privacy).
@@ -280,9 +281,9 @@ When a Discord webhook is configured, an upload does a second thing once the
 video is published: it works out the time span the selected recordings cover,
 collects the EVE Online gamelog files from your local `Gamelogs` folder that
 overlap that span, zips them, and posts the archive to the webhook URL you
-entered in Settings. That is the entire scope of the feature: local EVE log
-files, to a Discord channel you chose. Remove the webhook in Settings to upload
-videos without posting combat logs to Discord.
+entered in **Settings › Uploading**. That is the entire scope of the feature:
+local EVE log files, to a Discord channel you chose. Remove the webhook in
+**Settings › Uploading** to upload videos without posting combat logs to Discord.
 
 Notes:
 
@@ -309,8 +310,8 @@ Notes:
    the rename are named `OBS-YouTube-Uploader-Setup-<version>.exe`.
 2. Run it. It installs per-user, so there is no administrator prompt.
 3. Launch Wingman. It appears in the system tray. Connect your Google account
-   when you make your first upload, or up front via **Settings → Connect
-   Google Account**.
+   when you make your first upload, or up front via **Settings › Uploading**
+   using **Sign in with Google**.
 
 Python, FFmpeg, and the OAuth client configuration are bundled — there is no
 separate OBS script to install, and no Google Cloud project for you to set up.
@@ -335,6 +336,9 @@ launch. This is about code signing, and is unrelated to Google sign-in.
 ## Settings
 
 Settings open from the gear in the title bar and are grouped down the left.
+Configure your Google account, recording folder, and Discord webhook in
+**Settings › Uploading**. Set the Gamelogs folder in **Settings › Alerts**;
+EVE authorization remains in **Settings › Characters**.
 There is no Save button: every field applies as you set it. Folder paths and
 the webhook apply on **Enter** or from their own buttons, so a half-typed path
 is never acted on.
@@ -402,8 +406,8 @@ upload again.
    recording folder directly.
 2. Uninstall or delete your old checkout; it is not needed once the tray
    application is installed.
-3. After installing, open **Settings → Connect Google Account** and sign in
-   once. Old `client_secrets.json` and token files are not reused — there is no
+3. After installing, open **Settings › Uploading**, click **Sign in with
+   Google**, and sign in once. Old `client_secrets.json` and token files are not reused — there is no
    migration of stored credentials or settings.
 
 ## Building from source
@@ -448,7 +452,7 @@ So a build from source has no working Google OAuth client until you supply your
 own. To run YouTube uploads end to end you need to create a Google Cloud
 project, enable the YouTube Data API v3, create an **OAuth client ID of type
 "Desktop app"**, and put its client ID and secret into `CLIENT_CONFIG` in
-`wingman/credentials.py`. Everything except **Connect Google Account** works
+`wingman/credentials.py`. Everything except **Sign in with Google** works
 without this. Do not commit real credentials back to the repository.
 
 The EVE application is a separate external release prerequisite. The client ID,

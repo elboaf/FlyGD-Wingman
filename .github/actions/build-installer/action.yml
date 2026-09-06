@@ -57,20 +57,16 @@ runs:
         # That is how a failed install previously produced a green step, no
         # pystray in the environment, and a frozen app that crashed on
         # launch. Check every exit code explicitly.
-        uv sync --locked
-        if ($LASTEXITCODE -ne 0) { throw "uv sync failed - the app's dependencies are missing" }
-        # PyInstaller goes INTO the synced environment, not alongside it.
-        # `uv pip install` without --python would target a different prefix.
-        #
-        # Pinned to 6.x, and the pin is load-bearing: packaging/uploader.spec
-        # and packaging/installer.iss both assume 6.x's one-folder layout
-        # (executable at the top of dist/, dependencies under _internal/). A
-        # 7.x release with a changed layout would produce an installer whose
-        # shortcuts point at nothing while the build still reports success.
-        # If you widen this, re-check installer.iss's {app}\{#AppExe}
-        # assumption at the same time.
-        uv pip install --python .venv "pyinstaller>=6,<7"
-        if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
+        # PyInstaller is build-only. Its exact version is declared in
+        # pyproject.toml's build group and locked in uv.lock; sync that group
+        # into the app's environment rather than installing outside the lock.
+        # The 6.x one-folder layout is load-bearing: packaging/uploader.spec
+        # and packaging/installer.iss expect the executable at the top of
+        # dist/Wingman and dependencies under _internal/. Changing PyInstaller
+        # requires review of the Inno Setup assumptions, including
+        # installer.iss's {app}\{#AppExe} shortcut target.
+        uv sync --locked --group build
+        if ($LASTEXITCODE -ne 0) { throw "uv sync failed - the app's dependencies or build tools are missing" }
 
     - name: Verify uv run reaches the synced environment, on the right Python
       # Two assertions, both for failures that are otherwise silent.

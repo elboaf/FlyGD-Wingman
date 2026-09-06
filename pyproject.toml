@@ -67,6 +67,11 @@ Releases = "https://github.com/elboaf/FlyGD-Wingman/releases"
 [project.optional-dependencies]
 dev = ["pytest", "ruff==0.16.4"]
 
+# PyInstaller is build-only: its exact version is declared here and locked
+# in uv.lock, not installed with the application's runtime or dev extra.
+[dependency-groups]
+build = ["pyinstaller==6.22.2"]
+
 [tool.setuptools]
 # Declared explicitly rather than left to auto-discovery. `packaging/` holds
 # build scripts, not an importable package, but setuptools' flat-layout

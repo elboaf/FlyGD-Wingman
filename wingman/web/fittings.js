@@ -36,6 +36,7 @@
   var selected = {};       // entry_id -> true, pruned to the rendered page
   var progress = null;     // last refresh onFittingsProgress payload
   var copyOverlayOpen = false;
+  var copyInvoker = null;
   var copyPhase = 'targets';
   var copyTargets = {};
   var copyPreflight = null;
@@ -528,6 +529,7 @@
     var label = WM.make('label', 'check fit-select');
     label.appendChild(box);
     label.appendChild(WM.make('span', 'box'));
+    box.setAttribute('aria-label', 'Select ' + row.name);
     box.checked = !!selected[row.id];
     box.addEventListener('change', function () {
       if (box.checked) { selected[row.id] = true; } else { delete selected[row.id]; }
@@ -826,8 +828,39 @@
 
   // ---- additive-copy overlay ---------------------------------------------
 
+  function copyControlAvailable(node) {
+    return node && document.contains(node) && !node.disabled
+      && node.getClientRects().length > 0
+      && window.getComputedStyle(node).visibility === 'visible';
+  }
+
+  function copyFocusable(root) {
+    // Follow panel.js's controls, but also exclude hidden ancestors: the
+    // overlay lives inside a route and its controls change with each phase.
+    return Array.prototype.filter.call(root.querySelectorAll(
+      'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
+      + 'select:not([hidden]):not(:disabled)'), copyControlAvailable);
+  }
+
+  function restoreCopyFocus(target) {
+    // Route-leave cleanup must not pull focus back into the hidden route.
+    if (WM.current_route !== 'fittings') return;
+    if (copyControlAvailable(target)) {
+      target.focus();
+      if (document.activeElement === target) return;
+    }
+    // Completion clears selection, so Copy selected is normally disabled
+    // by the time results close. Find a usable control on this route instead.
+    var fallback = copyFocusable(WM.el('route-fittings'));
+    for (var i = 0; i < fallback.length; i += 1) {
+      fallback[i].focus();
+      if (document.activeElement === fallback[i]) return;
+    }
+  }
+
   function openCopyOverlay() {
     if (!visibleSelectedIds().length) return;
+    copyInvoker = WM.el('fittings-copy-selected');
     copyOverlayOpen = true;
     copyPhase = 'targets';
     copyTargets = {};
@@ -849,8 +882,14 @@
     }
     copyOverlayOpen = false;
     copyPreflight = null;
-    WM.el('fittings-copy-overlay').hidden = true;
+    var target = copyInvoker;
+    copyInvoker = null;
+    var overlay = WM.el('fittings-copy-overlay');
+    overlay.hidden = true;
+    // Also release hidden focus when a route leave has no restoration target.
+    if (overlay.contains(document.activeElement)) document.activeElement.blur();
     renderSelectionCount();
+    restoreCopyFocus(target);
   }
 
   WM.el('fittings-copy-close').addEventListener('click', function () {
@@ -858,10 +897,33 @@
   });
 
   document.addEventListener('keydown', function (event) {
-    if (!copyOverlayOpen || event.key !== 'Escape' || copyPhase === 'progress') return;
-    event.preventDefault();
-    closeCopyOverlay(false);
-    WM.el('fittings-copy-selected').focus();
+    if (!copyOverlayOpen || copyPhase === 'progress') return;
+    // WM.confirm sits above this workflow. Its capture listener may already
+    // have dismissed that dialog; never handle the same Escape a second time.
+    if (event.defaultPrevented || !WM.el('overlay').hidden) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCopyOverlay(false);
+    } else if (event.key === 'Tab') {
+      var dialog = WM.el('fittings-copy-dialog');
+      var focusable = copyFocusable(dialog);
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+      var first = focusable[0];
+      var last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
   });
 
   function copyButtons(review, start, cancel) {
