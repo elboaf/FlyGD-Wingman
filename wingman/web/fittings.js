@@ -1134,7 +1134,9 @@
   });
 
   function onCopyProgress(payload) {
-    if (!copyOverlayOpen) return;
+    // Only the bounded screenshot-state handler populates screenshotFixture;
+    // without that explicit fixture, app pushes remain phase-gated.
+    if (!copyOverlayOpen || (copyPhase !== 'progress' && !screenshotFixture)) return;
     if (payload.phase === 'progress') {
       WM.el('fittings-copy-body').textContent = '';
       WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',

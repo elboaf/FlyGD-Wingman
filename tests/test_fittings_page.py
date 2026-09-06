@@ -741,6 +741,18 @@ function detailFor(row, description) {
   return {id: row.id, name: row.name, description, ship_type_id: row.ship_type_id,
     items: [], aliases: [], presences: [], collection_ids: [], superseded_by: null};
 }
+function screenshotPayload() {
+  const entries = [];
+  for (let index = 1; index <= 21; index += 1) {
+    entries.push({...fitA, id: 'screenshot-' + index, name: 'Screenshot fitting ' + index,
+      presence_count: 0, is_unfiled: true});
+  }
+  return {
+    kind: 'fittings-screenshot-v1', characters: [state.characters[0]],
+    collections: state.collections, entries, details: {},
+    mixed_preflight: {pairs: []}, copy_result: {results: []}
+  };
+}
 const WM = {
   current_route: 'fittings', el,
   make(tag, cls, text) {
@@ -835,7 +847,7 @@ async function runStateMachineScenario() {
 
   const initial = scenario === 'state-detail-sequence'
     ? workspace('Two fittings', {rows: [fitA, fitB], total: 2})
-    : scenario === 'state-stale-preflight'
+    : scenario === 'state-stale-preflight' || scenario === 'state-stale-progress'
       ? workspace('Two targets', {characters: [
           state.characters[0],
           {character_id: 2, character_name: 'Second Pilot', status: 'enabled',
@@ -952,6 +964,32 @@ async function runStateMachineScenario() {
     return;
   }
 
+  if (scenario === 'state-screenshot-progress') {
+    handlers.onFittingsScreenshotState(screenshotPayload());
+    assert.equal(el('fittings-list').querySelectorAll('.fit-row').length, 21,
+      'the bounded screenshot fixture is active');
+    tick(selectedCheckbox());
+    el('fittings-copy-selected').click();
+    assert.equal(el('fittings-copy-review').hidden, false,
+      'screenshot staging begins in targets phase');
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
+      operation_id: 'screenshot-copy', completed: 2, total: 3,
+      result: {status: 'success'}});
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '2 of 3 pairs checked', 'bounded screenshot progress renders from targets phase');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', completed: 3,
+      total: 3, result: {
+        operation_id: 'screenshot-copy', status: 'complete', write_count: 1,
+        results: [{fitting_name: 'Screenshot result', character_name: 'Pilot',
+          status: 'success'}]
+      }});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+      'Screenshot result', 'bounded screenshot result renders from targets phase');
+    return;
+  }
+
   if (scenario === 'state-stale-preflight') {
     tick(selectedCheckbox());
     const invoker = el('fittings-copy-selected');
@@ -1002,6 +1040,72 @@ async function runStateMachineScenario() {
     const starts = calls.filter(call => call[0] === 'fittings_start_copy');
     assert.equal(starts.length, 1);
     assert.equal(starts[0][1], 'ticket-b', 'the stale ticket is never used');
+    return;
+  }
+
+  if (scenario === 'state-stale-progress') {
+    await beginCopy();
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 of 1 pairs checked');
+    const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
+      cancellations + 1, 'route leave cancels copy A');
+    assert.equal(el('fittings-copy-overlay').hidden, true,
+      'route leave force-closes copy A');
+
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    takePending('fittings_state').resolve(workspace('Reentered response', {
+      characters: initial.characters
+    }));
+    await flush();
+    tick(selectedCheckbox());
+    el('fittings-copy-selected').click();
+    const targetsB = el('fittings-copy-body').querySelectorAll('input');
+    const targetB = targetsB[1];
+    tick(targetB);
+    targetB.focus();
+    assert.equal(targetsB[0].checked, false);
+    assert.equal(document.activeElement, targetB);
+
+    function assertTargetsDialogB(eventName) {
+      assert.equal(el('fittings-copy-title').textContent, 'Copy fittings',
+        eventName + ' cannot turn dialog B into copy A results');
+      assert.equal(el('fittings-copy-review').hidden, false,
+        eventName + ' leaves dialog B in targets phase');
+      assert.equal(el('fittings-copy-start').hidden, true);
+      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+        '1 selected. Choose target characters.', 'copy A summary is not rendered');
+      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-result'), null,
+        'copy A result is not rendered');
+      assert.equal(document.contains(targetB), true,
+        eventName + ' does not replace dialog B controls');
+      assert.equal(targetsB[0].checked, false);
+      assert.equal(targetB.checked, true, 'dialog B target selection remains present');
+      assert.equal(document.activeElement, targetB,
+        eventName + ' does not redirect focus from dialog B');
+      assert.equal(el('fittings-copy-selected').disabled, false,
+        eventName + ' does not clear dialog B fitting selection');
+    }
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    assertTargetsDialogB('late progress');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', completed: 1,
+      total: 1, result: {
+        operation_id: 'copy-a', status: 'complete', write_count: 1, results: [{
+          fitting_name: 'Copy A result', character_name: 'Pilot', status: 'success'
+        }]
+      }});
+    assertTargetsDialogB('late completion');
     return;
   }
 
@@ -1118,6 +1222,11 @@ async function runStateMachineScenario() {
     else if (scenario === 'fallback-invisible') invoker.style.visibility = 'hidden';
     else {
       // Real completion clears selection and disables the original invoker.
+      tick(target);
+      review.click();
+      await flush();
+      el('fittings-copy-start').click();
+      await flush();
       handlers.onFittingsProgress({kind: 'copy', phase: 'complete',
         result: {results: [], write_count: 0, status: 'cancelled'}});
     }
@@ -1232,7 +1341,9 @@ def test_fittings_state_machine_in_node(tmp_path):
         "state-selection-scope",
         "state-detail-sequence",
         "state-rejected-mutation",
+        "state-screenshot-progress",
         "state-stale-preflight",
+        "state-stale-progress",
         "state-copy-lifecycle",
     )
     for scenario in scenarios:
