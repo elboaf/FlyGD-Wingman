@@ -10,6 +10,7 @@ import logging
 import sys
 from ctypes import wintypes
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -103,8 +104,8 @@ def test_start_during_timed_out_stop_does_not_spawn_a_second_pump(monkeypatch):
         def is_alive(self):
             return self.alive
 
-    monkeypatch.setattr(host.threading, "Thread", StuckThread)
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    monkeypatch.setattr(host, "threading", SimpleNamespace(Thread=StuckThread))
 
     h.start()
     first = h._thread
@@ -122,6 +123,81 @@ def test_start_during_timed_out_stop_does_not_spawn_a_second_pump(monkeypatch):
     assert len(created) == 2
     assert h._thread is created[1]
     assert h.is_running
+
+
+def test_older_stop_does_not_signal_replacement_pump(monkeypatch):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    lock = h._lock
+    created = []
+    posted = []
+
+    class PumpThread:
+        def __init__(self, *, target, daemon, name):
+            self.hwnd = 101 + len(created)
+            self.alive = False
+            self.joins = []
+            created.append(self)
+
+        def start(self):
+            assert not any(thread.is_alive() for thread in created)
+            self.alive = True
+            h._hwnd = self.hwnd
+
+        def join(self, timeout=None):
+            # Teardown needs this lock; joining while holding it would deadlock.
+            assert lock.acquire(blocking=False)
+            lock.release()
+            self.joins.append(timeout)
+            if self.alive:
+                assert (self.hwnd, host.win32.WM_APP_SHUTDOWN, 0, 0) in posted
+                self.alive = False
+                h._hwnd = None
+
+        def is_alive(self):
+            return self.alive
+
+    class RestartAfterUnlock:
+        restart = False
+
+        def __enter__(self):
+            lock.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            lock.release()
+            if self.restart:
+                self.restart = False
+                # Suspend Stop A at its first unlock, complete Stop B and
+                # restart, then let Stop A resume against the shared HWND.
+                h.stop(timeout=0)
+                h.start()
+
+    def post_message(hwnd, message, wparam, lparam):
+        posted.append((hwnd, message, wparam, lparam))
+        return 1
+
+    monkeypatch.setattr(host, "threading", SimpleNamespace(Thread=PumpThread))
+    monkeypatch.setattr(
+        host.win32,
+        "bind",
+        lambda: SimpleNamespace(user32=SimpleNamespace(PostMessageW=post_message)),
+    )
+    gate = RestartAfterUnlock()
+    h._lock = gate
+    h.start()
+    first = h._thread
+    gate.restart = True
+
+    h.stop(timeout=0)
+
+    assert posted == [(101, host.win32.WM_APP_SHUTDOWN, 0, 0)] * 2
+    assert len(created) == 2
+    assert not first.is_alive()
+    assert first.joins == [0, 0]
+    assert h._thread is created[1]
+    assert h._hwnd == 102
+    assert h.is_running
+    assert created[1].joins == []
 
 
 def test_shutdown_flushes_pending_layouts(monkeypatch):

@@ -511,11 +511,14 @@ class PreviewHost:
         """Idempotent, and safe when never started."""
         with self._lock:
             thread = self._thread
-        if thread is None:
-            return
-        if self._hwnd:
-            libs = win32.bind()
-            libs.user32.PostMessageW(self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0)
+            if thread is None:
+                return
+            # Keep selection and signaling together so a delayed stop cannot
+            # post shutdown to a replacement pump's HWND.
+            if self._hwnd:
+                libs = win32.bind()
+                libs.user32.PostMessageW(self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0)
+        # Posting is asynchronous; joining must release the lock teardown needs.
         thread.join(timeout)
         if thread.is_alive():
             # A stop() that returns while the thread still owns HWNDs
