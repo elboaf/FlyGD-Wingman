@@ -479,6 +479,26 @@ def test_tickets_expire_after_fifteen_minutes_and_are_bounded_to_twenty(tmp_path
     assert controller.start_copy(newest)["status"] == "invalid_ticket"
 
 
+def test_copy_progress_and_completion_carry_the_consumed_ticket_id(tmp_path):
+    progress = []
+    controller, _, _, _ = make_controller(
+        tmp_path,
+        ready_state(),
+        replies=[mutation()],
+        progress=progress.append,
+    )
+    ticket_id = ready_ticket(controller)
+
+    controller.start_copy(ticket_id)
+
+    copy_progress = [payload for payload in progress if payload.get("kind") == "copy"]
+    assert [payload["phase"] for payload in copy_progress] == [
+        "progress",
+        "complete",
+    ]
+    assert {payload["ticket_id"] for payload in copy_progress} == {ticket_id}
+
+
 def test_execution_saves_in_flight_before_the_single_post(tmp_path):
     events = []
 

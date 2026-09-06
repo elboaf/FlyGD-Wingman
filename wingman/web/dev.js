@@ -1211,7 +1211,8 @@
       if (index >= ticket.pairs.length) {
         if (window.onFittingsProgress) {
           window.onFittingsProgress({
-            kind: 'copy', phase: 'complete', operation_id: operationId,
+            kind: 'copy', phase: 'complete', ticket_id: ticketId,
+            operation_id: operationId,
             completed: results.length, total: ticket.pairs.length,
             result: {
               status: fitCopyCancelled ? 'cancelled' : 'complete',
@@ -1266,7 +1267,8 @@
       results.push(result);
       if (window.onFittingsProgress) {
         window.onFittingsProgress({
-          kind: 'copy', phase: 'progress', operation_id: operationId,
+          kind: 'copy', phase: 'progress', ticket_id: ticketId,
+          operation_id: operationId,
           completed: results.length, total: ticket.pairs.length, result: result
         });
       }

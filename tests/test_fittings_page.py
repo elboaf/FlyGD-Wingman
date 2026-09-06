@@ -572,6 +572,10 @@ const vm = require('node:vm');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
 const stateMachineScenario = scenario.startsWith('state-');
+const unhandledRejections = [];
+if (scenario === 'state-stale-start-result') {
+  process.on('unhandledRejection', error => { unhandledRejections.push(error); });
+}
 
 // Only DOM mechanics live here. Fittings rendering, listeners, selection and
 // phase changes all run from the unmodified production module below.
@@ -699,6 +703,7 @@ route.classList.add('active');
 const handlers = {};
 const calls = [];
 const pending = {};
+let copyTicketSequence = 0;
 function deferred(name, args) {
   let resolve;
   let reject;
@@ -776,11 +781,20 @@ const WM = {
     if (name === 'fittings_preflight_copy' && scenario === 'state-stale-preflight') {
       return deferred(name, args);
     }
-    if (name === 'fittings_preflight_copy') return Promise.resolve({
-      accepted: true, ticket_id: 'ticket', write_count: 1, requires_resolution: false,
-      counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
-        fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready', chosen_name: 'Sabre tackle'}]
-    });
+    if (name === 'fittings_preflight_copy') {
+      copyTicketSequence += 1;
+      const ticketId = scenario === 'state-ticket-progress'
+          || scenario === 'state-stale-start-result'
+        ? 'ticket-' + (copyTicketSequence === 1 ? 'a' : 'b') : 'ticket';
+      return Promise.resolve({
+        accepted: true, ticket_id: ticketId, write_count: 1, requires_resolution: false,
+        counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
+          fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready', chosen_name: 'Sabre tackle'}]
+      });
+    }
+    if (name === 'fittings_start_copy' && scenario === 'state-stale-start-result') {
+      return deferred(name, args);
+    }
     if (name === 'fittings_start_copy' || name === 'fittings_cancel_copy') return Promise.resolve(true);
     throw new Error('Unexpected bridge call: ' + name);
   },
@@ -848,6 +862,7 @@ async function runStateMachineScenario() {
   const initial = scenario === 'state-detail-sequence'
     ? workspace('Two fittings', {rows: [fitA, fitB], total: 2})
     : scenario === 'state-stale-preflight' || scenario === 'state-stale-progress'
+        || scenario === 'state-ticket-progress' || scenario === 'state-stale-start-result'
       ? workspace('Two targets', {characters: [
           state.characters[0],
           {character_id: 2, character_name: 'Second Pilot', status: 'enabled',
@@ -1043,9 +1058,117 @@ async function runStateMachineScenario() {
     return;
   }
 
+  if (scenario === 'state-ticket-progress') {
+    await beginCopy();
+    assert.equal(calls.filter(call => call[0] === 'fittings_start_copy')[0][1],
+      'ticket-a');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-a',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
+      cancellations + 1, 'route leave cancels copy A');
+
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    takePending('fittings_state').resolve(workspace('Reentered response', {
+      characters: initial.characters
+    }));
+    await flush();
+    await beginCopy();
+    const starts = calls.filter(call => call[0] === 'fittings_start_copy');
+    assert.equal(starts[1][1], 'ticket-b');
+    const cancelB = el('fittings-copy-cancel');
+    cancelB.focus();
+
+    function assertCopyBActive(eventName) {
+      assert.equal(el('fittings-copy-title').textContent, 'Copying fittings',
+        eventName + ' cannot replace copy B');
+      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+        '0 of 1 pairs checked');
+      assert.equal(el('fittings-copy-selected').textContent, 'Copy selected (1)',
+        eventName + ' cannot clear copy B selection');
+      assert.equal(el('fittings-copy-cancel').hidden, false);
+      assert.equal(document.activeElement, cancelB,
+        eventName + ' cannot redirect focus from copy B');
+    }
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-a',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
+    assertCopyBActive('late copy A progress');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-a',
+      operation_id: 'copy-a', completed: 1, total: 1, result: {
+        operation_id: 'copy-a', status: 'complete', write_count: 1, results: [{
+          fitting_name: 'Copy A result', character_name: 'Pilot', status: 'success'
+        }]
+      }});
+    assertCopyBActive('late copy A completion');
+
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-b',
+      operation_id: 'copy-b', completed: 1, total: 1, result: {status: 'success'}});
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 of 1 pairs checked');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-b',
+      operation_id: 'copy-b', completed: 1, total: 1, result: {
+        operation_id: 'copy-b', status: 'complete', write_count: 1, results: [{
+          fitting_name: 'Copy B result', character_name: 'Pilot', status: 'success'
+        }]
+      }});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+      'Copy B result', 'matching copy B completion renders normally');
+    return;
+  }
+
+  if (scenario === 'state-stale-start-result') {
+    await beginCopy();
+    const startA = takePending('fittings_start_copy');
+    assert.deepEqual(startA.args, ['ticket-a']);
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    takePending('fittings_state').resolve(workspace('Reentered response', {
+      characters: initial.characters
+    }));
+    await flush();
+    tick(selectedCheckbox());
+    el('fittings-copy-selected').click();
+    const targetsB = el('fittings-copy-body').querySelectorAll('input');
+    const targetB = targetsB[1];
+    tick(targetB);
+    targetB.focus();
+
+    startA.resolve(false);
+    await flush();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(unhandledRejections.length, 0,
+      'stale false start result cannot render a cleared preflight');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy fittings');
+    assert.equal(el('fittings-copy-review').hidden, false,
+      'dialog B remains in targets phase');
+    assert.equal(el('fittings-copy-start').hidden, true);
+    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      '1 selected. Choose target characters.');
+    assert.equal(document.contains(targetB), true);
+    assert.equal(targetB.checked, true);
+    assert.equal(document.activeElement, targetB);
+    return;
+  }
+
   if (scenario === 'state-stale-progress') {
     await beginCopy();
-    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
       '1 of 1 pairs checked');
@@ -1096,11 +1219,11 @@ async function runStateMachineScenario() {
         eventName + ' does not clear dialog B fitting selection');
     }
 
-    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
     assertTargetsDialogB('late progress');
-    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', completed: 1,
-      total: 1, result: {
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      completed: 1, total: 1, result: {
         operation_id: 'copy-a', status: 'complete', write_count: 1, results: [{
           fitting_name: 'Copy A result', character_name: 'Pilot', status: 'success'
         }]
@@ -1113,8 +1236,8 @@ async function runStateMachineScenario() {
     await beginCopy();
     assert.ok(calls.some(call => call[0] === 'fittings_preflight_copy'));
     assert.ok(calls.some(call => call[0] === 'fittings_start_copy'));
-    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', completed: 1,
-      total: 1, result: {status: 'success'}});
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
+      completed: 1, total: 1, result: {status: 'success'}});
     assert.equal(el('fittings-copy-status').textContent, 'Success');
     assert.equal(el('fittings-copy-close').disabled, true);
     key('Escape');
@@ -1123,9 +1246,9 @@ async function runStateMachineScenario() {
       'progress cannot be dismissed by Escape or Close');
     el('fittings-copy-cancel').click();
     assert.ok(calls.some(call => call[0] === 'fittings_cancel_copy'));
-    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', result: {
-      operation_id: 'op-1', status: 'cancelled', write_count: 1, results: []
-    }});
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      result: {operation_id: 'op-1', status: 'cancelled', write_count: 1,
+        results: []}});
     assert.equal(el('fittings-copy-title').textContent, 'Copy results');
     assert.equal(el('fittings-copy-selected').disabled, true,
       'completion clears selection');
@@ -1145,9 +1268,8 @@ async function runStateMachineScenario() {
       'route-leave cancellation does not steal focus');
     assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
       cancellations + 1, 'route leave cancels an active copy');
-    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', result: {
-      operation_id: 'late', status: 'success', write_count: 1, results: []
-    }});
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      result: {operation_id: 'late', status: 'success', write_count: 1, results: []}});
     assert.equal(el('fittings-copy-overlay').hidden, true,
       'late completion cannot reopen a copy workflow after route leave');
     assert.equal(el('fittings-copy-selected').disabled, true,
@@ -1227,7 +1349,7 @@ async function runStateMachineScenario() {
       await flush();
       el('fittings-copy-start').click();
       await flush();
-      handlers.onFittingsProgress({kind: 'copy', phase: 'complete',
+      handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
         result: {results: [], write_count: 0, status: 'cancelled'}});
     }
     // Fallback must skip both a disabled first control and a hidden ancestor.
@@ -1344,6 +1466,8 @@ def test_fittings_state_machine_in_node(tmp_path):
         "state-screenshot-progress",
         "state-stale-preflight",
         "state-stale-progress",
+        "state-ticket-progress",
+        "state-stale-start-result",
         "state-copy-lifecycle",
     )
     for scenario in scenarios:

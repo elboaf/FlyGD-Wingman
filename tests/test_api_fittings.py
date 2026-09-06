@@ -358,6 +358,7 @@ def test_fittings_start_copy_construction_failure_completes_optimistic_copy(tmp_
             {
                 "kind": "copy",
                 "phase": "complete",
+                "ticket_id": "ticket-1",
                 "operation_id": "",
                 "completed": 0,
                 "total": 0,
@@ -396,6 +397,7 @@ def test_fittings_start_copy_start_failure_completes_optimistic_copy(tmp_path):
             {
                 "kind": "copy",
                 "phase": "complete",
+                "ticket_id": "ticket-1",
                 "operation_id": "",
                 "completed": 0,
                 "total": 0,
@@ -447,6 +449,7 @@ def test_fittings_start_copy_pushes_an_early_controller_refusal(tmp_path):
             {
                 "kind": "copy",
                 "phase": "complete",
+                "ticket_id": "expired-ticket",
                 "operation_id": "",
                 "completed": 0,
                 "total": 0,

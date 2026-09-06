@@ -1188,6 +1188,7 @@ class FittingsController:
                     {
                         "kind": "copy",
                         "phase": "progress",
+                        "ticket_id": ticket.ticket_id,
                         "operation_id": operation_id,
                         "completed": len(results),
                         "total": total,
@@ -1200,6 +1201,7 @@ class FittingsController:
                 {
                     "kind": "copy",
                     "phase": "complete",
+                    "ticket_id": ticket.ticket_id,
                     "operation_id": operation_id,
                     "completed": len(results),
                     "total": total,
