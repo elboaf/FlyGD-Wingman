@@ -1,17 +1,58 @@
-"""The Fittings destination shell (SDD task 6).
+"""Fittings shell contracts and executable copy-control accessibility checks.
 
-Nothing executes web/*.js (docs/history/webview-replatform-design.md:545),
-so every assertion here is lexical, the same posture test_bridge_contract.py
-and test_settings_eve_gate.py already take. This file is deliberately
-narrow: Task 6 adds only a route shell and a safe unavailable-state render,
-not the fitting workspace -- test_fittings_wiring.py (Task 9) is where the
-real curation UI gets its coverage.
+The Node DOM double executes the real Fittings module against the page's
+markup. It tests keyboard/focus behavior, not browser layout or WebView2's
+accessibility tree; those still require the Windows smoke pass.
 """
 
+import json
 import re
+import shutil
+import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
+import pytest
+
 WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
+
+
+class _PageTree(HTMLParser):
+    """Keep real element order, ancestry, and attributes for the Node double."""
+
+    def __init__(self):
+        super().__init__()
+        self.root = {"tag": "document", "attrs": {}, "children": []}
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = {"tag": tag, "attrs": dict(attrs), "children": []}
+        self.stack[-1]["children"].append(node)
+        if tag not in {
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "param",
+            "source",
+            "track",
+            "wbr",
+        }:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, 0, -1):
+            if self.stack[index]["tag"] == tag:
+                del self.stack[index:]
+                return
+
+
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 APP_JS = (WEB / "app.js").read_text(encoding="utf-8")
 FITTINGS_JS = (WEB / "fittings.js").read_text(encoding="utf-8")
@@ -522,3 +563,338 @@ def test_render_pager_defaults_page_when_the_payload_has_none():
         "renderPager reads STATE.page directly somewhere other than the "
         "defaulted `page` variable: " + repr(bare_reads)
     )
+
+
+_COPY_ACCESSIBILITY_HARNESS = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const scenario = process.argv[3];
+
+// Only DOM mechanics live here. Fittings rendering, listeners, selection and
+// phase changes all run from the unmodified production module below.
+class Element {
+  constructor(tag, attrs = {}) {
+    this.tagName = tag.toUpperCase();
+    this.attrs = {...attrs};
+    this.children = [];
+    this.parentNode = null;
+    this.listeners = {};
+    this.hidden = 'hidden' in attrs;
+    this.disabled = 'disabled' in attrs;
+    this.className = attrs.class || '';
+    this.id = attrs.id || '';
+    this.type = attrs.type || '';
+    this.value = '';
+    this.style = {};
+    this.classList = {
+      contains: name => this.className.split(/\s+/).includes(name),
+      add: name => { this.className += ' ' + name; },
+      remove: name => {
+        this.className = this.className.split(/\s+/).filter(x => x !== name).join(' ');
+      }
+    };
+  }
+  appendChild(child) {
+    if (child.parentNode) child.remove();
+    this.children.push(child);
+    child.parentNode = this;
+    return child;
+  }
+  remove() {
+    this.parentNode.children = this.parentNode.children.filter(x => x !== this);
+    this.parentNode = null;
+  }
+  set textContent(value) {
+    this.children.forEach(child => { child.parentNode = null; });
+    this.children = [];
+    this.text = value;
+  }
+  get textContent() { return this.text || ''; }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  getAttribute(name) { return this.attrs[name] ?? null; }
+  contains(node) {
+    return node === this || this.children.some(child => child.contains(node));
+  }
+  matches(selector) {
+    return selector.split(',').some(part => {
+      part = part.trim();
+      const exclusions = [...part.matchAll(/:not\(([^)]+)\)/g)];
+      if (exclusions.some(match => this.matches(match[1]))) return false;
+      part = part.replace(/:not\([^)]+\)/g, '');
+      const tag = part.match(/^[a-z]+/i);
+      if (tag && tag[0].toUpperCase() !== this.tagName) return false;
+      if (part.includes(':disabled') && !this.disabled) return false;
+      if ([...part.matchAll(/\.([\w-]+)/g)].some(match =>
+          !this.classList.contains(match[1]))) return false;
+      return [...part.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)].every(match => {
+        const value = match[1] === 'hidden' ? (this.hidden ? '' : null)
+          : this.getAttribute(match[1]);
+        return value !== null && (match[2] === undefined || value === match[2]);
+      });
+    });
+  }
+  querySelectorAll(selector) {
+    const found = [];
+    const walk = node => node.children.forEach(child => {
+      if (child.matches(selector)) found.push(child);
+      walk(child);
+    });
+    walk(this);
+    return found;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  getClientRects() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.hidden || node.style.display === 'none'
+          || (node.classList.contains('route') && !node.classList.contains('active'))) {
+        return [];
+      }
+    }
+    return document.contains(this) ? [{}] : [];
+  }
+  focus() {
+    if (!this.disabled && this.getClientRects().length
+        && getComputedStyle(this).visibility === 'visible') document.activeElement = this;
+  }
+  blur() { if (document.activeElement === this) document.activeElement = document.body; }
+  addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
+  dispatchEvent(event) {
+    event.target ||= this;
+    event.currentTarget = this;
+    (this.listeners[event.type] || []).forEach(callback => callback(event));
+  }
+  click() {
+    if (!this.disabled) this.dispatchEvent({type: 'click'});
+  }
+}
+function fromTree(tree) {
+  const node = new Element(tree.tag, tree.attrs);
+  tree.children.forEach(child => node.appendChild(fromTree(child)));
+  return node;
+}
+const document = fromTree(page);
+global.document = document;
+document.body = document.querySelector('body');
+document.activeElement = document.body;
+document.createElement = tag => new Element(tag);
+document.getElementById = id => document.querySelectorAll('[id]').find(x => x.id === id) || null;
+global.getComputedStyle = node => {
+  let visibility = 'visible';
+  for (let current = node; current; current = current.parentNode) {
+    if (current.style.visibility) { visibility = current.style.visibility; break; }
+  }
+  return {visibility};
+};
+const el = id => {
+  const node = document.getElementById(id);
+  assert.ok(node, 'missing real markup: ' + id);
+  return node;
+};
+const route = el('route-fittings');
+document.querySelectorAll('.route').forEach(node => node.classList.remove('active'));
+route.classList.add('active');
+const handlers = {};
+const calls = [];
+const state = {
+  available: true, warnings: [], refreshing: false,
+  collections: [{id: 'all', name: 'All fittings', count: 1}], ships: [],
+  characters: [
+    {character_id: 1, character_name: 'Pilot', status: 'enabled', fetched_utc: '2026-09-01', stale: false},
+    {character_id: 2, character_name: 'Unavailable', status: 'disabled', fetched_utc: '', stale: false}
+  ],
+  rows: [{id: 'fit-1', name: 'Sabre tackle', ship_name: 'Sabre', ship_type_id: 22456,
+    presence_count: 1, collection_ids: [], deployable: true, superseded_by: null}],
+  total: 1, page: 1, page_size: 100
+};
+const WM = {
+  current_route: 'fittings', el,
+  make(tag, cls, text) {
+    const node = new Element(tag, {class: cls || ''});
+    if (text !== undefined) node.textContent = text;
+    return node;
+  },
+  handle(name, callback) { handlers[name] = callback; },
+  send(name, ...args) {
+    calls.push([name, ...args]);
+    if (name === 'fittings_state') return Promise.resolve(state);
+    if (name === 'fittings_preflight_copy') return Promise.resolve({
+      accepted: true, ticket_id: 'ticket', write_count: 1, requires_resolution: false,
+      counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
+        fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready', chosen_name: 'Sabre tackle'}]
+    });
+    if (name === 'fittings_start_copy' || name === 'fittings_cancel_copy') return Promise.resolve(true);
+    throw new Error('Unexpected bridge call: ' + name);
+  },
+  confirm() { return Promise.resolve(true); }
+};
+global.window = {WM, getComputedStyle};
+vm.runInThisContext(fs.readFileSync(process.argv[4], 'utf8'), {filename: 'fittings.js'});
+function key(name, shift = false, handled = false) {
+  const event = {type: 'keydown', key: name, shiftKey: shift, defaultPrevented: handled,
+    preventDefault() { this.defaultPrevented = true; }};
+  document.dispatchEvent(event);
+  return event;
+}
+function tick(node) { node.checked = true; node.dispatchEvent({type: 'change'}); }
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+(async () => {
+  document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+  await flush();
+  const checkbox = el('fittings-list').querySelector('input');
+  if (scenario === 'checkbox-name') {
+    assert.equal(checkbox.getAttribute('aria-label'), 'Select Sabre tackle');
+    return;
+  }
+  tick(checkbox);
+  const invoker = el('fittings-copy-selected');
+  invoker.focus();
+  invoker.click();
+  const overlay = el('fittings-copy-overlay');
+  const close = el('fittings-copy-close');
+  const target = el('fittings-copy-body').querySelector('input');
+  const review = el('fittings-copy-review');
+  assert.equal(overlay.hidden, false, 'Copy selected opens overlay');
+  assert.equal(document.activeElement, close, 'opening moves focus into dialog');
+
+  if (scenario === 'tab-wrap') {
+    // Review is initially disabled; unavailable target and Start/Cancel are excluded.
+    close.focus();
+    assert.equal(key('Tab').defaultPrevented, true);
+    assert.equal(document.activeElement, target, 'last wraps to first enabled target');
+    assert.equal(key('Tab', true).defaultPrevented, true);
+    assert.equal(document.activeElement, close, 'first wraps to last');
+    tick(target);
+    review.focus();
+    key('Tab');
+    assert.equal(document.activeElement, target, 'newly enabled review is now last');
+    target.focus();
+    key('Tab', true);
+    assert.equal(document.activeElement, review);
+    close.focus();
+    assert.equal(key('Tab').defaultPrevented, false, 'ordinary interior Tab stays native');
+  } else if (scenario === 'tab-outside') {
+    invoker.focus();
+    assert.equal(key('Tab').defaultPrevented, true);
+    assert.equal(document.activeElement, target);
+  } else if (scenario === 'hidden-controls') {
+    target.parentNode.hidden = true;
+    close.focus();
+    key('Tab');
+    assert.equal(document.activeElement, close, 'hidden ancestor excludes target');
+    close.disabled = true;
+    assert.equal(key('Tab').defaultPrevented, true, 'empty focus list cannot leak Tab');
+  } else if (scenario === 'close' || scenario === 'escape') {
+    if (scenario === 'close') close.click(); else key('Escape');
+    assert.equal(overlay.hidden, true);
+    assert.equal(document.activeElement, invoker, 'dismissal restores the saved invoker');
+  } else if (scenario.startsWith('fallback-')) {
+    if (scenario === 'fallback-detached') {
+      const replacement = new Element('button', {id: invoker.id});
+      invoker.parentNode.appendChild(replacement);
+      invoker.remove();
+    } else if (scenario === 'fallback-hidden') invoker.parentNode.hidden = true;
+    else if (scenario === 'fallback-invisible') invoker.style.visibility = 'hidden';
+    else {
+      // Real completion clears selection and disables the original invoker.
+      handlers.onFittingsProgress({kind: 'copy', phase: 'complete',
+        result: {results: [], write_count: 0, status: 'cancelled'}});
+    }
+    // Fallback must skip both a disabled first control and a hidden ancestor.
+    el('fittings-refresh-all').disabled = true;
+    el('fittings-manage-characters').parentNode.hidden = true;
+    close.click();
+    assert.equal(overlay.hidden, true);
+    assert.equal(document.activeElement, el('fittings-collections').querySelector('button'),
+      'fallback finds an available control on active Fittings route');
+  } else if (scenario === 'shared-dialog') {
+    el('overlay').hidden = false;
+    el('dlg-ok').focus();
+    key('Tab');
+    assert.equal(document.activeElement, el('dlg-ok'), 'shared dialog keeps keyboard ownership');
+    // panel.js handles Escape in capture phase, hiding itself before this listener.
+    el('overlay').hidden = true;
+    key('Escape', false, true);
+    assert.equal(overlay.hidden, false, 'shared confirmation Escape does not close copy overlay');
+  } else if (scenario === 'progress' || scenario === 'route-leave') {
+    tick(target);
+    review.click();
+    await flush();
+    const start = el('fittings-copy-start');
+    start.focus();
+    key('Tab');
+    assert.equal(document.activeElement, close, 'preflight recalculates first control');
+    close.focus();
+    key('Tab', true);
+    assert.equal(document.activeElement, start, 'preflight recalculates last control');
+    start.click();
+    await flush();
+    assert.equal(close.disabled, true, 'Close stays disabled during progress');
+    key('Escape');
+    close.click();
+    assert.equal(overlay.hidden, false, 'progress cannot be dismissed');
+    if (scenario === 'route-leave') {
+      WM.current_route = 'skills';
+      route.classList.remove('active');
+      el('route-skills').classList.add('active');
+      el('nav-skills').focus();
+      document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+      assert.equal(overlay.hidden, true, 'route leave force-closes progress');
+      assert.equal(document.activeElement, el('nav-skills'), 'cleanup does not steal new route focus');
+      assert.ok(calls.some(call => call[0] === 'fittings_cancel_copy'));
+      WM.current_route = 'fittings';
+      route.classList.add('active');
+      document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+      await flush();
+      tick(el('fittings-list').querySelector('input'));
+      invoker.focus();
+      invoker.click();
+      assert.equal(close.disabled, false, 'reentry resets progress guard');
+      close.click();
+      assert.equal(document.activeElement, invoker);
+    }
+  } else throw new Error('Unknown scenario: ' + scenario);
+})().then(() => console.log('PASS ' + scenario)).catch(error => {
+  // Node's object-identity diff can print the entire cyclic page tree.
+  console.error(error.message.slice(0, 1000));
+  process.exitCode = 1;
+});
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "checkbox-name",
+        "tab-wrap",
+        "tab-outside",
+        "hidden-controls",
+        "close",
+        "escape",
+        "fallback-detached",
+        "fallback-hidden",
+        "fallback-invisible",
+        "fallback-disabled",
+        "shared-dialog",
+        "progress",
+        "route-leave",
+    ],
+)
+def test_copy_accessibility_in_node(tmp_path, scenario):
+    page = _PageTree()
+    page.feed(HTML)
+    markup = tmp_path / "page.json"
+    markup.write_text(json.dumps(page.root), encoding="utf-8")
+    harness = tmp_path / "copy-accessibility.cjs"
+    harness.write_text(_COPY_ACCESSIBILITY_HARNESS, encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(harness), str(markup), scenario, str(WEB / "fittings.js")],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"PASS {scenario}" in result.stdout
