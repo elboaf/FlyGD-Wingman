@@ -571,6 +571,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
+const stateMachineScenario = scenario.startsWith('state-');
 
 // Only DOM mechanics live here. Fittings rendering, listeners, selection and
 // phase changes all run from the unmodified production module below.
@@ -697,17 +698,49 @@ document.querySelectorAll('.route').forEach(node => node.classList.remove('activ
 route.classList.add('active');
 const handlers = {};
 const calls = [];
+const pending = {};
+function deferred(name, args) {
+  let resolve;
+  let reject;
+  const promise = new Promise((accept, refuse) => { resolve = accept; reject = refuse; });
+  const request = {args, promise, resolve, reject};
+  (pending[name] ||= []).push(request);
+  return promise;
+}
+function takePending(name) {
+  const queue = pending[name] || [];
+  assert.ok(queue.length, 'no pending ' + name + ' request');
+  return queue.shift();
+}
+const fitA = {id: 'fit-1', name: 'Sabre tackle', ship_name: 'Sabre', ship_type_id: 22456,
+  presence_count: 1, collection_ids: [], deployable: true, superseded_by: null};
+const fitB = {id: 'fit-2', name: 'Flycatcher tackle', ship_name: 'Flycatcher', ship_type_id: 22464,
+  presence_count: 1, collection_ids: [], deployable: true, superseded_by: null};
 const state = {
   available: true, warnings: [], refreshing: false,
-  collections: [{id: 'all', name: 'All fittings', count: 1}], ships: [],
+  collections: [
+    {id: 'all', name: 'All fittings', count: 2},
+    {id: 'doctrine', name: 'Doctrine', count: 2}
+  ],
+  ships: [],
   characters: [
     {character_id: 1, character_name: 'Pilot', status: 'enabled', fetched_utc: '2026-09-01', stale: false},
     {character_id: 2, character_name: 'Unavailable', status: 'disabled', fetched_utc: '', stale: false}
   ],
-  rows: [{id: 'fit-1', name: 'Sabre tackle', ship_name: 'Sabre', ship_type_id: 22456,
-    presence_count: 1, collection_ids: [], deployable: true, superseded_by: null}],
-  total: 1, page: 1, page_size: 100
+  rows: [fitA], total: 1, page: 1, page_size: 100
 };
+function workspace(label, overrides = {}) {
+  const payload = {...state, ...overrides};
+  payload.collections = (overrides.collections || state.collections).map(collection => ({
+    ...collection,
+    name: collection.id === 'all' ? label : collection.name
+  }));
+  return payload;
+}
+function detailFor(row, description) {
+  return {id: row.id, name: row.name, description, ship_type_id: row.ship_type_id,
+    items: [], aliases: [], presences: [], collection_ids: [], superseded_by: null};
+}
 const WM = {
   current_route: 'fittings', el,
   make(tag, cls, text) {
@@ -718,7 +751,16 @@ const WM = {
   handle(name, callback) { handlers[name] = callback; },
   send(name, ...args) {
     calls.push([name, ...args]);
-    if (name === 'fittings_state') return Promise.resolve(state);
+    if (name === 'fittings_state') {
+      return stateMachineScenario ? deferred(name, args) : Promise.resolve(state);
+    }
+    if (name === 'fittings_detail' &&
+        (scenario === 'state-detail-sequence' || scenario === 'state-rejected-mutation')) {
+      return deferred(name, args);
+    }
+    if (name === 'fittings_update_metadata' && scenario === 'state-rejected-mutation') {
+      return Promise.resolve(false);
+    }
     if (name === 'fittings_preflight_copy') return Promise.resolve({
       accepted: true, ticket_id: 'ticket', write_count: 1, requires_resolution: false,
       counts: {ready: 1}, pairs: [{entry_id: 'fit-1', character_id: 1,
@@ -739,7 +781,229 @@ function key(name, shift = false, handled = false) {
 }
 function tick(node) { node.checked = true; node.dispatchEvent({type: 'change'}); }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+async function enterWith(payload) {
+  document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+  const request = takePending('fittings_state');
+  request.resolve(payload);
+  await flush();
+}
+function selectedCheckbox() {
+  const checkbox = el('fittings-list').querySelector('input');
+  assert.ok(checkbox, 'rendered fitting has a selection checkbox');
+  return checkbox;
+}
+async function beginCopy() {
+  tick(selectedCheckbox());
+  const invoker = el('fittings-copy-selected');
+  invoker.focus();
+  invoker.click();
+  const target = el('fittings-copy-body').querySelector('input');
+  tick(target);
+  el('fittings-copy-review').click();
+  await flush();
+  el('fittings-copy-start').click();
+  await flush();
+}
+async function runStateMachineScenario() {
+  if (scenario === 'state-route-lifecycle') {
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    const departed = takePending('fittings_state');
+    handlers.onFittingsChanged();
+    const lateDeparted = takePending('fittings_state');
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    departed.resolve(workspace('Departed response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, '',
+      'a response resolving after route leave cannot repaint the departed route');
+    WM.current_route = 'fittings';
+    el('route-skills').classList.remove('active');
+    route.classList.add('active');
+    document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+    const current = takePending('fittings_state');
+    current.resolve(workspace('Current response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Current response');
+    lateDeparted.resolve(workspace('Late departed response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Current response',
+      'a pre-leave response cannot overwrite current state after reentry');
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').length, 3,
+      'reentry requests fresh state');
+    return;
+  }
+
+  const initial = scenario === 'state-detail-sequence'
+    ? workspace('Two fittings', {rows: [fitA, fitB], total: 2})
+    : workspace('Initial response');
+  await enterWith(initial);
+  if (scenario === 'state-request-sequence') {
+    handlers.onFittingsChanged();
+    handlers.onFittingsChanged();
+    const older = takePending('fittings_state');
+    const newer = takePending('fittings_state');
+    newer.resolve(workspace('Newest response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Newest response');
+    older.resolve(workspace('Older response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Newest response',
+      'an older state response cannot overwrite the newest response');
+    return;
+  }
+
+  if (scenario === 'state-selection-scope') {
+    tick(selectedCheckbox());
+    assert.equal(el('fittings-copy-selected').disabled, false);
+    el('fittings-collections').querySelectorAll('button')[1].click();
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'collection change clears selection before its request resolves');
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').at(-1)[1].collection_id,
+      'doctrine');
+    el('fittings-copy-selected').click();
+    assert.equal(calls.some(call => call[0] === 'fittings_preflight_copy'), false,
+      'cleared collection selection cannot reach preflight');
+    takePending('fittings_state').resolve(workspace('Scoped response', {
+      rows: [fitA], total: 2, page: 1, page_size: 1
+    }));
+    await flush();
+
+    tick(selectedCheckbox());
+    el('fittings-page-next').click();
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'page change clears selection before its request resolves');
+    el('fittings-copy-selected').click();
+    assert.equal(calls.some(call => call[0] === 'fittings_preflight_copy'), false,
+      'cleared page selection cannot reach preflight');
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').at(-1)[1].page, 2);
+    takePending('fittings_state').resolve(workspace('Second page', {
+      rows: [fitB], total: 2, page: 2, page_size: 1
+    }));
+    await flush();
+
+    tick(selectedCheckbox());
+    el('fittings-search').value = 'needle';
+    el('fittings-search').dispatchEvent({type: 'input'});
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'search clears selection before its debounced request');
+    el('fittings-copy-selected').click();
+    await wait(250);
+    assert.equal(calls.filter(call => call[0] === 'fittings_state').at(-1)[1].search,
+      'needle');
+    assert.equal(calls.some(call => call[0] === 'fittings_preflight_copy'), false,
+      'scope, page, and search transitions never send stale IDs');
+    takePending('fittings_state').resolve(workspace('Search response', {
+      rows: [], total: 0, page: 1, page_size: 1
+    }));
+    await flush();
+    return;
+  }
+
+  if (scenario === 'state-detail-sequence') {
+    const toggles = el('fittings-list').querySelectorAll('.fit-row-toggle');
+    toggles[0].click();
+    const detailA = takePending('fittings_detail');
+    el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click();
+    const detailB = takePending('fittings_detail');
+    detailA.resolve(detailFor(fitA, 'Late detail A'));
+    await flush();
+    assert.equal(el('fittings-list').querySelector('.fit-description'), null,
+      'late detail for the collapsed fitting is ignored');
+    detailB.resolve(detailFor(fitB, 'Current detail B'));
+    await flush();
+    assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
+      'Current detail B');
+    assert.equal(el('fittings-list').querySelectorAll('.fit-row.open').length, 1);
+    return;
+  }
+
+  if (scenario === 'state-rejected-mutation') {
+    tick(selectedCheckbox());
+    el('fittings-list').querySelector('.fit-row-toggle').click();
+    takePending('fittings_detail').resolve(detailFor(fitA, 'Persisted detail'));
+    await flush();
+    const save = el('fittings-list').querySelectorAll('button')
+      .find(button => button.textContent === 'Save');
+    assert.ok(save, 'expanded real module renders its Save mutation control');
+    save.click();
+    await flush();
+    assert.equal((pending.fittings_state || []).length, 1,
+      'rejected mutation follows the existing state requery path');
+    assert.equal(el('fittings-copy-selected').disabled, false,
+      'rejection does not optimistically clear selection');
+    assert.equal(el('fittings-list').querySelectorAll('.fit-row.open').length, 1,
+      'rejection does not optimistically collapse detail');
+    assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
+      'Persisted detail');
+    takePending('fittings_state').resolve(workspace('Requeried response'));
+    await flush();
+    assert.equal(el('fittings-collection-name').textContent, 'Requeried response');
+    assert.equal(el('fittings-copy-selected').disabled, false);
+    takePending('fittings_detail').resolve(detailFor(fitA, 'Requeried detail'));
+    await flush();
+    assert.equal(el('fittings-list').querySelector('.fit-description').textContent,
+      'Requeried detail');
+    return;
+  }
+
+  if (scenario === 'state-copy-lifecycle') {
+    await beginCopy();
+    assert.ok(calls.some(call => call[0] === 'fittings_preflight_copy'));
+    assert.ok(calls.some(call => call[0] === 'fittings_start_copy'));
+    handlers.onFittingsProgress({kind: 'copy', phase: 'progress', completed: 1,
+      total: 1, result: {status: 'success'}});
+    assert.equal(el('fittings-copy-status').textContent, 'Success');
+    assert.equal(el('fittings-copy-close').disabled, true);
+    key('Escape');
+    el('fittings-copy-close').click();
+    assert.equal(el('fittings-copy-overlay').hidden, false,
+      'progress cannot be dismissed by Escape or Close');
+    el('fittings-copy-cancel').click();
+    assert.ok(calls.some(call => call[0] === 'fittings_cancel_copy'));
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', result: {
+      operation_id: 'op-1', status: 'cancelled', write_count: 1, results: []
+    }});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'completion clears selection');
+    assert.equal(el('fittings-copy-close').disabled, false,
+      'completion restores the close guard');
+    el('fittings-copy-close').click();
+
+    await beginCopy();
+    const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
+    WM.current_route = 'skills';
+    route.classList.remove('active');
+    el('route-skills').classList.add('active');
+    el('nav-skills').focus();
+    document.dispatchEvent({type: 'wm:route', detail: 'skills'});
+    assert.equal(el('fittings-copy-overlay').hidden, true);
+    assert.equal(document.activeElement, el('nav-skills'),
+      'route-leave cancellation does not steal focus');
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
+      cancellations + 1, 'route leave cancels an active copy');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', result: {
+      operation_id: 'late', status: 'success', write_count: 1, results: []
+    }});
+    assert.equal(el('fittings-copy-overlay').hidden, true,
+      'late completion cannot reopen a copy workflow after route leave');
+    assert.equal(el('fittings-copy-selected').disabled, true,
+      'late completion cannot restore departed selection');
+    assert.equal(document.activeElement, el('nav-skills'),
+      'late completion cannot steal focus from the current route');
+    return;
+  }
+
+  throw new Error('Unknown state-machine scenario: ' + scenario);
+}
 (async () => {
+  if (stateMachineScenario) {
+    await runStateMachineScenario();
+    return;
+  }
   document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
   await flush();
   const checkbox = el('fittings-list').querySelector('input');
@@ -863,6 +1127,22 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 """
 
 
+def _run_fittings_node(tmp_path, scenario, script=WEB / "fittings.js"):
+    page = _PageTree()
+    page.feed(HTML)
+    markup = tmp_path / "page.json"
+    markup.write_text(json.dumps(page.root), encoding="utf-8")
+    harness = tmp_path / "fittings-harness.cjs"
+    harness.write_text(_COPY_ACCESSIBILITY_HARNESS, encoding="utf-8")
+    return subprocess.run(
+        ["node", str(harness), str(markup), scenario, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 @pytest.mark.parametrize(
     "scenario",
@@ -883,18 +1163,22 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     ],
 )
 def test_copy_accessibility_in_node(tmp_path, scenario):
-    page = _PageTree()
-    page.feed(HTML)
-    markup = tmp_path / "page.json"
-    markup.write_text(json.dumps(page.root), encoding="utf-8")
-    harness = tmp_path / "copy-accessibility.cjs"
-    harness.write_text(_COPY_ACCESSIBILITY_HARNESS, encoding="utf-8")
-    result = subprocess.run(
-        ["node", str(harness), str(markup), scenario, str(WEB / "fittings.js")],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    result = _run_fittings_node(tmp_path, scenario)
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"PASS {scenario}" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_fittings_state_machine_in_node(tmp_path):
+    scenarios = (
+        "state-route-lifecycle",
+        "state-request-sequence",
+        "state-selection-scope",
+        "state-detail-sequence",
+        "state-rejected-mutation",
+        "state-copy-lifecycle",
+    )
+    for scenario in scenarios:
+        result = _run_fittings_node(tmp_path, scenario)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"PASS {scenario}" in result.stdout
