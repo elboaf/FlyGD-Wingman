@@ -53,6 +53,8 @@ HWND_TOPMOST = -1
 WM_DESTROY = 0x0002
 WM_PAINT = 0x000F
 WM_CLOSE = 0x0010
+WM_CANCELMODE = 0x001F
+WM_CAPTURECHANGED = 0x0215
 WM_TIMER = 0x0113
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
@@ -76,6 +78,11 @@ WM_APP_APPLY_LAYOUTS = WM_APP + 8
 # snapshot cannot ride in wparam/lparam, so it travels in a field under the
 # host's lock and this only says "there is a newer one to read".
 WM_APP_ROSTER = WM_APP + 9
+
+# --- Crop context menu --------------------------------------------------
+MF_STRING = 0x0000
+TPM_NONOTIFY = 0x0080
+TPM_RETURNCMD = 0x0100
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02
@@ -337,8 +344,26 @@ def bind() -> Libs:
         (user32, "KillTimer", BOOL, [HWND, ctypes.c_void_p]),
         # --- mouse capture
         (user32, "SetCapture", HWND, [HWND]),
+        (user32, "GetCapture", HWND, []),
         (user32, "ReleaseCapture", BOOL, []),
         (user32, "GetCursorPos", BOOL, [ctypes.POINTER(POINT)]),
+        # --- crop context menu. UINT_PTR must retain pointer width, and
+        # TrackPopupMenuEx's BOOL must retain the command ID with RETURNCMD
+        # (ctypes.c_bool would collapse every nonzero selection to True).
+        (user32, "CreatePopupMenu", wintypes.HMENU, []),
+        (user32, "DestroyMenu", BOOL, [wintypes.HMENU]),
+        (
+            user32,
+            "AppendMenuW",
+            BOOL,
+            [wintypes.HMENU, UINT, ctypes.c_size_t, wintypes.LPCWSTR],
+        ),
+        (
+            user32,
+            "TrackPopupMenuEx",
+            BOOL,
+            [wintypes.HMENU, UINT, ctypes.c_int, ctypes.c_int, HWND, ctypes.c_void_p],
+        ),
         # --- focus
         (user32, "SetForegroundWindow", BOOL, [HWND]),
         (user32, "SetFocus", HWND, [HWND]),
