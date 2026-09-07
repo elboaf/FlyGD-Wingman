@@ -1815,6 +1815,9 @@ only ever checked by hand.
 
 Headless Chrome can exercise the `?dev=1` controls below, but is not evidence
 for native WebView2 focus, Windows DPI, picker behavior or DWM resources.
+The current [production evidence and release blockers](preview-crops-production-results.md)
+keep the cap of eight provisional. No native item below is closed by the
+Linux/browser or synthetic/message-only Windows test runs.
 Schedule the native pass with Task 10 before release; do not launch EVE or
 Wingman automatically as part of the browser pass.
 
@@ -1855,6 +1858,34 @@ Wingman automatically as part of the browser pass.
       crop positioning and shared locks. Task 10's DWM/HWND resource, cap,
       stop-tail, client-window-safety and performance gates must also pass.
       No headless screenshot closes these gates.
+- [ ] **Production stages and temporary slot.** Follow the predeclared thresholds
+      in the production results document at stages 1/2/4/8 against matching
+      primary-only baselines. Record the exact tested commit, clients, hardware,
+      monitor rectangles/scales and source resolutions. Keep every intended
+      crop visible. At stage eight also test picker, replacement, cancellation,
+      initial DWM failure and save failure with the same memory allowance.
+      Count thumbnail registrations/unregistrations separately from HWNDs:
+      the picker has an additional overlay and native child controls, not
+      additional DWM relationships. Picker and candidate must never overlap;
+      peak relationships are primary baseline plus at most nine, and every
+      relationship/top-level/owned/child HWND returns to baseline on teardown.
+- [ ] **Persistence and lifecycle on real Windows.** Exercise restart restoration,
+      master-off, primary exclusion, close-to-disable save failure, source
+      exit/logout/return, hidden-at-birth, degraded recovery, capture theft and
+      stop during an admitted save. Reselection must not save an untouched
+      monitor rescue or lose real movement. Test tall/flat initial selections,
+      saved partial overhangs, source/picker resizing and negative coordinates.
+      Never move or resize a real EVE client to automate a scenario.
+- [ ] **Record minimized-source behavior rather than assuming it.** With explicit
+      operator approval, compare minimize/restore and occlusion, including a
+      primary alert pulse while dragging a crop. Record whether minimized
+      content is live/frozen/black/stale and whether it recovers without a retry
+      storm. This remains unmeasured; update help only after observation.
+- [ ] **Release decision.** Do not ship without the Windows frozen-build and
+      production native gates. If eight fails, lower the cap to a fully tested
+      passing stage and repeat the temporary-slot test. If only the extra slot
+      fails, implement/test the approved free-slot reselection fallback. If
+      one crop fails, block release. Missing evidence is not a passing stage.
 
 Dev drivers: `DEV.previewCrops('offline')`, `'crop-only'`, `'cap-full'`,
 `'pending'`, `'failed-save'`, `'degraded'`, `'invalid-source'`, `'stopping'`,
@@ -3244,8 +3275,9 @@ Two things decide what you should see, and they are easy to conflate:
 This is the Phase 0 engineering probe for cropped preview regions
 (`docs/preview-evolution-crops-design.md`), run only through the
 checkout-only `tests/manual/preview_crop_harness.py` — never through the
-installed app. There is no production crop feature yet: nothing here writes
-settings, persists a layout, or survives a restart. Every threshold a result
+installed app. This probe is separate from the unreleased production crop
+implementation: nothing in the probe writes settings, persists a layout, or
+survives a restart. Every threshold a result
 below is checked against is fixed in advance in
 `docs/preview-crop-prototype-results.md`; record observed values there, not
 in this checklist.

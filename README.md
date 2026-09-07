@@ -86,6 +86,28 @@ The EVE tools are on by default. If you only want the uploader, turn them off in
 **Settings → General** and Profiles, Skills, Fittings, and the EVE Settings
 sections are hidden; the window drops to the Uploader alone.
 
+### Character crops — unreleased, release gates blocked
+
+The production crop implementation on this branch is configured under
+**Settings → Previews → Configure → Crop**. Select one region per named
+character; its position and size are separate from the primary preview. An
+unlocked crop supports left-drag movement and right-drag aspect resizing; a
+stationary right-click offers **Disable crop**. The character's shared Lock
+setting applies to both windows.
+
+**Disable** retains the saved region and placement. **Remove** asks before
+deleting both. Turning the Preview master off retains every definition;
+eligible enabled crops return when the master and their named sources are
+available again. Excluding a primary preview does not disable that character's
+crop. Offline definitions remain configurable. An automatic off-screen rescue
+is temporary until you actually move the crop, including during reselection.
+
+The current cap of **eight active crops is provisional, not a measured released
+limit**. Native Windows/EVE acceptance and minimized-source behavior remain
+unmeasured; no live-minimized-video guarantee is made. See the
+[production verification results and release blockers](docs/preview-crops-production-results.md).
+Do not treat passing automated tests as authorization to release this branch.
+
 ### EVE authorization, Skills, and Fittings
 
 Settings → Characters is the only place to authorize, reconnect, or forget EVE

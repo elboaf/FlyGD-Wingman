@@ -181,6 +181,34 @@ suite verifies import safety, parser/opt-in behavior, packaging exclusion, and
 the injected production seams, but it cannot prove live COM, sharing, mutex,
 or ShellExecute behavior.
 
+# Production crop acceptance — not the probe
+
+Production crops now have an unreleased implementation under Settings →
+Previews → Configure. The provisional active cap is eight; no production stage
+or minimized-source behavior has yet been measured. See
+[`docs/preview-crops-production-results.md`](../../docs/preview-crops-production-results.md)
+for actual automated evidence, failed/unrun gates and fixed acceptance
+thresholds, and the crop section of the smoke checklist for the manual pass.
+Do not use probe numbers to certify the production implementation.
+
+Visible Wingman/WebView2, native picker/crop, EVE and installer exercises need
+an explicitly authorized operator pass. Keep source client geometry unchanged.
+Record exact SHA and all machine/display/client facts before collecting
+matching primary-only and crop stage results. Count DWM relationships separately
+from picker overlay/control HWNDs. No such visible/native acceptance was run
+in the automated hardening pass.
+
+**Windows pytest safety:** use a separate temporary Windows venv when sharing a
+checkout with Linux; never let Windows `uv` replace its Linux `.venv`. Set both
+`APPDATA` and `LOCALAPPDATA` to new temporary sandbox directories **before
+starting Python or importing pytest/project modules**. `tests/conftest.py`
+redirects only LOCALAPPDATA; otherwise autostart tests can delete real user
+Startup shortcuts. Keep those variables set for the entire subprocess.
+Synthetic/message-only HWND tests do not establish native crop/DPI/performance
+acceptance. The production results document records the actual Windows suite's
+three existing running-client test-isolation failures separately from the
+passing focused crop suite.
+
 # Windows preview crop probe harness
 
 `preview_crop_harness.py` is the Phase 0 engineering probe for cropped preview
