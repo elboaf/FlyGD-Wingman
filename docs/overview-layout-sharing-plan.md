@@ -4,6 +4,8 @@
 
 **Goal:** Export a faithful Wingman overview/in-space-layout preset and apply it to a new recipient profile, preserving recipient-local display preferences and existing profiles.
 
+**Execution checkpoint:** Tasks 1–3 are implemented and task-reviewed at `904d1a8`; Task 4 is blocked on protected/default, selection/cache and surplus-window retirement evidence. See [verification and decisions](overview-layout-sharing-verification.md). This is not a completed feature or release sign-off.
+
 **Architecture:** Pure validation and decoded-document adapters feed a recipient-local staged profile constructor. `ProfilesController` owns context, review authorization and mutation lifecycle; `Api` remains a thin facade with named file-dialog ports. One focused Profiles subroute owns transient UI state and receives completion through the existing event owner.
 
 **Tech Stack:** Python 3.11+, existing settings codec, pywebview 6.2.1, plain HTML/CSS/ES5, Node runtime tests, PyYAML added for bounded native-YAML compatibility, pytest/Ruff, Windows and Linux CI.
@@ -650,6 +652,7 @@ read-only frontend inventory identified the nonpersisting-context requirement an
 manual route/handler integration points. The plan's new files/interfaces are
 proposals; no importer code or new test profile was created while planning.
 
-Execution starts after plan approval and an execution-method choice. Existing
-baseline/focused results are recorded in the discovery/design documents; they are
-not a claim that these new tests or the feature already pass.
+The user approved subagent-driven execution. Tasks 1–3 and their actual results
+are recorded in the [verification checkpoint](overview-layout-sharing-verification.md).
+The remaining writer/GUI/acceptance tasks have not run; parser results do not
+clear their persisted-data proof gates.

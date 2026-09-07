@@ -1,7 +1,7 @@
 # Wingman overview and in-space layout presets
 
 Date: 2026-09-07
-Status: approved for implementation planning following independent review; implementation has not started. See the [implementation plan](overview-layout-sharing-plan.md).
+Status: approved design; pure model/parsers implemented through plan Task 3. Settings writes remain blocked on evidence. See the [implementation plan](overview-layout-sharing-plan.md) and [verification checkpoint](overview-layout-sharing-verification.md).
 Base: `a38c7a0` plus the discovery record committed in `ed6aa16`.
 Evidence: [overview/layout discovery](overview-layout-sharing-discovery.md).
 
