@@ -504,7 +504,15 @@ def test_fittings_cancel_copy_delegates(tmp_path):
     api = make_api(tmp_path, fittings=fittings)
 
     assert api.fittings_cancel_copy() is True
-    fittings.cancel_copy.assert_called_once_with()
+    fittings.cancel_copy.assert_called_once_with(None)
+
+
+def test_fittings_cancel_copy_forwards_the_ticket(tmp_path):
+    fittings = Mock()
+    api = make_api(tmp_path, fittings=fittings)
+
+    assert api.fittings_cancel_copy("ticket-1") is True
+    fittings.cancel_copy.assert_called_once_with("ticket-1")
 
 
 def test_fittings_cancel_copy_is_safe_when_unavailable(tmp_path):

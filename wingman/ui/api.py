@@ -6658,9 +6658,12 @@ class Api:
                 }
             )
 
-    def fittings_cancel_copy(self) -> bool:
+    def fittings_cancel_copy(self, ticket_id=None) -> bool:
+        # Optional so the pre-ticket call shape still works: the page passes
+        # the ticket it is cancelling, and the controller treats a missing
+        # one as "everything pending or in flight".
         if self._fittings is not None:
-            self._fittings.cancel_copy()
+            self._fittings.cancel_copy(ticket_id)
         return True
 
     # ---- EVE fittings: local curation ---
