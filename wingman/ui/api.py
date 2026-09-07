@@ -6188,10 +6188,6 @@ class Api:
         return self._profiles.state()
 
     def eve_settings_pick_root(self) -> str:
-        # The lock is held across the dialog too, so a mutation cannot
-        # start while the user is choosing. The alternative -- lock only
-        # the write -- lets the user pick a folder and then discards it,
-        # which is a worse answer to the same race.
         return self._profiles.pick_root()
 
     def eve_settings_detect_root(self) -> str:

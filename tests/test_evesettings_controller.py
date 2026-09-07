@@ -268,9 +268,7 @@ def test_selecting_is_refused_while_a_mutation_holds_the_lock(tmp_path, monkeypa
     assert controller.select(str(profile.parent), str(profile)) is True
 
 
-def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(
-    tmp_path, monkeypatch
-):
+def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(tmp_path):
     eve_tree(tmp_path)
     opened = []
 
@@ -285,9 +283,6 @@ def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(
             build_controller(tmp_path)._ports,
             choose_root=dialog,
         ),
-    )
-    monkeypatch.setattr(
-        ctrl_mod, "_folder_dialog_kind", lambda: "FOLDER", raising=False
     )
     controller._eve_mutation.acquire()
     try:
