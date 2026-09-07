@@ -515,6 +515,11 @@ class CropPicker:
     def cancel(self, reason="cancelled"):
         """Dismiss once; the coordinator also uses this for missing/renewed sessions."""
         if self._completed:
+            # Cleanup may still hold an undelivered proposal. A later disable
+            # or removal cancels that selection, not an already delivered one.
+            if self._pending_confirm is not None:
+                self._pending_confirm = None
+                self._pending_cancel = reason
             self._notify_pending_cancel()
             return
         self._completed = True

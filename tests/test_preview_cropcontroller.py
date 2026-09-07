@@ -664,6 +664,59 @@ def test_pending_picker_font_cleanup_precedes_candidate_or_shutdown(rig, stop):
         assert len(r.native.thumbnails) == 1 and not r.native.fonts
 
 
+@pytest.mark.parametrize("action,value", [("enabled", False), ("remove", None)])
+def test_disable_remove_cancels_confirmation_waiting_for_font_cleanup(
+    rig, action, value
+):
+    from ctypes import wintypes
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    selected, _ = request(r)
+    picker = r.controller.picker
+    canceled = []
+    original_cancel = picker._on_cancel
+
+    def on_cancel(reason):
+        assert not picker._fonts and not r.native.fonts
+        canceled.append(reason)
+        original_cancel(reason)
+
+    picker._on_cancel = on_cancel
+    r.native.held_fonts.update(r.native.fonts)
+    confirm(r)
+    assert picker._pending_confirm is not None
+    assert not r.controller._temporary.submitted
+    assert r.controller._temporary.candidate is None
+    later, receipt = request(r, action, value=value)
+    assert receipt["pending"]
+    assert not canceled and not r.transaction.writes
+    assert picker._fonts == r.native.fonts and r.native.fonts
+    assert r.controller.picker is picker
+    assert r.controller._temporary.candidate is None
+    created = list(r.native.created)
+
+    r.native.held_fonts.clear()
+    r.controller.process_dialog_message(wintypes.MSG())
+    finish(r)
+    state = r.store.snapshot()
+    selection_result = state["operations"][selected.operation_id]
+    assert not selection_result["pending"]
+    assert not selection_result["applied"] and not selection_result["persisted"]
+    assert state["operations"][later.operation_id]["persisted"]
+    assert len(r.transaction.writes) == 1
+    expected = (
+        {"Alice": replace(DEFINITION, enabled=False)} if action == "enabled" else {}
+    )
+    assert deserialize(state["definitions"]) == expected
+    assert deserialize(r.transaction.writes[0]["preview"]["crops"]) == expected
+    assert r.native.created == created  # No hidden candidate was allocated.
+    picker.cancel("late")
+    picker.process_dialog_message(wintypes.MSG())
+    assert len(canceled) == 1
+    r.native.assert_closed()
+
+
 def test_successful_replacement_survives_ordered_failed_removal(rig):
     r = rig({"Alice": DEFINITION})
     roster(r, 1, client())

@@ -397,7 +397,7 @@ def test_creation_uses_full_client_mirror_controls_and_focus_before_click(make):
 
 
 def test_confirm_tears_down_entire_slot_before_callback_and_preserves_size(make):
-    confirmed = []
+    confirmed, cancelled = [], []
     native = Native()
 
     def confirm(*args):
@@ -405,12 +405,13 @@ def test_confirm_tears_down_entire_slot_before_callback_and_preserves_size(make)
         confirmed.append(args)
         picker.cancel("reentrant")
 
-    picker, _ = make(native, on_confirm=confirm)
+    picker, _ = make(native, on_confirm=confirm, on_cancel=cancelled.append)
     drag(picker)
     assert native.controls[1]["enabled"]
     picker._on_message(win32.WM_COMMAND, 1, 0)
     picker.cancel("late")
     assert confirmed == [(CLIENT, Rect(0, 0, 640, 360), (1280, 720))]
+    assert cancelled == []
     names = [e[0] for e in native.events]
     assert names.count("register") == names.count("unregister") == 1
     assert max(
