@@ -60,6 +60,11 @@ class FakeHost:
     def layout_entries(self):
         return {}
 
+    def crop_state(self):
+        from wingman.preview.host import PreviewHost
+
+        return PreviewHost(on_layout_changed=lambda *args: None).crop_state()
+
     @property
     def is_running(self):
         return self.started > self.stopped
@@ -832,6 +837,7 @@ def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
         hotkey_status=dict,
         client_sizes=dict,
         layout_entries=dict,
+        crop_state=FakeHost().crop_state,
     )
     assert api.get_preview_hotkey_state()["sizable"] == [
         "Aiga Otsolen",

@@ -186,6 +186,254 @@ def confirm(r):
     picker._confirm()
 
 
+@pytest.mark.parametrize("failure", [None, "native", "save"])
+def test_available_enable_prepares_hidden_before_save_and_promotes(rig, failure):
+    disabled = replace(DEFINITION, enabled=False)
+    r = rig({"Alice": disabled})
+    roster(r, 1, client())
+    if failure == "native":
+        r.native.fail = "register"
+    r.transaction.fail = failure == "save"
+    r.transaction.release.clear()
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    receipt = r.controller.request("enabled", "Alice", True, token)
+    if failure == "native":
+        assert not receipt["pending"] and receipt["error"]
+        assert not r.transaction.writes
+        assert deserialize(r.store.snapshot()["definitions"])["Alice"] == disabled
+        return
+    assert r.transaction.entered.wait(5)
+    candidate = r.controller._temporary.candidate.window
+    assert candidate.hidden and "Alice" not in r.controller.live
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"] == disabled
+    r.transaction.release.set()
+    finish(r)
+    result = r.store.snapshot()["operations"][token.operation_id]
+    assert result["persisted"] is (failure is None)
+    if failure == "save":
+        assert candidate.hwnd is None
+        assert deserialize(r.store.snapshot()["definitions"])["Alice"] == disabled
+    else:
+        assert r.controller.live["Alice"].window is candidate and not candidate.hidden
+        assert len([c for c in r.native.events if c[0] == "register"]) == 1
+
+
+@pytest.mark.parametrize("admitted", [False, True])
+@pytest.mark.parametrize("loss", ["session", "stop"])
+def test_available_enable_loss_obeys_admission(rig, admitted, loss):
+    disabled = replace(DEFINITION, enabled=False)
+    r = rig({"Alice": disabled})
+    roster(r, 1, client())
+    if admitted:
+        r.transaction.release.clear()
+    else:
+        r.transaction.lock.acquire()
+    try:
+        token = r.store.begin("Alice", epoch=1, session=client().session)
+        r.controller.request("enabled", "Alice", True, token)
+        assert (r.transaction.entered if admitted else r.transaction.attempted).wait(5)
+        candidate = r.controller._temporary.candidate.window
+        if loss == "session":
+            roster(r, 2, client(serial=2))
+        else:
+            r.controller.begin_stop(1)
+        assert candidate.hwnd is None
+    finally:
+        r.transaction.release.set()
+        if not admitted:
+            r.transaction.lock.release()
+    finish(r)
+    state = r.store.snapshot()
+    assert state["operations"][token.operation_id]["persisted"] is admitted
+    assert state["definitions"]["Alice"]["enabled"] is admitted
+    assert all(live.window is not candidate for live in r.controller.live.values())
+
+
+def test_cap_full_refuses_offline_enable_on_pump(rig):
+    names = [f"Pilot {i}" for i in range(8)]
+    r = rig(
+        {
+            **dict.fromkeys(names, DEFINITION),
+            "Offline": replace(DEFINITION, enabled=False),
+        }
+    )
+    roster(r, 1, *(client(name, hwnd=20 + i) for i, name in enumerate(names)))
+    token, receipt = request(r, "enabled", "Offline", True)
+    finish(r)
+    assert not receipt["pending"] and "limit" in receipt["error"].lower()
+    assert not r.store.snapshot()["operations"][token.operation_id]["persisted"]
+    assert not r.transaction.writes and len(r.controller.live) == 8
+
+
+def test_offline_enable_reserves_eventual_capacity_against_arrival_and_selection(rig):
+    names = [f"Pilot {i}" for i in range(7)]
+    r = rig(
+        {
+            **dict.fromkeys([*names, "Arrival"], DEFINITION),
+            "Offline": replace(DEFINITION, enabled=False),
+        }
+    )
+    current = [client(name, hwnd=20 + i) for i, name in enumerate(names)]
+    roster(r, 1, *current)
+    r.transaction.release.clear()
+    token, _ = request(r, "enabled", "Offline", True)
+    assert r.transaction.entered.wait(5)
+    roster(r, 2, *current, client("Arrival", hwnd=40), client("Selecting", hwnd=41))
+    assert len(r.controller.live) == 7
+    _, refused = request(r, "select", "Selecting")
+    assert not refused["pending"] and "limit" in refused["error"].lower()
+    r.transaction.release.set()
+    finish(r)
+    assert r.store.snapshot()["operations"][token.operation_id]["persisted"]
+    assert len(r.controller.live) == 8
+
+
+def test_enable_candidate_keeps_monitor_rescue_unsaved(rig):
+    disabled = replace(DEFINITION, enabled=False, window=Rect(5000, 5000, 320, 160))
+    r = rig({"Alice": disabled})
+    roster(r, 1, client())
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    r.controller.request("enabled", "Alice", True, token)
+    finish(r)
+    assert r.controller.live["Alice"].window.rect == Rect(1600, 920, 320, 160)
+    assert (
+        deserialize(r.store.snapshot()["definitions"])["Alice"].window
+        == disabled.window
+    )
+    assert len(r.transaction.writes) == 1
+
+
+def test_enabling_shares_temporary_slot_and_reports_saving_not_selecting(rig):
+    r = rig({"Alice": replace(DEFINITION, enabled=False)})
+    roster(r, 1, client(), client("Bob", hwnd=20))
+    r.transaction.release.clear()
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    r.controller.request("enabled", "Alice", True, token)
+    assert r.transaction.entered.wait(5)
+    assert r.states[-1]["statuses"]["Alice"] == "saving"
+    _, receipt = request(r, "select", "Bob")
+    assert not receipt["pending"] and "another crop" in receipt["error"].lower()
+    assert r.controller.picker is None and len(r.native.thumbnails) == 1
+    r.transaction.release.set()
+    finish(r)
+    assert r.controller.live["Alice"].window.hwnd is not None
+
+
+def test_enable_setup_failure_never_announces_a_picker(rig):
+    r = rig({"Alice": replace(DEFINITION, enabled=False)})
+    roster(r, 1, client())
+    r.native.fail = "register"
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    r.controller.request("enabled", "Alice", True, token)
+    assert all(state["statuses"].get("Alice") != "selecting" for state in r.states)
+
+
+def test_enable_invalid_current_source_preserves_disabled_definition(rig):
+    disabled = replace(DEFINITION, enabled=False)
+    r = rig({"Alice": disabled})
+    roster(r, 1, client())
+    r.native.sources[16] = (20, 20)
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    receipt = r.controller.request("enabled", "Alice", True, token)
+    assert not receipt["pending"] and "reselect" in receipt["error"].lower()
+    assert not r.transaction.writes and not r.native.thumbnails
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"] == disabled
+
+
+def test_native_enable_reservation_refuses_offline_enable_before_publication(rig):
+    names = [f"Pilot {i}" for i in range(7)]
+    r = rig(
+        {
+            **dict.fromkeys(names, DEFINITION),
+            "Alice": replace(DEFINITION, enabled=False),
+            "Offline": replace(DEFINITION, enabled=False),
+        }
+    )
+    roster(r, 1, client(), *(client(name, hwnd=20 + i) for i, name in enumerate(names)))
+    r.transaction.release.clear()
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    r.controller.request("enabled", "Alice", True, token)
+    assert r.transaction.entered.wait(5)
+    _, receipt = request(r, "enabled", "Offline", True)
+    assert not receipt["pending"] and "limit" in receipt["error"].lower()
+    assert len(r.native.thumbnails) == 8 and r.controller.picker is None
+    r.transaction.release.set()
+    finish(r)
+    assert not r.store.snapshot()["definitions"]["Offline"]["enabled"]
+    assert r.store.snapshot()["definitions"]["Alice"]["enabled"]
+
+
+@pytest.mark.parametrize("admitted", [False, True])
+def test_enable_candidate_failure_cancels_only_before_admission(rig, admitted):
+    r = rig({"Alice": replace(DEFINITION, enabled=False)})
+    roster(r, 1, client())
+    if admitted:
+        r.transaction.release.clear()
+    else:
+        r.transaction.lock.acquire()
+    try:
+        token = r.store.begin("Alice", epoch=1, session=client().session)
+        r.controller.request("enabled", "Alice", True, token)
+        assert (r.transaction.entered if admitted else r.transaction.attempted).wait(5)
+        candidate = r.controller._temporary.candidate.window
+        r.native.fail = "update"
+        candidate.move(Rect(20, 30, 500, 200))
+        assert candidate.hwnd is None
+        r.native.fail = None
+    finally:
+        r.transaction.release.set()
+        if not admitted:
+            r.transaction.lock.release()
+    finish(r)
+    state = r.store.snapshot()
+    assert state["operations"][token.operation_id]["persisted"] is admitted
+    assert state["definitions"]["Alice"]["enabled"] is admitted
+    assert not r.controller.live
+    before = r.native.next_thumbnail
+    roster(r, 2, client())
+    assert r.native.next_thumbnail == before
+
+
+def test_stopping_refusal_does_not_replace_admitted_enable_receipt(rig):
+    r = rig({"Alice": replace(DEFINITION, enabled=False)})
+    roster(r, 1, client())
+    r.transaction.release.clear()
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    r.controller.request("enabled", "Alice", True, token)
+    assert r.transaction.entered.wait(5)
+    r.controller.begin_stop(1)
+    receipt = r.controller.request("enabled", "Alice", True, token)
+    assert receipt["pending"] and receipt["error"] is None
+    r.transaction.release.set()
+    finish(r)
+    assert r.store.snapshot()["operations"][token.operation_id]["persisted"]
+
+
+def test_queued_enable_does_not_keep_the_committed_disabled_window_visible(rig):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    old = r.controller.live["Alice"].window
+    r.transaction.release.clear()
+    request(r, "enabled", value=False)
+    assert r.transaction.entered.wait(5)
+    token = r.store.begin("Alice", epoch=1, session=client().session)
+    r.controller.request("enabled", "Alice", True, token)
+    r.transaction.release.set()
+    disabled_result = r.completions.get(timeout=5)
+    assert disabled_result.persisted
+    r.transaction.entered.clear()
+    r.transaction.release.clear()
+    r.controller.complete(disabled_result)
+    assert r.transaction.entered.wait(5)
+    assert old.hwnd is None
+    assert "Alice" not in r.controller.live
+    assert r.controller._temporary.candidate.window.hidden
+    assert not r.store.snapshot()["definitions"]["Alice"]["enabled"]
+    r.transaction.release.set()
+    finish(r)
+    assert r.controller.live["Alice"].window is not old
+
+
 def test_host_batch_continues_same_owner_after_picker_preparation_exception(
     rig, monkeypatch
 ):

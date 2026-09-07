@@ -471,10 +471,20 @@ def test_no_shipped_module_imports_the_crop_probe():
     """Packaging exclusion is only half of it: a `wingman/` module that
     imported the probe would drag it into the frozen build through
     PyInstaller's own dependency analysis, spec exclusion or not."""
+    # Match the actual probe modules, not semantic bridge endpoints such as
+    # get_preview_crop_state, which share the feature's vocabulary.
+    probes = "|".join(
+        re.escape(path.stem)
+        for path in (
+            MANUAL_PREVIEW_CROP_HARNESS,
+            MANUAL_PREVIEW_CROP_MODEL,
+            MANUAL_PREVIEW_CROP_WINDOWS,
+        )
+    )
     offenders = [
         path.relative_to(ROOT)
         for path in (ROOT / "wingman").rglob("*.py")
-        if "preview_crop_" in path.read_text(encoding="utf-8")
+        if re.search(probes, path.read_text(encoding="utf-8"))
     ]
     assert offenders == []
 

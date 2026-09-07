@@ -44,6 +44,7 @@ class _Request:
     value: object
     token: CropToken
     submitted: bool = False
+    reserved: bool = False
     candidate: _Live | None = None
     definition: CropDefinition | None = None
 
@@ -113,6 +114,7 @@ class CropController:
             and name in self.sessions
             and self.live[name].client.session == self.sessions[name].session
         }
+        pinned.update(op.name for op in self._active.values() if op.reserved)
         op = self._temporary
         if op is not None:
             pinned.add(op.name)
@@ -230,6 +232,12 @@ class CropController:
                     live.generation,
                     "native-failed",
                 )
+            # An enable candidate failing while its write waits for admission
+            # must not save a preference that never passed native validation.
+            # cancel refuses admitted writes and leaves their outcomes intact.
+            op = self._temporary
+            if op is not None and op.action == "enabled" and op.candidate is live:
+                self._cancel_token(op.token, "Could not prepare the crop display")
             # CropWindow already logged context, including HWNDs. Never send
             # that internal diagnostic through the semantic state event.
             self._emit()
@@ -300,8 +308,8 @@ class CropController:
             return self._receipt(token)
         op = _Request(action, name, value, token)
         if self._stopping:
-            self._cancel_token(token)
-            return self._receipt(token, "Previews are stopping")
+            self._cancel_token(token, "Previews are stopping")
+            return self._receipt(token)
         active = self._active.get(name)
         if active is not None:
             waiting = self._waiting.setdefault(name, deque())
@@ -328,7 +336,7 @@ class CropController:
         self._emit()
         return self._receipt(token)
 
-    def _receipt(self, token, error=None):
+    def _receipt(self, token):
         outcome = self._store.snapshot()["operations"].get(token.operation_id)
         if outcome is None:
             # This reports unavailable receipt history, not a replacement
@@ -338,13 +346,11 @@ class CropController:
                 "pending": False,
                 "applied": False,
                 "persisted": False,
-                "error": error or "Crop operation result expired; refresh crop state",
+                "error": "Crop operation result expired; refresh crop state",
             }
         result = dict(outcome)
         result.pop("name")
         result.pop("revision")
-        if error is not None:
-            result["error"] = error
         return result
 
     def _start(self, op):
@@ -361,16 +367,86 @@ class CropController:
                 self._discard_prepared(op)
             raise
 
+    def _capacity_full(self, name):
+        reserved = set(self.live) | {
+            op.name for op in self._active.values() if op.reserved
+        }
+        if self._temporary is not None:
+            reserved.add(self._temporary.name)
+        return name not in reserved and len(reserved) >= MAX_LIVE_CROPS
+
+    def _prepare_enable(self, op):
+        definition = deserialize(self._store.snapshot()["definitions"]).get(op.name)
+        if definition is None:
+            self._discard_prepared(op, "No saved crop for this character")
+            return
+        # _advance runs before reconciliation. If this follows a successful
+        # disable, retire its now-unauthorized window before preparing the new
+        # enable; only the hidden candidate may exist while that enable saves.
+        if not definition.enabled:
+            old = self.live.pop(op.name, None)
+            if old is not None:
+                old.window.close()
+        if self._capacity_full(op.name):
+            self._discard_prepared(op, "Crop limit reached; disable another crop first")
+            return
+        op.reserved = op.name not in self.live
+        # Availability is fixed at host acceptance. A later arrival cannot
+        # convert an offline configuration edit into a native-dependent write.
+        if definition.enabled or op.token.session is None:
+            self._submit(op)
+            return
+        if not self._authorized(op):
+            self._discard_prepared(op, "Crop source expired")
+            return
+        if self._temporary is not None:
+            self._discard_prepared(op, "Another crop is being selected or saved")
+            return
+        client = self.sessions[op.name]
+        source = source_to_pixels(
+            definition.source, self._read_client_size(client) or (0, 0)
+        )
+        if source is None:
+            self._discard_prepared(
+                op, "Saved region is too small for this client; reselect it"
+            )
+            return
+        monitors = self._monitors()
+        if not monitors:
+            self._discard_prepared(op, "No display is available for the crop")
+            return
+        self._temporary = op
+        op.candidate = _Live(client, op.token.generation, definition.source)
+        self._make_window(
+            op.name,
+            op.candidate,
+            source,
+            clamp_to_monitors(definition.window, monitors),
+            hidden=True,
+            candidate=True,
+        )
+        if op.candidate.failed:
+            self._discard_prepared(op, "Could not prepare the crop display")
+        elif not self._authorized(op):
+            self._discard_prepared(op, "Crop source expired")
+        else:
+            self._submit(op)
+
     def _prepare(self, op):
+        if op.action == "enabled" and op.value:
+            self._prepare_enable(op)
+            return
         if op.action != "select":
             self._submit(op)
             return
-        if (
-            not self._authorized(op)
-            or self._temporary is not None
-            or (op.name not in self.live and len(self.live) >= MAX_LIVE_CROPS)
-        ):
-            self._discard_prepared(op)
+        if not self._authorized(op):
+            self._discard_prepared(op, "Crop source expired")
+            return
+        if self._capacity_full(op.name):
+            self._discard_prepared(op, "Crop limit reached; disable another crop first")
+            return
+        if self._temporary is not None:
+            self._discard_prepared(op, "Another crop is being selected or saved")
             return
         monitors = self._monitors()
         if not monitors:
@@ -449,9 +525,9 @@ class CropController:
         if op.candidate is not None and op.candidate.window is not None:
             op.candidate.window.close()
 
-    def _cancel_token(self, token):
+    def _cancel_token(self, token, reason="Crop operation canceled"):
         try:
-            return self._store.cancel(token)
+            return self._store.cancel(token, reason)
         except ValueError:
             # All tokens here were issued by this store. It only forgets
             # terminal outcomes, never pending work; ingress may have canceled
@@ -475,8 +551,8 @@ class CropController:
         else:
             self._discard_prepared(op)
 
-    def _discard_prepared(self, op):
-        self._cancel_token(op.token)
+    def _discard_prepared(self, op, reason="Crop operation canceled"):
+        self._cancel_token(op.token, reason)
         self._close_candidate(op)
         if self._temporary is op:
             self._temporary = None
@@ -538,7 +614,13 @@ class CropController:
                 old = self.live.get(op.name)
                 # The actual native destination is newer than the worker's
                 # publication if the old crop moved while saving or delivering.
-                destination = old.window.rect if old is not None else definition.window
+                destination = (
+                    candidate.window.rect
+                    if op.action == "enabled"
+                    else old.window.rect
+                    if old is not None
+                    else definition.window
+                )
                 candidate.window.move(destination)
                 candidate.window.set_source_rect(source)
                 if not candidate.failed:
@@ -546,7 +628,9 @@ class CropController:
                         old.window.close()
                     self.live[op.name] = candidate
                     self._degraded.pop(op.name, None)
-                    if destination != definition.window:
+                    # Enabling may temporarily rescue an off-screen placement;
+                    # only user movement may change its persisted arrangement.
+                    if op.action == "select" and destination != definition.window:
                         self._store.record_geometry(
                             op.name,
                             candidate.generation,
@@ -590,7 +674,9 @@ class CropController:
         }
         if self._temporary is not None:
             statuses[self._temporary.name] = (
-                "saving" if self._temporary.submitted else "selecting"
+                "saving"
+                if self._temporary.submitted or self._temporary.action == "enabled"
+                else "selecting"
             )
         state.update(
             statuses=statuses,
@@ -640,7 +726,7 @@ class CropController:
         )
         self._waiting.clear()
         for op in waiting:
-            if op.action == "select":
+            if op.action == "select" or op.token.session is not None:
                 self._cancel_token(op.token)
             else:
                 self._submit(op)

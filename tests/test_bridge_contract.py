@@ -107,6 +107,21 @@ def test_crop_state_publisher_has_a_literal_allowlisted_handler():
     assert "onPreviewCrops" in allowlist()
 
 
+@pytest.mark.parametrize(
+    "method, parameters",
+    [
+        ("select_preview_crop", ["self", "name"]),
+        ("set_preview_crop_enabled", ["self", "name", "enabled"]),
+        ("remove_preview_crop", ["self", "name"]),
+        ("get_preview_crop_state", ["self"]),
+    ],
+)
+def test_crop_bridge_accepts_only_semantic_arguments(method, parameters):
+    from wingman.ui.api import Api
+
+    assert list(inspect.signature(getattr(Api, method)).parameters) == parameters
+
+
 def test_the_eve_settings_route_registers_all_three_of_its_pushes():
     """Named explicitly rather than left to the sweep above, because this
     is the route the sweep was written for and a regression here is

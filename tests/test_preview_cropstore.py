@@ -79,6 +79,22 @@ def startup_failure(request, monkeypatch):
         executor.shutdown(wait=False)
 
 
+def test_specific_cancellation_reason_does_not_overwrite_terminal_outcome(make_store):
+    store, _ = make_store(initial={"Alice": definition()})
+    token = store.begin("Alice", epoch=0, session=None)
+    assert store.cancel(token, "Crop limit reached")
+    assert not store.cancel(token, "Later refusal")
+    assert (
+        store.snapshot()["operations"][token.operation_id]["error"]
+        == "Crop limit reached"
+    )
+    success = store.begin("Alice", epoch=0, session=None)
+    assert store.set_enabled(success, False).result(3).persisted
+    before = store.snapshot()
+    assert not store.cancel(success, "Too late")
+    assert store.snapshot() == before
+
+
 def test_host_reuses_incomplete_offline_drain_on_repeated_stop(make_store, monkeypatch):
     from wingman.preview.host import PreviewHost
 

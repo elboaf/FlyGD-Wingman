@@ -815,6 +815,11 @@ class _FakeHost:
     def layout_entries(self):
         return {}
 
+    def crop_state(self):
+        from wingman.preview.host import PreviewHost
+
+        return PreviewHost(on_layout_changed=lambda *args: None).crop_state()
+
     def start(self):
         self.started = True
         self.is_running = True

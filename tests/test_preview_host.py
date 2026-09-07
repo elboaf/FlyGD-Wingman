@@ -58,12 +58,13 @@ def crop_pump(monkeypatch):
 
     opened = []
 
-    def make(*, primary_flush=None, before_window=None):
+    def make(*, primary_flush=None, before_window=None, initial=None):
         native = Resources()
-        transaction = Transaction({"Alice": DEFINITION})
+        initial = {"Alice": DEFINITION} if initial is None else initial
+        transaction = Transaction(initial)
         store = CropStore(
             transaction.update,
-            {"Alice": DEFINITION},
+            initial,
             executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
             flush_primary=primary_flush,
             debounce_s=100,
@@ -166,6 +167,64 @@ def crop_pump(monkeypatch):
             r.host.stop(timeout=5, final=True)
         finally:
             r.store.close().result(5)
+
+
+@pytest.mark.parametrize("available_at_acceptance", [False, True])
+def test_enable_admission_uses_acceptance_session_not_delivery_roster(
+    crop_pump, monkeypatch, available_at_acceptance
+):
+    from tests.test_preview_cropcontroller import DEFINITION, client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = crop_pump(initial={"Alice": replace(DEFINITION, enabled=False)})
+    h = r.host
+    if not available_at_acceptance:
+        h.apply_roster(RosterSnapshot(2, ()))
+    h.start()
+    original = h._post
+    monkeypatch.setattr(
+        h,
+        "_post",
+        lambda msg, *args: (
+            None if msg == host.win32.WM_APP_CROP_COMMAND else original(msg, *args)
+        ),
+    )
+    receipt = h.request_crop("enabled", "Alice", True)
+    h.apply_roster(RosterSnapshot(3, (client(serial=2),)))
+    r.call(lambda: h._apply_crop_commands(r.native.lib))
+    r.store.drain().result(5)
+    r.call(lambda: None)
+    state = h.crop_state()
+    assert (
+        state["operations"][receipt["operation_id"]]["persisted"]
+        is not available_at_acceptance
+    )
+    assert state["definitions"]["Alice"]["enabled"] is not available_at_acceptance
+    assert not state["operations"][receipt["operation_id"]]["pending"]
+
+
+def test_disable_then_enable_prepares_candidate_in_same_owner_order(crop_pump):
+    r = crop_pump()
+    h = r.host
+    h.start()
+    r.transaction.release.clear()
+    first = h.request_crop("enabled", "Alice", False)
+    assert r.transaction.entered.wait(5)
+    old = r.call(lambda: h._crop_controller.live["Alice"].window)
+    second = h.request_crop("enabled", "Alice", True)
+    r.call(lambda: None)
+    assert len(r.native.thumbnails) == 1
+    r.transaction.release.set()
+    r.store.drain().result(5)
+    r.call(lambda: None)
+    r.store.drain().result(5)
+    r.call(lambda: None)
+    state = h.crop_state()
+    assert state["operations"][first["operation_id"]]["persisted"]
+    assert state["operations"][second["operation_id"]]["persisted"]
+    assert old.hwnd is None
+    assert r.call(lambda: h._crop_controller.live["Alice"].window) is not old
+    assert [e[0] for e in r.native.events].count("register") == 2
 
 
 def test_crop_shutdown_pumps_while_storage_is_blocked_and_cleans_only_once(crop_pump):
@@ -514,8 +573,11 @@ def test_offline_submission_keeps_ownership_through_start_and_final_stop(
     assert not h.is_running
     state = h.crop_state()
     assert state["operations"][receipts[0]["operation_id"]]["persisted"]
-    assert state["operations"][later["operation_id"]]["persisted"]
-    assert state["definitions"]["Alice"]["enabled"]
+    # The later enable was accepted with an available source after start.
+    # Unlike the offline disable, its unadmitted native work is now fenced.
+    assert not state["operations"][later["operation_id"]]["persisted"]
+    assert state["operations"][later["operation_id"]]["error"]
+    assert not state["definitions"]["Alice"]["enabled"]
 
 
 def test_offline_stop_tail_cannot_stop_replacement_or_lose_its_result(

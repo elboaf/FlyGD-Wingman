@@ -693,9 +693,12 @@ class PreviewHost:
                 return self._crop_refused("Previews are stopping")
             running = self._starting or self.is_running
             session = None
-            if action == "select":
-                if not running:
-                    return self._crop_refused("Enable previews before selecting a crop")
+            if action == "select" and not running:
+                return self._crop_refused("Enable previews before selecting a crop")
+            # A positive enable can follow an accepted disable still waiting on
+            # native completion. Bind at ingress, not from tentative settings or
+            # the later pump roster. None deliberately stays configuration-only.
+            if running and (action == "select" or (action == "enabled" and value)):
                 snapshot = self._crop_roster
                 session = (
                     next(
@@ -705,7 +708,7 @@ class PreviewHost:
                     if snapshot
                     else None
                 )
-                if session is None:
+                if action == "select" and session is None:
                     return self._crop_refused("Character is offline")
             token = self._crop_store.begin(
                 name, epoch=self._crop_epoch, session=session
@@ -746,7 +749,7 @@ class PreviewHost:
         try:
             while True:
                 for action, name, value, token in commands:
-                    if action == "select":
+                    if action == "select" or token.session is not None:
                         self._cancel_crop_token(token)
                     else:
                         future = (
@@ -3103,7 +3106,7 @@ class PreviewHost:
         # those first; append still-undelivered configuration before the final
         # barrier. Source commands were fenced and must never open a picker.
         for action, name, value, token in commands:
-            if action == "select":
+            if action == "select" or token.session is not None:
                 self._cancel_crop_token(token)
             else:
                 pending = (

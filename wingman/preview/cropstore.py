@@ -203,12 +203,12 @@ class CropStore:
             raise ValueError("Unknown crop operation")
         return operation
 
-    def cancel(self, token: CropToken) -> bool:
+    def cancel(self, token: CropToken, reason: str = "Crop operation canceled") -> bool:
         with self._condition:
             operation = self._operation(token)
             if operation.admitted or operation.result is not None:
                 return False
-            result = self._finish_locked(operation, "Crop operation canceled")
+            result = self._finish_locked(operation, reason)
         operation.future.set_result(result)
         return True
 

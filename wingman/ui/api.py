@@ -5009,6 +5009,85 @@ class Api:
             if self._usable_preview_character(name)
         }
 
+    def get_preview_crop_state(self) -> dict:
+        """Committed crop truth and retained outcomes, including missed pushes.
+
+        The root revision orders HOST delivery, not persistence. Never rebuild
+        it from settings: settings.update can expose a tentative crop dictionary.
+        """
+        if self._preview_host is not None:
+            return self._preview_host.crop_state()
+        return dict(
+            revision=0,
+            definitions={},
+            operations={},
+            statuses={},
+            live_count=0,
+            cap=preview_host_mod.MAX_LIVE_CROPS,
+            runtime_enabled=False,
+            busy=False,
+        )
+
+    def select_preview_crop(self, name) -> dict:
+        """Select/reselect using the host's current named session, never an HWND."""
+        return self._request_preview_crop("select", name)
+
+    def set_preview_crop_enabled(self, name, enabled) -> dict:
+        return self._request_preview_crop("enabled", name, enabled)
+
+    def remove_preview_crop(self, name) -> dict:
+        return self._request_preview_crop("remove", name)
+
+    def _request_preview_crop(self, action, name, value=None) -> dict:
+        def refused(error):
+            return dict(self._field_refused(error), pending=False, operation_id=None)
+
+        if (
+            not self._usable_preview_character(name)
+            or name != name.strip()
+            or not name.isprintable()
+        ):
+            return refused("Choose a named character for the crop.")
+        if action == "enabled" and type(value) is not bool:
+            return refused("Crop enabled must be a boolean.")
+        host = self._preview_host
+        if host is None:
+            return refused("Crops are unavailable.")
+        if host.is_stopping:
+            return refused("Previews are stopping.")
+        state = host.crop_state()
+        definition = state["definitions"].get(name)
+        if action != "select" and definition is None:
+            return refused("No saved crop for this character.")
+        pending = any(
+            op["name"] == name and op["pending"] for op in state["operations"].values()
+        )
+        if action == "select" and not state["runtime_enabled"]:
+            return refused("Enable previews before selecting a crop.")
+        if (
+            (action == "select" or (action == "enabled" and value))
+            and state["live_count"] >= state["cap"]
+            and state["statuses"].get(name) not in ("live", "selecting", "saving")
+        ):
+            return refused("Crop limit reached; disable another crop first.")
+        if (
+            action == "enabled"
+            and definition["enabled"] == value
+            and not pending
+            and (
+                not value
+                or not state["runtime_enabled"]
+                or state["statuses"].get(name) == "live"
+            )
+        ):
+            # Earlier same-owner commands have tokens even before the pump sees
+            # them. A matching committed value alone is NOT a last-intent no-op.
+            # Non-live runtime enables also need the pump's reservation check.
+            return dict(self._field_ok(), pending=False, operation_id=None)
+        # This cached precheck is only a fast refusal. The pump rechecks native
+        # capacity/reservations, and the store owns admission and final outcomes.
+        return host.request_crop(action, name, value)
+
     def get_preview_hotkey_state(self) -> dict:
         """Everything the bind list needs, in one read.
 
@@ -5072,6 +5151,9 @@ class Api:
             # settings may retain a valid offline layout after its roster entry
             # aged out, and that geometry is still useful to copy.
             "layout_sources": layout_sources,
+            # One section hydration, with the same revised recovery snapshot as
+            # the dedicated getter and onPreviewCrops. No second page round trip.
+            "crops": self.get_preview_crop_state(),
             # Which characters set_preview_size can actually succeed for.
             #
             # It refuses outright for a character that is neither running
