@@ -1683,6 +1683,34 @@ def test_successful_noncopy_completion_clears_copy_followup():
     )
 
 
+def test_formation_recovery_has_secondary_reload_and_persistent_live_status():
+    reload_button = re.search(r'<button[^>]+id="fm-reload"[^>]*>', HTML)
+    assert reload_button and 'class="btn"' in reload_button.group(0)
+    status = re.search(r'<span[^>]+id="fm-save-status"[^>]*>', HTML)
+    assert status and 'role="status"' in status.group(0)
+    assert "hidden" not in status.group(0)
+    assert "#fm-save-status" in CSS and "overflow-wrap: anywhere" in CSS
+
+
+def test_formation_sharing_has_secondary_paste_without_clipping_text_or_names():
+    paste = re.search(r'<button[^>]+id="fm-paste"[^>]*>', HTML)
+    assert paste and 'class="btn"' in paste.group(0)
+    for ident in ("fm-name", "fm-import-text"):
+        field = re.search(r'<(?:input|textarea)[^>]+id="' + ident + r'"[^>]*>', HTML)
+        assert field and "maxlength" not in field.group(0)
+    assert 'aria-describedby="fm-import-status"' in HTML
+
+
+def test_formation_sharing_has_secondary_copy_and_persistent_live_status():
+    copy_button = re.search(r'<button[^>]+id="fm-copy"[^>]*>', HTML)
+    assert copy_button and 'class="btn"' in copy_button.group(0)
+    assert "disabled" in copy_button.group(0)
+    status = re.search(r'<span[^>]+id="fm-share-status"[^>]*>', HTML)
+    assert status and 'role="status"' in status.group(0)
+    assert "hidden" not in status.group(0)
+    assert "#fm-share-status" in CSS and "overflow-wrap: anywhere" in CSS
+
+
 def test_formation_commit_keeps_the_eve_closed_requirement_next_to_save():
     commit = re.search(r'<div class="row" id="fm-commit">(.*?)</div>', HTML, re.DOTALL)
     assert commit and "Saving needs every EVE client closed." in commit.group(1)

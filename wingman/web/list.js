@@ -265,14 +265,14 @@
       host.appendChild(document.createTextNode(
         'No recording folder is set yet.'));
       host.appendChild(WM.make('div', 'where',
-        'Choose one in Settings \u203A Folders.'));
+        'Choose one in Settings \u203A Uploading.'));
       return;
     }
     host.appendChild(document.createTextNode('No recordings in '));
     host.appendChild(WM.make('span', 'path', recordingDir));
     host.appendChild(WM.make('div', 'where',
       'Open folder below to check it, or change it in '
-      + 'Settings \u203A Folders.'));
+      + 'Settings \u203A Uploading.'));
   }
 
   document.addEventListener('wm:settings', function (ev) {

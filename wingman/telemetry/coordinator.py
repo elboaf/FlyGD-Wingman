@@ -408,7 +408,10 @@ class TelemetryCoordinator:
         """
         return result is not False
 
-    def _reconcile_discovery(self, wanted: bool) -> None:
+    def _remaining_timeout(self, deadline: float) -> float:
+        return max(0.0, deadline - self._clock())
+
+    def _reconcile_discovery(self, wanted: bool, deadline: float | None = None) -> None:
         with self._lock:
             started = self._discovery_started
             unsub = self._discovery_unsub
@@ -421,7 +424,12 @@ class TelemetryCoordinator:
                 unsub()
                 with self._lock:
                     self._discovery_unsub = None
-            if not self._completed(self._discovery.stop()):
+            result = (
+                self._discovery.stop()
+                if deadline is None
+                else self._discovery.stop(timeout=self._remaining_timeout(deadline))
+            )
+            if not self._completed(result):
                 return
             with self._lock:
                 self._discovery_started = False
@@ -438,7 +446,9 @@ class TelemetryCoordinator:
                 self._discovery_started = True
                 self._discovery_unsub = unsub
 
-    def _reconcile_stream(self, folder: Path | None) -> None:
+    def _reconcile_stream(
+        self, folder: Path | None, deadline: float | None = None
+    ) -> None:
         with self._lock:
             current = self._stream_folder
             unsub = self._stream_unsub
@@ -451,7 +461,12 @@ class TelemetryCoordinator:
                 unsub()
                 with self._lock:
                     self._stream_unsub = None
-            if not self._completed(self._stream.stop()):
+            result = (
+                self._stream.stop()
+                if deadline is None
+                else self._stream.stop(timeout=self._remaining_timeout(deadline))
+            )
+            if not self._completed(result):
                 return
             with self._lock:
                 self._stream_folder = None
@@ -691,22 +706,24 @@ class TelemetryCoordinator:
         """Detach consumers, stop workers, and report bounded completion.
 
         A timed-out producer remains authoritative by design. Shutdown gets
-        one retry before the dispatcher is stopped; if blocking external I/O
+        one retry before the dispatcher is stopped, sharing one timeout budget
+        across both attempts and the dispatcher join. If blocking external I/O
         still prevents exit, ``False`` and the error log make that state
         observable rather than pretending teardown completed.
         """
+        deadline = self._clock() + max(0.0, timeout)
         with self._reconcile_lock:
             services_stopped = False
             for _ in range(2):
-                self._reconcile_discovery(False)
-                self._reconcile_stream(None)
+                self._reconcile_discovery(False, deadline=deadline)
+                self._reconcile_stream(None, deadline=deadline)
                 with self._lock:
                     services_stopped = (
                         not self._discovery_started and self._stream_folder is None
                     )
                 if services_stopped:
                     break
-            self._stop_dispatcher(timeout)
+            self._stop_dispatcher(self._remaining_timeout(deadline))
             with self._lifecycle_lock:
                 dispatcher_stopped = self._worker is None or not self._worker.is_alive()
             completed = services_stopped and dispatcher_stopped

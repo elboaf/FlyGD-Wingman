@@ -3221,14 +3221,26 @@ def test_every_bridge_handler_has_exactly_one_owner():
 def test_the_formation_editor_converts_units_only_at_the_boundary():
     """The bridge speaks meters; the editor's fields are km and AU.
 
-    Both conversions live in load() and save(), so a third one anywhere
-    else is a double conversion -- and the failure is silent, because a
-    formation that comes back 1000x out still renders as a formation.
+    Ordinary reads normalize through fromMeters, sharing through fromSharedMeters;
+    both Save and Copy reuse toMeters. No caller may convert a second time.
+    Executable page tests exercise sharing, Save and ordinary reload cycles.
     """
     js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
     assert js.count("* KM") >= 1 and js.count("/ KM") >= 1
     assert js.count("* AU") >= 1 and js.count("/ AU") >= 1
     assert "149597870700" in js
+    copy = js[js.index("function copySelected(") : js.index("function saveStatus(")]
+    assert ".map(toMeters)" in copy
+    assert "eve_settings_export_formations" in copy
+    assert "eve_settings_save_formations" not in copy
+    assert "state.path" not in copy
+    assert "clipboard.readText" not in js
+    assert ".map(fromSharedMeters)" in js
+
+
+def test_formation_review_hidden_overrides_cover_both_work_and_commit_panes():
+    for ident in ("fm-editor-work", "fm-commit", "fm-import-work", "fm-import-commit"):
+        assert re.search(r"#" + ident + r"\[hidden\][^{]*\{\s*display:\s*none;", CSS)
 
 
 def test_the_formation_editor_guards_both_of_its_async_windows():
@@ -3275,6 +3287,25 @@ def test_the_formation_editor_guards_both_of_its_async_windows():
         "the completion push clears `dirty` without checking whether an "
         "edit landed since the send"
     )
+
+
+def test_formation_completion_guards_identity_before_any_busy_or_baseline_change():
+    js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
+    done = js[js.index("WM.formationsDone =") :]
+    done = done[: done.index("\n  };")]
+    before_busy = done[: done.index("state.busy = false")]
+    for key in (
+        "payload.operation",
+        "payload.request_id",
+        "payload.path",
+        "pendingSave.generation",
+        "WM.current_route",
+    ):
+        assert key in before_busy
+    assert done.index("state.contentRevision = payload.content_revision") < done.index(
+        "revision !== savingAt"
+    )
+    assert "WM.el('fm-save-status').textContent" in js
 
 
 def test_the_alert_rows_offer_exactly_the_flash_speeds_that_exist():

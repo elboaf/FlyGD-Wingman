@@ -61,6 +61,7 @@ from ..eveauth import application as eveauth_application
 from ..evesettings import backup as evesettings_backup
 from ..evesettings import characters as evesettings_characters
 from ..evesettings import codec as evesettings_codec
+from ..evesettings import formation_sharing as _evesettings_formation_sharing
 from ..evesettings import formations as evesettings_formations
 from ..evesettings import identity as evesettings_identity
 from ..evesettings import names as evesettings_names
@@ -8233,8 +8234,8 @@ class Api:
                 }
             try:
                 target = self._eve_account_file(path)
-                document = evesettings_codec.read_document(target)
-                found = evesettings_formations.read_formations(document.doc)
+                snapshot = evesettings_codec.read_snapshot(target)
+                found = evesettings_formations.read_formations(snapshot.document.doc)
             except (ValueError, OSError, evesettings_codec.CodecError) as error:
                 return {"ok": False, "error": str(error)}
             return {
@@ -8242,17 +8243,84 @@ class Api:
                 "path": str(target),
                 "name": self._eve_label(str(target)),
                 "formations": evesettings_formations.to_payload(found),
+                "content_revision": snapshot.content_revision,
+                "sharing_limits": _evesettings_formation_sharing.limits_payload(),
             }
 
-    def eve_settings_save_formations(self, path: str, formations: list) -> bool:
-        return self._eve_begin(
-            self._eve_save_formations_worker, (path, list(formations or []))
+    def eve_settings_export_formations(self, items: list) -> dict:
+        """Prepare selected draft values only; the page owns clipboard outcomes."""
+        try:
+            return {
+                "ok": True,
+                "text": _evesettings_formation_sharing.export_text(items),
+            }
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+
+    def eve_settings_parse_formations(self, text: str, existing_names: list) -> dict:
+        """Review clipboard text against draft names, never against an account file."""
+        try:
+            found = _evesettings_formation_sharing.parse_text(text)
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        return self.eve_settings_validate_formation_import(
+            evesettings_formations.to_payload(found), existing_names
         )
 
-    def _eve_save_formations_worker(self, path: str, items: list) -> None:
-        ok = False
+    def eve_settings_validate_formation_import(
+        self, items: list, existing_names: list
+    ) -> dict:
+        """Revalidate an explicit Add snapshot; no pending Python import session."""
         try:
+            found, conflicts = _evesettings_formation_sharing.prepare_import(
+                items, existing_names
+            )
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        return {
+            "ok": True,
+            "formations": evesettings_formations.to_payload(found),
+            "conflicts": conflicts,
+        }
+
+    def eve_settings_save_formations(
+        self,
+        path: str,
+        formations: list,
+        expected_content_revision: str = "",
+        request_id: str = "",
+    ) -> bool:
+        return self._eve_begin(
+            self._eve_save_formations_worker,
+            (path, formations, expected_content_revision, request_id),
+        )
+
+    def _eve_save_formations_worker(
+        self, path: str, items: list, expected_content_revision: str, request_id: str
+    ) -> None:
+        ok = False
+        committed_revision = ""
+        error_code = ""
+        error_message = ""
+        warnings = []
+        completed_path = path if isinstance(path, str) else ""
+        correlation = ""
+        try:
+            if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
+                raise ValueError(
+                    "A save request needs a request ID of 1 to 128 characters."
+                )
+            correlation = request_id
+            if (
+                not isinstance(expected_content_revision, str)
+                or len(expected_content_revision) != 64
+                or any(c not in "0123456789abcdef" for c in expected_content_revision)
+            ):
+                raise ValueError(
+                    "Reload this account before saving: a content revision is required."
+                )
             target = self._eve_account_file(path)
+            completed_path = str(target)
             wanted = evesettings_formations.from_payload(items)
             evesettings_formations.validate(wanted)
             # Fail closed while a client runs: EVE holds core_*.dat open for
@@ -8262,46 +8330,80 @@ class Api:
             # the running character; this always is the running account.
             try:
                 running = self._eve_client_running_strict()
-            except Exception:
+            except Exception as error:
                 logger.exception("Could not verify that EVE is closed")
-                self._alert(
-                    "error",
-                    "Formations not saved",
-                    "Wingman could not verify that EVE is closed. Close EVE and retry.",
-                )
-                return
+                raise RuntimeError(
+                    "Wingman could not verify that EVE is closed. Close EVE and retry."
+                ) from error
             if running:
-                self._alert(
-                    "error",
-                    "Formations not saved",
-                    "The file is in use. Close EVE and retry.",
+                raise RuntimeError("The file is in use. Close EVE and retry.")
+            snapshot = evesettings_codec.read_snapshot(target)
+            if snapshot.content_revision != expected_content_revision:
+                raise evesettings_codec.ContentChangedError(
+                    "The settings file changed."
                 )
-                return
-            document = evesettings_codec.read_document(target)
             updated = evesettings_formations.write_formations(
-                document.doc, wanted, now=time.time()
+                snapshot.document.doc, wanted, now=time.time()
             )
-            evesettings_codec.write_document(
+            committed_revision = evesettings_codec.write_document(
                 target,
-                evesettings_codec.Document(doc=updated, had_crc=document.had_crc),
+                evesettings_codec.Document(updated, snapshot.document.had_crc),
                 backup=self._eve_auto_backup,
-            )
-            keep = int(self._eve_section().get("auto_keep", 10))
-            self._eve_prune(keep)
-            self._status(
-                f"Saved {len(wanted)} formation(s) to {self._eve_label(str(target))}."
+                expected_content_revision=expected_content_revision,
             )
             ok = True
-        except (ValueError, evesettings_codec.CodecError) as error:
-            self._alert("error", "Formations not saved", str(error))
+            # Publication is final. Housekeeping failures must not invite a
+            # retry of committed edits or erase the baseline the page now owns.
+            try:
+                self._eve_prune(int(self._eve_section().get("auto_keep", 10)))
+            except Exception:
+                logger.exception(
+                    "Could not prune automatic backups after formation save"
+                )
+                warnings.append(
+                    "Formations saved, but automatic backups could not be pruned."
+                )
+            try:
+                self._status(
+                    f"Saved {len(wanted)} formation(s) to {self._eve_label(str(target))}."
+                )
+            except Exception:
+                logger.exception("Could not report formation save status")
+                warnings.append(
+                    "Formations saved, but Wingman could not update its status."
+                )
+        except evesettings_codec.ContentChangedError:
+            error_code = "stale_file"
+            error_message = (
+                "This account's settings changed since you opened them. Nothing was saved. "
+                "Copy the formations you want to keep, then reload the account before pasting them back."
+            )
+        except ValueError as error:
+            error_code = "invalid_request"
+            error_message = str(error)
+        except evesettings_codec.CodecError as error:
+            error_code = "save_failed"
+            error_message = str(error)
         except Exception as error:
             logger.exception("formation save failed")
-            self._alert(
-                "error", "Formations not saved", evesettings_ops.describe(error)
-            )
+            error_code = "save_failed"
+            error_message = evesettings_ops.describe(error)
         finally:
-            self._eve_mutation.release()
-            self._eve_done(ok)
+            try:
+                if not ok:
+                    self._alert("error", "Formations not saved", error_message)
+            finally:
+                self._eve_mutation.release()
+                self._eve_done(
+                    ok,
+                    operation="formations_save",
+                    path=completed_path,
+                    request_id=correlation,
+                    content_revision=committed_revision,
+                    error_code=error_code,
+                    error=error_message,
+                    warning=" ".join(warnings),
+                )
 
     # ---- Shared EVE characters ---
 
@@ -8487,6 +8589,7 @@ class Api:
                 {
                     "kind": "copy",
                     "phase": "complete",
+                    "ticket_id": ticket_id,
                     "operation_id": "",
                     "completed": 0,
                     "total": 0,
@@ -8513,6 +8616,7 @@ class Api:
                     {
                         "kind": "copy",
                         "phase": "complete",
+                        "ticket_id": ticket_id,
                         "operation_id": "",
                         "completed": 0,
                         "total": 0,
@@ -8525,6 +8629,7 @@ class Api:
                 {
                     "kind": "copy",
                     "phase": "complete",
+                    "ticket_id": ticket_id,
                     "operation_id": "",
                     "completed": 0,
                     "total": 0,

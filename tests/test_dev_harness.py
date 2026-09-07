@@ -15,10 +15,14 @@ zero keybind rows, and five sessions verified through it.
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 from wingman import bookmarks
-from wingman.evesettings import identity, selective
+from wingman.evesettings import formation_sharing, identity, selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -125,6 +129,16 @@ def test_fittings_fixture_covers_library_import_and_access_scenarios():
     assert "for (var index = 0; index < 108; index += 1)" in DEV_JS
     assert "fit-conflict-existing" in DEV_JS
     assert "fit-conflict-source" in DEV_JS
+
+
+def test_fittings_copy_progress_carries_the_consumed_ticket_id():
+    start = DEV_JS.index("api.fittings_start_copy = function (ticketId)")
+    end = DEV_JS.index("api.fittings_cancel_copy = function", start)
+    body = DEV_JS[start:end]
+
+    assert body.count("ticket_id: ticketId") == 2
+    assert re.search(r"phase: 'progress'[^}]*ticket_id: ticketId", body, re.DOTALL)
+    assert re.search(r"phase: 'complete'[^}]*ticket_id: ticketId", body, re.DOTALL)
 
 
 def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
@@ -725,6 +739,103 @@ def test_dev_account_labels_use_the_python_identity_data_without_node():
     assert "devAccountLabels" not in DEV_JS
     assert "eve.accounts = devFixtureAccounts(selectedIdentityScenario);" in DEV_JS
     assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "scenario",
+    ["selected", "empty", "stale", "error", "invalid", "conflict", "slow", "unsaved"],
+)
+def test_dev_formation_revisions_and_correlated_completion(scenario):
+    # Execute the real standalone formation fixture block with only timer and
+    # completion delivery seams. No fixture save/read implementation in tests.
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const timers = [], done = [];
+const api = {};
+const window = {onEveSettingsDone: payload => done.push(payload)};
+vm.runInNewContext(source.slice(source.indexOf('  function eveMutation('),
+  source.indexOf('  window.pywebview =')), {
+  api, window, console, Promise, copyScenario: '', formationsShareScenario: process.argv[3],
+  eve: {accounts: [{path: 'A', name: 'Account A'}]},
+  setTimeout: (callback, delay) => { timers.push({callback, delay}); }
+});
+function drain() { timers.splice(0).forEach(timer => timer.callback()); }
+async function main() {
+  const read = api.eve_settings_formations('A');
+  assert.equal(timers[0].delay, 150);
+  drain(); const initial = await read;
+  assert.match(initial.content_revision, /^[0-9a-f]{64}$/);
+  assert.deepEqual(JSON.parse(JSON.stringify(initial.sharing_limits)), JSON.parse(process.argv[2]));
+  const items = [{id: null, name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}];
+  const exported = await api.eve_settings_export_formations(items);
+  assert.equal(done.length, 0, 'export must not fake a save completion');
+  const afterExport = api.eve_settings_formations('A'); drain();
+  assert.deepEqual(await afterExport, initial, 'export must not modify the fake account');
+  if (process.argv[3] === 'error') {
+    assert.equal(exported.ok, false); assert.ok(exported.error); return;
+  }
+  assert.deepEqual(JSON.parse(exported.text), {format: 'wingman-preset', version: 1,
+    type: 'probe-formations', formations: [{name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}]});
+  const parsedPromise = api.eve_settings_parse_formations(exported.text, ['NEW']); drain();
+  const parsed = await parsedPromise;
+  assert.equal(parsed.ok, true); assert.equal(parsed.formations[0].id, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed.conflicts)), [0]);
+  parsed.formations[0].name = 'Renamed';
+  const validatedPromise = api.eve_settings_validate_formation_import(parsed.formations, ['NEW']);
+  if (process.argv[3] === 'slow') assert.equal(timers[0].delay, 1500);
+  drain(); const validated = await validatedPromise;
+  assert.equal(validated.ok, true); assert.deepEqual(JSON.parse(JSON.stringify(validated.conflicts)), []);
+  const invalidPromise = api.eve_settings_parse_formations('{', []); drain();
+  assert.equal((await invalidPromise).ok, false);
+  const afterReview = api.eve_settings_formations('A'); drain();
+  assert.deepEqual(await afterReview, initial, 'review/validation must not modify the account');
+  assert.equal(done.length, 0);
+  if (process.argv[3] === 'empty') { assert.deepEqual(JSON.parse(JSON.stringify(initial.formations)), []); return; }
+  if (process.argv[3] === 'stale') {
+    await api.eve_settings_save_formations('A', items, initial.content_revision, 'stale:1'); drain();
+    assert.equal(done[0].error_code, 'stale_file');
+    assert.match(done[0].error, /Copy.*reload.*pasting/); return;
+  }
+  assert.equal(await api.eve_settings_save_formations('A', items, initial.content_revision, 'test:1'), true);
+  drain(); assert.equal(done.length, 1);
+  assert.equal(done[0].ok, true);
+  assert.equal(done[0].operation, 'formations_save');
+  assert.equal(done[0].path, 'A'); assert.equal(done[0].request_id, 'test:1');
+  assert.notEqual(done[0].content_revision, initial.content_revision);
+  const reread = api.eve_settings_formations('A'); drain(); const saved = await reread;
+  assert.equal(saved.content_revision, done[0].content_revision);
+  assert.equal(saved.formations[0].id, 4);
+  assert.equal(saved.formations[0].probes[0].x, 2000);
+  await api.eve_settings_save_formations('A', [], initial.content_revision, 'test:2'); drain();
+  assert.equal(done.length, 2); assert.equal(done[1].error_code, 'stale_file');
+  assert.equal(done[1].content_revision, '');
+  await api.eve_settings_save_formations('A', []); drain();
+  assert.equal(done.length, 3); assert.equal(done[2].error_code, 'invalid_request');
+  const unchanged = api.eve_settings_formations('A'); drain();
+  assert.equal((await unchanged).formations[0].name, 'New');
+}
+main().then(() => console.log('PASS dev-formations')).catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(WEB / "dev.js"),
+            json.dumps(formation_sharing.limits_payload()),
+            scenario,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS dev-formations" in result.stdout
 
 
 def test_formation_switch_fixture_keeps_its_read_delay_visible():
