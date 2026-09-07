@@ -3915,7 +3915,13 @@ with real `settings_*` folders can still prove.
 ## Probe formations (Profiles → Edit formations…)
 
 Needs a real install for the write lines; the editor itself states the
-close-EVE requirement beside Save.
+close-EVE requirement beside Save. Use prepared copies/backups of two unrelated
+accounts, with every EVE client closed before each save or restore. Do not run
+against live profiles without the account owner's authorization. Record actual
+results and platform separately in
+[the sharing verification record](probe-formation-sharing-verification.md): a
+Linux developer-browser pass is not a Windows/WebView2, OS clipboard, or live-EVE
+pass.
 
 - [ ] The **Edit formations…** tool is present when the codec is bundled and
       absent (not broken) when `bin/wingman-settings-codec.exe` is removed from
@@ -3946,6 +3952,99 @@ close-EVE requirement beside Save.
 - [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.
 - [ ] Delete every formation, save, launch the client: the probe scanner has no custom formations and nothing else about the client's settings changed. (An empty list is a real state, not a failed save — this is the line that proves write does not confuse the two.)
 - [ ] With unsaved edits showing, the title bar offers no other destination and the gear is hidden: `‹ Profiles` is the only way out and it asks before discarding. (Every other exit routed away without asking, and the next open silently loaded over the edits.)
+
+### Portable formation sharing and stale-file recovery
+
+- [ ] **Copy is a draft snapshot, not a save.** Edit a name, position, and range;
+      select sharing checkboxes independently of the currently open row. Copy
+      includes only the selected current drafts in meters (including unsaved
+      changes), without local IDs, account paths, scratch entries or selection
+      state. It leaves all edits/checkboxes intact and writes no account file or
+      backup. Names are user-authored text, not anonymized. With no selection,
+      Copy is disabled; an invalid unselected formation must not prevent Copy.
+- [ ] **Native blur/click and keyboard selection.** While typing a new name,
+      click its sharing checkbox: it toggles once, not zero times. Repeat with
+      mouse deselection and Tab/Space. The renamed label updates without losing
+      checkbox/button identity or focus. Test unblurred coordinate input too.
+- [ ] **Clipboard denial is visible.** Deny clipboard write permission, then Copy.
+      No success message appears, the draft remains editable, and retry works
+      after permission is restored. Test unavailable clipboard API and rejected
+      writes in the developer browser; separately test actual Windows clipboard
+      permission behavior and receiving pasted text. No automatic clipboard read
+      occurs on opening Paste or the editor.
+- [ ] **Paste/Review never inserts or saves.** Open Paste; the shared-text field
+      receives focus. Paste valid text and choose Review: names, probe counts
+      and previews appear separately from the draft, with ordinary Save hidden/disabled.
+      Review a one-probe and a two-probe formation together: the differing counts
+      are visible and included in each editable name's screen-reader label.
+      Only explicit **Add formations** appends the entire validated batch and
+      focuses its first row. Only subsequent **Save formations** writes the file.
+- [ ] **Invalid text is recoverable.** Try malformed JSON, duplicate JSON keys,
+      unsupported version/type, deeply nested text, more than 64 KiB of UTF-8
+      (including multibyte names), invalid numeric types and out-of-bounds ranges
+      or coordinates. Errors remain visible; no partial candidates are inserted,
+      no text is silently clipped, and corrected text can be reviewed normally.
+- [ ] **Batch/name boundaries and Unicode conflicts.** Review 1 and 32 formations;
+      reject 0 and 33. Accept 128 Unicode code points (including supplementary
+      characters), reject 129, empty/control-character names, and duplicates.
+      Existing `STRASSE` conflicts with incoming `Straße`; Python decides all
+      conflicts. Rename conflicting candidates explicitly: no replacement,
+      skipping or automatic rename. Recheck all names on Add, including a new
+      collision introduced after Review. Markup-shaped names render only as text.
+- [ ] **Cancel preserves work.** With an unsaved draft, sharing ticks and edited
+      fields, open Paste, review/rename, then Cancel. No rows were added, no file
+      or backup changed, the ordinary draft is intact, and focus returns to Paste.
+      Cancel while validation is pending; its late reply must not insert anything.
+- [ ] **Empty destination and recipient identity.** Add to an account with no user
+      formations; Save assigns nonnegative local IDs. Add to another account with
+      existing formations and scratch entries: existing IDs, unrelated settings
+      and a valid selected formation remain intact; incoming IDs are freshly
+      allocated above that recipient's nonnegative IDs, not copied from the sender.
+- [ ] **Stale-file recovery is explicit.** Load a prepared account copy, edit it in
+      Wingman, then alter that copy externally before Save. Save refuses it and
+      leaves external bytes and the unsaved draft intact. Copy the draft to keep
+      **before** Reload, cancel Reload once, then confirm it and Paste/Review/Add
+      the saved text back, resolving names explicitly. No force-save or automatic
+      merge is offered. Keep EVE closed and stop external edits while saving:
+      conflict checks are optimistic, not an atomic compare-and-swap.
+- [ ] **Edits during Save and reload survive.** Make a newer edit (including an
+      unblurred name or partial coordinate) while Save runs, and separately while
+      its reread runs. It remains dirty and visible; the next Save uses the last
+      committed content revision, not an ignored reread's revision. Delayed replies
+      after an account change, cancellation or leaving/reopening cannot alter the
+      current draft, copy status or baseline. Repeated Add/Save must not duplicate
+      insertion or let an older completion unlock the newer operation.
+- [ ] **Delete cannot retarget a stale confirmation.** With a delayed Reload or
+      post-save reread pending, open Delete for A, then let the read replace A with
+      B at the same index. Confirming the old dialog must leave B and the rest of
+      the list unchanged and say nothing was deleted; choose Delete again to act
+      on B. Repeat with reused local IDs/names. In the developer browser, inject
+      a route exit/reopen or selection change while the dialog is open: an old
+      Yes must not delete the new selection/session's data. Ordinary confirmed
+      deletion while Save runs remains a live unsaved edit, not an implicit save.
+- [ ] **Save failure and post-save warning differ.** EVE-running/probe failure,
+      backup failure or codec refusal means no publication. A successfully
+      published save followed by a retention/status failure still reports success
+      with its committed revision; warning feedback must not invite duplicate
+      saves. Confirm the saved bytes and the pre-save backup independently.
+- [ ] **Fractional geometry and restoration in EVE.** Export from account A, import
+      into unrelated B, Save with all clients closed, then launch B. Check actual
+      probe positions/ranges and selected formation, and that A is unchanged.
+      Repeat a save/reload/export cycle: sharing does not normalize fractional
+      ranges; ordinary editor reload retains its six-decimal-AU normalization.
+      Close every client, restore B's pre-save backup through Backups, launch to
+      confirm restoration, then close it. Synthetic codec tests do not certify
+      EVE accepts the document or every supported range.
+- [ ] **Viewport, keyboard and accessibility.** At 840×625 and the 839×621 stress
+      size, check ordinary and review panes, 32 long-name rows, empty/error states,
+      and long stale-file warnings. Scroll content without losing Review/Add/Cancel
+      or Save/Reload, and check no horizontal clipping. At Windows 100/125/150/200%
+      scaling repeat the logical-pixel floor checks. Tab/Shift-Tab/Enter/Space can
+      complete Copy, Paste, Review, rename, Add, Cancel and recovery. Check screen
+      reader names for sharing checkboxes, editable names, geometry, previews,
+      conflicts and live statuses; focus remains visible and is restored after
+      Cancel/Add. Save remains the only accent action and there is no new title-bar
+      destination.
 
 ## EVE Fittings
 

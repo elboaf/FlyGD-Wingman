@@ -4,20 +4,20 @@
  * app.js's WM.route map and index.html's #route-formations comment).
  *
  * Edit state lives here in km (positions) and AU (ranges); the bridge and
- * the .dat both speak meters, so the two conversions happen in exactly two
- * places -- load() and save() -- and nowhere else. A third one is a double
- * conversion, and the failure is silent: a formation 1000x out still draws
- * as a formation. test_page_conventions.py pins the count.
+ * the .dat both speak meters. fromSharedMeters converts portable geometry;
+ * fromMeters additionally normalizes ordinary reads. toMeters handles Save
+ * and Copy snapshots. Never convert again in a caller: a formation 1000x
+ * out still draws as a formation. Executable page tests cover all callers.
  *
  * Ids travel with their formation (null = new). The client keys its
  * selectedFormationID on the id, so a save that re-numbered by list
  * position would move which formation the client has selected -- the bug
  * docs/eve-settings-decode-design.md names in eve-wrench.
  *
- * Deliberately dumb about validity, for evesettings.js's reason: nothing
- * in this repo executes JavaScript, so what a legal formation IS lives in
- * wingman/evesettings/formations.py, which is tested. This file captures
- * edits, sends them, and renders the answer.
+ * Deliberately dumb about file validity: what a legal formation IS lives
+ * in wingman/evesettings/formations.py. The executable page tests cover
+ * edit/correlation flow; Python still validates every document before a
+ * write. This file captures edits, sends them, and renders the answer.
  *
  * `problem()` is the one exception, and it does not move the authority.
  * A refusal from validate() discards the WHOLE save rather than the
@@ -45,7 +45,8 @@
   var AXIS_LABELS = { x: 'West', y: 'Up', z: 'North' };
 
   var state = {
-    path: '', formations: [], selected: 0, dirty: false, busy: false
+    path: '', contentRevision: '', formations: [], selected: 0,
+    dirty: false, busy: false
   };
   // Account paths in the supplied choice list are UI identities. Python
   // resolves a requested path before reading it, so the returned path can
@@ -59,6 +60,16 @@
   // without a confirm. Disabling the whole pane for the duration would
   // also fix it, and would punish the common case for the rare one.
   var revision = 0, savingAt = -1;
+  // Correlation only, never authorization. A fresh page cannot reuse a prior
+  // page's request IDs even if its generation and sequence start over.
+  var pageSession = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+  var loadGeneration = 0, readAttempt = 0, saveSequence = 0, pendingSave = null;
+  // Sharing selection is independent of the open editor row. Object identity
+  // survives rename/deletion without moving a tick onto a different formation.
+  var copySelection = [], copyAttempt = 0, sharingLimits = null;
+  // Review geometry remains canonical meters, separate from the draft. Attempts
+  // never reset: editing text/names, cancelling, or leaving invalidates replies.
+  var importReview = null, importAttempt = 0;
   var yaw = 0.6, pitch = 0.4, dragging = false, lastX = 0, lastY = 0;
 
   function probe(x, y, z) { return { x: x, y: y, z: z, range: 32 }; }
@@ -142,7 +153,7 @@
     markDirty(); renderProbes(); renderPreview();
   }
 
-  /* ---- load / save: the only two places meters appear ---- */
+  /* ---- meter boundary, ordinary reads / sharing / save ---- */
   // The range is rounded to six decimal places OF AN AU on the way in;
   // the positions are not.
   //
@@ -161,9 +172,18 @@
   // an unusual value at all. A position IS the user's own number, so it
   // is left exactly as the file has it.
   function fromMeters(f) {
-    return { id: f.id, name: f.name, probes: f.probes.map(function (p) {
-      return { x: p.x / KM, y: p.y / KM, z: p.z / KM,
-               range: Math.round(p.range / AU * 1e6) / 1e6 };
+    var converted = fromSharedMeters(f);
+    converted.id = f.id;
+    converted.probes.forEach(function (p) {
+      p.range = Math.round(p.range * 1e6) / 1e6;
+    });
+    return converted;
+  }
+  // Sharing preserves supported fractional ranges until an ordinary file read.
+  // Never reuse read normalization for an imported preview or Add snapshot.
+  function fromSharedMeters(f) {
+    return { id: null, name: f.name, probes: f.probes.map(function (p) {
+      return { x: p.x / KM, y: p.y / KM, z: p.z / KM, range: p.range / AU };
     }) };
   }
   function toMeters(f) {
@@ -191,7 +211,7 @@
     return paths[0] || '';
   }
 
-  // Two optional arguments, both only for the reload after a save.
+  // Two optional arguments for rereads, automatic after Save or explicit.
   //
   // keepIndex: the list comes back with Python's minted ids, and dropping
   // the user back on the first formation would make a save read as a
@@ -209,22 +229,26 @@
   // the pane is still showing whatever the last account held, and there is
   // nothing there worth protecting from the file being opened.
   function load(path, mode, keepIndex, protect) {
+    closeImportReview(false);
     var startedAt = revision;
+    if (mode === 'switch') { loadGeneration += 1; }
+    var generation = loadGeneration, attempt = ++readAttempt;
     state.busy = true; paintCommit();
     return WM.send('eve_settings_formations', path).then(function (reply) {
+      // Even failure belongs to the request that caused it. Check identity
+      // before clearing busy, showing a dialog, or touching either baseline.
+      if (WM.current_route !== 'formations' || generation !== loadGeneration
+          || attempt !== readAttempt) { return; }
       state.busy = false;
       if (!reply || !reply.ok) {
-        // A RELOAD that fails is not a reason to eject. The save itself
-        // succeeded; the formations on screen are the ones just written,
-        // plus any edit made since. Routing away here would discard that
-        // edit without the discard confirm -- the same silent loss as
-        // the clobber below, reached through the error path instead. The
-        // lock is the realistic cause (`Another EVE Settings operation
-        // is still running`), and it clears on its own.
+        // A failed reread is not a reason to eject: after Save the draft
+        // may include newer edits, and an explicit Reload has only agreed
+        // to discard if its replacement arrives. Routing away here would
+        // lose work through the error path instead of the clobber below.
+        // The lock is a realistic cause and clears on its own.
         //
-        // `dirty` is deliberately not touched: formationsDone cleared it
-        // before calling, and markDirty will have set it again if an edit
-        // landed. Either way it already says the truth.
+        // `dirty` is deliberately not touched: it already describes the
+        // retained document, whether just saved or still awaiting Save.
         if (mode === 'switch') {
           // Keep the old document after a failed switch. The select changed
           // before the request was sent, so put it back on the only document
@@ -236,6 +260,7 @@
           return;
         }
         if (protect) {
+          saveStatus((reply && reply.error) || 'The file could not be re-read.');
           paintCommit();
           WM.confirm('Formations',
                      (reply && reply.error) || 'The file could not be re-read.');
@@ -277,9 +302,17 @@
         return;
       }
       state.path = reply.path;
+      state.contentRevision = reply.content_revision;
+      if (mode !== 'reload') { saveStatus(''); }
       selectedAccountPath = path;
       lastSuccessfulPath = path;
       state.formations = reply.formations.map(fromMeters);
+      sharingLimits = reply.sharing_limits;
+      copySelection = [];
+      // A post-save reread can replace the document without a new generation.
+      // No export still preparing the prior document may reach the clipboard.
+      copyAttempt += 1;
+      setShareStatus('', false);
       state.selected = 0;
       if (typeof keepIndex === 'number' && state.formations.length) {
         state.selected = Math.min(Math.max(0, keepIndex),
@@ -293,16 +326,298 @@
   }
 
   function save() {
-    if (state.busy || !state.path) { return; }
+    if (importReview || state.busy || !state.path || !state.contentRevision) { return; }
+    var request = {
+      id: pageSession + ':' + loadGeneration + ':' + (++saveSequence),
+      path: state.path, generation: loadGeneration, revision: revision
+    };
+    pendingSave = request;
     state.busy = true;
-    savingAt = revision;
+    savingAt = request.revision;
+    saveStatus('');
     paintCommit();
-    WM.send('eve_settings_save_formations', state.path,
-            state.formations.map(toMeters)).then(function (accepted) {
-      // The bridge returns as soon as a worker is spawned, so a falsy
-      // answer means none did and nothing will ever push. Same contract
-      // evesettings.js's mutate() is written against.
-      if (!accepted) { state.busy = false; paintCommit(); }
+    WM.send('eve_settings_save_formations', request.path,
+            state.formations.map(toMeters), state.contentRevision,
+            request.id).then(function (accepted) {
+      // Completion can beat this bool reply, even starting a reread or a
+      // second save. Only the request still pending may release its busy state.
+      if (!accepted && pendingSave === request
+          && request.generation === loadGeneration
+          && WM.current_route === 'formations') {
+        pendingSave = null;
+        state.busy = false;
+        saveStatus('The save could not be started. Your edits are still here.');
+        paintCommit();
+      }
+    });
+  }
+
+  function setShareStatus(text, isError) {
+    var status = WM.el('fm-share-status');
+    status.textContent = text;
+    status.className = isError ? 'hint err' : 'hint';
+  }
+
+  function paintSharing() {
+    WM.setEnabled('fm-paste', !importReview && !state.busy && !!state.path && !!sharingLimits);
+    WM.el('fm-copy').textContent = 'Copy selected (' + copySelection.length + ')';
+    WM.setEnabled('fm-copy', !state.busy && copySelection.length > 0);
+    WM.el('fm-share-hint').textContent = sharingLimits
+      ? 'Up to ' + sharingLimits.max_formations + ' formations, '
+        + (sharingLimits.max_bytes / 1024) + ' KiB.'
+      : '';
+  }
+
+  function copySelected() {
+    if (state.busy || !copySelection.length) { return; }
+    var attempt = ++copyAttempt, generation = loadGeneration;
+    var items = state.formations.filter(function (f) {
+      return copySelection.indexOf(f) !== -1;
+    }).map(toMeters);
+    function stillCurrent() {
+      return generation === loadGeneration && attempt === copyAttempt
+        && WM.current_route === 'formations';
+    }
+    setShareStatus('Preparing formations…', false);
+    WM.send('eve_settings_export_formations', items).then(function (reply) {
+      if (!stillCurrent()) { return; }
+      if (!reply || !reply.ok) {
+        setShareStatus((reply && reply.error) || 'Could not prepare formations.', true);
+        return;
+      }
+      // Once this OS call begins it cannot be revoked. Ignore stale outcomes
+      // rather than reporting another account's copy as this account's success.
+      try {
+        navigator.clipboard.writeText(reply.text).then(function () {
+          if (stillCurrent()) { setShareStatus('Formations copied.', false); }
+        }, function () {
+          if (stillCurrent()) {
+            setShareStatus('Could not copy formations to the clipboard.', true);
+          }
+        });
+      } catch (error) {
+        if (stillCurrent()) {
+          setShareStatus('Could not copy formations to the clipboard.', true);
+        }
+      }
+    }, function () {
+      if (stillCurrent()) { setShareStatus('Could not prepare formations.', true); }
+    });
+  }
+
+  function saveStatus(text) {
+    WM.el('fm-save-status').textContent = text;
+  }
+
+  /* ---- inline import review: no account mutation until explicit Save ---- */
+  function setImportStatus(text, isError) {
+    var status = WM.el('fm-import-status');
+    status.textContent = text;
+    status.className = isError ? 'hint err' : 'hint';
+  }
+
+  function importTextProblem(text) {
+    // TextEncoder counts UTF-8 bytes, not JS UTF-16 units. Python rejects bad
+    // Unicode too; this is immediate size feedback, not a second parser.
+    if (sharingLimits && new TextEncoder().encode(text).length > sharingLimits.max_bytes) {
+      return 'Shared text exceeds ' + sharingLimits.max_bytes
+        + ' UTF-8 bytes. Copy fewer formations.';
+    }
+    return '';
+  }
+
+  function paintImportButtons() {
+    var review = importReview;
+    WM.setEnabled('fm-import-review', !!review && !review.pending
+      && !!review.text.trim() && !importTextProblem(review.text));
+    WM.setEnabled('fm-import-add', !!review && !review.pending
+      && review.candidates.length > 0 && !review.conflicts.length);
+  }
+
+  function openImportReview() {
+    if (importReview || state.busy || !state.path || !sharingLimits) { return; }
+    importAttempt += 1;
+    importReview = { text: '', candidates: [], selected: 0, conflicts: [],
+      path: state.path, generation: loadGeneration, request: null, pending: '' };
+    WM.el('fm-import-text').value = '';
+    WM.el('fm-import-list').textContent = '';
+    WM.el('fm-editor-work').hidden = true;
+    WM.el('fm-commit').hidden = true;
+    WM.el('fm-import-work').hidden = false;
+    WM.el('fm-import-commit').hidden = false;
+    setImportStatus('Paste shared text, then choose Review. Nothing is saved until Save formations.', false);
+    renderImportPreview(); paintImportButtons(); paintCommit();
+    WM.el('fm-import-text').focus();
+  }
+
+  function closeImportReview(restoreInvokerFocus) {
+    importAttempt += 1;
+    importReview = null;
+    WM.el('fm-import-text').value = '';
+    WM.el('fm-import-list').textContent = '';
+    WM.el('fm-import-preview').textContent = '';
+    WM.el('fm-import-work').hidden = true;
+    WM.el('fm-import-commit').hidden = true;
+    WM.el('fm-editor-work').hidden = false;
+    WM.el('fm-commit').hidden = false;
+    setImportStatus('', false);
+    paintImportButtons(); paintCommit(); renderPreview();
+    // Do not rebuild the ordinary pane: Cancel must preserve raw input/focus
+    // targets as well as committed draft values and sharing ticks.
+    if (restoreInvokerFocus) { WM.el('fm-paste').focus(); }
+  }
+
+  function existingNames() {
+    return state.formations.map(function (f) { return f.name; });
+  }
+
+  function importReplyIsCurrent(review, request) {
+    if (importReview !== review || review.request !== request
+        || importAttempt !== request.attempt || WM.current_route !== 'formations'
+        || review.path !== state.path || review.generation !== loadGeneration) { return false; }
+    if (request.revision !== revision) {
+      importAttempt += 1;
+      review.pending = '';
+      setImportStatus('The draft changed while checking. Review or Add again.', true);
+      paintImportButtons();
+      return false;
+    }
+    return true;
+  }
+
+  function renderImportPreview() {
+    var f = importReview && importReview.candidates[importReview.selected];
+    renderFormationPreview(WM.el('fm-import-preview'), f ? fromSharedMeters(f) : null);
+  }
+
+  function paintImportRows() {
+    var review = importReview;
+    if (!review) { return; }
+    Array.prototype.forEach.call(WM.el('fm-import-list').children, function (row, i) {
+      var conflict = review.conflicts.indexOf(i) !== -1;
+      var name = review.candidates[i].name;
+      row.querySelector('.hint').textContent = conflict
+        ? 'This account already has this name. Choose a different name.' : '';
+      row.querySelector('input').setAttribute('aria-invalid', conflict ? 'true' : 'false');
+      row.querySelector('button').setAttribute('aria-label', 'Preview ' + name);
+      row.querySelector('button').setAttribute('aria-pressed', i === review.selected ? 'true' : 'false');
+    });
+  }
+
+  function renderImportList() {
+    var box = WM.el('fm-import-list'), review = importReview;
+    box.textContent = '';
+    review.candidates.forEach(function (f, i) {
+      var row = WM.make('div', 'fm-import-row');
+      var input = document.createElement('input');
+      input.type = 'text'; input.className = 'field'; input.value = f.name;
+      input.id = 'fm-import-name-' + i;
+      input.setAttribute('aria-describedby', 'fm-import-conflict-' + i);
+      var label = WM.make('label', 'lab', 'Formation ' + (i + 1) + ' name ('
+        + f.probes.length + (f.probes.length === 1 ? ' probe)' : ' probes)'));
+      label.setAttribute('for', input.id);
+      var preview = WM.make('button', 'btn', 'Preview');
+      preview.type = 'button';
+      var conflict = WM.make('span', 'hint err');
+      conflict.id = 'fm-import-conflict-' + i;
+      row.appendChild(label); row.appendChild(input); row.appendChild(preview); row.appendChild(conflict);
+      input.addEventListener('input', function () {
+        if (importReview !== review) { return; }
+        f.name = input.value;
+        importAttempt += 1; review.pending = ''; review.conflicts = [];
+        setImportStatus('Names changed. Add formations checks every name again.', false);
+        // Paint in place so typing and the following native click keep focus.
+        paintImportRows(); paintImportButtons();
+      });
+      preview.addEventListener('click', function () {
+        if (importReview !== review) { return; }
+        review.selected = i; paintImportRows(); renderImportPreview();
+      });
+      box.appendChild(row);
+    });
+    paintImportRows(); renderImportPreview();
+  }
+
+  function reviewImport() {
+    var review = importReview;
+    if (!review || review.pending || !review.text.trim() || importTextProblem(review.text)) { return; }
+    var request = { attempt: ++importAttempt, revision: revision };
+    review.request = request;
+    review.pending = 'review'; review.candidates = []; review.conflicts = [];
+    renderImportList(); paintImportButtons(); setImportStatus('Reviewing formations…', false);
+    WM.send('eve_settings_parse_formations', review.text, existingNames()).then(function (reply) {
+      if (!importReplyIsCurrent(review, request)) { return; }
+      review.pending = '';
+      if (!reply || !reply.ok) {
+        setImportStatus((reply && reply.error) || 'Could not review formations.', true);
+      } else {
+        review.candidates = reply.formations; review.conflicts = reply.conflicts; review.selected = 0;
+        renderImportList();
+        setImportStatus(reply.conflicts.length ? 'Resolve the marked names before adding.'
+          : 'Review the names and previews, then Add formations to your draft.', !!reply.conflicts.length);
+      }
+      paintImportButtons();
+    }, function () {
+      if (!importReplyIsCurrent(review, request)) { return; }
+      review.pending = ''; setImportStatus('Could not review formations. Try Review again.', true);
+      paintImportButtons();
+    });
+  }
+
+  function addImport() {
+    var review = importReview;
+    if (!review || review.pending || !review.candidates.length || review.conflicts.length) { return; }
+    var request = { attempt: ++importAttempt, revision: revision };
+    review.request = request;
+    // Deep snapshot: later name edits must not alter an in-flight request.
+    var items = review.candidates.map(function (f) {
+      return { id: null, name: f.name, probes: f.probes.map(function (p) {
+        return { x: p.x, y: p.y, z: p.z, range: p.range };
+      }) };
+    });
+    review.pending = 'add'; paintImportButtons(); setImportStatus('Checking formations…', false);
+    WM.send('eve_settings_validate_formation_import', items, existingNames()).then(function (reply) {
+      if (!importReplyIsCurrent(review, request) || review.pending !== 'add') { return; }
+      review.pending = '';
+      if (!reply || !reply.ok || reply.conflicts.length) {
+        review.conflicts = reply && reply.ok ? reply.conflicts : [];
+        paintImportRows(); paintImportButtons();
+        setImportStatus(reply && reply.ok ? 'Resolve the marked names before adding.'
+          : (reply && reply.error) || 'Could not validate formations.', true);
+        return;
+      }
+      // Convert the whole batch before the one mutation. No IDs or file writes
+      // happen here; the existing explicit Save path alone owns those effects.
+      var firstAdded = state.formations.length;
+      var additions = reply.formations.map(fromSharedMeters);
+      state.formations = state.formations.concat(additions);
+      state.selected = firstAdded;
+      markDirty();
+      closeImportReview(false);
+      renderAll();
+      WM.el('fm-list').children[firstAdded].querySelector('.fm-item').focus();
+    }, function () {
+      if (!importReplyIsCurrent(review, request)) { return; }
+      review.pending = ''; setImportStatus('Could not validate formations. Try Add again.', true);
+      paintImportButtons();
+    });
+  }
+
+  function reload() {
+    if (state.busy || !state.path) { return; }
+    var generation = loadGeneration, path = selectedAccountPath;
+    function readAgain() {
+      if (WM.current_route !== 'formations' || generation !== loadGeneration
+          || path !== selectedAccountPath || state.busy) { return; }
+      // Confirming a discard is provisional until a read actually succeeds.
+      loadGeneration += 1;
+      load(path, 'explicit-reload', state.selected, true);
+    }
+    if (!state.dirty) { readAgain(); return; }
+    WM.confirm('Reload formations?',
+               'Discard your unsaved formation edits and read this account again?',
+               { destructive: true }).then(function (yes) {
+      if (yes) { readAgain(); }
     });
   }
 
@@ -312,9 +627,22 @@
   // busy for the rest of the session. Profiles forwards the push here
   // instead. test_page_conventions.py pins both halves.
   WM.formationsDone = function (payload) {
-    if (WM.current_route !== 'formations') { return; }
+    if (!pendingSave || !payload || payload.operation !== 'formations_save'
+        || payload.request_id !== pendingSave.id || payload.path !== pendingSave.path
+        || state.path !== pendingSave.path || pendingSave.generation !== loadGeneration
+        || WM.current_route !== 'formations') { return; }
+    savingAt = pendingSave.revision;
+    pendingSave = null;
     state.busy = false;
-    if (!(payload && payload.ok)) { paintCommit(); return; }
+    if (!payload.ok) {
+      saveStatus(payload.error || 'Formations were not saved. Your edits are still here.');
+      paintCommit();
+      return;
+    }
+    // The committed bytes become our baseline even when newer edits make
+    // reloading unsafe. Otherwise the next save would conflict with our own.
+    state.contentRevision = payload.content_revision;
+    saveStatus(payload.warning || 'Formations saved.');
     // An edit landed after the send, and the push says nothing about it.
     // Keeping it beats reloading over it: a reload here would throw away
     // work the user can see on screen, while the cost of NOT reloading is
@@ -335,7 +663,7 @@
 
   /* ---- rendering ---- */
   function renderAll() {
-    renderList(); renderPane(); renderPreview(); paintCommit();
+    renderList(); renderPane(); renderPreview(); renderImportPreview(); paintCommit();
   }
 
   function renderList() {
@@ -346,21 +674,43 @@
       return;
     }
     state.formations.forEach(function (f, i) {
+      var row = WM.make('div', 'fm-list-row');
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      var check = WM.make('label', 'check');
+      check.appendChild(input);
+      check.appendChild(WM.make('span', 'box'));
+      input.checked = copySelection.indexOf(f) !== -1;
+      input.addEventListener('change', function () {
+        var selected = copySelection.indexOf(f);
+        if (input.checked && selected === -1) { copySelection.push(f); }
+        else if (!input.checked && selected !== -1) { copySelection.splice(selected, 1); }
+        // Never rebuild the pane for a sharing tick: it can hold unblurred input.
+        paintSharing();
+      });
+      row.appendChild(check);
       // .fm-item, NOT .rail-item. The two share one rule in style.css
       // because they are one affordance, but app.js sweeps every
       // `.rail-item` on the page when a Settings section changes and
       // toggles `active` from its data-section -- which would quietly
       // un-select whichever formation is open. Same treatment, different
       // name, so that sweep cannot reach here.
-      var item = WM.make('button', 'fm-item' + (i === state.selected ? ' active' : ''),
-                         f.name || 'Unnamed');
+      var item = WM.make('button', 'fm-item' + (i === state.selected ? ' active' : ''));
       item.type = 'button';
       item.addEventListener('click', function () {
         state.selected = i;
         renderAll();
       });
-      box.appendChild(item);
+      row.appendChild(item);
+      paintListName(row, f);
+      box.appendChild(row);
     });
+  }
+
+  function paintListName(row, f) {
+    var name = f.name || 'Unnamed';
+    row.querySelector('.fm-item').textContent = name;
+    row.querySelector('input').setAttribute('aria-label', 'Select ' + name + ' for sharing');
   }
 
   function renderPane() {
@@ -417,6 +767,10 @@
           'aria-label',
           'Probe ' + (i + 1) + ' ' + AXIS_LABELS[axis] + ' km'
         );
+        // Protect the raw field through both async save windows, even when
+        // a partial sign/exponent has no numeric value yet. Only `change`
+        // below updates the model; input activity must not coerce it to zero.
+        input.addEventListener('input', markDirty);
         // `change`, so a half-typed value never commits: DESIGN.md's rule
         // for free text is Enter or an explicit button, never blur alone,
         // and a number input fires change on both.
@@ -532,7 +886,10 @@
   var MARGIN = 26;
 
   function renderPreview() {
-    var svg = WM.el('fm-preview'), f = current();
+    renderFormationPreview(WM.el('fm-preview'), current());
+  }
+
+  function renderFormationPreview(svg, f) {
     var rect = svg.getBoundingClientRect();
     var w = Math.round(rect.width), h = Math.round(rect.height);
     var cx = w / 2, cy = h / 2;
@@ -658,9 +1015,10 @@
 
   function paintCommit() {
     var why = state.busy ? '' : problem();
-    WM.setEnabled('fm-save', state.dirty && !state.busy && !why);
+    WM.setEnabled('fm-save', !importReview && state.dirty && !state.busy && !!state.contentRevision && !why);
+    WM.setEnabled('fm-reload', !!state.path && !state.busy);
     WM.el('fm-dirty').textContent = state.busy
-      ? 'Saving…'
+      ? (pendingSave ? 'Saving…' : 'Loading…')
       : (why || (state.dirty ? 'Unsaved changes' : ''));
     // .hint is the faintest tone the sheet has, which is right for
     // `Unsaved changes` and wrong for the one line explaining why the
@@ -668,8 +1026,9 @@
     // engine's "Stopped" message was found in (style.css, .hint.err).
     // One class toggle over one element; no second accent, no dialog.
     WM.el('fm-dirty').className = why ? 'hint err' : 'hint';
-    WM.setEnabled('fm-add', !state.busy);
+    WM.setEnabled('fm-add', !importReview && !state.busy);
     WM.setEnabled('fm-account', !state.busy && accountChoices.length > 0);
+    paintSharing();
   }
 
   /* ---- wiring ---- */
@@ -683,15 +1042,18 @@
     });
 
     WM.el('fm-back').addEventListener('click', function () {
+      var generation = loadGeneration;
       if (!state.dirty) { WM.route('evesettings'); return; }
       WM.confirm('Discard changes?',
                  'Your formation edits have not been saved.',
                  { destructive: true }).then(function (yes) {
+        if (generation !== loadGeneration || WM.current_route !== 'formations') { return; }
         if (yes) { state.dirty = false; WM.route('evesettings'); }
       });
     });
 
     WM.el('fm-add').addEventListener('click', function () {
+      if (importReview || state.busy) { return; }
       var pr = PRESETS.filter(function (x) {
         return x.id === preset.value;
       })[0] || PRESETS[0];
@@ -706,7 +1068,7 @@
     });
 
     WM.el('fm-delete').addEventListener('click', function () {
-      var f = current();
+      var f = current(), list = state.formations, generation = loadGeneration;
       if (!f) { return; }
       // "when you save", because nothing has been written yet: the delete
       // is an edit to the list this screen holds, and Save is the only
@@ -714,20 +1076,37 @@
       WM.confirm('Delete formation?',
                  '"' + f.name + '" is removed when you save.',
                  { destructive: true }).then(function (yes) {
-        if (!yes) { return; }
-        state.formations.splice(state.selected, 1);
+        if (!yes || generation !== loadGeneration
+            || WM.current_route !== 'formations') { return; }
+        // A read started before this dialog can replace the document without
+        // another generation change. Neither a retained index nor a reused ID
+        // authorizes deleting its replacement; require the same selected object.
+        if (list !== state.formations || current() !== f) {
+          saveStatus('The formation changed while confirming. Nothing was deleted. Choose Delete again.');
+          return;
+        }
+        var removed = state.formations.splice(state.selected, 1)[0];
+        var selected = copySelection.indexOf(removed);
+        if (selected !== -1) { copySelection.splice(selected, 1); }
         state.selected = Math.max(0, state.selected - 1);
         markDirty();
         renderAll();
       });
     });
 
+    // A focused draft must outlive a completion/reread before blur fires.
+    // Counting activity leaves the existing change-time model update intact.
+    WM.el('fm-name').addEventListener('input', function () {
+      if (current()) { markDirty(); }
+    });
     WM.el('fm-name').addEventListener('change', function () {
       var f = current();
       if (f) {
         f.name = WM.el('fm-name').value.trim();
         markDirty();
-        renderList();
+        // Blur can commit the name between pointer-down and a sharing click.
+        // Keep those controls connected so the native click/focus can finish.
+        paintListName(WM.el('fm-list').children[state.selected], f);
       }
     });
 
@@ -751,9 +1130,24 @@
 
     WM.el('fm-balance').addEventListener('click', balance);
     WM.el('fm-save').addEventListener('click', save);
+    WM.el('fm-reload').addEventListener('click', reload);
+    WM.el('fm-copy').addEventListener('click', copySelected);
+    WM.el('fm-paste').addEventListener('click', openImportReview);
+    WM.el('fm-import-review').addEventListener('click', reviewImport);
+    WM.el('fm-import-add').addEventListener('click', addImport);
+    WM.el('fm-import-cancel').addEventListener('click', function () { closeImportReview(true); });
+    WM.el('fm-import-text').addEventListener('input', function () {
+      if (!importReview) { return; }
+      importAttempt += 1;
+      importReview.text = WM.el('fm-import-text').value;
+      importReview.pending = ''; importReview.candidates = []; importReview.conflicts = [];
+      renderImportList(); paintImportButtons();
+      var why = importTextProblem(importReview.text);
+      setImportStatus(why || 'Text changed. Choose Review to check it.', !!why);
+    });
 
     WM.el('fm-account').addEventListener('change', function () {
-      var nextPath = WM.el('fm-account').value;
+      var nextPath = WM.el('fm-account').value, generation = loadGeneration;
       if (!nextPath || nextPath === selectedAccountPath || state.busy) return;
       if (!state.dirty) {
         load(nextPath, 'switch');
@@ -762,6 +1156,8 @@
       WM.confirm('Discard changes?',
                  'Your formation edits have not been saved.',
                  { destructive: true }).then(function (yes) {
+        if (generation !== loadGeneration || WM.current_route !== 'formations'
+            || state.busy) { return; }
         if (yes) {
           load(nextPath, 'switch');
         } else {
@@ -770,11 +1166,13 @@
       });
     });
 
-    svg.addEventListener('mousedown', function (e) {
-      e.preventDefault();
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+    [svg, WM.el('fm-import-preview')].forEach(function (preview) {
+      preview.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
     });
     window.addEventListener('mouseup', function () { dragging = false; });
     window.addEventListener('mousemove', function (e) {
@@ -784,27 +1182,33 @@
                        Math.min(Math.PI / 2, pitch + (e.clientY - lastY) * 0.01));
       lastX = e.clientX;
       lastY = e.clientY;
-      renderPreview();
+      renderPreview(); renderImportPreview();
     });
 
     // The viewBox is the element's own pixel size, so a resize changes
     // every coordinate in the drawing.
     window.addEventListener('resize', function () {
-      if (WM.current_route === 'formations') { renderPreview(); }
+      if (WM.current_route === 'formations') { renderPreview(); renderImportPreview(); }
     });
 
-    // Leaving is load-bearing here for one reason only: the drag listeners
-    // are on `window`, so a pointer released outside the page while the
-    // route changed would leave the preview spinning under the next
-    // screen's mouse movement.
+    // Leaving invalidates outstanding reads, saves and confirmations. The
+    // drag listeners are also on `window`: a pointer released elsewhere
+    // must not leave the preview spinning under the next screen.
     document.addEventListener('wm:route', function (event) {
-      if (event.detail !== 'formations') { dragging = false; }
+      if (event.detail !== 'formations') {
+        closeImportReview(false);
+        dragging = false;
+        loadGeneration += 1;
+        pendingSave = null;
+      }
     });
   }
 
   // The Profiles tool's entry point, and the only way in. Keep only the
   // account identity the editor needs: Python owns the canonical name.
   WM.openFormations = function (accounts, preferredPath) {
+    loadGeneration += 1;
+    pendingSave = null;
     accountChoices = (accounts || []).map(function (account) {
       return { path: account.path, name: account.name };
     });
