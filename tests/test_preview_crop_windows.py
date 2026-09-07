@@ -194,6 +194,7 @@ class FakeDwm:
         self.events = events
         self.updates = []
         self.register_hr = register_hr
+        self.register_attempts = []
         self.update_hr = update_hr
         # Injected so the register callback can assert the destination HWND
         # was already in the registry *before* registration -- registry
@@ -206,6 +207,7 @@ class FakeDwm:
         self.teardown_order = teardown_order if teardown_order is not None else []
 
     def DwmRegisterThumbnail(self, dest, src, out):
+        self.register_attempts.append((dest, src))
         if self._crops is not None:
             self.registry_present_at_register = int(dest) in self._crops
         if self.register_hr == 0:

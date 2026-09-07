@@ -1903,13 +1903,13 @@ def test_push_preview_hotkeys_includes_groups_and_membership(tmp_path):
     api.push_preview_hotkeys()
     pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
     assert len(pushes) == 1
-    import json
+    from tests.test_api import decode_payload
 
     payload_str = pushes[0]
     # Extract the JSON argument from the JS call.
     start = payload_str.index("(", payload_str.rindex("onPreviewHotkeys")) + 1
     end = payload_str.rindex(")")
-    payload = json.loads(payload_str[start:end])
+    payload = decode_payload(payload_str[start:end])
     assert payload["hotkeys"]["groups"] == [
         {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
     ]

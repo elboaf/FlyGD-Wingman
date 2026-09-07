@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.fakes import FakeWindow
-from tests.test_api import make_api
+from tests.test_api import decode_payload, make_api
 from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
 
 
@@ -399,7 +399,7 @@ def test_creation_failure_with_failed_rollback_reopens_current_generation(
     state_push = [
         script for script in api._window.evaluated if "onFleetBarState" in script
     ][-1]
-    state = json.loads(state_push.split("window.onFleetBarState(", 1)[1][:-1])
+    state = decode_payload(state_push.split("window.onFleetBarState(", 1)[1][:-1])
     assert state["enabled"] is True
 
     current = FleetSnapshot(

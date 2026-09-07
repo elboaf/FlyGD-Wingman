@@ -66,6 +66,18 @@ class Resources(Native):
     def GetForegroundWindow(self):
         return 0
 
+    def SetWindowPos(self, hwnd, *args):
+        assert hwnd in self.windows and hwnd not in self.sources
+        return super().SetWindowPos(hwnd, *args)
+
+    def ShowWindow(self, hwnd, mode):
+        assert hwnd in self.windows and hwnd not in self.sources
+        return super().ShowWindow(hwnd, mode)
+
+    def DestroyWindow(self, hwnd):
+        assert hwnd in self.windows and hwnd not in self.sources
+        return super().DestroyWindow(hwnd)
+
 
 class Transaction:
     def __init__(self, initial):
@@ -589,6 +601,161 @@ def test_host_isolates_command_failure_and_terminalizes_unadmitted_intent(
     assert outcomes[following.operation_id]["persisted"]
     assert r.store.snapshot()["definitions"] == {}
     assert "command handler failed" in caplog.text
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize(
+    "saved", [Rect(5000, 5000, 320, 160), Rect(-30, -40, 2500, 1500)]
+)
+def test_reselection_does_not_persist_untouched_monitor_rescue(rig, enabled, saved):
+    r = rig({"Alice": replace(DEFINITION, window=saved, enabled=enabled)})
+    roster(r, 1, client())
+    request(r)
+    confirm(r)
+    finish(r)
+    definition = deserialize(r.store.snapshot()["definitions"])["Alice"]
+    assert definition.source != DEFINITION.source
+    assert definition.enabled
+    assert definition.window == saved
+    assert r.controller.live["Alice"].window.rect == (
+        Rect(1600, 920, 320, 160) if saved.x == 5000 else saved
+    )
+    assert len(r.transaction.writes) == 1
+
+
+def test_monitor_loss_at_confirmation_cancels_without_a_save(rig):
+    r = rig()
+    roster(r, 1, client())
+    token, _ = request(r)
+    r.controller._monitors = list
+    confirm(r)
+    finish(r)
+    assert not r.transaction.writes and not r.native.windows
+    assert not r.store.snapshot()["operations"][token.operation_id]["persisted"]
+
+
+@pytest.mark.parametrize("stop", [False, True])
+def test_pending_picker_font_cleanup_precedes_candidate_or_shutdown(rig, stop):
+    from ctypes import wintypes
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    request(r)
+    r.native.held_fonts.update(r.native.fonts)
+    picker = r.controller.picker
+    confirm(r)
+    assert r.controller.picker is picker
+    assert r.controller._temporary.candidate is None
+    assert not r.transaction.writes
+    # The picker HWNDs/thumbnail are closed but its selected font remains owned.
+    assert picker._fonts == r.native.fonts and r.native.fonts
+    if stop:
+        stopping = r.controller.begin_stop(1)
+    r.native.held_fonts.clear()
+    r.controller.process_dialog_message(wintypes.MSG())
+    if stop:
+        assert stopping.result(5)
+        r.controller.close_native()
+        r.native.assert_closed()
+        assert not r.transaction.writes
+    else:
+        finish(r)
+        assert len(r.transaction.writes) == 1
+        assert len(r.native.thumbnails) == 1 and not r.native.fonts
+
+
+def test_successful_replacement_survives_ordered_failed_removal(rig):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    r.transaction.release.clear()
+    selected, _ = request(r)
+    confirm(r)
+    assert r.transaction.entered.wait(5)
+    removed, receipt = request(r, "remove")
+    assert receipt["pending"]
+    r.transaction.release.set()
+    replacement = r.completions.get(timeout=5)
+    assert replacement.persisted
+    saved = deserialize(r.store.snapshot()["definitions"])["Alice"]
+    assert saved.source != DEFINITION.source
+    r.transaction.fail = True
+    r.controller.complete(replacement)
+    removal = r.completions.get(timeout=5)
+    r.transaction.fail = False
+    r.controller.complete(removal)
+    finish(r)
+    assert not removal.persisted and removal.token == removed
+    state = r.store.snapshot()
+    assert state["operations"][selected.operation_id]["persisted"]
+    assert deserialize(state["definitions"])["Alice"] == saved
+    assert r.controller.live["Alice"].source == saved.source
+    assert not r.controller.live["Alice"].window.hidden
+    assert r.native.peak <= 2
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "before-select",
+        "selecting",
+        "during-save",
+        "after-publication",
+        "after-completion",
+    ],
+)
+def test_reselection_preserves_real_movement_from_rescue(rig, phase):
+    r = rig({"Alice": replace(DEFINITION, window=Rect(5000, 5000, 320, 160))})
+    roster(r, 1, client())
+    old = r.controller.live["Alice"].window
+    moved = Rect(400, 350, 320, 160)
+    if phase == "before-select":
+        old.move(moved)
+    request(r)
+    if phase == "selecting":
+        old.move(moved)
+    r.transaction.release.clear()
+    confirm(r)
+    assert r.transaction.entered.wait(5)
+    if phase == "during-save":
+        old.move(moved)
+    r.transaction.release.set()
+    result = r.completions.get(timeout=5)
+    if phase == "after-publication":
+        old.move(moved)
+    r.controller.complete(result)
+    current = r.controller.live["Alice"].window
+    if phase == "after-completion":
+        current.move(moved)
+    r.store.drain().result(5)
+    assert result.persisted
+    assert current.rect == moved
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].window == moved
+
+
+@pytest.mark.parametrize("size", [(16, 480), (1280, 16), (400, 200)])
+@pytest.mark.parametrize("monitor", [MONITOR, Rect(-640, -480, 400, 300)])
+def test_initial_selection_fits_one_actual_monitor_without_distorting_aspect(
+    rig, size, monitor
+):
+    r = rig()
+    r.controller._monitors = lambda: [monitor]
+    roster(r, 1, client())
+    request(r)
+    picker = r.controller.picker
+    # Keep real picker bundle cleanup, while choosing exact source-pixel edges.
+    selected = Rect(0, 0, *size)
+    picker._on_confirm = lambda *args: r.controller._confirm(
+        r.controller._temporary, client(), selected, (1280, 720)
+    )
+    confirm(r)
+    finish(r)
+    rect = r.controller.live["Alice"].window.rect
+    assert monitor.x <= rect.x < rect.right <= monitor.right
+    assert monitor.y <= rect.y < rect.bottom <= monitor.bottom
+    assert 0 < rect.w <= 320
+    # Integer rounding may cost at most half a destination pixel per axis.
+    assert abs(rect.w * size[1] - rect.h * size[0]) <= (size[0] + size[1]) / 2
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].window == rect
 
 
 def test_repeated_enable_does_not_persist_untouched_monitor_rescue(rig):

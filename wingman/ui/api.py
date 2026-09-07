@@ -25,6 +25,7 @@ import copy
 import datetime
 import json
 import logging
+import math
 import os
 import queue
 import sys
@@ -77,6 +78,39 @@ from .rows import RowSnapshot
 from .scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
+
+
+def _page_payload(payload):
+    """JSON data, not an object literal (whose __proto__ changes prototypes)."""
+    try:
+        encoded = json.dumps(payload, allow_nan=False)
+    except ValueError:
+        # The previous literal transport accepted non-finite numbers. Preserve
+        # those values without teaching JSON.parse a nonstandard JSON dialect.
+        # Round-trip first for json.dumps' existing tuple/key/type semantics.
+        value = json.loads(json.dumps(payload))
+        assignments = []
+
+        def finite(item, path):
+            if isinstance(item, float) and not math.isfinite(item):
+                assignments.append(f"{path}={json.dumps(item)};")
+                return None
+            if isinstance(item, dict):
+                return {
+                    key: finite(child, f"{path}[{json.dumps(key)}]")
+                    for key, child in item.items()
+                }
+            if isinstance(item, list):
+                return [finite(child, f"{path}[{i}]") for i, child in enumerate(item)]
+            return item
+
+        encoded = json.dumps(finite(value, "value"), allow_nan=False)
+        return (
+            "(function(value){" + "".join(assignments) + "return value;})("
+            f"JSON.parse({json.dumps(encoded)}))"
+        )
+    return f"JSON.parse({json.dumps(encoded)})"
+
 
 # 100ms, carried over from app.PROBE_DRAIN_MS: fast enough that durations
 # appear to fill in live, slow enough that a folder of a hundred recordings
@@ -897,7 +931,7 @@ class Api:
         this runs on upload and probe workers, and a window destroyed
         mid-upload must cost a status line, not the upload.
         """
-        script = f"window.{handler} && window.{handler}({json.dumps(payload)})"
+        script = f"window.{handler} && window.{handler}({_page_payload(payload)})"
         try:
             self._window.evaluate_js(script)
         except Exception:

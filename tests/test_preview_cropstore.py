@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from threading import Event, Thread
+from threading import Event, Thread, get_ident
 
 import pytest
 
@@ -471,13 +471,17 @@ def test_failed_remove_keeps_prior_success_and_worker_survives(make_store, monke
     assert store.set_enabled(third, False).result(timeout=3).persisted
 
 
-def test_callbacks_run_outside_both_locks_and_may_close(make_store):
+def test_callbacks_run_outside_both_locks_and_may_close(make_store, monkeypatch):
     store, live = make_store()
-    callback_done = Event()
+    callback_done, callback_returned = Event(), Event()
     failures = []
     closes = []
+    caller = get_ident()
+    delivery_threads = []
 
     def callback(_):
+        delivery_threads.append(get_ident())
+
         def check():
             try:
                 assert "Alice" in store.snapshot()["definitions"]
@@ -492,10 +496,16 @@ def test_callbacks_run_outside_both_locks_and_may_close(make_store):
         Thread(target=check).start()
         if not callback_done.wait(3):
             failures.append("callback invoked under a lock")
+        callback_returned.set()
 
-    token = store.begin("Alice", epoch=1, session=None)
-    store.put(token, definition()).add_done_callback(callback)
-    assert callback_done.wait(3)
+    with blocked_save(monkeypatch) as entered:
+        token = store.begin("Alice", epoch=1, session=None)
+        future = store.put(token, definition())
+        assert entered.wait(3)
+        assert not future.done()  # Register on the worker path, never inline.
+        future.add_done_callback(callback)
+    assert callback_returned.wait(5)
+    assert delivery_threads and delivery_threads != [caller]
     assert not failures
     assert closes[0].result(timeout=3)
 

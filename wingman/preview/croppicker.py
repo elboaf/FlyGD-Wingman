@@ -173,6 +173,7 @@ class CropPicker:
         self._completed = False
         self._default_button = _USE
         self._pending_cancel = None
+        self._pending_confirm = None
         self._start = None
         self.destination = None
         self.selection = None
@@ -364,7 +365,7 @@ class CropPicker:
             ),
             "CreateFontW",
         )
-        old, self._font = self._font, font
+        self._font = font
         # Both fonts remain owned until every child has switched. A paint
         # failure re-entering this loop must close both before cancellation.
         self._fonts.add(font)
@@ -374,9 +375,7 @@ class CropPicker:
             )
             if self._completed:
                 break  # A nested owner-draw failure may close the new font.
-        if old in self._fonts:
-            self._fonts.remove(old)
-            self._libs.gdi32.DeleteObject(old)
+        self._notify_pending_cancel()
 
     def _set_status(self, message):
         self.status = message
@@ -509,8 +508,9 @@ class CropPicker:
         # Copy the proposal before releasing capture/destruction can re-enter.
         proposal = self.client, pixels, current_size
         self._completed = True
+        self._pending_confirm = proposal
         self._close_resources()
-        self._on_confirm(*proposal)
+        self._notify_pending_cancel()
 
     def cancel(self, reason="cancelled"):
         """Dismiss once; the coordinator also uses this for missing/renewed sessions."""
@@ -518,8 +518,9 @@ class CropPicker:
             self._notify_pending_cancel()
             return
         self._completed = True
+        self._pending_cancel = reason
         self._close_resources()
-        self._on_cancel(reason)
+        self._notify_pending_cancel()
 
     def _fail(self, exc):
         logger.warning(
@@ -539,10 +540,8 @@ class CropPicker:
         controls, self._controls = self._controls, {}
         for hwnd in controls.values():
             self._libs.user32.DestroyWindow(hwnd)
-        fonts, self._fonts = self._fonts, set()
         self._font = None
-        for font in fonts:
-            self._libs.gdi32.DeleteObject(font)
+        self._release_fonts()
         if self._thumb is not None:
             thumb, self._thumb = self._thumb, None
             thumb.close()
@@ -550,9 +549,29 @@ class CropPicker:
             hwnd, self.hwnd = self.hwnd, None
             _PICKERS.pop(int(hwnd), None)
             self._libs.user32.DestroyWindow(hwnd)
+        # One existing-pump wake after the enclosing native paint returns;
+        # no retry loop or additional cleanup thread.
+        if self._fonts and not self._libs.user32.PostMessageW(None, 0, 0, 0):
+            logger.warning(
+                "Could not wake picker font cleanup; awaiting next pump message"
+            )
+
+    def _release_fonts(self):
+        # DeleteObject fails while an enclosing native paint still selects the
+        # font. Keep ownership until that call unwinds (factory finally, the
+        # next pump turn, or stop); never trade callback-once for a GDI leak.
+        for font in self._fonts - {self._font}:
+            if self._libs.gdi32.DeleteObject(font):
+                self._fonts.remove(font)
 
     def _notify_pending_cancel(self):
-        if self._pending_cancel is not None:
+        self._release_fonts()
+        if self._fonts:
+            return
+        if self._pending_confirm is not None:
+            proposal, self._pending_confirm = self._pending_confirm, None
+            self._on_confirm(*proposal)
+        elif self._pending_cancel is not None:
             reason, self._pending_cancel = self._pending_cancel, None
             self._on_cancel(reason)
 
@@ -626,6 +645,7 @@ class CropPicker:
         else:
             fill, text = ("control-hover" if pressed else "control"), "text-btn"
         saved = _require(self._libs.gdi32.SaveDC(hdc), "SaveDC")
+        previous_font = None
         try:
             # Repaint the entire item, including a disappearing focus ring.
             rim = (
@@ -651,7 +671,7 @@ class CropPicker:
                     inner.bottom - gap,
                 )
             self._fill(hdc, inner, fill)
-            _require(
+            previous_font = _require(
                 self._libs.gdi32.SelectObject(hdc, self._font), "SelectObject font"
             )
             self._set_color("SetTextColor", hdc, text)
@@ -666,7 +686,12 @@ class CropPicker:
                 "DrawTextW",
             )
         finally:
-            _require(self._libs.gdi32.RestoreDC(hdc, saved), "RestoreDC")
+            restored = self._libs.gdi32.RestoreDC(hdc, saved)
+            # RestoreDC failure must not strand our font in the borrowed DC.
+            # Other state restoration still failed and cancels the picker.
+            if not restored and previous_font is not None:
+                self._libs.gdi32.SelectObject(hdc, previous_font)
+            _require(restored, "RestoreDC")
         return 1
 
     def _handle_message(self, msg, wparam, lparam):

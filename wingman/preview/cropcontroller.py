@@ -22,7 +22,7 @@ from .crops import (
     source_to_pixels,
 )
 from .cropwindow import CropWindow
-from .geometry import clamp_to_monitors, default_stack
+from .geometry import EDGE_MARGIN, clamp_to_monitors, default_stack
 
 logger = logging.getLogger(__name__)
 
@@ -490,17 +490,30 @@ class CropController:
             return
         definitions = deserialize(self._store.snapshot()["definitions"])
         old = self.live.get(op.name)
-        destination = (
-            old.window.rect
-            if old
-            else definitions[op.name].window
-            if op.name in definitions
-            else default_stack(
-                0, self._monitors()[0], (320, max(1, round(320 * rect.h / rect.w)))
+        monitors = self._monitors()
+        if not monitors:
+            self._discard_prepared(op, "No display is available for the crop")
+            return
+        if op.name in definitions:
+            # A monitor rescue is presentation only. The store already merges
+            # real movement before admission and rebases movement during save.
+            destination = definitions[op.name].window
+        else:
+            monitor = monitors[0]
+            scale = min(
+                320 / rect.w,
+                max(1, monitor.w - 2 * EDGE_MARGIN) / rect.w,
+                max(1, monitor.h - 2 * EDGE_MARGIN) / rect.h,
             )
-        )
-        destination = clamp_to_monitors(destination, self._monitors())
+            destination = default_stack(
+                0,
+                monitor,
+                (max(1, round(rect.w * scale)), max(1, round(rect.h * scale))),
+            )
         op.definition = CropDefinition(source, destination)
+        destination = clamp_to_monitors(
+            old.window.rect if old else destination, monitors
+        )
         op.candidate = _Live(client, op.token.generation, source)
         self._make_window(
             op.name, op.candidate, rect, destination, hidden=True, candidate=True
@@ -619,7 +632,7 @@ class CropController:
                     if op.action == "enabled"
                     else old.window.rect
                     if old is not None
-                    else definition.window
+                    else clamp_to_monitors(definition.window, self._monitors())
                 )
                 candidate.window.move(destination)
                 candidate.window.set_source_rect(source)
@@ -628,15 +641,8 @@ class CropController:
                         old.window.close()
                     self.live[op.name] = candidate
                     self._degraded.pop(op.name, None)
-                    # Enabling may temporarily rescue an off-screen placement;
-                    # only user movement may change its persisted arrangement.
-                    if op.action == "select" and destination != definition.window:
-                        self._store.record_geometry(
-                            op.name,
-                            candidate.generation,
-                            self._next_geometry_sequence(),
-                            destination,
-                        )
+                    # _geometry recorded genuine movement. A displayed/saved
+                    # mismatch alone may be an untouched monitor rescue.
                     candidate.window.set_hidden(self._hidden)
             else:
                 candidate.failure_status = "invalid-source"

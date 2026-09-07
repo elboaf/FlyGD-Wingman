@@ -46,6 +46,7 @@ class Native:
         self.layers = []
         self.created = []
         self.fonts = set()
+        self.held_fonts = set()
         self.thumbnails = set()
         self.timers = set()
         self.next_hwnd = 1000
@@ -283,6 +284,10 @@ class Native:
 
     def DeleteObject(self, handle):
         self.attempt("delete-font", handle)
+        if handle in self.held_fonts or any(
+            dc.get("font") == handle for dc in [self.dc, *self.dc_stack]
+        ):
+            return False  # GDI cannot delete an object still selected in a DC.
         self.fonts.remove(handle)
         return True
 
@@ -1012,6 +1017,77 @@ def test_paint_failure_cancels_and_attempts_dc_restoration(make, phase):
     # A failed RestoreDC cannot prove restoration of the Windows-owned DC.
     if phase != "restore-dc":
         assert not native.dc_stack
+
+
+def test_selected_font_delete_failure_waits_for_native_paint_unwind(make):
+    cancelled = []
+    native = Native()
+
+    def cancel(reason):
+        native.assert_closed()
+        cancelled.append(reason)
+
+    picker, _ = make(native, on_cancel=cancel)
+    font = picker._font
+    native.held_fonts.add(font)  # An enclosing native control still owns its DC.
+    native.fail = "restore-dc"
+    draw_button(picker, native, 100, 0)
+    assert cancelled == []
+    assert picker._fonts == native.fonts == {font}
+    assert not native.windows and not native.thumbnails and not native.timers
+    # The next pump turn follows EndPaint/ReleaseDC in the native caller.
+    native.held_fonts.clear()
+    native.dc.clear()
+    native.dc_stack.clear()
+    picker.process_dialog_message(wintypes.MSG())
+    native.assert_closed()
+    assert len(cancelled) == 1
+    picker.cancel("again")
+    picker.process_dialog_message(wintypes.MSG())
+    assert len(cancelled) == 1
+
+
+@pytest.mark.parametrize("entry", ["creation", "dpi", "stop"])
+def test_font_cleanup_after_enclosing_native_call_preserves_callback_once(make, entry):
+    from wingman.preview import croppicker
+
+    native = Native()
+    cancelled = []
+    retained = []
+
+    def cancel(reason):
+        native.assert_closed()
+        cancelled.append(reason)
+
+    def paint_then_return(*args):
+        picker = next(iter(croppicker._PICKERS.values()))
+        retained.append(picker)
+        native.held_fonts.update(native.fonts)
+        if entry == "stop":
+            picker.cancel("stopping")
+        else:
+            native.fail = "restore-dc"
+            draw_button(picker, native, 100, 0)
+        assert not cancelled
+        assert picker._fonts == native.fonts and native.fonts
+        native.held_fonts.clear()
+        native.dc.clear()
+        native.dc_stack.clear()
+        return True
+
+    if entry == "creation":
+        native.SetForegroundWindow = paint_then_return
+        picker, _ = make(native, on_cancel=cancel)
+        assert picker is None
+    else:
+        picker, _ = make(native, on_cancel=cancel)
+        native.SendDlgItemMessageW = paint_then_return
+        picker._set_font()
+        picker.cancel("stopping")
+    native.assert_closed()
+    assert len(cancelled) == 1
+    retained[0].cancel("again")
+    assert len(cancelled) == 1
 
 
 @pytest.mark.parametrize(

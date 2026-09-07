@@ -467,6 +467,21 @@ def test_manual_preview_crop_harness_is_not_packaged():
     assert MANUAL_PREVIEW_CROP_WINDOWS.is_file()
 
 
+@pytest.mark.parametrize(
+    "name", ["crops", "cropstore", "cropwindow", "croppicker", "cropcontroller"]
+)
+def test_production_crops_import_as_modules_of_the_declared_preview_package(name):
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        packages = tomllib.load(fh)["tool"]["setuptools"]["packages"]
+    assert "wingman.preview" in packages
+    fullname = "wingman.preview." + name
+    module = importlib.import_module(fullname)
+    assert pathlib.Path(module.__file__).resolve() == ROOT / "wingman" / "preview" / (
+        name + ".py"
+    )
+    assert fullname not in packages  # Modules, not a new subpackage.
+
+
 def test_no_shipped_module_imports_the_crop_probe():
     """Packaging exclusion is only half of it: a `wingman/` module that
     imported the probe would drag it into the frozen build through

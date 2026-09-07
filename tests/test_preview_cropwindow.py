@@ -70,6 +70,7 @@ def test_initial_dwm_failure_cleans_once_without_retry(
     failures = []
     window, _ = create(monkeypatch, libs, on_failure=failures.append)
     assert window is None
+    assert libs.dwmapi.register_attempts == [(1000, CLIENT.hwnd)]
     assert libs.events.count("register") == unregisters
     assert libs.events.count("update") == unregisters
     assert libs.events.count("unregister") == unregisters
@@ -488,6 +489,7 @@ def test_later_update_recovers_once_and_each_success_ends_the_episode(live, hidd
     assert window.hwnd == 1000
     assert failures == []
     assert libs.events.count("register") == 3
+    assert libs.dwmapi.register_attempts == [(1000, CLIENT.hwnd)] * 3
     assert libs.events.count("unregister") == 2
     assert len(libs.dwmapi.updates) == 5
     assert all(bool(p.fVisible) is not hidden for p in libs.dwmapi.updates)
@@ -523,6 +525,7 @@ def test_failed_recovery_closes_before_contextual_callback_once(
     if phase == "register":
         assert "0x80070006" in failures[0]
     assert changes == []
+    assert libs.dwmapi.register_attempts == [(1000, CLIENT.hwnd)] * 2
     assert libs.events.count("update") == updates
     assert libs.events.count("unregister") == unregisters
     assert libs.events.count("destroy-window") == 1
