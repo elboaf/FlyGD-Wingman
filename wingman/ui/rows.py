@@ -16,11 +16,13 @@ snapshot resolves to None, which turns "act on the wrong file" into "do
 nothing" -- the only acceptable outcome for a delete.
 
 This module owns no cache. durations.resolve needs the cache dict, and the
-caller has it; rebuild() therefore produces rows with durations unknown and
-the caller re-applies cache hits through set_duration.
+caller has it. scan() stages unknown durations; the controller hydrates the
+candidate before install(). Bare rebuild() still produces unknown durations,
+and callers can apply answers through set_duration.
 """
 
 import dataclasses
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +57,7 @@ class RowSnapshot:
     """The backend's authoritative view of the list the page is showing."""
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self._rows: list[Row] = []
         self._infos: dict[str, library.VideoInfo] = {}
         # Keyed by path, not by row id, precisely so links outlive a
@@ -81,7 +84,11 @@ class RowSnapshot:
         rather than an error -- the watcher fires on a path a delete can
         beat to the refresh.
         """
-        preselect = preselect or set()
+        return self.install(self.scan(directory), preselect=preselect)
+
+    @staticmethod
+    def scan(directory) -> list[library.VideoInfo]:
+        """Stage filesystem results without modifying the installed snapshot."""
         infos: list[library.VideoInfo] = []
         for path in library.discover(Path(directory)):
             try:
@@ -92,37 +99,55 @@ class RowSnapshot:
                 # unlucky delete into an empty list for the whole folder.
                 continue
 
-        live = {info.path for info in infos}
-        self._links = {path: url for path, url in self._links.items() if path in live}
-        self._infos = {}
-        self._definitive = set()
-        self._rows = []
-        for info in infos:
-            row_id = self._mint()
-            self._infos[row_id] = info
-            self._rows.append(
-                Row(
-                    id=row_id,
-                    name=info.path.name,
-                    date=info.date_str,
-                    size=info.size_str,
-                    duration=info.duration_str,
-                    link=self._links.get(info.path),
-                    preselected=info.path in preselect,
+        return infos
+
+    def install(self, infos, preselect=None, link_urls=None) -> list[dict]:
+        """Install a complete scan, optionally with authoritative persisted links.
+
+        The controller arbitrates which scan is current. This lock protects
+        readers from partial row/info mappings and keeps minting monotonic,
+        including for callers using rebuild() directly. No filesystem work
+        or page calls occur here. Returned VideoInfos retain their identity
+        so a captured upload can outlive this installation.
+        """
+        preselect = preselect or set()
+        with self._lock:
+            live = {info.path for info in infos}
+            source = self._links if link_urls is None else link_urls
+            restored = {path: url for path, url in source.items() if path in live}
+            rendered, resolved, definitive = [], {}, set()
+            for info in infos:
+                row_id = self._mint()
+                resolved[row_id] = info
+                if info.probed and info.answered:
+                    definitive.add(row_id)
+                rendered.append(
+                    Row(
+                        id=row_id,
+                        name=info.path.name,
+                        date=info.date_str,
+                        size=info.size_str,
+                        duration=info.duration_str,
+                        link=restored.get(info.path),
+                        preselected=info.path in preselect,
+                    )
                 )
-            )
-        return self.rows()
+            self._rows, self._infos = rendered, resolved
+            self._links, self._definitive = restored, definitive
+            return self.rows()
 
     def rows(self) -> list[dict]:
         """The rows as plain dicts. pywebview serialises what it is handed,
         and a dataclass does not survive that trip."""
-        return [dataclasses.asdict(row) for row in self._rows]
+        with self._lock:
+            return [dataclasses.asdict(row) for row in self._rows]
 
     def resolve(self, row_id: str):
         """The VideoInfo behind *row_id*, or None if this snapshot has never
         heard of it. None is the answer for every stale id, and callers must
         treat it as "do nothing", never as "not found, try harder"."""
-        return self._infos.get(row_id)
+        with self._lock:
+            return self._infos.get(row_id)
 
     def resolve_many(self, ids: list[str]) -> list[library.VideoInfo]:
         """Every known id in *ids*, in snapshot order, unknown ones dropped.
@@ -134,7 +159,8 @@ class RowSnapshot:
         set happened to iterate in.
         """
         wanted = set(ids)
-        return [self._infos[row.id] for row in self._rows if row.id in wanted]
+        with self._lock:
+            return [self._infos[row.id] for row in self._rows if row.id in wanted]
 
     def set_link(self, row_id: str, url: str | None) -> None:
         """Record a finished upload against its row. Unknown id: no-op.
@@ -156,11 +182,12 @@ class RowSnapshot:
         the persisted store, which is keyed on (size, mtime) and therefore
         knows the difference.
         """
-        info = self._infos.get(row_id)
-        if info is None:
-            return
-        self._links[info.path] = url
-        self._replace(row_id, link=url)
+        with self._lock:
+            info = self._infos.get(row_id)
+            if info is None:
+                return
+            self._links[info.path] = url
+            self._replace(row_id, link=url)
 
     def set_duration(
         self, row_id: str, duration: float | None, definitive: bool
@@ -197,21 +224,22 @@ class RowSnapshot:
         again -- pinning that recording to "?" forever and blocking its
         combat-log upload with a message blaming ffprobe.
         """
-        info = self._infos.get(row_id)
-        if info is None or row_id in self._definitive:
-            return None
-        info.duration = duration
-        info.probed = True
-        # The flag reaches the CELL, not just this class's supersede rule.
-        # It used to stop here: every no-verdict probe rendered as "?", so
-        # an install with no ffprobe at all told the user, once per row,
-        # that ffprobe could not open that particular file. See
-        # library.VideoInfo.answered.
-        info.answered = definitive
-        if definitive:
-            self._definitive.add(row_id)
-        self._replace(row_id, duration=info.duration_str)
-        return info.duration_str
+        with self._lock:
+            info = self._infos.get(row_id)
+            if info is None or row_id in self._definitive:
+                return None
+            info.duration = duration
+            info.probed = True
+            # The flag reaches the CELL, not just this class's supersede rule.
+            # It used to stop here: every no-verdict probe rendered as "?", so
+            # an install with no ffprobe at all told the user, once per row,
+            # that ffprobe could not open that particular file. See
+            # library.VideoInfo.answered.
+            info.answered = definitive
+            if definitive:
+                self._definitive.add(row_id)
+            self._replace(row_id, duration=info.duration_str)
+            return info.duration_str
 
     def rename(self, row_id: str, new_path) -> None:
         """Point one row at a renamed file, keeping its id.
@@ -241,15 +269,16 @@ class RowSnapshot:
         one: a stale id must mean "do nothing", never an exception on the
         bridge thread.
         """
-        info = self._infos.get(row_id)
-        if info is None:
-            return
-        new_path = Path(new_path)
-        url = self._links.pop(info.path, None)
-        if url is not None:
-            self._links[new_path] = url
-        info.path = new_path
-        self._replace(row_id, name=new_path.name)
+        with self._lock:
+            info = self._infos.get(row_id)
+            if info is None:
+                return
+            new_path = Path(new_path)
+            url = self._links.pop(info.path, None)
+            if url is not None:
+                self._links[new_path] = url
+            info.path = new_path
+            self._replace(row_id, name=new_path.name)
 
     def _replace(self, row_id: str, **changes) -> None:
         for index, row in enumerate(self._rows):

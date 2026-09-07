@@ -857,14 +857,15 @@ def test_a_straggler_from_a_superseded_refresh_is_dropped(recordings, tmp_path):
         window=window,
     )
     api.list_rows()
+    stale_run = api._uploader._probe_run
+    stale_id = api._uploader._rows.rows()[0]["id"]
+    stale_info = api._uploader._rows.resolve(stale_id)
     clock.fire()
     window.evaluated.clear()
 
     api.list_rows()  # bumps the generation; the drain above has stopped
-    stale_id = api._uploader._rows.rows()[0]["id"]
-    stale_info = api._uploader._rows.resolve(stale_id)
-    api._uploader._probe_queue.put((0, stale_id, stale_info, 999.0, True))
-    api._uploader._drain_probes(api._uploader._generation)
+    stale_run.results.put((stale_id, stale_info, 999.0, True))
+    api._uploader._drain_probes(stale_run)
 
     assert [p for name, p in pushes(window) if name == "onDuration"] == []
     assert 999.0 not in {
@@ -876,10 +877,10 @@ def test_a_drain_for_a_superseded_generation_stops_itself(recordings, tmp_path):
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
-    stale_generation = api._uploader._generation
+    stale_run = api._uploader._probe_run
     api._uploader._generation += 1  # as a concurrent list_rows would
 
-    api._uploader._drain_probes(stale_generation)
+    api._uploader._drain_probes(stale_run)
 
     assert clock.timers[-1].cancelled
 
@@ -904,18 +905,17 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
 
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
-    # Hand-drive the queue so results land across two ticks rather than one.
-    api._uploader._generation += 1
-    generation = api._uploader._generation
-    api._uploader._rows.rebuild(recordings)
-    rows = api._uploader._rows.rows()
-
-    for row in rows:
-        api._uploader._probe_queue.put(
-            (generation, row["id"], api._uploader._rows.resolve(row["id"]), 12.5, True)
-        )
-        api._uploader._drain_probes(generation)
-    api._uploader._drain_probes(generation)  # a tick with nothing waiting
+    # Hand-drive this run's queue across two ticks rather than one.
+    api.list_rows()
+    run = api._uploader._probe_run
+    results = [run.results.get_nowait() for _ in range(2)]
+    sentinel = run.results.get_nowait()
+    for result in results:
+        run.results.put(result)
+        api._uploader._drain_probes(run)
+    api._uploader._drain_probes(run)  # a tick with nothing waiting
+    run.results.put(sentinel)
+    api._uploader._drain_probes(run)
 
     assert saves == [1, 2], (
         "one save per tick that applied results, none for an empty tick"

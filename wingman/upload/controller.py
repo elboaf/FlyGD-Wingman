@@ -234,6 +234,30 @@ class UploaderPorts:
     format_destination: Callable[..., str]
 
 
+class _ProbeRun:
+    """A queue and timer that cannot be rebound underneath their callbacks."""
+
+    def __init__(self, generation):
+        self.generation = generation
+        self.results = queue.Queue()
+        self.cancelled = threading.Event()
+        self.scheduler = None
+        self._lock = threading.Lock()
+
+    def start(self):
+        # No controller/row locks here. This lock only orders start against
+        # stop: Scheduler.stop alone cannot prevent a later start rearming it.
+        with self._lock:
+            if not self.cancelled.is_set():
+                self.scheduler.start()
+
+    def stop(self):
+        self.cancelled.set()
+        with self._lock:
+            if self.scheduler is not None:
+                self.scheduler.stop()
+
+
 class UploaderController:
     """One owner of the Uploader route's runtime.
 
@@ -268,12 +292,16 @@ class UploaderController:
         self._drain_interval_s = drain_interval_s
         self._probe = probe
         self._timer = timer
-        self._probe_queue: queue.Queue = queue.Queue()
-        # Every list_rows() bumps this. A probe result carrying a stale
-        # generation refers to rows that have since been replaced, and is
-        # dropped rather than written into the current list.
+        # Order: publication -> brief state/RowSnapshot/cache operations.
+        # NEVER acquire publication while holding state or a row/cache lock.
+        # Publication covers acceptance + mutation + delivery, not just the
+        # final push. WebView may block this gate, but never state/row reads
+        # or filesystem scans. Workers/probes start outside both gates.
+        self._publication_lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._generation = 0
-        self._drain = None
+        self._rename_revision = 0
+        self._probe_run = None
 
         # The claim exists before a worker handle and survives through its
         # target's finally. Thread liveness has a pre-start gap and therefore
@@ -344,78 +372,72 @@ class UploaderController:
         state and no explanation, which is precisely the inert screen
         DESIGN.md warns reads as a broken one.
         """
-        if self._state.recording_dir is None:
-            if self._state.settings.get("first_run_skipped"):
-                self._ports.publish_rows({"rows": []})
-            return
-        self._generation += 1
-        generation = self._generation
-        self._stop_drain()
+        with self._state_lock:
+            self._generation += 1
+            generation = self._generation
+            folder = self._state.recording_dir
+            revision = self._rename_revision
+            previous, self._probe_run = self._probe_run, None
+        if previous is not None:
+            previous.stop()
 
-        rebuilt = self._rows.rebuild(self._state.recording_dir, preselect=preselect)
+        while True:
+            candidate = self._rows.scan(folder) if folder is not None else []
+            with self._publication_lock:
+                with self._state_lock:
+                    if (
+                        generation != self._generation
+                        or folder != self._state.recording_dir
+                    ):
+                        return
+                    if revision != self._rename_revision:
+                        # A successful rename may have happened after stat.
+                        # Retry this scan, but never resurrect its old path.
+                        revision = self._rename_revision
+                        continue
+                if folder is None:
+                    if self._state.settings.get("first_run_skipped"):
+                        self._ports.publish_rows({"rows": []})
+                    return
+                work = self._install_scan(candidate, preselect)
+                break
+        if work:
+            self._start_probe(work, generation)
+
+    def _install_scan(self, infos, preselect):
+        """Accept/install/publish under the publication gate, with no scan I/O."""
+        # Hydrate BEFORE freezing the Rows. Hydrating only the VideoInfos
+        # once left the Length cells measuring forever on warm-cache starts:
+        # cached recordings never receive a later onDuration to repair them.
+        pending = durations.resolve(self._cache, infos)
+        # Authoritative in both directions: a miss must clear the old path
+        # link when a different recording reuses its name (size/mtime differ).
+        restored = {
+            info.path: links.lookup(self._link_store, info.path, info.size, info.mtime)
+            for info in infos
+        }
+        rebuilt = self._rows.install(infos, preselect=preselect, link_urls=restored)
         # rebuild() mints new ids, so every key already in _links is dead --
         # rows.py's whole contract is that a stale id resolves to nothing.
-        # Cleared rather than left, because the restore loop below re-adds a
+        # Replaced rather than left, because every installation re-adds a
         # key per linked row on EVERY refresh (launch, tray open, settings
         # save, delete, watcher find) and this map would otherwise grow
         # without bound across a long session, holding ids nothing can reach.
-        self._links.clear()
         ids = [row["id"] for row in rebuilt]
-        infos = self._rows.resolve_many(ids)
-        pending = durations.resolve(self._cache, infos)
+        with self._state_lock:
+            self._links = {
+                rid: restored[info.path]
+                for rid, info in zip(ids, infos)
+                if restored[info.path]
+            }
 
         # Identity, not equality: VideoInfo is a plain dataclass, so two
         # recordings with the same size and mtime compare equal and an `in`
         # test over the pending list would probe the wrong row.
         outstanding = {id(info) for info in pending}
 
-        # Re-apply cache hits into the snapshot BEFORE pushing. This is
-        # rows.py's documented contract -- "rebuild() therefore produces
-        # rows with durations unknown and the caller re-applies cache hits
-        # through set_duration" -- and skipping it failed silently in a way
-        # nothing else caught: rebuild() freezes `duration` into each Row
-        # while it is still unknown, and rows() serialises those frozen
-        # Rows, NOT the VideoInfos that resolve() mutates. A cache hit is
-        # also absent from `pending`, so it never earns an onDuration push
-        # either. The Length column therefore sat on the measuring glyph
-        # forever for every already-probed recording -- after the first run,
-        # all of them -- while the selection summary, computed in Python
-        # straight off the infos, showed the real total. The Tk build did
-        # not have this: it called resolve() before inserting any row.
-        #
-        # definitive=True: a cached entry is a probe result that already
-        # survived that judgement when it was stored.
-        for row_id, info in zip(ids, infos):
-            if id(info) not in outstanding:
-                self._rows.set_duration(row_id, info.duration, True)
-
-        # Links, from the same place and for the same reason: rebuild()
-        # mints new ids and freezes each Row before anything is known about
-        # it, so a link that is not re-applied here never reaches the page.
-        # Before this loop existed the Link column was empty on every fresh
-        # launch, including for recordings that were already on YouTube --
-        # which is the question the column is there to answer.
-        #
-        # AUTHORITATIVE IN BOTH DIRECTIONS, which is not optional. The
-        # snapshot's own link map is keyed by PATH and survives rebuild on
-        # purpose, so a file re-recorded at a path uploaded earlier in this
-        # session comes back out of rebuild() carrying the previous
-        # recording's video. Only the persisted store can tell the two
-        # apart, because only it is keyed on (size, mtime) -- so a miss has
-        # to CLEAR rather than be skipped. Setting without clearing passed
-        # every test that used a fresh Api and failed the moment one
-        # session did both.
-        #
-        # BOTH maps are filled. self._links is keyed by row id and is what
-        # copy_path and open_path read back; the snapshot's is keyed by path
-        # and is what renders the cell. A restore that filled only the
-        # snapshot would draw a link the context menu could not open.
-        for row_id, info in zip(ids, infos):
-            url = links.lookup(self._link_store, info.path, info.size, info.mtime)
-            if url:
-                self._links[row_id] = url
-            self._rows.set_link(row_id, url)
-
+        # BOTH link maps are filled before delivery: the snapshot renders
+        # the cell; _links lets copy_path/open_path act on that same answer.
         self._ports.publish_rows({"rows": self._rows.rows()})
         # Restated on every rebuild, and this is the ONLY thing that can
         # repair it. A disarming push lost into a hidden window (which
@@ -425,13 +447,11 @@ class UploaderController:
         # what a watcher announcement, a delete and a folder change all
         # produce, so the wrong state cannot outlive the next recording.
         self._ports.publish_log_post_running({"running": self.logs_busy()})
-        work = [
+        return [
             (row_id, info)
             for row_id, info in zip(ids, infos)
             if id(info) in outstanding
         ]
-        if work:
-            self._start_probe(work, generation)
 
     def panel_text(self, ids: list[str], stitch: bool) -> dict:
         """Both selection-dependent strings, for the page to render.
@@ -498,8 +518,9 @@ class UploaderController:
             for info in infos:
                 if info.path not in failed_paths:
                     watcher.forget(info.path)
-        for row_id, _ in pairs:
-            self._links.pop(row_id, None)
+        with self._state_lock:
+            for row_id, _ in pairs:
+                self._links.pop(row_id, None)
         self.list_rows()
         message = f"Deleted {deleted} file(s)."
         if failures:
@@ -514,14 +535,16 @@ class UploaderController:
         it rather than pushing it keeps this a plain request/response, which
         is what a button press is.
         """
-        url = self._links.get(row_id, "")
+        with self._state_lock:
+            url = self._links.get(row_id, "")
         if not url:
             return ""
         self._ports.status("Link copied to clipboard", "SUCCESS")
         return url
 
     def open_path(self, row_id: str) -> None:
-        url = self._links.get(row_id)
+        with self._state_lock:
+            url = self._links.get(row_id)
         if url:
             webbrowser.open(url)
 
@@ -598,17 +621,18 @@ class UploaderController:
 
         Runs on the BRIDGE THREAD deliberately, but not because that makes
         it exclusive: `poll_tick` runs on the Scheduler's thread, so a poll
-        CAN land in the middle of this. The stores below tolerate that --
-        each mutation is a single dict operation and `Watcher._save` copies
-        before it walks -- and the alternative, a worker, would buy nothing:
-        the work is milliseconds of metadata with no dialog to park on,
-        because the page has already answered the prompt.
+        CAN scan in the middle of this. There is no dialog to park on:
+        the page has already answered the prompt.
 
-        The one visible consequence of that race is benign. A rebuild
-        landing between `resolve` and `self._rows.rename` re-mints the ids,
-        so the repaint below finds nothing -- but that rebuild has just
-        re-scanned the folder and is already drawing the new name.
+        The publication gate orders resolve, rename and repaint against
+        scan installation and incremental updates. Scans still run freely;
+        successful rename advances their revision so a pre-rename stat is
+        retried rather than restoring the old name.
         """
+        with self._publication_lock:
+            return self._rename_recording(row_id, stem)
+
+    def _rename_recording(self, row_id: str, stem: str) -> dict:
         # First, and not for tidiness. The uploader reads a source path at
         # the moment it opens it: on the plain path _upload_one is handed
         # job.items[index].path per item, and _link persists against the
@@ -676,6 +700,9 @@ class UploaderController:
         except OSError as exc:
             logger.warning("Could not rename %s", old_path, exc_info=True)
             return {"ok": False, "error": f"That file could not be renamed: {exc}"}
+
+        with self._state_lock:
+            self._rename_revision += 1
 
         # ONLY after the rename succeeded. Four stores are keyed by path,
         # and moving keys first would leave every one of them describing a
@@ -760,19 +787,28 @@ class UploaderController:
         batching that makes the per-tick save affordable.
         """
 
+        run = _ProbeRun(generation)
+        run.scheduler = self._scheduler(
+            self._drain_interval_s,
+            lambda: self._drain_probes(run),
+            timer=self._timer,
+        )
+        with self._state_lock:
+            if generation != self._generation:
+                return
+            self._probe_run = run
+
         def worker() -> None:
             try:
                 for row_id, info in work:
-                    if generation != self._generation:
+                    if run.cancelled.is_set():
                         break  # A newer list_rows owns the list now.
                     if info.probed:
                         continue  # Already resolved on demand.
                     duration, definitive = self._probe(
                         info.path, self._state.ffprobe_bin
                     )
-                    self._probe_queue.put(
-                        (generation, row_id, info, duration, definitive)
-                    )
+                    run.results.put((row_id, info, duration, definitive))
             except Exception:
                 # probe() swallows its own failures, so reaching here means
                 # something unforeseen. Rows left unprobed sit on "…", and in
@@ -781,52 +817,56 @@ class UploaderController:
             finally:
                 # Always sent, including on early exit, so the drain loop
                 # knows to stop rescheduling itself.
-                self._probe_queue.put((generation, None, None, None, False))
+                run.results.put((None, None, None, False))
 
-        self._drain = self._scheduler(
-            self._drain_interval_s,
-            lambda: self._drain_probes(generation),
-            timer=self._timer,
-        )
-        self._ports.spawn(target=worker, daemon=True).start()
-        self._drain.start()
+        try:
+            # In tests start() can run the whole probe inline. Neither gate
+            # may be held here: a slow probe must not serialize refreshes.
+            self._ports.spawn(target=worker, daemon=True).start()
+            run.start()
+        except Exception:
+            self._stop_drain(run)
+            raise
 
-    def _drain_probes(self, generation: int) -> None:
-        """Apply whatever the probe worker has finished since the last tick."""
-        if generation != self._generation:
-            self._stop_drain()  # Superseded; the newer list has its own loop.
+    def _current_run(self, run) -> bool:
+        with self._state_lock:
+            return self._probe_run is run and run.generation == self._generation
+
+    def _drain_probes(self, run: _ProbeRun) -> None:
+        """Drain only this run, revalidating ownership after every queue read."""
+        if not self._current_run(run):
+            self._stop_drain(run)
             return
         done = False
         applied = 0
-        while True:
-            try:
-                gen, row_id, info, duration, definitive = self._probe_queue.get_nowait()
-            except queue.Empty:
-                break
-            if gen != self._generation:
-                continue  # Straggler from a superseded refresh.
-            if info is None:
-                done = True
-                continue
-            if definitive:
-                durations.remember(
-                    self._cache, info.path, info.size, info.mtime, duration
-                )
-            self._push_duration(row_id, duration, definitive)
-            applied += 1
-        # Per tick rather than once at the end: a cold scan of a large folder
-        # takes a while, and a user who opens the window from the tray and
-        # quits partway through would otherwise lose every duration measured
-        # so far and start the whole scan again next launch.
-        if applied:
-            durations.save(self._durations_file, self._cache)
-        if done:
-            self._stop_drain()
+        try:
+            while True:
+                try:
+                    row_id, info, duration, definitive = run.results.get_nowait()
+                except queue.Empty:
+                    break
+                with self._publication_lock:
+                    if not self._current_run(run):
+                        done = True
+                        break
+                    if info is None:
+                        done = True
+                        break
+                    if self._apply_duration(row_id, duration, definitive, info):
+                        applied += 1
+        finally:
+            # Per tick, including a tick superseded after applying a result:
+            # quitting during a long scan must not lose completed measurements.
+            if applied:
+                durations.save(self._durations_file, self._cache)
+            if done or not self._current_run(run):
+                self._stop_drain(run)
 
-    def _stop_drain(self) -> None:
-        drain, self._drain = self._drain, None
-        if drain is not None:
-            drain.stop()
+    def _stop_drain(self, run: _ProbeRun) -> None:
+        with self._state_lock:
+            if self._probe_run is run:
+                self._probe_run = None
+        run.stop()
 
     def _push_duration(self, row_id, duration, definitive: bool) -> None:
         """Record one probe result and tell the page what the cell says.
@@ -846,12 +886,20 @@ class UploaderController:
         that would put a superseded answer on screen while Python holds
         the good one.
         """
+        with self._publication_lock:
+            self._apply_duration(row_id, duration, definitive)
+
+    def _apply_duration(self, row_id, duration, definitive, info=None) -> bool:
+        """Publication-gated mutation; declined answers must not poison the cache."""
         rendered = self._rows.set_duration(row_id, duration, definitive)
         if rendered is None:
-            return
+            return False
+        if definitive and info is not None:
+            durations.remember(self._cache, info.path, info.size, info.mtime, duration)
         self._ports.publish_duration(
             {"id": row_id, "duration": rendered, "definitive": definitive},
         )
+        return True
 
     # ----- upload -----------------------------------------------------------
 
@@ -1041,11 +1089,16 @@ class UploaderController:
         inside the app afterwards.
         """
         url = uploader.watch_url(video_id)
-        self._links[row_id] = url
-        self._rows.set_link(row_id, url)
-        links.remember(self._link_store, info.path, info.size, info.mtime, url)
-        links.save(self._links_file, self._link_store)
-        self._ports.publish_link({"id": row_id, "url": url})
+        with self._publication_lock:
+            # Evidence belongs to the upload, not the lifetime of its row.
+            links.remember(self._link_store, info.path, info.size, info.mtime, url)
+            links.save(self._links_file, self._link_store)
+            if self._rows.resolve(row_id) is None:
+                return
+            with self._state_lock:
+                self._links[row_id] = url
+            self._rows.set_link(row_id, url)
+            self._ports.publish_link({"id": row_id, "url": url})
 
     def _upload_done(self, job: UploadJob) -> None:
         self._retry_state = None
@@ -1714,12 +1767,17 @@ class UploaderController:
                 f"Reading recording lengths… ({index}/{total})", busy=True
             )
             duration, definitive = library.probe(info.path, self._state.ffprobe_bin)
-            if definitive:
-                durations.remember(
-                    self._cache, info.path, info.size, info.mtime, duration
-                )
-                measured += 1
-            self._push_duration(row_id, duration, definitive)
+            with self._publication_lock:
+                # A background answer may have become definitive while this
+                # synchronous probe was away. It wins in RAM AND on disk.
+                if info.probed and info.answered:
+                    continue
+                if definitive:
+                    durations.remember(
+                        self._cache, info.path, info.size, info.mtime, duration
+                    )
+                    measured += 1
+                self._apply_duration(row_id, duration, definitive)
         if measured:
             durations.save(self._durations_file, self._cache)
 
