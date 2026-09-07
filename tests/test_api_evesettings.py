@@ -16,6 +16,7 @@ from tests.fakes import FakeWindow
 from tests.test_api import decode_payload
 from wingman import paths, settings
 from wingman.evesettings import codec, formation_sharing, formations, tree
+from wingman.evesettings import controller as ctrl_mod
 from wingman.evesettings import identity as evesettings_identity
 from wingman.preview import discovery as discovery_mod
 from wingman.ui import api as api_mod
@@ -77,7 +78,7 @@ def account_setup(tmp_path, monkeypatch, name="core_user_1.dat"):
 def mark_deleted(api, *character_ids, datasource="tranquility"):
     """Record ESI deletion verdicts the way a resolver pass would."""
     for character_id in character_ids:
-        api._eve_deleted.add((datasource, int(character_id)))
+        api._profiles._eve_deleted.add((datasource, int(character_id)))
 
 
 def fake_status(api, monkeypatch, names=None, deleted=(), seen=None, error=None):
@@ -95,8 +96,8 @@ def fake_status(api, monkeypatch, names=None, deleted=(), seen=None, error=None)
             raise error
         return dict(names or {}), {int(i) for i in deleted}
 
-    monkeypatch.setattr(api_mod.evesettings_characters, "resolve", resolve)
-    api._eve_names.resolve_missing = lambda ids, **kwargs: False
+    monkeypatch.setattr(ctrl_mod.evesettings_characters, "resolve", resolve)
+    api._profiles._eve_names.resolve_missing = lambda ids, **kwargs: False
 
 
 class QueuedThreads:
@@ -148,7 +149,9 @@ def test_state_normalizes_a_legacy_profile_root_without_saving(tmp_path, monkeyp
     value exactly as it does for a fresh one."""
     profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
-    api._eve_section().update({"root": str(profile), "server": None, "profile": None})
+    api._state.settings["eve_settings"].update(
+        {"root": str(profile), "server": None, "profile": None}
+    )
     monkeypatch.setattr(
         api_mod.settings_mod,
         "update_section",
@@ -163,14 +166,14 @@ def test_state_exposes_the_canonical_selective_copy_groups_and_availability(
     tmp_path, monkeypatch
 ):
     api = build(tmp_path, monkeypatch)
-    monkeypatch.setattr(api_mod.evesettings_codec, "codec_available", lambda: True)
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "codec_available", lambda: True)
 
     state = api.eve_settings_state()
 
     assert state["selective_copy_available"] is True
     assert state["copy_groups"] == {
-        "characters": api_mod.evesettings_selective.groups_payload("character"),
-        "accounts": api_mod.evesettings_selective.groups_payload("account"),
+        "characters": ctrl_mod.evesettings_selective.groups_payload("character"),
+        "accounts": ctrl_mod.evesettings_selective.groups_payload("account"),
     }
     assert [
         group for group in state["copy_groups"]["characters"] if not group["default_on"]
@@ -191,7 +194,7 @@ def test_state_reports_an_unreadable_folder(tmp_path, monkeypatch):
     def boom(_path):
         raise PermissionError(13, "denied")
 
-    monkeypatch.setattr(api_mod.evesettings_tree.os, "scandir", boom)
+    monkeypatch.setattr(ctrl_mod.evesettings_tree.os, "scandir", boom)
     assert api.eve_settings_state()["unreadable"] is True
 
 
@@ -214,13 +217,13 @@ def test_plain_copy_keeps_the_two_argument_byte_copy_path(tmp_path, monkeypatch)
 
     def plain(source, targets, **kwargs):
         called.append((source, targets, kwargs))
-        return api_mod.evesettings_ops.CopyReport(
-            [api_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True)]
+        return ctrl_mod.evesettings_ops.CopyReport(
+            [ctrl_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True)]
         )
 
-    monkeypatch.setattr(api_mod.evesettings_ops, "copy_to_targets", plain)
+    monkeypatch.setattr(ctrl_mod.evesettings_ops, "copy_to_targets", plain)
     monkeypatch.setattr(
-        api_mod.evesettings_ops,
+        ctrl_mod.evesettings_ops,
         "copy_selected_to_targets",
         lambda *args, **kwargs: pytest.fail("structured copy must not run"),
     )
@@ -242,13 +245,13 @@ def test_structured_copy_delegates_selected_groups_unchanged(tmp_path, monkeypat
 
     def selected(source, targets, **kwargs):
         called.append(kwargs["selected_groups"])
-        return api_mod.evesettings_ops.CopyReport(
-            [api_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True)]
+        return ctrl_mod.evesettings_ops.CopyReport(
+            [ctrl_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True)]
         )
 
-    monkeypatch.setattr(api_mod.evesettings_ops, "copy_selected_to_targets", selected)
+    monkeypatch.setattr(ctrl_mod.evesettings_ops, "copy_selected_to_targets", selected)
     monkeypatch.setattr(
-        api_mod.evesettings_ops,
+        ctrl_mod.evesettings_ops,
         "copy_to_targets",
         lambda *args, **kwargs: pytest.fail("plain copy must not run"),
     )
@@ -280,7 +283,7 @@ def test_structured_copy_refuses_when_eve_is_running_or_the_probe_fails(
 
     api._eve_client_running_strict = probe
     monkeypatch.setattr(
-        api_mod.evesettings_ops,
+        ctrl_mod.evesettings_ops,
         "copy_selected_to_targets",
         lambda *args, **kwargs: pytest.fail("copy must not run"),
     )
@@ -298,8 +301,8 @@ def test_structured_copy_refuses_when_eve_is_running_or_the_probe_fails(
         "onEveSettingsDone" in js and script_payload(js)["ok"] is False
         for js in api._window.calls
     )
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_structured_confirmation_derives_preserved_labels_from_the_kind_table(
@@ -353,21 +356,21 @@ def test_partial_structured_copy_reports_counts_and_still_prunes_backups(
     api._alert = fakes.Alerts()
     pruned = []
     outcomes = [
-        api_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True),
-        api_mod.evesettings_ops.TargetOutcome(
+        ctrl_mod.evesettings_ops.TargetOutcome(profile / "core_char_2.dat", True),
+        ctrl_mod.evesettings_ops.TargetOutcome(
             profile / "core_char_3.dat", False, "bad target"
         ),
     ]
     monkeypatch.setattr(
-        api_mod.evesettings_ops,
+        ctrl_mod.evesettings_ops,
         "copy_selected_to_targets",
-        lambda *args, **kwargs: api_mod.evesettings_ops.CopyReport(outcomes),
+        lambda *args, **kwargs: ctrl_mod.evesettings_ops.CopyReport(outcomes),
     )
     monkeypatch.setattr(
-        api_mod.evesettings_backup,
+        ctrl_mod.evesettings_backup,
         "prune",
         lambda store, keep: (
-            pruned.append((store, keep)) or api_mod.evesettings_backup.PruneReport()
+            pruned.append((store, keep)) or ctrl_mod.evesettings_backup.PruneReport()
         ),
     )
 
@@ -409,8 +412,8 @@ def test_the_copy_confirm_names_the_source_and_the_targets(tmp_path, monkeypatch
     profile = eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch, answer=False)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api._eve_names.names[1] = "Guarzo Opper"
-    api._eve_names.names[2] = "Zircon Gravimeld"
+    api._profiles._eve_names.names[1] = "Guarzo Opper"
+    api._profiles._eve_names.names[2] = "Zircon Gravimeld"
     seen = []
     api._eve_confirm = lambda title, body, **kw: seen.append(body) or False
 
@@ -434,9 +437,9 @@ def test_the_roster_is_ordered_by_name_not_by_file_id(tmp_path, monkeypatch):
     )
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api._eve_names.names[1] = "Zircon Gravimeld"
-    api._eve_names.names[2] = "guarzo opper"
-    api._eve_names.names[3] = "Aura"
+    api._profiles._eve_names.names[1] = "Zircon Gravimeld"
+    api._profiles._eve_names.names[2] = "guarzo opper"
+    api._profiles._eve_names.names[3] = "Aura"
 
     names = [c["name"] for c in api.eve_settings_state()["characters"]]
 
@@ -472,41 +475,8 @@ def test_the_roster_and_the_confirm_share_one_label_producer(tmp_path, monkeypat
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     state = api.eve_settings_state()
     for character in state["characters"]:
-        assert api._eve_label(character["path"]) == character["name"]
-    assert api._eve_label(profile / "core_char_2.dat") == "Character 2"
-
-
-def test_a_second_mutation_is_refused_while_one_holds_the_lock(tmp_path, monkeypatch):
-    """_confirm parks each worker independently, so without a lock two
-    approved operations can interleave over the same files."""
-    profile = eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api._eve_mutation.acquire()
-    try:
-        accepted = api.eve_settings_copy(
-            str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
-        )
-    finally:
-        api._eve_mutation.release()
-    assert accepted is False
-    assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_2.dat"
-
-
-def test_the_lock_is_released_even_when_the_worker_raises(tmp_path, monkeypatch):
-    profile = eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-
-    def explode(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(api_mod.evesettings_ops, "copy_to_targets", explode)
-    api.eve_settings_copy(
-        str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
-    )
-    assert api._eve_mutation.acquire(blocking=False) is True
-    api._eve_mutation.release()
+        assert api._profiles._eve_label(character["path"]) == character["name"]
+    assert api._profiles._eve_label(profile / "core_char_2.dat") == "Character 2"
 
 
 def test_select_persists_through_the_merging_writer(tmp_path, monkeypatch):
@@ -530,10 +500,13 @@ def test_pick_root_persists_the_canonical_selection(
     api = build(tmp_path, monkeypatch)
     picked = {"root": root, "server": server, "profile": profile}[picked_level]
     api._window.create_file_dialog = lambda *a, **k: (str(picked),)
+    # Stub the folder-kind constant at test time so the test does not attempt
+    # to import pywebview on platforms where it is not available.
+    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
     assert api.eve_settings_pick_root() == str(root)
-    assert api._eve_section()["root"] == str(root)
-    assert api._eve_section()["server"] == str(server)
-    assert api._eve_section()["profile"] == str(profile)
+    assert api._state.settings["eve_settings"]["root"] == str(root)
+    assert api._state.settings["eve_settings"]["server"] == str(server)
+    assert api._state.settings["eve_settings"]["profile"] == str(profile)
 
 
 def test_select_rejects_a_fabricated_selection(tmp_path, monkeypatch):
@@ -545,9 +518,9 @@ def test_select_rejects_a_fabricated_selection(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     assert api.eve_settings_select(str(profile.parent), "nonexistent-profile") is False
-    assert api._eve_section()["profile"] is None
+    assert api._state.settings["eve_settings"]["profile"] is None
     assert api.eve_settings_select("nonexistent-server", str(profile)) is False
-    assert api._eve_section()["server"] is None
+    assert api._state.settings["eve_settings"]["server"] is None
 
 
 def test_select_canonicalizes_a_legacy_deep_root(tmp_path, monkeypatch):
@@ -558,7 +531,7 @@ def test_select_canonicalizes_a_legacy_deep_root(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(profile)
     assert api.eve_settings_select(str(profile.parent), str(profile)) is True
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     assert section["root"] == str(profile.parent.parent)
     assert section["server"] == str(profile.parent)
     assert section["profile"] == str(profile)
@@ -579,7 +552,7 @@ def test_select_switches_to_a_sibling_profile_from_a_legacy_profile_root(
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(profile)
     assert api.eve_settings_select(str(profile.parent), str(sibling)) is True
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     assert section["root"] == str(profile.parent.parent)
     assert section["server"] == str(profile.parent)
     assert section["profile"] == str(sibling)
@@ -602,7 +575,7 @@ def test_select_switches_to_a_sibling_server_from_a_legacy_server_root(
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(server)
     assert api.eve_settings_select(str(other_server), str(other_profile)) is True
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     assert section["root"] == str(root)
     assert section["server"] == str(other_server)
     assert section["profile"] == str(other_profile)
@@ -616,7 +589,7 @@ def test_select_with_an_empty_profile_chooses_the_servers_first_profile(
     api = build(tmp_path, monkeypatch)
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     assert api.eve_settings_select(str(profile.parent), "") is True
-    assert api._eve_section()["profile"] == str(profile)
+    assert api._state.settings["eve_settings"]["profile"] == str(profile)
 
 
 def test_names_are_pushed_once_a_pass_resolves_something(tmp_path, monkeypatch):
@@ -625,7 +598,7 @@ def test_names_are_pushed_once_a_pass_resolves_something(tmp_path, monkeypatch):
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     fake_status(api, monkeypatch, names={1: "Pilot One"})
     api.eve_settings_resolve_names()
-    assert api._eve_names.names[1] == "Pilot One"
+    assert api._profiles._eve_names.names[1] == "Pilot One"
     assert [call for call in api._window.calls if "onEveSettingsNames" in call]
 
 
@@ -695,7 +668,7 @@ def test_restore_authorizes_against_the_effective_root_not_a_legacy_profile_root
     (sibling / "core_char_9.dat").write_bytes(b"sibling-data")
     api = build(tmp_path, monkeypatch)
     store = paths.eve_settings_backup_dir()
-    made = api_mod.evesettings_backup.create_profile_backup(
+    made = ctrl_mod.evesettings_backup.create_profile_backup(
         store, sibling, origin="manual"
     )
     # Legacy install: `root` points at the original profile, not its
@@ -718,35 +691,6 @@ def test_restore_refuses_when_no_root_is_configured(tmp_path, monkeypatch):
     assert any("Restore failed" in call for call in api._window.calls)
 
 
-def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path, monkeypatch):
-    """Only the worker releases the lock, and a worker that never started
-    never will -- every later operation would be refused for good."""
-    profile = eve_tree(tmp_path)
-
-    class Refuses:
-        def __init__(self, **kwargs):
-            pass
-
-        def start(self):
-            raise RuntimeError("can't start new thread")
-
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    state = api_mod.AppState(
-        recording_dir=tmp_path, settings=settings.load(tmp_path / "s.json")
-    )
-    api = api_mod.Api(state, spawn=Refuses)
-    api._window = FakeWindow()
-    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    assert (
-        api.eve_settings_copy(
-            str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
-        )
-        is False
-    )
-    assert api._eve_mutation.acquire(blocking=False) is True
-    api._eve_mutation.release()
-
-
 def test_a_confirmation_nobody_answers_does_not_strand_the_lock(tmp_path, monkeypatch):
     """_push swallows every evaluate_js failure, so a confirmation whose
     push never reached the page would park the worker forever holding the
@@ -760,8 +704,8 @@ def test_a_confirmation_nobody_answers_does_not_strand_the_lock(tmp_path, monkey
         str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
     )
     assert (profile / "core_char_2.dat").read_bytes() == b"payload-core_char_2.dat"
-    assert api._eve_mutation.acquire(blocking=False) is True
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False) is True
+    api._profiles._eve_mutation.release()
 
 
 def test_every_mutation_pushes_a_completion_the_page_can_wait_on(tmp_path, monkeypatch):
@@ -820,92 +764,6 @@ def test_state_does_not_call_a_readable_empty_store_unreadable(tmp_path, monkeyp
     assert api.eve_settings_state()["backups_unreadable"] is False
 
 
-def test_selecting_is_refused_while_a_mutation_holds_the_lock(tmp_path, monkeypatch):
-    """`root` is an input to every containment check, so changing it under
-    an in-flight restore has that operation validate against a different
-    root than the one in effect when the user approved it. _eve_begin's
-    stated policy is that EVE Settings mutations are refused rather than
-    interleaved, and selection mutates exactly that input."""
-    profile = eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    api._eve_mutation.acquire()
-    try:
-        assert api.eve_settings_select(str(profile.parent), str(profile)) is False
-        assert api._state.settings["eve_settings"]["server"] is None
-    finally:
-        api._eve_mutation.release()
-    assert api.eve_settings_select(str(profile.parent), str(profile)) is True
-
-
-def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    opened = []
-
-    def dialog(*args, **kwargs):
-        opened.append(args)
-        return [str(tmp_path / "EVE")]
-
-    api._window.create_file_dialog = dialog
-    # webview is not installed on the Linux box these tests run on, and
-    # _folder_dialog_kind() imports it before the dialog is ever called.
-    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
-    api._eve_mutation.acquire()
-    try:
-        assert api.eve_settings_pick_root() == ""
-        # Not merely a refused write: the picker never opened, so the user
-        # is not asked to choose a folder that is then thrown away.
-        assert opened == []
-    finally:
-        api._eve_mutation.release()
-    assert api.eve_settings_pick_root() == str(tmp_path / "EVE")
-
-
-def test_selecting_releases_the_lock_for_the_next_mutation(tmp_path, monkeypatch):
-    """A hold that leaked would refuse every later copy, backup, restore
-    and delete until the app restarted."""
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    api.eve_settings_select("s", "p")
-    assert api._eve_mutation.acquire(blocking=False) is True
-    api._eve_mutation.release()
-
-
-def test_a_pick_root_that_raises_still_releases_the_lock(tmp_path, monkeypatch):
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("no dialog here")
-
-    api._window.create_file_dialog = boom
-    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
-    with pytest.raises(RuntimeError):
-        api.eve_settings_pick_root()
-    assert api._eve_mutation.acquire(blocking=False) is True
-    api._eve_mutation.release()
-
-
-def test_state_reads_the_running_pill_from_cache_not_a_fresh_probe(
-    tmp_path, monkeypatch
-):
-    """eve_settings_state is costed in the design as scandir over a few
-    dozen files. list_clients() enumerates every top-level window and
-    resolves PIDs to executables, which is not that -- so it runs on a
-    background thread and state reads the last known answer."""
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    calls = []
-    api._eve_refresh_running = lambda: calls.append(1)
-    api._eve_running = True
-    assert api.eve_settings_state()["eve_running"] is True
-    # Kicked off, but its answer is never awaited on this thread.
-    assert calls == [1]
-
-
 def test_the_strict_running_probe_opts_in_at_the_discovery_boundary(
     tmp_path, monkeypatch
 ):
@@ -921,55 +779,13 @@ def test_the_strict_running_probe_opts_in_at_the_discovery_boundary(
     assert seen == [{"strict": True}]
 
 
-def test_the_running_probe_pushes_only_when_the_answer_changes(tmp_path, monkeypatch):
-    """One push per change, not per refresh: the page has nothing to
-    redraw when the pill still says what it already said."""
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    pushed = []
-    api._push = lambda name, payload: pushed.append((name, payload))
-
-    # None -> False IS a change: the pill was showing "Checking...".
-    api._eve_client_running = lambda: False
-    api._eve_refresh_running()
-    assert pushed == [("onEveSettingsRunning", {"running": False})]
-
-    api._eve_refresh_running()
-    assert len(pushed) == 1, "no change, so nothing to push"
-
-    api._eve_client_running = lambda: True
-    api._eve_refresh_running()
-    assert pushed[-1] == ("onEveSettingsRunning", {"running": True})
-    assert len(pushed) == 2 and api._eve_running is True
-
-    api._eve_refresh_running()
-    assert len(pushed) == 2, "no change, so nothing to push"
-
-
-def test_a_probe_that_raises_leaves_the_pill_alone(tmp_path, monkeypatch):
-    """Advisory only. A failed probe must never surface as an error."""
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    pushed = []
-    api._push = lambda name, payload: pushed.append((name, payload))
-
-    def boom():
-        raise OSError("no window station")
-
-    api._eve_client_running = boom
-    api._eve_refresh_running()
-    # Still None: a failed probe must not fabricate "EVE closed", which is
-    # the reassuring answer and the only warning before a copy.
-    assert pushed == [] and api._eve_running is None
-
-
 def test_state_refuses_a_root_too_wide_to_be_an_eve_folder(tmp_path, monkeypatch):
     """A mis-picked root costs a scandir per child on the bridge thread.
     Refused with a reason, rather than probed slowly."""
     api = build(tmp_path, monkeypatch)
     wide = tmp_path / "wide"
     wide.mkdir()
-    for n in range(api_mod.evesettings_tree.MAX_ROOT_CHILDREN + 1):
+    for n in range(ctrl_mod.evesettings_tree.MAX_ROOT_CHILDREN + 1):
         (wide / f"dir{n:03d}").mkdir()
     api._state.settings["eve_settings"]["root"] = str(wide)
     state = api.eve_settings_state()
@@ -992,61 +808,8 @@ def test_the_pill_is_unknown_until_the_probe_answers(tmp_path, monkeypatch):
     eve_tree(tmp_path)
     api = build(tmp_path, monkeypatch)
     # Nothing has looked yet; the probe must not be allowed to run inline.
-    api._eve_refresh_running = lambda: None
+    api._profiles._eve_refresh_running = lambda: None
     assert api.eve_settings_state()["eve_running"] is None
-
-
-def test_a_second_probe_is_skipped_while_one_is_in_flight(tmp_path, monkeypatch):
-    """eve_settings_state() fires a probe on every call -- route open and
-    after every mutation -- so two overlap easily. Without single-flight a
-    slow probe finishing after a fast one publishes the OLDER observation
-    and leaves it cached, showing "EVE closed" while EVE is running with
-    nothing to correct it."""
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-    started = []
-
-    class Parked:
-        """A spawn that never runs the worker, so the lock stays held."""
-
-        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
-            started.append(target)
-
-        def start(self):
-            return None
-
-    api._spawn = Parked
-    api._eve_refresh_running()
-    api._eve_refresh_running()
-    assert len(started) == 1, "a second probe was spawned over the first"
-
-
-def test_a_probe_that_cannot_be_spawned_does_not_wedge_the_lock(tmp_path, monkeypatch):
-    """Only the worker releases, and a worker that never started never
-    will -- that would freeze the pill for the process's lifetime."""
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-
-    def no_thread(*args, **kwargs):
-        raise RuntimeError("can't start new thread")
-
-    api._spawn = no_thread
-    api._eve_refresh_running()
-    assert api._eve_probe.acquire(blocking=False) is True
-    api._eve_probe.release()
-
-
-def test_the_probe_releases_its_lock_even_when_it_raises(tmp_path, monkeypatch):
-    eve_tree(tmp_path)
-    api = build(tmp_path, monkeypatch)
-
-    def boom():
-        raise OSError("no window station")
-
-    api._eve_client_running = boom
-    api._eve_refresh_running()
-    assert api._eve_probe.acquire(blocking=False) is True
-    api._eve_probe.release()
 
 
 # --- the copy confirmation, and the payload behind the backups card -------
@@ -1139,7 +902,7 @@ def test_the_copy_confirm_warns_when_a_client_is_open(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     asked = confirms(api)
     profile = eve_tree(tmp_path)
-    api._eve_running = False  # The stale pill value; must not be the source.
+    api._profiles._eve_running = False  # The stale pill value; must not be the source.
     api._eve_client_running = lambda: True
 
     api.eve_settings_copy(
@@ -1164,7 +927,7 @@ def test_the_prune_depth_reported_is_the_one_actually_used(tmp_path, monkeypatch
     """A payload that always said 10 while the copy pruned to something
     else would be worse than no number at all."""
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["auto_keep"] = 3
+    api._state.settings["eve_settings"]["auto_keep"] = 3
 
     assert api.eve_settings_state()["auto_keep"] == 3
 
@@ -1176,11 +939,11 @@ def test_account_payload_uses_name_character_summary_and_account_id(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
-    api._eve_names.names.update({20: "Aiga Otsolen", 21: "Beta"})
+    api._profiles._eve_names.names.update({20: "Aiga Otsolen", 21: "Beta"})
 
     account = api.eve_settings_state()["accounts"][0]
 
@@ -1194,7 +957,7 @@ def test_account_payload_uses_name_character_summary_and_account_id(
 def test_unidentified_account_payload_is_explicit(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat",))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
 
     account = api.eve_settings_state()["accounts"][0]
 
@@ -1208,16 +971,16 @@ def test_backup_rows_resolve_human_targets_without_opening_archives(
 ):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20"]}
-    api._eve_names.names[20] = "Aiga Otsolen"
+    api._profiles._eve_names.names[20] = "Aiga Otsolen"
     store = paths.eve_settings_backup_dir()
-    api_mod.evesettings_backup.create_file_backup(
+    ctrl_mod.evesettings_backup.create_file_backup(
         store, profile / "core_user_10.dat", origin="manual"
     )
-    api_mod.evesettings_backup.create_file_backup(
+    ctrl_mod.evesettings_backup.create_file_backup(
         store, profile / "core_char_20.dat", origin="manual"
     )
 
@@ -1234,8 +997,8 @@ def test_unidentified_account_backup_is_explicit_without_duplicating_id(
 ):
     profile = eve_tree(tmp_path, files=("core_user_10.dat",))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api_mod.evesettings_backup.create_file_backup(
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    ctrl_mod.evesettings_backup.create_file_backup(
         paths.eve_settings_backup_dir(),
         profile / "core_user_10.dat",
         origin="manual",
@@ -1255,7 +1018,7 @@ def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
 ):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "99"]}
@@ -1271,13 +1034,13 @@ def test_identity_editor_keeps_linked_characters_missing_from_current_profile(
 def test_account_name_is_trimmed_and_cannot_be_cleared(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat",))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
 
     assert api.eve_settings_set_account_name("10", " LoginName ")["applied"] is True
-    assert api._eve_section()["account_names"] == {"10": "LoginName"}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "LoginName"}
     assert api.eve_settings_set_account_name("10", "")["applied"] is False
     assert api.eve_settings_set_account_name("10", "x" * 81)["applied"] is False
-    assert api._eve_section()["account_names"] == {"10": "LoginName"}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "LoginName"}
 
 
 @pytest.mark.parametrize(
@@ -1291,12 +1054,14 @@ def test_manual_identity_endpoints_refuse_busy_without_reading_or_writing(
     tmp_path, monkeypatch, method, args
 ):
     api = build(tmp_path, monkeypatch)
-    api._eve_discover = lambda: pytest.fail("busy calls must not inspect the profile")
-    api._eve_mutation.acquire()
+    api._profiles._eve_discover = lambda: pytest.fail(
+        "busy calls must not inspect the profile"
+    )
+    api._profiles._eve_mutation.acquire()
     try:
         result = getattr(api, method)(*args)
     finally:
-        api._eve_mutation.release()
+        api._profiles._eve_mutation.release()
 
     assert result == {
         "applied": False,
@@ -1305,36 +1070,12 @@ def test_manual_identity_endpoints_refuse_busy_without_reading_or_writing(
     }
 
 
-def test_manual_identity_name_and_roster_work_stays_under_the_mutation_lock(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    original_discover = api._eve_discover
-    original_update = api_mod.settings_mod.update_section
-
-    def checked_discover():
-        assert api._eve_mutation.locked()
-        return original_discover()
-
-    def checked_update(*args, **kwargs):
-        assert api._eve_mutation.locked()
-        return original_update(*args, **kwargs)
-
-    monkeypatch.setattr(api, "_eve_discover", checked_discover)
-    monkeypatch.setattr(api_mod.settings_mod, "update_section", checked_update)
-
-    assert api.eve_settings_set_account_name("10", "LoginName")["applied"] is True
-    assert api.eve_settings_set_account_characters("10", ["20"])["applied"] is True
-
-
 def test_manual_identity_endpoint_does_not_interleave_a_blocked_save(
     tmp_path, monkeypatch
 ):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     writing = threading.Event()
     release_write = threading.Event()
     original = api_mod.settings_mod.update_section
@@ -1363,33 +1104,12 @@ def test_manual_identity_endpoint_does_not_interleave_a_blocked_save(
     }
 
 
-def test_account_identity_helpers_preserve_shared_validation_and_relinking_rules(
-    tmp_path, monkeypatch
-):
-    api = build(tmp_path, monkeypatch)
-
-    assert api._eve_validate_account_name("10", " Login ", {"11": "Other"}) == (
-        "Login",
-        None,
-    )
-    assert api._eve_validate_account_name("10", "other", {"11": "Other"}) == (
-        None,
-        "That EVE Online username is already assigned to another account.",
-    )
-    assert api._eve_relink_account_characters(
-        {"10": ["21"], "11": ["20"]}, "10", ["20"], ["21", "20"]
-    ) == ({"10": ["21", "20"]}, None)
-    assert api._eve_relink_account_characters(
-        {"10": ["21", "22", "23"]}, "10", ["20"], ["21", "22", "23", "20"]
-    ) == (None, "An EVE account can have up to three characters.")
-
-
 def test_account_name_is_unique_case_insensitively_except_for_itself(
     tmp_path, monkeypatch
 ):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_user_11.dat"))
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20"]}
@@ -1402,19 +1122,19 @@ def test_account_name_is_unique_case_insensitively_except_for_itself(
         "error": "That EVE Online username is already assigned to another account.",
     }
     assert api.eve_settings_set_account_name("10", "LOGINNAME")["applied"] is True
-    assert api._eve_section()["account_names"] == {"10": "LOGINNAME"}
-    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "LOGINNAME"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["20"]}
 
 
 def test_unnamed_account_refuses_character_links(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
 
     result = api.eve_settings_set_account_characters("10", ["20"])
 
     assert result["error"] == "Name this account before adding characters."
-    assert api._eve_section()["account_characters"] == {}
+    assert api._state.settings["eve_settings"]["account_characters"] == {}
 
 
 def test_three_unique_characters_apply_and_duplicates_do_not_consume_slots(
@@ -1430,14 +1150,16 @@ def test_three_unique_characters_apply_and_duplicates_do_not_consume_slots(
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
 
     result = api.eve_settings_set_account_characters("10", ["20", "20", "21", "22"])
 
     assert result["applied"] is True
-    assert api._eve_section()["account_characters"] == {"10": ["20", "21", "22"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {
+        "10": ["20", "21", "22"]
+    }
 
 
 def test_fourth_unique_character_is_refused_without_mutating_either_account(
@@ -1455,7 +1177,7 @@ def test_fourth_unique_character_is_refused_without_mutating_either_account(
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "Source", "11": "Destination"}
     section["account_characters"] = {"10": ["23"], "11": ["20", "21", "22"]}
@@ -1463,7 +1185,7 @@ def test_fourth_unique_character_is_refused_without_mutating_either_account(
     result = api.eve_settings_set_account_characters("11", ["20", "21", "22", "23"])
 
     assert result["error"] == "An EVE account can have up to three characters."
-    assert api._eve_section()["account_characters"] == {
+    assert api._state.settings["eve_settings"]["account_characters"] == {
         "10": ["23"],
         "11": ["20", "21", "22"],
     }
@@ -1472,7 +1194,7 @@ def test_fourth_unique_character_is_refused_without_mutating_either_account(
 def test_unknown_character_is_refused_without_mutation(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20"]}
@@ -1480,7 +1202,7 @@ def test_unknown_character_is_refused_without_mutation(tmp_path, monkeypatch):
     result = api.eve_settings_set_account_characters("10", ["99"])
 
     assert result["applied"] is False
-    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["20"]}
 
 
 def test_associating_a_character_moves_it_to_a_named_account_with_room(
@@ -1491,7 +1213,7 @@ def test_associating_a_character_moves_it_to_a_named_account_with_room(
         files=("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "Source", "11": "Destination"}
     section["account_characters"] = {"10": ["20"]}
@@ -1499,27 +1221,27 @@ def test_associating_a_character_moves_it_to_a_named_account_with_room(
     result = api.eve_settings_set_account_characters("11", ["20"])
 
     assert result["applied"] is True
-    assert api._eve_section()["account_characters"] == {"11": ["20"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"11": ["20"]}
 
 
 def test_removing_every_character_retains_the_account_name(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20"]}
 
     assert api.eve_settings_set_account_characters("10", [])["applied"] is True
-    assert api._eve_section()["account_names"] == {"10": "LoginName"}
-    assert api._eve_section()["account_characters"] == {}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "LoginName"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {}
 
 
 def _pending_identification(
     api, account_id="10", character_ids=("20",), generation=None
 ):
     """An observation and the offer it authorized, as a check leaves them."""
-    api._eve_identification = evesettings_identity.Snapshot(
+    api._profiles._eve_identification = evesettings_identity.Snapshot(
         Path("root"), Path("server"), Path("profile"), {}
     )
     _offer_candidate(api, account_id, character_ids, generation)
@@ -1527,8 +1249,10 @@ def _pending_identification(
 
 def _offer_candidate(api, account_id="10", character_ids=("20",), generation=None):
     """Publish an offer, authorized by the current generation by default."""
-    api._eve_identification_candidate = api_mod._EveCandidate(
-        api._eve_identification_generation if generation is None else generation,
+    api._profiles._eve_identification_candidate = ctrl_mod._EveCandidate(
+        api._profiles._eve_identification_generation
+        if generation is None
+        else generation,
         account_id,
         tuple(character_ids),
     )
@@ -1536,7 +1260,7 @@ def _offer_candidate(api, account_id="10", character_ids=("20",), generation=Non
 
 def offered(api):
     """The offered pair without its generation, for comparison."""
-    candidate = api._eve_identification_candidate
+    candidate = api._profiles._eve_identification_candidate
     if candidate is None:
         return None
     return (candidate.account_id, candidate.character_ids)
@@ -1555,43 +1279,18 @@ def names_pushes(api):
     ]
 
 
-def test_identification_starts_with_no_snapshot_or_candidate(tmp_path, monkeypatch):
-    api = build(tmp_path, monkeypatch)
-
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
-
-
-def test_identification_start_replaces_an_old_candidate_and_check_records_latest_pair(
-    tmp_path, monkeypatch
-):
-    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    _offer_candidate(api, "old", ("candidate",))
-    api._eve_client_running_strict = lambda: False
-
-    assert api.eve_settings_identification_start()["status"] == "watching"
-    assert api._eve_identification_candidate is None
-    (profile / "core_user_10.dat").write_bytes(b"changed account")
-    (profile / "core_char_20.dat").write_bytes(b"changed character")
-
-    assert api.eve_settings_identification_check()["status"] == "candidate"
-    assert offered(api) == ("10", ("20",))
-
-
 def test_identification_start_and_check_report_busy_with_stable_status(
     tmp_path, monkeypatch
 ):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_mutation.acquire()
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._profiles._eve_mutation.acquire()
     try:
         start = api.eve_settings_identification_start()
         check = api.eve_settings_identification_check()
     finally:
-        api._eve_mutation.release()
+        api._profiles._eve_mutation.release()
 
     assert start == {
         "status": "busy",
@@ -1601,96 +1300,29 @@ def test_identification_start_and_check_report_busy_with_stable_status(
     assert check == start
 
 
-def test_identification_check_clears_obsolete_candidate_on_no_change(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_client_running_strict = lambda: False
-    assert api.eve_settings_identification_start()["status"] == "watching"
-    _offer_candidate(api)
-
-    result = api.eve_settings_identification_check()
-
-    assert result == {
-        "status": "none",
-        "error": "No account and character changes were found. Make a small settings change in the client, then close it completely and check again.",
-        "identification_generation": 1,
-    }
-    assert api._eve_identification is not None
-    assert api._eve_identification_candidate is None
-
-
-def test_identification_check_clears_candidate_on_ambiguity_and_invalidation(
-    tmp_path, monkeypatch
-):
-    profile = eve_tree(
-        tmp_path,
-        files=("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"),
-    )
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_client_running_strict = lambda: False
-    assert api.eve_settings_identification_start()["status"] == "watching"
-    _offer_candidate(api)
-    for name in ("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"):
-        (profile / name).write_bytes(b"changed with a different size " + name.encode())
-
-    assert api.eve_settings_identification_check()["status"] == "ambiguous"
-    assert api._eve_identification_candidate is None
-    _offer_candidate(api)
-    (profile / "core_char_20.dat").unlink()
-
-    invalidated = api.eve_settings_identification_check()
-
-    assert invalidated["status"] == "invalidated"
-    # Discarding the observation is an invalidation like any other: the
-    # page must be able to tell this answer from the offer it replaces.
-    assert invalidated["identification_generation"] == 2
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
-
-
-def test_identification_check_preserves_snapshot_but_clears_candidate_while_eve_runs(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    assert api.eve_settings_identification_start()["status"] == "watching"
-    snapshot = api._eve_identification
-    _offer_candidate(api)
-    api._eve_client_running_strict = lambda: True
-
-    assert api.eve_settings_identification_check()["status"] == "watching"
-    assert api._eve_identification is snapshot
-    assert api._eve_identification_candidate is None
-
-
 def test_identification_cancellation_and_selection_changes_clear_snapshot_and_candidate(
     tmp_path, monkeypatch
 ):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
 
     _pending_identification(api)
     assert api.eve_settings_identification_cancel()["status"] == "idle"
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
+    assert api._profiles._eve_identification is None
+    assert api._profiles._eve_identification_candidate is None
 
     _pending_identification(api)
     assert api.eve_settings_select(str(profile.parent), str(profile)) is True
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
+    assert api._profiles._eve_identification is None
+    assert api._profiles._eve_identification_candidate is None
 
     _pending_identification(api)
     api._window.create_file_dialog = lambda *args, **kwargs: [str(tmp_path / "other")]
     monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
     assert api.eve_settings_pick_root() == str(tmp_path / "other")
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
+    assert api._profiles._eve_identification is None
+    assert api._profiles._eve_identification_candidate is None
 
 
 def test_identification_confirmation_refuses_missing_or_stale_candidates(
@@ -1708,8 +1340,8 @@ def test_identification_confirmation_refuses_missing_or_stale_candidates(
     assert (
         api.eve_settings_identification_confirm("10", "21", "Login")["applied"] is False
     )
-    assert api._eve_section()["account_names"] == {}
-    assert api._eve_section()["account_characters"] == {}
+    assert api._state.settings["eve_settings"]["account_names"] == {}
+    assert api._state.settings["eve_settings"]["account_characters"] == {}
 
 
 @pytest.mark.parametrize("name", ["", "x" * 81, "other"])
@@ -1717,7 +1349,7 @@ def test_identification_confirmation_rejects_invalid_names_without_partial_write
     tmp_path, monkeypatch, name
 ):
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["account_names"] = {"11": "Other"}
     section["account_characters"] = {"11": ["21"]}
     _pending_identification(api)
@@ -1725,8 +1357,8 @@ def test_identification_confirmation_rejects_invalid_names_without_partial_write
     result = api.eve_settings_identification_confirm("10", "20", name)
 
     assert result["applied"] is False
-    assert api._eve_section()["account_names"] == {"11": "Other"}
-    assert api._eve_section()["account_characters"] == {"11": ["21"]}
+    assert api._state.settings["eve_settings"]["account_names"] == {"11": "Other"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"11": ["21"]}
     assert offered(api) == ("10", ("20",))
 
 
@@ -1755,10 +1387,10 @@ def test_identification_confirmation_persists_name_and_link_in_one_write(
             {"account_names": {"10": "Login"}, "account_characters": {"10": ["20"]}},
         )
     ]
-    assert api._eve_section()["account_names"] == {"10": "Login"}
-    assert api._eve_section()["account_characters"] == {"10": ["20"]}
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "Login"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["20"]}
+    assert api._profiles._eve_identification is None
+    assert api._profiles._eve_identification_candidate is None
 
 
 def test_identification_confirmation_retains_candidate_when_atomic_write_fails(
@@ -1779,9 +1411,9 @@ def test_identification_confirmation_retains_candidate_when_atomic_write_fails(
         "persisted": False,
         "error": "Could not save this account identity.",
     }
-    assert api._eve_section()["account_names"] == {}
-    assert api._eve_section()["account_characters"] == {}
-    assert api._eve_identification is not None
+    assert api._state.settings["eve_settings"]["account_names"] == {}
+    assert api._state.settings["eve_settings"]["account_characters"] == {}
+    assert api._profiles._eve_identification is not None
     assert offered(api) == ("10", ("20",))
 
 
@@ -1789,7 +1421,7 @@ def test_identification_confirmation_accepts_its_existing_name_and_link_as_a_noo
     tmp_path, monkeypatch
 ):
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["account_names"] = {"10": "Login"}
     section["account_characters"] = {"10": ["20"]}
     _pending_identification(api)
@@ -1802,15 +1434,15 @@ def test_identification_confirmation_accepts_its_existing_name_and_link_as_a_noo
     assert (
         api.eve_settings_identification_confirm("10", "20", "Login")["applied"] is True
     )
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
+    assert api._profiles._eve_identification is None
+    assert api._profiles._eve_identification_candidate is None
 
 
 def test_identification_confirmation_refuses_a_fourth_link_without_moving_it(
     tmp_path, monkeypatch
 ):
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["account_names"] = {"10": "Destination", "11": "Source"}
     section["account_characters"] = {"10": ["21", "22", "23"], "11": ["20"]}
     _pending_identification(api)
@@ -1818,7 +1450,7 @@ def test_identification_confirmation_refuses_a_fourth_link_without_moving_it(
     result = api.eve_settings_identification_confirm("10", "20", "Destination")
 
     assert result["applied"] is False
-    assert api._eve_section()["account_characters"] == {
+    assert api._state.settings["eve_settings"]["account_characters"] == {
         "10": ["21", "22", "23"],
         "11": ["20"],
     }
@@ -1828,7 +1460,7 @@ def test_identification_confirmation_moves_an_owned_character_only_when_room_exi
     tmp_path, monkeypatch
 ):
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["account_names"] = {"10": "Destination", "11": "Source"}
     section["account_characters"] = {"10": ["21"], "11": ["20"]}
     _pending_identification(api)
@@ -1837,7 +1469,9 @@ def test_identification_confirmation_moves_an_owned_character_only_when_room_exi
         api.eve_settings_identification_confirm("10", "20", "Destination")["applied"]
         is True
     )
-    assert api._eve_section()["account_characters"] == {"10": ["21", "20"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {
+        "10": ["21", "20"]
+    }
 
 
 def test_identification_confirmation_cannot_be_consumed_twice(tmp_path, monkeypatch):
@@ -1869,16 +1503,16 @@ def test_identification_confirmation_cannot_be_consumed_twice(tmp_path, monkeypa
     assert not first.is_alive()
     assert [result["applied"] for result in results].count(True) == 1
     assert [result["applied"] for result in results].count(False) == 1
-    assert api._eve_section()["account_names"] == {"10": "Login"}
-    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "Login"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["20"]}
 
 
 def test_identification_proposes_only_one_changed_account(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
     api._eve_client_running_strict = lambda: False
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_names.names[20] = "Aiga Otsolen"
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    api._profiles._eve_names.names[20] = "Aiga Otsolen"
 
     assert api.eve_settings_identification_start()["status"] == "watching"
     (profile / "core_user_10.dat").write_bytes(b"changed account")
@@ -1893,7 +1527,7 @@ def test_identification_proposes_only_one_changed_account(tmp_path, monkeypatch)
 def test_identification_waits_until_eve_is_closed(tmp_path, monkeypatch):
     eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api.eve_settings_identification_start()
     api._eve_client_running_strict = lambda: True
 
@@ -1909,7 +1543,7 @@ def test_identification_never_guesses_between_changed_accounts(tmp_path, monkeyp
         files=("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"),
     )
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._eve_client_running_strict = lambda: False
     api.eve_settings_identification_start()
     for name in ("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"):
@@ -1937,146 +1571,12 @@ def test_identification_blocks_mutations_until_cancelled(tmp_path, monkeypatch):
 # current answer from one that was true when it was computed.
 
 
-def test_identification_responses_carry_a_monotonic_generation(tmp_path, monkeypatch):
-    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_client_running_strict = lambda: False
-    api._eve_names.names[20] = "Aiga Otsolen"
-
-    started = api.eve_settings_identification_start()
-    (profile / "core_user_10.dat").write_bytes(b"changed account")
-    (profile / "core_char_20.dat").write_bytes(b"changed character")
-    checked = api.eve_settings_identification_check()
-    cancelled = api.eve_settings_identification_cancel()
-    restarted = api.eve_settings_identification_start()
-
-    assert started == {
-        "status": "watching",
-        "error": None,
-        "identification_generation": 1,
-    }
-    # The offer belongs to the observation that produced it, so a check
-    # does not claim a number of its own.
-    assert checked == {
-        "status": "candidate",
-        "error": None,
-        "account": checked["account"],
-        "characters": [{"id": "20", "name": "Aiga Otsolen"}],
-        "identification_generation": 1,
-    }
-    assert cancelled == {
-        "status": "idle",
-        "error": None,
-        "identification_generation": 2,
-    }
-    assert restarted["identification_generation"] == 3
-
-
-def test_a_cancel_racing_start_publication_discards_the_observation(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    real_snapshot = api_mod.evesettings_identity.take_snapshot
-    taking = threading.Event()
-
-    def cancel_during_snapshot(found):
-        taking.set()
-        # From another thread, and joined: a cancellation that had to wait
-        # for _eve_mutation -- which start holds right now -- would hang
-        # here instead of racing the publication below.
-        canceller = threading.Thread(target=api.eve_settings_identification_cancel)
-        canceller.start()
-        canceller.join(5)
-        assert not canceller.is_alive(), "cancellation waited for the mutation lock"
-        return real_snapshot(found)
-
-    monkeypatch.setattr(
-        api_mod.evesettings_identity, "take_snapshot", cancel_during_snapshot
-    )
-
-    result = api.eve_settings_identification_start()
-
-    assert taking.is_set()
-    assert result == {
-        "status": "cancelled",
-        "error": None,
-        "identification_generation": 2,
-    }
-    assert api._eve_identification is None
-
-
-def test_a_cancel_racing_a_candidate_discards_the_offer(tmp_path, monkeypatch):
-    profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_client_running_strict = lambda: False
-    assert api.eve_settings_identification_start()["status"] == "watching"
-    (profile / "core_user_10.dat").write_bytes(b"changed account")
-    (profile / "core_char_20.dat").write_bytes(b"changed character")
-
-    def cancel_while_probing():
-        canceller = threading.Thread(target=api.eve_settings_identification_cancel)
-        canceller.start()
-        canceller.join(5)
-        assert not canceller.is_alive(), "cancellation waited for the mutation lock"
-        return False
-
-    api._eve_client_running_strict = cancel_while_probing
-
-    result = api.eve_settings_identification_check()
-
-    assert result == {
-        "status": "cancelled",
-        "error": None,
-        "identification_generation": 2,
-    }
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
-
-
-def test_cancellation_is_never_blocked_by_the_mutation_lock(tmp_path, monkeypatch):
-    api = build(tmp_path, monkeypatch)
-    _pending_identification(api)
-    # Cleanup and every mutation own this lock for their whole run. Route
-    # exit cancels, and a cancel that waited for them would freeze the page
-    # on the way out of Profiles.
-    api._eve_mutation.acquire()
-    try:
-        canceller = threading.Thread(target=api.eve_settings_identification_cancel)
-        canceller.start()
-        canceller.join(5)
-
-        assert not canceller.is_alive(), "cancellation waited for the mutation lock"
-        assert api._eve_identification is None
-        assert api._eve_identification_candidate is None
-        assert api._eve_identification_generation == 1
-    finally:
-        api._eve_mutation.release()
-
-
-def test_confirmation_refuses_an_offer_from_an_older_generation(tmp_path, monkeypatch):
-    api = build(tmp_path, monkeypatch)
-    # The observation that authorized this offer has been replaced; only
-    # the offer object survived it. It authorizes nothing.
-    _pending_identification(api, generation=api._eve_identification_generation - 1)
-
-    result = api.eve_settings_identification_confirm("10", "20", "Login")
-
-    assert result["applied"] is False
-    assert result["error"] == "Start account identification again."
-    assert api._eve_section()["account_names"] == {}
-    assert api._eve_section()["account_characters"] == {}
-
-
 def test_a_deletion_learned_after_an_offer_invalidates_it_with_a_newer_generation(
     tmp_path, monkeypatch
 ):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._eve_client_running_strict = lambda: False
     assert api.eve_settings_identification_start()["status"] == "watching"
     (profile / "core_user_10.dat").write_bytes(b"changed account")
@@ -2087,8 +1587,8 @@ def test_a_deletion_learned_after_an_offer_invalidates_it_with_a_newer_generatio
     api.eve_settings_resolve_names()
 
     assert offer["status"] == "candidate"
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
+    assert api._profiles._eve_identification is None
+    assert api._profiles._eve_identification_candidate is None
     # Strictly newer than the offer, so a page holding a delayed candidate
     # callback rejects it instead of resurrecting the deleted character.
     assert names_pushes(api) == [
@@ -2104,7 +1604,7 @@ def test_a_deletion_that_races_a_candidate_publication_invalidates_it(
 ):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._eve_client_running_strict = lambda: False
     assert api.eve_settings_identification_start()["status"] == "watching"
     (profile / "core_user_10.dat").write_bytes(b"changed account")
@@ -2115,11 +1615,11 @@ def test_a_deletion_that_races_a_candidate_publication_invalidates_it(
         learned.set()
         return {}, {21}
 
-    monkeypatch.setattr(api_mod.evesettings_characters, "resolve", resolve)
-    api._eve_names.resolve_missing = lambda ids, **kwargs: False
+    monkeypatch.setattr(ctrl_mod.evesettings_characters, "resolve", resolve)
+    api._profiles._eve_names.resolve_missing = lambda ids, **kwargs: False
     resolver = threading.Thread(target=api.eve_settings_resolve_names)
     started = threading.Event()
-    label = api._eve_names.label
+    label = api._profiles._eve_names.label
 
     def label_after_starting_the_resolver(character_id):
         if not started.is_set():
@@ -2131,13 +1631,13 @@ def test_a_deletion_that_races_a_candidate_publication_invalidates_it(
             assert learned.wait(5), "the resolver never reached its ESI pass"
         return label(character_id)
 
-    api._eve_names.label = label_after_starting_the_resolver
+    api._profiles._eve_names.label = label_after_starting_the_resolver
     offer = api.eve_settings_identification_check()
     resolver.join(5)
 
     assert not resolver.is_alive()
     assert offer["status"] == "candidate"
-    assert api._eve_identification_candidate is None
+    assert api._profiles._eve_identification_candidate is None
     assert names_pushes(api) == [
         {
             "identification_generation": offer["identification_generation"] + 1,
@@ -2159,7 +1659,7 @@ def test_confirmation_prunes_deleted_links_without_re_persisting_them(
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"11": "Second"}
     section["account_characters"] = {"11": ["21"]}
@@ -2171,7 +1671,7 @@ def test_confirmation_prunes_deleted_links_without_re_persisting_them(
     assert result["applied"] is True
     # The deleted link belongs to an account this confirmation never
     # touched: writing a mapping read before the prune would restore it.
-    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["20"]}
     stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
     assert stored["eve_settings"]["account_characters"] == {"10": ["20"]}
 
@@ -2189,7 +1689,7 @@ def test_confirmation_is_refused_while_deleted_links_cannot_be_removed(
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"11": "Second"}
     section["account_characters"] = {"11": ["21"]}
@@ -2204,7 +1704,7 @@ def test_confirmation_is_refused_while_deleted_links_cannot_be_removed(
     result = api.eve_settings_identification_confirm("10", "20", "First")
 
     assert result["error"] == "Could not remove deleted character links."
-    assert api._eve_section()["account_characters"] == {"11": ["21"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"11": ["21"]}
     assert offered(api) == ("10", ("20",))
 
 
@@ -2217,7 +1717,7 @@ def test_lowering_retention_confirms_exact_count_and_keeps_manual_backups(
     store = paths.eve_settings_backup_dir()
     source = profile / "core_char_1.dat"
     for second in range(3):
-        api_mod.evesettings_backup.create_file_backup(
+        ctrl_mod.evesettings_backup.create_file_backup(
             store,
             source,
             origin="auto",
@@ -2225,7 +1725,7 @@ def test_lowering_retention_confirms_exact_count_and_keeps_manual_backups(
                 2026, 1, 1, 0, 0, second, tzinfo=api_mod.datetime.UTC
             ),
         )
-    manual = api_mod.evesettings_backup.create_file_backup(
+    manual = ctrl_mod.evesettings_backup.create_file_backup(
         store,
         source,
         origin="manual",
@@ -2238,7 +1738,7 @@ def test_lowering_retention_confirms_exact_count_and_keeps_manual_backups(
 
     assert result["accepted"] is True
     assert "delete 2 older automatic backups" in asked[0]
-    assert api._eve_section()["auto_keep"] == 1
+    assert api._state.settings["eve_settings"]["auto_keep"] == 1
     assert manual.exists()
 
 
@@ -2262,7 +1762,7 @@ def test_declining_retention_deletion_changes_nothing(tmp_path, monkeypatch):
     store = paths.eve_settings_backup_dir()
     source = profile / "core_char_1.dat"
     for second in range(2):
-        api_mod.evesettings_backup.create_file_backup(
+        ctrl_mod.evesettings_backup.create_file_backup(
             store,
             source,
             origin="auto",
@@ -2273,7 +1773,7 @@ def test_declining_retention_deletion_changes_nothing(tmp_path, monkeypatch):
 
     api.eve_settings_set_auto_keep(1)
 
-    assert api._eve_section()["auto_keep"] == 10
+    assert api._state.settings["eve_settings"]["auto_keep"] == 10
     assert len(api.eve_settings_state()["backups"]) == 2
 
 
@@ -2359,8 +1859,8 @@ def test_confirmed_deleted_character_is_hidden_but_its_file_and_backup_remain(
     the user left them."""
     profile = eve_tree(tmp_path, files=("core_char_20.dat", "core_char_21.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api_mod.evesettings_backup.create_file_backup(
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
+    ctrl_mod.evesettings_backup.create_file_backup(
         paths.eve_settings_backup_dir(), profile / "core_char_21.dat", origin="manual"
     )
     mark_deleted(api, 21)
@@ -2376,7 +1876,7 @@ def test_unresolved_character_remains_visible(tmp_path, monkeypatch):
     """Offline is the normal case, and silence is not a deletion."""
     eve_tree(tmp_path, files=("core_char_20.dat", "core_char_21.dat"))
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
 
     assert {row["id"] for row in api.eve_settings_state()["characters"]} == {
         "20",
@@ -2391,11 +1891,11 @@ def test_deleted_links_are_filtered_from_account_rows_and_the_identity_picker(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
-    api._eve_names.names.update({20: "Alpha", 21: "Beta"})
+    api._profiles._eve_names.names.update({20: "Alpha", 21: "Beta"})
     mark_deleted(api, 21)
 
     state = api.eve_settings_state()
@@ -2419,7 +1919,7 @@ def test_untrusted_servers_expose_no_account_identity_and_filter_nothing(
         server=server,
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
@@ -2434,7 +1934,9 @@ def test_untrusted_servers_expose_no_account_identity_and_filter_nothing(
     assert state["accounts"][0]["display_name"] == "Account 10"
     assert state["identity_characters"] == []
     assert (profile / "core_char_21.dat").exists()
-    assert api._eve_section()["account_characters"] == {"10": ["20", "21"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {
+        "10": ["20", "21"]
+    }
 
 
 def test_an_untrusted_server_refuses_identity_edits_and_identification(
@@ -2446,7 +1948,7 @@ def test_an_untrusted_server_refuses_identity_edits_and_identification(
         server="server_singularity",
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     unavailable = "Account identity is available only for Tranquility profiles."
@@ -2458,8 +1960,8 @@ def test_an_untrusted_server_refuses_identity_edits_and_identification(
         "error": unavailable,
         "identification_generation": 1,
     }
-    assert api._eve_section()["account_names"] == {"10": "LoginName"}
-    assert api._eve_section()["account_characters"] == {}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "LoginName"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {}
 
 
 def test_a_deleted_character_cannot_be_linked_or_confirmed(tmp_path, monkeypatch):
@@ -2467,7 +1969,7 @@ def test_a_deleted_character_cannot_be_linked_or_confirmed(tmp_path, monkeypatch
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     mark_deleted(api, 21)
@@ -2478,7 +1980,7 @@ def test_a_deleted_character_cannot_be_linked_or_confirmed(tmp_path, monkeypatch
 
     assert linked["error"] == "That character no longer exists."
     assert confirmed["error"] == "That character no longer exists."
-    assert api._eve_section()["account_characters"] == {}
+    assert api._state.settings["eve_settings"]["account_characters"] == {}
 
 
 def test_identification_does_not_offer_a_confirmed_deleted_character(
@@ -2488,7 +1990,7 @@ def test_identification_does_not_offer_a_confirmed_deleted_character(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api._eve_client_running_strict = lambda: False
     mark_deleted(api, 21)
     assert api.eve_settings_identification_start()["status"] == "watching"
@@ -2519,7 +2021,7 @@ def test_cleanup_removes_deleted_links_from_every_account_and_survives_reload(
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "First", "11": "Second"}
     section["account_characters"] = {"10": ["21"], "11": ["20", "21"]}
@@ -2527,7 +2029,7 @@ def test_cleanup_removes_deleted_links_from_every_account_and_survives_reload(
 
     api.eve_settings_resolve_names()
 
-    assert api._eve_section()["account_characters"] == {"11": ["20"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"11": ["20"]}
     stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
     assert stored["eve_settings"]["account_characters"] == {"11": ["20"]}
     assert stored["eve_settings"]["account_names"] == {"10": "First", "11": "Second"}
@@ -2542,7 +2044,7 @@ def test_cleanup_write_failure_keeps_the_links_but_the_payload_still_hides_them(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
@@ -2555,7 +2057,9 @@ def test_cleanup_write_failure_keeps_the_links_but_the_payload_still_hides_them(
 
     api.eve_settings_resolve_names()
 
-    assert api._eve_section()["account_characters"] == {"10": ["20", "21"]}
+    assert api._state.settings["eve_settings"]["account_characters"] == {
+        "10": ["20", "21"]
+    }
     assert api.eve_settings_state()["accounts"][0]["character_ids"] == ["20"]
 
 
@@ -2576,7 +2080,7 @@ def test_a_pending_cleanup_that_cannot_save_refuses_the_account_edit(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
@@ -2594,8 +2098,10 @@ def test_a_pending_cleanup_that_cannot_save_refuses_the_account_edit(
         "persisted": False,
         "error": "Could not remove deleted character links.",
     }
-    assert api._eve_section()["account_names"] == {"10": "LoginName"}
-    assert api._eve_section()["account_characters"] == {"10": ["20", "21"]}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "LoginName"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {
+        "10": ["20", "21"]
+    }
 
 
 def test_a_later_edit_retries_the_pending_cleanup_before_applying(
@@ -2605,7 +2111,7 @@ def test_a_later_edit_retries_the_pending_cleanup_before_applying(
         tmp_path, files=("core_user_10.dat", "core_char_20.dat", "core_char_21.dat")
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["20", "21"]}
@@ -2613,8 +2119,8 @@ def test_a_later_edit_retries_the_pending_cleanup_before_applying(
 
     assert api.eve_settings_set_account_name("10", "Renamed")["applied"] is True
 
-    assert api._eve_section()["account_names"] == {"10": "Renamed"}
-    assert api._eve_section()["account_characters"] == {"10": ["20"]}
+    assert api._state.settings["eve_settings"]["account_names"] == {"10": "Renamed"}
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["20"]}
 
 
 def test_second_account_deleted_link_absent_after_retry_cleanup_and_character_edit(
@@ -2638,7 +2144,7 @@ def test_second_account_deleted_link_absent_after_retry_cleanup_and_character_ed
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "Alpha", "11": "Beta"}
     # Account 11 links to character 21, which ESI has confirmed deleted.
@@ -2669,7 +2175,7 @@ def test_second_account_deleted_link_absent_after_retry_cleanup_and_character_ed
     assert result["applied"] is True, result.get("error")
 
     # Deleted id must be absent in memory ...
-    saved = api._eve_section().get("account_characters") or {}
+    saved = api._state.settings["eve_settings"].get("account_characters") or {}
     all_saved_ids = [cid for ids in saved.values() for cid in ids]
     assert "21" not in all_saved_ids, f"deleted id 21 still in memory: {saved}"
     # ... and absent after a fresh reload from disk.
@@ -2702,7 +2208,7 @@ def test_cleanup_rereads_the_links_only_after_taking_the_mutation_lock(
         ),
     )
     api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
+    section = api._state.settings["eve_settings"]
     section["root"] = str(tmp_path / "EVE")
     section["account_names"] = {"10": "LoginName"}
     section["account_characters"] = {"10": ["21"]}
@@ -2729,204 +2235,12 @@ def test_cleanup_rereads_the_links_only_after_taking_the_mutation_lock(
     resolver.join(5)
 
     assert not writer.is_alive() and not resolver.is_alive()
-    assert api._eve_section()["account_characters"] == {"10": ["22"]}
-
-
-def test_cleanup_clears_an_identification_candidate_it_invalidates(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    fake_status(api, monkeypatch, deleted={21})
-    _pending_identification(api, "10", ("21",))
-
-    api.eve_settings_resolve_names()
-
-    assert api._eve_identification is None
-    assert api._eve_identification_candidate is None
-    assert any("onEveSettingsNames" in call for call in api._window.calls)
-
-
-def test_an_unrelated_identification_candidate_survives_a_deletion(
-    tmp_path, monkeypatch
-):
-    eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    fake_status(api, monkeypatch, deleted={21})
-    _pending_identification(api, "10", ("20",))
-
-    api.eve_settings_resolve_names()
-
-    assert offered(api) == ("10", ("20",))
-    # The event still carries the number, and an empty list: the page
-    # decides nothing from the absence of a key.
-    assert names_pushes(api) == [
-        {"identification_generation": 0, "deleted_candidate_ids": []}
-    ]
-
-
-def test_a_second_request_coalesces_into_one_trailing_pass(tmp_path, monkeypatch):
-    eve_tree(tmp_path, files=("core_char_20.dat",))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_refresh_running = lambda: None
-    threads = QueuedThreads()
-    api._spawn = threads.spawn
-    seen = []
-    fake_status(api, monkeypatch, seen=seen)
-
-    api.eve_settings_resolve_names()
-    api.eve_settings_resolve_names()
-    api.eve_settings_resolve_names()
-
-    assert len(threads.queued) == 1
-    threads.run_next()
-    assert len(threads.queued) == 1, "the two later requests coalesced into one"
-    threads.run_next()
-
-    assert threads.queued == []
-    assert seen == [[20], [20]]
-    assert api._eve_resolve_running is False
-    assert api._eve_resolve_pending is False
-
-
-def test_switching_profiles_during_a_pass_resolves_the_new_one(tmp_path, monkeypatch):
-    first = eve_tree(tmp_path, files=("core_char_20.dat",))
-    second = first.parent / "settings_Other"
-    second.mkdir()
-    (second / "core_char_30.dat").write_bytes(b"payload")
-    api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
-    section["root"] = str(tmp_path / "EVE")
-    section["profile"] = str(first)
-    api._eve_refresh_running = lambda: None
-    threads = QueuedThreads()
-    api._spawn = threads.spawn
-    api._eve_names.resolve_missing = lambda ids, **kwargs: False
-    seen = []
-
-    def switch_while_resolving(ids, *args, **kwargs):
-        seen.append(list(ids))
-        if section["profile"] == str(first):
-            # The user switches, and the page asks again, while this pass
-            # is still on the network.
-            section["profile"] = str(second)
-            api.eve_settings_resolve_names()
-        return {}, set()
-
-    monkeypatch.setattr(
-        api_mod.evesettings_characters, "resolve", switch_while_resolving
-    )
-
-    api.eve_settings_resolve_names()
-    threads.run_next()
-
-    assert len(threads.queued) == 1, "the request made mid-pass owes one more"
-    threads.run_next()
-
-    assert seen == [[20], [30]]
-    assert threads.queued == []
-
-
-def test_a_stale_pass_caches_facts_but_cannot_clean_or_push_another_profile(
-    tmp_path, monkeypatch
-):
-    first = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_21.dat"))
-    second = first.parent / "settings_Other"
-    second.mkdir()
-    (second / "core_char_30.dat").write_bytes(b"payload")
-    api = build(tmp_path, monkeypatch)
-    section = api._eve_section()
-    section["root"] = str(tmp_path / "EVE")
-    section["profile"] = str(first)
-    section["account_names"] = {"10": "LoginName"}
-    section["account_characters"] = {"10": ["21"]}
-    api._eve_names.resolve_missing = lambda ids, **kwargs: False
-
-    def switch_then_report(ids, *args, **kwargs):
-        section["profile"] = str(second)
-        return {}, {21}
-
-    monkeypatch.setattr(api_mod.evesettings_characters, "resolve", switch_then_report)
-
-    api.eve_settings_resolve_names()
-
-    assert ("tranquility", 21) in api._eve_deleted
-    assert api._eve_section()["account_characters"] == {"10": ["21"]}
-    assert not any("onEveSettingsNames" in call for call in api._window.calls)
-
-
-def test_a_pass_publishes_cached_facts_newly_applicable_to_its_profile(
-    tmp_path, monkeypatch
-):
-    """What a stale pass learned still has to reach the selected profile,
-    and only once: application is tracked apart from the remote cache."""
-    eve_tree(tmp_path, files=("core_char_20.dat",))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    api._eve_names.names[20] = "Alpha"
-    fake_status(api, monkeypatch)
-
-    api.eve_settings_resolve_names()
-
-    assert len([c for c in api._window.calls if "onEveSettingsNames" in c]) == 1
-
-    api.eve_settings_resolve_names()
-
-    assert len([c for c in api._window.calls if "onEveSettingsNames" in c]) == 1
-
-
-def test_active_ids_are_rechecked_while_deleted_ids_are_never_fetched_again(
-    tmp_path, monkeypatch
-):
-    """Active is not a cacheable verdict -- a character deleted during a long
-    session must still be found -- while deleted is monotonic."""
-    eve_tree(tmp_path, files=("core_char_20.dat", "core_char_21.dat"))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    seen = []
-    fake_status(api, monkeypatch, names={20: "Alpha"}, deleted={21}, seen=seen)
-
-    api.eve_settings_resolve_names()
-    api.eve_settings_resolve_names()
-
-    assert seen == [[20, 21], [20]]
-
-
-def test_a_resolver_that_cannot_spawn_clears_its_running_state(tmp_path, monkeypatch):
-    eve_tree(tmp_path, files=("core_char_20.dat",))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-
-    def refuses(**kwargs):
-        raise RuntimeError("can't start new thread")
-
-    api._spawn = refuses
-
-    api.eve_settings_resolve_names()
-
-    assert api._eve_resolve_running is False
-    assert api._eve_resolve_pending is False
-
-
-def test_a_resolver_that_raises_clears_its_running_state(tmp_path, monkeypatch):
-    eve_tree(tmp_path, files=("core_char_20.dat",))
-    api = build(tmp_path, monkeypatch)
-    api._eve_section()["root"] = str(tmp_path / "EVE")
-    fake_status(api, monkeypatch, error=RuntimeError("ESI exploded"))
-
-    api.eve_settings_resolve_names()
-
-    assert api._eve_resolve_running is False
-    assert api._eve_resolve_pending is False
+    assert api._state.settings["eve_settings"]["account_characters"] == {"10": ["22"]}
 
 
 def _fake_codec(monkeypatch, doc, *, available=True):
     """In-memory documents for ordinary API tests, not publication evidence."""
     from wingman.evesettings import codec as codec_mod
-    from wingman.ui import api as api_mod
 
     store = {"doc": doc, "written": []}
 
@@ -2942,11 +2256,11 @@ def _fake_codec(monkeypatch, doc, *, available=True):
         store["written"].append((path, document))
         return "b" * 64
 
-    monkeypatch.setattr(api_mod.evesettings_codec, "read_snapshot", read_snapshot)
-    monkeypatch.setattr(api_mod.evesettings_codec, "read_document", read_document)
-    monkeypatch.setattr(api_mod.evesettings_codec, "write_document", write_document)
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "read_snapshot", read_snapshot)
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "read_document", read_document)
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "write_document", write_document)
     monkeypatch.setattr(
-        api_mod.evesettings_codec, "codec_available", lambda **kw: available
+        ctrl_mod.evesettings_codec, "codec_available", lambda **kw: available
     )
     return store
 
@@ -3000,7 +2314,7 @@ def test_formation_import_is_pure_and_casefolds_actual_draft_names(
     existing = ["STRASSE", " Padded ", "", "bad\x00name"] * 10
     before_items = json.dumps([items, existing])
     before_files = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    with api._eve_mutation:
+    with api._profiles._eve_mutation:
         if operation == "parse":
             text = formation_sharing.export_text(items)
             reply = api.eve_settings_parse_formations(text, existing)
@@ -3073,6 +2387,7 @@ def test_formation_import_rejects_invalid_batches_without_partial_results(
 def test_formation_parse_handles_malformed_deep_and_oversize_text(text):
     # No initialized state exists: a parser must not read an account or settings.
     api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = ctrl_mod.ProfilesController.__new__(ctrl_mod.ProfilesController)
     reply = api.eve_settings_parse_formations(text, [])
     assert reply["ok"] is False
     assert reply["error"]
@@ -3082,7 +2397,7 @@ def test_export_formations_does_not_need_an_account(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     # A pure request must work even while account mutations are locked out.
-    with api._eve_mutation:
+    with api._profiles._eve_mutation:
         reply = api.eve_settings_export_formations(
             [
                 {
@@ -3172,14 +2487,13 @@ def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
     tmp_path, monkeypatch
 ):
     from wingman.evesettings import codec as codec_mod
-    from wingman.ui import api as api_mod
 
     api, account = account_setup(tmp_path, monkeypatch)
 
     def boom(path, **kw):
         raise codec_mod.CodecError("bad header")
 
-    monkeypatch.setattr(api_mod.evesettings_codec, "read_snapshot", boom)
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "read_snapshot", boom)
     got = api.eve_settings_formations(str(account))
     assert got == {"ok": False, "error": "bad header"}
 
@@ -3192,7 +2506,7 @@ def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
     def refuse(doc):
         raise ValueError("This file has a formation entry Wingman does not understand.")
 
-    monkeypatch.setattr(api_mod.evesettings_formations, "read_formations", refuse)
+    monkeypatch.setattr(ctrl_mod.evesettings_formations, "read_formations", refuse)
     got = api.eve_settings_formations(str(account))
     assert got == {
         "ok": False,
@@ -3205,7 +2519,7 @@ def test_save_backs_up_writes_and_reports_done(tmp_path, monkeypatch):
     store = _fake_codec(monkeypatch, FORMATION_DOC)
     api._eve_client_running_strict = lambda: False
     backups = []
-    api._eve_auto_backup = lambda p: backups.append(p)
+    api._profiles._eve_auto_backup = lambda p: backups.append(p)
     accepted = api.eve_settings_save_formations(
         str(account),
         [{"id": None, "name": "New", "probes": [{"x": 1, "y": 0, "z": 0, "range": 2}]}],
@@ -3232,7 +2546,7 @@ def test_save_is_refused_when_the_strict_running_probe_fails(tmp_path, monkeypat
     store = _fake_codec(monkeypatch, FORMATION_DOC)
     api._alert = fakes.Alerts()
     backups = []
-    api._eve_auto_backup = lambda path: backups.append(path)
+    api._profiles._eve_auto_backup = lambda path: backups.append(path)
 
     def boom():
         raise OSError("window station unavailable")
@@ -3265,7 +2579,7 @@ def test_save_rejects_an_invalid_formation_before_touching_the_file(
     store = _fake_codec(monkeypatch, FORMATION_DOC)
     api._eve_client_running_strict = lambda: False
     backups = []
-    api._eve_auto_backup = lambda p: backups.append(p)
+    api._profiles._eve_auto_backup = lambda p: backups.append(p)
     api.eve_settings_save_formations(
         str(account), [{"id": None, "name": "", "probes": []}], "a" * 64, "1:1"
     )
@@ -3278,8 +2592,8 @@ def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
     _fake_codec(monkeypatch, FORMATION_DOC)
     api._eve_client_running_strict = lambda: False
     api.eve_settings_save_formations(str(account), [], "a" * 64, "1:1")
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_formation_save_without_revision_is_refused(tmp_path, monkeypatch):
@@ -3294,26 +2608,26 @@ def test_formation_save_without_revision_is_refused(tmp_path, monkeypatch):
     assert done[0]["error_code"] == "invalid_request"
     assert done[0]["content_revision"] == ""
     assert account.read_bytes() == before
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 @pytest.mark.parametrize(
-    "revision,request_id",
+    "revision,request_id,expected_correlation",
     [
-        ("a" * 64, ""),
-        ("a" * 64, None),
-        ("a" * 64, 1),
-        ("a" * 64, "x" * 129),
-        (None, "id"),
-        (3, "id"),
-        ("A" * 64, "id"),
-        ("a" * 63, "id"),
-        ("g" * 64, "id"),
+        ("a" * 64, "", ""),
+        ("a" * 64, None, ""),
+        ("a" * 64, 1, ""),
+        ("a" * 64, "x" * 129, ""),
+        (None, "id", "id"),
+        (3, "id", "id"),
+        ("A" * 64, "id", "id"),
+        ("a" * 63, "id", "id"),
+        ("g" * 64, "id", "id"),
     ],
 )
 def test_formation_save_invalid_correlation_is_refused(
-    tmp_path, monkeypatch, revision, request_id
+    tmp_path, monkeypatch, revision, request_id, expected_correlation
 ):
     api, account = account_setup(tmp_path, monkeypatch)
     before = account.read_bytes()
@@ -3322,10 +2636,45 @@ def test_formation_save_invalid_correlation_is_refused(
     [done] = fakes.payloads(sent, "onEveSettingsDone")
     assert not done["ok"] and done["error_code"] == "invalid_request"
     assert done["content_revision"] == "" and done["warning"] == ""
+    assert done["request_id"] == expected_correlation
     assert done["error"]
     assert account.read_bytes() == before
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
+
+
+@pytest.mark.parametrize("items", [None, {}, "", False])
+def test_formation_save_rejects_malformed_items_without_normalizing_them(
+    tmp_path, monkeypatch, items
+):
+    api, account = account_setup(tmp_path, monkeypatch)
+    before = account.read_bytes()
+
+    def no_io(*args, **kwargs):
+        pytest.fail("invalid draft values must not read, back up, or write an account")
+
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "read_snapshot", no_io)
+    monkeypatch.setattr(ctrl_mod.evesettings_codec, "write_document", no_io)
+    api._profiles._eve_auto_backup = no_io
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(
+        str(account), items, "a" * 64, "malformed:1"
+    )
+    (done,) = fakes.payloads(sent, "onEveSettingsDone")
+    assert done == {
+        "ok": False,
+        "operation": "formations_save",
+        "path": str(account),
+        "request_id": "malformed:1",
+        "content_revision": "",
+        "error_code": "invalid_request",
+        "error": "Expected a list of formations.",
+        "warning": "",
+    }
+    assert account.read_bytes() == before
+    assert not list(paths.eve_settings_backup_dir().glob("*.zip"))
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_formation_legacy_caller_is_refused(tmp_path, monkeypatch):
@@ -3342,7 +2691,7 @@ def _formation_filter(monkeypatch, account, *, on_encode=None):
     A signature plus JSON envelope stands in for sidecar bytes. The writer's
     verifying decode consumes its actual encoded input, not a static document.
     """
-    codec = api_mod.evesettings_codec
+    codec = ctrl_mod.evesettings_codec
     raw = b"\x7d" + json.dumps({"doc": FORMATION_DOC, "had_crc": True}).encode()
     account.write_bytes(raw)
 
@@ -3389,11 +2738,11 @@ def test_formation_save_refuses_changed_bytes_at_every_boundary(
         if mutation == "backup":
             mutate()
 
-    api._eve_auto_backup = backup
-    api._eve_prune = lambda keep: prunes.append(keep)
+    api._profiles._eve_auto_backup = backup
+    api._profiles._eve_prune = lambda keep: prunes.append(keep)
     sent = fakes.record_pushes(api)
     assert api.eve_settings_save_formations(str(account), [], baseline, "race:1")
-    assert not api._eve_mutation.acquire(blocking=False)
+    assert not api._profiles._eve_mutation.acquire(blocking=False)
     assert not api.eve_settings_formations(str(account))["ok"]
     if mutation == "queued":
         mutate()
@@ -3412,11 +2761,11 @@ def test_formation_save_refuses_changed_bytes_at_every_boundary(
     assert account.read_bytes() == changed
     assert len(backups) == (1 if mutation == "backup" else 0)
     assert prunes == []
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
-@pytest.mark.parametrize("housekeeping", ["none", "prune", "status"])
+@pytest.mark.parametrize("housekeeping", ["none", "prune", "status", "both"])
 def test_formation_commit_retains_digest_ids_scratch_selection_and_success(
     tmp_path, monkeypatch, housekeeping
 ):
@@ -3425,18 +2774,18 @@ def test_formation_commit_retains_digest_ids_scratch_selection_and_success(
     api._eve_client_running_strict = lambda: False
     before = account.read_bytes()
     backups, prunes = [], []
-    api._eve_auto_backup = lambda path: backups.append(path.read_bytes())
+    api._profiles._eve_auto_backup = lambda path: backups.append(path.read_bytes())
 
     def prune(keep):
         prunes.append(keep)
-        if housekeeping == "prune":
+        if housekeeping in {"prune", "both"}:
             raise OSError("retention unavailable")
 
     def status(message):
-        if housekeeping == "status":
+        if housekeeping in {"status", "both"}:
             raise RuntimeError("status unavailable")
 
-    api._eve_prune = prune
+    api._profiles._eve_prune = prune
     api._status = status
     api._alert = fakes.Alerts()
     sent = fakes.record_pushes(api)
@@ -3452,18 +2801,23 @@ def test_formation_commit_retains_digest_ids_scratch_selection_and_success(
     assert done["request_id"] == "x" * 128
     assert done["path"] == str(account) and done["operation"] == "formations_save"
     assert bool(done["warning"]) == (housekeeping != "none")
+    if housekeeping == "both":
+        assert done["warning"] == (
+            "Formations saved, but automatic backups could not be pruned. "
+            "Formations saved, but Wingman could not update its status."
+        )
     assert done["content_revision"] == hashlib.sha256(account.read_bytes()).hexdigest()
     assert done["content_revision"] != baseline
     assert backups == [before] and len(prunes) == 1
-    ui = api_mod.evesettings_codec.read_document(account).doc["bytes:ui"]
+    ui = ctrl_mod.evesettings_codec.read_document(account).doc["bytes:ui"]
     entries = ui["bytes:probescanning.customFormations"]["tuple"][1]
     assert entries["int:0"]["tuple"][0] == "utf8:Retained"
     assert entries["int:1"]["tuple"][0] == "utf8:New"
     assert entries["int:-4"] == {"tuple": ["bytes:tempFormation", []]}
     assert ui["bytes:probescanning.selectedFormationID"]["tuple"][1] == 0
     assert not any(title == "Formations not saved" for _, title, _ in api._alert.raised)
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 @pytest.mark.parametrize("failure", ["codec", "backup", "publish", "running", "probe"])
@@ -3475,24 +2829,24 @@ def test_formation_save_failure_completes_once_without_pruning(
     before = account.read_bytes()
     api._eve_client_running_strict = lambda: failure == "running"
     prunes = []
-    api._eve_prune = lambda keep: prunes.append(keep)
+    api._profiles._eve_prune = lambda keep: prunes.append(keep)
 
     def boom(*args, **kwargs):
         if failure == "codec":
-            raise api_mod.evesettings_codec.CodecError("encode failed")
+            raise ctrl_mod.evesettings_codec.CodecError("encode failed")
         raise OSError("unavailable")
 
     if failure == "probe":
         api._eve_client_running_strict = boom
     elif failure == "backup":
-        api._eve_auto_backup = boom
+        api._profiles._eve_auto_backup = boom
     elif failure in {"codec", "publish"}:
         if failure == "codec":
-            monkeypatch.setattr(api_mod.evesettings_codec, "write_document", boom)
+            monkeypatch.setattr(ctrl_mod.evesettings_codec, "write_document", boom)
         else:
-            writer = api_mod.evesettings_codec.write_document
+            writer = ctrl_mod.evesettings_codec.write_document
             monkeypatch.setattr(
-                api_mod.evesettings_codec,
+                ctrl_mod.evesettings_codec,
                 "write_document",
                 partial(writer, publish=boom),
             )
@@ -3503,8 +2857,8 @@ def test_formation_save_failure_completes_once_without_pruning(
     assert done["content_revision"] == done["warning"] == ""
     assert done["error"] and done["request_id"] == "failure"
     assert account.read_bytes() == before and not prunes
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 @pytest.fixture(params=["lossless-filter", "native-codec"])
@@ -3621,7 +2975,7 @@ def test_shared_formation_lifecycle_between_accounts(
         def unavailable(*args, **kwargs):
             raise OSError("retention unavailable")
 
-        monkeypatch.setattr(api_mod.evesettings_backup, "prune", unavailable)
+        monkeypatch.setattr(ctrl_mod.evesettings_backup, "prune", unavailable)
 
     sent = fakes.record_pushes(api)
     assert api.eve_settings_save_formations(
@@ -3634,8 +2988,8 @@ def test_shared_formation_lifecycle_between_accounts(
     assert done["request_id"] == "lifecycle:1"
     assert done["path"] == str(target) and done["operation"] == "formations_save"
     assert source.read_bytes() == source_before
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
     if outcome == "stale":
         assert not done["ok"] and done["error_code"] == "stale_file"
         assert done["content_revision"] == done["warning"] == ""
@@ -3676,7 +3030,7 @@ def test_shared_formation_lifecycle_between_accounts(
         assert source.name not in backup.namelist()
     # Restore the real archive only into the test-owned root. This is not the
     # still-required Windows/Backups-manager/live-EVE restoration smoke gate.
-    api_mod.evesettings_backup.restore(store, archive, tmp_path / "EVE")
+    ctrl_mod.evesettings_backup.restore(store, archive, tmp_path / "EVE")
     assert target.read_bytes() == target_before and source.read_bytes() == source_before
 
 
@@ -3709,8 +3063,8 @@ def test_shared_formation_account_boundary_cannot_escape_root(
     assert "outside" in done["error"] and done["content_revision"] == ""
     assert outside.read_bytes() == before
     assert not list(paths.eve_settings_backup_dir().glob("*.zip"))
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 # ---- whole-profile copy ---------------------------------------------------
@@ -3756,39 +3110,11 @@ def probe_returning(*states):
     return probe
 
 
-def watch(order, label, func):
-    def wrapper(*args, **kwargs):
-        order.append(label)
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def order_spies(api, monkeypatch):
-    """Record the whole orchestration sequence, real behaviour intact."""
-    order = []
-    api._eve_discover = watch(order, "discover", api._eve_discover)
-    api._eve_persist_selection = watch(order, "persist", api._eve_persist_selection)
-    api._eve_confirm = watch(order, "confirm", api._eve_confirm)
-    api._eve_prune = watch(order, "prune", api._eve_prune)
-    api._eve_done = watch(order, "done", api._eve_done)
-    for module, name, label in (
-        (api_mod.evesettings_profilecopy, "prepare_copy", "prepare"),
-        (api_mod.evesettings_profilecopy, "stage_copy", "stage"),
-        (api_mod.evesettings_profilecopy, "publish_new", "publish"),
-        (api_mod.evesettings_profilecopy, "publish_replacement", "publish"),
-        (api_mod.evesettings_backup, "create_profile_backup", "backup"),
-        (discovery_mod, "probe_eve_client_state", "probe"),
-    ):
-        monkeypatch.setattr(module, name, watch(order, label, getattr(module, name)))
-    return order
-
-
 def stages_left(server):
     return [
         entry.name
         for entry in server.iterdir()
-        if entry.name.startswith(api_mod.evesettings_profilecopy.STAGE_PREFIX)
+        if entry.name.startswith(ctrl_mod.evesettings_profilecopy.STAGE_PREFIX)
     ]
 
 
@@ -3799,15 +3125,15 @@ def test_profile_copy_returns_an_inline_refusal_when_another_operation_runs(
     return value rather than an alert -- and it is decided before anything
     reads the tree, exactly as the character copy's busy check is."""
     api, source = copy_profile_setup(tmp_path, monkeypatch)
-    api._eve_discover = lambda: pytest.fail("busy must not inspect the tree")
-    assert api._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_discover = lambda: pytest.fail("busy must not inspect the tree")
+    assert api._profiles._eve_mutation.acquire(blocking=False)
     try:
         assert api.eve_settings_copy_profile(str(source), "new", "Fleet") == {
             "accepted": False,
             "error": "Another Profiles operation is running.",
         }
     finally:
-        api._eve_mutation.release()
+        api._profiles._eve_mutation.release()
     assert not (source.parent / "settings_Fleet").exists()
 
 
@@ -3815,15 +3141,15 @@ def test_profile_copy_is_refused_while_account_identification_is_active(
     tmp_path, monkeypatch
 ):
     api, source = copy_profile_setup(tmp_path, monkeypatch)
-    api._eve_identification = object()
+    api._profiles._eve_identification = object()
     result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
     assert result == {
         "accepted": False,
         "error": "Finish or cancel account identification first.",
     }
     assert not (source.parent / "settings_Fleet").exists()
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 @pytest.mark.parametrize(
@@ -3846,8 +3172,8 @@ def test_profile_copy_refuses_an_invalid_request_before_starting_a_worker(
     assert result["accepted"] is False
     assert fragment in result["error"]
     assert sorted(p.name for p in source.parent.iterdir()) == ["settings_Default"]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_profile_copy_refuses_a_stale_expected_source(tmp_path, monkeypatch):
@@ -3880,38 +3206,8 @@ def test_profile_copy_aborts_untouched_when_the_canonical_save_fails(
     assert result["accepted"] is False
     assert "nothing was copied" in result["error"]
     assert sorted(p.name for p in source.parent.iterdir()) == ["settings_Default"]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
-
-
-def test_profile_copy_releases_the_lock_when_the_worker_cannot_start(
-    tmp_path, monkeypatch
-):
-    """Only the worker releases the lock, so a worker that never started
-    would refuse every later Profiles operation for good."""
-    source = eve_tree(tmp_path)
-
-    class Refuses:
-        def __init__(self, **kwargs):
-            pass
-
-        def start(self):
-            raise RuntimeError("can't start new thread")
-
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    state = api_mod.AppState(
-        recording_dir=tmp_path, settings=settings.load(tmp_path / "s.json")
-    )
-    api = api_mod.Api(state, spawn=Refuses)
-    api._window = FakeWindow()
-    api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
-    result = api.eve_settings_copy_profile(str(source), "new", "Fleet")
-    assert result == {
-        "accepted": False,
-        "error": "Profile copy could not be started.",
-    }
-    assert api._eve_mutation.acquire(blocking=False) is True
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_creating_a_profile_copies_every_recognized_file_and_selects_it(
@@ -3920,7 +3216,7 @@ def test_creating_a_profile_copies_every_recognized_file_and_selects_it(
     api, source = copy_profile_setup(tmp_path, monkeypatch)
     api._eve_confirm = lambda *args, **kwargs: pytest.fail("creation never confirms")
     monkeypatch.setattr(
-        api_mod.evesettings_backup,
+        ctrl_mod.evesettings_backup,
         "create_profile_backup",
         lambda *args, **kwargs: pytest.fail("creation overwrites nothing"),
     )
@@ -3950,8 +3246,8 @@ def test_creating_a_profile_copies_every_recognized_file_and_selects_it(
             "error": None,
         }
     ]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_a_created_profile_survives_a_failed_selection_save(tmp_path, monkeypatch):
@@ -3984,30 +3280,6 @@ def test_a_created_profile_survives_a_failed_selection_save(tmp_path, monkeypatc
     assert "Select it from Profile" in payload["error"]
     assert api._alert.raised[0][0] == "warning"
     assert "Select it from Profile" in api._alert.raised[0][2]
-
-
-def test_profile_copy_runs_its_steps_in_the_documented_order(tmp_path, monkeypatch):
-    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
-    order = order_spies(api, monkeypatch)
-
-    result = api.eve_settings_copy_profile(
-        str(source), "replace", str(source.parent / "settings_Backup")
-    )
-
-    assert result == {"accepted": True, "error": None}
-    assert order == [
-        "discover",
-        "prepare",
-        "persist",
-        "probe",
-        "stage",
-        "confirm",
-        "probe",
-        "backup",
-        "publish",
-        "prune",
-        "done",
-    ]
 
 
 def test_replacing_a_profile_copies_the_recognized_set_and_keeps_the_source_selected(
@@ -4061,14 +3333,14 @@ def test_a_published_replacement_survives_a_failed_stage_cleanup(tmp_path, monke
     api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
     destination = source.parent / "settings_Backup"
     api._eve_confirm = lambda *args, **kwargs: True
-    real_rmtree = api_mod.evesettings_profilecopy.shutil.rmtree
+    real_rmtree = ctrl_mod.evesettings_profilecopy.shutil.rmtree
 
     def rmtree(path, *args, **kwargs):
-        if Path(path).name.startswith(api_mod.evesettings_profilecopy.STAGE_PREFIX):
+        if Path(path).name.startswith(ctrl_mod.evesettings_profilecopy.STAGE_PREFIX):
             raise OSError("handle open")
         return real_rmtree(path, *args, **kwargs)
 
-    monkeypatch.setattr(api_mod.evesettings_profilecopy.shutil, "rmtree", rmtree)
+    monkeypatch.setattr(ctrl_mod.evesettings_profilecopy.shutil, "rmtree", rmtree)
     sent = fakes.record_pushes(api)
 
     result = api.eve_settings_copy_profile(str(source), "replace", str(destination))
@@ -4099,12 +3371,12 @@ def test_a_declined_replacement_creates_no_backup_and_changes_nothing(
     destination = source.parent / "settings_Backup"
     api._eve_confirm = lambda *args, **kwargs: False
     monkeypatch.setattr(
-        api_mod.evesettings_backup,
+        ctrl_mod.evesettings_backup,
         "create_profile_backup",
         lambda *args, **kwargs: pytest.fail("a declined copy backs nothing up"),
     )
     prunes = []
-    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
+    api._profiles._eve_prune = lambda *args, **kwargs: prunes.append(args)
     sent = fakes.record_pushes(api)
 
     api.eve_settings_copy_profile(str(source), "replace", str(destination))
@@ -4117,8 +3389,8 @@ def test_a_declined_replacement_creates_no_backup_and_changes_nothing(
     # Nothing was published, and the source the page still shows selected is
     # the one persisted when the request was accepted.
     assert payload["selection_persisted"] is True
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 @pytest.mark.parametrize(
@@ -4160,17 +3432,19 @@ def test_a_replacement_that_never_publishes_still_reports_the_retained_selection
             ),
         )
     elif failure == "backup":
-        monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", refuse)
+        monkeypatch.setattr(
+            ctrl_mod.evesettings_backup, "create_profile_backup", refuse
+        )
     elif failure == "rollback restored":
         failing_publication(monkeypatch, destination)
     elif failure == "rollback failed":
         failing_publication(monkeypatch, destination)
-        monkeypatch.setattr(api_mod.evesettings_backup, "restore", refuse)
+        monkeypatch.setattr(ctrl_mod.evesettings_backup, "restore", refuse)
     else:
         # A worker failure after acceptance that is not one of the handled
         # arms: the outer catch must report the same retained selection.
         monkeypatch.setattr(
-            api_mod.evesettings_profilecopy, "publish_replacement", explode
+            ctrl_mod.evesettings_profilecopy, "publish_replacement", explode
         )
     sent = fakes.record_pushes(api)
 
@@ -4181,8 +3455,8 @@ def test_a_replacement_that_never_publishes_still_reports_the_retained_selection
     assert payload["selection_persisted"] is True
     stored = settings.load(tmp_path / "FlyGD Wingman" / "settings.json")
     assert stored["eve_settings"]["profile"] == str(source)
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 @pytest.mark.parametrize(
@@ -4198,7 +3472,7 @@ def test_profile_copy_refuses_unless_the_probe_proves_eve_is_closed(
     api, source = copy_profile_setup(tmp_path, monkeypatch)
     monkeypatch.setattr(discovery_mod, "probe_eve_client_state", probe_returning(state))
     monkeypatch.setattr(
-        api_mod.evesettings_profilecopy,
+        ctrl_mod.evesettings_profilecopy,
         "stage_copy",
         lambda *args, **kwargs: pytest.fail("a refused copy stages nothing"),
     )
@@ -4216,8 +3490,8 @@ def test_profile_copy_refuses_unless_the_probe_proves_eve_is_closed(
     # never got as far as making one.
     assert payload["selection_persisted"] is False
     assert fragment in payload["error"]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_a_replacement_probes_again_after_the_confirmation(tmp_path, monkeypatch):
@@ -4233,7 +3507,7 @@ def test_a_replacement_probes_again_after_the_confirmation(tmp_path, monkeypatch
         ),
     )
     monkeypatch.setattr(
-        api_mod.evesettings_backup,
+        ctrl_mod.evesettings_backup,
         "create_profile_backup",
         lambda *args, **kwargs: pytest.fail("a refused copy backs nothing up"),
     )
@@ -4243,8 +3517,8 @@ def test_a_replacement_probes_again_after_the_confirmation(tmp_path, monkeypatch
     assert sorted(p.name for p in destination.iterdir()) == ["core_char_9.dat"]
     assert stages_left(source.parent) == []
     assert "EVE is running" in api._alert.raised[0][2]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def test_a_failed_destination_backup_leaves_the_destination_unchanged(
@@ -4256,14 +3530,14 @@ def test_a_failed_destination_backup_leaves_the_destination_unchanged(
     def refuse(*args, **kwargs):
         raise OSError("the backup store is read-only")
 
-    monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", refuse)
+    monkeypatch.setattr(ctrl_mod.evesettings_backup, "create_profile_backup", refuse)
     monkeypatch.setattr(
-        api_mod.evesettings_profilecopy,
+        ctrl_mod.evesettings_profilecopy,
         "publish_replacement",
         lambda *args, **kwargs: pytest.fail("publication needs a backup first"),
     )
     prunes = []
-    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
+    api._profiles._eve_prune = lambda *args, **kwargs: prunes.append(args)
     sent = fakes.record_pushes(api)
 
     api.eve_settings_copy_profile(str(source), "replace", str(destination))
@@ -4276,121 +3550,18 @@ def test_a_failed_destination_backup_leaves_the_destination_unchanged(
     ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
     assert payload["ok"] is False and payload["published"] is False
     assert payload["selection_persisted"] is True
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    assert api._profiles._eve_mutation.acquire(blocking=False)
+    api._profiles._eve_mutation.release()
 
 
 def failing_publication(monkeypatch, destination):
     """Break the second per-file replacement, so publication fails after it
     has already changed the destination."""
-    real_copy = api_mod.evesettings_profilecopy.atomicio.copy_atomic
+    real_copy = ctrl_mod.evesettings_profilecopy.atomicio.copy_atomic
 
     def flaky(source, target, **kwargs):
         if Path(target).parent == destination and Path(target).name.endswith("2.dat"):
             raise OSError("the destination went away")
         return real_copy(source, target, **kwargs)
 
-    monkeypatch.setattr(api_mod.evesettings_profilecopy.atomicio, "copy_atomic", flaky)
-
-
-def test_a_failed_publication_rolls_back_from_the_backup_it_just_took(
-    tmp_path, monkeypatch
-):
-    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
-    destination = source.parent / "settings_Backup"
-    archives = []
-    real_backup = api_mod.evesettings_backup.create_profile_backup
-
-    def record(*args, **kwargs):
-        archives.append(real_backup(*args, **kwargs))
-        return archives[-1]
-
-    restores = []
-    real_restore = api_mod.evesettings_backup.restore
-
-    def watched_restore(store, archive, root, **kwargs):
-        restores.append((Path(archive), kwargs))
-        return real_restore(store, archive, root, **kwargs)
-
-    monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", record)
-    monkeypatch.setattr(api_mod.evesettings_backup, "restore", watched_restore)
-    failing_publication(monkeypatch, destination)
-    prunes = []
-    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
-    sent = fakes.record_pushes(api)
-
-    api.eve_settings_copy_profile(str(source), "replace", str(destination))
-
-    assert sorted(p.name for p in destination.iterdir()) == ["core_char_9.dat"]
-    assert (destination / "core_char_9.dat").read_bytes() == b"old-9"
-    assert restores == [(archives[0], {"backup_current": False})]
-    assert stages_left(source.parent) == []
-    # Settled: the destination is back to what it was, so retention may run.
-    assert len(prunes) == 1
-    assert api._alert.raised[0][1] == "Replacement failed"
-    assert "restored" in api._alert.raised[0][2]
-    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
-    assert payload["ok"] is False and payload["published"] is False
-    assert payload["selection_persisted"] is True
-    assert "restored" in payload["error"]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
-
-
-def test_a_failed_rollback_names_the_backup_and_prunes_nothing(tmp_path, monkeypatch):
-    """The durable archive is the only way back, so it is named in the
-    message and retention does not get to consider deleting anything."""
-    api, source = copy_profile_setup(tmp_path, monkeypatch, others=("Backup",))
-    destination = source.parent / "settings_Backup"
-    archives = []
-    real_backup = api_mod.evesettings_backup.create_profile_backup
-
-    def record(*args, **kwargs):
-        archives.append(real_backup(*args, **kwargs))
-        return archives[-1]
-
-    def refuse_restore(*args, **kwargs):
-        raise OSError("the archive could not be read")
-
-    monkeypatch.setattr(api_mod.evesettings_backup, "create_profile_backup", record)
-    monkeypatch.setattr(api_mod.evesettings_backup, "restore", refuse_restore)
-    failing_publication(monkeypatch, destination)
-    prunes = []
-    api._eve_prune = lambda *args, **kwargs: prunes.append(args)
-    sent = fakes.record_pushes(api)
-
-    api.eve_settings_copy_profile(str(source), "replace", str(destination))
-
-    assert prunes == []
-    assert archives[0].exists()
-    kind, _title, body = api._alert.raised[0]
-    assert kind == "error"
-    assert archives[0].name in body
-    assert "Backups" in body
-    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
-    assert payload["ok"] is False and payload["published"] is False
-    assert payload["selection_persisted"] is True
-    assert archives[0].name in payload["error"]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
-
-
-def test_an_unexpected_worker_failure_still_releases_and_completes_once(
-    tmp_path, monkeypatch
-):
-    api, source = copy_profile_setup(tmp_path, monkeypatch)
-
-    def explode(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(api_mod.evesettings_profilecopy, "stage_copy", explode)
-    sent = fakes.record_pushes(api)
-
-    api.eve_settings_copy_profile(str(source), "new", "Fleet")
-
-    ((payload,)) = fakes.payloads(sent, "onEveSettingsDone")
-    assert payload["ok"] is False and payload["published"] is False
-    assert payload["selection_persisted"] is False
-    assert payload["error"]
-    assert api._eve_mutation.acquire(blocking=False)
-    api._eve_mutation.release()
+    monkeypatch.setattr(ctrl_mod.evesettings_profilecopy.atomicio, "copy_atomic", flaky)

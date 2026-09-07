@@ -177,7 +177,7 @@ def _same_path(candidate, requested) -> bool:
     `discover()` supplied for it.
 
     Two-way containment, not a lexical `==`: this is the same idiom
-    `ui/api.py`'s `_eve_same_path` uses for the identical reason -- a
+    `wingman/evesettings/controller.py`'s `_eve_same_path` uses for the identical reason -- a
     trailing separator or an unresolved symlink on either side must not
     make a genuine match look stale, and `discover()`'s own fallback-to-
     first behavior must not make a fabricated token look genuine.

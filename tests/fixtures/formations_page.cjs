@@ -302,11 +302,11 @@ async function copyScenario() {
   assert.match(WM.el('fm-share-status').className, /err/);
   assert.equal(saves.length, 0); assert.equal(WM.el('fm-copy').disabled, false);
 }
-// Python, not a JS approximation, answers actual production requests. __new__
-// intentionally supplies no account/session state to these pure endpoints.
+// Python, not a JS approximation, answers actual production requests. Compose
+// the real facade/controller without account/session state for these pure endpoints.
 function pythonReply(method, args) {
   const result = spawnSync(process.argv[5], ['-c',
-    'import json,sys; from wingman.ui.api import Api; method,args=json.loads(sys.stdin.buffer.read().decode("utf-8")); print(json.dumps(getattr(Api.__new__(Api), method)(*args)))'],
+    'import json,sys; from wingman.ui.api import Api; from wingman.evesettings.controller import ProfilesController; api=Api.__new__(Api); api._profiles=ProfilesController.__new__(ProfilesController); method,args=json.loads(sys.stdin.buffer.read().decode("utf-8")); print(json.dumps(getattr(api, method)(*args)))'],
     {input: JSON.stringify([method, args]), encoding: 'utf8'});
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);

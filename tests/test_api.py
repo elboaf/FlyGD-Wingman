@@ -273,6 +273,18 @@ def test_api_exposes_no_public_non_method_attributes(tmp_path):
     assert non_methods == []
 
 
+def test_profiles_controller_stays_private_on_api(tmp_path):
+    api = make_api(tmp_path)
+
+    public = [name for name in dir(api) if not name.startswith("_")]
+    assert "profiles" not in public
+    assert hasattr(api, "_profiles")
+    controller = api._profiles
+    assert controller is not api
+    assert not hasattr(controller, "api")
+    assert not hasattr(controller, "window")
+
+
 def test_alert_pushes_a_dialog_with_no_request_id(tmp_path):
     window = FakeWindow()
     api = make_api(tmp_path, window)
