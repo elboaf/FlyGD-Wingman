@@ -1783,9 +1783,10 @@ only ever checked by hand.
       then moves focus to `<body>`, so ticking thirteen names by keyboard
       meant thirteen restarts from the top of the page. The summary
       repaints on its own now, and the roster is left standing.
-      **An opted-out character stays live here, unlike in the Lock
-      block.** Untick `Preview` on a character — their preview stops and
-      the rest of their `#preview-binds` row goes dim — then open this
+      **An opted-out character stays live here. The Lock block also stays
+      live if that character has an enabled saved crop.** Untick `Preview`
+      on a character: their primary preview stops and its keybind controls
+      go dim. Then open this
       disclosure: their box is still tickable there and still takes
       effect, because Never minimize still governs a client with no
       preview (see "`Preview` turns one character's preview off" below).
@@ -1809,6 +1810,58 @@ only ever checked by hand.
       that label has no visible text at all. Restating the purpose on
       every roster box would override the visible name, which is the
       failure WCAG 2.5.3 names.
+
+**Character crops (Windows/WebView2 release gates remain open)**
+
+Headless Chrome can exercise the `?dev=1` controls below, but is not evidence
+for native WebView2 focus, Windows DPI, picker behavior or DWM resources.
+Schedule the native pass with Task 10 before release; do not launch EVE or
+Wingman automatically as part of the browser pass.
+
+- [ ] **Crop lives inside Configure.** At 840x625 and the 839x625 rounding
+      case, open a character's Configure detail. Crop is beside Cycle group
+      and Saved geometry, not a new grid column or destination. Labels align;
+      controls and status wrap without horizontal scrolling. Long names
+      ellipsize in the roster and remain readable in the Remove confirmation.
+- [ ] **Select, disable, reselect, remove.** With previews enabled and the
+      source available, `Select region…` opens the native picker after keybind
+      capture disarms. Commit a region: the wrapped Enabled checkbox,
+      neutral `Reselect…`, and destructive Remove appear. Disable retains
+      selection/position; Remove confirms their loss and distinguishes itself
+      from Disable. Escape cancels without a write. Use Tab/Space and verify
+      visible focus throughout, including the native picker return.
+- [ ] **Saved settings outlive runtime availability.** Offline/master-off:
+      Enabled and Remove stay usable, while region selection explains the
+      unavailable source. Test disabled, cap-suppressed, invalid-source,
+      degraded, and stopping states. Counts use the delivered cap. Disable
+      and Remove must remain ways out of a full cap or degraded crop.
+- [ ] **Crop-only owners and shared locks.** Untick primary Preview for a
+      character with an enabled saved crop. The shared Lock checkbox remains
+      usable even offline/master-off/cap-suppressed. Disabling/removing the
+      crop makes Lock inert again without enabling primary Size/Copy or
+      keybinds. A saved owner absent from all other rosters still has a row.
+      In `?dev=1`, also exercise `constructor`, `__proto__`, and `toString`.
+- [ ] **Asynchronous saves tell the truth.** Pending shows Selecting/Saving,
+      not a refusal, and preserves a requested checkbox value until terminal
+      authority arrives. Failed saves restore committed definitions and show
+      the error. Test terminal-event-before-receipt, late older receipts,
+      stale root delivery, successful no-op, and reentry after missed or
+      expired operation history. No write occurs before hydration. Leaving
+      invalidates focus restoration, not an admitted save. Keep an unsent
+      group name or armed keybind while crop state changes; neither is lost.
+- [ ] **Native smoke, separately on Windows.** Repeat Configure keyboard
+      paths in pinned WebView2 at 100/125/150/200% scaling. Exercise picker
+      cancel/use/resize/source loss, master-off during admission, independent
+      crop positioning and shared locks. Task 10's DWM/HWND resource, cap,
+      stop-tail, client-window-safety and performance gates must also pass.
+      No headless screenshot closes these gates.
+
+Dev drivers: `DEV.previewCrops('offline')`, `'crop-only'`, `'cap-full'`,
+`'pending'`, `'failed-save'`, `'degraded'`, `'invalid-source'`, `'stopping'`,
+`'master-off'`, `'event-before-receipt'`, or `'no-op'`.
+`DEV.finishPreviewCrop()` completes the held pending operation. These are
+browser fixtures only, not native behavior or release evidence.
+
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
       `Character`, `Preview`, `Keybind`, `Configure` — sentence case, a step
@@ -1862,14 +1915,16 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…` and `Configure` — goes dim and stops responding to
-      clicks. The row's saved keybind stays legible on the inert button;
-      it is not cleared. `Lock` and `Never minimize` are not in this row
+      `Clear` and `Edit…` — goes dim and stops responding to clicks.
+      Configure stays live for saved groups and crops; its primary Saved
+      geometry actions alone are inert. The row's saved keybind stays
+      legible on the inert button; it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
-      **the character's box in the Lock block must read inert**, since
-      with no window there is nothing to lock, while **their box in the
-      Never-minimize block must STAY LIVE**. Opting out of previews stops
-      the preview, not `minimize_inactive_clients` — switching away from
+      **the character's box in the Lock block must read inert unless an
+      enabled saved crop remains**. The lock is shared by both windows and
+      stays configurable for a crop even while offline or master-off.
+      **Their box in the Never-minimize block must STAY LIVE**. Opting out
+      of previews stops the primary preview, not `minimize_inactive_clients` — switching away from
       that character's real EVE window still minimizes it — so greying
       its only control would leave a setting in force with no way to
       change it.

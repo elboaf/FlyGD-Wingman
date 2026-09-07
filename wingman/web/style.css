@@ -2647,7 +2647,7 @@ button.btn:disabled,
    while the collapsed line stays useful for roster-scale verification. */
 .preview-character-detail {
   grid-column: 1 / -1;
-  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px;
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 16px;
   /* One sticky table header plus one sticky group header can cover this
      disclosure after Configure scrolls it into view. Their shared measured
      height is defined by the table, so this clearance follows it. */
@@ -2666,6 +2666,13 @@ button.btn:disabled,
 }
 .preview-character-detail .geometry-actions { min-height: 28px; }
 .preview-configure { justify-self: start; }
+
+/* Crop stays inside the one disclosure. Its status gets a wrapping line,
+   not a content-sized track that widens every character row. */
+.preview-crop-field { flex: 1 1 280px; min-width: 0; max-width: 100%; }
+.preview-crop-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.preview-crop-actions .check[hidden], .preview-crop-actions .btn[hidden] { display: none; }
+.preview-crop-status { max-width: 65ch; margin-top: 0; overflow-wrap: anywhere; }
 
 /* A conditional conflict is a sibling after its affected row. Since rows
    are display:contents, it must span every track rather than add a cell. */

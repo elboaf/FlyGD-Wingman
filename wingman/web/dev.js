@@ -2099,8 +2099,150 @@
 
   api.get_preview_hotkey_state = function () {
     console.log('DEV api.get_preview_hotkey_state()');
-    return Promise.resolve(JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE)));
+    var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+    full.hotkeys = _devHotkeysCopy();
+    full.crops = _devCropCopy();
+    return Promise.resolve(full);
   };
+
+  // One saved crop per owner. Only dev.js fabricates definitions and native
+  // outcomes; these drivers exercise the real page without a native runtime.
+  var DEV_PREVIEW_CROP_CAP = 8;
+  var DEV_PREVIEW_CROP_RESULT_LIMIT = 32;
+  var _devCrops = {revision: 0, definitions: {}, operations: {}, statuses: {},
+    live_count: 0, cap: DEV_PREVIEW_CROP_CAP, runtime_enabled: true, busy: false};
+  var _devCropMode = '';
+  var _devCropNextId = 0;
+  var _devCropFinish = null;
+
+  function _devCropDefinition(enabled) {
+    return {version: 1, enabled: enabled,
+      source: {x: 0.1, y: 0.2, w: 0.4, h: 0.3, original_client_w: 1920,
+        original_client_h: 1080, original_px: [192, 216, 768, 324]},
+      window: {x: 40, y: 40, w: 384, h: 162}};
+  }
+
+  function _devCropCopy() { return JSON.parse(JSON.stringify(_devCrops)); }
+
+  function _devCropPublish() {
+    _devCrops.revision += 1;
+    if (window.onPreviewCrops) { window.onPreviewCrops(_devCropCopy()); }
+  }
+
+  function _devCropRuntime() {
+    _devCrops.live_count = 0;
+    _devCrops.statuses = Object.create(null);
+    Object.keys(_devCrops.definitions).forEach(function (name) {
+      var enabled = _devCrops.definitions[name].enabled;
+      var online = DEV_PREVIEW_HOTKEYS_FIXTURE.characters.indexOf(name) !== -1;
+      var status = !enabled ? 'disabled' : !_devCrops.runtime_enabled ? 'master-off'
+        : !online ? 'offline' : _devCrops.live_count >= _devCrops.cap ? 'cap-suppressed' : 'live';
+      if (status === 'live') { _devCrops.live_count += 1; }
+      _devCrops.statuses[name] = status;
+    });
+  }
+
+  api.get_preview_crop_state = function () { return Promise.resolve(_devCropCopy()); };
+
+  function _devCropRequest(action, name, enabled) {
+    var definition = _devCrops.definitions[name];
+    var error = null;
+    if (_devCropMode === 'stopping') { error = 'Previews are stopping'; }
+    else if (action !== 'select' && !definition) { error = 'No saved crop for this character'; }
+    else if (action === 'select' && (!_devCrops.runtime_enabled
+        || DEV_PREVIEW_HOTKEYS_FIXTURE.characters.indexOf(name) === -1)) {
+      error = 'Start this client and enable previews to select a region';
+    } else if ((action === 'select' || enabled) && _devCrops.runtime_enabled
+        && _devCrops.live_count >= _devCrops.cap && _devCrops.statuses[name] !== 'live') {
+      error = 'Crop limit reached';
+    }
+    if (error || (action === 'enabled' && definition.enabled === enabled)) {
+      return Promise.resolve({applied: !error, persisted: !error, pending: false,
+        operation_id: null, error: error});
+    }
+    var id = ++_devCropNextId;
+    var operation = {operation_id: id, name: name, pending: true,
+      applied: false, persisted: false, error: null, revision: null};
+    _devCrops.operations[id] = operation;
+    _devCrops.busy = true;
+    _devCrops.statuses[name] = action === 'select' ? 'selecting' : 'saving';
+    _devCropPublish();
+    var receipt = {operation_id: id, pending: true, applied: false, persisted: false, error: null};
+    var mode = _devCropMode;
+    function finish() {
+      if (!operation.pending) { return; }
+      var failed = mode === 'failed-save';
+      operation.pending = false;
+      operation.applied = !failed;
+      operation.persisted = !failed;
+      operation.error = failed ? 'Could not save crop: settings file is read-only.' : null;
+      // Deliberately unrelated to delivery revision, like the production store.
+      operation.revision = id + 1000;
+      if (!failed) {
+        if (action === 'remove') { delete _devCrops.definitions[name]; }
+        else if (action === 'enabled') { definition.enabled = enabled; }
+        else { _devCrops.definitions[name] = _devCropDefinition(true); }
+      }
+      _devCrops.busy = false;
+      var terminal = Object.keys(_devCrops.operations).filter(function (key) {
+        return !_devCrops.operations[key].pending;
+      }).sort(function (a, b) { return Number(a) - Number(b); });
+      terminal.slice(0, Math.max(0, terminal.length - DEV_PREVIEW_CROP_RESULT_LIMIT))
+        .forEach(function (key) { delete _devCrops.operations[key]; });
+      _devCropRuntime();
+      _devCropPublish();
+    }
+    _devCropFinish = finish;
+    if (mode === 'event-before-receipt') { finish(); }
+    else if (mode !== 'pending') { setTimeout(finish, 150); }
+    return Promise.resolve(receipt);
+  }
+
+  api.select_preview_crop = function (name) { return _devCropRequest('select', name); };
+  api.set_preview_crop_enabled = function (name, enabled) { return _devCropRequest('enabled', name, enabled); };
+  api.remove_preview_crop = function (name) { return _devCropRequest('remove', name); };
+
+  function _devCropScenario(mode, operationMode) {
+    _devCropMode = operationMode || mode;
+    _devCrops.definitions = Object.create(null);
+    _devCrops.operations = {};
+    _devCrops.busy = false;
+    _devCrops.runtime_enabled = mode !== 'master-off' && mode !== 'stopping';
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    fixture.characters = ['Aiga Otsolen', 'Zuelo Parvi', 'Corvin Veles'];
+    fixture.excluded = ['Sera Vahn'];
+    fixture.locked = ['Aiga Otsolen'];
+    fixture.enabled = _devCrops.runtime_enabled;
+    _devCrops.definitions['Aiga Otsolen'] = _devCropDefinition(true);
+    _devCrops.definitions['Sera Vahn'] = _devCropDefinition(true);
+    _devCrops.definitions['Aleksandrina Shadowbanes Voidstriders'] = _devCropDefinition(false);
+    if (mode === 'offline') { fixture.characters = []; }
+    if (mode === 'crop-only') {
+      // These are legitimate names, not prototype properties. They appear
+      // only as saved crop owners, outside seen/character/binding rosters.
+      ['constructor', '__proto__', 'toString'].forEach(function (name) {
+        _devCrops.definitions[name] = _devCropDefinition(true);
+        fixture.excluded.push(name);
+        fixture.locked.push(name);
+      });
+    }
+    if (mode === 'cap-full') {
+      for (var i = 1; i <= _devCrops.cap; i++) {
+        var name = 'Active crop ' + i;
+        _devCrops.definitions[name] = _devCropDefinition(true);
+        fixture.characters.push(name);
+      }
+    }
+    _devCropRuntime();
+    if (mode === 'degraded' || mode === 'stopping' || mode === 'invalid-source') {
+      _devCrops.statuses['Aiga Otsolen'] = mode;
+      _devCrops.live_count = 0;
+      _devCrops.busy = mode === 'stopping';
+    }
+    if (mode === 'no-op') { _devCrops.definitions['Aiga Otsolen'].enabled = false; _devCropRuntime(); }
+    _devCropPublish();
+    _devPushHotkeys();
+  }
 
   // ---- Stateful dev stubs for the five preview cycle-group methods.
   //
@@ -2117,6 +2259,11 @@
   function _devHotkeysCopy() {
     return JSON.parse(JSON.stringify(_devPreviewHotkeys));
   }
+
+  api.set_preview_binds = function (hotkeys) {
+    _devPreviewHotkeys = JSON.parse(JSON.stringify(hotkeys));
+    return Promise.resolve(true);
+  };
 
   function _devGroupResult(applied, error) {
     return {
@@ -2142,6 +2289,7 @@
       if (window.onPreviewHotkeys) {
         var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
         full.hotkeys = _devHotkeysCopy();
+        full.crops = _devCropCopy();
         window.onPreviewHotkeys(full);
       }
     }, 0);
@@ -2252,7 +2400,8 @@
       if (!valid) {
         return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
       }
-      gbc[name] = groupId;
+      Object.defineProperty(gbc, name, {value: groupId,
+        enumerable: true, configurable: true, writable: true});
     }
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
@@ -2309,6 +2458,11 @@
   }
 
   window.DEV = {
+    // previewCrops('offline'|'crop-only'|'cap-full'|'pending'|'failed-save'|
+    // 'degraded'|'stopping'|'master-off'|'event-before-receipt'|'no-op').
+    previewCrops: _devCropScenario,
+    previewBindCaptured: function () { window.onPreviewBindCaptured({gesture: 'Ctrl+Alt+F9'}); },
+    finishPreviewCrop: function () { if (_devCropFinish) { _devCropFinish(); } },
     // `DEV.fleetHiddenLimit()` makes the backend's exact cap reachable from
     // the browser console: Ariadne stays visible, the other 64 known names
     // are hidden, and clicking Ariadne exercises the inline refusal/rollback.

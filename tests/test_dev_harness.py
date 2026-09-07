@@ -201,6 +201,39 @@ def test_fittings_screenshot_fixture_is_browser_consumed_and_semantically_valid(
     )["stale"]
 
 
+def test_crop_dev_contract_has_recovery_and_async_scenarios():
+    from wingman.preview.crops import MAX_LIVE_CROPS
+    from wingman.preview.cropstore import RECENT_RESULT_LIMIT
+
+    retained = re.search(r"var DEV_PREVIEW_CROP_RESULT_LIMIT = (\d+);", DEV_JS)
+    assert retained and int(retained[1]) == RECENT_RESULT_LIMIT
+    cap = re.search(r"var DEV_PREVIEW_CROP_CAP = (\d+);", DEV_JS)
+    assert cap and int(cap[1]) == MAX_LIVE_CROPS
+    assert {
+        "get_preview_crop_state",
+        "select_preview_crop",
+        "set_preview_crop_enabled",
+        "remove_preview_crop",
+    } <= _stubbed()
+    assert "window.onPreviewCrops(" in DEV_JS
+    assert "full.crops = _devCropCopy()" in DEV_JS
+    for scenario in (
+        "offline",
+        "crop-only",
+        "cap-full",
+        "pending",
+        "failed-save",
+        "degraded",
+        "stopping",
+        "master-off",
+        "event-before-receipt",
+        "no-op",
+    ):
+        assert "'" + scenario + "'" in DEV_JS
+    assert "previewCrops:" in DEV_JS
+    assert "finishPreviewCrop:" in DEV_JS
+
+
 def test_every_bridge_method_the_page_calls_has_a_double():
     """The general form of the `get_bookmarks` gap, and the reason this
     file exists rather than two fixture assertions.
@@ -238,7 +271,6 @@ def test_every_bridge_method_the_page_calls_has_a_double():
         "previews.js: alert_bookmarks",
         "previews.js: capture_preview_bind",
         "previews.js: parse_preview_bind",
-        "previews.js: set_preview_binds",
         "settings.js: set_preview_enabled",
         "settings.js: set_restore_preview_positions",
     }
@@ -2192,7 +2224,7 @@ def test_preview_bind_assigns_cycle_field_on_located_group():
 
 def test_preview_assignment_both_sets_and_deletes_group_by_character():
     """set_preview_character_group must handle BOTH paths:
-    - assign path:  gbc[name] = groupId  (character joins a group)
+    - assign path: an own enumerable property (including __proto__)
     - remove path:  delete gbc[name]      (character returns to All-only)
 
     A method that only supports one path silently ignores the other,
@@ -2200,13 +2232,10 @@ def test_preview_assignment_both_sets_and_deletes_group_by_character():
     """
     body = _extract_fn_body("api.set_preview_character_group")
     body = re.sub(r"(?m)^\s*//.*$", "", body)
-    # Assignment path: gbc[name] = groupId (or equivalent bracket notation)
-    assert re.search(r"gbc\s*\[\s*name\s*\]\s*=", body) or re.search(
-        r"group_by_character\s*\[\s*name\s*\]\s*=", body
-    ), (
-        "set_preview_character_group must have an assignment path: "
-        "gbc[name] = groupId — missing it means a character can never join a group"
-    )
+    # Define an own property: bracket assignment loses a new __proto__ owner.
+    assert "Object.defineProperty(gbc, name, {value: groupId," in body
+    for flag in ("enumerable: true", "configurable: true", "writable: true"):
+        assert flag in body
     # Delete path: delete gbc[name]
     assert re.search(r"delete\s+gbc\s*\[\s*name\s*\]", body) or re.search(
         r"delete\s+group_by_character\s*\[\s*name\s*\]", body
@@ -2391,15 +2420,16 @@ def test_preview_assignment_branches_use_requested_name_and_group_id():
           if (!valid) {
             return Promise.resolve(_devGroupResult(false, 'No group with id \\'' + groupId + '\\''));
           }
-          gbc[name] = groupId;
+          Object.defineProperty(gbc, name, {value: groupId,
+            enumerable: true, configurable: true, writable: true});
         }
         """
     )
     assert body.count(branches) == 1
     assert body.count("deletegbc[") == 1
     assert body.count("deletegbc[name];") == 1
-    assert re.findall(r"gbc\[[^]]+\]=", body) == ["gbc[name]="]
-    assert body.count("gbc[name]=groupId;") == 1
+    assert not re.findall(r"gbc\[[^]]+\]=", body)
+    assert body.count("Object.defineProperty(gbc,name,") == 1
     assert body.index(branches) < body.index("_devPushHotkeys();")
 
 
