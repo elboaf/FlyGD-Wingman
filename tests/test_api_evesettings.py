@@ -17,7 +17,6 @@ from wingman.ui import api as api_mod
 
 # Tests run on Linux where pywebview is not installed; ensure the folder
 # dialog kind function does not import webview at call time during tests.
-api_mod._folder_dialog_kind = lambda: "FOLDER"
 
 
 class ImmediateThread:
@@ -528,6 +527,9 @@ def test_pick_root_persists_the_canonical_selection(
     api = build(tmp_path, monkeypatch)
     picked = {"root": root, "server": server, "profile": profile}[picked_level]
     api._window.create_file_dialog = lambda *a, **k: (str(picked),)
+    # Stub the folder-kind constant at test time so the test does not attempt
+    # to import pywebview on platforms where it is not available.
+    monkeypatch.setattr(api_mod, "_folder_dialog_kind", lambda: "FOLDER")
     assert api.eve_settings_pick_root() == str(root)
     assert api._eve_section()["root"] == str(root)
     assert api._eve_section()["server"] == str(server)
