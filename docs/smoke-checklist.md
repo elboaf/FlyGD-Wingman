@@ -3973,8 +3973,10 @@ pass.
       permission behavior and receiving pasted text. No automatic clipboard read
       occurs on opening Paste or the editor.
 - [ ] **Paste/Review never inserts or saves.** Open Paste; the shared-text field
-      receives focus. Paste valid text and choose Review: names and previews
-      appear separately from the draft, with ordinary Save hidden/disabled.
+      receives focus. Paste valid text and choose Review: names, probe counts
+      and previews appear separately from the draft, with ordinary Save hidden/disabled.
+      Review a one-probe and a two-probe formation together: the differing counts
+      are visible and included in each editable name's screen-reader label.
       Only explicit **Add formations** appends the entire validated batch and
       focuses its first row. Only subsequent **Save formations** writes the file.
 - [ ] **Invalid text is recoverable.** Try malformed JSON, duplicate JSON keys,
@@ -4012,6 +4014,14 @@ pass.
       after an account change, cancellation or leaving/reopening cannot alter the
       current draft, copy status or baseline. Repeated Add/Save must not duplicate
       insertion or let an older completion unlock the newer operation.
+- [ ] **Delete cannot retarget a stale confirmation.** With a delayed Reload or
+      post-save reread pending, open Delete for A, then let the read replace A with
+      B at the same index. Confirming the old dialog must leave B and the rest of
+      the list unchanged and say nothing was deleted; choose Delete again to act
+      on B. Repeat with reused local IDs/names. In the developer browser, inject
+      a route exit/reopen or selection change while the dialog is open: an old
+      Yes must not delete the new selection/session's data. Ordinary confirmed
+      deletion while Save runs remains a live unsaved edit, not an implicit save.
 - [ ] **Save failure and post-save warning differ.** EVE-running/probe failure,
       backup failure or codec refusal means no publication. A successfully
       published save followed by a retention/status failure still reports success

@@ -513,7 +513,8 @@
       input.type = 'text'; input.className = 'field'; input.value = f.name;
       input.id = 'fm-import-name-' + i;
       input.setAttribute('aria-describedby', 'fm-import-conflict-' + i);
-      var label = WM.make('label', 'lab', 'Formation ' + (i + 1) + ' name');
+      var label = WM.make('label', 'lab', 'Formation ' + (i + 1) + ' name ('
+        + f.probes.length + (f.probes.length === 1 ? ' probe)' : ' probes)'));
       label.setAttribute('for', input.id);
       var preview = WM.make('button', 'btn', 'Preview');
       preview.type = 'button';
@@ -1067,7 +1068,7 @@
     });
 
     WM.el('fm-delete').addEventListener('click', function () {
-      var f = current();
+      var f = current(), list = state.formations, generation = loadGeneration;
       if (!f) { return; }
       // "when you save", because nothing has been written yet: the delete
       // is an edit to the list this screen holds, and Save is the only
@@ -1075,7 +1076,15 @@
       WM.confirm('Delete formation?',
                  '"' + f.name + '" is removed when you save.',
                  { destructive: true }).then(function (yes) {
-        if (!yes) { return; }
+        if (!yes || generation !== loadGeneration
+            || WM.current_route !== 'formations') { return; }
+        // A read started before this dialog can replace the document without
+        // another generation change. Neither a retained index nor a reused ID
+        // authorizes deleting its replacement; require the same selected object.
+        if (list !== state.formations || current() !== f) {
+          saveStatus('The formation changed while confirming. Nothing was deleted. Choose Delete again.');
+          return;
+        }
         var removed = state.formations.splice(state.selected, 1)[0];
         var selected = copySelection.indexOf(removed);
         if (selected !== -1) { copySelection.splice(selected, 1); }

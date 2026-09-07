@@ -484,6 +484,13 @@ async function pasteScenario() {
     importRename(0, 'Corrected');
   }
   if (scenario === 'paste-batch') {
+    const labels = importNames().map(field => field.parentNode.querySelector('label'));
+    assert.match(labels[0].textContent, /\b1 probe\b/, 'the first incoming row must expose its one-probe count');
+    assert.match(labels[1].textContent, /\b2 probes\b/, 'the second incoming row must expose its two-probe count');
+    labels.forEach((label, i) => {
+      assert.equal(label.getAttribute('for'), importNames()[i].id, 'visible count belongs to the accessible name');
+      assert.equal(label.hidden, false); assert.notEqual(label.getAttribute('aria-hidden'), 'true');
+    });
     selectShare(0); rowButtons()[0].click();
     assert.equal(WM.el('fm-name').value, 'Original', 'import rendering cannot replace current draft');
     importButtons()[1].click();
@@ -545,9 +552,76 @@ async function pasteScenario() {
   if (first) assert.equal(saves[0].args[1][0].id, 7);
   if (scenario === 'paste-batch') { assertShareCount(1); assert.equal(shareBoxes()[0].checked, true); }
 }
+async function deleteScenario() {
+  // Same local IDs/names can recur after a read; they cannot authorize an old Yes.
+  const data = reply();
+  data.formations.push({id: 8, name: 'Other', probes: [{x: 0, y: 0, z: 0, range: 149597870700}]});
+  WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+  selectShare(0); selectShare(1);
+  if (scenario === 'delete-during-reload') click('fm-reload');
+  if (scenario === 'delete-during-save-reread' || scenario === 'delete-live-during-save') {
+    rename('Submitted'); click('fm-save');
+    if (scenario === 'delete-during-save-reread') complete(saves[0]);
+  }
+  assert.equal(WM.el('fm-delete').disabled, false, 'live draft editing must remain available');
+  click('fm-delete'); const confirmation = confirms.at(-1);
+  assert.match(confirmation.args[1], scenario.includes('save') ? /"Submitted"/ : /"Original"/);
+  const saveCount = saves.length;
+  if (scenario === 'delete-during-reload' || scenario === 'delete-during-save-reread') {
+    const replacement = plain(data);
+    replacement.content_revision = C;
+    replacement.formations[0].probes[0].x = 9000;
+    // Identical local ID and name, but a distinct external document.
+    reads.at(-1).resolve(replacement); await tick();
+  } else if (scenario === 'delete-after-exit' || scenario === 'delete-after-reopen') {
+    WM.route('evesettings');
+    // Keep the entry read unresolved: the old object still occupies the pane.
+    // A current-object-only guard is not a session guard.
+    if (scenario === 'delete-after-reopen') WM.openFormations(accounts, 'choice-A');
+  } else if (scenario === 'delete-selection-changed') rowButtons()[1].click();
+  confirmation.resolve(true); await tick();
+  assert.equal(saves.length, saveCount, 'Delete never writes an account file');
+  if (scenario === 'delete-live-during-save') {
+    assert.deepEqual(rowButtons().map(e => e.textContent), ['Other']); assertShareCount(1);
+    complete(saves[0]);
+    assert.equal(reads.length, 2, 'completion cannot reload over a newer deletion');
+    assertEditable('Other'); click('fm-save');
+    assert.equal(saves[1].args[2], B);
+    assert.deepEqual(plain(saves[1].args[1]).map(f => [f.id, f.name]), [[8, 'Other']]);
+    return;
+  }
+  assert.deepEqual(rowButtons().map(e => e.textContent), ['Original', 'Other'], 'stale Yes must not delete any current formation');
+  if (scenario === 'delete-after-exit' || scenario === 'delete-after-reopen') {
+    assert.equal(WM.el('fm-save-status').textContent, '', 'an old session must not report into the new one');
+    if (scenario === 'delete-after-reopen') {
+      reads.at(-1).resolve(data); await tick();
+      assert.deepEqual(rowButtons().map(e => e.textContent), ['Original', 'Other']);
+      assert.equal(WM.el('fm-dirty').textContent, '');
+    } else assert.equal(WM.current_route, 'evesettings');
+    return;
+  }
+  assert.equal(WM.el('fm-dirty').textContent, '');
+  assert.match(WM.el('fm-save-status').textContent, /Nothing was deleted.*Delete again/);
+  if (scenario === 'delete-selection-changed') {
+    assert.equal(WM.el('fm-name').value, 'Other'); assertShareCount(2);
+  } else {
+    assert.equal(WM.el('fm-name').value, 'Original'); assertShareCount(0);
+    const x = WM.el('fm-probes').children.find(e => e.getAttribute('aria-label') === 'Probe 1 West km');
+    assert.equal(x.value, '9');
+  }
+  // Retrying Delete is live; No is harmless, Yes removes only the now-named row.
+  click('fm-delete'); confirms.at(-1).resolve(false); await tick();
+  assert.equal(rowButtons().length, 2); assert.equal(WM.el('fm-dirty').textContent, '');
+  click('fm-delete'); confirms.at(-1).resolve(true); await tick();
+  const expected = scenario === 'delete-selection-changed' ? 'Original' : 'Other';
+  assert.deepEqual(rowButtons().map(e => e.textContent), [expected]);
+  assert.equal(WM.el('fm-dirty').textContent, 'Unsaved changes');
+  assert.equal(saves.length, saveCount);
+}
 async function main() {
   await open();
-  if (scenario.startsWith('paste-')) await pasteScenario();
+  if (scenario.startsWith('delete-')) await deleteScenario();
+  else if (scenario.startsWith('paste-')) await pasteScenario();
   else if (scenario.startsWith('copy-')) await copyScenario();
   else if (scenario === 'commit-keeps-newer-edit' || scenario === 'second-save-retained-draft') {
     rename('Submitted'); click('fm-save'); const first = saves[0];

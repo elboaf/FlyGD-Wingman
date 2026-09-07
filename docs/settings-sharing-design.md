@@ -2,7 +2,7 @@
 
 Date: 2026-09-06
 Base: `57ce91d` — Harden accessibility, build reproducibility, and Settings docs (#171)
-Status: approved after independent-review revisions. Implementation planning authorized; production implementation has not started. See [phase-1 implementation plan](probe-formation-sharing-plan.md).
+Status: phase 1 implemented, with local verification and polish corrections recorded in the [verification record](probe-formation-sharing-verification.md). Independent task/final branch review and Windows/WebView2, real-clipboard, and live-EVE acceptance remain open. Requirements below are unchanged; see the [phase-1 implementation plan](probe-formation-sharing-plan.md).
 
 ## Outcome and roadmap
 
