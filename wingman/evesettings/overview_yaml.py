@@ -217,7 +217,8 @@ def _labels(value, order):
     return labels, ambiguous
 
 
-def _normalize(value):
+def normalize(value: object) -> ParsedSetup:
+    """Normalize decoded native data; callers check text and structure budgets."""
     if type(value) is not dict:
         raise SetupError("invalid_type", "Native overview YAML must be an object.")
     if not value or value.keys() - NATIVE_FIELDS:
@@ -318,4 +319,4 @@ def parse_text(text: str) -> ParsedSetup:
             "invalid_yaml", "Unsupported native YAML scalar value."
         ) from error
     model.check_structure_budget(value)
-    return _normalize(value)
+    return normalize(value)

@@ -18,8 +18,13 @@ def native():
     return yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
 
 
-def parse(value):
-    return sharing.parse_text(yaml.safe_dump(value, allow_unicode=True))
+def parse(value, *, style="yaml"):
+    text = (
+        json.dumps(value)
+        if style == "json"
+        else yaml.safe_dump(value, allow_unicode=True)
+    )
+    return sharing.parse_text(text)
 
 
 def assert_error(code, text):
@@ -245,12 +250,36 @@ def test_supplied_tabs_need_included_dependencies_even_when_presets_are_absent()
     assert caught.value.code == "dangling_reference"
 
 
-@pytest.mark.parametrize("name", ["all", "none", " Fleet ", "𐐀é"])
-def test_reference_names_are_exact_text_not_magic_sentinels(name):
+@pytest.mark.parametrize("style", ["yaml", "json"])
+@pytest.mark.parametrize(
+    "name", ["all", "none", " Fleet ", "𐐀é"], ids=["all", "none", "space", "unicode"]
+)
+def test_reference_names_are_exact_text_not_magic_sentinels(style, name):
     value = native()
     value["presets"][0][0] = name
-    next(pair for pair in value["tabSetup"][0][1] if pair[0] == "overview")[1] = name
-    assert parse(value).overview["tabs"][0]["overview"] == name
+    for pair in value["tabSetup"][0][1]:
+        if pair[0] in ("name", "overview", "bracket"):
+            pair[1] = name
+    overview = parse(value, style=style).overview
+    assert overview["presets"][0]["name"] == name
+    assert overview["tabs"][0]["name"] == name
+    assert overview["tabs"][0]["overview"] == name
+    assert overview["tabs"][0]["bracket"] == name
+
+
+@pytest.mark.parametrize("style", ["yaml", "json"])
+def test_native_exponent_tab_colors_preserve_numeric_values(style):
+    value = native()
+    next(pair for pair in value["tabSetup"][0][1] if pair[0] == "color")[1] = [
+        1e-6,
+        1e-20,
+        1,
+    ]
+    parsed = parse(value, style=style)
+    assert parsed.overview["tabs"][0]["color"] == [0.000001, 0.00000000000000000001, 1]
+    assert list(map(type, parsed.overview["tabs"][0]["color"])) == [float, float, int]
+    assert parsed.source_kind == "native-yaml"
+    assert parsed.layout is None
 
 
 @pytest.mark.parametrize(
@@ -349,10 +378,16 @@ def test_state_key_syntax_is_explicit_and_bounded(key):
         "blink",
     ],
 )
-def test_duplicate_mapping_and_keyed_pairs_refuse_before_last_wins(case):
+@pytest.mark.parametrize("style", ["yaml", "json"])
+def test_duplicate_mapping_and_keyed_pairs_refuse_before_last_wins(style, case):
     value = native()
     if case == "root":
-        assert_error("duplicate_field", "presets: []\npresets: []\n")
+        text = (
+            '{"presets": [], "presets": []}'
+            if style == "json"
+            else "presets: []\npresets: []\n"
+        )
+        assert_error("duplicate_field", text)
         return
     field, nested = {
         "preset": ("presets", False),
@@ -366,7 +401,9 @@ def test_duplicate_mapping_and_keyed_pairs_refuse_before_last_wins(case):
     }[case]
     pairs = value[field][0][1] if nested else value[field]
     pairs.append(copy.deepcopy(pairs[0]))
-    assert_error("duplicate_field", yaml.safe_dump(value))
+    with pytest.raises(model.SetupError) as caught:
+        parse(value, style=style)
+    assert caught.value.code == "duplicate_field"
 
 
 @pytest.mark.parametrize(
@@ -401,7 +438,8 @@ def test_mapping_keys_are_never_silently_collapsed_or_unhashable_errors(text):
         "layout",
     ],
 )
-def test_native_shape_and_field_allowlists_are_not_generic_dat_passthrough(case):
+@pytest.mark.parametrize("style", ["yaml", "json"])
+def test_native_shape_and_field_allowlists_are_not_generic_dat_passthrough(style, case):
     value = native()
     if case == "root":
         value["extra"] = []
@@ -433,7 +471,7 @@ def test_native_shape_and_field_allowlists_are_not_generic_dat_passthrough(case)
     else:
         value["layout"] = {}
     with pytest.raises(model.SetupError):
-        parse(value)
+        parse(value, style=style)
 
 
 @pytest.mark.parametrize(
@@ -565,7 +603,10 @@ def test_native_depth_boundary_and_preconstruction_refusal(monkeypatch):
     assert caught.value.code == "depth_limit"
 
 
-def test_native_node_boundary_counts_pair_containers_and_mapping_keys(monkeypatch):
+@pytest.mark.parametrize("style", ["yaml", "json"])
+def test_native_node_boundary_counts_pair_containers_and_mapping_keys(
+    monkeypatch, style
+):
     value = {"presets": []}
     remaining = 99937  # Root/key/list = 3; five native presets = 5 * 12 nodes.
     for i in range(5):
@@ -579,10 +620,13 @@ def test_native_node_boundary_counts_pair_containers_and_mapping_keys(monkeypatc
             remaining -= count
         value["presets"].append([f"Filter {i}", fields])
     assert remaining == 0
-    text = yaml.safe_dump(value, default_flow_style=True)
-    assert len(sharing.parse_text(text).overview["presets"]) == 5
+    assert len(parse(value, style=style).overview["presets"]) == 5
     value["presets"][-1][1][-1][1].append(42)
-    text = yaml.safe_dump(value, default_flow_style=True)
+    text = (
+        json.dumps(value)
+        if style == "json"
+        else yaml.safe_dump(value, default_flow_style=True)
+    )
 
     def must_not_construct(*args, **kwargs):
         pytest.fail("Node overflow reached document construction")

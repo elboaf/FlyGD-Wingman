@@ -56,9 +56,9 @@ def parse_text(text: str) -> ParsedSetup:
         raise SetupError("invalid_json", f"Invalid setup JSON: {error}") from error
     model.check_structure_budget(value)
     if type(value) is dict and value and value.keys() <= overview_yaml.NATIVE_FIELDS:
-        # JSON syntax is a YAML subset, but native semantics must still travel
-        # through native validation, not the full/reset Wingman model path.
-        return overview_yaml.parse_text(text)
+        # Keep JSON scalar semantics (exponents and Unicode surrogate pairs)
+        # while sharing native validation, not the full/reset Wingman path.
+        return overview_yaml.normalize(value)
     # Claimed JSON envelopes, including unsupported versions/types or missing
     # markers, are validated exactly once; domain errors never trigger fallback.
     return model.validate_wingman(value)
