@@ -868,8 +868,8 @@ class UploaderController:
                 self._probe_run = None
         run.stop()
 
-    def _push_duration(self, row_id, duration, definitive: bool) -> None:
-        """Record one probe result and tell the page what the cell says.
+    def _apply_duration(self, row_id, duration, definitive, info=None) -> bool:
+        """Record/publish under the publication gate; return whether accepted.
 
         One helper for both probe paths -- the background drain and the
         synchronous pre-upload sweep -- because they pushed the same
@@ -885,12 +885,9 @@ class UploaderController:
         the row is gone or already answered definitively, and pushing over
         that would put a superseded answer on screen while Python holds
         the good one.
+        Declined answers must not poison the cache either. The drain passes
+        its captured info so acceptance can govern caching as well as delivery.
         """
-        with self._publication_lock:
-            self._apply_duration(row_id, duration, definitive)
-
-    def _apply_duration(self, row_id, duration, definitive, info=None) -> bool:
-        """Publication-gated mutation; declined answers must not poison the cache."""
         rendered = self._rows.set_duration(row_id, duration, definitive)
         if rendered is None:
             return False

@@ -279,7 +279,9 @@ class ObservedGate:
 
 
 @pytest.mark.parametrize("event", ["rows", "duration", "link", "rename"])
-def test_acceptance_mutation_and_delivery_are_one_ordered_operation(rig, event):
+def test_acceptance_mutation_and_delivery_are_one_ordered_operation(
+    rig, event, monkeypatch
+):
     api, controller, rows, _folder, _loops, _workers, sent = rig
     api.list_rows()
     rid = rows.rows()[0]["id"]
@@ -305,9 +307,10 @@ def test_acceptance_mutation_and_delivery_are_one_ordered_operation(rig, event):
         publish(payload)
 
     controller._ports = replace(controller._ports, **{port_name: blocked})
+    monkeypatch.setattr(library, "probe", lambda *args: (90.0, True))
     action = {
         "rows": api.list_rows,
-        "duration": lambda: controller._push_duration(rid, 90.0, True),
+        "duration": lambda: controller._probe_now([(rid, info)]),
         "link": lambda: controller._link(rid, "uploaded", info),
         "rename": lambda: api.rename_recording(rid, "renamed"),
     }[event]

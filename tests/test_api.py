@@ -798,7 +798,9 @@ def test_an_indefinite_probe_result_is_not_cached(recordings, tmp_path):
     assert [p["definitive"] for p in streamed] == [False, False]
 
 
-def test_a_superseded_answer_is_not_pushed_over_a_definitive_one(recordings, tmp_path):
+def test_a_superseded_answer_is_not_pushed_over_a_definitive_one(
+    recordings, tmp_path, monkeypatch
+):
     """The supersede rule reaches the PAGE, not just RowSnapshot.
 
     _probe_now sweeps the selection before a combat-log upload and can
@@ -813,15 +815,18 @@ def test_a_superseded_answer_is_not_pushed_over_a_definitive_one(recordings, tmp
         recordings,
         tmp_path,
         clock,
-        probe=lambda path, binary: (12.5, True),
+        probe=lambda path, binary: (None, False),
         window=window,
     )
-    api.list_rows()
-    clock.fire()
+    api.list_rows()  # Timeouts queued, but not drained yet.
+    monkeypatch.setattr(library, "probe", lambda path, binary: (12.5, True))
+    pairs = [
+        (row["id"], api._uploader._rows.resolve(row["id"]))
+        for row in api._uploader._rows.rows()
+    ]
+    api._uploader._probe_now(pairs)
     window.evaluated.clear()
-
-    row_id = api._uploader._rows.rows()[0]["id"]
-    api._uploader._push_duration(row_id, None, False)
+    clock.fire()  # The real background drain must not repaint those timeouts.
 
     assert [p for name, p in pushes(window) if name == "onDuration"] == []
     assert api._uploader._rows.rows()[0]["duration"] == library.format_duration(12.5)
