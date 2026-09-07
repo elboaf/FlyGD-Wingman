@@ -15,6 +15,10 @@ from wingman.evesettings import tree
 from wingman.preview import discovery as discovery_mod
 from wingman.ui import api as api_mod
 
+# Tests run on Linux where pywebview is not installed; ensure the folder
+# dialog kind function does not import webview at call time during tests.
+api_mod._folder_dialog_kind = lambda: "FOLDER"
+
 
 class ImmediateThread:
     """Runs the worker inline, so a test never races a real thread."""

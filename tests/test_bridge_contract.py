@@ -118,6 +118,13 @@ def test_selective_copy_reuses_the_existing_bridge_contract():
 
     assert callable(getattr(Api, "eve_settings_copy", None))
     parameters = inspect.signature(Api.eve_settings_copy).parameters
+    # Exact parameter list asserted as the façade contract for the copy API.
+    assert list(inspect.signature(Api.eve_settings_copy).parameters) == [
+        "self",
+        "source",
+        "targets",
+        "groups",
+    ]
     assert "groups" in parameters
     assert parameters["groups"].default is None
     registered = registered_names()
