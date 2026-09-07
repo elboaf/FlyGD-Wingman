@@ -99,6 +99,18 @@ WEB = ROOT / "wingman" / "web"
     ],
 )
 def test_formation_editor_runtime(tmp_path, scenario):
+    _run_formation_editor(tmp_path, scenario)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("scenario", ["paste-conflict", "paste-unicode-name"])
+def test_unicode_bridge_ignores_locale_encoding(tmp_path, monkeypatch, scenario):
+    # Node writes UTF-8 bytes even when Python's piped stdin uses a Windows code page.
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    _run_formation_editor(tmp_path, scenario)
+
+
+def _run_formation_editor(tmp_path, scenario):
     page = PageTree()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
     markup = tmp_path / "page.json"

@@ -3056,7 +3056,12 @@ def test_formation_import_rejects_invalid_batches_without_partial_results(
     assert json.loads(json.dumps(reply)) == reply
 
 
-@pytest.mark.parametrize("text", [None, "{", "[" * 2000 + "]" * 2000, "é" * 32769])
+# Keep large payloads out of pytest's IDs and its Windows environment variable.
+@pytest.mark.parametrize(
+    "text",
+    [None, "{", "[" * 2000 + "]" * 2000, "é" * 32769],
+    ids=["not-text", "malformed", "deeply-nested", "oversized-utf8"],
+)
 def test_formation_parse_handles_malformed_deep_and_oversize_text(text):
     # No initialized state exists: a parser must not read an account or settings.
     api = api_mod.Api.__new__(api_mod.Api)

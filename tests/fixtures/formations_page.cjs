@@ -306,7 +306,7 @@ async function copyScenario() {
 // intentionally supplies no account/session state to these pure endpoints.
 function pythonReply(method, args) {
   const result = spawnSync(process.argv[5], ['-c',
-    'import json,sys; from wingman.ui.api import Api; method,args=json.load(sys.stdin); print(json.dumps(getattr(Api.__new__(Api), method)(*args)))'],
+    'import json,sys; from wingman.ui.api import Api; method,args=json.loads(sys.stdin.buffer.read().decode("utf-8")); print(json.dumps(getattr(Api.__new__(Api), method)(*args)))'],
     {input: JSON.stringify([method, args]), encoding: 'utf8'});
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);

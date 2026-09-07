@@ -492,7 +492,12 @@ def test_utf8_byte_limit_counts_multibyte_characters_and_accepts_exact_boundary(
         sharing.parse_text(padded + " ")
 
 
-@pytest.mark.parametrize("text", ["{" + " " * 65536, "𐐀" * 20000, "\ud800" * 65537])
+# Pytest puts parameter IDs in PYTEST_CURRENT_TEST; Windows caps its length.
+@pytest.mark.parametrize(
+    "text",
+    ["{" + " " * 65536, "𐐀" * 20000, "\ud800" * 65537],
+    ids=["oversized-ascii", "oversized-utf8", "oversized-surrogates"],
+)
 def test_input_size_is_checked_before_decoding_or_parsing(text):
     with pytest.raises(ValueError, match=r"(?i)(bytes|KiB)"):
         sharing.parse_text(text)
