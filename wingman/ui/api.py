@@ -68,6 +68,7 @@ from ..evesettings import ops as evesettings_ops
 from ..evesettings import profilecopy as evesettings_profilecopy
 from ..evesettings import selective as evesettings_selective
 from ..evesettings import tree as evesettings_tree
+from ..preview import crops as preview_crops
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
@@ -4598,7 +4599,7 @@ class Api:
         if section.get("enabled"):
             self._preview_host.start()
         # After host start(), so Preview roster delivery has a live pump.
-        # Telemetry predicates read persisted settings directly.
+        # Telemetry follows this committed runtime, not tentative settings I/O.
         self._start_fleet_telemetry_if_enabled()
 
     def _start_fleet_telemetry_if_enabled(self) -> None:
@@ -5076,11 +5077,7 @@ class Api:
         def refused(error):
             return dict(self._field_refused(error), pending=False, operation_id=None)
 
-        if (
-            not self._usable_preview_character(name)
-            or name != name.strip()
-            or not name.isprintable()
-        ):
+        if not preview_crops.valid_owner(name):
             return refused("Choose a named character for the crop.")
         if action == "enabled" and type(value) is not bool:
             return refused("Crop enabled must be a boolean.")

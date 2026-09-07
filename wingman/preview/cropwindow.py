@@ -249,7 +249,7 @@ class CropWindow:
             self.source_rect = rect
             self._refresh()
 
-    def set_hidden(self, hidden: bool) -> None:
+    def set_hidden(self, hidden: bool, *, authorized=None) -> None:
         if self.hwnd is None or hidden == self.hidden:
             return
         self.hidden = hidden
@@ -259,6 +259,11 @@ class CropWindow:
         # A hidden candidate's first visible update must succeed BEFORE
         # showing its HWND. Hiding does the inverse to take it off-screen now.
         if self._refresh() and not hidden:
+            # DWM preparation can re-enter the pump or yield to stop ingress.
+            # A candidate's HWND must stay hidden if that revoked its authority.
+            if authorized is not None and not authorized():
+                self.hidden = True
+                return
             self._libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
 
     def set_locked(self, locked: bool) -> None:
@@ -392,6 +397,9 @@ class CropWindow:
             )
             self._start, self._start_rect = point, self.rect
             self._libs.user32.SetCapture(self.hwnd)
+            # SetCapture returns the previous owner, not a success flag.
+            if self._libs.user32.GetCapture() != self.hwnd:
+                self._cancel_gesture(release=False)
             return 0
         if msg == win32.WM_MOUSEMOVE and self._mode is not None:
             coalesce_moves(self._libs.user32.PeekMessageW, self.hwnd, lparam)

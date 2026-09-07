@@ -149,6 +149,17 @@ def map_selection(
     return Rect(sx, sy, sr - sx, sb - sy)
 
 
+def valid_owner(name: object) -> bool:
+    """Exact manageable character identity; never normalize onto another owner."""
+    return (
+        isinstance(name, str)
+        and bool(name)
+        and name == name.strip()
+        and name.isprintable()
+        and not name.startswith("hwnd:")
+    )
+
+
 def deserialize(raw: object) -> dict[str, CropDefinition]:
     """Rebuild version-1 definitions, dropping malformed owners individually.
 
@@ -159,12 +170,7 @@ def deserialize(raw: object) -> dict[str, CropDefinition]:
         return {}
     out = {}
     for name, value in raw.items():
-        if (
-            not isinstance(name, str)
-            or not name.strip()
-            or name.strip().startswith("hwnd:")
-            or not isinstance(value, dict)
-        ):
+        if not valid_owner(name) or not isinstance(value, dict):
             continue
         if type(value.get("version")) is not int or value["version"] != 1:
             continue

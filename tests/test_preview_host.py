@@ -58,12 +58,14 @@ def crop_pump(monkeypatch):
 
     opened = []
 
-    def make(*, primary_flush=None, before_window=None, initial=None):
+    def make(
+        *, primary_flush=None, before_window=None, initial=None, update_settings=None
+    ):
         native = Resources()
         initial = {"Alice": DEFINITION} if initial is None else initial
         transaction = Transaction(initial)
         store = CropStore(
-            transaction.update,
+            update_settings or transaction.update,
             initial,
             executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
             flush_primary=primary_flush,
@@ -301,6 +303,143 @@ def test_admitted_crop_save_after_stop_is_reported_but_never_revealed(crop_pump)
     assert state["operations"][receipt["operation_id"]]["persisted"]
     assert state["statuses"]["Alice"] == "master-off"
     assert not r.native.thumbnails
+
+
+@pytest.mark.parametrize("boundary", ["move", "source", "old-close", "visible-update"])
+@pytest.mark.parametrize("revoke", ["stop", "renew"])
+def test_promotion_rechecks_host_ingress_after_native_work(
+    crop_pump, monkeypatch, boundary, revoke
+):
+    from threading import Event
+
+    from tests.test_preview_cropcontroller import client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = crop_pump()
+    h = r.host
+    h.start()
+    old = r.call(lambda: h._crop_controller.live["Alice"].window)
+    receipt = h.request_crop("select", "Alice")
+    r.call(lambda: None)
+    r.transaction.release.clear()
+
+    def confirm():
+        picker = h._crop_controller.picker
+        picker.selection = geometry.Rect(
+            picker.destination.x + 20, picker.destination.y + 20, 100, 80
+        )
+        picker._confirm()
+
+    r.call(confirm)
+    assert r.transaction.entered.wait(5)
+    candidate = r.call(lambda: h._crop_controller._temporary.candidate.window)
+    candidate_hwnd = candidate.hwnd
+    entered, release = Event(), Event()
+    target, method = {
+        "move": (candidate, "move"),
+        "source": (candidate, "set_source_rect"),
+        "old-close": (old, "close"),
+        "visible-update": (candidate, "_refresh"),
+    }[boundary]
+    original = getattr(target, method)
+
+    def paused(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        return result
+
+    monkeypatch.setattr(target, method, paused)
+    shown = []
+    show = r.native.ShowWindow
+
+    def record_show(hwnd, mode):
+        if hwnd == candidate_hwnd and mode == host.win32.SW_SHOWNOACTIVATE:
+            shown.append(hwnd)
+        return show(hwnd, mode)
+
+    monkeypatch.setattr(r.native, "ShowWindow", record_show)
+    thread = h._thread
+    try:
+        r.transaction.release.set()
+        assert entered.wait(5)
+        # The save is already real; only native authorization is revoked.
+        assert h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+        if revoke == "stop":
+            assert not h.stop(timeout=0)
+        else:
+            h.apply_roster(RosterSnapshot(2, (client(serial=2),)))
+    finally:
+        release.set()
+    if revoke == "stop":
+        thread.join(5)
+        assert not thread.is_alive()
+    else:
+        r.call(lambda: None)
+        assert (
+            r.call(lambda: h._crop_controller.live["Alice"].client.session)
+            == client(serial=2).session
+        )
+    assert shown == []
+    assert candidate.hwnd is None
+    assert h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+    assert h.stop(timeout=5)
+    r.native.assert_closed()
+
+
+@pytest.mark.parametrize("final", [False, True])
+def test_host_retains_picker_and_pump_until_font_cleanup_completes(crop_pump, final):
+    from threading import Event
+
+    r = crop_pump()
+    h = r.host
+    h.start()
+    receipt = h.request_crop("select", "Alice")
+    r.call(lambda: None)
+    closed = Event()
+
+    def confirm_with_held_font():
+        picker = h._crop_controller.picker
+        original = picker._on_cancel
+
+        def canceled(reason):
+            assert not r.native.fonts
+            original(reason)
+            closed.set()
+
+        picker._on_cancel = canceled
+        r.native.held_fonts.update(r.native.fonts)
+        picker.selection = geometry.Rect(
+            picker.destination.x + 20, picker.destination.y + 20, 100, 80
+        )
+        picker._confirm()
+        return h._crop_controller
+
+    controller = r.call(confirm_with_held_font)
+    thread = h._thread
+    try:
+        assert not h.stop(timeout=0, final=final)
+        r.store.drain().result(5)
+        # A pump callback after the ready message proves cleanup was attempted.
+        r.call(lambda: None)
+        assert h.is_stopping and thread.is_alive()
+        assert h._crop_controller is controller and controller.picker is not None
+        assert r.native.fonts and not closed.is_set()
+        h.start()
+        assert h._thread is thread
+        assert not h.request_crop("select", "Alice")["pending"]
+        assert not h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+    finally:
+        # Release at an existing pump boundary, not through a retained probe ref.
+        r.native.held_fonts.clear()
+        h._post(0)
+        thread.join(5)
+    assert closed.is_set()
+    assert not thread.is_alive() and not h.is_stopping
+    assert h._crop_controller is None
+    r.native.assert_closed()
+    assert h.stop(timeout=5, final=final)
 
 
 def test_stop_before_hwnd_creation_is_not_lost(crop_pump):

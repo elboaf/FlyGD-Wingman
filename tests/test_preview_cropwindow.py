@@ -407,6 +407,30 @@ def test_cancellation_resets_before_synchronous_capture_changed(live, action):
     assert activated == []
 
 
+@pytest.mark.parametrize("right", [False, True])
+@pytest.mark.parametrize("owner", [None, 999])
+def test_failed_capture_acquisition_disarms_without_releasing_other_owner(
+    live, monkeypatch, right, owner
+):
+    activated, moved, disabled = [], [], []
+    window, libs = live(
+        on_activate=activated.append,
+        on_rect_changed=moved.append,
+        on_disable=lambda: disabled.append(True),
+    )
+    libs.user32.capture_owner = owner
+    monkeypatch.setattr(libs.user32, "SetCapture", lambda hwnd: owner)
+    press(window, libs, right=right)
+    libs.user32.cursor = (200, 180)
+    window._on_message(win32.WM_MOUSEMOVE, 0, 0)
+    release(window, right=right)
+    assert window.rect == DEST
+    assert not activated and not moved and not disabled
+    assert window._mode is window._start is window._start_rect is None
+    assert libs.user32.capture_owner == owner
+    assert libs.user32.captures == []
+
+
 @pytest.mark.parametrize("notify", [True, False])
 def test_capture_loss_never_releases_new_owners_capture(live, notify):
     activated = []

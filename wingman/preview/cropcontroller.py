@@ -65,6 +65,7 @@ class CropController:
         publish,
         post_complete,
         next_geometry_sequence,
+        is_authorized=None,
     ) -> None:
         self._libs, self._store = libs, store
         self._epoch = epoch
@@ -74,6 +75,7 @@ class CropController:
         self._publish, self._post_complete = publish, post_complete
         # Retained by PreviewHost, not reset when a new pump is constructed.
         self._next_geometry_sequence = next_geometry_sequence
+        self._is_authorized = is_authorized
         self.live: dict[str, _Live] = {}
         self.sessions: dict[str, RosterClient] = {}
         self.picker = None
@@ -152,12 +154,16 @@ class CropController:
         return not live.failed
 
     def _reconcile(self):
-        if self._stopping:
+        if not self._runtime_authorized():
             self._emit()
             return
         state = self._store.snapshot()
         definitions = deserialize(state["definitions"])
-        desired = self._eligible(definitions)
+        desired = {
+            name
+            for name in self._eligible(definitions)
+            if self._runtime_authorized(self.sessions.get(name))
+        }
         for name, live in list(self.live.items()):
             current = self.sessions.get(name)
             # An admitted replacement may already be published by the worker.
@@ -288,13 +294,18 @@ class CropController:
                 token = self._store.begin(name, epoch=0, session=None)
                 self.request("enabled", name, False, token)
 
+    def _runtime_authorized(self, client=None):
+        return not self._stopping and (
+            self._is_authorized is None or self._is_authorized(self._epoch, client)
+        )
+
     def _authorized(self, op):
         client = self.sessions.get(op.name)
         return (
-            not self._stopping
-            and op.token.epoch == self._epoch
+            op.token.epoch == self._epoch
             and client is not None
             and client.session == op.token.session
+            and self._runtime_authorized(client)
         )
 
     def request(self, action: str, name: str, value, token: CropToken) -> dict:
@@ -576,7 +587,7 @@ class CropController:
 
     def _advance(self, name):
         waiting = self._waiting.get(name)
-        if waiting and not self._stopping:
+        if waiting and self._runtime_authorized():
             op = waiting.popleft()
             if not waiting:
                 self._waiting.pop(name)
@@ -636,14 +647,19 @@ class CropController:
                 )
                 candidate.window.move(destination)
                 candidate.window.set_source_rect(source)
-                if not candidate.failed:
+                if not candidate.failed and self._authorized(op):
                     if old is not None:
                         old.window.close()
-                    self.live[op.name] = candidate
-                    self._degraded.pop(op.name, None)
-                    # _geometry recorded genuine movement. A displayed/saved
-                    # mismatch alone may be an untouched monitor rescue.
-                    candidate.window.set_hidden(self._hidden)
+                    # Native preparation/destruction may re-enter or yield to
+                    # ingress. Persistence stays true, but visibility requires
+                    # current authority again, including after DWM preparation.
+                    if self._authorized(op):
+                        candidate.window.set_hidden(
+                            self._hidden, authorized=lambda: self._authorized(op)
+                        )
+                        if not candidate.failed and self._authorized(op):
+                            self.live[op.name] = candidate
+                            self._degraded.pop(op.name, None)
             else:
                 candidate.failure_status = "invalid-source"
         if candidate is not None and self.live.get(op.name) is not candidate:
@@ -742,7 +758,7 @@ class CropController:
         self._emit()
         return self._stop_future
 
-    def close_native(self) -> None:
+    def close_native(self) -> bool:
         """Release resources on the pump, after begin_stop's drain completes."""
         if self._temporary is not None:
             self._cancel_native(self._temporary)
@@ -750,3 +766,6 @@ class CropController:
             live.window.close()
         self.live.clear()
         self._emit()
+        # Picker terminal delivery proves its entire bundle, including fonts,
+        # was released. Until then the host must retain us and the pump.
+        return self.picker is None

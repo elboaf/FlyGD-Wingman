@@ -540,6 +540,16 @@ class PreviewHost:
         return self._thread is not None and self._thread.is_alive()
 
     @property
+    def runtime_enabled(self) -> bool:
+        """Committed runtime delivery, including launch before the first HWND."""
+        with self._lock:
+            return (
+                (self._starting or self.is_running)
+                and not self._stopping
+                and not self._closing
+            )
+
+    @property
     def is_stopping(self) -> bool:
         with self._lock:
             return self._stop_incomplete()
@@ -1291,13 +1301,17 @@ class PreviewHost:
         while libs.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             # Child HWND messages and deferred cancel after HWND destruction
             # both belong to the retained picker, not just parent messages.
-            if (
+            consumed = (
                 self._crop_controller is not None
                 and self._crop_controller.process_dialog_message(msg)
-            ):
-                continue
-            libs.user32.TranslateMessage(ctypes.byref(msg))
-            libs.user32.DispatchMessageW(ctypes.byref(msg))
+            )
+            if not consumed:
+                libs.user32.TranslateMessage(ctypes.byref(msg))
+                libs.user32.DispatchMessageW(ctypes.byref(msg))
+            if self._stopping:
+                # A ready drain may still own a picker's fonts. Retry only at
+                # existing message boundaries, after native callbacks unwind.
+                self._finish_crop_stop(libs)
 
     def _create_host_window(self, libs):
         """A message-only window that outlives every preview.
@@ -1476,8 +1490,23 @@ class PreviewHost:
             publish=self._publish_crop_state,
             post_complete=self._queue_crop_completion,
             next_geometry_sequence=lambda: next(self._crop_geometry_sequence),
+            is_authorized=self._crop_authorized,
         )
         self._crop_controller.set_hidden(self._previews_hidden)
+
+    def _crop_authorized(self, epoch, client=None) -> bool:
+        """Current ingress fence, not the pump's possibly stale roster copy."""
+        with self._lock:
+            if self._stopping or self._closing or epoch != self._crop_epoch:
+                return False
+            return client is None or (
+                self._crop_roster is not None
+                and any(
+                    entry.session == client.session
+                    for entry in self._crop_roster.clients
+                    if entry.character == client.character
+                )
+            )
 
     def _activate_crop(self, libs, name) -> None:
         if self._stopping:
@@ -3149,8 +3178,14 @@ class PreviewHost:
             if not future.result():
                 logger.warning("Preview storage drain completed with a flush failure")
             self._apply_crop_completions(libs)
-            if self._crop_controller is not None:
-                self._crop_controller.close_native()
+            if (
+                self._crop_controller is not None
+                and not self._crop_controller.close_native()
+            ):
+                # Keep both the owner and its ready barrier. Do not repost:
+                # the next existing pump turn retries after native unwinding.
+                self._stop_ready.put((epoch, future))
+                return
             with self._lock:
                 self._stop_cleanup_epoch = epoch
                 self._crop_controller = None

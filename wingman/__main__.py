@@ -598,8 +598,13 @@ def build_telemetry(state, host, alert_policy):
             return Path(configured) if configured else combatlog.find_gamelogs_dir()
 
         return TelemetryCoordinator(
-            preview_enabled=lambda: bool(
-                state.settings.get("preview", {}).get("enabled")
+            # settings.update temporarily mutates the live document. The host
+            # transitions only after a successful master save; keep delivering
+            # session revocations while that previous committed runtime is on.
+            preview_enabled=lambda: (
+                host.runtime_enabled
+                if host is not None
+                else bool(state.settings.get("preview", {}).get("enabled"))
             ),
             fleet_enabled=lambda: bool(
                 state.settings.get("fleet_bar", {}).get("enabled")

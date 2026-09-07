@@ -66,6 +66,36 @@ def test_crop_enable_requires_a_boolean(crop_api, value):
     assert not store.snapshot()["operations"]
 
 
+@pytest.mark.parametrize("owner", [" Alice ", "Alice\n", "Ali\tce", "Alice\x00"])
+def test_loaded_malformed_owner_drops_alone_and_canonical_owner_remains_manageable(
+    tmp_path, owner
+):
+    from wingman.preview.crops import deserialize, serialize
+
+    valid = replace(DEFINITION, enabled=False)
+    initial = deserialize(serialize({"Alice": valid, owner: DEFINITION}))
+    assert initial == {"Alice": valid}  # never trim/rename onto another owner
+    transaction = Transaction(initial)
+    store = CropStore(
+        transaction.update,
+        initial,
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
+    )
+    host = PreviewHost(on_layout_changed=lambda *args: None, crop_store=store)
+    api = make_api(tmp_path, preview_host=host)
+    try:
+        assert set(api.get_preview_crop_state()["definitions"]) == {"Alice"}
+        refused(api.remove_preview_crop(owner))
+        receipt = api.remove_preview_crop("Alice")
+        store.drain().result(5)
+        state = api.get_preview_crop_state()
+        assert state["operations"][receipt["operation_id"]]["persisted"]
+        assert state["definitions"] == {}
+    finally:
+        host.stop(final=True)
+        store.close().result(5)
+
+
 def test_crop_requests_without_host_are_final_refusals(tmp_path):
     api = make_api(tmp_path)
     refused(api.select_preview_crop("Alice"))
@@ -315,6 +345,95 @@ def test_api_offline_enable_refuses_full_cap_even_if_arrivals_beat_delivery(
         api.get_preview_crop_state()["definitions"]["Offline"]["enabled"]
         is saved_enabled
     )
+
+
+def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
+    tmp_path, crop_pump, monkeypatch
+):
+    from threading import Event, Thread
+
+    from tests.test_telemetry_coordinator import FakeDiscovery, FakeStream
+    from wingman import __main__ as main_mod
+    from wingman import settings
+    from wingman.telemetry.coordinator import _noop_thread_factory
+
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"enabled": True, "crops": {}}
+    r = crop_pump(
+        initial={}, update_settings=lambda: settings.update(api._state.settings)
+    )
+    h = r.host
+    api._preview_host = h
+    discovery = FakeDiscovery()
+    with monkeypatch.context() as build:
+        build.setattr(main_mod.sys, "platform", "win32")
+        build.setattr("wingman.telemetry.clients.ClientDiscovery", lambda: discovery)
+        build.setattr("wingman.telemetry.gamelogs.GameLogStream", FakeStream)
+        runtime = main_mod.build_telemetry(api._state, h, None)
+    assert runtime is not None
+    runtime._thread_factory = _noop_thread_factory
+    api._telemetry = runtime
+    api.start_previews_if_enabled()
+    discovery.publish(RosterSnapshot(1, (client(),)))
+    runtime.dispatch_once(0)
+    r.call(lambda: None)
+    receipt = api.select_preview_crop("Alice")
+    r.call(lambda: None)
+    entered, release = Event(), Event()
+    attempted = Event()
+    save = settings._save_locked
+
+    def blocked_save(document, path):
+        if document["preview"]["enabled"] is False:
+            entered.set()
+            assert release.wait(5)
+            raise OSError("master save failed")
+        return save(document, path)
+
+    monkeypatch.setattr(settings, "_save_locked", blocked_save)
+    # This wrapper proves the crop worker reached the real settings-lock seam.
+    update = r.store._update_settings
+
+    def crop_update():
+        attempted.set()
+        return update()
+
+    monkeypatch.setattr(r.store, "_update_settings", crop_update)
+    result = []
+    worker = Thread(target=lambda: result.append(api.set_preview_enabled(False)))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        assert api._state.settings["preview"]["enabled"] is False
+
+        def confirm():
+            picker = h._crop_controller.picker
+            picker.selection = Rect(
+                picker.destination.x + 20, picker.destination.y + 20, 100, 80
+            )
+            picker._confirm()
+
+        r.call(confirm)
+        assert attempted.wait(5)
+        # Deliver via the actual telemetry dispatcher, while settings is tentative.
+        discovery.publish(RosterSnapshot(2, (client(serial=2),)))
+        runtime.dispatch_once(0)
+        r.call(lambda: None)  # also proves delivery/native work never waits on settings
+    finally:
+        release.set()
+        worker.join(5)
+    try:
+        assert result == [False]
+        r.store.drain().result(5)
+        r.call(lambda: None)
+        outcome = h.crop_state()["operations"][receipt["operation_id"]]
+        assert not outcome["pending"] and not outcome["persisted"]
+        assert api._state.settings["preview"]["enabled"] is True
+        assert h.is_running and h.crop_state()["definitions"] == {}
+        assert h._crop_roster.clients[0].session == client(serial=2).session
+        assert not r.native.thumbnails
+    finally:
+        runtime.stop()
 
 
 def test_crop_state_getter_returns_independent_private_safe_snapshots(crop_api):
