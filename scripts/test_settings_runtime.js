@@ -308,6 +308,56 @@ test('retrying one field clears only its own shared-slot error', async () => {
   assert.match(p.el('msg-uploads').textContent, /Privacy not saved/);
 });
 
+test('accepted retry clears its obsolete refusal while preserving a newer draft', async () => {
+  const p = page();
+  await p.submit('f-category', 'invalid');
+  await p.reply('set_category', refused);
+  await p.submit('f-category', '22');
+  p.edit('f-category', '23');
+  await p.reply('set_category', accepted);
+  assert.equal(p.el('f-category').value, '23');
+  assert.equal(p.el('msg-uploads').textContent, '');
+  assert.equal(p.el('msg-uploads').hidden, true);
+  await p.submit('f-category', 'invalid');
+  await p.reply('set_category', refused);
+  assert.equal(p.el('f-category').value, '22');
+});
+
+test('accepted retry with a newer draft removes only its own displayed refusal', async () => {
+  const p = page();
+  await p.submit('f-category', 'invalid');
+  await p.reply('set_category', Object.assign({}, refused, {error: 'Category rejected.'}));
+  await p.submit('f-privacy', 'private');
+  await p.reply('set_privacy', Object.assign({}, refused, {error: 'Privacy not saved.'}));
+  await p.submit('f-category', '22');
+  p.edit('f-category', '23');
+  await p.reply('set_category', accepted);
+  assert.equal(p.el('f-category').value, '23');
+  assert.doesNotMatch(p.el('msg-uploads').textContent, /Category rejected/);
+  assert.match(p.el('msg-uploads').textContent, /Privacy not saved/);
+  assert.match(p.el('msg-uploads').className, /err/);
+});
+
+for (const [id, method, slot, value] of [
+  ['f-recdir', 'set_folder', 'msg-recdir', 'C:\\accepted'],
+  ['f-webhook', 'set_discord_webhook', 'msg-discord', 'https://discord.com/api/webhooks/1/a']
+]) {
+  test(id + ' accepted retry preserves a newer draft warning instead of repainting refusals', async () => {
+    const p = page();
+    await p.submit(id, 'invalid', 'keydown');
+    await p.reply(method, refused);
+    await p.submit(id, value, 'keydown');
+    p.edit(id, 'newer draft');
+    p.fire(id, 'blur');
+    const warning = p.el(slot).textContent;
+    assert.match(warning, /Press Enter/);
+    await p.reply(method, accepted);
+    assert.equal(p.el(id).value, 'newer draft');
+    assert.equal(p.el(slot).textContent, warning);
+    assert.match(p.el(slot).className, /warn/);
+  });
+}
+
 test('folder acknowledgement does not label a later draft as saved', async () => {
   const p = page();
   await p.submit('f-recdir', 'C:\\accepted', 'keydown');

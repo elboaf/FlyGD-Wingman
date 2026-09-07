@@ -196,6 +196,7 @@
   // reopens it for any early focus, so nothing may commit until the first
   // payload has landed.
   var hydrated = false;
+  var displayedRefusals = {};
 
   function say(slot, text, tone) {
     var el = WM.el(slot);
@@ -203,6 +204,7 @@
     el.textContent = text || '';
     el.className = 'field-msg' + (tone ? ' ' + tone : '');
     el.hidden = !text;
+    displayedRefusals[slot] = false;
   }
 
   var writes = {};
@@ -224,6 +226,7 @@
       if (state.slot === slot && state.error) { errors.push(state.error); }
     });
     say(slot, errors.length ? errors.join(' ') : text, errors.length ? 'err' : tone);
+    displayedRefusals[slot] = errors.length > 0;
   }
 
   // Input and submission are different generations: an unsubmitted draft
@@ -277,7 +280,9 @@
       // while the control holds a newer draft. Pass the accepted value.
       if (onApplied) { onApplied(res, value, unchanged); }
       if (!ownsMessage) {
-        if (unchanged && hadError) { sayCommit(slot); }
+        // An accepted retry retires its refusal even with a newer draft.
+        // Repaint only refusal feedback: a later blur warning owns the slot.
+        if (hadError && displayedRefusals[slot]) { sayCommit(slot); }
         return;
       }
       if (!res.persisted) {
