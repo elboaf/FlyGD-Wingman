@@ -1374,45 +1374,59 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     #    sites, and passed while `Confirm Copy` -- the dialog that
     #    overwrites 34 characters' settings, and the whole reason for this
     #    test -- was silently outside it. A call site is a call node.
-    tree = ast.parse(api)
-    seen = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
+    sources = [("api.py", api)]
+    controller_path = WEB.parent / "evesettings" / "controller.py"
+    if controller_path.exists():
+        sources.append(("controller.py", controller_path.read_text(encoding="utf-8")))
+
+    def is_confirm_call(node):
         fn = node.func
-        if not (
-            isinstance(fn, ast.Attribute) and fn.attr in ("_confirm", "_eve_confirm")
-        ):
-            continue
-        if not (isinstance(fn.value, ast.Name) and fn.value.id == "self"):
-            continue
-        title = (
-            node.args[0].value
-            if node.args and isinstance(node.args[0], ast.Constant)
-            else "<computed>"
+        if not isinstance(fn, ast.Attribute):
+            return False
+        if fn.attr in ("_confirm", "_eve_confirm"):
+            return isinstance(fn.value, ast.Name) and fn.value.id == "self"
+        return (
+            fn.attr == "confirm"
+            and isinstance(fn.value, ast.Attribute)
+            and fn.value.attr == "_ports"
+            and isinstance(fn.value.value, ast.Name)
+            and fn.value.value.id == "self"
         )
-        source = ast.get_source_segment(api, node) or ""
-        final = (
-            "cannot be undone" in source
-            or "Permanently delete" in source
-            or "format_eve_copy_confirm" in source
-        )
-        flagged = any(
-            kw.arg == "destructive"
-            and isinstance(kw.value, ast.Constant)
-            and kw.value.value is True
-            for kw in node.keywords
-        )
-        seen[(title, node.lineno)] = (final, flagged)
+
+    seen = {}
+    for path_name, source_text in sources:
+        tree = ast.parse(source_text)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not is_confirm_call(node):
+                continue
+            title = (
+                node.args[0].value
+                if node.args and isinstance(node.args[0], ast.Constant)
+                else "<computed>"
+            )
+            source = ast.get_source_segment(source_text, node) or ""
+            final = (
+                "cannot be undone" in source
+                or "Permanently delete" in source
+                or "format_eve_copy_confirm" in source
+                or "_ports.format_copy_confirm" in source
+            )
+            flagged = any(
+                kw.arg == "destructive"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True
+                for kw in node.keywords
+            )
+            seen[(path_name, title, node.lineno)] = (final, flagged)
 
     # The count is asserted so this cannot go quiet the way the regex did.
     assert len(seen) >= 4, (
-        f"expected at least 4 self._confirm/_eve_confirm call sites, "
+        f"expected at least 4 Profiles confirm call sites, "
         f"walked {len(seen)}: {sorted(seen)}"
     )
     unflagged = sorted(
-        f"{title} (api.py:{line})"
-        for (title, line), (final, flagged) in seen.items()
+        f"{title} ({path_name}:{line})"
+        for (path_name, title, line), (final, flagged) in seen.items()
         if final and not flagged
     )
     assert not unflagged, (
@@ -1424,7 +1438,7 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     # nothing and it is the one action the Uploader exists to perform.
     upload = [
         flagged
-        for (title, _), (_, flagged) in seen.items()
+        for (_path_name, title, _), (_, flagged) in seen.items()
         if title == "Confirm Upload"
     ]
     assert upload == [False], (

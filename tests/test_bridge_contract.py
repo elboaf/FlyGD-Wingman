@@ -29,6 +29,7 @@ Purely lexical, and only as good as the spellings it watches:
   be pushed from somewhere other than ui/api.py.
 """
 
+import ast
 import inspect
 import re
 from pathlib import Path
@@ -51,6 +52,14 @@ def pushed_names() -> list:
     """Every handler name ui/api.py pushes as a string literal."""
     source = API.read_text(encoding="utf-8")
     return sorted(set(re.findall(r"_push\(\s*\"([A-Za-z0-9_]+)\"", source)))
+
+
+def api_method_body(name: str) -> str:
+    source = API.read_text(encoding="utf-8")
+    parts = source.split(f"def {name}(", 1)
+    if len(parts) != 2:
+        return ""
+    return parts[1].split("\n    def ", 1)[0]
 
 
 def registered_names() -> dict:
@@ -158,6 +167,105 @@ def test_profile_copy_reuses_the_single_profiles_completion_push():
         "onEveSettingsRunning",
     ]
     assert set(registered_names().get("onEveSettingsDone", [])) == {"evesettings.js"}
+
+
+def test_profiles_controller_factory_binds_named_semantic_ports():
+    source = API.read_text(encoding="utf-8")
+
+    assert "def _build_profiles_controller(self)" in source
+    assert "ProfilesController(" in source
+    assert "ProfilesPorts(" in source
+    assert "publish_running=self._publish_eve_settings_running" in source
+    assert "publish_names=self._publish_eve_settings_names" in source
+    assert "publish_done=self._publish_eve_settings_done" in source
+    assert "alert=self._profiles_alert" in source
+    assert "status=self._profiles_status" in source
+    assert "confirm=self._profiles_confirm" in source
+    assert "choose_root=self._choose_eve_settings_root" in source
+    assert "spawn=self._spawn_profiles_worker" in source
+    assert "advisory_client_running=self._profiles_advisory_client_running" in source
+    assert "strict_client_running=self._profiles_strict_client_running" in source
+    assert "profile_copy_refusal=self._profiles_copy_refusal" in source
+    assert "backup_root=paths.eve_settings_backup_dir" in source
+    assert "update_settings=self._update_profiles_settings" in source
+    assert "format_copy_confirm=copy_mod.format_eve_copy_confirm" in source
+    assert "format_copy_done=copy_mod.format_eve_copy_done" in source
+    assert "self._profiles = self._build_profiles_controller()" in source
+
+
+def test_profiles_semantic_push_adapters_stay_literal_and_private_to_api():
+    assert 'self._push("onEveSettingsRunning", payload)' in api_method_body(
+        "_publish_eve_settings_running"
+    )
+    assert 'self._push("onEveSettingsNames", payload)' in api_method_body(
+        "_publish_eve_settings_names"
+    )
+    assert 'self._push("onEveSettingsDone", payload)' in api_method_body(
+        "_publish_eve_settings_done"
+    )
+
+
+def test_profiles_facade_methods_delegate_lexically_to_private_controller_methods():
+    source = API.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    assert "getattr(self._profiles" not in source
+    assert "__getattr__(self" not in source
+    expected = {
+        "eve_settings_state": ("state", []),
+        "eve_settings_pick_root": ("pick_root", []),
+        "eve_settings_detect_root": ("detect_root", []),
+        "eve_settings_select": ("select", ["server", "profile"]),
+        "eve_settings_set_account_name": (
+            "set_account_name",
+            ["account_id", "name"],
+        ),
+        "eve_settings_set_account_characters": (
+            "set_account_characters",
+            ["account_id", "character_ids"],
+        ),
+        "eve_settings_identification_start": ("identification_start", []),
+        "eve_settings_identification_check": ("identification_check", []),
+        "eve_settings_identification_confirm": (
+            "identification_confirm",
+            ["account_id", "character_id", "account_name"],
+        ),
+        "eve_settings_identification_cancel": ("identification_cancel", []),
+        "eve_settings_resolve_names": ("resolve_names", []),
+        "eve_settings_set_auto_keep": ("set_auto_keep", ["value"]),
+        "eve_settings_copy": ("copy", ["source", "targets", "groups"]),
+        "eve_settings_copy_profile": (
+            "copy_profile",
+            ["expected_source", "mode", "destination"],
+        ),
+        "eve_settings_backup": ("backup", ["path", "kind"]),
+        "eve_settings_restore": ("restore", ["archive"]),
+        "eve_settings_delete_backup": ("delete_backup", ["archive"]),
+        "eve_settings_formations": ("formations", ["path"]),
+        "eve_settings_save_formations": (
+            "save_formations",
+            ["path", "formations"],
+        ),
+    }
+    methods = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    for method_name, (delegate_name, arg_names) in expected.items():
+        method = methods[method_name]
+        returns = [node for node in method.body if isinstance(node, ast.Return)]
+        assert returns, method_name
+        call = returns[-1].value
+        assert isinstance(call, ast.Call), method_name
+        assert isinstance(call.func, ast.Attribute), method_name
+        assert call.func.attr == delegate_name, method_name
+        owner = call.func.value
+        assert isinstance(owner, ast.Attribute), method_name
+        assert owner.attr == "_profiles", method_name
+        assert isinstance(owner.value, ast.Name) and owner.value.id == "self", (
+            method_name
+        )
+        assert [ast.unparse(arg) for arg in call.args] == arg_names, method_name
+        assert call.keywords == [], method_name
 
 
 def test_update_status_handler_is_allowlisted_and_registered_literally():
