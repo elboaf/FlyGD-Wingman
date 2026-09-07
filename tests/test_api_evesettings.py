@@ -13,6 +13,7 @@ import pytest
 
 from tests import fakes
 from tests.fakes import FakeWindow
+from tests.test_api import decode_payload
 from wingman import paths, settings
 from wingman.evesettings import codec, formation_sharing, formations, tree
 from wingman.evesettings import identity as evesettings_identity
@@ -294,7 +295,8 @@ def test_structured_copy_refuses_when_eve_is_running_or_the_probe_fails(
     assert len(api._alert.raised) == 1
     assert "Close EVE" in api._alert.raised[0][2]
     assert any(
-        "onEveSettingsDone" in js and '"ok": false' in js for js in api._window.calls
+        "onEveSettingsDone" in js and script_payload(js)["ok"] is False
+        for js in api._window.calls
     )
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
@@ -705,14 +707,14 @@ def test_restore_authorizes_against_the_effective_root_not_a_legacy_profile_root
 
     assert (sibling / "core_char_9.dat").read_bytes() == b"sibling-data"
     done = [c for c in api._window.calls if "onEveSettingsDone" in c]
-    assert len(done) == 1 and '"ok": true' in done[0]
+    assert len(done) == 1 and script_payload(done[0])["ok"] is True
 
 
 def test_restore_refuses_when_no_root_is_configured(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     api.eve_settings_restore("whatever.zip")
     done = [c for c in api._window.calls if "onEveSettingsDone" in c]
-    assert len(done) == 1 and '"ok": false' in done[0]
+    assert len(done) == 1 and script_payload(done[0])["ok"] is False
     assert any("Restore failed" in call for call in api._window.calls)
 
 
@@ -772,7 +774,7 @@ def test_every_mutation_pushes_a_completion_the_page_can_wait_on(tmp_path, monke
         str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
     )
     done = [c for c in api._window.calls if "onEveSettingsDone" in c]
-    assert len(done) == 1 and '"ok": true' in done[0]
+    assert len(done) == 1 and script_payload(done[0])["ok"] is True
 
 
 def test_a_failed_mutation_still_pushes_a_completion(tmp_path, monkeypatch):
@@ -781,7 +783,7 @@ def test_a_failed_mutation_still_pushes_a_completion(tmp_path, monkeypatch):
     api._state.settings["eve_settings"]["root"] = str(tmp_path / "EVE")
     api.eve_settings_backup("", "profile")
     done = [c for c in api._window.calls if "onEveSettingsDone" in c]
-    assert len(done) == 1 and '"ok": false' in done[0]
+    assert len(done) == 1 and script_payload(done[0])["ok"] is False
 
 
 def test_state_reports_an_unreadable_backup_store(tmp_path, monkeypatch):
@@ -1540,10 +1542,14 @@ def offered(api):
     return (candidate.account_id, candidate.character_ids)
 
 
+def script_payload(script):
+    return decode_payload(script[script.index("(") + 1 : script.rindex(")")])
+
+
 def names_pushes(api):
     """Every onEveSettingsNames payload the bridge sent, decoded."""
     return [
-        json.loads(call[call.index("(") + 1 : call.rindex(")")])
+        script_payload(call)
         for call in api._window.calls
         if "onEveSettingsNames" in call
     ]
@@ -1870,6 +1876,7 @@ def test_identification_confirmation_cannot_be_consumed_twice(tmp_path, monkeypa
 def test_identification_proposes_only_one_changed_account(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
+    api._eve_client_running_strict = lambda: False
     api._eve_section()["root"] = str(tmp_path / "EVE")
     api._eve_names.names[20] = "Aiga Otsolen"
 
@@ -1903,6 +1910,7 @@ def test_identification_never_guesses_between_changed_accounts(tmp_path, monkeyp
     )
     api = build(tmp_path, monkeypatch)
     api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
     api.eve_settings_identification_start()
     for name in ("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"):
         (profile / name).write_bytes(b"changed with a different size " + name.encode())
@@ -3214,7 +3222,8 @@ def test_save_backs_up_writes_and_reports_done(tmp_path, monkeypatch):
     assert sorted(entries) == ["int:-4", "int:1"]
     assert entries["int:1"]["tuple"][0] == "utf8:New"
     assert any(
-        "onEveSettingsDone" in js and '"ok": true' in js for js in api._window.calls
+        "onEveSettingsDone" in js and script_payload(js)["ok"] is True
+        for js in api._window.calls
     )
 
 
@@ -3244,7 +3253,8 @@ def test_save_is_refused_while_an_eve_client_is_running(tmp_path, monkeypatch):
     assert store["written"] == []
     assert any("Close EVE" in js for js in api._window.calls)
     assert any(
-        "onEveSettingsDone" in js and '"ok": false' in js for js in api._window.calls
+        "onEveSettingsDone" in js and script_payload(js)["ok"] is False
+        for js in api._window.calls
     )
 
 

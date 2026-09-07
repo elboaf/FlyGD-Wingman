@@ -22,12 +22,15 @@ class FakeHost:
         self.rebinds = 0
         self.hotkeys = None
         self.restyles = 0
+        self.is_stopping = False
+        self.closed = False
 
     def start(self):
         self.started += 1
 
-    def stop(self, timeout=5.0):
+    def stop(self, timeout=5.0, *, final=False):
         self.stopped += 1
+        self.closed = self.closed or final
 
     def request_sweep(self):
         self.sweeps += 1
@@ -56,6 +59,11 @@ class FakeHost:
 
     def layout_entries(self):
         return {}
+
+    def crop_state(self):
+        from wingman.preview.host import PreviewHost
+
+        return PreviewHost(on_layout_changed=lambda *args: None).crop_state()
 
     @property
     def is_running(self):
@@ -118,6 +126,141 @@ def test_shutdown_stops_the_host_even_when_enabled(tmp_path):
     assert host.stopped == 1
 
 
+def test_failed_master_save_does_not_stop_host(tmp_path, monkeypatch):
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True}
+
+    def fail_save(data, path=None):
+        raise OSError("read-only settings")
+
+    monkeypatch.setattr("wingman.settings._save_locked", fail_save)
+    assert api.set_preview_enabled(False) is False
+    assert host.stopped == 0
+    assert api._state.settings["preview"]["enabled"] is True
+
+
+def test_master_on_is_refused_before_save_while_host_drains(tmp_path, monkeypatch):
+    host = FakeHost()
+    host.is_stopping = True
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": False}
+    writes = _no_disk(monkeypatch)
+    assert api.set_preview_enabled(True) is False
+    assert writes == [] and host.started == 0
+    assert api._state.settings["preview"]["enabled"] is False
+
+
+def test_concurrent_master_request_is_refused_while_transaction_is_tentative(
+    tmp_path, monkeypatch
+):
+    from threading import Event, Thread
+
+    from wingman import settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True}
+    entered, release, returned = Event(), Event(), Event()
+    original = settings._save_locked
+
+    def save(data, path=None):
+        entered.set()
+        assert release.wait(5)
+        original(data, path)
+
+    monkeypatch.setattr(settings, "_save_locked", save)
+    first, second = [], []
+    worker = Thread(target=lambda: first.append(api.set_preview_enabled(False)))
+
+    def enable():
+        second.append(api.set_preview_enabled(True))
+        returned.set()
+
+    later = Thread(target=enable)
+    worker.start()
+    assert entered.wait(5)
+    later.start()
+    try:
+        assert returned.wait(1), (
+            "master request waited on tentative settings instead of refusing"
+        )
+    finally:
+        release.set()
+        worker.join(5)
+        later.join(5)
+    assert first == [True] and second == [False]
+    assert host.started == 0 and host.stopped == 1
+    assert not api._state.settings["preview"]["enabled"]
+
+
+def test_rejected_primary_ingress_does_not_report_settings_applied(tmp_path):
+    host = FakeHost()
+    host.started = 1
+    host.resize_preview = lambda *args: False
+    host.resize_all = lambda *args: False
+    host.reset_layouts = lambda: False
+    host.characters = lambda: ["Alice"]
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"enabled": True, "width": 320, "height": 210}
+    assert not api.set_preview_size("Alice", 400, 250)["applied"]
+    assert not api.apply_preview_default_size()["applied"]
+    assert not api.reset_preview_layouts()["applied"]
+
+
+def test_application_exit_closes_even_never_started_host(tmp_path):
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api.shutdown_previews()
+    assert host.closed
+
+
+def test_final_crop_publication_never_calls_a_closed_webview(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from tests.test_preview_cropcontroller import DEFINITION, Transaction
+    from wingman.preview.cropstore import CropStore
+    from wingman.preview.host import PreviewHost
+
+    transaction = Transaction({"Alice": DEFINITION})
+    transaction.release.clear()
+    store = CropStore(
+        transaction.update,
+        {"Alice": DEFINITION},
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
+    )
+    api = make_api(tmp_path)
+    host = PreviewHost(
+        on_layout_changed=lambda *args: None,
+        crop_store=store,
+        on_crops_changed=api.push_preview_crops,
+    )
+    api._preview_host = host
+    closed = Event()
+    pushes = []
+
+    def evaluate(script):
+        pushes.append(script)
+        assert not closed.is_set(), (
+            "final storage/native cleanup reached a closed webview"
+        )
+
+    monkeypatch.setattr(api._window, "evaluate_js", evaluate)
+    try:
+        host.request_crop("enabled", "Alice", False)
+        assert transaction.entered.wait(5)
+        assert pushes  # normal mode still delivers pending/terminal events
+        closed.set()
+        assert host.stop(timeout=0, final=True) is False
+        transaction.release.set()
+        assert host.stop(final=True)
+        assert len(pushes) == 1
+    finally:
+        transaction.release.set()
+        store.close().result(5)
+
+
 def test_shutdown_without_a_host_is_a_no_op(tmp_path):
     """Off-Windows and in tests there is no host at all; shutdown runs on
     every exit path and must never be the thing that raises."""
@@ -158,6 +301,45 @@ def test_build_preview_host_body_is_exercised(monkeypatch, tmp_path):
     host = main_mod.build_preview_host(state, {})
     assert host is not None
     assert not host.is_running  # constructed, never started
+
+
+def test_build_preview_host_retains_lazy_crop_store_and_publishes_commits(
+    monkeypatch, tmp_path
+):
+    from tests.test_preview_cropcontroller import DEFINITION
+    from wingman import __main__ as main_mod
+    from wingman.preview.crops import serialize
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"crops": serialize({"Alice": DEFINITION})}
+    box = {}
+    host = main_mod.build_preview_host(api._state, box)
+    assert host._crop_store is not None
+    assert host._crop_store._executor is None
+    assert host._crop_store._flush_primary == host._flush_layouts
+    assert not host.is_running
+    pushed = []
+    monkeypatch.setattr(
+        api, "_push", lambda name, payload: pushed.append((name, payload))
+    )
+    box["api"] = api
+    try:
+        receipt = host.request_crop("enabled", "Alice", False)
+        assert receipt["operation_id"] is not None
+        host._crop_store.drain().result(5)
+        state = host.crop_state()
+        assert state["definitions"]["Alice"]["enabled"] is False
+        assert state["statuses"]["Alice"] == "disabled"
+        assert state["operations"][receipt["operation_id"]]["persisted"]
+        assert pushed[-1][0] == "onPreviewCrops"
+        assert pushed[-1][1]["definitions"]["Alice"]["enabled"] is False
+        assert "generations" not in state
+        assert not host.is_running
+    finally:
+        host.stop(final=True)
+    assert host.request_crop("remove", "Alice")["pending"] is False
+    assert host.request_crop("select", "Alice")["applied"] is False
 
 
 def test_build_preview_host_wires_ordered_layout_replacement(monkeypatch, tmp_path):
@@ -603,6 +785,16 @@ def test_set_never_minimize_adds_and_removes_by_name(tmp_path, monkeypatch):
     assert host.restyles == 2
 
 
+def test_crop_saved_owners_reach_shared_lock_without_native_runtime():
+    js = _web("previews.js")
+    rows = js.split("function rows(", 1)[1].split("\n  function ", 1)[0]
+    assert "Object.keys(cropState.definitions" in rows
+    assert "makeLockCheck(name, isExcluded(name) && !hasEnabledCrop(name))" in js
+    enabled = js.split("function hasEnabledCrop(", 1)[1].split("\n  function ", 1)[0]
+    assert "definition.enabled" in enabled
+    assert "runtime_enabled" not in enabled
+
+
 def test_get_preview_hotkey_state_reports_locked_and_never_minimize(tmp_path):
     """The per-character table paints its two new checkboxes off this one
     payload (ui/api.py's own comment says so) -- confirm the two keys
@@ -655,6 +847,7 @@ def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
         hotkey_status=dict,
         client_sizes=dict,
         layout_entries=dict,
+        crop_state=FakeHost().crop_state,
     )
     assert api.get_preview_hotkey_state()["sizable"] == [
         "Aiga Otsolen",
@@ -1710,13 +1903,13 @@ def test_push_preview_hotkeys_includes_groups_and_membership(tmp_path):
     api.push_preview_hotkeys()
     pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
     assert len(pushes) == 1
-    import json
+    from tests.test_api import decode_payload
 
     payload_str = pushes[0]
     # Extract the JSON argument from the JS call.
     start = payload_str.index("(", payload_str.rindex("onPreviewHotkeys")) + 1
     end = payload_str.rindex(")")
-    payload = json.loads(payload_str[start:end])
+    payload = decode_payload(payload_str[start:end])
     assert payload["hotkeys"]["groups"] == [
         {"id": "g1", "name": "DPS", "cycle": "Ctrl+F3"}
     ]

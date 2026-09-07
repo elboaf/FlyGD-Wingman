@@ -12,6 +12,10 @@ import math
 
 from wingman.preview.geometry import Rect
 
+# The disposable load probe reserves its largest stage from the first crop,
+# so later stages do not have to move or recreate the earlier destinations.
+PROBE_MAX = 8
+
 
 def map_selection(selection, destination, source_size, minimum=(16, 16)):
     """Map a selection rect in destination space to source space.
@@ -103,29 +107,40 @@ def fit_within(source_size, maximum=(1200, 800)):
     return (int(src_w * scale), int(src_h * scale))
 
 
-def stack_from_bottom_right(index, monitor, size, gap=8):
-    """Position a window at monitor bottom-right, stacked upward.
+def stack_from_bottom_right(
+    index, monitor, size, gap=8, *, slot_size=None, slots=PROBE_MAX
+):
+    """Fit a destination into a bounded grid, upward then leftward.
 
-    Args:
-        index: Stack position (0 = bottom, 1 = above, ...).
-        monitor: Rect of monitor in virtual desktop coordinates. A monitor
-            left of or above the primary normally has a negative x or y;
-            that is not an off-screen or error condition.
-        size: (width, height) of window.
-        gap: Pixels between stacked windows, and between the stack and
-            the monitor's right/bottom edges (default 8).
+    ``size`` is the preferred destination size, never the EVE client size.
+    Pass the same ``slot_size`` for every crop in a mixed-aspect load stage
+    so their rows/columns agree. Load reserves eight slots; picker mode uses
+    only one. The largest monitor-bounded cells win;
+    ties favour more upward rows. Only the destination is shrunk, preserving
+    its aspect. Negative monitor origins are ordinary desktop coordinates.
 
-    Returns:
-        Rect positioned at monitor.bottom_right - size - gap, moved up by
-        (index * (height + gap)).
+    Gaps separate cells and inset all monitor edges. A monitor too small
+    for the grid returns an empty rect, which the host refuses to create.
     """
-    w, h = size
-    # Start at bottom-right of monitor, inset by gap.
-    x = monitor.right - w - gap
-    y = monitor.bottom - h - gap
-    # Move up for each index.
-    y -= index * (h + gap)
-    return Rect(x, y, w, h)
+    max_w, max_h = slot_size if slot_size is not None else size
+    choices = []
+    for rows in range(1, slots + 1):
+        columns = math.ceil(slots / rows)
+        cell_w = min(max_w, (monitor.w - (columns + 1) * gap) // columns)
+        cell_h = min(max_h, (monitor.h - (rows + 1) * gap) // rows)
+        if cell_w > 0 and cell_h > 0:
+            choices.append((cell_w * cell_h, rows, cell_w, cell_h))
+    if not choices:
+        return Rect(monitor.x, monitor.y, 0, 0)
+    _area, rows, cell_w, cell_h = max(choices)
+    w, h = fit_within(size, (min(size[0], cell_w), min(size[1], cell_h)))
+    column, row = divmod(index, rows)
+    return Rect(
+        monitor.right - gap - column * (cell_w + gap) - w,
+        monitor.bottom - gap - row * (cell_h + gap) - h,
+        w,
+        h,
+    )
 
 
 def validated_stage(value):

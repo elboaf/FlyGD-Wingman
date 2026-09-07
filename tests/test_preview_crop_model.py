@@ -88,6 +88,41 @@ def test_stack_starts_at_monitor_bottom_right_and_moves_up():
     )
 
 
+def test_stack_wraps_upward_rows_into_columns_before_leaving_the_monitor():
+    monitor = Rect(-1920, -1080, 1920, 1080)
+    assert [
+        model.stack_from_bottom_right(i, monitor, (480, 270)) for i in range(8)
+    ] == [
+        Rect(-488, -278, 480, 270),
+        Rect(-488, -556, 480, 270),
+        Rect(-488, -834, 480, 270),
+        Rect(-976, -278, 480, 270),
+        Rect(-976, -556, 480, 270),
+        Rect(-976, -834, 480, 270),
+        Rect(-1464, -278, 480, 270),
+        Rect(-1464, -556, 480, 270),
+    ]
+
+
+@pytest.mark.parametrize("monitor", [Rect(0, 0, 640, 360), Rect(-320, -240, 320, 240)])
+@pytest.mark.parametrize("size", [(480, 270), (180, 320)])
+def test_small_monitors_fit_all_eight_crops_without_overlap_or_rescue(monitor, size):
+    rectangles = [model.stack_from_bottom_right(i, monitor, size) for i in range(8)]
+    assert len(set(rectangles)) == 8
+    for index, rect in enumerate(rectangles):
+        assert 0 < rect.w <= size[0] and 0 < rect.h <= size[1]
+        assert monitor.x + 8 <= rect.x and rect.right <= monitor.right - 8
+        assert monitor.y + 8 <= rect.y and rect.bottom <= monitor.bottom - 8
+        assert abs(rect.w * size[1] - rect.h * size[0]) <= max(size)
+        for other in rectangles[:index]:
+            assert (
+                rect.right + 8 <= other.x
+                or other.right + 8 <= rect.x
+                or rect.bottom + 8 <= other.y
+                or other.bottom + 8 <= rect.y
+            )
+
+
 def test_stack_gap_controls_both_edge_inset_and_spacing():
     """A non-default gap must move the bottom-right inset AND the
     inter-window spacing; a gap that only affected one of the two would

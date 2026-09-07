@@ -1529,6 +1529,14 @@ def test_choice_dialog_uses_a_labelled_select_and_cancels_safely():
     assert "active.kind === 'choice'" in escape
 
 
+def test_crop_actions_wrap_and_status_does_not_widen_the_detail():
+    rule = re.search(r"\.preview-crop-actions\s*\{([^}]*)\}", CSS)
+    assert rule and "flex-wrap: wrap" in rule.group(1)
+    status = re.search(r"\.preview-crop-status\s*\{([^}]*)\}", CSS)
+    assert status and "overflow-wrap: anywhere" in status.group(1)
+    assert ".preview-crop-actions .check[hidden]" in CSS
+
+
 def test_the_previews_table_names_the_configure_disclosure():
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     head = src.split("function makeHeadRow(", 1)[1].split("return row;", 1)[0]
@@ -2716,17 +2724,10 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     assert re.search(r"makeGeometryActions\(characterName,[^)]*\boff\b", detail), (
         "makeCharacterDetail does not pass the opted-out state to geometry actions"
     )
-    # Lock left the row for its own disclosure, and took this invariant with
-    # it: with no window there is nothing to lock, so the block must pass
-    # each character's opted-out state the way the row used to. Asserted on
-    # the CALL, not inside the builder, because the call site is what
-    # decides -- the same reasoning the never-minimize guard below gives.
-    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    assert re.search(r"makeLockCheck\(name,[^)]*isExcluded\(name\)", src), (
-        "the Lock block does not pass each character's opted-out state, so "
-        "an opted-out character gets a live control over a window that is "
-        "not there"
-    )
+    # Shared locks also govern enabled saved crops, even while offline or
+    # master-off. Primary geometry above must retain its stricter gate.
+    assert "makeLockCheck(name, isExcluded(name) && !hasEnabledCrop(name))" in src
+    assert "inert(label, input, isExcluded(name) && !hasEnabledCrop(name))" in src
 
 
 def test_never_minimize_stays_live_on_an_opted_out_row():

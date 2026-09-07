@@ -181,12 +181,54 @@ suite verifies import safety, parser/opt-in behavior, packaging exclusion, and
 the injected production seams, but it cannot prove live COM, sharing, mutex,
 or ShellExecute behavior.
 
+# Production crop acceptance — not the probe
+
+Production crops now have an unreleased implementation under Settings →
+Previews → Configure. The provisional active cap is eight; no production stage
+or minimized-source behavior has yet been measured. See
+[`docs/preview-crops-production-results.md`](../../docs/preview-crops-production-results.md)
+for actual automated evidence, failed/unrun gates and fixed acceptance
+thresholds, and the crop section of the smoke checklist for the manual pass.
+Do not use probe numbers to certify the production implementation.
+
+Visible Wingman/WebView2, native picker/crop, EVE and installer exercises need
+an explicitly authorized operator pass. Keep source client geometry unchanged.
+Record exact SHA and all machine/display/client facts before collecting
+matching primary-only and crop stage results. Count DWM relationships separately
+from picker overlay/control HWNDs. No such visible/native acceptance was run
+in the automated hardening pass.
+
+**Windows pytest safety:** use a separate temporary Windows venv when sharing a
+checkout with Linux; never let Windows `uv` replace its Linux `.venv`. Set both
+`APPDATA` and `LOCALAPPDATA` to new temporary sandbox directories **before
+starting Python or importing pytest/project modules**. `tests/conftest.py`
+redirects only LOCALAPPDATA; otherwise autostart tests can delete real user
+Startup shortcuts. Keep those variables set for the entire subprocess.
+Synthetic/message-only HWND tests do not establish native crop/DPI/performance
+acceptance. The production results document distinguishes the initial Windows
+suite's three running-client test-isolation failures from the fresh passing full
+suite at `6111c5b`, after a parent-approved repair confined to those three test
+instances. The later pending-confirm cancellation fix at `16b69b0` also has
+fresh full Linux/Windows and rebuilt-wheel evidence; its historical browser
+evidence remains labeled with its original SHA. The final consolidated review
+fixes are at `ea14411`, followed by a one-line test-ordering correction at
+`201917e`. Fresh verification at `201917e`: Linux 6124 passed/11 skipped,
+Windows 6083 passed/52 skipped, owned Linux browser 27/27, real bridge and
+rebuilt wheel passed.
+The earlier Windows test-ordering failure is retained in the production results.
+No blanket running-client injection or extra exclusions were used. Windows
+Cargo/Rust are unavailable, so the separate codec CI leg remains unrun there.
+Visible native, frozen-build, DPI, minimized-source and performance acceptance
+remain blocked; cap eight is still provisional.
+
 # Windows preview crop probe harness
 
 `preview_crop_harness.py` is the Phase 0 engineering probe for cropped preview
 regions (`docs/preview-evolution-crops-design.md`). It subclasses the real
-`PreviewHost`, so discovery, the message pump, activation and teardown are the
-shipped ones; only the crop windows and the crop picker are prototype code.
+`PreviewHost` and owns one shared `ClientDiscovery`, so discovery, the message
+pump, activation and teardown are the shipped ones; only the crop windows and
+the crop picker are prototype code. Startup waits for both pump readiness and
+the first roster actually applied on that pump, not merely delivered to it.
 Like `update_harness.py` it is checkout-only: no module in `wingman/` imports
 it, `packaging/uploader.spec` excludes `tests/manual`, and importing it is
 inert on Linux and Windows.
@@ -235,17 +277,22 @@ uv run --no-sync python tests/manual/preview_crop_harness.py load `
   --i-understand-this-is-an-ephemeral-windows-probe
 ```
 
-`WINGMAN_LOG_LEVEL=DEBUG` is what makes the DWM registration and update
-HRESULTs readable in `uploader_debug.log`; `WINGMAN_PREVIEW_PERF=1` adds the
-per-drag timing lines. The acknowledgement flag is spelled out in full on
-purpose: every parser sets `allow_abbrev=False`, so no prefix of it is
-accepted.
+Diagnostics go to the **console (stderr)**, not `uploader_debug.log` or any
+other app log file. The probe configures its own console logging without
+reading settings. INFO is the default (also the fallback for an invalid
+`WINGMAN_LOG_LEVEL`); `WINGMAN_LOG_LEVEL=DEBUG` includes DWM registration and
+update HRESULTs. `WINGMAN_PREVIEW_PERF=1` adds INFO-level per-drag timing lines.
+To retain diagnostics, append `2> crop-probe.log` to either command yourself.
+The acknowledgement flag is spelled out in full on purpose: every parser sets
+`allow_abbrev=False`, so no prefix of it is accepted.
 
 ### `pick`
 
 Opens one picker for the named character as soon as that client is discovered,
 and one crop when you confirm. One picker per process, ever: cancelling is a
 decision, not a transient failure, so it does not reopen on the next sweep.
+Picker and load modes are mutually exclusive; a host created with a character
+rejects `set_probe_count` rather than mixing a picker with staged crops.
 
 - Picker: left drag selects, Enter confirms, Escape cancels.
 - Crop: left click activates, left drag moves, right drag resizes (the source
@@ -261,8 +308,19 @@ down. Ctrl+C ends the run the same way: the host is stopped, the probe prints
 Walks the staged simultaneous counts 1, 2, 4 and 8, printing the probe status
 at each stage and waiting for Enter so the performance-gate metrics can be
 recorded before the next stage opens. It refuses to start with no named client
-running, stops before a stage the machine has fewer clients than, and stops at
-the first stage that records a crop failure rather than continuing past it.
+running and stops normally before an unrequested stage the machine has fewer
+clients than. A requested stage that records a crop failure or still has fewer
+live crops than requested after five seconds stops the run with exit status
+`1`; it never prints `stage N is up` for an incomplete stage. Startup failures
+and readiness timeouts also exit `1`. Every exit unsubscribes and stops discovery
+before stopping the host.
+
+Load destinations use one eight-slot grid from the first stage: rows wrap into
+columns before leaving the selected monitor, including negative-origin monitors.
+Small monitors shrink the **probe destinations only**, preserving each crop's
+source aspect. Shared slots keep mixed-aspect crops distinct, rather than
+stacking off-screen crops onto one rescued position. Record the actual crop
+sizes with performance results: a smaller destination is a different load.
 
 ## Release gate
 

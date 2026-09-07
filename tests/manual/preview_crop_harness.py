@@ -15,17 +15,15 @@ has to live inside, and a probe that reimplemented any of them would
 prove nothing about how crops behave in the shipped one. What the
 subclass adds is exactly the crop-specific reconciliation:
 
-    _sweep(libs) -> super()._sweep(libs) -> _reconcile_probe(libs)
+    _reconcile_roster(libs, snapshot) -> base reconciliation -> probe
 
-_reconcile_probe is a method of its own, not inline in _sweep, so the
+_reconcile_probe is a method of its own, not inline in _reconcile_roster, so the
 Linux tests can drive reconciliation against a fake client registry
 without standing up discovery, a desktop, or EVE.
 
 No new WM_APP message is introduced. Public intent (`set_probe_count`)
-is stored under the inherited lock and the real pump is woken with
-`request_sweep()`, which is the base host's own "there is nothing for you
-to carry, only something to re-read" signal (see PreviewHost.request_rebind
-for the same reasoning applied to hotkeys).
+is stored under the inherited lock; `request_sweep()` wakes the shared
+ClientDiscovery, whose next snapshot reaches the existing roster message.
 
 Same Linux-import constraint as wingman/preview/win32.py and the two
 controllers this drives: no native call happens at module scope. The only
@@ -41,12 +39,15 @@ import contextlib
 import ctypes
 import importlib.util
 import logging
+import os
 import sys
+import threading
 import time
 from pathlib import Path
 
 from wingman.preview import geometry, win32
 from wingman.preview.host import PreviewHost
+from wingman.telemetry.clients import ClientDiscovery
 
 # tests/manual/preview_crop_windows.py and tests/manual/preview_crop_model.py
 # are sibling harness modules, not package members -- the same reason the
@@ -78,7 +79,7 @@ logger = logging.getLogger(__name__)
 # The probe guard from the design doc's prototype scope, NOT a production
 # cap: eight is the largest staged count the load path measures, and the
 # measurement is what decides the real cap later.
-PROBE_MAX = 8
+PROBE_MAX = _crop_model.PROBE_MAX
 # The staged simultaneous counts the design doc's performance gates name,
 # in the order the load path walks them. Not a second copy of the
 # validation rule: `validated_stage` in the pure model owns which counts
@@ -86,7 +87,8 @@ PROBE_MAX = 8
 PROBE_STAGES = (1, 2, 4, 8)
 # How large a load-staged crop opens. The staged crops exist to be counted
 # and measured, not arranged, so they take the aspect of their own source
-# (via fit_within) and stack up the bottom-right corner out of the way.
+# (via fit_within) in monitor-bounded columns from the bottom-right corner.
+# Every load crop shares this slot size so mixed aspects cannot overlap.
 PROBE_SIZE_MAX = (480, 320)
 
 
@@ -97,7 +99,7 @@ def _discard_layout(stable_key, rect, locked) -> None:
 
 
 class PrototypePreviewHost(PreviewHost):
-    """PreviewHost plus one picker and up to PROBE_MAX ephemeral crops.
+    """PreviewHost plus a picker/confirmed crop OR up to PROBE_MAX load crops.
 
     Identity is `(stable_key, HWND, PID)`, not the stable key alone. A
     character who logs out and back in is the same NAME on a different
@@ -106,7 +108,7 @@ class PrototypePreviewHost(PreviewHost):
     is the failure the primary registry's wholesale replacement avoids by
     rebuilding rather than merging.
 
-    Everything below `_sweep` runs on the inherited pump thread: the sweep
+    Everything below `_reconcile_roster` runs on the inherited pump thread: the pass
     itself, both picker callbacks (they arrive through the picker's own
     WndProc, which this thread dispatches), and teardown.
     """
@@ -143,14 +145,14 @@ class PrototypePreviewHost(PreviewHost):
         self._probe_crops = {}  # stable_key -> (hwnd, pid, crop)
         self._probe_count = 0
         self._probe_failures = []
+        self._probe_roster_ready = threading.Event()
         # The confirmed interactive selection: stable_key -> (source_rect,
         # destination_rect). Retained beyond the crop itself because there
         # is nothing to recompute it from -- unlike a load crop, whose
         # central half is re-derived from the current client every time.
         # In memory only, and never written anywhere.
         self._probe_sources = {}
-        # Which key (if any) came from the picker rather than the stage,
-        # so a load stage of 1 does not evict the crop the user chose.
+        # The picker selection to recreate if its character relogs.
         self._probe_interactive_key = None
         host_kwargs.setdefault("on_layout_changed", _discard_layout)
         super().__init__(**host_kwargs)
@@ -160,20 +162,21 @@ class PrototypePreviewHost(PreviewHost):
     def set_probe_count(self, count) -> int:
         """Ask for *count* simultaneous load crops. Safe from any thread.
 
-        Stored first and woken second, and in that order because the CLI
-        calls this before the pump has created its message-only window:
-        request_sweep is a no-op until then, so the stored intent is the
-        only thing that carries the request into the first sweep.
+        Stored first and discovery woken second: the next roster applies
+        this intent on the pump, even if requested before the host started.
 
-        Raises ValueError for anything but 1, 2, 4 or 8 -- the staged
-        counts the design doc names, validated by the pure model rather
-        than by a second copy of the rule here.
+        Raises ValueError in picker mode or for anything but 1, 2, 4 or 8 --
+        the staged counts validated by the pure model. Mixing modes could
+        overwrite a staged crop's registry entry when the picker confirms,
+        leaving its native resources with no owner to close them.
 
         Clearing the failure record is deliberate: reconciliation must not
         retry a failed crop every 700ms, and an explicit stage request is
         the "meaningful lifecycle event or explicit user action" the
         design requires before it tries again.
         """
+        if self._probe_character is not None:
+            raise ValueError("load stages are unavailable in picker mode")
         stage = validated_stage(count)
         with self._lock:
             self._probe_count = stage
@@ -182,8 +185,12 @@ class PrototypePreviewHost(PreviewHost):
         return stage
 
     def wait_ready(self, timeout: float = 5.0) -> bool:
-        """Whether the inherited pump finished its first sweep in time."""
+        """Whether the inherited message pump is ready in time."""
         return self._ready.wait(timeout)
+
+    def wait_roster(self, timeout: float = 5.0) -> bool:
+        """Whether the pump applied its first roster, including an empty one."""
+        return self._probe_roster_ready.wait(timeout)
 
     def probe_status(self) -> dict:
         """A snapshot for the operator. Safe from any thread: every
@@ -207,12 +214,13 @@ class PrototypePreviewHost(PreviewHost):
 
     # ---- everything below runs ON the preview thread -------------------
 
-    def _sweep(self, libs) -> None:
-        # Base first, always: it refreshes _clients, which is the registry
-        # every decision below is made against, and applies selection and
-        # visibility to the primary previews.
-        super()._sweep(libs)
+    def _reconcile_roster(self, libs, snapshot) -> None:
+        # Base first, always: it refreshes _clients and owns primary previews
+        # (and any optional production crop coordinator). Snapshot delivery
+        # alone is not readiness: the CLI must see the applied client registry.
+        super()._reconcile_roster(libs, snapshot)
         self._reconcile_probe(libs)
+        self._probe_roster_ready.set()
 
     def _reconcile_probe(self, libs) -> None:
         """Bring the crop registry back in line with the client registry.
@@ -237,10 +245,8 @@ class PrototypePreviewHost(PreviewHost):
                 crop.close()
                 del crops[key]
 
-        # 2. The picker DECISION, taken before the display is read so a
-        #    pass that opens a picker and stages crops shares one
-        #    enumeration. An already-open picker whose client is gone is
-        #    ended here; opening happens below.
+        # 2. Resolve picker intent before reading the display. Cancelling
+        #    a picker whose client is gone requires no monitor enumeration.
         picker_client = self._picker_candidate(by_key)
 
         with self._lock:
@@ -253,12 +259,9 @@ class PrototypePreviewHost(PreviewHost):
         for key in sorted(set(crops) - set(desired)):
             crops.pop(key)[2].close()
 
-        # 4. Creations. The display is enumerated at most ONCE per
-        #    reconcile and shared by the picker and every crop: the
-        #    hardware does not change between two keys of the same batch,
-        #    _monitors() logs a line per failed enumeration, and a pass
-        #    that opened the picker AND staged crops used to enumerate
-        #    twice for one answer.
+        # 4. Enumerate the display once for the picker or the entire crop
+        #    batch. Hardware does not change between keys in one pass and
+        #    a failed enumeration should not log a line per crop.
         pending = [key for key in desired if key not in crops]
         monitor = (
             self._probe_monitor() if pending or picker_client is not None else None
@@ -298,21 +301,14 @@ class PrototypePreviewHost(PreviewHost):
         return sorted(named, key=lambda c: (c.stable_key.lower(), c.stable_key))
 
     def _desired_keys(self, named, count) -> list:
-        """Which characters should have a crop right now, in stack order.
-
-        The interactive crop comes first and is not counted against the
-        stage: the user chose it, and a load stage of 1 evicting it would
-        be the probe undoing its own picker.
-        """
-        desired = []
-        if self._probe_interactive_key is not None and any(
-            client.stable_key == self._probe_interactive_key for client in named
-        ):
-            desired.append(self._probe_interactive_key)
-        for client in named[:count]:
-            if client.stable_key not in desired:
-                desired.append(client.stable_key)
-        return desired[:PROBE_MAX]
+        """The retained picker selection or a load stage, never both."""
+        if self._probe_character is not None:
+            return [
+                client.stable_key
+                for client in named
+                if client.stable_key == self._probe_interactive_key
+            ]
+        return [client.stable_key for client in named[:count]]
 
     def _probe_monitor(self):
         """The display crops stack up, chosen exactly as the primary
@@ -343,7 +339,7 @@ class PrototypePreviewHost(PreviewHost):
             # it from being retried on every 700ms sweep.
             self._record_probe_failure(client, "crop-failed")
             return
-        # The base host applied visibility during super()._sweep(), before
+        # The base host applied visibility during super()._reconcile_roster(), before
         # this crop existed -- so a crop born while previews are hidden
         # has to be told, exactly like PreviewWindow's own born-visible
         # case that _apply_visibility re-applies for every sweep.
@@ -377,6 +373,7 @@ class PrototypePreviewHost(PreviewHost):
                     index,
                     monitor,
                     fit_within((source_rect.w, source_rect.h), PROBE_SIZE_MAX),
+                    slot_size=PROBE_SIZE_MAX,
                 ),
             )
         # A client small enough that its central half rounds to nothing --
@@ -411,11 +408,9 @@ class PrototypePreviewHost(PreviewHost):
     def _picker_candidate(self, by_key):
         """The client an interactive picker should open for, or None.
 
-        Decision only -- opening is `_open_picker`, and the two are split
-        so the caller can resolve the display once for the picker and the
-        staged crops together instead of enumerating it twice in one
-        reconcile. Ending an already-open picker whose client is gone DOES
-        happen here: it needs no display and must not wait on one.
+        Decision only -- opening is `_open_picker`. Ending an already-open
+        picker whose client is gone happens here: it needs no display and
+        must not wait on an enumeration.
         """
         picker = self._probe_picker
         if picker is not None:
@@ -494,6 +489,7 @@ class PrototypePreviewHost(PreviewHost):
             len(crops),
             monitor,
             fit_within((source_rect.w, source_rect.h), PROBE_SIZE_MAX),
+            slots=1,
         )
         # Retained BEFORE creation so a crop that fails to open still has
         # the user's selection to retry from on the next lifecycle event.
@@ -587,7 +583,7 @@ class PrototypePreviewHost(PreviewHost):
         """
         picker, self._probe_picker = self._probe_picker, None
         if picker is not None:
-            picker.cancel("host-teardown")  # public seam, see _reconcile_picker
+            picker.cancel("host-teardown")  # public seam, see _picker_candidate
         with self._lock:
             crops, self._probe_crops = self._probe_crops, {}
             self._probe_sources = {}
@@ -596,6 +592,7 @@ class PrototypePreviewHost(PreviewHost):
         for _hwnd, _pid, crop in crops.values():
             crop.close()
         self._probe_interactive_key = None
+        self._probe_roster_ready.clear()
         super()._teardown(libs)
 
 
@@ -613,9 +610,8 @@ class PrototypePreviewHost(PreviewHost):
 # can be tab-completed or half-typed.
 _OPT_IN = "--i-understand-this-is-an-ephemeral-windows-probe"
 
-# How long the CLI waits for the inherited pump's first sweep. The base
-# host sets _ready at the end of that sweep, so this covers window class
-# registration, the message-only window and one discovery pass.
+# Separate deadlines for pump startup and the first applied discovery roster.
+# The pump's _ready alone says nothing about whether discovery has delivered.
 READY_TIMEOUT_S = 5.0
 # How long a staged count is given to appear. set_probe_count only stores
 # the intent and wakes the pump, so the crops arrive on a later sweep --
@@ -706,37 +702,50 @@ def _format_status(status) -> str:
     )
 
 
+def _stop_discovery(discovery) -> None:
+    if not discovery.stop():
+        raise RuntimeError("client discovery did not stop within its timeout")
+
+
 @contextlib.contextmanager
 def _probe_host(character=None):
-    """The one host lifecycle a probe run gets.
+    """The one host and discovery lifecycle a probe run gets.
 
-    Constructed with no settings persistence callbacks at all -- the
-    subclass supplies its own discarding on_layout_changed -- and stopped
-    in `finally` whatever happens, because a pump left running owns HWNDs
-    and DWM relationships with nothing left to close them.
+    No settings callbacks: the subclass discards on_layout_changed. Cleanup
+    unwinds subscription, discovery and host in that order, even if startup
+    or another owner's cleanup raises. No producer should keep delivering
+    roster snapshots into a host whose native windows are being torn down.
     """
     _require_probe_environment()
     # Before the host, never after: its windows are placed in physical
     # pixels the moment the pump starts, and a process that became
     # DPI-aware afterwards would be measuring a desktop it no longer has.
     _set_dpi_awareness()
-    host = PrototypePreviewHost(character=character)
-    try:
+    with contextlib.ExitStack() as cleanup:
+        host = PrototypePreviewHost(character=character)
+        cleanup.callback(host.stop)
+        discovery = ClientDiscovery()
+        cleanup.callback(_stop_discovery, discovery)
+        cleanup.callback(discovery.subscribe(host.apply_roster))
+        host.set_discovery_request(discovery.request_scan)
         host.start()
+        if not discovery.start():
+            raise RuntimeError("client discovery could not start")
         if not host.wait_ready(READY_TIMEOUT_S):
             raise RuntimeError(
                 f"the preview host was not ready within {READY_TIMEOUT_S:.1f}s"
             )
+        if not host.wait_roster(READY_TIMEOUT_S):
+            raise RuntimeError(
+                f"the preview host applied no roster within {READY_TIMEOUT_S:.1f}s"
+            )
         yield host
-    finally:
-        host.stop()
 
 
 def _await_stage(host, stage, timeout=STAGE_TIMEOUT_S):
     """The status once *stage* crops are live, a failure is recorded, or
-    the wait runs out. The timed-out status is RETURNED rather than raised
-    on: a stage that could not be filled is a result the operator has to
-    record, not an error that should discard the run so far."""
+    the wait runs out. Return even an incomplete status so the CLI can print
+    the measurement before rejecting that stage with a nonzero exit status."""
     deadline = time.monotonic() + timeout
     while True:
         status = host.probe_status()
@@ -782,9 +791,11 @@ def _run_load(args) -> None:
             status = _await_stage(host, stage)
             print(f"stage {stage}:")
             print(_format_status(status), flush=True)
-            if status["failures"]:
-                print(f"stopping at stage {stage}: a crop did not open")
-                return
+            if status["failures"] or status["live"] < stage:
+                raise RuntimeError(
+                    f"stopping at stage {stage}: {status['live']}/{stage} crops live; "
+                    "a crop failed or the stage timed out"
+                )
             clients = status["clients"]
             _wait_for_enter(f"stage {stage} is up; press Enter to continue")
 
@@ -827,9 +838,21 @@ def build_parser():
     return parser
 
 
+def _configure_probe_logging() -> None:
+    # Console only: production logging reads settings for redaction and opens
+    # the app's log file. This disposable probe must do neither.
+    raw = os.environ.get("WINGMAN_LOG_LEVEL", "").strip().upper()
+    level = logging.getLevelName(raw)
+    logging.basicConfig(
+        level=level if isinstance(level, int) else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        _configure_probe_logging()
         args.handler(args)
     except KeyboardInterrupt:
         # Ctrl+C is a documented way to end a run (see the smoke

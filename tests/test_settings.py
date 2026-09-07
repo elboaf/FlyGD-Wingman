@@ -48,6 +48,7 @@ def test_defaults_are_the_documented_values():
             # is keyed off this marker.
             "defaults_version": 2,
             "layouts": {},
+            "crops": {},
             "hotkeys": {
                 "characters": {},
                 "cycle_next": "",

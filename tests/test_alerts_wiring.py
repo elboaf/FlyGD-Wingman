@@ -45,6 +45,7 @@ class FakePreviewHost:
         self.raised = []
         self.started = self.stopped = 0
         self.hotkeys = None
+        self.is_stopping = False
 
     def focused_character(self):
         return self._focused
@@ -52,7 +53,7 @@ class FakePreviewHost:
     def start(self):
         self.started += 1
 
-    def stop(self, timeout=5.0):
+    def stop(self, timeout=5.0, *, final=False):
         self.stopped += 1
 
     def set_hotkeys(self, table):
