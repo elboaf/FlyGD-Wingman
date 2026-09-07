@@ -63,7 +63,7 @@ committed; this table is the artifact.
   one input, sets its body with `textContent`, labels OK as "Set", answers on
   Enter and cancels on Escape (`panel.js:373-398`).
 - **A snap toggle is a recorded deferred item**, together with a snap
-  distance (`docs/preview-config-design.md:352`). The distance is
+  distance (`docs/history/preview-config-design.md:352`). The distance is
   `geometry.snap`'s `threshold=12`.
 
 ## Decisions

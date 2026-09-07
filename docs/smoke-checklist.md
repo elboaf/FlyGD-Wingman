@@ -4008,7 +4008,7 @@ close-EVE requirement beside Save. Use prepared copies/backups of two unrelated
 accounts, with every EVE client closed before each save or restore. Do not run
 against live profiles without the account owner's authorization. Record actual
 results and platform separately in
-[the sharing verification record](probe-formation-sharing-verification.md): a
+[the sharing verification record](history/probe-formation-sharing-verification.md): a
 Linux developer-browser pass is not a Windows/WebView2, OS clipboard, or live-EVE
 pass.
 
