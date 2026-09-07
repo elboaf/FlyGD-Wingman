@@ -65,6 +65,7 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
+from ..upload.gate import WorkGate
 from . import copy as copy_mod
 from .rows import RowSnapshot
 from .scheduler import Scheduler
@@ -470,89 +471,6 @@ class AppState:
     engine: object | None = None
 
 
-@dataclass(frozen=True)
-class _ClaimResult:
-    """One locked claim decision, including why a caller was refused."""
-
-    ok: bool
-    reason: str = ""
-
-    def __bool__(self) -> bool:
-        return self.ok
-
-
-class _WorkGate:
-    """Atomically arbitrate uploads, updater handoff, and process shutdown.
-
-    The lock protects state transitions only. Prompts, page pushes, I/O, worker
-    creation, and shutdown all happen after it has been released so no external
-    operation can park every claimant behind it.
-    """
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._upload = False
-        self._handoff = ""
-        self._quitting = False
-
-    def claim_upload(self) -> _ClaimResult:
-        with self._lock:
-            if self._handoff:
-                return _ClaimResult(False, "handoff")
-            if self._quitting:
-                return _ClaimResult(False, "quitting")
-            if self._upload:
-                return _ClaimResult(False, "upload")
-            self._upload = True
-            return _ClaimResult(True)
-
-    def upload_claimed(self) -> bool:
-        with self._lock:
-            return self._upload
-
-    def release_upload(self) -> None:
-        with self._lock:
-            self._upload = False
-
-    def claim_handoff(self, phase: str) -> _ClaimResult:
-        with self._lock:
-            if self._upload:
-                return _ClaimResult(False, "upload")
-            if self._quitting:
-                return _ClaimResult(False, "quitting")
-            # The updater's own runtime lock excludes a second installer.
-            # Reusing this transition lets that owner advance the phase
-            # without releasing the claim between revalidation and launch.
-            self._handoff = phase
-            return _ClaimResult(True)
-
-    def release_handoff(self) -> None:
-        with self._lock:
-            self._handoff = ""
-
-    def handoff_phase(self) -> str:
-        with self._lock:
-            return self._handoff
-
-    def claim_quit(self, *, force_upload: bool) -> _ClaimResult:
-        with self._lock:
-            if self._quitting:
-                return _ClaimResult(True)
-            if self._handoff:
-                return _ClaimResult(False, "handoff")
-            if self._upload and not force_upload:
-                return _ClaimResult(False, "upload")
-            self._quitting = True
-            return _ClaimResult(True)
-
-    def begin_update_shutdown(self) -> bool:
-        with self._lock:
-            if not self._handoff:
-                return False
-            self._quitting = True
-            return True
-
-
 @dataclass
 class _UpdateRuntime:
     state: str = "idle"
@@ -690,7 +608,7 @@ class Api:
         # The claim exists before a worker handle and survives through its
         # target's finally. Thread liveness has a pre-start gap and therefore
         # cannot arbitrate concurrent pywebview bridge calls.
-        self._work_gate = _WorkGate()
+        self._work_gate = WorkGate()
         self._update_lock = threading.Lock()
         self._update = _UpdateRuntime()
         self._update_staging_cleaned = False
@@ -2771,7 +2689,7 @@ class Api:
             return self._update_snapshot()
         # Reserve the runtime phase before consulting the work gate. That
         # reservation is the owner token Task 4 deliberately did not add to
-        # _WorkGate, and avoids nesting the two locks.
+        # WorkGate, and avoids nesting the two locks.
         with self._update_lock:
             if (
                 self._update.state != "ready"

@@ -10,6 +10,7 @@ from tests import fakes
 from wingman import settings as settings_mod
 from wingman import updates as updates_mod
 from wingman.ui import api as api_mod
+from wingman.upload import gate as gate_mod
 
 
 def _upload_api(tmp_path):
@@ -47,7 +48,7 @@ def _enable_retry(api):
 
 
 def test_handoff_and_upload_claims_are_mutually_exclusive():
-    gate = api_mod._WorkGate()
+    gate = gate_mod.WorkGate()
     assert gate.claim_upload()
     assert not gate.claim_handoff("handing_off")
     gate.release_upload()
@@ -57,14 +58,14 @@ def test_handoff_and_upload_claims_are_mutually_exclusive():
 
 def test_quit_is_refused_during_each_handoff_phase():
     for phase in ("handing_off", "revalidating", "launching"):
-        gate = api_mod._WorkGate()
+        gate = gate_mod.WorkGate()
         assert gate.claim_handoff(phase)
         assert gate.handoff_phase() == phase
         assert not gate.claim_quit(force_upload=False)
 
 
 def test_failed_handoff_release_allows_upload_to_claim():
-    gate = api_mod._WorkGate()
+    gate = gate_mod.WorkGate()
     assert gate.claim_handoff("revalidating")
 
     gate.release_handoff()
@@ -74,7 +75,7 @@ def test_failed_handoff_release_allows_upload_to_claim():
 
 
 def test_update_shutdown_is_idempotent_for_the_handoff_owner():
-    gate = api_mod._WorkGate()
+    gate = gate_mod.WorkGate()
     assert not gate.begin_update_shutdown()
     assert gate.claim_handoff("launching")
 
@@ -86,7 +87,7 @@ def test_update_shutdown_is_idempotent_for_the_handoff_owner():
 
 
 def test_quitting_is_idempotent_but_blocks_new_upload_and_handoff_claims():
-    gate = api_mod._WorkGate()
+    gate = gate_mod.WorkGate()
     assert gate.claim_quit(force_upload=False)
 
     assert gate.claim_quit(force_upload=False)
@@ -95,7 +96,7 @@ def test_quitting_is_idempotent_but_blocks_new_upload_and_handoff_claims():
 
 
 def test_quit_requires_force_while_an_upload_is_claimed():
-    gate = api_mod._WorkGate()
+    gate = gate_mod.WorkGate()
     assert gate.claim_upload()
 
     assert not gate.claim_quit(force_upload=False)
