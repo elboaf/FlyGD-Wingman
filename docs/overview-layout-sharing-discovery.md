@@ -22,8 +22,9 @@ The user approved:
   scales; the user accepted manual adjustment rather than automatic fitting.
 
 Complete setups still default to a new profile. The supported window set and
-publication workflow are proposed in the [design draft](overview-layout-sharing-design.md),
-which still requires user review before implementation planning.
+publication workflow are specified in the [approved design](overview-layout-sharing-design.md).
+The user approved proceeding after independent review; the
+[implementation plan](overview-layout-sharing-plan.md) defines execution order and gates.
 Probe copy/paste was reported working by the user; that is not a sign-off on every
 outstanding probe-sharing smoke-check item.
 

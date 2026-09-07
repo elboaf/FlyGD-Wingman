@@ -1,7 +1,7 @@
 # Wingman overview and in-space layout presets
 
 Date: 2026-09-07
-Status: design draft for user review; implementation has not started.
+Status: approved for implementation planning following independent review; implementation has not started. See the [implementation plan](overview-layout-sharing-plan.md).
 Base: `a38c7a0` plus the discovery record committed in `ed6aa16`.
 Evidence: [overview/layout discovery](overview-layout-sharing-discovery.md).
 
@@ -361,5 +361,6 @@ for the selected window set within the proposed numeric bounds. The character
 files contain duplicated layouts; this is compatibility evidence for that corpus,
 not proof of EVE-wide coordinate limits or correct behavior on another display.
 
-This document is still subject to user review. No setup importer, GUI or new live
-profile mutation was implemented while writing it.
+The user approved proceeding after an independent second-opinion review returned
+SHIP with no findings. No setup importer, GUI or new live profile mutation was
+implemented while writing the design or its implementation plan.
