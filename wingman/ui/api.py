@@ -287,6 +287,10 @@ def _empty_fittings_state(warnings=None) -> dict:
     }
 
 
+class _SettingUnchanged(Exception):
+    """Exit a serialized no-op without rewriting the complete settings file."""
+
+
 @dataclass
 class AppState:
     """Everything the bridge needs that is not the page.
@@ -1768,20 +1772,20 @@ class Api:
         restores the live dict if the write raises, so a failed write
         leaves the stored value as it was.
         """
-        if self._state.settings.get(key) == value:
-            # Not merely an optimisation. settings.save projects the
-            # COMPLETE document, so a no-op write is a full rewrite -- and
-            # an immediate-save page re-emits on every render.
-            return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
+                # Decide under serialization: an unlocked comparison can
+                # acknowledge another writer's value before it rolls back.
+                if doc.get(key) == value:
+                    raise _SettingUnchanged
                 doc[key] = value
+        except _SettingUnchanged:
+            return self._field_ok()
         except OSError:
-            # Reported, not raised: a settings file that cannot be written
-            # must not stop the setting taking effect, but the page has to
-            # be able to say the choice is not saved.
+            # update() rolled back; reporting session-only success would
+            # leave the control showing a value the runtime does not use.
             logger.exception("Could not persist %s", key)
-            return self._field_ok(persisted=False)
+            return self._field_refused("Could not save this to settings.")
         return self._field_ok()
 
     def set_start_on_login(self, value) -> dict:
