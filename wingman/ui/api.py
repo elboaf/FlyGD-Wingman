@@ -2401,6 +2401,9 @@ class Api:
         if write is not None:
             self._remember_fleet_roster(write)
         if not self._fleet_delivery_current(delivery):
+            # Target changes (notably sig-bar creation) need not publish any
+            # telemetry. Preserve a wakeup even when this was the only job.
+            self._queue_fleet_presentation()
             return
         with self._fleet_presentation_lock:
             settings_payload, display_payload = self._fleet_payloads_locked()
@@ -2411,6 +2414,8 @@ class Api:
         with self._fleet_presentation_lock:
             if self._fleet_delivery_current_locked(delivery):
                 self._fleet_settings_dirty = False
+            elif not self._fleetbar_quitting:
+                self._fleet_worker.notify()
 
     def _remember_fleet_roster(self, write: RosterWrite) -> None:
         """Persist a folded batch; acknowledge only its captured admissions."""

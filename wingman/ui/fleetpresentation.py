@@ -81,7 +81,13 @@ class RosterMemory:
                 )
             }
         )["seen"]
-        self._priority = {name: self.pending[name] for name in priority}
+        # Priority age is NOT admission age: cap overflow can be promoted
+        # by a later empty roster without admitting that name again. An older
+        # save may acknowledge membership, but cannot erase that promotion.
+        self._priority = {
+            name: self._version if name in waiting else self._priority[name]
+            for name in priority
+        }
         self._overflow = {
             name: self.pending[name] for name in waiting if name not in self._priority
         }

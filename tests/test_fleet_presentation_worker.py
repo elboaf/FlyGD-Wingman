@@ -361,6 +361,96 @@ def test_coalesced_cap_overflow_keeps_next_transition_priority():
     assert candidate == names[64:] + names[:58]
 
 
+def test_old_ack_preserves_later_cap_overflow_priority_promotion():
+    from wingman.ui.fleetpresentation import RosterMemory
+
+    old = [f"A{index:02}" for index in range(65)]
+    new = [f"B{index:02}" for index in range(64)]
+    memory = RosterMemory()
+    memory.admit(old)
+    captured = memory.take()
+    memory.admit(new)
+    memory.admit(())
+    memory.acknowledge(captured, old[:64])
+    latest = memory.take()
+    saved = settings.validated_fleet_bar(
+        {"seen": [*latest.priority, *latest.pending, *old[:64]]}
+    )["seen"]
+    assert saved == [old[-1], *new[:63]]
+    memory.acknowledge(latest, saved)
+    memory.admit(("Newest",))
+    following = memory.take()
+    next_seen = settings.validated_fleet_bar(
+        {"seen": [*following.priority, *following.pending, *saved]}
+    )["seen"]
+    assert old[-1] in next_seen  # wrong priority would evict A64 here
+
+
+def test_failed_old_ack_demotes_inherited_priority_but_not_new_transitions():
+    from wingman.ui.fleetpresentation import RosterMemory
+
+    memory = RosterMemory()
+    memory.admit(("Bravo", "Alice"))
+    failed = memory.take()
+    memory.admit(("Charlie",))
+    memory.acknowledge(failed, None)
+    latest = memory.take()
+    assert list(dict.fromkeys([*latest.priority, *latest.pending])) == [
+        "Charlie",
+        "Bravo",
+        "Alice",
+    ]
+
+
+@pytest.mark.parametrize("stage", ["before_delivery", "during_main_push"])
+def test_target_only_invalidation_reschedules_without_another_snapshot(
+    tmp_path, monkeypatch, stage
+):
+    from tests.test_api import decode_payload
+
+    api = make_api(tmp_path)
+    api._state.settings["fleet_bar"] = settings.validated_fleet_bar({"enabled": False})
+    entered = threading.Event()
+    release = threading.Event()
+    displayed = threading.Event()
+    payloads = []
+    original_validate = api._fleet_delivery_current
+
+    def validate(delivery):
+        if stage == "before_delivery" and not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        return original_validate(delivery)
+
+    def display(script):
+        if stage == "during_main_push" and not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        payloads.append(script)
+
+    def mirror(script):
+        displayed.set()
+
+    monkeypatch.setattr(api, "_fleet_delivery_current", validate)
+    monkeypatch.setattr(api._window, "evaluate_js", display)
+    assert api._start_fleet_presentation()
+    api._push_fleet_bar_state()
+    try:
+        assert entered.wait(5)
+        # Sig-bar creation does not submit Fleet telemetry or wake Fleet.
+        api._sigbar_window = FleetWindow()
+        api._sigbar_window.evaluate_js = mirror
+        release.set()
+        assert displayed.wait(1), "target change stranded the only settings delivery"
+        payload = decode_payload(
+            payloads[-1].split("window.onFleetBarState(", 1)[1][:-1]
+        )
+        assert payload["enabled"] is False
+    finally:
+        release.set()
+        assert api._stop_fleet_presentation(5)
+
+
 def test_failed_multi_name_roster_keeps_original_pending_insertion_order():
     from wingman.ui.fleetpresentation import RosterMemory
 

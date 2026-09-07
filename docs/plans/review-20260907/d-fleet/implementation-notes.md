@@ -30,7 +30,9 @@ and reducer tests were also added before their implementation.
   the pending retry tier and retry on a later roster transition, not metric-only
   frames. Successful writes remove only retained names admitted no later than
   the captured version. Repeated names admitted during that save survive its
-  acknowledgement. Coalescing is not a claim that skipped physical writes
+  acknowledgement. Priority promotions carry separate transition ages: a name
+  promoted from cap overflow by a later empty roster must survive an older
+  acknowledgement even without a new admission. Coalescing is not a claim that skipped physical writes
   succeeded: names absent from the actual durable candidate remain pending even
   if the logical priority reducer once included them.
 - All runtime writes still use settings.update/update_section unchanged.
@@ -40,7 +42,9 @@ and reducer tests were also added before their implementation.
   identities before saving. It revalidates before every later JS stage and
   keeps captured targets. A later snapshot supersedes the old display, not the
   roster memory. A retired activation cannot redirect a continuation to a new
-  bar, even when sharing keeps the coordinator generation unchanged.
+  bar, even when sharing keeps the coordinator generation unchanged. Invalidated
+  delivery requeues the latest state: a target-only change (such as sig-bar
+  creation) may not produce another telemetry snapshot to wake the worker.
 - Worker construction is inert. Main starts before subscribing; failed startup
   leaves no subscription and an enable can retry. Disable does not churn
   workers. Stop retains a timed-out owner; start refuses a second live owner.
@@ -84,6 +88,18 @@ fields, Fleet methods and Fleet detachment portion of shutdown_previews in
 ui/api.py; and Fleet subscription, pre-destroy stop, and post-GUI stop in main.
 No settings transaction implementation, preview config reader, telemetry core,
 public bridge payload/name, native window module or JS changed.
+
+## Polish findings resolved
+
+Independent review of the initial implementation found two correctness gaps:
+older acknowledgements erased later cap-overflow priority promotions, and a
+target-only invalidation could strand the sole wakeup while Fleet was off.
+Both reproduced as deterministic failing regressions before correction. Priority
+age is now distinct from admission age; invalidated deliveries reschedule the
+current state without redirecting the captured job. Regressions also cover an
+inherited failed tier, and target changes before delivery and during main push.
+The main-state test decodes through the existing JSON.parse-aware test helper;
+raw JSON decoding was an incorrect test assumption corrected during verification.
 
 ## Remaining gaps / proposed central smoke checklist
 
