@@ -700,7 +700,7 @@ class TelemetryCoordinator:
     def _run(self, stop_event: threading.Event) -> None:
         while not stop_event.is_set():
             with self._dispatch_lock:
-                self._dispatch_iteration(PUBLISH_INTERVAL_S)
+                self._dispatch_iteration(PUBLISH_INTERVAL_S, stop_event)
 
     def stop(self, timeout: float = 5.0) -> bool:
         """Detach consumers, stop workers, and report bounded completion.
@@ -742,19 +742,32 @@ class TelemetryCoordinator:
         """
         with self._lifecycle_lock:
             worker_alive = self._worker is not None and self._worker.is_alive()
+            stop_event = self._stop_event
         if worker_alive:
             raise RuntimeError("dispatch_once cannot run beside dispatcher worker")
         with self._dispatch_lock:
-            self._dispatch_iteration(timeout)
+            self._dispatch_iteration(timeout, stop_event)
 
-    def _dispatch_iteration(self, timeout: float) -> None:
-        """Consume one batch and publish; caller owns ``_dispatch_lock``."""
+    def _dispatch_iteration(self, timeout: float, stop_event: threading.Event) -> None:
+        """Consume one batch and publish; caller owns ``_dispatch_lock``.
+
+        ``stop_event`` is the generation's own, handed in rather than read
+        from ``self``: it is checked at every point where this iteration
+        would otherwise hand work to a consumer. ``_run`` only tests it
+        between iterations, and a stop that lands mid-batch used to be
+        discarded here -- the ``_WAKE`` sentinel ``_stop_dispatcher`` puts
+        on the queue was skipped by the coalescing loop like any other
+        wake, so the whole batch still reached ``_dispatch_alerts`` and
+        ``_publish``. A sound played and a preview ring lit AFTER
+        ``stop()`` had returned, against previews already torn down.
+        """
         try:
             item = self._queue.get(timeout=timeout)
         except queue.Empty:
-            self._publish()
+            if not stop_event.is_set():
+                self._publish()
             return
-        if item is _WAKE:
+        if item is _WAKE or stop_event.is_set():
             return
 
         alerts: list[AlertEvent] = []
@@ -770,9 +783,17 @@ class TelemetryCoordinator:
             except queue.Empty:
                 break
             if item is _WAKE:
+                # A wake is only ever put by a reconcile or a stop; when it
+                # is the stop's, everything behind it belongs to a
+                # generation that is over. Payloads left on the queue are
+                # drained by _finalize_dead_dispatcher.
+                if stop_event.is_set():
+                    return
                 continue
             self._process(item, alerts)
 
+        if stop_event.is_set():
+            return
         self._dispatch_alerts(alerts)
         self._publish()
 
