@@ -71,6 +71,28 @@ jobs:
               sys.exit(1)
           print("WebView2 detection predicate agrees across installer.iss and preflight.py")
           PY
+      - name: Load every page module under node
+        # The web layer's first EXECUTABLE gate. Nothing in pytest renders
+        # or runs web/*.js; handlers register at the top of each module's
+        # IIFE, so one bad name throws mid-module and every registration
+        # below it silently never runs -- the screen loads as an inert,
+        # empty copy of itself with no error anywhere a user or a test
+        # would look. `onEveSettingsRunning` did exactly that to the whole
+        # EVE Settings route once, with the suite green. The lexical guards
+        # in tests/test_bridge_contract.py catch the handler-NAME half; this
+        # runs app.js and every <script src> of index.html, fleetbar.html
+        # and sigbar.html for real under a DOM stub and fails on any throw,
+        # which also covers a misspelled identifier, a missing WM.* member
+        # and a wrong script order. It cannot catch a handler body failing
+        # on a real payload, a missing element id, or CSS -- the script's
+        # header says exactly where it stops.
+        #
+        # Run here with the runner's preinstalled node rather than from
+        # pytest, so it gates even though the windows-latest test job has
+        # no node and tests/test_js_smoke.py skips there. No setup-node:
+        # the script is stdlib-only and any current node runs it.
+        run: node scripts/js_smoke.js
+
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:

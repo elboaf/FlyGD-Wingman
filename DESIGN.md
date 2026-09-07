@@ -530,10 +530,17 @@ Settings route broke while every test still passed.
 
 `tests/test_bridge_contract.py` now asserts both directions, and it is
 purely lexical, so know where it stops looking before trusting it: it reads
-only `self._push("literal", …)` calls and only the `WM.HANDLERS = [...]`
-array literal, so a name built or appended at runtime is invisible to it;
-and an allowlist entry that nothing registers is deliberately not an error,
+only `self._push("literal", …)` calls (and `_push_cb("literal", …)` in
+`eveskills/controller.py`) and only the `WM.HANDLERS = [...]` array
+literal, so a name built or appended at runtime is invisible to it; and an
+allowlist entry that nothing registers is deliberately not an error,
 because it may be pushed from somewhere other than `ui/api.py`.
+
+`scripts/js_smoke.js` is the executable half of the same guard: it loads
+every page's modules under node and fails on anything an IIFE throws,
+which is how the second row of the table above actually fails. Its header
+says what it cannot see — a handler body on a real payload, a missing
+element id, anything painted.
 
 **Which confirmation, and why.** Never `window.confirm`, `window.prompt` or
 `window.alert`: WebView2 renders them as browser chrome captioned with the

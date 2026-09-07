@@ -8,8 +8,10 @@ The UI itself is likewise untested by `pytest`. `tests/test_api*.py` drive
 the bridge headlessly against a fake window and cover what the API *says*
 and accepts; nothing under `tests/` renders the page, sends it input, opens
 a native dialog, or touches the tray. There is deliberately no Playwright
-and no browser toolchain. **This checklist is the only verification any of
-that gets.**
+and no browser toolchain. `scripts/js_smoke.js` loads every page's modules
+under node and fails on anything an IIFE throws at top level — it proves a
+screen is not an inert copy of itself, and nothing more. **This checklist
+is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
 
