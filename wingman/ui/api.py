@@ -2903,23 +2903,16 @@ class Api:
             and self._preview_host.is_stopping
         ):
             return False
-        section = self._state.settings.setdefault("preview", {})
-        if section.get("enabled") == enabled:
-            # A no-op toggle rewrites the whole settings document for
-            # nothing (settings.save projects every key), and the page can
-            # emit one on re-render. PreviewHost.start/stop are idempotent
-            # too, so this is belt and braces -- but the redundant write is
-            # real.
-            #
-            # True, not None: this is a SUCCESS path. Returning None here
-            # gave it exactly the failure the truthy return below exists to
-            # prevent -- WM.send resolves to null on a bridge error, so the
-            # page would read a no-op toggle as a failed call and revert
-            # the checkbox.
-            return True
         try:
             with settings_mod.update(self._state.settings) as cfg:
-                cfg.setdefault("preview", {})["enabled"] = enabled
+                section = cfg.setdefault("preview", {})
+                if section.get("enabled") == enabled:
+                    raise _SettingUnchanged
+                section["enabled"] = enabled
+        except _SettingUnchanged:
+            # True, not None: a serialized no-op is success, but must not
+            # rewrite the document or restart an already-running host.
+            return True
         except OSError:
             # Only a committed master setting authorizes runtime changes.
             logger.exception("Could not persist the preview setting")

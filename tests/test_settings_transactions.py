@@ -113,6 +113,7 @@ def test_concurrent_roster_changes_keep_both_accepted_choices(
 @pytest.mark.parametrize(
     "method, args, expected",
     [
+        ("set_preview_enabled", (True,), {"enabled": True}),
         ("set_minimize_inactive_clients", (True,), {"minimize_inactive_clients": True}),
         ("set_preview_default_size", (640, 360), {"width": 640, "height": 360}),
         (
@@ -168,13 +169,25 @@ def test_preview_decisions_ignore_a_rolled_back_concurrent_candidate(
         "set_preview_lock_default" if method == "set_preview_locked" else method
     )
     first_args = (True,) if method == "set_preview_locked" else args
+
+    def first_request():
+        if method == "set_preview_enabled":
+            # The master reservation serializes master requests, not other
+            # document writers. Its no-op decision still needs the save lock.
+            try:
+                with settings.update(api._state.settings) as doc:
+                    doc["preview"]["enabled"] = True
+            except OSError:
+                return {"applied": False}
+        return getattr(api, first_method)(*first_args)
+
     monkeypatch.setattr(settings, "_SAVE_LOCK", ObservedLock())
     monkeypatch.setattr(settings, "_save_locked", save)
     with (
         ThreadPoolExecutor(max_workers=1) as first_pool,
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="retry") as retry_pool,
     ):
-        first = first_pool.submit(getattr(api, first_method), *first_args)
+        first = first_pool.submit(first_request)
         try:
             assert entered_save.wait(10)
             second = retry_pool.submit(retry)
@@ -185,7 +198,10 @@ def test_preview_decisions_ignore_a_rolled_back_concurrent_candidate(
         second_result = second.result(timeout=10)
 
     assert first_result["applied"] is False
-    assert second_result["persisted"] is True
+    if method == "set_preview_enabled":
+        assert second_result is True
+    else:
+        assert second_result["persisted"] is True
     assert len(attempts) == 2
     persisted = json.loads(paths.settings_file().read_text())["preview"]
     for key, value in expected.items():
