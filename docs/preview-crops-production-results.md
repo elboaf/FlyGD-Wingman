@@ -5,15 +5,41 @@ not a revision of the checkout-only probe results. No visible Windows app,
 native picker/crop, installer or EVE interaction was launched for this pass.
 No real EVE client geometry was changed.
 
-**Tested code:** `1b61f64fa98e6f3915d01f89d6623d70b14d155b`
-(`test: harden production crop lifecycle and bridge fidelity`). Documentation
-is committed separately so this identifies the code actually exercised, not a
-self-referential evidence commit. The implementation cap remains **eight,
-provisional**; no stage has passed the production hardware release gates.
+**Production hardening SHA:** `1b61f64fa98e6f3915d01f89d6623d70b14d155b`
+(`test: harden production crop lifecycle and bridge fidelity`).
+**Latest full-suite SHA:** `6111c5b3dba2701285d69f35f2949a2c291fba51`
+(`test: isolate EVE settings fixtures from running clients`). The later revision
+changes only three tests plus intervening documentation, not production code.
+Documentation is committed separately to avoid self-referential evidence hashes.
+The implementation cap remains **eight, provisional**; no stage has passed the
+production hardware release gates.
 
-## Automated evidence
+## Latest full-suite verification at 6111c5b
 
-| Exercise at the tested code SHA | Actual result | Boundary |
+| Exercise | Actual result | Boundary |
+| --- | --- | --- |
+| Full Windows pytest, Python 3.12.10, Windows 11 build 26100 | **6062 passed, 52 skipped**, 116.82 seconds | Same temporary venv and APPDATA/LOCALAPPDATA sandboxes; no blanket diagnostic injection or exclusions |
+| Full Linux pytest, Python 3.11.15 | **6103 passed, 11 skipped**, 117.44 seconds | Includes the real generated-script Node tests |
+| Ruff check / format check | Passed; 292 files already formatted | Static checks |
+
+The parent approved a narrow test-only isolation repair after inspecting the
+three earlier failures: the two identification-success/ambiguity tests now
+explicitly stub their instance's `_eve_client_running_strict` as False, and the
+formation-save test replaces its obsolete weak-method stub with that strict
+seam. All assertions and the separate running=True/strict-failure guards remain
+unchanged. Temporary EVE roots/fake codec are retained. No production behavior
+changed, no EVE client was closed or manipulated, and no global injection or
+extra test exclusions were used for these fresh full runs.
+
+New XML artifacts are `task-10-windows-6111c5b.xml` and
+`task-10-linux-6111c5b.xml` in the implementation workspace. The earlier red run
+and diagnostic remain below as history, not as the current Windows result.
+These automated passes do not close visible native, frozen-build or performance
+gates. Times are test execution times, not crop performance measurements.
+
+## Earlier automated evidence at 1b61f64
+
+| Exercise at the production hardening SHA | Actual result | Boundary |
 | --- | --- | --- |
 | Linux, Python 3.11: locked dev sync; full pytest | 6103 passed, 11 skipped | Python behavior and repository conventions; no EVE/DWM measurements |
 | Ruff check / format check | Passed; 292 files already formatted | Static checks |
@@ -23,12 +49,12 @@ provisional**; no stage has passed the production hardware release gates.
 | Real `Api._push` scripts executed by Node | 6 passed | Own `__proto__` data keys; nested/root NaN and ±Infinity; ordinary JSON/string fidelity |
 | Existing Task 9 browser exercise, isolated Linux Chrome 152.0.7977.82 | 27 passed, 0 failed | Actual dev page at 840×625 and 839×625; 32/32 handlers registered; no unexpected runtime errors |
 | Actual Python `Api._push` → generated script → actual page handler in a separate isolated Chrome | Passed | `__proto__` owner remains an own key and renders configured controls |
-| Windows 11 build 26100, Python 3.12.10: full pytest | **6059 passed, 52 skipped, 3 failed** | Not a green Windows full-suite gate; details below |
+| Windows 11 build 26100, Python 3.12.10: initial full pytest | **6059 passed, 52 skipped, 3 failed** | Historical red run; superseded by the fresh full suite at 6111c5b above |
 | Windows focused crop/store/controller/host/wiring/API/native-declaration/packaging/invariant suite | 914 passed, 2 skipped | Includes synthetic message-only HWND pump and real Win32 declaration checks; no visible crop/picker |
 | Actual wheel build and imports from that wheel | Passed | Five production modules collected and importable; all three probe modules absent; not a Windows frozen build |
 
-The Linux full suite ran after the code commit and took 91.30 seconds. The
-Windows full suite took 143.25 seconds; the focused Windows run took 6.53
+The earlier Linux full suite ran after the hardening commit and took 91.30 seconds.
+The initial Windows full suite took 143.25 seconds; its focused run took 6.53
 seconds. These are **test execution times**, not crop performance measurements.
 
 Windows used a separate temporary venv and process-level **APPDATA and
@@ -41,18 +67,18 @@ full run warned that the repository's Python 3.11 request differed from the
 explicitly installed supported 3.12 interpreter; the focused run selected that
 interpreter explicitly.
 
-The three Windows failures are existing EVE-settings test isolation gaps:
+The three initial Windows failures exposed EVE-settings test isolation gaps:
 
 - `test_identification_proposes_only_one_changed_account`
 - `test_identification_never_guesses_between_changed_accounts`
 - `test_save_backs_up_writes_and_reports_done`
 
-They leave the current `_eve_client_running_strict` seam native (the third
-stubs the older method), so this environment returns “watching” or refuses a
-save before the changed bridge assertion. Running these same three test bodies
-with **only that seam injected as False** gave **3 passed**. That diagnostic is
-not a replacement for a green unmodified full Windows suite; no unrelated
-production fix or test-behavior change was made. Windows skips include missing
+They left `_eve_client_running_strict` native (the third stubbed the older
+method), so this environment returned “watching” or refused a save before the
+changed bridge assertion. A diagnostic with **only that seam injected as False**
+gave **3 passed**, but was not counted as a green full suite. The parent-approved
+per-test repair and fresh full Windows result are recorded above; no unrelated
+production fix was made. Windows skips still include missing
 Node (the six new serialization cases and 15 existing Node cases), unavailable
 codec, POSIX/symlink cases and an intentionally excluded visible modal. Node
 serialization evidence above is Linux evidence, not a claimed Windows pass.

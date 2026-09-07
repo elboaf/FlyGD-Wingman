@@ -205,9 +205,11 @@ starting Python or importing pytest/project modules**. `tests/conftest.py`
 redirects only LOCALAPPDATA; otherwise autostart tests can delete real user
 Startup shortcuts. Keep those variables set for the entire subprocess.
 Synthetic/message-only HWND tests do not establish native crop/DPI/performance
-acceptance. The production results document records the actual Windows suite's
-three existing running-client test-isolation failures separately from the
-passing focused crop suite.
+acceptance. The production results document distinguishes the initial Windows
+suite's three running-client test-isolation failures from the fresh passing full
+suite at `6111c5b`, after a parent-approved repair confined to those three test
+instances. No blanket running-client injection or extra exclusions were used;
+visible native, frozen-build and performance acceptance remain blocked.
 
 # Windows preview crop probe harness
 
