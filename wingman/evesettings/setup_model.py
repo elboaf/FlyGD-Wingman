@@ -281,12 +281,13 @@ def _unique(values, label, *, code="duplicate_id"):
         raise SetupError(code, f"{label}: duplicate logical key.")
 
 
-def _ids(value, label, *, maximum=MAX_MEMBERSHIP_IDS, minimum=0):
+def _ids(value, label, *, maximum=MAX_MEMBERSHIP_IDS, minimum=0, unique=True):
     result = [
         _integer(item, 0, MAX_ID, label)
         for item in _list(value, label, maximum=maximum, minimum=minimum)
     ]
-    _unique(result, label)
+    if unique:
+        _unique(result, label)
     return result
 
 
@@ -312,7 +313,9 @@ def _presets(value):
                 "name": _text(
                     item["name"], MAX_NAME_CODEPOINTS, "Preset name", name=True
                 ),
-                "groups": _ids(item["groups"], "Preset groups"),
+                # Native exports contain repeated group IDs. Preserve their
+                # exact sequence; each entry still consumes the same budgets.
+                "groups": _ids(item["groups"], "Preset groups", unique=False),
                 "filteredStates": _ids(
                     item["filteredStates"], "Preset filtered states"
                 ),

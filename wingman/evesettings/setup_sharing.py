@@ -1,12 +1,12 @@
-"""Strict Wingman setup JSON transport; native YAML is not enabled yet.
+"""Strict Wingman JSON transport with a separate bounded native YAML path.
 
-The model is a leaf. A future native parser is called from this transport, never
-from the model and never as a recovery path for a claimed malformed/unsupported
-Wingman artifact. Probe-formation sharing retains its separate existing parser.
+The model stays a leaf. Native syntax is not a recovery path for a claimed
+Wingman envelope. Probe-formation sharing retains its separate existing parser.
 """
 
 import json
 
+from . import overview_yaml
 from . import setup_model as model
 from .setup_model import ParsedSetup, SetupError
 
@@ -38,17 +38,29 @@ def parse_text(text: str) -> ParsedSetup:
             "depth_limit", f"Setup JSON exceeds nesting depth {model.MAX_DEPTH}."
         ) from error
     except json.JSONDecodeError as error:
-        if text.lstrip().startswith(("{", "[")):
-            raise SetupError("invalid_json", f"Invalid setup JSON: {error}") from error
-        # Task 3 owns safe native parsing/dispatch. Do not implement a permissive
-        # fallback or infer native semantics just to admit unsupported input.
-        raise SetupError(
-            "unsupported_input",
-            "Native YAML or other input is not supported yet; use Wingman setup JSON.",
-        ) from error
+        # Flow-style native YAML also starts with '{'. Let the native parser
+        # recognize its own strict schema, which excludes ALL envelope fields.
+        # It cannot rescue a trailing-comma/otherwise malformed Wingman object.
+        try:
+            return overview_yaml.parse_text(text)
+        except SetupError as native_error:
+            if native_error.code in (
+                "invalid_yaml",
+                "unsupported_input",
+            ) and text.lstrip().startswith(("{", "[")):
+                raise SetupError(
+                    "invalid_json", f"Invalid setup JSON: {error}"
+                ) from error
+            raise
     except (ValueError, OverflowError) as error:
         raise SetupError("invalid_json", f"Invalid setup JSON: {error}") from error
-    # validate_wingman starts with the structural budget, before any conversion.
+    model.check_structure_budget(value)
+    if type(value) is dict and value and value.keys() <= overview_yaml.NATIVE_FIELDS:
+        # JSON syntax is a YAML subset, but native semantics must still travel
+        # through native validation, not the full/reset Wingman model path.
+        return overview_yaml.parse_text(text)
+    # Claimed JSON envelopes, including unsupported versions/types or missing
+    # markers, are validated exactly once; domain errors never trigger fallback.
     return model.validate_wingman(value)
 
 

@@ -50,6 +50,38 @@ equivalent, hashbrown, indexmap, itoa, memchr, num-bigint, num-integer,
 num-traits, proc-macro2, quote, serde, serde_core, serde_derive,
 serde_json, syn, unicode-ident, zmij.
 
+## PyYAML
+
+Version: 6.0.3 (locked in `uv.lock`)
+Licence: MIT
+Source: https://github.com/yaml/pyyaml
+
+Used for safe, bounded native overview YAML parsing. The installed distribution's
+MIT licence is reproduced below so its notice travels with the frozen app:
+
+```text
+Copyright (c) 2017-2021 Ingy döt Net
+Copyright (c) 2006-2016 Kirill Simonov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Fonts
 
 Both are SIL Open Font License 1.1, which is not GPL and imposes no

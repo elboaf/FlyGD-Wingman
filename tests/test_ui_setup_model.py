@@ -376,10 +376,30 @@ def test_membership_bounds_and_duplicates(field):
         0,
     ]
     source["overview"]["presets"][0][field] = [1, 1]
-    assert_error("duplicate_id", model.validate_wingman, source)
+    if field == "groups":
+        assert model.validate_wingman(source).overview["presets"][0][field] == [1, 1]
+    else:
+        assert_error("duplicate_id", model.validate_wingman, source)
     source["overview"]["presets"][0][field] = list(range(8192))
     assert len(model.validate_wingman(source).overview["presets"][0][field]) == 8192
     source["overview"]["presets"][0][field].append(8192)
+    assert_error("collection_limit", model.validate_wingman, source)
+
+
+def test_repeated_preset_groups_preserve_order_and_count_toward_membership_limit():
+    groups = [73, 11, 73, 0, 11, 2147483647, 73]
+    source = changed(("overview", "presets", 0, "groups"), groups)
+    before = copy.deepcopy(source)
+    for partial in (True, False):
+        overview = model.validate_overview(source["overview"], partial=partial)
+        assert overview["presets"][0]["groups"] == [73, 11, 73, 0, 11, 2147483647, 73]
+        overview["presets"][0]["groups"].clear()
+        assert source == before
+    source["overview"]["presets"][0]["groups"] = [73] * 8192
+    assert (
+        model.validate_wingman(source).overview["presets"][0]["groups"] == [73] * 8192
+    )
+    source["overview"]["presets"][0]["groups"].append(73)
     assert_error("collection_limit", model.validate_wingman, source)
 
 

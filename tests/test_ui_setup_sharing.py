@@ -19,6 +19,33 @@ def test_json_roundtrip_preserves_order_and_geometry():
     assert parsed.source_kind == "wingman"
 
 
+def test_json_parse_and_export_preserve_repeated_preset_groups_exactly():
+    source = wire()
+    source["overview"]["presets"][0]["groups"] = [73, 11, 73, 0, 11, 2147483647, 73]
+    before = copy.deepcopy(source)
+    assert sharing.parse_text(json.dumps(source)).overview["presets"][0]["groups"] == [
+        73,
+        11,
+        73,
+        0,
+        11,
+        2147483647,
+        73,
+    ]
+    text = sharing.export_text(source)
+    assert json.loads(text)["overview"]["presets"][0]["groups"] == [
+        73,
+        11,
+        73,
+        0,
+        11,
+        2147483647,
+        73,
+    ]
+    assert sharing.parse_text(text).overview == source["overview"]
+    assert source == before
+
+
 def test_canonical_export_is_compact_unicode_json_without_private_metadata():
     original = wire()
     before = copy.deepcopy(original)
@@ -144,21 +171,20 @@ def test_malformed_claimed_json_never_falls_back_to_native_input(text):
 
 
 @pytest.mark.parametrize(
-    "text",
+    "text,code",
     [
-        "presets: []\n",
-        "format: wingman-preset\nversion: 99\n",
-        "",
-        " \n\t",
-        "https://example.invalid/setup",
-        "```json\n{}\n```",
+        ("format: wingman-preset\nversion: 99\n", "unsupported_input"),
+        ("", "invalid_type"),
+        (" \n\t", "invalid_yaml"),
+        ("https://example.invalid/setup", "invalid_type"),
+        ("```json\n{}\n```", "invalid_yaml"),
     ],
-    ids=["native", "claimed-native", "empty", "space", "url", "fence"],
+    ids=["claimed-native", "empty", "space", "url", "fence"],
 )
-def test_native_or_wrapped_input_is_explicitly_unavailable_until_task_three(text):
-    with pytest.raises(model.SetupError, match="not supported") as caught:
+def test_claimed_yaml_envelopes_and_wrapped_or_nonsetup_input_still_refuse(text, code):
+    with pytest.raises(model.SetupError) as caught:
         sharing.parse_text(text)
-    assert caught.value.code == "unsupported_input"
+    assert caught.value.code == code
 
 
 @pytest.mark.parametrize(
