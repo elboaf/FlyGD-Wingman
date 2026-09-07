@@ -190,6 +190,139 @@ def mark_deleted(controller, *character_ids, datasource="tranquility"):
 
 
 # ---------------------------------------------------------------------------
+# Selective copy confirmation safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("groups", [["windows"], []])
+@pytest.mark.parametrize("after_confirm", ["running", "probe_error", "declined"])
+def test_selective_copy_refuses_without_filesystem_work_after_confirmation(
+    tmp_path, monkeypatch, groups, after_confirm
+):
+    profile = eve_tree(tmp_path)
+    source = profile / "core_char_1.dat"
+    target = profile / "core_char_2.dat"
+    workers = QueuedThreads()
+    controller = build_controller(tmp_path, spawn=workers.spawn)
+    controller._eve_section()["root"] = str(tmp_path / "EVE")
+    confirmed = False
+
+    def probe():
+        if not confirmed:
+            return False
+        if after_confirm == "probe_error":
+            raise OSError("window station unavailable")
+        return True
+
+    def confirm(title, body, **kwargs):
+        nonlocal confirmed
+        confirmed = True
+        return after_confirm != "declined"
+
+    controller._ports = dataclasses.replace(
+        controller._ports, strict_client_running=probe, confirm=confirm
+    )
+    monkeypatch.setattr(
+        ctrl_mod.evesettings_ops,
+        "copy_selected_to_targets",
+        lambda *args, **kwargs: pytest.fail("selective filesystem work must not start"),
+    )
+
+    assert controller.copy(str(source), [str(target)], groups) is True
+    workers.run_next()
+
+    assert confirmed
+    assert target.read_bytes() == b"payload-core_char_2.dat"
+    assert source.read_bytes() == b"payload-core_char_1.dat"
+    assert not paths.eve_settings_backup_dir().exists()
+    assert controller._done_pushes == [{"ok": False}]
+    assert controller._statuses == []
+    if after_confirm == "declined":
+        assert controller._alerts == []
+    else:
+        [(kind, title, body)] = controller._alerts
+        assert (kind, title) == ("error", "Copy not started")
+        assert "Close EVE" in body
+        assert ("could not verify" in body) is (after_confirm == "probe_error")
+
+    # A refusal must release the gate, and legacy copy must still be advisory
+    # even when the strict probe can no longer prove EVE is closed.
+    controller._ports = dataclasses.replace(
+        controller._ports,
+        confirm=lambda *args, **kwargs: True,
+        advisory_client_running=lambda: True,
+    )
+    assert controller.copy(str(source), [str(target)]) is True
+    workers.run_next()
+    assert target.read_bytes() == b"payload-core_char_1.dat"
+    assert controller._done_pushes == [{"ok": False}, {"ok": True}]
+    [archive] = paths.eve_settings_backup_dir().rglob("*.zip")
+    with zipfile.ZipFile(archive) as saved:
+        assert b"payload-core_char_2.dat" in (
+            saved.read(name) for name in saved.namelist()
+        )
+
+
+@pytest.mark.parametrize(
+    ("groups", "expected_windows"), [(["windows"], "source"), ([], "target")]
+)
+def test_selective_copy_rechecks_closed_before_real_copy_and_backup(
+    tmp_path, monkeypatch, groups, expected_windows
+):
+    profile = eve_tree(tmp_path)
+    source = profile / "core_char_1.dat"
+    target = profile / "core_char_2.dat"
+    for path, label in ((source, "source"), (target, "target")):
+        path.write_bytes(
+            b"\x7d"
+            + json.dumps(
+                {
+                    "had_crc": False,
+                    "doc": {"bytes:windows": {"tuple": [label]}, "bytes:ui": {}},
+                }
+            ).encode()
+        )
+    original = target.read_bytes()
+    controller = build_controller(tmp_path)
+    controller._eve_section()["root"] = str(tmp_path / "EVE")
+    order = []
+
+    def probe():
+        order.append("probe")
+        return False
+
+    def confirm(*args, **kwargs):
+        order.append("confirm")
+        return True
+
+    def codec_filter(mode, payload, **kwargs):
+        # Only the sidecar filter is substituted: real ops, codec verification,
+        # backup creation, and atomic publication still operate on temp files.
+        order.append(mode)
+        return b"\x7d" + payload if mode == "encode" else payload[1:]
+
+    controller._ports = dataclasses.replace(
+        controller._ports, strict_client_running=probe, confirm=confirm
+    )
+    monkeypatch.setattr(codec_mod, "_run", codec_filter)
+
+    assert controller.copy(str(source), [str(target)], groups) is True
+
+    assert controller._alerts == []
+    assert controller._done_pushes == [{"ok": True}]
+    assert controller._statuses
+    assert order[:4] == ["probe", "confirm", "probe", "decode"]
+    assert json.loads(target.read_bytes()[1:])["doc"]["bytes:windows"] == {
+        "tuple": [expected_windows]
+    }
+    [archive] = paths.eve_settings_backup_dir().rglob("*.zip")
+    with zipfile.ZipFile(archive) as saved:
+        assert original in (saved.read(name) for name in saved.namelist())
+    assert controller._eve_mutation.acquire(blocking=False)
+    controller._eve_mutation.release()
+
+
+# ---------------------------------------------------------------------------
 # Mutation lock
 # ---------------------------------------------------------------------------
 
