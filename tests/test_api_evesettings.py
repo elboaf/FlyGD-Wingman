@@ -1871,6 +1871,7 @@ def test_identification_confirmation_cannot_be_consumed_twice(tmp_path, monkeypa
 def test_identification_proposes_only_one_changed_account(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path, files=("core_user_10.dat", "core_char_20.dat"))
     api = build(tmp_path, monkeypatch)
+    api._eve_client_running_strict = lambda: False
     api._eve_section()["root"] = str(tmp_path / "EVE")
     api._eve_names.names[20] = "Aiga Otsolen"
 
@@ -1904,6 +1905,7 @@ def test_identification_never_guesses_between_changed_accounts(tmp_path, monkeyp
     )
     api = build(tmp_path, monkeypatch)
     api._eve_section()["root"] = str(tmp_path / "EVE")
+    api._eve_client_running_strict = lambda: False
     api.eve_settings_identification_start()
     for name in ("core_user_10.dat", "core_user_11.dat", "core_char_20.dat"):
         (profile / name).write_bytes(b"changed with a different size " + name.encode())
@@ -3038,7 +3040,7 @@ def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
 def test_save_backs_up_writes_and_reports_done(tmp_path, monkeypatch):
     api, account = account_setup(tmp_path, monkeypatch)
     store = _fake_codec(monkeypatch, FORMATION_DOC)
-    api._eve_client_running = lambda: False
+    api._eve_client_running_strict = lambda: False
     backups = []
     api._eve_auto_backup = lambda p: backups.append(p)
     accepted = api.eve_settings_save_formations(
