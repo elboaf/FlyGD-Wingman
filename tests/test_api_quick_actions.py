@@ -79,7 +79,7 @@ def logs_api(tmp_path, monkeypatch, settings=None, selection=None, dropped=0):
 
 
 def join_logs(api):
-    thread = api._logs_thread
+    thread = api._uploader._logs_thread
     if thread is not None:
         thread.join(timeout=5)
         assert not thread.is_alive()
@@ -224,12 +224,12 @@ def test_the_post_is_refused_while_an_upload_runs(tmp_path, monkeypatch):
     sent = fakes.record_pushes(api)
     gate = threading.Event()
     assert api._work_gate.claim_upload()
-    api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._upload_thread.start()
+    api._uploader._upload_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._upload_thread.start()
     try:
         api.post_recent_logs()
         assert posted == []
-        assert api._logs_thread is None
+        assert api._uploader._logs_thread is None
         (status,) = fakes.payloads(sent, "onStatus")
         assert status["kind"] == "WARNING"
         # Its OWN sentence. "An upload is already in progress" belongs to
@@ -237,7 +237,7 @@ def test_the_post_is_refused_while_an_upload_runs(tmp_path, monkeypatch):
         assert "upload" in status["text"].lower()
     finally:
         gate.set()
-        api._upload_thread.join(timeout=5)
+        api._uploader._upload_thread.join(timeout=5)
         api._work_gate.release_upload()
 
 
@@ -248,36 +248,36 @@ def test_an_upload_is_refused_while_a_post_runs_with_its_own_sentence(
     progress", which is false: nothing is uploading."""
     api, _asked = logs_api(tmp_path, monkeypatch)
     gate = threading.Event()
-    api._logs_running = True
-    api._logs_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._logs_thread.start()
+    api._uploader._logs_running = True
+    api._uploader._logs_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._logs_thread.start()
     try:
         api.start_upload("t", "d", False, ["r0"])
-        assert api._upload_thread is None
+        assert api._uploader._upload_thread is None
         ((kind, _title, body),) = api._alert.raised
         assert kind == "warning"
         assert "already in progress" not in body
         assert "combat log" in body.lower()
     finally:
         gate.set()
-        api._logs_thread.join(timeout=5)
-        api._logs_running = False
+        api._uploader._logs_thread.join(timeout=5)
+        api._uploader._logs_running = False
 
 
 def test_a_second_post_is_refused_while_one_runs(tmp_path, monkeypatch):
     api, _asked = logs_api(tmp_path, monkeypatch)
     posted = posts(monkeypatch)
     gate = threading.Event()
-    api._logs_running = True
-    api._logs_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._logs_thread.start()
+    api._uploader._logs_running = True
+    api._uploader._logs_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._logs_thread.start()
     try:
         api.post_recent_logs()
         assert posted == []
     finally:
         gate.set()
-        api._logs_thread.join(timeout=5)
-        api._logs_running = False
+        api._uploader._logs_thread.join(timeout=5)
+        api._uploader._logs_running = False
 
 
 def test_the_post_is_claimed_before_the_worker_starts(tmp_path, monkeypatch):
@@ -297,7 +297,7 @@ def test_the_post_is_claimed_before_the_worker_starts(tmp_path, monkeypatch):
     real_start = threading.Thread.start
 
     def spy(self):
-        started.append(api._logs_busy())
+        started.append(api._uploader.logs_busy())
         real_start(self)
 
     monkeypatch.setattr(threading.Thread, "start", spy)
@@ -365,15 +365,15 @@ def test_the_post_does_not_defer_the_recording_list(tmp_path, monkeypatch):
     make the list go stale."""
     api, _asked = logs_api(tmp_path, monkeypatch)
     gate = threading.Event()
-    api._logs_running = True
-    api._logs_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._logs_thread.start()
+    api._uploader._logs_running = True
+    api._uploader._logs_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._logs_thread.start()
     try:
         assert api._busy() is False
     finally:
         gate.set()
-        api._logs_thread.join(timeout=5)
-        api._logs_running = False
+        api._uploader._logs_thread.join(timeout=5)
+        api._uploader._logs_running = False
 
 
 # ---- play -----------------------------------------------------------------
@@ -386,7 +386,7 @@ def test_play_asks_the_shell_for_the_recording(tmp_path, monkeypatch):
     monkeypatch.setattr(api_mod.os, "startfile", opened.append, raising=False)
 
     api.play_recording("r0")
-    api._play_thread.join(timeout=5)
+    api._uploader._play_thread.join(timeout=5)
 
     assert opened == [str(rows["r0"].path)]
 
@@ -399,7 +399,7 @@ def test_play_off_windows_is_a_deliberate_no_op(tmp_path, monkeypatch):
     sent = fakes.record_pushes(api)
 
     api.play_recording("r0")
-    api._play_thread.join(timeout=5)
+    api._uploader._play_thread.join(timeout=5)
 
     assert fakes.payloads(sent, "onStatus") == []
 
@@ -410,7 +410,7 @@ def test_play_reports_a_recording_that_has_gone(tmp_path, monkeypatch):
     sent = fakes.record_pushes(api)
 
     api.play_recording("r0")
-    api._play_thread.join(timeout=5)
+    api._uploader._play_thread.join(timeout=5)
 
     (status,) = fakes.payloads(sent, "onStatus")
     assert status["kind"] == "WARNING"
@@ -428,7 +428,7 @@ def test_play_reports_a_shell_that_refuses(tmp_path, monkeypatch):
     sent = fakes.record_pushes(api)
 
     api.play_recording("r0")
-    api._play_thread.join(timeout=5)
+    api._uploader._play_thread.join(timeout=5)
 
     assert fakes.payloads(sent, "onStatus")[0]["kind"] == "WARNING"
 
@@ -441,7 +441,7 @@ def test_play_on_a_stale_id_does_nothing_loudly(tmp_path, monkeypatch):
 
     api.play_recording("r404")
 
-    assert api._play_thread is None
+    assert api._uploader._play_thread is None
     (status,) = fakes.payloads(sent, "onStatus")
     assert status["kind"] == "WARNING"
 
@@ -509,17 +509,24 @@ def test_rename_carries_the_link_and_the_duration(tmp_path):
     api, _window, rows, _watcher = rename_api(tmp_path)
     info = rows["r0"]
     links_mod.remember(
-        api._link_store, info.path, info.size, info.mtime, "https://youtu.be/abc"
+        api._uploader._link_store,
+        info.path,
+        info.size,
+        info.mtime,
+        "https://youtu.be/abc",
     )
-    durations.remember(api._cache, info.path, info.size, info.mtime, 61.0)
+    durations.remember(api._uploader._cache, info.path, info.size, info.mtime, 61.0)
 
     api.rename_recording("r0", "Fight 12")
 
     new = tmp_path / "Fight 12.mkv"
-    assert links_mod.lookup(api._link_store, new, info.size, info.mtime) == (
+    assert links_mod.lookup(api._uploader._link_store, new, info.size, info.mtime) == (
         "https://youtu.be/abc"
     )
-    assert durations.lookup(api._cache, new, info.size, info.mtime) == (True, 61.0)
+    assert durations.lookup(api._uploader._cache, new, info.size, info.mtime) == (
+        True,
+        61.0,
+    )
 
 
 def test_a_renamed_link_survives_a_restart(tmp_path):
@@ -528,12 +535,16 @@ def test_a_renamed_link_survives_a_restart(tmp_path):
     api, _window, rows, _watcher = rename_api(tmp_path)
     info = rows["r0"]
     links_mod.remember(
-        api._link_store, info.path, info.size, info.mtime, "https://youtu.be/abc"
+        api._uploader._link_store,
+        info.path,
+        info.size,
+        info.mtime,
+        "https://youtu.be/abc",
     )
 
     api.rename_recording("r0", "Fight 12")
 
-    reloaded = links_mod.load(api._links_file)
+    reloaded = links_mod.load(api._uploader._links_file)
     assert str(tmp_path / "Fight 12.mkv") in reloaded
 
 
@@ -550,8 +561,8 @@ def test_rename_is_refused_while_an_upload_runs(tmp_path):
     old = rows["r0"].path
     gate = threading.Event()
     assert api._work_gate.claim_upload()
-    api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._upload_thread.start()
+    api._uploader._upload_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._upload_thread.start()
     try:
         result = api.rename_recording("r0", "Fight 12")
         assert result["ok"] is False
@@ -559,7 +570,7 @@ def test_rename_is_refused_while_an_upload_runs(tmp_path):
         assert old.exists()
     finally:
         gate.set()
-        api._upload_thread.join(timeout=5)
+        api._uploader._upload_thread.join(timeout=5)
         api._work_gate.release_upload()
 
 
@@ -583,16 +594,20 @@ def test_rename_leaves_every_store_untouched_when_it_fails(tmp_path):
     api, _window, rows, watcher = rename_api(tmp_path)
     info = rows["r0"]
     links_mod.remember(
-        api._link_store, info.path, info.size, info.mtime, "https://youtu.be/abc"
+        api._uploader._link_store,
+        info.path,
+        info.size,
+        info.mtime,
+        "https://youtu.be/abc",
     )
     (tmp_path / "b.mkv").write_bytes(b"x")
 
     api.rename_recording("r0", "b")
 
     assert watcher.renamed == []
-    assert links_mod.lookup(api._link_store, info.path, info.size, info.mtime) == (
-        "https://youtu.be/abc"
-    )
+    assert links_mod.lookup(
+        api._uploader._link_store, info.path, info.size, info.mtime
+    ) == ("https://youtu.be/abc")
 
 
 def test_a_case_only_rename_is_not_a_collision(tmp_path):
@@ -734,7 +749,7 @@ def test_a_post_that_cannot_start_does_not_latch_the_button(tmp_path, monkeypatc
 
     api.post_recent_logs()
 
-    assert api._logs_busy() is False
+    assert api._uploader.logs_busy() is False
     assert fakes.payloads(sent, "onLogPostRunning")[-1] == {"running": False}
     assert fakes.payloads(sent, "onStatus")[-1]["kind"] == "WARNING"
 

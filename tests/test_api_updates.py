@@ -10,6 +10,7 @@ from tests import fakes
 from wingman import settings as settings_mod
 from wingman import updates as updates_mod
 from wingman.ui import api as api_mod
+from wingman.upload import controller as upload_mod
 from wingman.upload import gate as gate_mod
 
 
@@ -22,15 +23,15 @@ def _upload_api(tmp_path):
 
 
 def _join_upload(api):
-    thread = api._upload_thread
+    thread = api._uploader._upload_thread
     if thread is not None:
         thread.join(timeout=5)
         assert not thread.is_alive()
 
 
 def _enable_retry(api):
-    api._retry_state = api_mod.RetryState(
-        job=api_mod.UploadJob(
+    api._uploader._retry_state = upload_mod.RetryState(
+        job=upload_mod.UploadJob(
             items=[],
             ids=[],
             title="Fight",
@@ -111,7 +112,7 @@ def test_upload_and_handoff_race_has_exactly_one_winner(tmp_path):
     bridge_calls = threading.Barrier(3)
     release_worker = threading.Event()
     results = {}
-    api._confirm_then_upload = lambda _job: release_worker.wait(5)
+    api._uploader._confirm_then_upload = lambda _job: release_worker.wait(5)
 
     def upload_call():
         bridge_calls.wait(timeout=2)
@@ -141,8 +142,8 @@ def test_upload_and_handoff_race_has_exactly_one_winner(tmp_path):
 
 def test_retry_and_handoff_race_has_exactly_one_winner(tmp_path):
     api, _window = _upload_api(tmp_path)
-    api._retry_state = api_mod.RetryState(
-        job=api_mod.UploadJob(
+    api._uploader._retry_state = upload_mod.RetryState(
+        job=upload_mod.UploadJob(
             items=[],
             ids=[],
             title="Fight",
@@ -157,7 +158,7 @@ def test_retry_and_handoff_race_has_exactly_one_winner(tmp_path):
     bridge_calls = threading.Barrier(3)
     release_worker = threading.Event()
     results = {}
-    api._retry_worker = lambda _state: release_worker.wait(5)
+    api._uploader._retry_worker = lambda _state: release_worker.wait(5)
 
     def retry_call():
         bridge_calls.wait(timeout=2)
@@ -221,7 +222,7 @@ def test_upload_refused_while_quitting_explains_update_shutdown(tmp_path):
 
     api.start_upload("Fight", "", False, ["r1"])
 
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     assert api._alert.raised == [
         ("info", "Update", "Update installation is being prepared.")
     ]
@@ -235,7 +236,7 @@ def test_retry_refused_during_handoff_is_disabled_and_explained(tmp_path):
 
     api.retry()
 
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     assert fakes.payloads(sent, "onRetryAvailable") == [{"available": False}]
     assert api._alert.raised == [
         ("info", "Update", "Update installation is being prepared.")
@@ -250,7 +251,7 @@ def test_retry_refused_while_quitting_is_disabled_and_explained(tmp_path):
 
     api.retry()
 
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     assert fakes.payloads(sent, "onRetryAvailable") == [{"available": False}]
     assert api._alert.raised == [
         ("info", "Update", "Update installation is being prepared.")
@@ -268,7 +269,7 @@ def test_retry_refused_by_an_upload_is_disabled_and_names_the_upload(tmp_path):
     finally:
         api._work_gate.release_upload()
 
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     assert fakes.payloads(sent, "onRetryAvailable") == [{"available": False}]
     assert api._alert.raised == [
         ("warning", "Busy", "An upload is already in progress.")
@@ -284,7 +285,7 @@ def test_upload_claim_lives_until_worker_finally(tmp_path):
         entered.set()
         release.wait(5)
 
-    api._confirm_then_upload = block
+    api._uploader._confirm_then_upload = block
     api.start_upload("Fight", "", False, ["r1"])
 
     assert entered.wait(1)
@@ -302,14 +303,14 @@ def test_upload_claim_is_released_when_the_worker_target_raises(tmp_path):
         raise RuntimeError("worker exploded")
 
     with pytest.raises(RuntimeError, match="worker exploded"):
-        api._run_claimed_upload(explode)
+        api._uploader._run_claimed_upload(explode)
 
     assert not api._busy()
 
 
 def test_upload_is_claimed_before_thread_start(tmp_path, monkeypatch):
     api, _window = _upload_api(tmp_path)
-    api._confirm_then_upload = lambda _job: None
+    api._uploader._confirm_then_upload = lambda _job: None
     observed = []
     real_start = threading.Thread.start
 
@@ -327,8 +328,8 @@ def test_upload_is_claimed_before_thread_start(tmp_path, monkeypatch):
 
 def test_retry_is_claimed_before_thread_start(tmp_path, monkeypatch):
     api, _window = _upload_api(tmp_path)
-    api._retry_state = api_mod.RetryState(
-        job=api_mod.UploadJob(
+    api._uploader._retry_state = upload_mod.RetryState(
+        job=upload_mod.UploadJob(
             items=[],
             ids=[],
             title="Fight",
@@ -340,7 +341,7 @@ def test_retry_is_claimed_before_thread_start(tmp_path, monkeypatch):
         resume_index=0,
         request=None,
     )
-    api._retry_worker = lambda _state: None
+    api._uploader._retry_worker = lambda _state: None
     observed = []
     real_start = threading.Thread.start
 
@@ -373,14 +374,14 @@ def test_upload_start_failure_clears_thread_and_claim(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="cannot start worker"):
         api.start_upload("Fight", "", False, ["r1"])
 
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     assert not api._busy()
 
 
 def test_retry_start_failure_clears_thread_and_claim(tmp_path, monkeypatch):
     api, _window = _upload_api(tmp_path)
-    api._retry_state = api_mod.RetryState(
-        job=api_mod.UploadJob(
+    api._uploader._retry_state = upload_mod.RetryState(
+        job=upload_mod.UploadJob(
             items=[],
             ids=[],
             title="Fight",
@@ -397,7 +398,7 @@ def test_retry_start_failure_clears_thread_and_claim(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="cannot start worker"):
         api.retry()
 
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     assert not api._busy()
 
 
@@ -1067,7 +1068,7 @@ def test_install_claim_excludes_upload_before_revalidation(tmp_path):
         "Update",
         "Update installation is being prepared.",
     )
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     service.release_launch()
     _join_update(api)
 
@@ -1098,7 +1099,7 @@ def test_install_claim_excludes_retry_before_revalidation(tmp_path):
 
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": False}
     assert api._alert.raised[-1][2] == "Update installation is being prepared."
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
     service.release_launch()
     _join_update(api)
 
@@ -1108,7 +1109,7 @@ def test_retry_and_install_race_has_exactly_one_owner(tmp_path):
     api, _window = _ready_api(tmp_path, service)
     _enable_retry(api)
     release_retry = threading.Event()
-    api._retry_worker = lambda _state: release_retry.wait(5)
+    api._uploader._retry_worker = lambda _state: release_retry.wait(5)
     bridge_calls = threading.Barrier(3)
 
     def retry_call():

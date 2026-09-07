@@ -481,7 +481,7 @@ def test_the_panel_text_is_computed_in_python(recordings, tmp_path):
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
-    ids = [row["id"] for row in api._rows.rows()]
+    ids = [row["id"] for row in api._uploader._rows.rows()]
 
     assert api.panel_text([], False)["summary"] == "Nothing selected"
     assert api.panel_text(ids[:1], False)["summary"].startswith("1 selected")
@@ -498,7 +498,7 @@ def test_the_title_hint_tracks_the_selection_and_the_stitch_flag(recordings, tmp
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
-    ids = [row["id"] for row in api._rows.rows()]  # the fixture holds two
+    ids = [row["id"] for row in api._uploader._rows.rows()]  # the fixture holds two
 
     assert api.panel_text(ids, False)["title_hint"] == (
         "Title (applies to all 2, numbered 1-2)"
@@ -651,19 +651,19 @@ def test_the_row_id_link_map_does_not_grow_across_refreshes(recordings, tmp_path
         links_file=links_file,
     )
     api.list_rows()
-    first = dict(api._links)
+    first = dict(api._uploader._links)
     assert len(first) == 1
 
     api.list_rows()
     api.list_rows()
 
-    assert len(api._links) == 1, (
+    assert len(api._uploader._links) == 1, (
         "one linked recording, one entry, however many refreshes"
     )
     # And it is the CURRENT id, not a survivor of an earlier snapshot.
-    assert set(api._links) != set(first)
-    live = {row["id"] for row in api._rows.rows()}
-    assert set(api._links) <= live
+    assert set(api._uploader._links) != set(first)
+    live = {row["id"] for row in api._uploader._rows.rows()}
+    assert set(api._uploader._links) <= live
 
 
 def test_a_re_recording_within_one_session_loses_the_link_too(recordings, tmp_path):
@@ -804,11 +804,11 @@ def test_a_superseded_answer_is_not_pushed_over_a_definitive_one(recordings, tmp
     clock.fire()
     window.evaluated.clear()
 
-    row_id = api._rows.rows()[0]["id"]
-    api._push_duration(row_id, None, False)
+    row_id = api._uploader._rows.rows()[0]["id"]
+    api._uploader._push_duration(row_id, None, False)
 
     assert [p for name, p in pushes(window) if name == "onDuration"] == []
-    assert api._rows.rows()[0]["duration"] == library.format_duration(12.5)
+    assert api._uploader._rows.rows()[0]["duration"] == library.format_duration(12.5)
 
 
 def test_the_drain_loop_stops_once_the_worker_is_done(recordings, tmp_path):
@@ -845,10 +845,10 @@ def test_a_straggler_from_a_superseded_refresh_is_dropped(recordings, tmp_path):
     window.evaluated.clear()
 
     api.list_rows()  # bumps the generation; the drain above has stopped
-    stale_id = api._rows.rows()[0]["id"]
-    stale_info = api._rows.resolve(stale_id)
-    api._probe_queue.put((0, stale_id, stale_info, 999.0, True))
-    api._drain_probes(api._generation)
+    stale_id = api._uploader._rows.rows()[0]["id"]
+    stale_info = api._uploader._rows.resolve(stale_id)
+    api._uploader._probe_queue.put((0, stale_id, stale_info, 999.0, True))
+    api._uploader._drain_probes(api._uploader._generation)
 
     assert [p for name, p in pushes(window) if name == "onDuration"] == []
     assert 999.0 not in {
@@ -860,10 +860,10 @@ def test_a_drain_for_a_superseded_generation_stops_itself(recordings, tmp_path):
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     api.list_rows()
-    stale_generation = api._generation
-    api._generation += 1  # as a concurrent list_rows would
+    stale_generation = api._uploader._generation
+    api._uploader._generation += 1  # as a concurrent list_rows would
 
-    api._drain_probes(stale_generation)
+    api._uploader._drain_probes(stale_generation)
 
     assert clock.timers[-1].cancelled
 
@@ -878,12 +878,10 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
     duration measured so far -- and pays for the whole scan again on the
     next launch, which is the exact cost this cache exists to avoid.
     """
-    from wingman.ui import api as api_mod
-
     saves = []
-    real_save = api_mod.durations.save
+    real_save = durations.save
     monkeypatch.setattr(
-        api_mod.durations,
+        durations,
         "save",
         lambda path, cache: (saves.append(len(cache)), real_save(path, cache)),
     )
@@ -891,17 +889,17 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
     clock = FakeClock()
     api = rows_api(recordings, tmp_path, clock, probe=lambda path, binary: (12.5, True))
     # Hand-drive the queue so results land across two ticks rather than one.
-    api._generation += 1
-    generation = api._generation
-    api._rows.rebuild(recordings)
-    rows = api._rows.rows()
+    api._uploader._generation += 1
+    generation = api._uploader._generation
+    api._uploader._rows.rebuild(recordings)
+    rows = api._uploader._rows.rows()
 
     for row in rows:
-        api._probe_queue.put(
-            (generation, row["id"], api._rows.resolve(row["id"]), 12.5, True)
+        api._uploader._probe_queue.put(
+            (generation, row["id"], api._uploader._rows.resolve(row["id"]), 12.5, True)
         )
-        api._drain_probes(generation)
-    api._drain_probes(generation)  # a tick with nothing waiting
+        api._uploader._drain_probes(generation)
+    api._uploader._drain_probes(generation)  # a tick with nothing waiting
 
     assert saves == [1, 2], (
         "one save per tick that applied results, none for an empty tick"

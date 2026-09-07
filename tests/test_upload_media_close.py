@@ -27,7 +27,7 @@ import pytest
 
 from tests import fakes
 from wingman import uploader
-from wingman.ui.api import RetryState, UploadJob
+from wingman.upload.controller import RetryState, UploadJob
 
 
 def _job(ids=("r1",), stitch=True):
@@ -47,7 +47,7 @@ def _upload_one(api, monkeypatch, upload_impl, **kwargs):
     MediaFileUpload = fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", upload_impl)
     youtube = fakes.FakeYouTube()
-    return api._upload_one(
+    return api._uploader._upload_one(
         youtube, MediaFileUpload, "/tmp/stitch-abc.mkv", _job(), 0, 1, **kwargs
     )
 
@@ -123,10 +123,10 @@ def test_stitched_worker_asks_upload_one_to_close_the_media(tmp_path, monkeypatc
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
 
     api, _window = fakes.build_api(tmp_path)
-    api._upload_one = fake_upload_one
+    api._uploader._upload_one = fake_upload_one
 
     job = _job(ids=("r1",), stitch=True)
-    api._upload_worker(job)
+    api._uploader._upload_worker(job)
 
     assert recorded.get("close_media") is True, (
         "the stitched call site must ask _upload_one to close the media, or "
@@ -164,7 +164,7 @@ def test_retry_availability_after_a_failed_retry_matches_the_outcome(
     job = _job(ids=("r1",), stitch=False)
     state = RetryState(job=job, resume_index=0, request=object())
 
-    api._retry_worker(state)
+    api._uploader._retry_worker(state)
 
     available = [p for p in fakes.payloads(sent, "onRetryAvailable") if p["available"]]
     assert bool(available) is retryable
@@ -188,10 +188,10 @@ def _run_retry(tmp_path, monkeypatch, outcome):
     rows = fakes.FakeRows({"r1": fakes.info(tmp_path / "a.mkv")})
     api, _window = fakes.build_api(tmp_path, rows=rows)
     job = _job(ids=("r1",), stitch=False)
-    api._retry_state = RetryState(job=job, resume_index=0, request=request)
+    api._uploader._retry_state = RetryState(job=job, resume_index=0, request=request)
     api.retry()
-    api._upload_thread.join(timeout=5)
-    assert not api._upload_thread.is_alive()
+    api._uploader._upload_thread.join(timeout=5)
+    assert not api._uploader._upload_thread.is_alive()
     assert not api._busy()
     return api, media
 
@@ -202,7 +202,7 @@ def test_terminal_retry_failure_releases_the_recording(tmp_path, monkeypatch):
     holding it only blocks renaming or deleting that file on Windows."""
     api, media = _run_retry(tmp_path, monkeypatch, uploader.Outcome.UPLOAD_LIMIT)
     assert media.closed
-    assert api._retry_state.request is None
+    assert api._uploader._retry_state.request is None
 
 
 def test_retryable_retry_failure_keeps_the_stream_for_the_next_resume(
@@ -210,4 +210,4 @@ def test_retryable_retry_failure_keeps_the_stream_for_the_next_resume(
 ):
     api, media = _run_retry(tmp_path, monkeypatch, uploader.Outcome.RETRY)
     assert not media.closed
-    assert api._retry_state.request is not None
+    assert api._uploader._retry_state.request is not None
