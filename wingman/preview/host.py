@@ -11,12 +11,16 @@ records the identical discovery about webview.start() carrying none of
 the old event loop, and answers it with an owned loop.
 """
 
+import copy
 import ctypes
+import itertools
 import logging
 import threading
 import time
+from concurrent.futures import Future, TimeoutError
 from ctypes import wintypes
 from dataclasses import dataclass, replace
+from queue import Empty, SimpleQueue
 
 from ..telemetry.model import RosterClient, RosterSnapshot
 from . import (
@@ -30,6 +34,10 @@ from . import (
     win32,
 )
 from . import window as window_mod
+from .cropcontroller import CropController
+from .croppicker import CropPicker
+from .crops import MAX_LIVE_CROPS
+from .cropwindow import CropWindow
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
@@ -73,6 +81,15 @@ COPY_PERSIST_FAILED = "persist_failed"
 LEGACY_SWEEP_GENERATION = 0
 
 
+def crop_wire_status(status: str, *, stopping: bool = False) -> str:
+    """Translate coordinator-only names at the semantic state boundary."""
+    return {
+        "stopped": "stopping" if stopping else "master-off",
+        "native-failed": "degraded",
+        "suppressed": "cap-suppressed",
+    }.get(status, status)
+
+
 def _roster_stable_key(entry) -> str:
     """The key every preview, layout and hotkey is filed under, for a
     shared-roster record.
@@ -91,12 +108,10 @@ def _roster_stable_key(entry) -> str:
 def _preview_client(entry) -> discovery.Client:
     """A shared-roster record in the shape preview state already speaks.
 
-    RosterClient carries no stable key -- nothing outside Preview is keyed
-    by one -- and a Fleet Metrics session Preview has no use for, while
-    every consumer in this module (windows, switching, alerts, hotkey
-    dispatch, the client registry) reads Client.stable_key. One adaptation
-    at the top of reconciliation keeps that single vocabulary rather than
-    teaching each of them a second one.
+    Primary windows, switching, alerts, hotkeys and the primary registry
+    read Client.stable_key, which RosterClient does not carry. Keep that
+    vocabulary here; the independent crop coordinator receives the original
+    snapshot and retains its full discovery-session identity.
     """
     return discovery.Client(
         entry.hwnd, entry.title, entry.pid, entry.character, _roster_stable_key(entry)
@@ -272,7 +287,35 @@ class PreviewHost:
         replace_layout=None,
         hide_on_lost_focus=None,
         request_discovery=None,
+        crop_store=None,
+        on_crops_changed=None,
+        crop_controller_factory=None,
     ):
+        self._crop_controller_factory = crop_controller_factory
+        self._crop_controller = None
+        self._crop_store = crop_store
+        self._on_crops_changed = on_crops_changed
+        self._crop_epoch = 0
+        self._crop_geometry_sequence = itertools.count(1)
+        self._crop_commands = []
+        self._crop_completions = SimpleQueue()
+        self._crop_runtime_state = {}
+        self._crop_delivery_state = None
+        self._crop_delivery_revision = 0
+        self._crop_roster = None
+        self._crop_epoch_prepared = False
+        self._crop_dispatching = False
+        self._starting = False
+        self._launch_done = threading.Event()
+        self._launch_done.set()
+        self._stopping = False
+        self._closing = False
+        self._stop_future = None
+        self._stop_final = False
+        self._stop_submitting = False
+        self._stop_ready = SimpleQueue()
+        self._stop_cleanup_epoch = None
+        self._pending_primary_signals = []
         self._on_layout_changed = on_layout_changed
         # Production injects the shared coordinator request. None is an inert
         # test seam; this host never enumerates clients from its pump.
@@ -337,7 +380,7 @@ class PreviewHost:
         # place (_is_locked) so the two cannot be consulted separately and
         # disagree.
         self._lock_default = lock_default
-        # preview.excluded: characters opted out of previews entirely. Read
+        # preview.excluded: characters opted out of primary previews. Read
         # live like the rest, and read in THREE places rather than one --
         # _reconcile_roster (no window), _registerable (no hotkey
         # registration) and _cycle_keys (not a stop on the walk) -- because
@@ -496,40 +539,363 @@ class PreviewHost:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    @property
+    def runtime_enabled(self) -> bool:
+        """Committed runtime delivery, including launch before the first HWND."""
+        with self._lock:
+            return (
+                (self._starting or self.is_running)
+                and not self._stopping
+                and not self._closing
+            )
+
+    @property
+    def is_stopping(self) -> bool:
+        with self._lock:
+            return self._stop_incomplete()
+
+    def _stop_incomplete(self) -> bool:
+        # Caller holds _lock. A timeout never transfers ownership. A dead pump
+        # alone is insufficient while an off-pump drain still owns storage.
+        return self._stopping and (
+            self._starting
+            or self._stop_submitting
+            or self.is_running
+            or (self._stop_future is not None and not self._stop_future.done())
+            or self._crop_dispatching
+        )
+
+    def _open_crop_epoch(self) -> None:
+        with self._lock:
+            self._crop_epoch += 1
+            epoch = self._crop_epoch
+        self._crop_store.open_epoch(epoch)
+        # Ingress in the pre-open gap may have been refused by the store.
+        # Re-read AFTER opening; its high-water mark rejects an older seed.
+        with self._lock:
+            snapshot = self._crop_roster
+            stopping = self._stopping
+            self._crop_epoch_prepared = True
+        if snapshot is not None:
+            self._crop_store.observe_roster(epoch, snapshot)
+        if stopping:
+            self._crop_store.fence_epoch(epoch)
+
     def start(self) -> None:
         with self._lock:
-            if self._thread is not None:
-                if self._thread.is_alive():
-                    return  # Even a timed-out stop still owns its live pump.
-                self._thread = None
-            self._thread = threading.Thread(
-                target=self._run, daemon=True, name="wingman-preview"
-            )
-            self._thread.start()
-
-    def stop(self, timeout: float = JOIN_TIMEOUT_S) -> None:
-        """Idempotent, and safe when never started."""
-        with self._lock:
-            thread = self._thread
-            if thread is None:
+            if (
+                self._closing
+                or self._starting
+                or self.is_running
+                or self._stop_incomplete()
+            ):
                 return
-            # Keep selection and signaling together so a delayed stop cannot
-            # post shutdown to a replacement pump's HWND.
-            if self._hwnd:
-                libs = win32.bind()
-                libs.user32.PostMessageW(self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0)
-        # Posting is asynchronous; joining must release the lock teardown needs.
-        thread.join(timeout)
-        if thread.is_alive():
-            # A stop() that returns while the thread still owns HWNDs
-            # produces a Wingman that vanishes from the tray and lingers
-            # in Task Manager.
-            logger.warning("Preview thread did not exit within %.1fs", timeout)
-        else:
+            self._starting = True
+            self._stopping = False
+            self._stop_future = None
+            self._stop_final = False
+            self._stop_cleanup_epoch = None
+            self._crop_runtime_state = {}
+            if self._crop_store is not None:
+                self._pending_roster = self._crop_roster
+            self._ready.clear()
+            self._launch_done.clear()
+        try:
+            if self._crop_store is not None:
+                self._open_crop_epoch()
             with self._lock:
-                # A concurrent start may already have replaced this dead pump.
+                # stop() can reserve shutdown before there is even an HWND.
+                # Still launch the pump: its first turn performs freeze/drain.
+                self._thread = threading.Thread(
+                    target=self._run, daemon=True, name="wingman-preview"
+                )
+                self._thread.start()
+        finally:
+            with self._lock:
+                self._starting = False
+                self._launch_done.set()
+
+    def stop(self, timeout: float = JOIN_TIMEOUT_S, *, final: bool = False) -> bool:
+        """Request shutdown; False means incomplete, not canceled. final closes storage."""
+        deadline = time.monotonic() + timeout
+        with self._lock:
+            self._closing = self._closing or final
+            if (
+                not self.is_running
+                and not self._starting
+                and not self._stop_final
+                and self._stop_future is not None
+                and self._stop_future.done()
+            ):
+                self._stop_future = None
+            self._stop_submitting = self._crop_store is not None and (
+                self._stop_future is None or (final and not self._stop_final)
+            )
+            self._stopping = True
+            self._capture_until = 0.0
+            thread = self._thread
+            starting = self._starting
+            epoch = self._crop_epoch
+            close_store = (
+                final and self._stop_future is not None and not self._stop_final
+            )
+            # Keep selection/signaling together: an older stop cannot signal a
+            # replacement HWND. No callbacks, store calls or waits under here.
+            if self._hwnd:
+                win32.bind().user32.PostMessageW(
+                    self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0
+                )
+        if self._crop_store is not None:
+            self._crop_store.fence_epoch(epoch)
+            if close_store:
+                # Final exit can race the tail of an ordinary native cleanup.
+                # Its installed barrier proves all accepted intents were queued;
+                # close storage now, even if this caller will time out joining.
+                self._watch_crop_stop(self._crop_store.close(), epoch, final=True)
+        if starting:
+            if not self._launch_done.wait(max(0, deadline - time.monotonic())):
+                logger.warning("Preview startup did not stop within %.1fs", timeout)
+                return False
+            with self._lock:
+                thread = self._thread
+        if thread is not None:
+            thread.join(max(0, deadline - time.monotonic()) if starting else timeout)
+            if thread.is_alive():
+                logger.warning("Preview thread did not exit within %.1fs", timeout)
+                return False
+            with self._lock:
                 if self._thread is thread:
                     self._thread = None
+        if self._crop_store is not None:
+            future = self._drain_offline_crop_commands()
+            if future is None:
+                logger.warning(
+                    "Preview storage submission did not finish within %.1fs", timeout
+                )
+                return False
+            try:
+                future.result(max(0, deadline - time.monotonic()))
+            except TimeoutError:
+                logger.warning("Preview storage did not drain within %.1fs", timeout)
+                return False
+        return True
+
+    @staticmethod
+    def _crop_refused(error: str) -> dict:
+        return dict(
+            applied=False,
+            persisted=False,
+            pending=False,
+            operation_id=None,
+            error=error,
+        )
+
+    def request_crop(self, action: str, name: str, value=None) -> dict:
+        """Trusted semantic request; external validation belongs to Api.
+
+        begin is metadata-only and cannot complete a Future. Submissions and
+        listeners run outside _lock, including immediately completed failures.
+        """
+        with self._lock:
+            if self._crop_store is None or self._closing:
+                return self._crop_refused("Crops are unavailable")
+            if self._stop_incomplete():
+                return self._crop_refused("Previews are stopping")
+            running = self._starting or self.is_running
+            session = None
+            if action == "select" and not running:
+                return self._crop_refused("Enable previews before selecting a crop")
+            # A positive enable can follow an accepted disable still waiting on
+            # native completion. Bind at ingress, not from tentative settings or
+            # the later pump roster. None deliberately stays configuration-only.
+            if running and (action == "select" or (action == "enabled" and value)):
+                snapshot = self._crop_roster
+                session = (
+                    next(
+                        (c.session for c in snapshot.clients if c.character == name),
+                        None,
+                    )
+                    if snapshot
+                    else None
+                )
+                if action == "select" and session is None:
+                    return self._crop_refused("Character is offline")
+            token = self._crop_store.begin(
+                name, epoch=self._crop_epoch, session=session
+            )
+            self._crop_commands.append((action, name, value, token))
+        if running:
+            self._post(win32.WM_APP_CROP_COMMAND)
+        else:
+            self._drain_offline_crop_commands()
+        state = self._crop_store.snapshot()["operations"].get(token.operation_id)
+        self._notify_crop_state()
+        if state is None:
+            return dict(
+                self._crop_refused("Crop operation result expired; refresh crop state"),
+                operation_id=token.operation_id,
+            )
+        return {
+            key: state[key]
+            for key in ("applied", "persisted", "pending", "operation_id", "error")
+        }
+
+    def _cancel_crop_token(self, token) -> None:
+        try:
+            self._crop_store.cancel(token)
+        except ValueError:
+            # Only terminal tokens can age out. Stop ingress can fence more
+            # selections than retained history before this pump drains them.
+            logger.debug("Crop cancellation outcome already retired")
+
+    def _drain_offline_crop_commands(self) -> Future | None:
+        if self._crop_store is None:
+            return None
+        with self._lock:
+            if self._crop_dispatching or self._starting or self.is_running:
+                return self._stop_future
+            self._crop_dispatching = True
+            commands, self._crop_commands = self._crop_commands, []
+        try:
+            while True:
+                for action, name, value, token in commands:
+                    if action == "select" or token.session is not None:
+                        self._cancel_crop_token(token)
+                    else:
+                        future = (
+                            self._crop_store.set_enabled(token, value)
+                            if action == "enabled"
+                            else self._crop_store.remove(token)
+                        )
+                        future.add_done_callback(
+                            lambda done: self._queue_crop_completion(done.result())
+                        )
+                with self._lock:
+                    if self._starting or self.is_running:
+                        # Only this detached batch belongs to offline ingress.
+                        # The pump owns later requests, after we release delivery.
+                        break
+                    if self._crop_commands:
+                        commands, self._crop_commands = self._crop_commands, []
+                        continue
+                    stopping, final, epoch = (
+                        self._stopping,
+                        self._closing,
+                        self._crop_epoch,
+                    )
+                    need_barrier = stopping and (
+                        self._stop_future is None or (final and not self._stop_final)
+                    )
+                if need_barrier:
+                    future = (
+                        self._crop_store.close() if final else self._crop_store.drain()
+                    )
+                    self._watch_crop_stop(future, epoch, final=final)
+                break
+        finally:
+            with self._lock:
+                self._crop_dispatching = False
+                pending = bool(self._crop_commands)
+                stopping = self._stopping
+                stop_future = self._stop_future
+                # Signal before releasing lifecycle ownership: a completed drain
+                # permits start() to replace both the HWND and the stop Future.
+                # PostMessage only queues; no store calls or callbacks under here.
+                self._post(
+                    win32.WM_APP_SHUTDOWN if stopping else win32.WM_APP_CROP_COMMAND
+                )
+                self._post(win32.WM_APP_CROP_COMPLETE)
+        if pending:
+            return self._drain_offline_crop_commands()
+        # The caller's result belongs to this drain, not a replacement runtime.
+        return stop_future
+
+    def crop_state(self) -> dict:
+        """Copied committed truth, ordered across storage AND runtime changes.
+
+        The store revision cannot order offline/live/stopping transitions. This
+        retained delivery revision covers the entire public payload; operation
+        outcome revisions remain the store's independent persistence ordering.
+        """
+        with self._lock:
+            state = (
+                self._crop_store.snapshot()
+                if self._crop_store is not None
+                else dict(definitions={}, operations={})
+            )
+            runtime = self._crop_runtime_state
+            stopping = (
+                self._stop_incomplete() and self._stop_cleanup_epoch != self._crop_epoch
+            )
+            enabled = (
+                (self._starting or self.is_running)
+                and not self._stopping
+                and not self._closing
+            )
+            state.pop("generations", None)
+            state.pop("revision", None)
+            statuses = {}
+            for name, definition in state["definitions"].items():
+                status = (
+                    "disabled"
+                    if not definition["enabled"]
+                    else "stopping"
+                    if stopping
+                    else "master-off"
+                    if not enabled
+                    else runtime.get("statuses", {}).get(name, "offline")
+                )
+                statuses[name] = crop_wire_status(status, stopping=stopping)
+            for name, status in runtime.get("statuses", {}).items():
+                if status in ("selecting", "saving") and enabled:
+                    # A replacement picker also belongs to a disabled saved
+                    # definition. Its temporary state wins until pump completion.
+                    statuses[name] = status
+            state.update(
+                statuses=statuses,
+                live_count=runtime.get("live_count", 0) if enabled or stopping else 0,
+                cap=MAX_LIVE_CROPS,
+                runtime_enabled=enabled,
+                busy=stopping
+                or (enabled and runtime.get("busy", False))
+                or any(op["pending"] for op in state["operations"].values()),
+            )
+            if state != self._crop_delivery_state:
+                self._crop_delivery_revision += 1
+                self._crop_delivery_state = copy.deepcopy(state)
+            state["revision"] = self._crop_delivery_revision
+            return state
+
+    def _notify_crop_state(self) -> None:
+        # evaluate_js is synchronous: final shutdown runs after webview.start
+        # returns, so neither the storage worker nor native cleanup may wait on
+        # that closed page. Ordinary master-off still publishes its outcomes.
+        if not self._closing and self._on_crops_changed is not None:
+            try:
+                self._on_crops_changed(self.crop_state())
+            except Exception:
+                # A page failure cannot strand operation ordering or cleanup.
+                logger.exception("Could not publish crop state")
+
+    def _watch_crop_stop(self, future: Future, epoch: int, *, final=False) -> None:
+        with self._lock:
+            close_needed = self._closing and not final
+            if not close_needed:
+                self._stop_future = future
+                self._stop_final = final
+                self._stop_submitting = False
+        if close_needed:
+            # Covers final exit in the gap before begin_stop installed its
+            # ordinary barrier, including startup failure with no native pump.
+            self._watch_crop_stop(self._crop_store.close(), epoch, final=True)
+            return
+
+        def ready(done):
+            self._stop_ready.put((epoch, done))
+            self._post(win32.WM_APP_CROP_STOP_READY)
+            self._notify_crop_state()
+
+        future.add_done_callback(ready)
 
     def _layout_changed(self, stable_key, rect, locked) -> None:
         """Record the new rect locally, then pass it outward.
@@ -553,7 +919,9 @@ class PreviewHost:
             self._announce_layouts_changed()
 
     def _announce_layouts_changed(self) -> None:
-        if self._on_layouts_changed is None:
+        # A final freeze can record the first primary drag after WebView closed.
+        # Preserve that geometry without making cleanup wait on evaluate_js.
+        if self._closing or self._on_layouts_changed is None:
             return
         try:
             self._on_layouts_changed()
@@ -593,6 +961,16 @@ class PreviewHost:
             if pending is not None and snapshot.generation <= pending.generation:
                 return
             self._pending_roster = snapshot
+            if (
+                self._crop_roster is None
+                or snapshot.generation > self._crop_roster.generation
+            ):
+                self._crop_roster = snapshot
+            epoch = self._crop_epoch
+        if self._crop_store is not None:
+            # Ingress revokes admission immediately, even while this pump is
+            # busy. Store callbacks only enqueue results, never touch natives.
+            self._crop_store.observe_roster(epoch, snapshot)
         # Outside the lock, and after the swap: _post is a no-op until the
         # preview thread has created _hwnd (start() returns before that), so
         # a snapshot published in that gap carries no signal of its own --
@@ -690,7 +1068,7 @@ class PreviewHost:
         """
         return dict(self._hotkey_status)
 
-    def resize_preview(self, stable_key: str, size) -> None:
+    def resize_preview(self, stable_key: str, size) -> bool:
         """Set one preview's size on demand. Safe from any thread.
 
         Same shape as set_hotkeys: PostMessageW carries integers only, so the
@@ -698,10 +1076,13 @@ class PreviewHost:
         posted.
         """
         with self._lock:
+            if self._stopping:
+                return False
             self._pending_resize[stable_key] = (int(size[0]), int(size[1]))
-        self._post(win32.WM_APP_RESIZE_ONE)
+            self._post_primary_intent(win32.WM_APP_RESIZE_ONE)
+        return True
 
-    def resize_all(self, size) -> None:
+    def resize_all(self, size) -> bool:
         """Set EVERY open preview's size. Safe from any thread.
 
         Deliberately overrides custom sizes: this is the "make them all
@@ -710,8 +1091,11 @@ class PreviewHost:
         sized individually afterwards simply overwrites its entry again.
         """
         with self._lock:
+            if self._stopping:
+                return False
             self._pending_resize_all = (int(size[0]), int(size[1]))
-        self._post(win32.WM_APP_RESIZE_ALL)
+            self._post_primary_intent(win32.WM_APP_RESIZE_ALL)
+        return True
 
     def _mirror_resize(self, driver_key: str, rect) -> None:
         """Copy a resize-all chord's size onto every OTHER open preview.
@@ -795,9 +1179,22 @@ class PreviewHost:
             self._post(win32.WM_APP_APPLY_LAYOUTS)
         return COPY_OK
 
-    def reset_layouts(self) -> None:
+    def _post_primary_intent(self, message) -> None:
+        # Caller holds _lock, also used to post shutdown. These three messages
+        # contain deferred persistence, not just native updates: place accepted
+        # intents BEFORE shutdown in the native FIFO, including the HWND gap.
+        if self._hwnd:
+            self._post(message)
+        else:
+            self._pending_primary_signals.append(message)
+
+    def reset_layouts(self) -> bool:
         """Forget every saved position and re-place. Safe from any thread."""
-        self._post(win32.WM_APP_RESET_LAYOUTS)
+        with self._lock:
+            if self._stopping:
+                return False
+            self._post_primary_intent(win32.WM_APP_RESET_LAYOUTS)
+        return True
 
     def client_sizes(self) -> dict:
         """Last sampled client-area size per character. Safe from any thread."""
@@ -850,8 +1247,22 @@ class PreviewHost:
                 "Preview host window could not be created; "
                 "previews are disabled for this session"
             )
+            if self._crop_store is not None:
+                # Bridge requests may have arrived after start() but before
+                # CreateWindowExW failed. Settle them without a native pump.
+                self._begin_stop(libs)
             return
 
+        self._init_crop_controller(libs)
+        with self._lock:
+            primary_signals, self._pending_primary_signals = (
+                self._pending_primary_signals,
+                [],
+            )
+        for signal in primary_signals:
+            self._host_proc(self._hwnd, signal, 0, 0)
+        if self._stopping:
+            self._begin_stop(libs)
         # Shared discovery owns enumeration cadence. Request its first
         # snapshot only after the pump HWND exists, so apply_roster can post
         # a signal rather than relying solely on the pending slot.
@@ -875,17 +1286,32 @@ class PreviewHost:
             # reposted here, which would be a retry loop against a failure
             # that is very likely to repeat.
             logger.exception("Could not apply the startup roster")
-        self._install_hook(libs)
-        with self._lock:
-            initial = dict(self._desired_hotkeys)
-        self._apply_hotkeys(libs, initial)
+        if not self._stopping:
+            self._install_hook(libs)
+            with self._lock:
+                initial = dict(self._desired_hotkeys)
+            self._apply_hotkeys(libs, initial)
+            if self._crop_controller is not None:
+                self._apply_crop_commands(libs)
+                self._apply_crop_completions(libs)
+            self._apply_alerts(libs, self._drain_alerts())
         self._ready.set()
-        self._apply_alerts(libs, self._drain_alerts())
 
         msg = wintypes.MSG()
         while libs.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            libs.user32.TranslateMessage(ctypes.byref(msg))
-            libs.user32.DispatchMessageW(ctypes.byref(msg))
+            # Child HWND messages and deferred cancel after HWND destruction
+            # both belong to the retained picker, not just parent messages.
+            consumed = (
+                self._crop_controller is not None
+                and self._crop_controller.process_dialog_message(msg)
+            )
+            if not consumed:
+                libs.user32.TranslateMessage(ctypes.byref(msg))
+                libs.user32.DispatchMessageW(ctypes.byref(msg))
+            if self._stopping:
+                # A ready drain may still own a picker's fonts. Retry only at
+                # existing message boundaries, after native callbacks unwind.
+                self._finish_crop_stop(libs)
 
     def _create_host_window(self, libs):
         """A message-only window that outlives every preview.
@@ -935,6 +1361,31 @@ class PreviewHost:
 
     def _host_proc(self, hwnd, msg, wparam, lparam):
         libs = win32.bind()
+        if msg == win32.WM_APP_CROP_STOP_READY:
+            self._finish_crop_stop(libs)
+            return 0
+        if msg == win32.WM_APP_SHUTDOWN:
+            self._begin_stop(libs)
+            return 0
+        if self._stopping:
+            # Stop ingress fences native authority immediately. Already-posted
+            # primary settings intents still run, in FIFO order BEFORE freeze;
+            # once draining starts only completions/cleanup may reach natives.
+            primary_intent = msg in (
+                win32.WM_APP_RESIZE_ONE,
+                win32.WM_APP_RESIZE_ALL,
+                win32.WM_APP_RESET_LAYOUTS,
+            )
+            if msg == win32.WM_APP_CROP_COMPLETE and self._stop_future is not None:
+                self._apply_crop_completions(libs)
+            elif primary_intent and self._stop_future is None:
+                if msg == win32.WM_APP_RESIZE_ONE:
+                    self._apply_resizes()
+                elif msg == win32.WM_APP_RESIZE_ALL:
+                    self._apply_resize_all()
+                else:
+                    self._reset_layouts()
+            return 0
         if msg == win32.WM_TIMER and wparam == ACTIVATE_RETRY_TIMER_ID:
             self._retry_pending_activation(libs)
             return 0
@@ -944,8 +1395,11 @@ class PreviewHost:
         if msg == win32.WM_APP_ROSTER:
             self._apply_pending_roster(libs)
             return 0
-        if msg == win32.WM_APP_SHUTDOWN:
-            self._teardown(libs)
+        if msg == win32.WM_APP_CROP_COMMAND:
+            self._apply_crop_commands(libs)
+            return 0
+        if msg == win32.WM_APP_CROP_COMPLETE:
+            self._apply_crop_completions(libs)
             return 0
         if msg == win32.WM_APP_REBIND:
             with self._lock:
@@ -1006,6 +1460,125 @@ class PreviewHost:
                 "SetWinEventHook failed; selection will follow periodic shared scans"
             )
 
+    def _init_crop_controller(self, libs) -> None:
+        if self._crop_store is None:
+            return
+        # start() prepares authorization before launching the thread. Direct
+        # pump-construction tests can still initialize the optional collaborator.
+        if not self._crop_epoch_prepared:
+            self._open_crop_epoch()
+        self._crop_epoch_prepared = False
+        epoch = self._crop_epoch
+
+        def client_size(client):
+            rect = win32.RECT()
+            if libs.user32.GetClientRect(client.hwnd, ctypes.byref(rect)):
+                return rect.right - rect.left, rect.bottom - rect.top
+            return None
+
+        factory = self._crop_controller_factory or CropController
+        self._crop_controller = factory(
+            libs,
+            self._crop_store,
+            epoch=epoch,
+            create_crop=CropWindow.create,
+            create_picker=CropPicker.create,
+            read_client_size=client_size,
+            monitors=self._monitors,
+            activate=lambda client: self._activate_crop(libs, client.character),
+            is_locked=self._is_locked,
+            publish=self._publish_crop_state,
+            post_complete=self._queue_crop_completion,
+            next_geometry_sequence=lambda: next(self._crop_geometry_sequence),
+            is_authorized=self._crop_authorized,
+        )
+        self._crop_controller.set_hidden(self._previews_hidden)
+
+    def _crop_authorized(self, epoch, client=None) -> bool:
+        """Current ingress fence, not the pump's possibly stale roster copy."""
+        with self._lock:
+            if self._stopping or self._closing or epoch != self._crop_epoch:
+                return False
+            return client is None or (
+                self._crop_roster is not None
+                and any(
+                    entry.session == client.session
+                    for entry in self._crop_roster.clients
+                    if entry.character == client.character
+                )
+            )
+
+    def _activate_crop(self, libs, name) -> None:
+        if self._stopping:
+            return
+        self._apply_pending_roster(libs)
+        current = self._crop_controller.sessions.get(name)
+        if current is not None:
+            self._activate_client(libs, _preview_client(current))
+
+    def _publish_crop_state(self, state) -> None:
+        with self._lock:
+            self._crop_runtime_state = copy.deepcopy(state)
+        self._notify_crop_state()
+
+    def _queue_crop_completion(self, result) -> None:
+        # Store callbacks run outside its locks, including ingress cancellation.
+        # Order the mailbox decision with start; a stopped host needs no native
+        # completion history (the store already bounds its terminal outcomes).
+        with self._lock:
+            running = self._starting or self.is_running or self._hwnd is not None
+            if running:
+                self._crop_completions.put(result)
+        if running:
+            self._post(win32.WM_APP_CROP_COMPLETE)
+        else:
+            self._notify_crop_state()
+
+    def _apply_crop_commands(self, libs) -> None:
+        self._apply_pending_roster(libs)
+        with self._lock:
+            if (
+                self._crop_dispatching
+                or self._stopping
+                or self._crop_controller is None
+            ):
+                return
+            commands, self._crop_commands = self._crop_commands, []
+        for command in commands:
+            try:
+                self._crop_controller.request(*command)
+            except Exception:
+                # This batch was already drained. One failed request must not
+                # abandon all following accepted intents. Preserve admitted
+                # outcomes; cancel only work the store still permits canceling.
+                logger.exception("Could not process crop command for %s", command[1])
+                if self._crop_store is not None:
+                    try:
+                        self._crop_store.cancel(command[3])
+                    except ValueError:
+                        # Bounded terminal history may already have retired it.
+                        logger.debug("Failed crop command outcome already retired")
+
+    def _apply_crop_completions(self, libs) -> None:
+        with self._lock:
+            if self._crop_dispatching:
+                return
+        self._apply_pending_roster(libs)
+        while True:
+            try:
+                result = self._crop_completions.get_nowait()
+            except Empty:
+                break
+            if self._crop_controller is not None:
+                self._crop_controller.complete(result)
+                # An offline write may publish after a pump started. It has no
+                # coordinator-owned intent, but committed truth must still be
+                # reconciled (equal-generation roster retry is supported).
+                with self._lock:
+                    snapshot = self._crop_roster
+                if snapshot is not None and not self._stopping:
+                    self._crop_controller.reconcile(snapshot)
+
     def _sweep(self, libs) -> None:
         """Legacy reconciliation test seam; production never calls it.
 
@@ -1033,6 +1606,10 @@ class PreviewHost:
         failure means there -- but never at the cost of the snapshot.
         """
         with self._lock:
+            if self._stopping or self._crop_dispatching:
+                # An offline batch accepted before launch still owns delivery.
+                # Even a native window's close callback must not overtake it.
+                return
             snapshot, self._pending_roster = self._pending_roster, None
         if snapshot is None:
             return
@@ -1044,7 +1621,13 @@ class PreviewHost:
             )
             return
         try:
-            self._reconcile_roster(libs, snapshot)
+            try:
+                self._reconcile_roster(libs, snapshot)
+            finally:
+                # A primary failure must not retain a stale crop/picker's
+                # native authorization. Both consumers share the retry fence.
+                if self._crop_controller is not None:
+                    self._crop_controller.reconcile(snapshot)
         except Exception:
             # Put it back. It was popped before reconciliation ran, so
             # without this a failure would discard the roster as well as
@@ -1307,6 +1890,8 @@ class PreviewHost:
         for win in self._windows.values():
             win.set_hidden(hide)
         self._previews_hidden = hide
+        if self._crop_controller is not None:
+            self._crop_controller.set_hidden(hide)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -1824,6 +2409,8 @@ class PreviewHost:
         activation updates selection and requests its async minimize, which
         prevents the minimize-first desktop gap found in Windows smoke.
         """
+        if self._stopping:
+            return window_mod.ActivationResult.REFUSED
         # A newer click or hotkey supersedes an outstanding pending target.
         superseded = self._pending_switch
         if superseded is not None:
@@ -2406,6 +2993,8 @@ class PreviewHost:
                     win.opacity,
                 )
 
+        if self._crop_controller is not None:
+            self._crop_controller.restyle()
         # Last, after every window has been restyled: hiding one that is
         # about to be repainted anyway would push a bitmap nobody can see.
         self._apply_visibility(libs, self._foreground)
@@ -2503,13 +3092,113 @@ class PreviewHost:
         with self._lock:
             self._client_sizes = sizes
 
-    def _teardown(self, libs) -> None:
-        """Ordered, and all of it on this thread."""
-        # First, while the windows still exist and their rects are still
-        # readable. Layout writes are debounced by a second, so quitting
-        # right after a drag would otherwise discard it. settings.save()
-        # is lock-serialised, so writing from this thread is safe.
-        if self._flush_layouts is not None:
+    def _begin_stop(self, libs) -> None:
+        """Freeze native activity, then arrange storage completion without waiting."""
+        with self._lock:
+            if (
+                self._stop_future is not None
+                or self._stop_cleanup_epoch == self._crop_epoch
+            ):
+                return
+            self._stopping = True
+            self._capture_until = 0.0
+            dispatching = self._crop_dispatching
+            commands = []
+            if not dispatching:
+                commands, self._crop_commands = self._crop_commands, []
+            epoch = self._crop_epoch
+        self._clear_pending_activation(libs)
+        for key, window in list(self._windows.items()):
+            # Primary drags commit on button-up, unlike crops' per-move deltas.
+            # Freeze a real in-progress move, never an untouched monitor rescue.
+            if window._mode in ("move", "resize", "resize_all"):
+                self._layout_changed(key, window.rect, window.locked)
+            window._mode = None
+            window.locked = True
+            window.set_hidden(True)
+        libs.user32.ReleaseCapture()
+        if dispatching:
+            # An accepted offline batch predates pump launch and still owns
+            # submission order. Its finally reposts shutdown; never close the
+            # store ahead of those begun-but-not-yet-submitted config tokens.
+            return
+        if self._crop_store is None:
+            # Optional primary-only seam retains its historical teardown path.
+            self._teardown(libs)
+            return
+        if self._crop_controller is not None:
+            future = self._crop_controller.begin_stop(epoch)
+        else:
+            self._crop_store.fence_epoch(epoch)
+            future = self._crop_store.drain()
+        # Coordinator-held intents precede the host mailbox. begin_stop submits
+        # those first; append still-undelivered configuration before the final
+        # barrier. Source commands were fenced and must never open a picker.
+        for action, name, value, token in commands:
+            if action == "select" or token.session is not None:
+                self._cancel_crop_token(token)
+            else:
+                pending = (
+                    self._crop_store.set_enabled(token, value)
+                    if action == "enabled"
+                    else self._crop_store.remove(token)
+                )
+                pending.add_done_callback(
+                    lambda done: self._queue_crop_completion(done.result())
+                )
+        with self._lock:
+            final = self._closing
+        if final:
+            future = self._crop_store.close()
+        elif commands:
+            future = self._crop_store.drain()
+        self._watch_crop_stop(future, epoch, final=final)
+        self._notify_crop_state()
+
+    def _finish_crop_stop(self, libs) -> None:
+        while True:
+            try:
+                epoch, future = self._stop_ready.get_nowait()
+            except Empty:
+                return
+            with self._lock:
+                if (
+                    epoch != self._crop_epoch
+                    or future is not self._stop_future
+                    or self._stop_cleanup_epoch == epoch
+                ):
+                    continue
+                final = self._closing
+                close_needed = final and not self._stop_final
+            if not future.done():
+                continue
+            if close_needed:
+                self._watch_crop_stop(self._crop_store.close(), epoch, final=True)
+                continue
+            if not future.result():
+                logger.warning("Preview storage drain completed with a flush failure")
+            self._apply_crop_completions(libs)
+            if (
+                self._crop_controller is not None
+                and not self._crop_controller.close_native()
+            ):
+                # Keep both the owner and its ready barrier. Do not repost:
+                # the next existing pump turn retries after native unwinding.
+                self._stop_ready.put((epoch, future))
+                return
+            with self._lock:
+                self._stop_cleanup_epoch = epoch
+                self._crop_controller = None
+                self._crop_runtime_state = {}
+            self._teardown(libs, flush=False)
+            self._notify_crop_state()
+
+    def _teardown(self, libs, *, flush=True) -> None:
+        """Ordered native teardown; production storage was drained off-pump."""
+        # Primary-only callers retain their legacy flush hook. Production
+        # reaches here only after the retained crop worker flushed both stores;
+        # repeating that synchronous wait would defeat two-phase shutdown.
+        if flush and self._flush_layouts is not None:
             try:
                 self._flush_layouts()
             except Exception:
@@ -2556,7 +3245,15 @@ class PreviewHost:
             # ever compared: a restarted discovery counts from 1 again, and
             # a remembered high-water mark would reject its whole session.
             self._pending_roster = None
+            # Telemetry's existing preview consumer is gated while master-off.
+            # Do not re-authorize the old runtime's HWND/session after an hour
+            # offline. New ingress (including the post-open seed) repopulates it.
+            self._crop_roster = None
             self._last_roster_generation = 0
+            self._pending_resize = {}
+            self._pending_resize_all = None
+            self._pending_layouts = {}
+            self._pending_primary_signals = []
         self._focused_key = None
         self._selected_key = None
         self._foreground = 0

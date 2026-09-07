@@ -19,11 +19,44 @@ engine is verified":
 The manual smoke checklist is the backstop for all of these.
 """
 
+import ast
+import importlib
+import inspect
 import re
 
 import pytest
 
 from wingman import paths
+
+
+@pytest.mark.parametrize(
+    "name", ["crops", "cropstore", "cropwindow", "croppicker", "cropcontroller"]
+)
+def test_production_crop_modules_cannot_control_client_placement_or_inject_input(name):
+    module = importlib.import_module("wingman.preview." + name)
+    calls = [
+        node
+        for node in ast.walk(ast.parse(inspect.getsource(module)))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    forbidden = {
+        "SetWindowPlacement",
+        "MoveWindow",
+        "ShowWindowAsync",
+        "SendInput",
+        "keybd_event",
+        "mouse_event",
+    }
+    assert not forbidden.intersection(node.func.attr for node in calls)
+    # Crop destinations, overlays and children legitimately move/show. Reject
+    # source/client-targeted calls rather than banning Wingman's own geometry.
+    geometry = [
+        node for node in calls if node.func.attr in {"SetWindowPos", "ShowWindow"}
+    ]
+    if name in {"cropwindow", "croppicker"}:
+        assert geometry
+    for node in geometry:
+        assert ast.unparse(node.args[0]) in {"self.hwnd", "self._overlay_hwnd", "hwnd"}
 
 
 def _code(source: str) -> str:

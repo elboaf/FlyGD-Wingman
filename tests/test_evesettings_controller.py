@@ -9,7 +9,11 @@ stay in tests/test_api_evesettings.py.
 """
 
 import dataclasses
+import hashlib
+import json
 import threading
+import zipfile
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -315,23 +319,19 @@ def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
     profile = eve_tree(tmp_path, files=("core_user_1.dat",))
     controller = build_controller(tmp_path)
     controller._eve_section()["root"] = str(tmp_path / "EVE")
-    store = {"doc": {}, "written": []}
-
-    def read_document(path, **kw):
-        from wingman.evesettings import codec as codec_mod
-
-        return codec_mod.Document(doc=store["doc"], had_crc=False)
-
-    def write_document(path, document, *, backup, **kw):
-        backup(path)
-        store["written"].append((path, document))
-
-    monkeypatch.setattr(ctrl_mod.evesettings_codec, "read_document", read_document)
-    monkeypatch.setattr(ctrl_mod.evesettings_codec, "write_document", write_document)
-    monkeypatch.setattr(
-        ctrl_mod.evesettings_codec, "codec_available", lambda **kw: True
+    store = _fake_codec(monkeypatch, {})
+    queued = QueuedThreads()
+    controller._ports = dataclasses.replace(controller._ports, spawn=queued.spawn)
+    assert controller.save_formations(
+        str(profile / "core_user_1.dat"), [], "a" * 64, "lock:1"
     )
-    controller.save_formations(str(profile / "core_user_1.dat"), [])
+    assert not controller._eve_mutation.acquire(blocking=False)
+    assert store["written"] == [] and controller._done_pushes == []
+    queued.run_next()
+    assert len(store["written"]) == 1
+    (done,) = controller._done_pushes
+    assert done["ok"] is True
+    assert done["request_id"] == "lock:1" and done["content_revision"] == "b" * 64
     assert controller._eve_mutation.acquire(blocking=False)
     controller._eve_mutation.release()
 
@@ -953,16 +953,22 @@ FORMATION_DOC = {
 
 
 def _fake_codec(monkeypatch, doc, *, available=True):
-    """Route the seam at codec.read_document/write_document to an in-memory doc."""
+    """In-memory snapshots for orchestration tests, not publication evidence."""
     store = {"doc": doc, "written": []}
 
     def read_document(path, **kw):
         return codec_mod.Document(doc=store["doc"], had_crc=False)
 
-    def write_document(path, document, *, backup, **kw):
+    def read_snapshot(path, **kw):
+        return codec_mod.DocumentSnapshot(read_document(path), "a" * 64)
+
+    def write_document(path, document, *, backup, expected_content_revision, **kw):
+        assert expected_content_revision == "a" * 64
         backup(path)
         store["written"].append((path, document))
+        return "b" * 64
 
+    monkeypatch.setattr(codec_mod, "read_snapshot", read_snapshot)
     monkeypatch.setattr(codec_mod, "read_document", read_document)
     monkeypatch.setattr(codec_mod, "write_document", write_document)
     monkeypatch.setattr(codec_mod, "codec_available", lambda **kw: available)
@@ -994,7 +1000,7 @@ def test_formations_read_reports_a_codec_failure_as_an_error_not_an_exception(
     def boom(path, **kw):
         raise codec_mod.CodecError("bad header")
 
-    monkeypatch.setattr(codec_mod, "read_document", boom)
+    monkeypatch.setattr(codec_mod, "read_snapshot", boom)
     got = controller.formations(str(account))
     assert got == {"ok": False, "error": "bad header"}
 
@@ -1027,7 +1033,7 @@ def test_save_is_refused_when_the_strict_running_probe_fails(tmp_path, monkeypat
     controller._ports = dataclasses.replace(
         controller._ports, strict_client_running=boom
     )
-    controller.save_formations(str(account), [])
+    controller.save_formations(str(account), [], "a" * 64, "probe:1")
 
     assert store["written"] == [] and backups == []
     assert len(controller._alerts) == 1
@@ -1040,10 +1046,23 @@ def test_save_is_refused_while_an_eve_client_is_running(tmp_path, monkeypatch):
     controller._ports = dataclasses.replace(
         controller._ports, strict_client_running=lambda: True
     )
-    controller.save_formations(str(account), [])
+    controller.save_formations(str(account), [], "a" * 64, "running:1")
     assert store["written"] == []
     assert len(controller._alerts) == 1 and "Close EVE" in controller._alerts[0][2]
-    assert controller._done_pushes == [{"ok": False}]
+    assert controller._done_pushes == [
+        {
+            "ok": False,
+            "operation": "formations_save",
+            "path": str(account),
+            "request_id": "running:1",
+            "content_revision": "",
+            "error_code": "save_failed",
+            "error": "The file is in use. Close EVE and retry.",
+            "warning": "",
+        }
+    ]
+    assert controller._eve_mutation.acquire(blocking=False)
+    controller._eve_mutation.release()
 
 
 def test_save_rejects_an_invalid_formation_before_touching_the_file(
@@ -1056,9 +1075,190 @@ def test_save_rejects_an_invalid_formation_before_touching_the_file(
     )
     backups = []
     controller._eve_auto_backup = lambda path: backups.append(path)
-    controller.save_formations(str(account), [{"id": None, "name": "", "probes": []}])
+    controller.save_formations(
+        str(account), [{"id": None, "name": "", "probes": []}], "a" * 64, "invalid:1"
+    )
     assert store["written"] == [] and backups == []
     assert "needs a name" in controller._alerts[0][2]
+
+
+@pytest.mark.parametrize("refusal", ["busy", "identification", "spawn"])
+def test_formation_save_admission_refusal_never_publishes_done(
+    tmp_path, monkeypatch, refusal
+):
+    controller, account = controller_account_setup(tmp_path)
+    before = account.read_bytes()
+
+    def no_read(*args, **kwargs):
+        pytest.fail("a refused save never starts account work")
+
+    monkeypatch.setattr(codec_mod, "read_snapshot", no_read)
+    if refusal == "busy":
+        controller._eve_mutation.acquire()
+    elif refusal == "identification":
+        controller._eve_identification = object()
+    else:
+
+        def refuse_spawn(**kwargs):
+            raise RuntimeError("worker unavailable")
+
+        controller._ports = dataclasses.replace(controller._ports, spawn=refuse_spawn)
+    try:
+        assert (
+            controller.save_formations(str(account), [], "a" * 64, "refused:1") is False
+        )
+        assert controller._done_pushes == []
+        assert len(controller._alerts) == 1
+        assert account.read_bytes() == before
+        assert not list(paths.eve_settings_backup_dir().glob("*.zip"))
+        assert controller._eve_mutation.locked() is (refusal == "busy")
+    finally:
+        if refusal == "busy":
+            controller._eve_mutation.release()
+    assert controller._eve_mutation.acquire(blocking=False)
+    controller._eve_mutation.release()
+
+
+@pytest.mark.parametrize("outcome", ["saved", "stale", "publish-failure"])
+def test_formation_save_direct_boundary_preserves_bytes_correlation_and_completion(
+    tmp_path, monkeypatch, outcome
+):
+    """Real snapshots, guarded publication and backups, without an Api instance."""
+    controller, account = controller_account_setup(tmp_path)
+    before = b"\x7d" + json.dumps({"doc": FORMATION_DOC, "had_crc": True}).encode()
+    account.write_bytes(before)
+
+    # Only replace the external filter: verifying decode consumes encoded bytes.
+    def filter_bytes(mode, payload, **kwargs):
+        if mode == "encode":
+            return b"\x7d" + payload
+        assert mode == "decode" and payload.startswith(b"\x7d")
+        return payload[1:]
+
+    monkeypatch.setattr(codec_mod, "_run", filter_bytes)
+    loaded = controller.formations(str(account))
+    assert loaded["ok"]
+    assert loaded["content_revision"] == hashlib.sha256(before).hexdigest()
+    wanted = [
+        {"id": None, "name": "New", "probes": [{"x": 1, "y": 2, "z": 3, "range": 4}]}
+    ]
+    queued = QueuedThreads()
+    lock_at_done = []
+
+    def done(payload):
+        lock_at_done.append(controller._eve_mutation.locked())
+        controller._done_pushes.append(payload)
+
+    controller._ports = dataclasses.replace(
+        controller._ports, spawn=queued.spawn, publish_done=done
+    )
+    prunes = []
+    real_prune = controller._eve_prune
+
+    def prune(keep):
+        prunes.append(keep)
+        return real_prune(keep)
+
+    controller._eve_prune = prune
+    if outcome == "publish-failure":
+
+        def refuse_publish(*args, **kwargs):
+            raise OSError("publication unavailable")
+
+        monkeypatch.setattr(
+            codec_mod,
+            "write_document",
+            partial(codec_mod.write_document, publish=refuse_publish),
+        )
+    assert controller.save_formations(
+        str(account), wanted, loaded["content_revision"], "direct:1"
+    )
+    assert controller._eve_mutation.locked()
+    assert controller._done_pushes == []
+    assert not controller.formations(str(account))["ok"]
+    if outcome == "stale":
+        changed = before + b" "
+        account.write_bytes(changed)
+
+        def no_write(*args, **kwargs):
+            pytest.fail(
+                "a stale snapshot must be refused before encoding or backing up"
+            )
+
+        monkeypatch.setattr(codec_mod, "write_document", no_write)
+    queued.run_next()
+    (payload,) = controller._done_pushes
+    assert lock_at_done == [False]
+    assert payload["operation"] == "formations_save"
+    assert payload["path"] == str(account) and payload["request_id"] == "direct:1"
+    assert payload["warning"] == ""
+    assert controller._eve_mutation.acquire(blocking=False)
+    controller._eve_mutation.release()
+    archives = list(paths.eve_settings_backup_dir().glob("*.zip"))
+    if outcome == "stale":
+        assert payload["ok"] is False and payload["error_code"] == "stale_file"
+        assert payload["content_revision"] == ""
+        assert "Nothing was saved" in payload["error"]
+        assert account.read_bytes() == changed
+        assert archives == [] and prunes == []
+    else:
+        (archive,) = archives
+        with zipfile.ZipFile(archive) as backup:
+            assert backup.read(account.name) == before
+        if outcome == "publish-failure":
+            assert payload["ok"] is False and payload["error_code"] == "save_failed"
+            assert payload["content_revision"] == ""
+            assert "publication unavailable" in payload["error"]
+            assert account.read_bytes() == before and prunes == []
+        else:
+            assert payload["ok"] is True
+            assert payload["error"] == payload["error_code"] == ""
+            assert (
+                payload["content_revision"]
+                == hashlib.sha256(account.read_bytes()).hexdigest()
+            )
+            assert payload["content_revision"] != loaded["content_revision"]
+            assert prunes == [10]
+            saved = formations_mod.to_payload(
+                formations_mod.read_formations(codec_mod.read_document(account).doc)
+            )
+            assert saved == [{"id": 1, "name": "New", "probes": wanted[0]["probes"]}]
+
+
+def test_formation_import_direct_boundary_needs_no_runtime_state():
+    # Accessing settings, ports or an account fails: none exist on this instance.
+    controller = ProfilesController.__new__(ProfilesController)
+    items = [
+        {
+            "id": None,
+            "name": " Straße ",
+            "probes": [{"x": 1, "y": 0, "z": 0, "range": 149597870700}],
+        }
+    ]
+    existing = ["STRASSE"]
+    before = json.dumps([items, existing])
+    exported = controller.export_formations(items)
+    assert exported["ok"] is True
+    parsed = controller.parse_formations(exported["text"], existing)
+    validated = controller.validate_formation_import(items, existing)
+    expected = {
+        "ok": True,
+        "formations": [
+            {
+                "id": None,
+                "name": "Straße",
+                "probes": [{"x": 1, "y": 0, "z": 0, "range": 149597870700}],
+            }
+        ],
+        "conflicts": [0],
+    }
+    assert parsed == expected and validated == expected
+    assert json.dumps([items, existing]) == before
+    items[0]["id"] = 7
+    rejected = controller.validate_formation_import(items, existing)
+    assert set(rejected) == {"ok", "error"}
+    assert rejected["ok"] is False and rejected["error"]
+    assert json.loads(json.dumps(rejected)) == rejected
 
 
 # ---------------------------------------------------------------------------

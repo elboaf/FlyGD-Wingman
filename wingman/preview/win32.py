@@ -22,6 +22,15 @@ from typing import NamedTuple
 
 # --- Window styles ------------------------------------------------------
 WS_POPUP = 0x80000000
+WS_CHILD = 0x40000000
+WS_VISIBLE = 0x10000000
+WS_CLIPCHILDREN = 0x02000000
+WS_CAPTION = 0x00C00000
+WS_SYSMENU = 0x00080000
+WS_THICKFRAME = 0x00040000
+WS_TABSTOP = 0x00010000
+BS_OWNERDRAW = 0x0000000B
+SS_NOPREFIX = 0x00000080
 WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
@@ -51,8 +60,42 @@ HWND_TOPMOST = -1
 
 # --- Messages -----------------------------------------------------------
 WM_DESTROY = 0x0002
+WM_MOVE = 0x0003
+WM_SIZE = 0x0005
+WM_GETMINMAXINFO = 0x0024
+WM_SETFONT = 0x0030
+WM_NCDESTROY = 0x0082
+WM_KEYDOWN = 0x0100
+WM_COMMAND = 0x0111
+WM_DPICHANGED = 0x02E0
+DM_GETDEFID = 0x0400
+DM_SETDEFID = 0x0401
+WM_ERASEBKGND = 0x0014
+WM_DRAWITEM = 0x002B
+WM_CTLCOLORSTATIC = 0x0138
+WM_NCHITTEST = 0x0084
+WM_NCLBUTTONDBLCLK = 0x00A3
+HTCLIENT = 1
+HTCAPTION = 2
+ODT_BUTTON = 4
+ODS_SELECTED = 0x0001
+ODS_DISABLED = 0x0004
+ODS_FOCUS = 0x0010
+ODS_NOACCEL = 0x0100
+ODS_NOFOCUSRECT = 0x0200
+DT_CENTER = 0x0001
+DT_VCENTER = 0x0004
+DT_SINGLELINE = 0x0020
+DT_HIDEPREFIX = 0x00100000
+DC_BRUSH = 18
+TRANSPARENT = 1
+CLR_INVALID = 0xFFFFFFFF
+VK_RETURN = 0x0D
+VK_ESCAPE = 0x1B
 WM_PAINT = 0x000F
 WM_CLOSE = 0x0010
+WM_CANCELMODE = 0x001F
+WM_CAPTURECHANGED = 0x0215
 WM_TIMER = 0x0113
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
@@ -76,6 +119,15 @@ WM_APP_APPLY_LAYOUTS = WM_APP + 8
 # snapshot cannot ride in wparam/lparam, so it travels in a field under the
 # host's lock and this only says "there is a newer one to read".
 WM_APP_ROSTER = WM_APP + 9
+# Crop messages carry signals only; Python mailboxes own commands/results.
+WM_APP_CROP_COMMAND = WM_APP + 10
+WM_APP_CROP_COMPLETE = WM_APP + 11
+WM_APP_CROP_STOP_READY = WM_APP + 12
+
+# --- Crop context menu --------------------------------------------------
+MF_STRING = 0x0000
+TPM_NONOTIFY = 0x0080
+TPM_RETURNCMD = 0x0100
 
 # --- Layered windows ----------------------------------------------------
 ULW_ALPHA = 0x02
@@ -96,6 +148,7 @@ WINEVENT_OUTOFCONTEXT = 0x0000
 
 # --- DPI ----------------------------------------------------------------
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+MONITOR_DEFAULTTONEAREST = 2
 
 # --- Virtual desktop metrics -------------------------------------------
 # The union of every monitor, in physical pixels. Origin can be NEGATIVE:
@@ -139,6 +192,16 @@ class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
+class MINMAXINFO(ctypes.Structure):
+    _fields_ = [
+        ("ptReserved", POINT),
+        ("ptMaxSize", POINT),
+        ("ptMaxPosition", POINT),
+        ("ptMinTrackSize", POINT),
+        ("ptMaxTrackSize", POINT),
+    ]
+
+
 class SIZE(ctypes.Structure):
     _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
 
@@ -164,6 +227,20 @@ class DWM_THUMBNAIL_PROPERTIES(ctypes.Structure):
 
 
 RECT = wintypes.RECT
+
+
+class DRAWITEMSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("CtlType", wintypes.UINT),
+        ("CtlID", wintypes.UINT),
+        ("itemID", wintypes.UINT),
+        ("itemAction", wintypes.UINT),
+        ("itemState", wintypes.UINT),
+        ("hwndItem", wintypes.HWND),
+        ("hDC", wintypes.HDC),
+        ("rcItem", RECT),
+        ("itemData", ctypes.c_size_t),
+    ]
 
 
 class MONITORINFO(ctypes.Structure):
@@ -279,6 +356,30 @@ def bind() -> Libs:
         ),
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
+        (user32, "ClientToScreen", BOOL, [HWND, ctypes.POINTER(POINT)]),
+        (user32, "ScreenToClient", BOOL, [HWND, ctypes.POINTER(POINT)]),
+        (
+            user32,
+            "FillRect",
+            ctypes.c_int,
+            [HDC, ctypes.POINTER(RECT), wintypes.HBRUSH],
+        ),
+        (
+            user32,
+            "DrawTextW",
+            ctypes.c_int,
+            [HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(RECT), UINT],
+        ),
+        (user32, "GetDpiForWindow", UINT, [HWND]),
+        (
+            user32,
+            "AdjustWindowRectExForDpi",
+            BOOL,
+            [ctypes.POINTER(wintypes.RECT), DWORD, BOOL, DWORD, UINT],
+        ),
+        (user32, "MonitorFromWindow", wintypes.HMONITOR, [HWND, DWORD]),
+        (user32, "EnableWindow", BOOL, [HWND, BOOL]),
+        (user32, "SetWindowTextW", BOOL, [HWND, wintypes.LPCWSTR]),
         (user32, "GetSystemMetrics", ctypes.c_int, [ctypes.c_int]),
         # Monitor geometry. GetSystemMetrics(SM_*VIRTUALSCREEN) gives only
         # the bounding rectangle; these two give the actual displays, which
@@ -321,6 +422,17 @@ def bind() -> Libs:
         ),
         (user32, "GetDC", HDC, [HWND]),
         (user32, "ReleaseDC", ctypes.c_int, [HWND, HDC]),
+        # --- native picker dialog navigation. IsDialogMessage consumes the
+        # message itself on success; callers must skip Translate/Dispatch.
+        (user32, "IsDialogMessageW", BOOL, [HWND, ctypes.POINTER(wintypes.MSG)]),
+        # Only our same-thread picker child controls. Do not expose a
+        # general synchronous send: client minimize must remain asynchronous.
+        (
+            user32,
+            "SendDlgItemMessageW",
+            LRESULT,
+            [HWND, ctypes.c_int, UINT, WPARAM, LPARAM],
+        ),
         # --- message pump
         (user32, "GetMessageW", ctypes.c_int, [ctypes.c_void_p, HWND, UINT, UINT]),
         (user32, "PeekMessageW", BOOL, [ctypes.c_void_p, HWND, UINT, UINT, UINT]),
@@ -337,11 +449,30 @@ def bind() -> Libs:
         (user32, "KillTimer", BOOL, [HWND, ctypes.c_void_p]),
         # --- mouse capture
         (user32, "SetCapture", HWND, [HWND]),
+        (user32, "GetCapture", HWND, []),
         (user32, "ReleaseCapture", BOOL, []),
         (user32, "GetCursorPos", BOOL, [ctypes.POINTER(POINT)]),
+        # --- crop context menu. UINT_PTR must retain pointer width, and
+        # TrackPopupMenuEx's BOOL must retain the command ID with RETURNCMD
+        # (ctypes.c_bool would collapse every nonzero selection to True).
+        (user32, "CreatePopupMenu", wintypes.HMENU, []),
+        (user32, "DestroyMenu", BOOL, [wintypes.HMENU]),
+        (
+            user32,
+            "AppendMenuW",
+            BOOL,
+            [wintypes.HMENU, UINT, ctypes.c_size_t, wintypes.LPCWSTR],
+        ),
+        (
+            user32,
+            "TrackPopupMenuEx",
+            BOOL,
+            [wintypes.HMENU, UINT, ctypes.c_int, ctypes.c_int, HWND, ctypes.c_void_p],
+        ),
         # --- focus
         (user32, "SetForegroundWindow", BOOL, [HWND]),
         (user32, "SetFocus", HWND, [HWND]),
+        (user32, "GetFocus", HWND, []),
         (user32, "GetForegroundWindow", HWND, []),
         (user32, "AttachThreadInput", BOOL, [DWORD, DWORD, BOOL]),
         (user32, "IsIconic", BOOL, [HWND]),
@@ -377,6 +508,19 @@ def bind() -> Libs:
         (gdi32, "SelectObject", wintypes.HGDIOBJ, [HDC, wintypes.HGDIOBJ]),
         (gdi32, "DeleteObject", BOOL, [wintypes.HGDIOBJ]),
         (gdi32, "DeleteDC", BOOL, [HDC]),
+        (gdi32, "GetStockObject", wintypes.HGDIOBJ, [ctypes.c_int]),
+        (gdi32, "SetDCBrushColor", wintypes.COLORREF, [HDC, wintypes.COLORREF]),
+        (gdi32, "SetTextColor", wintypes.COLORREF, [HDC, wintypes.COLORREF]),
+        (gdi32, "SetBkColor", wintypes.COLORREF, [HDC, wintypes.COLORREF]),
+        (gdi32, "SetBkMode", ctypes.c_int, [HDC, ctypes.c_int]),
+        (gdi32, "SaveDC", ctypes.c_int, [HDC]),
+        (gdi32, "RestoreDC", BOOL, [HDC, ctypes.c_int]),
+        (
+            gdi32,
+            "CreateFontW",
+            wintypes.HFONT,
+            [ctypes.c_int] * 5 + [DWORD] * 8 + [wintypes.LPCWSTR],
+        ),
         # --- DWM
         (
             dwmapi,

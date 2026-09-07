@@ -20,7 +20,7 @@ import pytest
 
 from wingman.preview import win32
 
-pytestmark = pytest.mark.skipif(
+native_only = pytest.mark.skipif(
     sys.platform != "win32", reason="binds user32/gdi32/dwmapi"
 )
 
@@ -42,10 +42,27 @@ REQUIRED = {
         "GetDC",
         "ReleaseDC",
         "GetClientRect",
+        "ClientToScreen",
+        "ScreenToClient",
+        "FillRect",
+        "DrawTextW",
+        "GetDpiForWindow",
+        "AdjustWindowRectExForDpi",
+        "MonitorFromWindow",
+        "IsDialogMessageW",
+        "SendDlgItemMessageW",
+        "GetFocus",
+        "EnableWindow",
+        "SetWindowTextW",
         "InvalidateRect",
         "LoadCursorW",
         "SetCapture",
+        "GetCapture",
         "ReleaseCapture",
+        "CreatePopupMenu",
+        "AppendMenuW",
+        "TrackPopupMenuEx",
+        "DestroyMenu",
         "GetCursorPos",
         "SetForegroundWindow",
         "SetFocus",
@@ -66,6 +83,14 @@ REQUIRED = {
     ],
     "gdi32": [
         "CreateDIBSection",
+        "CreateFontW",
+        "GetStockObject",
+        "SetDCBrushColor",
+        "SetTextColor",
+        "SetBkColor",
+        "SetBkMode",
+        "SaveDC",
+        "RestoreDC",
         "CreateCompatibleDC",
         "SelectObject",
         "DeleteObject",
@@ -93,13 +118,24 @@ POINTER_SIZED_RETURNS = {
         "GetDC",
         "GetForegroundWindow",
         "SetFocus",
+        "GetFocus",
+        "SendDlgItemMessageW",
+        "MonitorFromWindow",
         "SetCapture",
+        "GetCapture",
+        "CreatePopupMenu",
         "SetTimer",
         "SetWinEventHook",
         "SetThreadDpiAwarenessContext",
         "DispatchMessageW",
     ],
-    "gdi32": ["CreateDIBSection", "CreateCompatibleDC", "SelectObject"],
+    "gdi32": [
+        "CreateDIBSection",
+        "CreateCompatibleDC",
+        "SelectObject",
+        "CreateFontW",
+        "GetStockObject",
+    ],
     "kernel32": ["GetModuleHandleW"],
 }
 
@@ -108,6 +144,7 @@ POINTER_SIZED_RETURNS = {
 _WIDE = (ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_size_t)
 
 
+@native_only
 def test_every_used_function_is_declared():
     libs = win32.bind()
     missing = []
@@ -122,6 +159,7 @@ def test_every_used_function_is_declared():
     assert not missing, "\n".join(missing)
 
 
+@native_only
 def test_pointer_sized_returns_are_not_left_at_the_c_int_default():
     """The other half of the guard.
 
@@ -145,5 +183,151 @@ def test_pointer_sized_returns_are_not_left_at_the_c_int_default():
     assert not bad, "\n".join(bad)
 
 
+@native_only
 def test_bind_is_cached_so_declarations_are_applied_once():
     assert win32.bind() is win32.bind()
+
+
+def test_crop_menu_and_capture_declarations_with_injected_libraries(monkeypatch):
+    """Exercise bind on Linux without loading any DLL or touching its cache."""
+    from ctypes import wintypes
+    from types import SimpleNamespace
+
+    class Library:
+        def __getattr__(self, name):
+            fn = SimpleNamespace(argtypes=None, restype=None)
+            setattr(self, name, fn)
+            return fn
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: Library(), raising=False)
+    for name in ("wndproc_type", "winevent_proc_type", "monitor_enum_proc_type"):
+        monkeypatch.setattr(win32, name, lambda: ctypes.c_void_p)
+    user32 = win32.bind.__wrapped__().user32
+    signatures = {
+        "GetCapture": (wintypes.HWND, []),
+        "CreatePopupMenu": (wintypes.HMENU, []),
+        "DestroyMenu": (wintypes.BOOL, [wintypes.HMENU]),
+        "AppendMenuW": (
+            wintypes.BOOL,
+            [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR],
+        ),
+        "TrackPopupMenuEx": (
+            wintypes.BOOL,
+            [
+                wintypes.HMENU,
+                wintypes.UINT,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.HWND,
+                ctypes.c_void_p,
+            ],
+        ),
+    }
+    for name, (result, args) in signatures.items():
+        fn = getattr(user32, name)
+        assert fn.restype is result, name
+        assert fn.argtypes == args, name
+    assert user32.TrackPopupMenuEx.restype(257).value == 257
+
+
+def test_picker_declarations_with_injected_libraries(monkeypatch):
+    from ctypes import wintypes
+    from types import SimpleNamespace
+
+    class Library:
+        def __getattr__(self, name):
+            fn = SimpleNamespace(argtypes=None, restype=None)
+            setattr(self, name, fn)
+            return fn
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: Library(), raising=False)
+    for name in ("wndproc_type", "winevent_proc_type", "monitor_enum_proc_type"):
+        monkeypatch.setattr(win32, name, lambda: ctypes.c_void_p)
+    libs = win32.bind.__wrapped__()
+    H, B, U, D = wintypes.HWND, wintypes.BOOL, wintypes.UINT, wintypes.DWORD
+    signatures = {
+        "ClientToScreen": (B, [H, ctypes.POINTER(win32.POINT)]),
+        "ScreenToClient": (B, [H, ctypes.POINTER(win32.POINT)]),
+        "FillRect": (
+            ctypes.c_int,
+            [wintypes.HDC, ctypes.POINTER(win32.RECT), wintypes.HBRUSH],
+        ),
+        "DrawTextW": (
+            ctypes.c_int,
+            [
+                wintypes.HDC,
+                wintypes.LPCWSTR,
+                ctypes.c_int,
+                ctypes.POINTER(win32.RECT),
+                U,
+            ],
+        ),
+        "GetDpiForWindow": (U, [H]),
+        "AdjustWindowRectExForDpi": (B, [ctypes.POINTER(win32.RECT), D, B, D, U]),
+        "MonitorFromWindow": (wintypes.HMONITOR, [H, D]),
+        "IsDialogMessageW": (B, [H, ctypes.POINTER(wintypes.MSG)]),
+        "SendDlgItemMessageW": (
+            win32.LRESULT,
+            [H, ctypes.c_int, U, win32.WPARAM, win32.LPARAM],
+        ),
+        "GetFocus": (H, []),
+        "EnableWindow": (B, [H, B]),
+        "SetWindowTextW": (B, [H, wintypes.LPCWSTR]),
+    }
+    for name, (result, args) in signatures.items():
+        fn = getattr(libs.user32, name)
+        assert fn.restype is result, name
+        assert fn.argtypes == args, name
+    for name in ("SetDCBrushColor", "SetTextColor", "SetBkColor"):
+        fn = getattr(libs.gdi32, name)
+        assert fn.restype is wintypes.COLORREF
+        assert fn.argtypes == [wintypes.HDC, wintypes.COLORREF]
+    for name, result, args in (
+        ("SetBkMode", ctypes.c_int, [wintypes.HDC, ctypes.c_int]),
+        ("SaveDC", ctypes.c_int, [wintypes.HDC]),
+        ("RestoreDC", B, [wintypes.HDC, ctypes.c_int]),
+    ):
+        fn = getattr(libs.gdi32, name)
+        assert fn.restype is result
+        assert fn.argtypes == args
+    assert libs.gdi32.CreateFontW.restype is wintypes.HFONT
+    assert libs.gdi32.CreateFontW.argtypes == [ctypes.c_int] * 5 + [D] * 8 + [
+        wintypes.LPCWSTR
+    ]
+    assert libs.gdi32.GetStockObject.restype is wintypes.HGDIOBJ
+    assert libs.gdi32.GetStockObject.argtypes == [ctypes.c_int]
+    assert ctypes.sizeof(libs.user32.SendDlgItemMessageW.restype) == ctypes.sizeof(
+        ctypes.c_void_p
+    )
+
+
+def test_picker_drawitem_struct_retains_pointer_sized_handles_and_item_data():
+    from ctypes import wintypes
+
+    fields = dict(win32.DRAWITEMSTRUCT._fields_)
+    assert fields == {
+        "CtlType": wintypes.UINT,
+        "CtlID": wintypes.UINT,
+        "itemID": wintypes.UINT,
+        "itemAction": wintypes.UINT,
+        "itemState": wintypes.UINT,
+        "hwndItem": wintypes.HWND,
+        "hDC": wintypes.HDC,
+        "rcItem": win32.RECT,
+        "itemData": ctypes.c_size_t,
+    }
+    value = 1 << (ctypes.sizeof(ctypes.c_void_p) * 8 - 2)
+    item = win32.DRAWITEMSTRUCT()
+    item.hwndItem = item.hDC = item.itemData = value
+    assert item.hwndItem == item.hDC == item.itemData == value
+    if sys.platform == "win32":
+        assert ctypes.sizeof(item) == (
+            64 if ctypes.sizeof(ctypes.c_void_p) == 8 else 48
+        )
+
+
+def test_crop_message_and_menu_constants_match_native_declarations():
+    assert win32.WM_CAPTURECHANGED == 0x0215
+    assert win32.WM_CANCELMODE == 0x001F
+    assert win32.TPM_NONOTIFY | win32.TPM_RETURNCMD == 0x0180
+    assert win32.MF_STRING == 0

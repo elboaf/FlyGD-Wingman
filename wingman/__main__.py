@@ -369,12 +369,29 @@ def build_preview_host(state, api_box):
     if sys.platform != "win32":
         return None
     try:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from .preview import crops as preview_crops
         from .preview import layout as preview_layout
+        from .preview.cropstore import CropStore
         from .preview.host import PreviewHost
         from .preview.store import LayoutStore
 
         store = LayoutStore(update_settings=lambda: settings_mod.update(state.settings))
         section = state.settings.get("preview", {})
+        crop_store = CropStore(
+            update_settings=lambda: settings_mod.update(state.settings),
+            initial=preview_crops.deserialize(section.get("crops")),
+            executor_factory=lambda: ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="wingman-crops"
+            ),
+            flush_primary=store.flush,
+        )
+
+        def on_crops_changed(snapshot):
+            api = api_box.get("api")
+            if api is not None:
+                api.push_preview_crops(snapshot)
 
         def on_layout_changed(stable_key, rect, locked):
             # Nameless clients (character select) have no stable identity,
@@ -517,6 +534,8 @@ def build_preview_host(state, api_box):
             # runs, and tests/test_preview_wiring.py records what that cost
             # last time.
             flush_layouts=store.flush,
+            crop_store=crop_store,
+            on_crops_changed=on_crops_changed,
             # Same reasoning as flush_layouts above: bound methods, never
             # lambdas wrapping them.
             clear_layouts=store.clear,
@@ -579,8 +598,13 @@ def build_telemetry(state, host, alert_policy):
             return Path(configured) if configured else combatlog.find_gamelogs_dir()
 
         return TelemetryCoordinator(
-            preview_enabled=lambda: bool(
-                state.settings.get("preview", {}).get("enabled")
+            # settings.update temporarily mutates the live document. The host
+            # transitions only after a successful master save; keep delivering
+            # session revocations while that previous committed runtime is on.
+            preview_enabled=lambda: (
+                host.runtime_enabled
+                if host is not None
+                else bool(state.settings.get("preview", {}).get("enabled"))
             ),
             fleet_enabled=lambda: bool(
                 state.settings.get("fleet_bar", {}).get("enabled")

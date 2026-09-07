@@ -2647,7 +2647,7 @@ button.btn:disabled,
    while the collapsed line stays useful for roster-scale verification. */
 .preview-character-detail {
   grid-column: 1 / -1;
-  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px;
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 16px;
   /* One sticky table header plus one sticky group header can cover this
      disclosure after Configure scrolls it into view. Their shared measured
      height is defined by the table, so this clearance follows it. */
@@ -2666,6 +2666,13 @@ button.btn:disabled,
 }
 .preview-character-detail .geometry-actions { min-height: 28px; }
 .preview-configure { justify-self: start; }
+
+/* Crop stays inside the one disclosure. Its status gets a wrapping line,
+   not a content-sized track that widens every character row. */
+.preview-crop-field { flex: 1 1 280px; min-width: 0; max-width: 100%; }
+.preview-crop-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.preview-crop-actions .check[hidden], .preview-crop-actions .btn[hidden] { display: none; }
+.preview-crop-status { max-width: 65ch; margin-top: 0; overflow-wrap: anywhere; }
 
 /* A conditional conflict is a sibling after its affected row. Since rows
    are display:contents, it must span every track rather than add a cell. */
@@ -4386,6 +4393,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .fm-rail-head > #fm-account { flex: 1; min-width: 0; }
 .fm-rail-add { flex: none; flex-wrap: wrap; row-gap: 6px; }
 .fm-rail-add > .btn { width: 100%; text-align: center; }
+.fm-list-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.fm-list-row > .check { flex: none; }
+.fm-list-row > .fm-item { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fm-share { flex: none; display: flex; flex-direction: column; gap: 4px; }
+.fm-share > .hint { margin-top: 0; }
+#fm-share-status { min-height: 1.4em; overflow-wrap: anywhere; }
 
 /* 620px, the app's form measure, and for the reason `#route-evesettings >
    .settings > .card` keeps it: this pane is a form. The roster one route
@@ -4403,7 +4416,21 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
   display: flex; flex-direction: column; gap: 10px;
 }
-#fm-commit { flex: none; }
+.fm-work[hidden], #fm-editor-work[hidden], #fm-import-work[hidden],
+#fm-commit[hidden], #fm-import-commit[hidden] { display: none; }
+#fm-commit, #fm-import-commit { flex: none; flex-wrap: wrap; row-gap: 4px; }
+#fm-import-heading { margin: 0; font-size: var(--fs-body); color: var(--text); }
+#fm-import-text { flex: none; width: 100%; resize: vertical; min-height: 80px; }
+#fm-import-list { flex: none; display: flex; flex-direction: column; gap: 10px; }
+.fm-import-row { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.fm-import-row > .lab, .fm-import-row > .hint { flex-basis: 100%; margin: 0; }
+.fm-import-row > .field { flex: 1; min-width: 0; }
+.fm-import-row > .btn[aria-pressed="true"] { border-color: var(--brand-text); }
+#fm-import-status { flex-basis: 100%; margin-top: 0; min-height: 1.4em; overflow-wrap: anywhere; }
+#fm-commit .fm-save-note { flex-basis: 100%; margin-top: 0; }
+/* Keep the live region present before its text arrives, and wrap file errors
+   rather than letting a long path widen the editor at the viewport floor. */
+#fm-save-status { min-height: 1.4em; overflow-wrap: anywhere; }
 
 /* The three coordinate tracks are capped, not elastic. `1fr` handed them
    every spare pixel, which is the same thing the recording list's
@@ -4443,13 +4470,13 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    margin, since formations.js sizes the projection off the SMALLER
    dimension either way. 150px is the floor below which the three rings
    stop being tellable apart. */
-#fm-preview {
+#fm-preview, #fm-import-preview {
   flex: 1 1 auto; min-height: 150px;
   width: auto; max-width: 100%; aspect-ratio: 1; align-self: center;
   background: var(--sunken); border: 1px solid var(--panel-border);
   border-radius: var(--radius); cursor: grab; touch-action: none;
 }
-#fm-preview:active { cursor: grabbing; }
+#fm-preview:active, #fm-import-preview:active { cursor: grabbing; }
 .fm-ring { fill: none; stroke: var(--panel-border); stroke-width: 1; }
 /* --fs-label and it MEANS it: formations.js sets the viewBox to the
    element's own CSS pixel size on every draw, so one SVG user unit is one

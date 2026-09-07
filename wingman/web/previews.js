@@ -217,6 +217,15 @@
 // the wrong character on non-US layouts, and manual entry is the way out.
 // Both paths are validated by the same Python rules so they cannot disagree.
 (function () {
+  // Register before DOM setup: a setup failure must not strand crop delivery.
+  WM.handle('onPreviewCrops', function (payload) {
+    acceptCrops(payload);
+  });
+  var cropState = {revision: -1, definitions: {}, operations: {}, statuses: {}};
+  var cropHydrated = false;
+  var cropRequests = Object.create(null);
+  var cropErrors = Object.create(null);
+  var cropRosterEdit = null;
   var host = WM.el('preview-binds');
   if (!host) { return; }
 
@@ -308,6 +317,9 @@
     // but no running/seen/bind entry needs a row so the select can clear
     // the assignment (design §6: "offline membership is still editable").
     Object.keys(state.hotkeys.group_by_character || {}).forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
+    Object.keys(cropState.definitions || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     return out;
@@ -516,16 +528,14 @@
     if (online === false) { lab.classList.add('dim'); }
     row.appendChild(lab);
 
-    // Whether this character is opted out of previews entirely. The
-    // controls that can no longer DO anything go inert with it: there is
-    // no window to lock or resize, no registration to rebind and no place
-    // in the cycle, so a live control there would be one that saves a
-    // setting nothing reads.
+    // Whether this character is opted out of PRIMARY previews. Its geometry,
+    // registration and place in the cycle go inert. A saved crop is independent
+    // and may still be enabled, so Configure and its shared lock stay reachable.
     //
     // `Never minimize` is the exception and stays live. It governs the
     // real EVE window, not the preview, and opting out does not stop it --
-    // see renderLockBlock (passes `isExcluded(name)`) versus
-    // renderNeverMinimizeBlock (does not) for where that asymmetry is
+    // see renderLockBlock (requires a primary preview OR an enabled saved crop)
+    // versus renderNeverMinimizeBlock (does not) for where that asymmetry is
     // expressed now that both live in their own disclosures, not this row.
     //
     // The NAME is deliberately not dimmed either. `.dim` on a .lab means
@@ -740,7 +750,273 @@
     geometry.appendChild(WM.make('span', 'preview-detail-label', 'Saved geometry'));
     geometry.appendChild(makeGeometryActions(characterName, off));
     detail.appendChild(geometry);
+    detail.appendChild(makeCropField(characterName));
     return detail;
+  }
+
+  function ownValue(map, name) {
+    return map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
+  }
+
+  function hasEnabledCrop(name) {
+    var definition = ownValue(cropState.definitions, name);
+    return !!(definition && definition.enabled);
+  }
+
+  function latestCropOperation(name) {
+    var latest = null;
+    Object.keys(cropState.operations || {}).forEach(function (id) {
+      var operation = cropState.operations[id];
+      if (operation.name === name && (!latest || operation.operation_id > latest.operation_id)) {
+        latest = operation;
+      }
+    });
+    return latest;
+  }
+
+  function cropPending(name) {
+    return Object.keys(cropState.operations || {}).some(function (id) {
+      var operation = cropState.operations[id];
+      return operation.name === name && operation.pending;
+    });
+  }
+
+  function cropsStopping() {
+    return Object.keys(cropState.statuses || {}).some(function (name) {
+      return cropState.statuses[name] === 'stopping';
+    });
+  }
+
+  function finishCropFocus(name, request) {
+    // Only restore focus lost by disabling our own control. A user who has
+    // moved on, changed Configure, or left Settings owns their new focus.
+    if (request.focus && request.interaction === detailInteraction
+        && openDetailName === name && document.activeElement === document.body) {
+      rememberDetailFocus(name, request.control);
+      restoreDetailFocus();
+    }
+  }
+
+  function settleCropRequests(recovered) {
+    Object.keys(cropRequests).forEach(function (name) {
+      var request = cropRequests[name];
+      if (!request.received) { return; }
+      var operation = ownValue(cropState.operations, request.id);
+      var latest = latestCropOperation(name);
+      // A getter issued AFTER the receipt also recovers an outcome aged out
+      // of the bounded history. It recovers definitions, not a made-up result.
+      if ((operation && !operation.pending)
+          || (latest && latest.operation_id > request.id && !latest.pending)
+          || (recovered === request && !operation)) {
+        delete cropRequests[name];
+        paintCrops();
+        finishCropFocus(name, request);
+      }
+    });
+  }
+
+  function acceptCrops(payload, quiet, recovered) {
+    if (!payload || payload.revision < cropState.revision) { return; }
+    // Only the root HOST delivery revision orders this whole snapshot. Store
+    // outcome revisions describe persistence, not runtime transitions.
+    var previousNames = rows().map(function (entry) { return entry.name; }).join('\n');
+    cropState = payload;
+    cropHydrated = true;
+    Object.keys(cropErrors).forEach(function (name) {
+      var latest = latestCropOperation(name);
+      if (latest && latest.operation_id > cropErrors[name].after) { delete cropErrors[name]; }
+    });
+    if (!quiet) {
+      var names = rows().map(function (entry) { return entry.name; }).join('\n');
+      if (names !== previousNames) {
+        var draft = host.querySelector('.group-add-name');
+        var manager = host.querySelector('.preview-group-manager');
+        // Native <details> toggle events are queued; read the actual open
+        // state if a crop delivery overtakes that event.
+        if (manager) { groupManagerOpen = manager.open; }
+        cropRosterEdit = draft ? {value: draft.value, focused: document.activeElement === draft,
+          start: draft.selectionStart, end: draft.selectionEnd, interaction: detailInteraction} : null;
+        var focused = document.activeElement;
+        if (focused && focused.hasAttribute('data-preview-detail-control')) {
+          rememberDetailFocus(openDetailName, focused.getAttribute('data-preview-detail-control'));
+        }
+        requestRender();
+      }
+      else { paintCrops(); }
+    }
+    settleCropRequests(recovered);
+  }
+
+  function refreshCrops(request) {
+    return WM.send('get_preview_crop_state').then(function (payload) {
+      if (payload) {
+        acceptCrops(payload, false, request);
+        // A newer event may already have overtaken the getter's snapshot.
+        settleCropRequests(request);
+      }
+    });
+  }
+
+  function requestCrop(name, action, wanted, control) {
+    if (!cropHydrated || cropRequests[name] || cropPending(name) || cropsStopping()) { return; }
+    endCapture();
+    var request = {action: action, wanted: wanted, control: control,
+      interaction: detailInteraction, focus: document.activeElement !== document.body,
+      id: null, received: false};
+    cropRequests[name] = request;
+    var previous = latestCropOperation(name);
+    // A new intent dismisses the previous error, including when this request
+    // is a successful no-op and therefore adds no new operation to history.
+    cropErrors[name] = {after: previous ? previous.operation_id : -1, text: ''};
+    paintCrops();
+    var call;
+    if (action === 'select') { call = WM.send('select_preview_crop', name); }
+    else if (action === 'enabled') { call = WM.send('set_preview_crop_enabled', name, wanted); }
+    else { call = WM.send('remove_preview_crop', name); }
+    call.then(function (receipt) {
+      if (cropRequests[name] !== request) { return; }
+      request.received = true;
+      request.id = receipt && receipt.operation_id;
+      if (!receipt || request.id === null) {
+        // Includes genuine no-ops. Never infer a new definition from a receipt.
+        delete cropRequests[name];
+        if (!receipt || !receipt.applied) {
+          var latest = latestCropOperation(name);
+          cropErrors[name] = {after: latest ? latest.operation_id : -1,
+            text: receipt && receipt.error || 'Could not confirm the crop change. Reopen Previews to refresh.'};
+        }
+        paintCrops();
+        finishCropFocus(name, request);
+      } else {
+        // pending:false still needs the authoritative definitions. In
+        // particular, a late pending receipt cannot undo a terminal event.
+        settleCropRequests();
+      }
+      refreshCrops(request);
+    });
+  }
+
+  function cropMessage(name) {
+    var request = cropRequests[name];
+    var status = ownValue(cropState.statuses, name);
+    if (!cropHydrated) { return 'Loading crop settings…'; }
+    if (request || cropPending(name)) {
+      return status === 'selecting' || (request && request.action === 'select' && !request.received)
+        ? 'Selecting… Finish or cancel in the region picker.' : 'Saving…';
+    }
+    if (status === 'stopping' || cropsStopping()) { return 'Stopping previews. Wait for the current save to finish.'; }
+    if (status === 'degraded') { return 'Saved, but the crop could not be displayed. Reselect a region or disable it.'; }
+    if (status === 'invalid-source') { return 'Saved region is too small at the current client size. Reselect a region.'; }
+    if (status === 'cap-suppressed') { return 'Saved; waiting for a crop slot (' + cropState.live_count + '/' + cropState.cap + ' active). Disable another crop to make room.'; }
+    if (status === 'selecting') { return 'Selecting… Finish or cancel in the region picker.'; }
+    if (status === 'saving') { return 'Saving…'; }
+    if (status === 'live') { return 'Live. Position and size are separate from the primary preview.'; }
+    // The master note lives once above the roster, not once for every owner.
+    if (status === 'master-off' || !cropState.runtime_enabled) {
+      return 'Enable previews above to select a region. Saved crop settings remain editable.';
+    }
+    if (status === 'offline' || state.characters.indexOf(name) === -1) {
+      return 'Start this character’s client to select a region. Saved crop settings remain editable.';
+    }
+    if (cropState.live_count >= cropState.cap && !hasEnabledCrop(name)) {
+      return 'Crop limit reached (' + cropState.live_count + '/' + cropState.cap + '). Disable another crop to select a region.';
+    }
+    if (cropState.busy) { return 'Another crop operation is in progress. Region selection will be available when it finishes.'; }
+    if (status === 'disabled') { return 'Disabled. The saved selection and position are kept.'; }
+    return 'Select one region of this client in a separate preview.';
+  }
+
+  function paintCropField(field, name) {
+    var definition = ownValue(cropState.definitions, name);
+    var request = cropRequests[name];
+    var status = ownValue(cropState.statuses, name);
+    var pending = !!request || cropPending(name);
+    var blocked = !cropHydrated || pending || cropsStopping();
+    var check = field.querySelector('input');
+    var label = field.querySelector('.check');
+    var select = field.querySelector('[data-preview-detail-control="crop-select"]');
+    var remove = field.querySelector('[data-preview-detail-control="crop-remove"]');
+    var full = cropState.runtime_enabled && cropState.live_count >= cropState.cap && status !== 'live';
+    label.hidden = !definition;
+    check.checked = request && request.action === 'enabled' ? request.wanted : !!(definition && definition.enabled);
+    inert(label, check, blocked || (!check.checked && full));
+    select.textContent = definition ? 'Reselect…' : 'Select region…';
+    select.disabled = blocked || !cropState.runtime_enabled || cropState.busy
+      || state.characters.indexOf(name) === -1 || full;
+    remove.hidden = !definition;
+    remove.disabled = blocked;
+    var hint = field.querySelector('.preview-crop-status');
+    var latest = latestCropOperation(name);
+    var error = !pending && (cropErrors[name] ? cropErrors[name].text : latest && latest.error);
+    hint.textContent = (error ? error + ' ' : '') + cropMessage(name);
+    hint.classList.toggle('err', !!error);
+  }
+
+  function makeCropField(name) {
+    var field = WM.make('div', 'preview-detail-field preview-crop-field');
+    field.appendChild(WM.make('span', 'preview-detail-label', 'Crop'));
+    var actions = WM.make('div', 'preview-crop-actions');
+    var label = WM.make('label', 'check');
+    var check = WM.make('input');
+    check.type = 'checkbox';
+    label.appendChild(check);
+    label.appendChild(WM.make('span', 'box'));
+    label.appendChild(WM.make('span', '', 'Enabled'));
+    check.setAttribute('aria-label', 'Crop enabled for ' + name);
+    check.setAttribute('data-preview-detail-control', 'crop-enabled');
+    check.addEventListener('change', function () {
+      requestCrop(name, 'enabled', check.checked, 'crop-enabled');
+    });
+    actions.appendChild(label);
+    var select = WM.make('button', 'btn', 'Select region…');
+    select.setAttribute('data-preview-detail-control', 'crop-select');
+    select.addEventListener('click', function () { requestCrop(name, 'select', null, 'crop-select'); });
+    actions.appendChild(select);
+    var remove = WM.make('button', 'btn danger', 'Remove');
+    remove.setAttribute('data-preview-detail-control', 'crop-remove');
+    remove.addEventListener('click', function () {
+      if (!cropHydrated || cropRequests[name] || cropPending(name)) { return; }
+      endCapture();
+      var interaction = detailInteraction;
+      WM.confirm('Remove crop for "' + name + '"?',
+        'Remove the saved crop selection and position for "' + name + '". '
+        + 'Disable keeps both for later; Remove cannot be undone.',
+        {destructive: true}).then(function (confirmed) {
+        if (confirmed && interaction === detailInteraction) {
+          requestCrop(name, 'remove', null, 'crop-remove');
+        }
+      });
+    });
+    actions.appendChild(remove);
+    field.appendChild(actions);
+    var hint = WM.make('div', 'hint preview-crop-status');
+    hint.id = detailId(name) + '-crop-status';
+    hint.setAttribute('role', 'status');
+    [check, select, remove].forEach(function (control) {
+      control.setAttribute('aria-describedby', hint.id);
+    });
+    field.appendChild(hint);
+    paintCropField(field, name);
+    return field;
+  }
+
+  function paintCropLocks() {
+    var list = WM.el('preview-lock-exceptions-list');
+    if (!list) { return; }
+    Array.prototype.forEach.call(list.querySelectorAll('[data-preview-lock]'), function (input) {
+      var name = input.getAttribute('data-preview-lock');
+      var label = input.parentNode;
+      inert(label, input, isExcluded(name) && !hasEnabledCrop(name));
+    });
+  }
+
+  function paintCrops() {
+    // Crop/runtime pushes must not detach an armed keybind, an unsent group
+    // name, a native select, or even the checkbox waiting for its receipt.
+    var detail = openDetailName && document.getElementById(detailId(openDetailName));
+    var field = detail && detail.querySelector('.preview-crop-field');
+    if (field) { paintCropField(field, openDetailName); }
+    paintCropLocks();
   }
 
   function rememberDetailFocus(characterName, control) {
@@ -1010,6 +1286,7 @@
     var box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = isLocked(name);
+    box.setAttribute('data-preview-lock', name);
     // The wrapper is built HERE, before the listener, and that ordering is
     // load-bearing: test_page_conventions.py looks for `'box'` within 600
     // characters of `.type = 'checkbox'`, and the listener below is long
@@ -1026,9 +1303,8 @@
     // failure WCAG 2.5.3 names. What the tick MEANS reaches the reader
     // through the group's aria-labelledby, once, not per row.
     var label = WM.make('label', 'check', name);
-    label.title = 'Stops this preview being moved. Right-drag is the only '
-                + 'move gesture, and a lock blocks it; a left click still '
-                + 'switches to the client.';
+    label.title = 'Locks this character’s primary preview and crop in place. '
+                + 'Clicking still switches to the client.';
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
@@ -1147,7 +1423,7 @@
     // rendered once instead of being cut to fit a track.
     box.setAttribute('aria-label', 'Show a preview for ' + name);
     var label = WM.make('label', 'check optout', '');
-    label.title = 'Untick to give this character no preview window. Its own '
+    label.title = 'Untick to hide this character’s primary preview, not its crop. Its own '
                 + 'keybind and the cycle keybinds skip it too. Its keybind, '
                 + 'size and position are kept for when you tick it again.';
     label.prepend(WM.make('span', 'box'));
@@ -1187,10 +1463,8 @@
   // Both halves are set here together so the look and the behaviour
   // cannot disagree.
   //
-  // "A rule could dim the box but not the word beside it, so dim the
-  // whole label" is live reasoning again, not history: `inert()` has
-  // exactly one caller, makeLockCheck, and its label inside the Lock
-  // disclosure carries the character's name as visible text. Dimming the
+  // Dim the whole label, not only its box: both the Lock disclosure and
+  // the Crop field carry visible text beside their checkboxes. Dimming the
   // 15px square while the name beside it stayed at full strength would
   // read as a rendering fault. The class also carries `cursor`, which
   // sits on `.check` and nothing else can reach. style.css keeps the full
@@ -1462,7 +1736,7 @@
     paintLockSummary();
     list.textContent = '';
     all.forEach(function (name) {
-      list.appendChild(makeLockCheck(name, isExcluded(name)));
+      list.appendChild(makeLockCheck(name, isExcluded(name) && !hasEnabledCrop(name)));
     });
     box.hidden = !all.length;
   }
@@ -1505,8 +1779,8 @@
     paintNeverMinimizeSummary();
     list.textContent = '';
     all.forEach(function (name) {
-      // NOT gated on isExcluded, unlike the Lock block above. Opting a
-      // character out stops their preview; _activate_client still
+      // NOT gated on isExcluded or a saved crop, unlike the Lock block above.
+      // Opting a character out stops their primary preview; _activate_client still
       // consults this for the real EVE window, so a dimmed box here would
       // leave a setting in force with no control to change it.
       list.appendChild(makeNeverMinimizeCheck(name));
@@ -1625,7 +1899,7 @@
 
     function paint(entry) {
       appendBindRow(
-        entry.name, (state.hotkeys.characters || {})[entry.name],
+        entry.name, ownValue(state.hotkeys.characters, entry.name),
         // null, not false, while previews are off. makeRow dims only on
         // a strict false, and dimming means "this character is logged
         // off" -- a claim we cannot make with the host stopped, because
@@ -1660,8 +1934,23 @@
     }
     renderLockBlock();
     renderNeverMinimizeBlock();
-    if (openDetailMissing) { focusRosterHeading(); }
-    else { restoreDetailFocus(); }
+    if (cropRosterEdit) {
+      var draft = host.querySelector('.group-add-name');
+      var edit = cropRosterEdit;
+      cropRosterEdit = null;
+      if (draft) {
+        draft.value = edit.value;
+        if (edit.focused && edit.interaction === detailInteraction
+            && document.activeElement === document.body) {
+          draft.focus();
+          draft.setSelectionRange(edit.start, edit.end);
+        }
+      }
+    }
+    if (openDetailMissing) {
+      // Removing a crop-only owner must not steal a newer group's draft focus.
+      if (document.activeElement === document.body) { focusRosterHeading(); }
+    } else { restoreDetailFocus(); }
   }
 
   function send(next) {
@@ -1714,8 +2003,12 @@
     endCapture();
     var next = JSON.parse(JSON.stringify(state.hotkeys));
     next.characters = next.characters || {};
-    if (gesture) { next.characters[name] = gesture; }
-    else { delete next.characters[name]; }
+    if (gesture) {
+      // A crop-only owner may be named __proto__. Define an own JSON entry,
+      // rather than invoking Object.prototype's legacy setter.
+      Object.defineProperty(next.characters, name, {value: gesture,
+        enumerable: true, configurable: true, writable: true});
+    } else { delete next.characters[name]; }
     send(next);
   }
 
@@ -1802,7 +2095,7 @@
 
     // Reflect current assignment.
     var gbc = state.hotkeys.group_by_character || {};
-    sel.value = gbc[characterName] || '';
+    sel.value = ownValue(gbc, characterName) || '';
     // Disabled during any group write (assignment, lifecycle, or bind) so
     // concurrent changes from multiple selects can't stack.
     WM.setEnabled(sel, !groupBusy);
@@ -1828,7 +2121,7 @@
           groupBusy = false;
           if (!res || !res.applied) {
             // Revert: re-read from state.
-            sel.value = (state.hotkeys.group_by_character || {})[characterName] || '';
+            sel.value = ownValue(state.hotkeys.group_by_character, characterName) || '';
             WM.send('alert_bookmarks',
                     res && res.error
                       ? res.error
@@ -2120,6 +2413,11 @@
   }
 
   function refresh(beforeRender) {
+    // Only receipts already received when this getter starts can be recovered
+    // from absent history. An earlier read cannot settle a later request.
+    var recover = Object.keys(cropRequests).map(function (name) {
+      return cropRequests[name];
+    }).filter(function (request) { return request.received; });
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
       state = payload;
@@ -2131,6 +2429,8 @@
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
+      acceptCrops(payload.crops, true);
+      recover.forEach(function (request) { settleCropRequests(request); });
       if (beforeRender) { beforeRender(); }
       requestRender();
     });
@@ -2191,6 +2491,7 @@
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     state.excluded = state.excluded || [];
+    acceptCrops(payload.crops, true);
     requestRender();
   });
 
@@ -2270,6 +2571,8 @@
   document.addEventListener('wm:section', function (event) {
     copyAttempt += 1;
     copyStatus('', false);
+    cropHydrated = false;
+    paintCrops();
     if (event.detail === 'previews') {
       refresh();
       return;

@@ -651,6 +651,11 @@ class _FakeSizeHost:
     def layout_entries(self):
         return dict(self.layouts)
 
+    def crop_state(self):
+        from wingman.preview.host import PreviewHost
+
+        return PreviewHost(on_layout_changed=lambda *args: None).crop_state()
+
     def hotkey_status(self):
         return {}
 

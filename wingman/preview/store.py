@@ -94,12 +94,16 @@ class LayoutStore:
         a persisted group assignment.  Without a row the assignment select
         never renders, leaving the character silently locked into (or out
         of) a named group with no UI to clear it.
+
+        Crop owners need the same protection, even when disabled: their
+        saved selection must retain a row where it can be enabled or removed.
         """
         hotkeys = section.get("hotkeys") or {}
         return (
             set(hotkeys.get("characters") or {})
             | set(section.get("excluded") or [])
             | set(hotkeys.get("group_by_character") or {})
+            | set(section.get("crops") or {})
         )
 
     def replace(self, stable_key: str, entry) -> bool:

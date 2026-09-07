@@ -2,11 +2,11 @@ import dataclasses
 import importlib
 import importlib.util
 import inspect
-import json
 
 import pytest
 
 from tests import fakes
+from tests.test_api import decode_payload
 from wingman import paths
 from wingman import settings as settings_mod
 from wingman.ui import api as api_mod
@@ -32,6 +32,9 @@ PROFILE_METHODS = (
     "eve_settings_restore",
     "eve_settings_delete_backup",
     "eve_settings_formations",
+    "eve_settings_export_formations",
+    "eve_settings_parse_formations",
+    "eve_settings_validate_formation_import",
     "eve_settings_save_formations",
 )
 
@@ -60,7 +63,15 @@ PROFILE_SIGNATURES = {
     "eve_settings_restore": "(self, archive: str) -> bool",
     "eve_settings_delete_backup": "(self, archive: str) -> bool",
     "eve_settings_formations": "(self, path: str) -> dict",
-    "eve_settings_save_formations": "(self, path: str, formations: list) -> bool",
+    "eve_settings_export_formations": "(self, items: list) -> dict",
+    "eve_settings_parse_formations": "(self, text: str, existing_names: list) -> dict",
+    "eve_settings_validate_formation_import": (
+        "(self, items: list, existing_names: list) -> dict"
+    ),
+    "eve_settings_save_formations": (
+        "(self, path: str, formations: list, expected_content_revision: str = '', "
+        "request_id: str = '') -> bool"
+    ),
 }
 
 PROFILE_DELEGATES = {
@@ -82,6 +93,9 @@ PROFILE_DELEGATES = {
     "eve_settings_restore": "restore",
     "eve_settings_delete_backup": "delete_backup",
     "eve_settings_formations": "formations",
+    "eve_settings_export_formations": "export_formations",
+    "eve_settings_parse_formations": "parse_formations",
+    "eve_settings_validate_formation_import": "validate_formation_import",
     "eve_settings_save_formations": "save_formations",
 }
 
@@ -222,15 +236,28 @@ class _ProfilesSpy:
     def formations(self, path):
         return self._record("formations", path)
 
-    def save_formations(self, path, formations):
-        return self._record("save_formations", path, formations)
+    def export_formations(self, items):
+        return self._record("export_formations", items)
+
+    def parse_formations(self, text, existing_names):
+        return self._record("parse_formations", text, existing_names)
+
+    def validate_formation_import(self, items, existing_names):
+        return self._record("validate_formation_import", items, existing_names)
+
+    def save_formations(
+        self, path, formations, expected_content_revision="", request_id=""
+    ):
+        return self._record(
+            "save_formations", path, formations, expected_content_revision, request_id
+        )
 
 
 def _pushes(window) -> list[tuple[str, object]]:
     out = []
     for script in window.calls:
         handler = script.split("window.", 1)[1].split(" ", 1)[0]
-        payload = json.loads(
+        payload = decode_payload(
             script[script.index("(", script.rindex(handler)) + 1 : script.rindex(")")]
         )
         out.append((handler, payload))
@@ -238,6 +265,10 @@ def _pushes(window) -> list[tuple[str, object]]:
 
 
 def test_profiles_public_methods_exist():
+    assert set(PROFILE_METHODS) == set(PROFILE_SIGNATURES) == set(PROFILE_DELEGATES)
+    assert {name for name in vars(Api) if name.startswith("eve_settings_")} == set(
+        PROFILE_METHODS
+    )
     for method in PROFILE_METHODS:
         assert callable(getattr(Api, method, None)), method
 
@@ -420,6 +451,13 @@ def test_profiles_controller_construction_has_no_effects_and_factory_runs_last(
         ("eve_settings_restore", "restore", ("/tmp/archive.zip",)),
         ("eve_settings_delete_backup", "delete_backup", ("/tmp/archive.zip",)),
         ("eve_settings_formations", "formations", ("/tmp/account.dat",)),
+        ("eve_settings_export_formations", "export_formations", ([{"id": 7}],)),
+        ("eve_settings_parse_formations", "parse_formations", ("draft text", ["Name"])),
+        (
+            "eve_settings_validate_formation_import",
+            "validate_formation_import",
+            ([{"id": None}], ["Name"]),
+        ),
     ],
 )
 def test_profiles_facade_methods_delegate_directly_to_the_private_controller(
@@ -432,6 +470,7 @@ def test_profiles_facade_methods_delegate_directly_to_the_private_controller(
     result = getattr(api, api_name)(*args)
 
     assert spy.calls == [(controller_name, args)]
+    assert all(actual is original for actual, original in zip(spy.calls[0][1], args))
     assert result is spy.returns[controller_name]
 
 
@@ -479,17 +518,25 @@ def test_profiles_set_account_characters_delegate_preserves_the_original_list_ob
     assert result is spy.returns["set_account_characters"]
 
 
-def test_profiles_save_formations_delegate_preserves_the_original_list_object(tmp_path):
+@pytest.mark.parametrize("correlation", [(), ("a" * 64,), ("a" * 64, "save:1")])
+def test_profiles_save_formations_delegate_preserves_the_original_list_object(
+    tmp_path, correlation
+):
     api, _window = _build_api(tmp_path)
     spy = _ProfilesSpy()
     api._profiles = spy
     formations = [{"name": "center", "x_m": 1.0, "y_m": 2.0, "z_m": 3.0}]
+    path = "/tmp/account.dat"
+    revision, request_id = (*correlation, "", "")[:2]
 
-    result = api.eve_settings_save_formations("/tmp/account.dat", formations)
+    result = api.eve_settings_save_formations(path, formations, *correlation)
 
-    assert spy.calls == [("save_formations", ("/tmp/account.dat", formations))]
-    _name, (_path, forwarded_formations) = spy.calls[0]
-    assert forwarded_formations is formations
+    assert spy.calls == [("save_formations", (path, formations, revision, request_id))]
+    _name, forwarded = spy.calls[0]
+    assert forwarded[0] is path
+    assert forwarded[1] is formations
+    assert forwarded[2] is revision
+    assert forwarded[3] is request_id
     assert result is spy.returns["save_formations"]
 
 

@@ -2101,8 +2101,150 @@
 
   api.get_preview_hotkey_state = function () {
     console.log('DEV api.get_preview_hotkey_state()');
-    return Promise.resolve(JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE)));
+    var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+    full.hotkeys = _devHotkeysCopy();
+    full.crops = _devCropCopy();
+    return Promise.resolve(full);
   };
+
+  // One saved crop per owner. Only dev.js fabricates definitions and native
+  // outcomes; these drivers exercise the real page without a native runtime.
+  var DEV_PREVIEW_CROP_CAP = 8;
+  var DEV_PREVIEW_CROP_RESULT_LIMIT = 32;
+  var _devCrops = {revision: 0, definitions: {}, operations: {}, statuses: {},
+    live_count: 0, cap: DEV_PREVIEW_CROP_CAP, runtime_enabled: true, busy: false};
+  var _devCropMode = '';
+  var _devCropNextId = 0;
+  var _devCropFinish = null;
+
+  function _devCropDefinition(enabled) {
+    return {version: 1, enabled: enabled,
+      source: {x: 0.1, y: 0.2, w: 0.4, h: 0.3, original_client_w: 1920,
+        original_client_h: 1080, original_px: [192, 216, 768, 324]},
+      window: {x: 40, y: 40, w: 384, h: 162}};
+  }
+
+  function _devCropCopy() { return JSON.parse(JSON.stringify(_devCrops)); }
+
+  function _devCropPublish() {
+    _devCrops.revision += 1;
+    if (window.onPreviewCrops) { window.onPreviewCrops(_devCropCopy()); }
+  }
+
+  function _devCropRuntime() {
+    _devCrops.live_count = 0;
+    _devCrops.statuses = Object.create(null);
+    Object.keys(_devCrops.definitions).forEach(function (name) {
+      var enabled = _devCrops.definitions[name].enabled;
+      var online = DEV_PREVIEW_HOTKEYS_FIXTURE.characters.indexOf(name) !== -1;
+      var status = !enabled ? 'disabled' : !_devCrops.runtime_enabled ? 'master-off'
+        : !online ? 'offline' : _devCrops.live_count >= _devCrops.cap ? 'cap-suppressed' : 'live';
+      if (status === 'live') { _devCrops.live_count += 1; }
+      _devCrops.statuses[name] = status;
+    });
+  }
+
+  api.get_preview_crop_state = function () { return Promise.resolve(_devCropCopy()); };
+
+  function _devCropRequest(action, name, enabled) {
+    var definition = _devCrops.definitions[name];
+    var error = null;
+    if (_devCropMode === 'stopping') { error = 'Previews are stopping'; }
+    else if (action !== 'select' && !definition) { error = 'No saved crop for this character'; }
+    else if (action === 'select' && (!_devCrops.runtime_enabled
+        || DEV_PREVIEW_HOTKEYS_FIXTURE.characters.indexOf(name) === -1)) {
+      error = 'Start this client and enable previews to select a region';
+    } else if ((action === 'select' || enabled) && _devCrops.runtime_enabled
+        && _devCrops.live_count >= _devCrops.cap && _devCrops.statuses[name] !== 'live') {
+      error = 'Crop limit reached';
+    }
+    if (error || (action === 'enabled' && definition.enabled === enabled)) {
+      return Promise.resolve({applied: !error, persisted: !error, pending: false,
+        operation_id: null, error: error});
+    }
+    var id = ++_devCropNextId;
+    var operation = {operation_id: id, name: name, pending: true,
+      applied: false, persisted: false, error: null, revision: null};
+    _devCrops.operations[id] = operation;
+    _devCrops.busy = true;
+    _devCrops.statuses[name] = action === 'select' ? 'selecting' : 'saving';
+    _devCropPublish();
+    var receipt = {operation_id: id, pending: true, applied: false, persisted: false, error: null};
+    var mode = _devCropMode;
+    function finish() {
+      if (!operation.pending) { return; }
+      var failed = mode === 'failed-save';
+      operation.pending = false;
+      operation.applied = !failed;
+      operation.persisted = !failed;
+      operation.error = failed ? 'Could not save crop: settings file is read-only.' : null;
+      // Deliberately unrelated to delivery revision, like the production store.
+      operation.revision = id + 1000;
+      if (!failed) {
+        if (action === 'remove') { delete _devCrops.definitions[name]; }
+        else if (action === 'enabled') { definition.enabled = enabled; }
+        else { _devCrops.definitions[name] = _devCropDefinition(true); }
+      }
+      _devCrops.busy = false;
+      var terminal = Object.keys(_devCrops.operations).filter(function (key) {
+        return !_devCrops.operations[key].pending;
+      }).sort(function (a, b) { return Number(a) - Number(b); });
+      terminal.slice(0, Math.max(0, terminal.length - DEV_PREVIEW_CROP_RESULT_LIMIT))
+        .forEach(function (key) { delete _devCrops.operations[key]; });
+      _devCropRuntime();
+      _devCropPublish();
+    }
+    _devCropFinish = finish;
+    if (mode === 'event-before-receipt') { finish(); }
+    else if (mode !== 'pending') { setTimeout(finish, 150); }
+    return Promise.resolve(receipt);
+  }
+
+  api.select_preview_crop = function (name) { return _devCropRequest('select', name); };
+  api.set_preview_crop_enabled = function (name, enabled) { return _devCropRequest('enabled', name, enabled); };
+  api.remove_preview_crop = function (name) { return _devCropRequest('remove', name); };
+
+  function _devCropScenario(mode, operationMode) {
+    _devCropMode = operationMode || mode;
+    _devCrops.definitions = Object.create(null);
+    _devCrops.operations = {};
+    _devCrops.busy = false;
+    _devCrops.runtime_enabled = mode !== 'master-off' && mode !== 'stopping';
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    fixture.characters = ['Aiga Otsolen', 'Zuelo Parvi', 'Corvin Veles'];
+    fixture.excluded = ['Sera Vahn'];
+    fixture.locked = ['Aiga Otsolen'];
+    fixture.enabled = _devCrops.runtime_enabled;
+    _devCrops.definitions['Aiga Otsolen'] = _devCropDefinition(true);
+    _devCrops.definitions['Sera Vahn'] = _devCropDefinition(true);
+    _devCrops.definitions['Aleksandrina Shadowbanes Voidstriders'] = _devCropDefinition(false);
+    if (mode === 'offline') { fixture.characters = []; }
+    if (mode === 'crop-only') {
+      // These are legitimate names, not prototype properties. They appear
+      // only as saved crop owners, outside seen/character/binding rosters.
+      ['constructor', '__proto__', 'toString'].forEach(function (name) {
+        _devCrops.definitions[name] = _devCropDefinition(true);
+        fixture.excluded.push(name);
+        fixture.locked.push(name);
+      });
+    }
+    if (mode === 'cap-full') {
+      for (var i = 1; i <= _devCrops.cap; i++) {
+        var name = 'Active crop ' + i;
+        _devCrops.definitions[name] = _devCropDefinition(true);
+        fixture.characters.push(name);
+      }
+    }
+    _devCropRuntime();
+    if (mode === 'degraded' || mode === 'stopping' || mode === 'invalid-source') {
+      _devCrops.statuses['Aiga Otsolen'] = mode;
+      _devCrops.live_count = 0;
+      _devCrops.busy = mode === 'stopping';
+    }
+    if (mode === 'no-op') { _devCrops.definitions['Aiga Otsolen'].enabled = false; _devCropRuntime(); }
+    _devCropPublish();
+    _devPushHotkeys();
+  }
 
   // ---- Stateful dev stubs for the five preview cycle-group methods.
   //
@@ -2119,6 +2261,11 @@
   function _devHotkeysCopy() {
     return JSON.parse(JSON.stringify(_devPreviewHotkeys));
   }
+
+  api.set_preview_binds = function (hotkeys) {
+    _devPreviewHotkeys = JSON.parse(JSON.stringify(hotkeys));
+    return Promise.resolve(true);
+  };
 
   function _devGroupResult(applied, error) {
     return {
@@ -2144,6 +2291,7 @@
       if (window.onPreviewHotkeys) {
         var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
         full.hotkeys = _devHotkeysCopy();
+        full.crops = _devCropCopy();
         window.onPreviewHotkeys(full);
       }
     }, 0);
@@ -2254,7 +2402,8 @@
       if (!valid) {
         return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
       }
-      gbc[name] = groupId;
+      Object.defineProperty(gbc, name, {value: groupId,
+        enumerable: true, configurable: true, writable: true});
     }
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
@@ -2311,6 +2460,11 @@
   }
 
   window.DEV = {
+    // previewCrops('offline'|'crop-only'|'cap-full'|'pending'|'failed-save'|
+    // 'degraded'|'stopping'|'master-off'|'event-before-receipt'|'no-op').
+    previewCrops: _devCropScenario,
+    previewBindCaptured: function () { window.onPreviewBindCaptured({gesture: 'Ctrl+Alt+F9'}); },
+    finishPreviewCrop: function () { if (_devCropFinish) { _devCropFinish(); } },
     // `DEV.fleetHiddenLimit()` makes the backend's exact cap reachable from
     // the browser console: Ariadne stays visible, the other 64 known names
     // are hidden, and clicking Ariadne exercises the inline refusal/rollback.
@@ -2473,12 +2627,13 @@
   var backupsScenario = identitySearch.get('backups') || '';
   var copyScenario = identitySearch.get('copy') || '';
   var formationsAccountScenario = identitySearch.get('formations-account') || '';
+  var formationsShareScenario = identitySearch.get('formations-share') || '';
   // Task 7: the whole-profile copy checkpoints. A named scenario drives
   // the eve_settings_copy_profile double below through the real panel
   // rather than through a harness-only shortcut.
   var profileCopyScenario = identitySearch.get('profile') || '';
   var profilesScenarioRequested = !!(backupsScenario || copyScenario
-    || formationsAccountScenario || profileCopyScenario);
+    || formationsAccountScenario || formationsShareScenario || profileCopyScenario);
   var identityScenarios = JSON.parse('{"idle":{"stage":"intro","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null},"waiting":{"stage":"observe","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"watching","error":null}},"none":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"none","error":"No account and character changes were found. Make a small settings change in the client, then close it completely and check again."}},"ambiguous":{"stage":"check","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"ambiguous","error":"More than one account changed. Close the other EVE clients and start again."}},"candidate-multiple":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004","90000005"]}},"pending-name":{"stage":"name","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1003","character_ids":["90000004"]}},"existing-name":{"stage":"candidate","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000001"]}},"roster-one":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-two":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-three":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"roster_account":"1001"},"roster-empty":{"stage":"roster","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1001","character_ids":["90000000"]},"discovered":["90000000"],"roster_account":"1001"},"move":{"stage":"move","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":{"status":"candidate","error":null,"account_id":"1002","character_ids":["90000000"]}},"full":{"stage":"manage","accounts":[{"id":"1001","account_name":"alpha@example","character_ids":["90000000","90000001","90000002"]},{"id":"1002","account_name":"beta@example","character_ids":["90000003"]},{"id":"1003","account_name":"","character_ids":[]}],"check":null,"roster_account":"1001"}}');
   var selectedIdentityScenario = identityScenarios[identityScenario]
     || identityScenarios.idle;
@@ -2978,8 +3133,8 @@
   //
   // Copied per account below, and the save stub writes into that account's
   // copy, so a save-then-reopen in the harness round-trips through meters
-  // the way the app does. That is the only check the unit conversion gets
-  // anywhere: nothing in the test suite executes this file or formations.js.
+  // the way the app does. The executable formation-page tests also check
+  // the unit boundary; this fixture keeps it inspectable in a real browser.
   var devFormations = [
     { id: 0, name: 'Test', probes: [
       { x: -2048, y: 0, z: 0, range: 598391482800 },
@@ -2995,11 +3150,25 @@
   // Each account has its own file and therefore its own formations. The
   // second fixture differs visibly, so ?formations-account=switch proves
   // the clean account switch replaces the editor rather than only its label.
-  var devFormationsByAccount = {};
+  var devFormationsByAccount = {}, devFormationRevisions = {}, devFormationSequence = 0;
+  // Asserted against formation_sharing.limits_payload in test_dev_harness.py.
+  var devSharingLimits = {
+    max_bytes: 65536, max_formations: 32, max_name_codepoints: 128, max_probes: 8,
+    au_meters: 149597870700, min_range_meters: 149597870700 * 1e-6,
+    max_range_meters: 149597870700 * 65536, max_coordinate_meters: 1e16
+  };
+  // Opaque fake revisions, not hashing evidence. Real byte hashing is tested
+  // through codec.read_snapshot/write_document with only the filter injected.
+  function nextDevFormationRevision() {
+    devFormationSequence += 1;
+    return (Array(65).join('0') + devFormationSequence.toString(16)).slice(-64);
+  }
   eve.accounts.forEach(function (account, index) {
     var formations = JSON.parse(JSON.stringify(devFormations));
     if (index === 1) formations[0].name = 'Second account test';
+    if (formationsShareScenario === 'empty') formations = [];
     devFormationsByAccount[account.path] = formations;
+    devFormationRevisions[account.path] = nextDevFormationRevision();
   });
   // Deliberately SLOW, the way eveMutation deliberately is. This is a
   // read, so the obvious stub resolves at once -- and resolving at once
@@ -3016,9 +3185,60 @@
       setTimeout(function () {
         resolve({
           ok: true, path: path, name: account ? account.name : path,
+          content_revision: devFormationRevisions[path],
+          sharing_limits: JSON.parse(JSON.stringify(devSharingLimits)),
           formations: JSON.parse(JSON.stringify(devFormationsByAccount[path] || []))
         });
       }, 150);
+    });
+  };
+  // Visual fixture only, not Python's strict parser or Unicode casefold policy.
+  // This projects known-good scenario drafts; contract tests run the pure module.
+  api.eve_settings_export_formations = function (items) {
+    if (formationsShareScenario === 'error') {
+      return Promise.resolve({ok: false, error: 'Could not prepare these formations (dev scenario).'});
+    }
+    return Promise.resolve({ok: true, text: JSON.stringify({
+      format: 'wingman-preset', version: 1, type: 'probe-formations',
+      formations: items.map(function (f) {
+        return {name: f.name, probes: f.probes.map(function (p) {
+          return {x: p.x, y: p.y, z: p.z, range: p.range};
+        })};
+      })
+    })});
+  };
+  // These visual doubles only model the fixture shapes and ASCII conflicts.
+  // The executable page tests deliver real Python replies for strict JSON,
+  // Unicode casefold and numeric bounds; do not use this as a validator.
+  function devImportReply(items, existingNames) {
+    if (!Array.isArray(items) || !items.length) {
+      return {ok: false, error: 'Paste a formation preset (dev fixture).'};
+    }
+    var candidates = [], conflicts = [], seen = [];
+    var names = existingNames.map(function (name) { return name.toLowerCase(); });
+    for (var i = 0; i < items.length; i++) {
+      var f = items[i];
+      if (!f || typeof f.name !== 'string' || !f.name.trim() || !Array.isArray(f.probes) || !f.probes.length) {
+        return {ok: false, error: 'Each formation needs a name and probes (dev fixture).'};
+      }
+      var name = f.name.trim(), key = name.toLowerCase();
+      if (seen.indexOf(key) !== -1) { return {ok: false, error: 'A name is used twice (dev fixture).'}; }
+      seen.push(key);
+      if (names.indexOf(key) !== -1) { conflicts.push(i); }
+      candidates.push({id: null, name: name, probes: JSON.parse(JSON.stringify(f.probes))});
+    }
+    return {ok: true, formations: candidates, conflicts: conflicts};
+  }
+  api.eve_settings_parse_formations = function (text, existingNames) {
+    var wire;
+    try { wire = JSON.parse(text); }
+    catch (error) { return Promise.resolve({ok: false, error: 'Invalid formation JSON (dev fixture).'}); }
+    return Promise.resolve(devImportReply(wire && wire.formations, existingNames));
+  };
+  api.eve_settings_validate_formation_import = function (items, existingNames) {
+    var reply = devImportReply(items, existingNames);
+    return new Promise(function (resolve) {
+      setTimeout(function () { resolve(reply); }, formationsShareScenario === 'slow' ? 1500 : 150);
     });
   };
   // The save MINTS an id for every `id: null`, because write_formations
@@ -3027,17 +3247,36 @@
   // harness could not show the one behaviour that makes the editor reload
   // after a save: a brand-new formation coming back with a real id.
   // Highest id wins the next number, matching `max(taken) + 1`.
-  api.eve_settings_save_formations = function (path, items) {
-    var existing = devFormationsByAccount[path] || [];
-    var next = -1;
-    existing.concat(items).forEach(function (f) {
-      if (typeof f.id === 'number' && f.id > next) { next = f.id; }
-    });
-    devFormationsByAccount[path] = JSON.parse(JSON.stringify(items)).map(function (f) {
-      if (f.id === null || f.id === undefined) { next += 1; f.id = next; }
-      return f;
-    });
-    return eveMutation('eve_settings_save_formations')(path, items);
+  api.eve_settings_save_formations = function (path, items, expectedRevision, requestId) {
+    var validId = typeof requestId === 'string' && requestId.length > 0
+      && requestId.length <= 128;
+    var done = { ok: false, operation: 'formations_save', path: path,
+      request_id: validId ? requestId : '', content_revision: '',
+      error_code: '', error: '', warning: '' };
+    if (!validId || typeof expectedRevision !== 'string'
+        || !/^[0-9a-f]{64}$/.test(expectedRevision)) {
+      done.error_code = 'invalid_request';
+      done.error = 'A content revision and request ID are required.';
+    } else if (formationsShareScenario === 'stale'
+        || expectedRevision !== devFormationRevisions[path]) {
+      done.error_code = 'stale_file';
+      done.error = "This account's settings changed since you opened them. Nothing was saved. Copy the formations you want to keep, then reload the account before pasting them back.";
+    } else {
+      var existing = devFormationsByAccount[path] || [];
+      var next = -1;
+      existing.concat(items).forEach(function (f) {
+        if (typeof f.id === 'number' && f.id > next) { next = f.id; }
+      });
+      devFormationsByAccount[path] = JSON.parse(JSON.stringify(items)).map(function (f) {
+        if (f.id === null || f.id === undefined) { next += 1; f.id = next; }
+        return f;
+      });
+      done.ok = true;
+      done.content_revision = nextDevFormationRevision();
+      devFormationRevisions[path] = done.content_revision;
+    }
+    setTimeout(function () { window.onEveSettingsDone(done); }, 600);
+    return Promise.resolve(true);
   };
 
   window.pywebview = { api: api };
@@ -3092,6 +3331,31 @@
       var target = WM.el('es-targets').querySelector('input[type="checkbox"]');
       if (target) target.click();
       WM.el('es-copy').click();
+      return;
+    }
+    if (formationsShareScenario) {
+      WM.openFormations(eve.accounts, eve.accounts[0].path);
+      window.setTimeout(function () {
+        var boxes = WM.el('fm-list').querySelectorAll('input[type="checkbox"]');
+        Array.prototype.forEach.call(boxes, function (box) { box.click(); });
+        if (formationsShareScenario === 'stale' || formationsShareScenario === 'unsaved') {
+          var name = WM.el('fm-name');
+          name.value = 'Recovery draft';
+          name.dispatchEvent(new Event('change'));
+          if (formationsShareScenario === 'stale') WM.el('fm-save').click();
+        }
+        if (['invalid', 'conflict', 'slow'].indexOf(formationsShareScenario) !== -1) {
+          api.eve_settings_export_formations([devFormations[0]]).then(function (reply) {
+            WM.el('fm-paste').click();
+            var text = WM.el('fm-import-text');
+            text.value = formationsShareScenario === 'invalid' ? '{' : reply.text;
+            text.dispatchEvent(new Event('input'));
+            WM.el('fm-import-review').click();
+          });
+        }
+        // Only browser-local fixture text above: never touch the clipboard
+        // automatically. Copying an unsaved draft remains an explicit action.
+      }, 250);
       return;
     }
     if (formationsAccountScenario) {

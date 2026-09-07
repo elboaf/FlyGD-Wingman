@@ -111,6 +111,26 @@ def test_every_registered_handler_is_in_the_allowlist(name):
     )
 
 
+def test_crop_state_publisher_has_a_literal_allowlisted_handler():
+    assert "onPreviewCrops" in pushed_names()
+    assert "onPreviewCrops" in allowlist()
+
+
+@pytest.mark.parametrize(
+    "method, parameters",
+    [
+        ("select_preview_crop", ["self", "name"]),
+        ("set_preview_crop_enabled", ["self", "name", "enabled"]),
+        ("remove_preview_crop", ["self", "name"]),
+        ("get_preview_crop_state", ["self"]),
+    ],
+)
+def test_crop_bridge_accepts_only_semantic_arguments(method, parameters):
+    from wingman.ui.api import Api
+
+    assert list(inspect.signature(getattr(Api, method)).parameters) == parameters
+
+
 def test_the_eve_settings_route_registers_all_three_of_its_pushes():
     """Named explicitly rather than left to the sweep above, because this
     is the route the sweep was written for and a regression here is
@@ -242,9 +262,18 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
         "eve_settings_restore": ("restore", ["archive"]),
         "eve_settings_delete_backup": ("delete_backup", ["archive"]),
         "eve_settings_formations": ("formations", ["path"]),
+        "eve_settings_export_formations": ("export_formations", ["items"]),
+        "eve_settings_parse_formations": (
+            "parse_formations",
+            ["text", "existing_names"],
+        ),
+        "eve_settings_validate_formation_import": (
+            "validate_formation_import",
+            ["items", "existing_names"],
+        ),
         "eve_settings_save_formations": (
             "save_formations",
-            ["path", "formations"],
+            ["path", "formations", "expected_content_revision", "request_id"],
         ),
     }
     methods = {

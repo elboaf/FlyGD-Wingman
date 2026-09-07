@@ -25,6 +25,7 @@ import copy
 import datetime
 import json
 import logging
+import math
 import os
 import queue
 import sys
@@ -58,6 +59,7 @@ from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..eveauth import application as eveauth_application
 from ..evesettings.controller import ProfilesController, ProfilesPorts
+from ..preview import crops as preview_crops
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
@@ -68,6 +70,39 @@ from .rows import RowSnapshot
 from .scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
+
+
+def _page_payload(payload):
+    """JSON data, not an object literal (whose __proto__ changes prototypes)."""
+    try:
+        encoded = json.dumps(payload, allow_nan=False)
+    except ValueError:
+        # The previous literal transport accepted non-finite numbers. Preserve
+        # those values without teaching JSON.parse a nonstandard JSON dialect.
+        # Round-trip first for json.dumps' existing tuple/key/type semantics.
+        value = json.loads(json.dumps(payload))
+        assignments = []
+
+        def finite(item, path):
+            if isinstance(item, float) and not math.isfinite(item):
+                assignments.append(f"{path}={json.dumps(item)};")
+                return None
+            if isinstance(item, dict):
+                return {
+                    key: finite(child, f"{path}[{json.dumps(key)}]")
+                    for key, child in item.items()
+                }
+            if isinstance(item, list):
+                return [finite(child, f"{path}[{i}]") for i, child in enumerate(item)]
+            return item
+
+        encoded = json.dumps(finite(value, "value"), allow_nan=False)
+        return (
+            "(function(value){" + "".join(assignments) + "return value;})("
+            f"JSON.parse({json.dumps(encoded)}))"
+        )
+    return f"JSON.parse({json.dumps(encoded)})"
+
 
 # 100ms, carried over from app.PROBE_DRAIN_MS: fast enough that durations
 # appear to fill in live, slow enough that a folder of a hundred recordings
@@ -696,6 +731,8 @@ class Api:
         # concurrent mutations cannot reorder their host deliveries past their
         # persist order.
         self._preview_hotkey_lock = threading.Lock()
+        self._preview_mode_lock = threading.Lock()
+        self._preview_mode_changing = False
         # Bind only after the worker and runtime collaborators exist. The
         # adapters resolve the window and replaceable effects when invoked;
         # construction itself must not touch the page or start Profiles work.
@@ -752,7 +789,7 @@ class Api:
         this runs on upload and probe workers, and a window destroyed
         mid-upload must cost a status line, not the upload.
         """
-        script = f"window.{handler} && window.{handler}({json.dumps(payload)})"
+        script = f"window.{handler} && window.{handler}({_page_payload(payload)})"
         try:
             self._window.evaluate_js(script)
         except Exception:
@@ -4419,7 +4456,7 @@ class Api:
         if section.get("enabled"):
             self._preview_host.start()
         # After host start(), so Preview roster delivery has a live pump.
-        # Telemetry predicates read persisted settings directly.
+        # Telemetry follows this committed runtime, not tentative settings I/O.
         self._start_fleet_telemetry_if_enabled()
 
     def _start_fleet_telemetry_if_enabled(self) -> None:
@@ -4429,7 +4466,21 @@ class Api:
         else:
             self._reconcile_eve_runtime()
 
-    def set_preview_enabled(self, enabled: bool) -> None:
+    def set_preview_enabled(self, enabled: bool) -> bool:
+        # A reservation, not a lock held across settings I/O, stop.join or page
+        # callbacks. Concurrent bridge calls must not read a tentative master
+        # setting or reorder runtime delivery after their transactions.
+        with self._preview_mode_lock:
+            if self._preview_mode_changing:
+                return False
+            self._preview_mode_changing = True
+        try:
+            return self._set_preview_enabled(bool(enabled))
+        finally:
+            with self._preview_mode_lock:
+                self._preview_mode_changing = False
+
+    def _set_preview_enabled(self, enabled: bool) -> bool:
         """Toggle previews and persist the choice.
 
         start() and stop() are both idempotent, so a double-click on the
@@ -4437,6 +4488,12 @@ class Api:
         will tear down.
         """
         enabled = bool(enabled)
+        if (
+            enabled
+            and self._preview_host is not None
+            and self._preview_host.is_stopping
+        ):
+            return False
         section = self._state.settings.setdefault("preview", {})
         if section.get("enabled") == enabled:
             # A no-op toggle rewrites the whole settings document for
@@ -4455,9 +4512,9 @@ class Api:
             with settings_mod.update(self._state.settings) as cfg:
                 cfg.setdefault("preview", {})["enabled"] = enabled
         except OSError:
-            # Same posture as the channel persist above: a settings file
-            # that cannot be written must not block the feature itself.
+            # Only a committed master setting authorizes runtime changes.
             logger.exception("Could not persist the preview setting")
+            return False
         if self._preview_host is not None:
             if enabled:
                 self._preview_host.start()
@@ -4469,6 +4526,10 @@ class Api:
         # returned None (settings.js:181 documents the same trap).
         return True
 
+    def push_preview_crops(self, state: dict) -> None:
+        """Semantic committed state; safe before a crop page handler is registered."""
+        self._push("onPreviewCrops", state)
+
     def shutdown_previews(self) -> None:
         """Tear the preview thread down on the way out.
 
@@ -4479,7 +4540,7 @@ class Api:
         """
         if self._preview_host is not None:
             try:
-                self._preview_host.stop()
+                self._preview_host.stop(final=True)
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
         if self._telemetry is not None:
@@ -4840,6 +4901,81 @@ class Api:
             if self._usable_preview_character(name)
         }
 
+    def get_preview_crop_state(self) -> dict:
+        """Committed crop truth and retained outcomes, including missed pushes.
+
+        The root revision orders HOST delivery, not persistence. Never rebuild
+        it from settings: settings.update can expose a tentative crop dictionary.
+        """
+        if self._preview_host is not None:
+            return self._preview_host.crop_state()
+        return dict(
+            revision=0,
+            definitions={},
+            operations={},
+            statuses={},
+            live_count=0,
+            cap=preview_host_mod.MAX_LIVE_CROPS,
+            runtime_enabled=False,
+            busy=False,
+        )
+
+    def select_preview_crop(self, name) -> dict:
+        """Select/reselect using the host's current named session, never an HWND."""
+        return self._request_preview_crop("select", name)
+
+    def set_preview_crop_enabled(self, name, enabled) -> dict:
+        return self._request_preview_crop("enabled", name, enabled)
+
+    def remove_preview_crop(self, name) -> dict:
+        return self._request_preview_crop("remove", name)
+
+    def _request_preview_crop(self, action, name, value=None) -> dict:
+        def refused(error):
+            return dict(self._field_refused(error), pending=False, operation_id=None)
+
+        if not preview_crops.valid_owner(name):
+            return refused("Choose a named character for the crop.")
+        if action == "enabled" and type(value) is not bool:
+            return refused("Crop enabled must be a boolean.")
+        host = self._preview_host
+        if host is None:
+            return refused("Crops are unavailable.")
+        if host.is_stopping:
+            return refused("Previews are stopping.")
+        state = host.crop_state()
+        definition = state["definitions"].get(name)
+        if action != "select" and definition is None:
+            return refused("No saved crop for this character.")
+        pending = any(
+            op["name"] == name and op["pending"] for op in state["operations"].values()
+        )
+        if action == "select" and not state["runtime_enabled"]:
+            return refused("Enable previews before selecting a crop.")
+        if (
+            (action == "select" or (action == "enabled" and value))
+            and state["live_count"] >= state["cap"]
+            and state["statuses"].get(name) not in ("live", "selecting", "saving")
+        ):
+            return refused("Crop limit reached; disable another crop first.")
+        if (
+            action == "enabled"
+            and definition["enabled"] == value
+            and not pending
+            and (
+                not value
+                or not state["runtime_enabled"]
+                or state["statuses"].get(name) == "live"
+            )
+        ):
+            # Earlier same-owner commands have tokens even before the pump sees
+            # them. A matching committed value alone is NOT a last-intent no-op.
+            # Non-live runtime enables also need the pump's reservation check.
+            return dict(self._field_ok(), pending=False, operation_id=None)
+        # This cached precheck is only a fast refusal. The pump rechecks native
+        # capacity/reservations, and the store owns admission and final outcomes.
+        return host.request_crop(action, name, value)
+
     def get_preview_hotkey_state(self) -> dict:
         """Everything the bind list needs, in one read.
 
@@ -4903,6 +5039,9 @@ class Api:
             # settings may retain a valid offline layout after its roster entry
             # aged out, and that geometry is still useful to copy.
             "layout_sources": layout_sources,
+            # One section hydration, with the same revised recovery snapshot as
+            # the dedicated getter and onPreviewCrops. No second page round trip.
+            "crops": self.get_preview_crop_state(),
             # Which characters set_preview_size can actually succeed for.
             #
             # It refuses outright for a character that is neither running
@@ -5196,7 +5335,8 @@ class Api:
         if host is None or not host.is_running:
             return self._field_refused("Start previews first.")
         section = self._state.settings.get("preview", {})
-        host.resize_all((section.get("width"), section.get("height")))
+        if host.resize_all((section.get("width"), section.get("height"))) is False:
+            return self._field_refused("Previews are stopping.")
         # The cards show each character's size; every one just changed.
         self.push_preview_hotkeys()
         return self._field_ok()
@@ -5225,7 +5365,8 @@ class Api:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
         host = self._preview_host
         if host is not None and host.is_running and name in host.characters():
-            host.resize_preview(name, (width, height))
+            if host.resize_preview(name, (width, height)) is False:
+                return self._field_refused("Previews are stopping.")
             return self._field_ok()
         layouts = self._state.settings.get("preview", {}).get("layouts") or {}
         if name not in layouts:
@@ -5325,7 +5466,8 @@ class Api:
         failure justifies.
         """
         if self._preview_host is not None and self._preview_host.is_running:
-            self._preview_host.reset_layouts()
+            if self._preview_host.reset_layouts() is False:
+                return self._field_refused("Previews are stopping.")
             return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
@@ -6250,8 +6392,27 @@ class Api:
     def eve_settings_formations(self, path: str) -> dict:
         return self._profiles.formations(path)
 
-    def eve_settings_save_formations(self, path: str, formations: list) -> bool:
-        return self._profiles.save_formations(path, formations)
+    def eve_settings_export_formations(self, items: list) -> dict:
+        return self._profiles.export_formations(items)
+
+    def eve_settings_parse_formations(self, text: str, existing_names: list) -> dict:
+        return self._profiles.parse_formations(text, existing_names)
+
+    def eve_settings_validate_formation_import(
+        self, items: list, existing_names: list
+    ) -> dict:
+        return self._profiles.validate_formation_import(items, existing_names)
+
+    def eve_settings_save_formations(
+        self,
+        path: str,
+        formations: list,
+        expected_content_revision: str = "",
+        request_id: str = "",
+    ) -> bool:
+        return self._profiles.save_formations(
+            path, formations, expected_content_revision, request_id
+        )
 
     # ---- Shared EVE characters ---
 

@@ -1783,9 +1783,10 @@ only ever checked by hand.
       then moves focus to `<body>`, so ticking thirteen names by keyboard
       meant thirteen restarts from the top of the page. The summary
       repaints on its own now, and the roster is left standing.
-      **An opted-out character stays live here, unlike in the Lock
-      block.** Untick `Preview` on a character — their preview stops and
-      the rest of their `#preview-binds` row goes dim — then open this
+      **An opted-out character stays live here. The Lock block also stays
+      live if that character has an enabled saved crop.** Untick `Preview`
+      on a character: their primary preview stops and its keybind controls
+      go dim. Then open this
       disclosure: their box is still tickable there and still takes
       effect, because Never minimize still governs a client with no
       preview (see "`Preview` turns one character's preview off" below).
@@ -1809,6 +1810,89 @@ only ever checked by hand.
       that label has no visible text at all. Restating the purpose on
       every roster box would override the visible name, which is the
       failure WCAG 2.5.3 names.
+
+**Character crops (Windows/WebView2 release gates remain open)**
+
+Headless Chrome can exercise the `?dev=1` controls below, but is not evidence
+for native WebView2 focus, Windows DPI, picker behavior or DWM resources.
+The current [production evidence and release blockers](preview-crops-production-results.md)
+keep the cap of eight provisional. No native item below is closed by the
+Linux/browser or synthetic/message-only Windows test runs.
+Schedule the native pass with Task 10 before release; do not launch EVE or
+Wingman automatically as part of the browser pass.
+
+- [ ] **Crop lives inside Configure.** At 840x625 and the 839x625 rounding
+      case, open a character's Configure detail. Crop is beside Cycle group
+      and Saved geometry, not a new grid column or destination. Labels align;
+      controls and status wrap without horizontal scrolling. Long names
+      ellipsize in the roster and remain readable in the Remove confirmation.
+- [ ] **Select, disable, reselect, remove.** With previews enabled and the
+      source available, `Select region…` opens the native picker after keybind
+      capture disarms. Commit a region: the wrapped Enabled checkbox,
+      neutral `Reselect…`, and destructive Remove appear. Disable retains
+      selection/position; Remove confirms their loss and distinguishes itself
+      from Disable. Escape cancels without a write. Use Tab/Space and verify
+      visible focus throughout, including the native picker return.
+- [ ] **Saved settings outlive runtime availability.** Offline/master-off:
+      Enabled and Remove stay usable, while region selection explains the
+      unavailable source. Test disabled, cap-suppressed, invalid-source,
+      degraded, and stopping states. Counts use the delivered cap. Disable
+      and Remove must remain ways out of a full cap or degraded crop.
+- [ ] **Crop-only owners and shared locks.** Untick primary Preview for a
+      character with an enabled saved crop. The shared Lock checkbox remains
+      usable even offline/master-off/cap-suppressed. Disabling/removing the
+      crop makes Lock inert again without enabling primary Size/Copy or
+      keybinds. A saved owner absent from all other rosters still has a row.
+      In `?dev=1`, also exercise `constructor`, `__proto__`, and `toString`.
+- [ ] **Asynchronous saves tell the truth.** Pending shows Selecting/Saving,
+      not a refusal, and preserves a requested checkbox value until terminal
+      authority arrives. Failed saves restore committed definitions and show
+      the error. Test terminal-event-before-receipt, late older receipts,
+      stale root delivery, successful no-op, and reentry after missed or
+      expired operation history. No write occurs before hydration. Leaving
+      invalidates focus restoration, not an admitted save. Keep an unsent
+      group name or armed keybind while crop state changes; neither is lost.
+- [ ] **Native smoke, separately on Windows.** Repeat Configure keyboard
+      paths in pinned WebView2 at 100/125/150/200% scaling. Exercise picker
+      cancel/use/resize/source loss, master-off during admission, independent
+      crop positioning and shared locks. Task 10's DWM/HWND resource, cap,
+      stop-tail, client-window-safety and performance gates must also pass.
+      No headless screenshot closes these gates.
+- [ ] **Production stages and temporary slot.** Follow the predeclared thresholds
+      in the production results document at stages 1/2/4/8 against matching
+      primary-only baselines. Record the exact tested commit, clients, hardware,
+      monitor rectangles/scales and source resolutions. Keep every intended
+      crop visible. At stage eight also test picker, replacement, cancellation,
+      initial DWM failure and save failure with the same memory allowance.
+      Count thumbnail registrations/unregistrations separately from HWNDs:
+      the picker has an additional overlay and native child controls, not
+      additional DWM relationships. Picker and candidate must never overlap;
+      peak relationships are primary baseline plus at most nine, and every
+      relationship/top-level/owned/child HWND returns to baseline on teardown.
+- [ ] **Persistence and lifecycle on real Windows.** Exercise restart restoration,
+      master-off, primary exclusion, close-to-disable save failure, source
+      exit/logout/return, hidden-at-birth, degraded recovery, capture theft and
+      stop during an admitted save. Reselection must not save an untouched
+      monitor rescue or lose real movement. Test tall/flat initial selections,
+      saved partial overhangs, source/picker resizing and negative coordinates.
+      Never move or resize a real EVE client to automate a scenario.
+- [ ] **Record minimized-source behavior rather than assuming it.** With explicit
+      operator approval, compare minimize/restore and occlusion, including a
+      primary alert pulse while dragging a crop. Record whether minimized
+      content is live/frozen/black/stale and whether it recovers without a retry
+      storm. This remains unmeasured; update help only after observation.
+- [ ] **Release decision.** Do not ship without the Windows frozen-build and
+      production native gates. If eight fails, lower the cap to a fully tested
+      passing stage and repeat the temporary-slot test. If only the extra slot
+      fails, implement/test the approved free-slot reselection fallback. If
+      one crop fails, block release. Missing evidence is not a passing stage.
+
+Dev drivers: `DEV.previewCrops('offline')`, `'crop-only'`, `'cap-full'`,
+`'pending'`, `'failed-save'`, `'degraded'`, `'invalid-source'`, `'stopping'`,
+`'master-off'`, `'event-before-receipt'`, or `'no-op'`.
+`DEV.finishPreviewCrop()` completes the held pending operation. These are
+browser fixtures only, not native behavior or release evidence.
+
 - [ ] **The columns are named once, above the rows.** Settings > Previews,
       at the character list. Expected: a single heading row reading
       `Character`, `Preview`, `Keybind`, `Configure` — sentence case, a step
@@ -1862,14 +1946,16 @@ only ever checked by hand.
       ticked means this character gets a preview. Expected, with no
       reload: that preview disappears within a sweep (~700ms), the other
       one is untouched, and the rest of that row — the bind button,
-      `Clear`, `Edit…` and `Configure` — goes dim and stops responding to
-      clicks. The row's saved keybind stays legible on the inert button;
-      it is not cleared. `Lock` and `Never minimize` are not in this row
+      `Clear` and `Edit…` — goes dim and stops responding to clicks.
+      Configure stays live for saved groups and crops; its primary Saved
+      geometry actions alone are inert. The row's saved keybind stays
+      legible on the inert button; it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
-      **the character's box in the Lock block must read inert**, since
-      with no window there is nothing to lock, while **their box in the
-      Never-minimize block must STAY LIVE**. Opting out of previews stops
-      the preview, not `minimize_inactive_clients` — switching away from
+      **the character's box in the Lock block must read inert unless an
+      enabled saved crop remains**. The lock is shared by both windows and
+      stays configurable for a crop even while offline or master-off.
+      **Their box in the Never-minimize block must STAY LIVE**. Opting out
+      of previews stops the primary preview, not `minimize_inactive_clients` — switching away from
       that character's real EVE window still minimizes it — so greying
       its only control would leave a setting in force with no way to
       change it.
@@ -3189,8 +3275,9 @@ Two things decide what you should see, and they are easy to conflate:
 This is the Phase 0 engineering probe for cropped preview regions
 (`docs/preview-evolution-crops-design.md`), run only through the
 checkout-only `tests/manual/preview_crop_harness.py` — never through the
-installed app. There is no production crop feature yet: nothing here writes
-settings, persists a layout, or survives a restart. Every threshold a result
+installed app. This probe is separate from the unreleased production crop
+implementation: nothing in the probe writes settings, persists a layout, or
+survives a restart. Every threshold a result
 below is checked against is fixed in advance in
 `docs/preview-crop-prototype-results.md`; record observed values there, not
 in this checklist.
@@ -3915,7 +4002,13 @@ with real `settings_*` folders can still prove.
 ## Probe formations (Profiles → Edit formations…)
 
 Needs a real install for the write lines; the editor itself states the
-close-EVE requirement beside Save.
+close-EVE requirement beside Save. Use prepared copies/backups of two unrelated
+accounts, with every EVE client closed before each save or restore. Do not run
+against live profiles without the account owner's authorization. Record actual
+results and platform separately in
+[the sharing verification record](probe-formation-sharing-verification.md): a
+Linux developer-browser pass is not a Windows/WebView2, OS clipboard, or live-EVE
+pass.
 
 - [ ] The **Edit formations…** tool is present when the codec is bundled and
       absent (not broken) when `bin/wingman-settings-codec.exe` is removed from
@@ -3946,6 +4039,99 @@ close-EVE requirement beside Save.
 - [ ] Open an account whose file the parser refuses (only reproducible with a hand-damaged copy): the editor does not open, the reason is shown, and the file is untouched.
 - [ ] Delete every formation, save, launch the client: the probe scanner has no custom formations and nothing else about the client's settings changed. (An empty list is a real state, not a failed save — this is the line that proves write does not confuse the two.)
 - [ ] With unsaved edits showing, the title bar offers no other destination and the gear is hidden: `‹ Profiles` is the only way out and it asks before discarding. (Every other exit routed away without asking, and the next open silently loaded over the edits.)
+
+### Portable formation sharing and stale-file recovery
+
+- [ ] **Copy is a draft snapshot, not a save.** Edit a name, position, and range;
+      select sharing checkboxes independently of the currently open row. Copy
+      includes only the selected current drafts in meters (including unsaved
+      changes), without local IDs, account paths, scratch entries or selection
+      state. It leaves all edits/checkboxes intact and writes no account file or
+      backup. Names are user-authored text, not anonymized. With no selection,
+      Copy is disabled; an invalid unselected formation must not prevent Copy.
+- [ ] **Native blur/click and keyboard selection.** While typing a new name,
+      click its sharing checkbox: it toggles once, not zero times. Repeat with
+      mouse deselection and Tab/Space. The renamed label updates without losing
+      checkbox/button identity or focus. Test unblurred coordinate input too.
+- [ ] **Clipboard denial is visible.** Deny clipboard write permission, then Copy.
+      No success message appears, the draft remains editable, and retry works
+      after permission is restored. Test unavailable clipboard API and rejected
+      writes in the developer browser; separately test actual Windows clipboard
+      permission behavior and receiving pasted text. No automatic clipboard read
+      occurs on opening Paste or the editor.
+- [ ] **Paste/Review never inserts or saves.** Open Paste; the shared-text field
+      receives focus. Paste valid text and choose Review: names, probe counts
+      and previews appear separately from the draft, with ordinary Save hidden/disabled.
+      Review a one-probe and a two-probe formation together: the differing counts
+      are visible and included in each editable name's screen-reader label.
+      Only explicit **Add formations** appends the entire validated batch and
+      focuses its first row. Only subsequent **Save formations** writes the file.
+- [ ] **Invalid text is recoverable.** Try malformed JSON, duplicate JSON keys,
+      unsupported version/type, deeply nested text, more than 64 KiB of UTF-8
+      (including multibyte names), invalid numeric types and out-of-bounds ranges
+      or coordinates. Errors remain visible; no partial candidates are inserted,
+      no text is silently clipped, and corrected text can be reviewed normally.
+- [ ] **Batch/name boundaries and Unicode conflicts.** Review 1 and 32 formations;
+      reject 0 and 33. Accept 128 Unicode code points (including supplementary
+      characters), reject 129, empty/control-character names, and duplicates.
+      Existing `STRASSE` conflicts with incoming `Straße`; Python decides all
+      conflicts. Rename conflicting candidates explicitly: no replacement,
+      skipping or automatic rename. Recheck all names on Add, including a new
+      collision introduced after Review. Markup-shaped names render only as text.
+- [ ] **Cancel preserves work.** With an unsaved draft, sharing ticks and edited
+      fields, open Paste, review/rename, then Cancel. No rows were added, no file
+      or backup changed, the ordinary draft is intact, and focus returns to Paste.
+      Cancel while validation is pending; its late reply must not insert anything.
+- [ ] **Empty destination and recipient identity.** Add to an account with no user
+      formations; Save assigns nonnegative local IDs. Add to another account with
+      existing formations and scratch entries: existing IDs, unrelated settings
+      and a valid selected formation remain intact; incoming IDs are freshly
+      allocated above that recipient's nonnegative IDs, not copied from the sender.
+- [ ] **Stale-file recovery is explicit.** Load a prepared account copy, edit it in
+      Wingman, then alter that copy externally before Save. Save refuses it and
+      leaves external bytes and the unsaved draft intact. Copy the draft to keep
+      **before** Reload, cancel Reload once, then confirm it and Paste/Review/Add
+      the saved text back, resolving names explicitly. No force-save or automatic
+      merge is offered. Keep EVE closed and stop external edits while saving:
+      conflict checks are optimistic, not an atomic compare-and-swap.
+- [ ] **Edits during Save and reload survive.** Make a newer edit (including an
+      unblurred name or partial coordinate) while Save runs, and separately while
+      its reread runs. It remains dirty and visible; the next Save uses the last
+      committed content revision, not an ignored reread's revision. Delayed replies
+      after an account change, cancellation or leaving/reopening cannot alter the
+      current draft, copy status or baseline. Repeated Add/Save must not duplicate
+      insertion or let an older completion unlock the newer operation.
+- [ ] **Delete cannot retarget a stale confirmation.** With a delayed Reload or
+      post-save reread pending, open Delete for A, then let the read replace A with
+      B at the same index. Confirming the old dialog must leave B and the rest of
+      the list unchanged and say nothing was deleted; choose Delete again to act
+      on B. Repeat with reused local IDs/names. In the developer browser, inject
+      a route exit/reopen or selection change while the dialog is open: an old
+      Yes must not delete the new selection/session's data. Ordinary confirmed
+      deletion while Save runs remains a live unsaved edit, not an implicit save.
+- [ ] **Save failure and post-save warning differ.** EVE-running/probe failure,
+      backup failure or codec refusal means no publication. A successfully
+      published save followed by a retention/status failure still reports success
+      with its committed revision; warning feedback must not invite duplicate
+      saves. Confirm the saved bytes and the pre-save backup independently.
+- [ ] **Fractional geometry and restoration in EVE.** Export from account A, import
+      into unrelated B, Save with all clients closed, then launch B. Check actual
+      probe positions/ranges and selected formation, and that A is unchanged.
+      Repeat a save/reload/export cycle: sharing does not normalize fractional
+      ranges; ordinary editor reload retains its six-decimal-AU normalization.
+      Close every client, restore B's pre-save backup through Backups, launch to
+      confirm restoration, then close it. Synthetic codec tests do not certify
+      EVE accepts the document or every supported range.
+- [ ] **Viewport, keyboard and accessibility.** At 840×625 and the 839×621 stress
+      size, check ordinary and review panes, 32 long-name rows, empty/error states,
+      and long stale-file warnings. Scroll content without losing Review/Add/Cancel
+      or Save/Reload, and check no horizontal clipping. At Windows 100/125/150/200%
+      scaling repeat the logical-pixel floor checks. Tab/Shift-Tab/Enter/Space can
+      complete Copy, Paste, Review, rename, Add, Cancel and recovery. Check screen
+      reader names for sharing checkboxes, editable names, geometry, previews,
+      conflicts and live statuses; focus remains visible and is restored after
+      Cancel/Add. Save remains the only accent action and there is no new title-bar
+      destination.
 
 ## EVE Fittings
 

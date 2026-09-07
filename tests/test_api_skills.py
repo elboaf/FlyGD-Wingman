@@ -306,14 +306,15 @@ def test_a_payload_without_characters_is_passed_through_untouched(tmp_path):
 
 def _status_lines(window):
     """Every onStatus text the api pushed at the fake window, in order."""
-    import json
     import re
+
+    from tests.test_api import decode_payload
 
     out = []
     for script in window.calls:
         match = re.search(r"window\.onStatus\((.*)\)$", script)
         if match:
-            out.append(json.loads(match.group(1)))
+            out.append(decode_payload(match.group(1)))
     return out
 
 

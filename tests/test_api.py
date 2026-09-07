@@ -9,6 +9,8 @@ production, and a test does it directly.
 
 import json
 import os
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -75,12 +77,19 @@ def make_api(tmp_path, window=None, **kwargs):
     return api
 
 
+def decode_payload(expression):
+    """Decode the finite JSON.parse transport, not arbitrary JavaScript."""
+    if expression.startswith("JSON.parse("):
+        return json.loads(json.loads(expression[len("JSON.parse(") : -1]))
+    return json.loads(expression)  # Independent fleet snapshot transport.
+
+
 def pushes(window: FakeWindow) -> list[tuple[str, object]]:
     """Decode recorded JS back into (handler, payload) pairs."""
     out = []
     for script in window.evaluated:
         handler = script.split("window.", 1)[1].split(" ", 1)[0]
-        payload = json.loads(
+        payload = decode_payload(
             script[script.index("(", script.rindex(handler)) + 1 : script.rindex(")")]
         )
         out.append((handler, payload))
@@ -94,6 +103,111 @@ def test_push_calls_the_named_handler_with_a_json_payload(tmp_path):
     api._push("onStatus", {"text": "Found 3 video(s)", "kind": "FG"})
 
     assert pushes(window) == [("onStatus", {"text": "Found 3 video(s)", "kind": "FG"})]
+
+
+@pytest.mark.parametrize("nonfinite", [False, True])
+def test_real_push_script_preserves_proto_owners_and_json_values(tmp_path, nonfinite):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable for generated bridge-script execution")
+    api = make_api(tmp_path)
+    api._sigbar_window = FakeWindow()
+    payload = {
+        "definitions": {"__proto__": {"version": 1, "enabled": True}},
+        "nested": [{"__proto__": None, "constructor": "pilot", "toString": False}],
+        "text": 'quotes " \\ newline\n Unicode Ω 😀 \u2028 </script> NaN Infinity -Infinity',
+        "values": [None, True, False, -0.0, 3.5, "NaN", "Infinity"],
+    }
+    if nonfinite:
+        payload["definitions"]["__proto__"]["numbers"] = (
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        )
+    api._push("onPreviewCrops", payload)
+    assert api._window.evaluated == api._sigbar_window.evaluated
+    script = api._window.evaluated[-1]
+    result = subprocess.run(
+        [
+            node,
+            "-e",
+            """
+var assert = require('assert');
+var window = {onPreviewCrops: function(value) { global.value = value; }};
+eval(require('fs').readFileSync(0, 'utf8'));
+assert.deepStrictEqual(Object.keys(value.definitions), ['__proto__']);
+assert.strictEqual(Object.getPrototypeOf(value.definitions), Object.prototype);
+assert.strictEqual(value.definitions.enabled, undefined);
+assert.strictEqual(value.definitions.__proto__.enabled, true);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(value.nested[0], '__proto__'), true);
+assert.strictEqual(value.nested[0].__proto__, null);
+assert.strictEqual(value.nested[0].constructor, 'pilot');
+assert.strictEqual(value.nested[0].toString, false);
+assert.deepStrictEqual(value.values, [null, true, false, -0, 3.5, 'NaN', 'Infinity']);
+var numbers = value.definitions.__proto__.numbers;
+if (numbers) {
+  assert.ok(Number.isNaN(numbers[0]));
+  assert.strictEqual(numbers[1], Infinity);
+  assert.strictEqual(numbers[2], -Infinity);
+}
+console.log(JSON.stringify(value.text));
+""",
+        ],
+        input=script,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == payload["text"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        [float("nan"), {"__proto__": float("inf")}, "value", {"NaN": "Infinity"}],
+    ],
+)
+def test_real_push_nonfinite_roots_and_arrays_preserve_values_without_markers(
+    tmp_path, payload
+):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable for generated bridge-script execution")
+    api = make_api(tmp_path)
+    api._push("onStatus", payload)
+    result = subprocess.run(
+        [
+            node,
+            "-e",
+            """
+var assert = require('assert');
+var window = {onStatus: function(value) { global.value = value; }};
+eval(require('fs').readFileSync(0, 'utf8'));
+if (Array.isArray(value)) {
+  assert.ok(Number.isNaN(value[0]));
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(value[1], '__proto__'), true);
+  assert.strictEqual(value[1].__proto__, Infinity);
+  assert.strictEqual(value[2], 'value');
+  assert.deepStrictEqual(value[3], {NaN: 'Infinity'});
+} else {
+  assert.strictEqual(String(value), process.argv[1]);
+}
+""",
+            "--",
+            json.dumps(payload),
+        ],
+        input=api._window.evaluated[-1],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_push_guards_on_the_handler_existing(tmp_path):
@@ -826,6 +940,11 @@ class _FakeHost:
 
     def layout_entries(self):
         return {}
+
+    def crop_state(self):
+        from wingman.preview.host import PreviewHost
+
+        return PreviewHost(on_layout_changed=lambda *args: None).crop_state()
 
     def start(self):
         self.started = True

@@ -7,6 +7,105 @@ import pytest
 from wingman import settings
 
 
+@pytest.fixture
+def saved_crop():
+    return {
+        "version": 1,
+        "enabled": False,
+        "source": {
+            "x": 0.25,
+            "y": 0.125,
+            "w": 0.5,
+            "h": 0.5,
+            "original_client_w": 1280,
+            "original_client_h": 720,
+            "original_px": [320, 90, 640, 360],
+        },
+        "window": {"x": -800, "y": -40, "w": 320, "h": 180},
+    }
+
+
+def test_new_settings_get_independent_empty_crops(saved_crop):
+    first, second = settings.load(), settings.load()
+    assert first["preview"]["crops"] == {}
+    first["preview"]["crops"]["Alice"] = saved_crop
+    assert second["preview"]["crops"] == {}
+    assert settings.DEFAULTS["preview"]["crops"] == {}
+
+
+@pytest.mark.parametrize("raw", [None, [], "crop", 1])
+def test_bad_crops_section_does_not_reset_other_preview_settings(raw):
+    preview = settings.validated_preview({"crops": raw, "snap": False, "width": 640})
+    assert preview["crops"] == {}
+    assert preview["snap"] is False
+    assert preview["width"] == 640
+
+
+def test_crop_validation_drops_bad_owners_without_rebuilding_other_settings(saved_crop):
+    raw = settings._preview_defaults()
+    raw.update(
+        enabled=True,
+        snap=False,
+        width=640,
+        excluded=["Alice"],
+        locked=["Alice"],
+        seen=["Alice"],
+        layouts={"Bob": {"x": 1, "y": 2, "w": 320, "h": 210, "locked": False}},
+        crops={"Alice": saved_crop, "Bad": {"version": 2}, "hwnd:123": saved_crop},
+    )
+    raw["hotkeys"]["characters"] = {"Bob": "Ctrl+F1"}
+    raw["alerts"]["enabled"] = True
+    expected = {**raw, "crops": {"Alice": saved_crop}}
+    actual = settings.validated_preview(raw)
+    assert actual == expected
+    assert settings.validated_preview(actual) == expected
+
+
+@pytest.mark.parametrize("master_enabled", [False, True])
+def test_unrelated_settings_writes_cannot_remove_saved_crops(
+    saved_crop, master_enabled, tmp_path
+):
+    path = tmp_path / "settings.json"
+    live = settings.load(path)
+    live["preview"].update(
+        enabled=master_enabled, crops={"Alice": saved_crop}, excluded=["Alice"]
+    )
+    settings.save(live, path)
+    assert settings.load(path) == live
+    with settings.update(live, path) as document:
+        document["channel_title"] = "Changed elsewhere"
+        document["preview"]["snap"] = False
+    reloaded = settings.load(path)
+    assert reloaded == live
+    assert reloaded["preview"]["crops"] == {"Alice": saved_crop}
+    assert reloaded["preview"]["enabled"] is master_enabled
+    assert reloaded["preview"]["excluded"] == ["Alice"]
+    assert reloaded["preview"]["snap"] is False
+    assert reloaded["channel_title"] == "Changed elsewhere"
+
+
+def test_normalized_crops_are_a_save_load_update_fixed_point(saved_crop, tmp_path):
+    path = tmp_path / "settings.json"
+    saved_crop["source"].update(x=-0.5, y=0.75, w=2, h=0.5)
+    path.write_text(
+        json.dumps({"preview": {"crops": {"Alice": saved_crop}}}), encoding="utf-8"
+    )
+    live = settings.load(path)
+    source = live["preview"]["crops"]["Alice"]["source"]
+    assert (source["x"], source["y"], source["w"], source["h"]) == (
+        0.0,
+        0.75,
+        1.0,
+        0.25,
+    )
+    settings.save(live, path)
+    canonical_json = path.read_text(encoding="utf-8")
+    assert settings.load(path) == live
+    with settings.update(live, path):
+        pass
+    assert path.read_text(encoding="utf-8") == canonical_json
+
+
 @pytest.mark.parametrize("raw", [None, [], "nope", 3])
 def test_whole_section_of_wrong_type_falls_back(raw):
     assert settings.validated_preview(raw) == settings._preview_defaults()

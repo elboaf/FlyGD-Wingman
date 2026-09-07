@@ -15,10 +15,14 @@ zero keybind rows, and five sessions verified through it.
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 from wingman import bookmarks
-from wingman.evesettings import identity, selective
+from wingman.evesettings import formation_sharing, identity, selective
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -211,6 +215,39 @@ def test_fittings_screenshot_fixture_is_browser_consumed_and_semantically_valid(
     )["stale"]
 
 
+def test_crop_dev_contract_has_recovery_and_async_scenarios():
+    from wingman.preview.crops import MAX_LIVE_CROPS
+    from wingman.preview.cropstore import RECENT_RESULT_LIMIT
+
+    retained = re.search(r"var DEV_PREVIEW_CROP_RESULT_LIMIT = (\d+);", DEV_JS)
+    assert retained and int(retained[1]) == RECENT_RESULT_LIMIT
+    cap = re.search(r"var DEV_PREVIEW_CROP_CAP = (\d+);", DEV_JS)
+    assert cap and int(cap[1]) == MAX_LIVE_CROPS
+    assert {
+        "get_preview_crop_state",
+        "select_preview_crop",
+        "set_preview_crop_enabled",
+        "remove_preview_crop",
+    } <= _stubbed()
+    assert "window.onPreviewCrops(" in DEV_JS
+    assert "full.crops = _devCropCopy()" in DEV_JS
+    for scenario in (
+        "offline",
+        "crop-only",
+        "cap-full",
+        "pending",
+        "failed-save",
+        "degraded",
+        "stopping",
+        "master-off",
+        "event-before-receipt",
+        "no-op",
+    ):
+        assert "'" + scenario + "'" in DEV_JS
+    assert "previewCrops:" in DEV_JS
+    assert "finishPreviewCrop:" in DEV_JS
+
+
 def test_every_bridge_method_the_page_calls_has_a_double():
     """The general form of the `get_bookmarks` gap, and the reason this
     file exists rather than two fixture assertions.
@@ -248,7 +285,6 @@ def test_every_bridge_method_the_page_calls_has_a_double():
         "previews.js: alert_bookmarks",
         "previews.js: capture_preview_bind",
         "previews.js: parse_preview_bind",
-        "previews.js: set_preview_binds",
         "settings.js: set_preview_enabled",
         "settings.js: set_restore_preview_positions",
     }
@@ -703,6 +739,103 @@ def test_dev_account_labels_use_the_python_identity_data_without_node():
     assert "devAccountLabels" not in DEV_JS
     assert "eve.accounts = devFixtureAccounts(selectedIdentityScenario);" in DEV_JS
     assert "eve.accounts.forEach(refreshDevAccount);" not in DEV_JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "scenario",
+    ["selected", "empty", "stale", "error", "invalid", "conflict", "slow", "unsaved"],
+)
+def test_dev_formation_revisions_and_correlated_completion(scenario):
+    # Execute the real standalone formation fixture block with only timer and
+    # completion delivery seams. No fixture save/read implementation in tests.
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const timers = [], done = [];
+const api = {};
+const window = {onEveSettingsDone: payload => done.push(payload)};
+vm.runInNewContext(source.slice(source.indexOf('  function eveMutation('),
+  source.indexOf('  window.pywebview =')), {
+  api, window, console, Promise, copyScenario: '', formationsShareScenario: process.argv[3],
+  eve: {accounts: [{path: 'A', name: 'Account A'}]},
+  setTimeout: (callback, delay) => { timers.push({callback, delay}); }
+});
+function drain() { timers.splice(0).forEach(timer => timer.callback()); }
+async function main() {
+  const read = api.eve_settings_formations('A');
+  assert.equal(timers[0].delay, 150);
+  drain(); const initial = await read;
+  assert.match(initial.content_revision, /^[0-9a-f]{64}$/);
+  assert.deepEqual(JSON.parse(JSON.stringify(initial.sharing_limits)), JSON.parse(process.argv[2]));
+  const items = [{id: null, name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}];
+  const exported = await api.eve_settings_export_formations(items);
+  assert.equal(done.length, 0, 'export must not fake a save completion');
+  const afterExport = api.eve_settings_formations('A'); drain();
+  assert.deepEqual(await afterExport, initial, 'export must not modify the fake account');
+  if (process.argv[3] === 'error') {
+    assert.equal(exported.ok, false); assert.ok(exported.error); return;
+  }
+  assert.deepEqual(JSON.parse(exported.text), {format: 'wingman-preset', version: 1,
+    type: 'probe-formations', formations: [{name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}]});
+  const parsedPromise = api.eve_settings_parse_formations(exported.text, ['NEW']); drain();
+  const parsed = await parsedPromise;
+  assert.equal(parsed.ok, true); assert.equal(parsed.formations[0].id, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed.conflicts)), [0]);
+  parsed.formations[0].name = 'Renamed';
+  const validatedPromise = api.eve_settings_validate_formation_import(parsed.formations, ['NEW']);
+  if (process.argv[3] === 'slow') assert.equal(timers[0].delay, 1500);
+  drain(); const validated = await validatedPromise;
+  assert.equal(validated.ok, true); assert.deepEqual(JSON.parse(JSON.stringify(validated.conflicts)), []);
+  const invalidPromise = api.eve_settings_parse_formations('{', []); drain();
+  assert.equal((await invalidPromise).ok, false);
+  const afterReview = api.eve_settings_formations('A'); drain();
+  assert.deepEqual(await afterReview, initial, 'review/validation must not modify the account');
+  assert.equal(done.length, 0);
+  if (process.argv[3] === 'empty') { assert.deepEqual(JSON.parse(JSON.stringify(initial.formations)), []); return; }
+  if (process.argv[3] === 'stale') {
+    await api.eve_settings_save_formations('A', items, initial.content_revision, 'stale:1'); drain();
+    assert.equal(done[0].error_code, 'stale_file');
+    assert.match(done[0].error, /Copy.*reload.*pasting/); return;
+  }
+  assert.equal(await api.eve_settings_save_formations('A', items, initial.content_revision, 'test:1'), true);
+  drain(); assert.equal(done.length, 1);
+  assert.equal(done[0].ok, true);
+  assert.equal(done[0].operation, 'formations_save');
+  assert.equal(done[0].path, 'A'); assert.equal(done[0].request_id, 'test:1');
+  assert.notEqual(done[0].content_revision, initial.content_revision);
+  const reread = api.eve_settings_formations('A'); drain(); const saved = await reread;
+  assert.equal(saved.content_revision, done[0].content_revision);
+  assert.equal(saved.formations[0].id, 4);
+  assert.equal(saved.formations[0].probes[0].x, 2000);
+  await api.eve_settings_save_formations('A', [], initial.content_revision, 'test:2'); drain();
+  assert.equal(done.length, 2); assert.equal(done[1].error_code, 'stale_file');
+  assert.equal(done[1].content_revision, '');
+  await api.eve_settings_save_formations('A', []); drain();
+  assert.equal(done.length, 3); assert.equal(done[2].error_code, 'invalid_request');
+  const unchanged = api.eve_settings_formations('A'); drain();
+  assert.equal((await unchanged).formations[0].name, 'New');
+}
+main().then(() => console.log('PASS dev-formations')).catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(WEB / "dev.js"),
+            json.dumps(formation_sharing.limits_payload()),
+            scenario,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS dev-formations" in result.stdout
 
 
 def test_formation_switch_fixture_keeps_its_read_delay_visible():
@@ -2202,7 +2335,7 @@ def test_preview_bind_assigns_cycle_field_on_located_group():
 
 def test_preview_assignment_both_sets_and_deletes_group_by_character():
     """set_preview_character_group must handle BOTH paths:
-    - assign path:  gbc[name] = groupId  (character joins a group)
+    - assign path: an own enumerable property (including __proto__)
     - remove path:  delete gbc[name]      (character returns to All-only)
 
     A method that only supports one path silently ignores the other,
@@ -2210,13 +2343,10 @@ def test_preview_assignment_both_sets_and_deletes_group_by_character():
     """
     body = _extract_fn_body("api.set_preview_character_group")
     body = re.sub(r"(?m)^\s*//.*$", "", body)
-    # Assignment path: gbc[name] = groupId (or equivalent bracket notation)
-    assert re.search(r"gbc\s*\[\s*name\s*\]\s*=", body) or re.search(
-        r"group_by_character\s*\[\s*name\s*\]\s*=", body
-    ), (
-        "set_preview_character_group must have an assignment path: "
-        "gbc[name] = groupId — missing it means a character can never join a group"
-    )
+    # Define an own property: bracket assignment loses a new __proto__ owner.
+    assert "Object.defineProperty(gbc, name, {value: groupId," in body
+    for flag in ("enumerable: true", "configurable: true", "writable: true"):
+        assert flag in body
     # Delete path: delete gbc[name]
     assert re.search(r"delete\s+gbc\s*\[\s*name\s*\]", body) or re.search(
         r"delete\s+group_by_character\s*\[\s*name\s*\]", body
@@ -2401,15 +2531,16 @@ def test_preview_assignment_branches_use_requested_name_and_group_id():
           if (!valid) {
             return Promise.resolve(_devGroupResult(false, 'No group with id \\'' + groupId + '\\''));
           }
-          gbc[name] = groupId;
+          Object.defineProperty(gbc, name, {value: groupId,
+            enumerable: true, configurable: true, writable: true});
         }
         """
     )
     assert body.count(branches) == 1
     assert body.count("deletegbc[") == 1
     assert body.count("deletegbc[name];") == 1
-    assert re.findall(r"gbc\[[^]]+\]=", body) == ["gbc[name]="]
-    assert body.count("gbc[name]=groupId;") == 1
+    assert not re.findall(r"gbc\[[^]]+\]=", body)
+    assert body.count("Object.defineProperty(gbc,name,") == 1
     assert body.index(branches) < body.index("_devPushHotkeys();")
 
 
