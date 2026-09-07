@@ -210,6 +210,13 @@ them when you add a convention:
 - `test_bridge_contract.py` — every `_push("name")` in `ui/api.py` exists in
   `WM.HANDLERS`, every `WM.send('name')` exists on `Api`, every handler has
   exactly one owner, and facades delegate to their controller.
+- `scripts/js_smoke.js` (run by CI's `checks` job and by `test_js_smoke.py`
+  where node is on PATH) — the one **executable** gate: loads `app.js` and
+  every `<script src>` of all three pages under node with a DOM stub and
+  fails on anything an IIFE throws at top level (unknown handler names,
+  misspelled identifiers, missing `WM.*` members, wrong script order). It
+  cannot catch a handler body failing on a real payload, a missing element
+  id, or CSS; only synchronous top level runs, never timers or listeners.
 - `test_page_conventions.py` — the mechanical half of `DESIGN.md`.
 - `test_engine_invariants.py`, `test_no_tk.py` (Tk is gone and must stay gone),
   `test_packaging_completeness.py`, `test_packaging_version.py`.
