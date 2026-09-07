@@ -804,7 +804,10 @@ class AuthorityController:
         gate = self._lifecycle_gate(character_id)
         with gate:
             if character_id not in dict(attempt.known_generations):
-                self._verify_unknown_character(character_id)
+                with self._roster_gate:
+                    with self._lock:
+                        self._check_authorization_locked(attempt)
+                    self._verify_unknown_character_under_roster_gate(character_id)
             try:
                 blob = self._wrap_token(token_set.refresh_token)
             except Exception as exc:

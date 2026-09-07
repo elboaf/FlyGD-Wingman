@@ -468,11 +468,27 @@ def test_cleanup_eligibility_is_rechecked_after_token_wrapping(roster, monkeypat
     assert not roster.alerts
 
 
-def test_shutdown_during_precommit_cleanup_prevents_authority_save(roster, monkeypatch):
+@pytest.mark.parametrize("phase", ["preliminary", "final"])
+def test_shutdown_during_precommit_cleanup_prevents_authority_save(
+    roster, monkeypatch, phase
+):
     observe_gate(roster, monkeypatch, "unused-contender")
-    roster.authority._store_cleanup_verification(
-        application.SKILLS, CleanupVerification(False)
-    )
+
+    def invalidate_verification():
+        roster.authority._store_cleanup_verification(
+            application.SKILLS, CleanupVerification(False)
+        )
+
+    if phase == "preliminary":
+        invalidate_verification()
+    else:
+        # Force a real participant retry only AFTER the preliminary check and
+        # wrapping, so shutdown lands between final eligibility and durable save.
+        def wrap(token):
+            invalidate_verification()
+            return token
+
+        monkeypatch.setattr(roster.authority, "_wrap_token", wrap)
     entered = threading.Event()
     release = threading.Event()
     stopped = threading.Event()
@@ -499,3 +515,68 @@ def test_shutdown_during_precommit_cleanup_prevents_authority_save(roster, monke
     assert roster.authority.character(43) is None
     assert not roster.saved_authority
     assert not roster.alerts
+
+
+@pytest.mark.parametrize("action", ["cancel", "shutdown"])
+def test_cancelled_waiter_cannot_begin_preliminary_feature_cleanup(
+    roster, monkeypatch, action
+):
+    """A cancelled worker must not retry blocked cleanup after it obtains R."""
+    save_skills = skills_state.save
+    save_fittings = roster.fittings._save_state
+
+    def fail_save(*args):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(skills_state, "save", fail_save)
+    monkeypatch.setattr(roster.fittings, "_save_state", fail_save)
+    forgotten = roster.authority.forget(42)
+    assert forgotten.applied and not forgotten.persisted
+    # Both real participants retain 42 as evidence of failed cleanup. A retry
+    # would now succeed, making any work by the cancelled waiter observable.
+    monkeypatch.setattr(skills_state, "save", save_skills)
+    monkeypatch.setattr(roster.fittings, "_save_state", save_fittings)
+    wrapped = []
+
+    def wrap(token):
+        wrapped.append(token)
+        return token
+
+    monkeypatch.setattr(roster.authority, "_wrap_token", wrap)
+    gate = observe_gate(roster, monkeypatch, "cancelled-waiter")
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_gate():
+        with gate:
+            held.set()
+            assert release.wait(timeout=5)
+
+    with running(hold_gate, name="roster-holder"):
+        try:
+            assert held.wait(timeout=5)
+            with running(roster.consent(43), name="cancelled-waiter"):
+                try:
+                    assert gate.waiting.wait(timeout=5)
+                    if action == "shutdown":
+                        roster.authority.shutdown()
+                    else:
+                        assert roster.authority.cancel_authorization().accepted
+                finally:
+                    release.set()
+        finally:
+            release.set()
+
+    persisted_skills, _ = skills_state.load(roster.skills_path)
+    persisted_fittings, _ = fittings_store.load_fittings(roster.fittings_path)
+    assert [row.character_id for row in persisted_skills.characters] == [42]
+    assert [row.character_id for row in persisted_fittings.snapshots] == [42]
+    assert not roster.saved_skills
+    assert not roster.saved_fittings
+    assert len(roster.saved_authority) == 1  # Only the completed Forget.
+    assert not roster.authority.characters
+    assert not wrapped
+    for capability in application.FULL_AUTH_CAPABILITIES:
+        assert roster.authority._cleanup_verification[
+            capability
+        ].blocked_character_ids == frozenset({42})
