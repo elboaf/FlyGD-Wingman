@@ -209,10 +209,17 @@ acceptance. The production results document distinguishes the initial Windows
 suite's three running-client test-isolation failures from the fresh passing full
 suite at `6111c5b`, after a parent-approved repair confined to those three test
 instances. The later pending-confirm cancellation fix at `16b69b0` also has
-fresh full Linux/Windows and rebuilt-wheel evidence; browser evidence remains
-labeled with its original SHA. No blanket running-client injection or extra
-exclusions were used. Visible native, frozen-build and performance acceptance
-remain blocked.
+fresh full Linux/Windows and rebuilt-wheel evidence; its historical browser
+evidence remains labeled with its original SHA. The final consolidated review
+fixes are at `ea14411`, followed by a one-line test-ordering correction at
+`201917e`. Fresh verification at `201917e`: Linux 6124 passed/11 skipped,
+Windows 6083 passed/52 skipped, owned Linux browser 27/27, real bridge and
+rebuilt wheel passed.
+The earlier Windows test-ordering failure is retained in the production results.
+No blanket running-client injection or extra exclusions were used. Windows
+Cargo/Rust are unavailable, so the separate codec CI leg remains unrun there.
+Visible native, frozen-build, DPI, minimized-source and performance acceptance
+remain blocked; cap eight is still provisional.
 
 # Windows preview crop probe harness
 

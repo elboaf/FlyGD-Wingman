@@ -6,13 +6,73 @@ native picker/crop, installer or EVE interaction was launched for this pass.
 No real EVE client geometry was changed.
 
 **Initial hardening SHA:** `1b61f64fa98e6f3915d01f89d6623d70b14d155b`.
-**Latest tested fix / full-suite SHA:** `16b69b01a97b610ca2000d4225673afa5a779f79`
-(`fix: cancel crop confirmation pending font cleanup`). Documentation is
-committed separately to avoid self-referential evidence hashes. The
-implementation cap remains **eight, provisional**; no stage has passed the
+**Final-review production fix SHA:** `ea14411003a73ee860a5096a53e4c926f512e27c`.
+**Latest full-suite / browser / wheel SHA:** `201917e74fecbadbfb3da6a6266fce97fea11c35`
+(one subsequent test-ordering correction; production bytes unchanged).
+Documentation is committed separately to avoid self-referential evidence hashes.
+The implementation cap remains **eight, provisional**; no stage has passed the
 production hardware release gates.
 
-## Latest verification at 16b69b0 — pending-confirm cancellation
+## Final consolidated review fixes — ea14411 / 201917e
+
+All five final-review findings were reproduced and addressed together:
+
+- Telemetry uses the host's committed runtime authorization, not a live settings
+  value temporarily changed by a pending master transaction. A failed master-off
+  save can no longer suppress renewed-session delivery and permit an old selection
+  to persist. The regression uses the real API, settings lock, store, telemetry
+  dispatcher and fake-native pump; no settings lock is held across native work.
+- Candidate promotion checks current host ingress (runtime epoch, stop fence and
+  full discovery session) after native preparation and old-window destruction,
+  and again after the final DWM update before showing. Successful admitted saves
+  remain real persisted outcomes; unauthorized candidates are discarded. Eight
+  Event-barrier cases cover stop/session renewal at four promotion boundaries.
+- A completed store drain does not imply native cleanup completed. The host now
+  retains its controller/picker/pump until the picker releases its full bundle,
+  including fonts. Cleanup retries on existing pump-message boundaries without
+  a retry thread, timer, busy loop or worker wait. Ordinary/final stop tests hold
+  fonts through confirmation and drain, prove timeout/restart refusal, then release
+  them through a pump boundary and verify complete teardown.
+- Failed capture acquisition resets the crop gesture after checking GetCapture;
+  SetCapture's return is the previous owner, not success. Neither another owner's
+  capture nor a late move/up may cause an unintended move, resize or activation.
+- The loader and crop API share exact canonical-owner validation. Malformed rows
+  drop individually; trimming/renaming must not overwrite a valid owner's crop.
+
+The 19 new cases failed before their fixes and pass on both platforms. The first
+full Windows run at ea14411 produced **6082 passed, 52 skipped, 1 failed**: an
+existing crop-status test drained the store before proving its asynchronous host
+command had been submitted. An Event-blocked-pump diagnostic established that
+ordering gap. The only subsequent change, at 201917e, adds the missing pump
+barrier before that drain; assertions and production behavior are unchanged.
+The failed XML is retained, not replaced by a diagnostic pass.
+
+| Fresh exercise at 201917e | Actual result | Boundary |
+| --- | --- | --- |
+| Full Linux pytest, Python 3.11.15 | **6124 passed, 11 skipped**, 85.10 seconds | All new regressions plus existing suite |
+| Full Windows pytest, Python 3.12.10, Windows 11 build 26100 | **6083 passed, 52 skipped**, 83.45 seconds | Same isolated TEMP venv and APPDATA/LOCALAPPDATA; no blanket injection/exclusions |
+| Ruff check / format check | Passed; 292 files formatted | No lint/format exemption |
+| Current CI WebView2/build-action text checks; all 16 web JS syntax checks | Passed | No version or packaging contract change |
+| Owned Linux Chrome dev-page exercise | **27 passed, 0 failed**; 32/32 handlers registered | 840×625 and 839×625; no unexpected runtime errors |
+| Actual Api._push → generated JS → actual page handler | Passed | Own __proto__ key and configured controls preserved |
+| Rebuilt wheel, ZIP imports and byte comparison | Passed | Five crop modules plus modified startup/host/API bytes; probes/tests absent |
+
+Linux's separate `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml`
+passed **1 test** at ea14411. Windows Cargo/Rust were queried and are not on PATH;
+that separate CI codec leg was not run or installed globally. No Rust source
+changed. Full Windows pytest is green, not a claim that every Windows build gate
+ran. The earlier full Linux run at ea14411 also passed 6124/11 in 81.05 seconds.
+
+Fresh artifacts in the implementation workspace: `final-fix-linux-201917e.xml`,
+`final-fix-windows-201917e.xml`, `final-fix-browser/` and `wheel-201917e/`.
+Historical `final-fix-windows-ea14411.xml` records the test-ordering failure.
+`final-fix-report.md` contains exact commands, RED/GREEN results and decisions.
+Only owned, isolated Linux browsers were opened/closed; no unrelated browser or
+Windows desktop was captured. Test timings are not crop performance measurements.
+All native/frozen/performance/DPI/minimized release gates below remain BLOCKED;
+cap eight remains provisional.
+
+## Previous verification at 16b69b0 — pending-confirm cancellation
 
 Review found that a confirmation waiting for selected-font cleanup remained
 cancellable but could still be delivered after a later Disable or Remove. The
@@ -135,7 +195,22 @@ serialization evidence above is Linux evidence, not a claimed Windows pass.
 
 ## Distribution collection
 
-At **16b69b01a97b610ca2000d4225673afa5a779f79**, `uv build --wheel` rebuilt
+At **201917e74fecbadbfb3da6a6266fce97fea11c35**, the fresh wheel
+`wheel-201917e/wingman-5.1.1-py3-none-any.whl` is **688344 bytes**, SHA-256:
+
+```text
+8a69fc7f0011662d726cbb74850c4da35431e4f01fea8fccb985ba1c8856a3a5
+```
+
+All five crop modules were byte-compared and imported from the ZIP itself under
+`python -I`. The changed `wingman/__main__.py`, `wingman/ui/api.py` and
+`wingman/preview/host.py` also match the checkout byte-for-byte. All three probe
+modules and the tests tree are absent. No native launch/import side effect was
+used to inspect the wheel. The earlier ea14411 wheel remains separately stored
+(688344 bytes, SHA-256 `632da9e2b177f65d2c49b5755e2d4c789433efe969caff3edc1ef740a452e1b8`).
+This is Python wheel collection, not Windows frozen-build/installer acceptance.
+
+At **16b69b01a97b610ca2000d4225673afa5a779f79** (historical), `uv build --wheel` rebuilt
 `wheel-16b69b0/wingman-5.1.1-py3-none-any.whl` (687456 bytes) in the ignored
 implementation workspace:
 
@@ -147,7 +222,7 @@ The earlier 1b61f64 wheel remains a historical artifact: 686868 bytes,
 SHA-256 `a4bc659e87ff7367cde3079b1027ab0fd8d92c139789b95af3c8b4b59ed2a3d7`.
 It is not evidence for the corrected pending-confirm cancellation path.
 
-For the latest wheel, `crops.py`, `cropstore.py`, `cropwindow.py`, `croppicker.py`
+For that earlier wheel, `crops.py`, `cropstore.py`, `cropwindow.py`, `croppicker.py`
 and `cropcontroller.py` were byte-compared with the 16b69b0 checkout and imported
 from the ZIP itself in an isolated Python invocation. The wheel contains no
 `preview_crop_harness.py`, `preview_crop_model.py`, `preview_crop_windows.py`
