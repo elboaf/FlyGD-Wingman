@@ -565,7 +565,7 @@ def test_a_failed_position_write_is_reported_rather_than_claimed(tmp_path, monke
     api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
     assert api.set_restore_preview_positions(False) == {
-        "applied": True,
+        "applied": False,
         "persisted": False,
     }
 

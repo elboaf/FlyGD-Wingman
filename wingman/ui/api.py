@@ -3547,27 +3547,21 @@ class Api:
         select left showing it would be showing a state the app is not
         in.
 
-        `path` is walked fresh against `self._state.settings` both for the
-        no-op check and inside the `update()` block, never against a
-        `preview` reference held across the call: `_normalize` reassigns
-        `preview` wholesale on every write (settings.py:373-378), so a
-        reference captured before `update()` is stale by the time it
-        returns.
+        The no-op check shares the mutation's serialization. An unlocked
+        comparison could acknowledge another writer's tentative value just
+        before it rolls back. Walk `path` inside the transaction as well:
+        normalization replaces nested sections on every settings write.
         """
-        node = self._state.settings.get("preview", {})
-        for key in path[:-1]:
-            node = node.get(key, {})
-        if node.get(path[-1]) == value:
-            # Same rationale as _write_setting's no-op guard: a save
-            # projects the complete document, so this would otherwise be a
-            # full rewrite for a value that has not changed.
-            return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
                 node = doc.setdefault("preview", {})
                 for key in path[:-1]:
                     node = node.setdefault(key, {})
+                if node.get(path[-1]) == value:
+                    raise _SettingUnchanged
                 node[path[-1]] = value
+        except _SettingUnchanged:
+            return self._field_ok()
         except OSError:
             logger.exception("Could not persist preview setting %s", ".".join(path))
             return self._field_refused("Could not save this to settings.")
@@ -3718,17 +3712,15 @@ class Api:
         floor_w, floor_h = preview_window.MIN_SIZE
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
-        section = self._state.settings.get("preview", {})
-        if section.get("width") == width and section.get("height") == height:
-            # Same no-op guard every other preview write carries: a save
-            # projects the complete document, so an unchanged pair would
-            # otherwise be a full rewrite.
-            return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
                 node = doc.setdefault("preview", {})
+                if node.get("width") == width and node.get("height") == height:
+                    raise _SettingUnchanged
                 node["width"] = width
                 node["height"] = height
+        except _SettingUnchanged:
+            return self._field_ok()
         except OSError:
             logger.exception("Could not persist the default preview size")
             return self._field_refused("Could not save this to settings.")
@@ -3976,8 +3968,12 @@ class Api:
 
     def _toggle_preview_roster(self, key: str, name: str, member: bool) -> dict:
         """Add or remove *name* from the character-name list at
-        preview.<key> (locked, never_minimize or excluded), then persist through
-        _write_preview_setting.
+        preview.<key> (locked, never_minimize or excluded).
+
+        For `locked`, *member* is the desired effective lock; its difference
+        from the default is resolved inside the same transaction as the
+        roster read. Neither a concurrent default change nor another
+        character's edit may be lost behind an accepted response.
 
         A list, not a per-character flag: Task 1 moved lock storage out of
         preview.layouts precisely because that entry is dropped whenever it
@@ -3994,13 +3990,25 @@ class Api:
         why the live-update call stays with the caller rather than moving
         in here (two restyle, one sweeps and rebinds).
         """
-        current = list(self._state.settings.get("preview", {}).get(key) or [])
-        if member:
-            if name not in current:
-                current.append(name)
-        else:
-            current = [n for n in current if n != name]
-        return self._write_preview_setting((key,), current)
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                section = doc.setdefault("preview", {})
+                if key == "locked":
+                    member = member != bool(section.get("lock_default"))
+                current = list(section.get(key) or [])
+                if (name in current) == member:
+                    raise _SettingUnchanged
+                if member:
+                    current.append(name)
+                else:
+                    current = [n for n in current if n != name]
+                section[key] = current
+        except _SettingUnchanged:
+            return self._field_ok()
+        except OSError:
+            logger.exception("Could not persist preview roster %s", key)
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
 
     def set_preview_locked(self, name, locked) -> dict:
         """Persist whether *name*'s preview is locked against drag, then
@@ -4016,9 +4024,7 @@ class Api:
         With lock_default off (the shipped default) the expression is
         `bool(locked)` and this method behaves exactly as it always has.
         """
-        section = self._state.settings.get("preview", {})
-        member = bool(locked) != bool(section.get("lock_default"))
-        result = self._toggle_preview_roster("locked", name, member)
+        result = self._toggle_preview_roster("locked", name, bool(locked))
         if self._preview_host is not None:
             self._preview_host.restyle()
         return result
@@ -4256,26 +4262,12 @@ class Api:
         next restart will discard is the failure this shape exists to
         prevent.
         """
-        enabled = bool(enabled)
-        section = self._state.settings.setdefault("preview", {})
-        persisted = True
-        if section.get("restore_preview_positions") != enabled:
-            try:
-                # Through settings.update, not save(): the mutation must
-                # happen inside _SAVE_LOCK or a concurrent writer is
-                # reverted. update() also restores the live dict if the
-                # block raises, so a failed write leaves the stored value
-                # as it was and the next toggle retries on its own --
-                # which is why this needs no dirty-flag of its own.
-                with settings_mod.update(self._state.settings) as doc:
-                    doc.setdefault("preview", {})["restore_preview_positions"] = enabled
-            except OSError:
-                # Logged and reported, not raised. A settings file that
-                # cannot be written must not break the toggle -- but the
-                # page has to be able to say the choice is not saved.
-                persisted = False
-                logger.exception("Could not persist restore_preview_positions")
-        return {"applied": True, "persisted": persisted}
+        result = self._write_preview_setting(
+            ("restore_preview_positions",), bool(enabled)
+        )
+        # Preserve this older endpoint's two-key result shape while sharing
+        # the serialized no-op and truthful rollback handling above.
+        return {"applied": result["applied"], "persisted": result["persisted"]}
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.
