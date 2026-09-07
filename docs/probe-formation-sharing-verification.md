@@ -5,7 +5,8 @@
 **2026-09-06 — implementation-wide polish and fresh local verification complete;
 not release-ready.** All four independent polish roles returned; their two
 consolidated findings were corrected with runtime and native Chromium RED/GREEN
-evidence. Independent Task 6 and final branch review still follow.
+evidence. All six task reviews and the final whole-branch review are complete with
+no outstanding code findings; the controller independently reran the local gates.
 Windows/WebView2, real OS clipboard and live-EVE acceptance/restoration remain
 **unverified**. Passing Linux tests do not satisfy those gates.
 
@@ -22,6 +23,30 @@ documentation only. Those tests passed when added: **added coverage, not a claim
 RED/GREEN production fix**. The subsequent polish corrections below change only
 the formation editor, its runtime tests, and scoped documentation; they have
 separate observed RED/GREEN evidence.
+
+## Implemented flow
+
+- **Copy:** independent sharing checkboxes select current draft objects, including
+  valid unsaved edits. `formation_sharing.py` validates and explicitly projects
+  names and meter-valued geometry into versioned JSON. Account identities, paths,
+  local IDs and revisions do not travel. The page reports success only after its
+  clipboard-write promise succeeds.
+- **Paste:** the page sends explicit review text to pure Python endpoints. Candidates
+  remain separate from the account draft, with editable names, derived probe counts
+  and the existing geometry preview. Python owns strict validation and casefold
+  conflicts; no file lookup or write occurs in these endpoints.
+- **Add:** current candidate names and current draft names are revalidated. Only a
+  matching, current response appends the whole batch as ID-less draft items. Cancel,
+  malformed input and stale responses cannot partially add or replace data.
+- **Save:** the existing recipient writer allocates local IDs. The API requires the
+  loaded content revision; the codec hashes the same bytes it decodes and checks
+  the expected revision around backup before atomic publication. Publication is
+  the success boundary, so later housekeeping failure is a warning, not a false
+  claim that nothing was saved.
+- **Lifecycle:** content revisions, local edit revisions and session/request
+  identities answer different questions. Committed baselines advance while newer
+  edits remain intact. Native typing, checkbox clicks and stale Delete confirmations
+  have regressions; error recovery never force-saves or automatically merges files.
 
 ## Cross-account production-API coverage
 
@@ -261,11 +286,48 @@ review remains separate from the four completed polish roles.
 
 ### Knowledge check for reviewers
 
-1. Why can a Delete dialog opened after Reload starts remain in the same generation as the replacement document?
-2. Which guards reject a late Yes after exit/reopen while the old formation object is still on screen?
-3. Why must a valid deletion during Save remain dirty while still adopting the completed Save's content revision?
-4. Which evidence proves recipient-local IDs, backups and unchanged source bytes, and which evidence proves only page behavior?
-5. Why do native codec round trips and Chromium accessibility names not satisfy Windows/WebView2, real-clipboard or live-EVE release gates?
+1. Why does sharing project selected draft values instead of reusing selective-copy output or serializing an account response?
+2. When must a committed Save advance the content baseline even though newer local edits prevent a reload?
+3. Why is the shared-meter conversion separate from ordinary load normalization, and what do the accepted range bounds guarantee?
+4. Which distinct identities prevent stale Add and Delete replies from changing a replacement document or another session?
+5. Which checks prove actual recipient-file/codec behavior, which prove only page behavior, and which release gates remain unverified?
+
+## Final independent review and controller verification
+
+The final reviewer inspected all 21 changed files in
+`57ce91dfea854d23714b8209db3c3e6ced854e73..689493c343933519b088999d969836538a83925e`
+against the approved design, plan and relevant callers. Verdict: no Critical,
+Important or new actionable Minor finding; code ready subject to fresh checks,
+**not release-ready**. Task 6's separate review also approved its production-boundary
+coverage and both polish corrections. No final code-fix wave was required.
+
+The controller independently verified the same committed implementation while the
+review proceeded (not just implementer reports):
+
+- `uv sync --locked --extra dev`: resolved 55 packages, checked 38, exit 0.
+- `uv run --no-sync python -m pytest tests/ -q -rs`: **6,125 passed, 9 Windows-only
+  skips in 204.25s**. No updater failure in this run; the earlier observed timing
+  window remains documented and unfixed.
+- `uv run --no-sync ruff check .` and `uv run --no-sync ruff format --check .`:
+  clean; 284 files already formatted.
+- `node --check` on `wingman/web/formations.js`, `wingman/web/dev.js`, and
+  `tests/fixtures/formations_page.cjs`: all exit 0.
+- The same offline/locked release `cargo test` command recorded above: **1 passed**.
+  The native-codec Python integration also ran within the full suite; no codec or
+  Node scenario skipped.
+- Both recorded Chromium scripts were inspected and rerun: all seven Delete/count
+  regressions and the sharing/Unicode/keyboard/32-row scenarios passed. Tabs/contexts
+  were closed; clipboard boundaries stayed page-local and file replies stayed
+  controlled. These remain Linux-browser observations, not the manual gates below.
+- Current CI's WebView2 predicate-token comparison and build-action `uv run`
+  invocation check both passed locally. Version derivation is covered by the
+  current packaging tests, not a reinstated comparison of removed version literals.
+- `git diff --check` and tracked worktree status were clean.
+
+Only documentation completion records follow this reviewed/tested implementation;
+no production or test code is changed by recording these outcomes. The branch has
+not been pushed, merged, or released. Its fork point is recorded above; integration
+with later changes on `main` requires its own verification.
 
 ## Controller rulings retained from the execution ledger
 
@@ -289,9 +351,6 @@ must survive scratch cleanup:
 
 ## Unverified gates and remaining release obligations
 
-- **PENDING — independent Task 6 and final branch review.** All four polish roles
-  and the local post-correction gates above are complete; they do not substitute
-  for those later controller-owned reviews.
 - **OBSERVED — unrelated updater test timing window.** One full run failed at the
   shutdown assertion described above; isolated and serial full reruns passed.
   The updater is unchanged and the window is not claimed fixed.
