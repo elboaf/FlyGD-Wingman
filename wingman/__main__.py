@@ -915,8 +915,8 @@ def main() -> int:
         telemetry=telemetry,
     )
     api_box["api"] = api
-    if telemetry is not None:
-        api._fleet_unsubscribe = telemetry.subscribe_fleet(api._receive_fleet_snapshot)
+    if telemetry is not None and not api._start_fleet_presentation():
+        logger.error("Fleet presentation could not start")
     # Migration and authority composition happen after Api construction so
     # warnings have a durable route payload and callbacks bind eagerly. They
     # still happen before the window starts and before any EVE feature work.
@@ -949,6 +949,10 @@ def main() -> int:
         # Neither auxiliary-window path takes shutdown_lock, so a creation
         # already in progress can finish and be observed without inversion.
         with shutdown_lock:
+            # Close acceptance and detach BEFORE joining or destroying any
+            # target. A timed-out WebView owner stays tracked but cannot start
+            # a later delivery stage; no native/presentation lock covers join.
+            api._stop_fleet_presentation()
             with api._fleetbar_lifecycle_lock:
                 api._fleetbar_quitting = True
                 fleet = api._fleetbar_window
@@ -1108,6 +1112,8 @@ def main() -> int:
     # this callback on its own thread once the GUI loop owns the main one.
     window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
 
+    # Also covers GUI exit paths that did not request destroy_windows().
+    api._stop_fleet_presentation()
     icon.stop()
     if scheduler is not None:
         scheduler.stop()

@@ -67,6 +67,12 @@ from ..upload.controller import (
 )
 from ..upload.gate import WorkGate
 from . import copy as copy_mod
+from .fleetpresentation import (
+    FleetDelivery,
+    FleetPresentationWorker,
+    RosterMemory,
+    RosterWrite,
+)
 from .rows import RowSnapshot
 from .scheduler import Scheduler
 
@@ -374,9 +380,14 @@ class Api:
         self._fleet_expected_generation = None  # rejecting sentinel
         self._fleet_presentation_revision = 0
         self._fleet_roster_signature = None
-        self._fleet_pending_seen = []
+        self._fleet_roster = RosterMemory()
         self._fleet_snapshot = None
         self._fleet_unsubscribe = None
+        self._fleet_activation = 0
+        self._fleet_settings_dirty = False
+        # Construction is inert. Main starts the owner before subscribing;
+        # the dispatcher only folds state and sets its wakeup bit.
+        self._fleet_worker = FleetPresentationWorker(self._present_fleet_snapshot)
         # pywebview serves bridge calls concurrently. Window construction,
         # show/hide, page-ready reveal, and shutdown must have one lifecycle
         # owner or a late enable can orphan an untracked topmost WebView.
@@ -2237,7 +2248,7 @@ class Api:
         running = None if snapshot is None else {row.character for row in snapshot.rows}
         names = set(section.get("seen") or ())
         names.update(section.get("hidden") or ())
-        names.update(self._fleet_pending_seen)
+        names.update(self._fleet_roster.pending)
         if running is not None:
             names.update(running)
         hidden = set(section.get("hidden") or ())
@@ -2314,11 +2325,10 @@ class Api:
             settings_payload, _ = self._fleet_payloads_locked()
         return settings_payload
 
-    def _push_fleet_bar_state(self, payload: dict | None = None) -> None:
-        self._push(
-            "onFleetBarState",
-            payload if payload is not None else self.fleet_bar_settings(),
-        )
+    def _push_fleet_bar_state(self) -> None:
+        # Always read the latest state on the presentation owner. A bridge
+        # caller may still hold the native lifecycle lock here.
+        self._queue_fleet_presentation(settings_changed=True)
 
     def fleet_bar_snapshot(self) -> dict:
         """Current complete display payload, also used by the bar at boot."""
@@ -2326,12 +2336,11 @@ class Api:
             _, display_payload = self._fleet_payloads_locked()
         return display_payload
 
-    def _push_fleet_snapshot(self, payload: dict | None = None) -> None:
-        bar = self._fleetbar_window
-        if bar is None:
+    def _push_fleet_snapshot(self, payload: dict, delivery: FleetDelivery) -> None:
+        # Never look up a new bar after an earlier stage waited in WebView.
+        bar = delivery.fleetbar
+        if bar is None or not self._fleet_delivery_current(delivery):
             return
-        if payload is None:
-            payload = self.fleet_bar_snapshot()
         script = (
             f"window.onFleetSnapshot && window.onFleetSnapshot({json.dumps(payload)})"
         )
@@ -2340,45 +2349,106 @@ class Api:
         except Exception:
             logger.debug("Fleet Bar snapshot push failed", exc_info=True)
 
-    def _remember_fleet_roster(self, current: list[str], pending: list[str]) -> bool:
-        """Persist a roster transition without holding the presentation lock.
+    def _fleet_state_push(
+        self, handler: str, payload: dict, delivery: FleetDelivery
+    ) -> None:
+        script = f"window.{handler} && window.{handler}({_page_payload(payload)})"
+        for target in (delivery.main, delivery.sigbar):
+            if not self._fleet_delivery_current(delivery):
+                return
+            if target is not None:
+                try:
+                    target.evaluate_js(script)
+                except Exception:
+                    logger.debug("Fleet state push failed", exc_info=True)
 
-        The current snapshot wins over names pending from a failed earlier save,
-        which win over the persisted memory.  A metric-only publication never
-        reaches here, so a disk error is retried only when the roster changes.
-        """
-        candidate = []
+    def _fleet_delivery_current(self, delivery: FleetDelivery) -> bool:
+        with self._fleet_presentation_lock:
+            return self._fleet_delivery_current_locked(delivery)
+
+    def _fleet_delivery_current_locked(self, delivery: FleetDelivery) -> bool:
+        return (
+            not self._fleetbar_quitting
+            and delivery.activation == self._fleet_activation
+            and delivery.revision == self._fleet_presentation_revision
+            and delivery.main is self._window
+            and delivery.sigbar is self._sigbar_window
+            and delivery.fleetbar is self._fleetbar_window
+        )
+
+    def _queue_fleet_presentation(self, *, settings_changed=False) -> None:
+        with self._fleet_presentation_lock:
+            if self._fleetbar_quitting:
+                return
+            if settings_changed:
+                self._fleet_settings_dirty = True
+                self._next_fleet_revision_locked()
+            self._fleet_worker.notify()
+
+    def _present_fleet_snapshot(self) -> None:
+        """The worker alone performs persistence and all Fleet presentation I/O."""
+        with self._fleet_presentation_lock:
+            if self._fleetbar_quitting:
+                return
+            delivery = FleetDelivery(
+                self._fleet_activation,
+                self._fleet_presentation_revision,
+                self._window,
+                self._sigbar_window,
+                self._fleetbar_window,
+            )
+            write = self._fleet_roster.take()
+        if write is not None:
+            self._remember_fleet_roster(write)
+        if not self._fleet_delivery_current(delivery):
+            return
+        with self._fleet_presentation_lock:
+            settings_payload, display_payload = self._fleet_payloads_locked()
+            settings_changed = self._fleet_settings_dirty
+        if settings_changed:
+            self._fleet_state_push("onFleetBarState", settings_payload, delivery)
+        self._push_fleet_snapshot(display_payload, delivery)
+        with self._fleet_presentation_lock:
+            if self._fleet_delivery_current_locked(delivery):
+                self._fleet_settings_dirty = False
+
+    def _remember_fleet_roster(self, write: RosterWrite) -> None:
+        """Persist a folded batch; acknowledge only its captured admissions."""
+        candidate = None
         try:
             with settings_mod.update(self._state.settings) as doc:
                 section = dict(doc.get("fleet_bar") or {})
                 persisted = list(section.get("seen") or ())
-                candidate = self._fleet_unique_names([*current, *pending, *persisted])
                 normalized = settings_mod.validated_fleet_bar(
-                    {**section, "seen": candidate}
+                    {
+                        **section,
+                        "seen": self._fleet_unique_names(
+                            [*write.priority, *write.pending, *persisted]
+                        ),
+                    }
                 )["seen"]
                 if normalized == persisted:
                     candidate = normalized
                     raise _FleetVisibilityNoChange()
                 section["seen"] = normalized
                 doc["fleet_bar"] = section
-                candidate = normalized
+            candidate = normalized
         except _FleetVisibilityNoChange:
             pass
         except OSError:
             logger.exception("Could not persist the Fleet character roster")
-            return False
-        with self._fleet_presentation_lock:
-            saved = set(candidate)
-            self._fleet_pending_seen = [
-                name for name in self._fleet_pending_seen if name not in saved
-            ]
-        return True
+        finally:
+            # No settings lock is held here. Later admissions (including a
+            # repeat of a saved name) must survive this older acknowledgement.
+            with self._fleet_presentation_lock:
+                self._fleet_roster.acknowledge(write, candidate)
 
     def _receive_fleet_snapshot(self, snapshot) -> None:
-        """Coordinator subscriber; safe on its dispatcher thread."""
+        """Dispatcher handoff: state only, never I/O, joins or thread startup."""
         with self._fleet_presentation_lock:
             if (
-                snapshot.activation_generation == 0
+                self._fleetbar_quitting
+                or snapshot.activation_generation == 0
                 or snapshot.activation_generation != self._fleet_expected_generation
             ):
                 return
@@ -2388,21 +2458,37 @@ class Api:
             self._next_fleet_revision_locked()
             self._fleet_roster_signature = signature
             if roster_changed:
-                self._fleet_pending_seen = self._fleet_unique_names(
-                    [*self._fleet_pending_seen, *signature]
+                self._fleet_roster.admit(signature)
+                self._fleet_settings_dirty = True
+            self._fleet_worker.notify()
+
+    def _start_fleet_presentation(self) -> bool:
+        """Start before subscribing; retries never allocate a second owner."""
+        with self._fleetbar_lifecycle_lock:
+            if self._fleetbar_quitting or not self._fleet_worker.start():
+                return False
+            if self._telemetry is not None and self._fleet_unsubscribe is None:
+                self._fleet_unsubscribe = self._telemetry.subscribe_fleet(
+                    self._receive_fleet_snapshot
                 )
-                current = sorted(signature, key=lambda name: (name.casefold(), name))
-                pending = list(self._fleet_pending_seen)
-        if roster_changed:
-            self._remember_fleet_roster(current, pending)
-            with self._fleet_presentation_lock:
-                settings_payload, display_payload = self._fleet_payloads_locked()
-            self._push_fleet_bar_state(settings_payload)
-        else:
-            display_payload = self.fleet_bar_snapshot()
-        # pywebview can synchronously enter page code, so the presentation
-        # lock protects state only and is deliberately released before JS.
-        self._push_fleet_snapshot(display_payload)
+            return True
+
+    def _stop_fleet_presentation(self, timeout: float = 1.0) -> bool:
+        """Close, detach, then join without holding native/presentation locks."""
+        with self._fleetbar_lifecycle_lock:
+            self._fleetbar_quitting = True
+            self._close_fleet_presentation()
+            unsubscribe = self._fleet_unsubscribe
+            self._fleet_unsubscribe = None
+        if unsubscribe is not None:
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception("Fleet snapshot subscriber did not detach cleanly")
+        stopped = self._fleet_worker.stop(timeout)
+        if not stopped:
+            logger.warning("Fleet presentation worker is still stopping")
+        return stopped
 
     def set_fleet_bar_character_visible(self, name, visible) -> dict:
         """Persist one exact character visibility choice without touching Preview."""
@@ -2452,9 +2538,8 @@ class Api:
         if changed:
             with self._fleet_presentation_lock:
                 self._next_fleet_revision_locked()
-                settings_payload, display_payload = self._fleet_payloads_locked()
-            self._push_fleet_bar_state(settings_payload)
-            self._push_fleet_snapshot(display_payload)
+                settings_payload, _ = self._fleet_payloads_locked()
+            self._push_fleet_bar_state()
             return {
                 "applied": True,
                 "persisted": True,
@@ -2480,6 +2565,7 @@ class Api:
                 self._fleet_roster_signature,
                 self._fleet_presentation_revision,
             )
+            self._fleet_activation += 1
             self._fleet_expected_generation = None
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
@@ -2505,6 +2591,7 @@ class Api:
     def _install_fleet_generation(self, generation: int | None) -> None:
         """Open acceptance for one coordinator reservation, still on WAITING."""
         with self._fleet_presentation_lock:
+            self._fleet_activation += 1
             self._fleet_expected_generation = generation
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
@@ -2555,6 +2642,8 @@ class Api:
         with self._fleetbar_lifecycle_lock:
             if self._fleetbar_quitting:
                 return self._field_refused("Wingman is shutting down.")
+            if on and not self._start_fleet_presentation():
+                return self._field_refused("The Fleet Bar could not be opened.")
             return self._toggle_fleet_bar(bool(on))
 
     def _toggle_fleet_bar(self, on: bool) -> dict:
@@ -2591,7 +2680,7 @@ class Api:
                     bar = fleetbar.create(self, hidden=True)
                 elif self._fleetbar_ready:
                     fleetbar.reveal_bar(bar)
-                    self._push_fleet_snapshot()
+                    self._queue_fleet_presentation()
             elif fleetbar.is_alive(bar):
                 fleetbar.hide_bar(bar)
         except Exception:
@@ -2647,7 +2736,7 @@ class Api:
                 return
             try:
                 fleetbar.reveal_bar(bar)
-                self._push_fleet_snapshot()
+                self._queue_fleet_presentation()
             except Exception:
                 logger.exception("Fleet Bar window could not be revealed")
                 self._toggle_fleet_bar(False)
@@ -2945,20 +3034,9 @@ class Api:
                 self._preview_host.stop(final=True)
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        # The fleet subscriber detaches BEFORE telemetry stops -- the same
-        # rule __main__ applies to the sharing worker. The coordinator's
-        # dispatcher drains and publishes one last batch on the way down,
-        # and with this callback still attached that publication routed
-        # into a fleet-bar window the preview teardown above had already
-        # destroyed. Detaching first means the final batch has nowhere to
-        # go, which is the correct answer at shutdown.
-        unsubscribe = self._fleet_unsubscribe
-        self._fleet_unsubscribe = None
-        if unsubscribe is not None:
-            try:
-                unsubscribe()
-            except Exception:
-                logger.exception("Fleet snapshot subscriber did not detach cleanly")
+        # Also called by main before native destruction. Idempotence covers
+        # headless shutdown and retries after a blocked presentation owner.
+        self._stop_fleet_presentation()
         if self._telemetry is not None:
             try:
                 self._telemetry.stop()

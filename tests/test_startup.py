@@ -170,6 +170,63 @@ def startup(monkeypatch, tmp_path):
     return SimpleNamespace(order=order, captured=captured)
 
 
+def test_fleet_closes_detaches_and_stops_before_native_destruction(
+    startup, monkeypatch
+):
+    from tests.test_fleet_bar import FakeTelemetry
+    from wingman.ui.fleetpresentation import FleetPresentationWorker
+
+    order = startup.order
+    telemetry = FakeTelemetry()
+
+    def subscribe(callback):
+        order.append("fleet_subscribe")
+
+        def detach():
+            api = startup.captured["api"]
+            assert api._fleet_expected_generation is None
+            assert api._fleetbar_quitting
+            order.append("fleet_detach")
+
+        return detach
+
+    telemetry.subscribe_fleet = subscribe
+    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: telemetry)
+    real_stop = FleetPresentationWorker.stop
+
+    def stop(worker, timeout=1.0):
+        api = startup.captured["api"]
+        acquired = threading.Event()
+
+        def check_locks():
+            with api._fleetbar_lifecycle_lock, api._fleet_presentation_lock:
+                acquired.set()
+
+        probe = threading.Thread(target=check_locks)
+        probe.start()
+        assert acquired.wait(5), "join must not hold Fleet state/native locks"
+        probe.join(5)
+        order.append("fleet_stop")
+        return real_stop(worker, timeout)
+
+    monkeypatch.setattr(FleetPresentationWorker, "stop", stop)
+
+    def during_run():
+        api = startup.captured["api"]
+        api._fleetbar_window = SimpleNamespace(
+            destroy=lambda: order.append("fleet_destroy")
+        )
+        api._request_shutdown()
+
+    startup.captured["during_run"] = during_run
+    assert main_mod.main() == 0
+    assert order.count("fleet_subscribe") == 1
+    assert order.count("fleet_detach") == 1
+    assert order.index("fleet_detach") < order.index("fleet_stop")
+    assert order.index("fleet_stop") < order.index("fleet_destroy")
+    assert order.index("fleet_destroy") < order.index("destroy_window")
+
+
 def test_nothing_touches_the_page_before_the_gui_loop_starts(startup):
     """The whole of C2 in one assertion.
 
