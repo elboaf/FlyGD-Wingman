@@ -18,6 +18,7 @@ import time
 import pytest
 
 from wingman.telemetry.coordinator import (
+    _WAKE,
     PUBLISH_INTERVAL_S,
     TelemetryCoordinator,
     _FleetMode,
@@ -1181,6 +1182,84 @@ def _record_shutdown_timeouts(
     monkeypatch.setattr(h.stream, "stop", stop_stream)
     monkeypatch.setattr(h.coordinator, "_thread_factory", lambda **_kw: worker)
     return calls, worker
+
+
+class TestStopMidBatch:
+    """A stop that lands while a batch is being coalesced must end it.
+
+    ``_stop_dispatcher`` sets the generation's event and puts ``_WAKE`` on
+    the queue. The coalescing loop skipped that sentinel like any other
+    wake, so every payload behind it was still processed and the batch
+    still reached Alert policy and the fleet subscribers -- a sound and a
+    preview ring after ``stop()`` had returned.
+    """
+
+    @staticmethod
+    def _stopping_harness(tmp_path, stop_during):
+        policy = FakePolicy()
+
+        class PreviewHostThatStops(FakePreviewHost):
+            def apply_roster(self, snapshot):
+                super().apply_roster(snapshot)
+                stop_during()
+
+        preview = PreviewHostThatStops()
+        h = _harness(
+            tmp_path,
+            preview=True,
+            alerts=True,
+            fleet=True,
+            alert_policy=policy,
+            preview_host=preview,
+        )
+        h.subscribe()
+        h.coordinator.reconcile()
+        return h, policy, preview
+
+    def test_payloads_behind_the_stop_wake_reach_no_consumer(self, tmp_path):
+        state = {}
+
+        def stop_from_another_thread():
+            # Exactly what _stop_dispatcher does, arriving while the
+            # dispatcher is inside _process for the roster.
+            state["coordinator"]._stop_event.set()
+            state["coordinator"]._queue.put(_WAKE)
+
+        h, policy, preview = self._stopping_harness(tmp_path, stop_from_another_thread)
+        state["coordinator"] = h.coordinator
+
+        h.discovery.publish(_roster(_session("Alice")))
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.pump()
+
+        assert len(preview.rosters) == 1, "the roster was already in flight"
+        assert policy.calls == []
+        assert h.snapshots == []
+
+    def test_a_stop_set_before_the_batch_starts_consumes_nothing(self, tmp_path):
+        h, policy, _preview = self._stopping_harness(tmp_path, lambda: None)
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        assert len(h.snapshots) == 1
+
+        h.stream.publish(_fact("Alice", "incoming_damage", source="Rat"))
+        h.coordinator._stop_event.set()
+        h.coordinator._queue.put(_WAKE)
+        h.pump()
+
+        assert policy.calls == []
+        assert len(h.snapshots) == 1
+
+    def test_an_idle_publish_is_skipped_once_stopping(self, tmp_path):
+        h, _policy, _preview = self._stopping_harness(tmp_path, lambda: None)
+        h.discovery.publish(_roster(_session("Alice")))
+        h.pump()
+        assert len(h.snapshots) == 1
+
+        h.coordinator._stop_event.set()
+        h.pump()  # Empty queue: the periodic publish path.
+
+        assert len(h.snapshots) == 1
 
 
 class TestStopDeadline:

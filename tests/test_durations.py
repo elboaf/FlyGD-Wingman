@@ -7,6 +7,7 @@ so the cache API is deliberately shaped so the untestable layer stays thin.
 
 import json
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -217,6 +218,63 @@ def test_save_failure_does_not_raise(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "write_text", boom)
     durations.save(tmp_path / "d.json", {})  # must not raise
+
+
+class _InsertDuringIteration(dict):
+    """A cache whose iteration lets another thread try to insert mid-way.
+
+    save() builds its payload from ``cache.items()``; a live dict view
+    raises RuntimeError the moment the dict changes size under it. The
+    hook runs a remember() on a second thread and waits a short bounded
+    time for it: unserialised, the insert lands in microseconds and the
+    next step of the iteration raises; serialised, the second thread
+    blocks on the module lock until save() is done and the wait simply
+    times out.
+    """
+
+    def __init__(self, on_iterate):
+        super().__init__()
+        self._on_iterate = on_iterate
+
+    def items(self):
+        for pair in super().items():  # live view: size changes raise
+            self._on_iterate()
+            yield pair
+
+
+def test_save_is_serialised_against_a_concurrent_remember(tmp_path):
+    """Three threads mutate one cache in the app (the scheduler drain, the
+    upload worker's synchronous probe, and a rename on the bridge thread)
+    and none of them held a lock. A probe landing while the drain was
+    saving raised "dictionary changed size during iteration" out of
+    save(), which catches only OSError -- and the upload path reported it
+    as a bogus combat-log-skipped message."""
+    worker = None
+
+    def insert_from_another_thread():
+        nonlocal worker
+        if worker is not None:
+            return
+        worker = threading.Thread(
+            target=durations.remember,
+            args=(cache, tmp_path / "late.mkv", 20, 200.0, 7.0),
+        )
+        worker.start()
+        worker.join(timeout=0.2)
+
+    cache = _InsertDuringIteration(insert_from_another_thread)
+    durations.remember(cache, tmp_path / "a.mkv", 10, 100.0, 42.5)
+    durations.remember(cache, tmp_path / "b.mkv", 11, 101.0, 43.5)
+
+    durations.save(tmp_path / "d.json", cache)  # must not raise
+
+    worker.join(timeout=5.0)
+    assert not worker.is_alive()
+    assert set(cache) == {
+        str(tmp_path / "a.mkv"),
+        str(tmp_path / "b.mkv"),
+        str(tmp_path / "late.mkv"),
+    }
 
 
 def test_save_failure_is_logged(tmp_path, monkeypatch, caplog):

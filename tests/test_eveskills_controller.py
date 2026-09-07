@@ -309,8 +309,69 @@ def test_refresh_body_key_error_is_not_mistaken_for_missing_authority(tmp_path):
 
     controller._refresh_one_leased = fail_after_lease
 
-    with pytest.raises(KeyError, match="malformed ESI payload"):
-        controller._refresh_one(95)
+    error = controller._refresh_one(95)
+
+    # "" is the answer for a character authority no longer knows; a body
+    # KeyError is a failure of THIS character and must be recorded as one.
+    assert error and "malformed ESI payload" in error
+    assert controller._state.find(95).error == error
+
+
+def test_one_malformed_esi_body_does_not_abort_the_pass_for_the_rest(tmp_path):
+    """eveesi raises ValueError for an oversize or unparseable body rather
+    than returning an error response, and _authorised_get calls the client
+    bare. Before the per-character guard that ValueError climbed out of
+    _refresh_pass into the worker's catch-all: the pass logged "refresh
+    failed", every character behind the bad one stayed unrefreshed, and
+    the row that caused it showed nothing."""
+    clock = Clock()
+    clock.advance(3600)
+    esi = FakeEsi()
+
+    def oversize(path):
+        raise ValueError(f"ESI response for {path} exceeded 1048576 bytes.")
+
+    esi.on_get = oversize  # Fires once: character 95's skills request.
+    controller, pushed, _ = build(
+        tmp_path,
+        characters=[with_snapshot(character_id=95), with_snapshot(character_id=96)],
+        client=esi,
+        sso=FakeSso(identities=[(95, ""), (96, "")]),
+        spawn=DirectSpawn(),
+        now=clock,
+    )
+
+    controller.refresh_characters()
+
+    first, second = controller._state.characters
+    assert first.character_id == 95 and second.character_id == 96
+    assert first.error.startswith(controller_mod.MSG_REFRESH_FAILED)
+    assert "exceeded" in first.error
+    assert first.fetched_utc == T0, "last-good data is kept, not discarded"
+    assert second.error == ""
+    assert second.fetched_utc == clock.value, "the pass reached the next character"
+    progress = [p for handler, p in pushed if handler == "onSkillsProgress"]
+    assert [p["character_id"] for p in progress] == [95, 96]
+    assert progress[0]["error"] == first.error and progress[1]["error"] == ""
+
+
+def test_an_unclassified_refresh_error_is_bounded_on_the_row(tmp_path):
+    """The row is part of the largest payload in the app and crosses the
+    bridge on every push; a decode error quoting the body it choked on
+    must not ride along at full length."""
+    controller, _, _ = build(
+        tmp_path, characters=[state_mod.Character(character_id=95)]
+    )
+
+    def fail_after_lease(_character_id):
+        raise ValueError("x" * (controller_mod.MAX_ERROR_CHARS * 3))
+
+    controller._refresh_one_leased = fail_after_lease
+
+    error = controller._refresh_one(95)
+
+    assert len(error) == controller_mod.MAX_ERROR_CHARS
+    assert controller._state.find(95).error == error
 
 
 def test_owner_change_mapping_uses_reason_not_human_text(tmp_path):
@@ -2259,9 +2320,19 @@ def test_a_callback_carrying_an_error_adds_nothing(tmp_path, monkeypatch):
 def test_re_authenticating_the_same_character_keeps_its_data(tmp_path, monkeypatch):
     """The same owner signing back in must not look like a transfer -- the
     cached snapshot is still theirs."""
+    # Sign-in kicks an inline refresh (DirectSpawn); it answers 304 so the
+    # refresh confirms the snapshot rather than replacing it. Without a
+    # client the refresh crashed on build()'s placeholder object, which
+    # the worker's catch-all used to hide and the per-character guard now
+    # records on the row -- turning this into a test of that crash.
     controller, _, _alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
+        client=FakeEsi(
+            skills=[esi_response(304)],
+            queue=[esi_response(304)],
+            attributes=[esi_response(304)],
+        ),
         characters=[
             with_snapshot(
                 owner_hash="hash-1",
@@ -2402,6 +2473,13 @@ def test_a_blank_incoming_owner_hash_is_not_a_transfer(tmp_path, monkeypatch):
     controller, _, alerts, _, _ = build_auth(
         tmp_path,
         monkeypatch,
+        # 304s for the inline refresh sign-in kicks off; see
+        # test_re_authenticating_the_same_character_keeps_its_data.
+        client=FakeEsi(
+            skills=[esi_response(304)],
+            queue=[esi_response(304)],
+            attributes=[esi_response(304)],
+        ),
         characters=[with_snapshot()],
         authority_characters=[
             AuthorityCharacter(

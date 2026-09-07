@@ -2948,11 +2948,13 @@ class Api:
                 self._preview_host.stop(final=True)
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        if self._telemetry is not None:
-            try:
-                self._telemetry.stop()
-            except Exception:
-                logger.exception("EVE telemetry runtime did not stop cleanly")
+        # The fleet subscriber detaches BEFORE telemetry stops -- the same
+        # rule __main__ applies to the sharing worker. The coordinator's
+        # dispatcher drains and publishes one last batch on the way down,
+        # and with this callback still attached that publication routed
+        # into a fleet-bar window the preview teardown above had already
+        # destroyed. Detaching first means the final batch has nowhere to
+        # go, which is the correct answer at shutdown.
         unsubscribe = self._fleet_unsubscribe
         self._fleet_unsubscribe = None
         if unsubscribe is not None:
@@ -2960,6 +2962,11 @@ class Api:
                 unsubscribe()
             except Exception:
                 logger.exception("Fleet snapshot subscriber did not detach cleanly")
+        if self._telemetry is not None:
+            try:
+                self._telemetry.stop()
+            except Exception:
+                logger.exception("EVE telemetry runtime did not stop cleanly")
 
     def capture_preview_bind(self, parts) -> dict:
         return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})
@@ -5056,9 +5063,12 @@ class Api:
                 }
             )
 
-    def fittings_cancel_copy(self) -> bool:
+    def fittings_cancel_copy(self, ticket_id=None) -> bool:
+        # Optional so the pre-ticket call shape still works: the page passes
+        # the ticket it is cancelling, and the controller treats a missing
+        # one as "everything pending or in flight".
         if self._fittings is not None:
-            self._fittings.cancel_copy()
+            self._fittings.cancel_copy(ticket_id)
         return True
 
     # ---- EVE fittings: local curation ---

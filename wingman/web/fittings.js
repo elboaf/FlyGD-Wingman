@@ -257,7 +257,10 @@
       // a debounced search request.
       if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
       screenshotFixture = null;
-      if (copyPhase === 'progress') WM.send('fittings_cancel_copy');
+      // Keyed to the ticket: this fires right after confirm and can reach
+      // Python before the worker has consumed the ticket, and a cancel
+      // with no key used to be erased by that start.
+      if (copyPhase === 'progress') WM.send('fittings_cancel_copy', activeCopyTicket);
       closeCopyOverlay(true);
       clearSelection();
       // Settings owns sign-in and Forget, so a hidden-route authority change
@@ -1142,7 +1145,7 @@
   WM.el('fittings-copy-cancel').addEventListener('click', function () {
     WM.el('fittings-copy-cancel').disabled = true;
     WM.el('fittings-copy-status').textContent = 'Cancelling after the current request\u2026';
-    WM.send('fittings_cancel_copy');
+    WM.send('fittings_cancel_copy', activeCopyTicket);
   });
 
   function onCopyProgress(payload) {

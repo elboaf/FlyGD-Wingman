@@ -15,10 +15,28 @@ the same reason.
 
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# One lock for every reader and writer of a cache dict. The app shares the
+# dict between three threads -- the scheduler drain (remember + save per
+# tick), the upload worker's synchronous probe (_probe_now: remember + save
+# per selection) and the bridge thread's rename -- and none of them held
+# anything. save() iterates the dict while the others insert into it, so a
+# probe landing during a save raised "RuntimeError: dictionary changed size
+# during iteration", which save() does not catch (only OSError) and which
+# then surfaced on the upload path as a bogus "combat log skipped" line for
+# a recording whose duration was fine.
+#
+# The lock lives here rather than in the callers so every entry point is
+# covered by construction: the callers are spread across a 6k-line bridge
+# module and a new one is easy to add without knowing the rule. Re-entrant
+# because resolve() calls lookup(); a plain Lock would deadlock the first
+# refresh.
+_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -68,11 +86,15 @@ def save(path: Path, cache: dict[str, CacheEntry]) -> None:
     try:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            key: {"size": e.size, "mtime": e.mtime, "duration": e.duration}
-            for key, e in cache.items()
-        }
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        # The write, not just the snapshot, is under the lock: two savers
+        # racing each other would otherwise let the OLDER snapshot land on
+        # disk last and silently drop the newer probe results.
+        with _LOCK:
+            payload = {
+                key: {"size": e.size, "mtime": e.mtime, "duration": e.duration}
+                for key, e in cache.items()
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
     except OSError:
         logger.warning("Could not persist duration cache to %s", path, exc_info=True)
 
@@ -88,7 +110,8 @@ def lookup(
     is what would make the combat-log upload tell a user that ffprobe is
     unavailable when it is merely still working.
     """
-    entry = cache.get(str(video_path))
+    with _LOCK:
+        entry = cache.get(str(video_path))
     if entry is None or entry.size != size or entry.mtime != mtime:
         return False, None
     return True, entry.duration
@@ -111,7 +134,8 @@ def remember(
     because the (size, mtime) key never changes again for a finished
     recording and the bad answer would outlive whatever caused it.
     """
-    cache[str(video_path)] = CacheEntry(size=size, mtime=mtime, duration=duration)
+    with _LOCK:
+        cache[str(video_path)] = CacheEntry(size=size, mtime=mtime, duration=duration)
 
 
 def rename(cache: dict[str, CacheEntry], old_path, new_path) -> None:
@@ -128,10 +152,11 @@ def rename(cache: dict[str, CacheEntry], old_path, new_path) -> None:
     is worth more than it looks: dropping it buys a fresh subprocess on
     every refresh, forever, for a file already known to be unreadable.
     """
-    entry = cache.pop(str(old_path), None)
-    if entry is None:
-        return
-    cache[str(new_path)] = entry
+    with _LOCK:
+        entry = cache.pop(str(old_path), None)
+        if entry is None:
+            return
+        cache[str(new_path)] = entry
 
 
 def resolve(cache: dict[str, CacheEntry], infos: list) -> list:
@@ -142,19 +167,21 @@ def resolve(cache: dict[str, CacheEntry], infos: list) -> list:
     a background worker.
     """
     pending = []
-    for info in infos:
-        hit, duration = lookup(cache, info.path, info.size, info.mtime)
-        if hit:
-            info.duration = duration
-            info.probed = True
-            # Explicit rather than left to the default: only a definitive
-            # verdict is ever admitted to the cache (see library.probe), so
-            # a hit is always an answer -- but this flag decides which glyph
-            # the column draws, and leaving it implicit is how the two
-            # states collapsed into one in the first place.
-            info.answered = True
-        else:
-            pending.append(info)
+    with _LOCK:
+        for info in infos:
+            hit, duration = lookup(cache, info.path, info.size, info.mtime)
+            if hit:
+                info.duration = duration
+                info.probed = True
+                # Explicit rather than left to the default: only a
+                # definitive verdict is ever admitted to the cache (see
+                # library.probe), so a hit is always an answer -- but this
+                # flag decides which glyph the column draws, and leaving it
+                # implicit is how the two states collapsed into one in the
+                # first place.
+                info.answered = True
+            else:
+                pending.append(info)
     return pending
 
 
@@ -180,7 +207,8 @@ def prune(cache: dict[str, CacheEntry], live_paths) -> int:
     rather than on every refresh.
     """
     live = {str(p) for p in live_paths}
-    gone = [k for k in cache if k not in live]
-    for key in gone:
-        del cache[key]
+    with _LOCK:
+        gone = [k for k in cache if k not in live]
+        for key in gone:
+            del cache[key]
     return len(gone)
