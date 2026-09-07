@@ -285,6 +285,22 @@ def test_profiles_controller_stays_private_on_api(tmp_path):
     assert not hasattr(controller, "window")
 
 
+def test_uploader_controller_stays_private_on_api(tmp_path):
+    api = make_api(tmp_path)
+
+    public = [name for name in dir(api) if not name.startswith("_")]
+    assert "uploader" not in public
+    assert hasattr(api, "_uploader")
+    controller = api._uploader
+    assert controller is not api
+    assert not hasattr(controller, "api")
+    assert not hasattr(controller, "window")
+    # One gate, shared by reference: the upload claim is taken in the
+    # controller, the updater's handoff and Quit's claim in the bridge. A
+    # second instance would leave each side arbitrating against nobody.
+    assert controller._work_gate is api._work_gate
+
+
 def test_alert_pushes_a_dialog_with_no_request_id(tmp_path):
     window = FakeWindow()
     api = make_api(tmp_path, window)

@@ -81,8 +81,8 @@ modules: `ui/scheduler.py` (self-rescheduling timer loop replacing the old
 always re-arms), and `preview/host.py` (its own thread with a real
 `GetMessage` pump, required by `RegisterHotKey` and `SetWinEventHook`).
 
-**The bridge** (`ui/api.py`, ~6.8k lines — the hub, and still the largest
-file after the Profiles extraction):
+**The bridge** (`ui/api.py`, ~5.2k lines — the hub, and still the largest
+file after the Profiles and Uploader extractions):
 - Page → Python: `WM.send()` → `pywebview.api.<method>`. pywebview 6.2.1
   runs each call on its own thread, so a slow bridge method delays only its
   own promise, not the page.
@@ -106,7 +106,8 @@ file after the Profiles extraction):
 - **Controllers, not more bridge.** Domain orchestration that needs
   status/progress/confirm/push lives in a controller behind a small ports
   object, and `Api` keeps one-line facades: `evesettings/controller.py`
-  (`ProfilesPorts`, PR #175) is the template, `eveskills/controller.py` and
+  (`ProfilesPorts`, PR #175) is the template, `upload/controller.py`
+  (`UploaderPorts`) follows it exactly, and `eveskills/controller.py` and
   `evefittings/controller.py` follow the same shape with a `_push_cb`. A
   controller imports nothing from `ui` and never holds the window.
   `test_bridge_contract.py` pins the facades lexically; keep every
@@ -166,6 +167,14 @@ reached through injected seams or lazy `windll` binding):
   redundant: OBS's muxer flushes in bursts (measured 17-20s apart on a quiet
   scene, against a 9s settle), so a steady size alone re-announced the same
   in-progress recording once per flush for the length of the recording.
+- `upload/` — the Uploader runtime. `controller.py` owns the rows, the
+  durations/link stores, the probe drain, the upload worker, Retry, Cancel
+  and the combat-log post; `ui/api.py` keeps one-line facades and one literal
+  `_push` adapter per `publish_*` port. `gate.py` is the work gate that
+  upload, the app updater and Quit all claim against — **one** instance,
+  built in `Api.__init__` and injected into the controller, because the
+  updater and `_claim_quit` still live on the bridge and a gate they cannot
+  see would let an installer launch over a running upload.
 - `uploader.py`, `stitch.py` (bundled FFmpeg), `combatlog.py` + `discord.py`,
   `library.py`, `durations.py`, `links.py`, `settings.py`, `paths.py`,
   `atomicio.py`, `updates.py` (release discovery with strict validation),
