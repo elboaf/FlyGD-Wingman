@@ -5,16 +5,41 @@ not a revision of the checkout-only probe results. No visible Windows app,
 native picker/crop, installer or EVE interaction was launched for this pass.
 No real EVE client geometry was changed.
 
-**Production hardening SHA:** `1b61f64fa98e6f3915d01f89d6623d70b14d155b`
-(`test: harden production crop lifecycle and bridge fidelity`).
-**Latest full-suite SHA:** `6111c5b3dba2701285d69f35f2949a2c291fba51`
-(`test: isolate EVE settings fixtures from running clients`). The later revision
-changes only three tests plus intervening documentation, not production code.
-Documentation is committed separately to avoid self-referential evidence hashes.
-The implementation cap remains **eight, provisional**; no stage has passed the
+**Initial hardening SHA:** `1b61f64fa98e6f3915d01f89d6623d70b14d155b`.
+**Latest tested fix / full-suite SHA:** `16b69b01a97b610ca2000d4225673afa5a779f79`
+(`fix: cancel crop confirmation pending font cleanup`). Documentation is
+committed separately to avoid self-referential evidence hashes. The
+implementation cap remains **eight, provisional**; no stage has passed the
 production hardware release gates.
 
-## Latest full-suite verification at 6111c5b
+## Latest verification at 16b69b0 — pending-confirm cancellation
+
+Review found that a confirmation waiting for selected-font cleanup remained
+cancellable but could still be delivered after a later Disable or Remove. The
+picker now converts only an **undelivered** confirmation to cancellation. The
+terminal callback still waits for resource cleanup; an already-delivered
+confirmation or admitted write is not undone.
+
+Real-store/native-held-font regressions for both Disable and Remove failed
+before the fix because the selection persisted. After the fix, each confirms
+that selection never persists, only the later operation writes, Disable retains
+the old source, no candidate is allocated, and cancellation is delivered once
+after font cleanup. Reentrant/late cancellation after delivered confirmation
+also remains a no-op. No worker, schema, API/browser or capacity change.
+
+| Exercise at 16b69b0 | Actual result | Boundary |
+| --- | --- | --- |
+| Full Linux pytest, Python 3.11.15 | **6105 passed, 11 skipped**, 97.59 seconds | Fresh after fix commit |
+| Full Windows pytest, Python 3.12.10, Windows 11 build 26100 | **6064 passed, 52 skipped**, 99.63 seconds | Same temporary venv and APPDATA/LOCALAPPDATA sandboxes; no blanket injection or extra exclusions |
+| Ruff check / format check and current CI WebView2/build-action checks | Passed; 292 files formatted | Static/text contracts |
+| Rebuilt wheel / byte comparison / direct ZIP imports | Passed | All five production modules, including corrected picker; all three probes absent |
+
+New XML: `task-10-linux-16b69b0.xml`, `task-10-windows-16b69b0.xml`.
+The wheel is identified below. Test execution times are not crop performance
+measurements. API/browser code was unchanged by this fix: the browser evidence
+remains attributed to **1b61f64**, not falsely reported as rerun at 16b69b0.
+
+## Previous full-suite verification at 6111c5b
 
 | Exercise | Actual result | Boundary |
 | --- | --- | --- |
@@ -108,16 +133,22 @@ serialization evidence above is Linux evidence, not a claimed Windows pass.
   sentinel strings or objects**, so ordinary user data cannot collide with a
   reserved marker. Existing semantic payloads/receipts and fan-out are unchanged.
 
-### Distribution collection
+## Distribution collection
 
-`uv build --wheel` produced `wingman-5.1.1-py3-none-any.whl` (686868 bytes):
+At **16b69b01a97b610ca2000d4225673afa5a779f79**, `uv build --wheel` rebuilt
+`wheel-16b69b0/wingman-5.1.1-py3-none-any.whl` (687456 bytes) in the ignored
+implementation workspace:
 
 ```text
-SHA-256 a4bc659e87ff7367cde3079b1027ab0fd8d92c139789b95af3c8b4b59ed2a3d7
+SHA-256 56c55fcd6c85dcfcbb34db5a9c35e8e34118dbefab70825a06cb79d511c170d9
 ```
 
-`crops.py`, `cropstore.py`, `cropwindow.py`, `croppicker.py` and
-`cropcontroller.py` were byte-compared with the tested checkout and imported
+The earlier 1b61f64 wheel remains a historical artifact: 686868 bytes,
+SHA-256 `a4bc659e87ff7367cde3079b1027ab0fd8d92c139789b95af3c8b4b59ed2a3d7`.
+It is not evidence for the corrected pending-confirm cancellation path.
+
+For the latest wheel, `crops.py`, `cropstore.py`, `cropwindow.py`, `croppicker.py`
+and `cropcontroller.py` were byte-compared with the 16b69b0 checkout and imported
 from the ZIP itself in an isolated Python invocation. The wheel contains no
 `preview_crop_harness.py`, `preview_crop_model.py`, `preview_crop_windows.py`
 or `tests/` tree. No subpackage or hidden import was added. This proves Python
