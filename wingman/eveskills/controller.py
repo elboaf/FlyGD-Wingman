@@ -68,17 +68,6 @@ MSG_REAUTH = "EVE rejected the stored authorisation. Re-authenticate this charac
 MSG_NO_TOKEN = "No stored authorisation. Re-authenticate this character."
 MSG_SAVE_FAILED = "Fresh data is in memory but was not saved for offline use."
 MSG_REFRESH_FAILED = "Skills refresh failed"
-
-
-def _bounded_error(exc: BaseException) -> str:
-    """A roster-row message for an exception nothing else classified.
-
-    The exception text is kept because it is the only diagnostic the user
-    will see -- the log has the traceback, the row has this -- but it is
-    capped, since a decode error can quote the body it choked on.
-    """
-    text = str(exc) or exc.__class__.__name__
-    return f"{MSG_REFRESH_FAILED}: {text}"[:MAX_ERROR_CHARS]
 MSG_OWNER_CHANGE_DETECTED = (
     "Character ownership changed. Re-authenticate this character."
 )
@@ -93,6 +82,17 @@ MSG_CLEANUP_SAVE_FAILED = "Could not save Skills cleanup."
 # what is missing rather than what to do, because there is nothing the user
 # can do: attributes come back on the next refresh or they do not.
 MSG_ATTRIBUTES_UNREADABLE = "EVE returned no usable character attributes."
+
+
+def _bounded_error(exc: BaseException) -> str:
+    """A roster-row message for an exception nothing else classified.
+
+    The exception text is kept because it is the only diagnostic the user
+    will see -- the log has the traceback, the row has this -- but it is
+    capped, since a decode error can quote the body it choked on.
+    """
+    text = str(exc) or exc.__class__.__name__
+    return f"{MSG_REFRESH_FAILED}: {text}"[:MAX_ERROR_CHARS]
 
 
 # How many missing requirement names a roster row carries (round 6, P1-2).

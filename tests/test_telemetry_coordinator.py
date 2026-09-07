@@ -18,11 +18,11 @@ import time
 import pytest
 
 from wingman.telemetry.coordinator import (
+    _WAKE,
     PUBLISH_INTERVAL_S,
     TelemetryCoordinator,
     _FleetMode,
     _noop_thread_factory,
-    _WAKE,
 )
 from wingman.telemetry.metrics import NO_LOG, FleetMetrics
 from wingman.telemetry.model import (
@@ -1225,9 +1225,7 @@ class TestStopMidBatch:
             state["coordinator"]._stop_event.set()
             state["coordinator"]._queue.put(_WAKE)
 
-        h, policy, preview = self._stopping_harness(
-            tmp_path, stop_from_another_thread
-        )
+        h, policy, preview = self._stopping_harness(tmp_path, stop_from_another_thread)
         state["coordinator"] = h.coordinator
 
         h.discovery.publish(_roster(_session("Alice")))

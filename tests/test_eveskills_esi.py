@@ -469,7 +469,7 @@ class _TruncatedResponse(_Response):
     mid-body, and it is an HTTPException, not an OSError."""
 
     def read(self, size=-1):
-        raise http.client.IncompleteRead(b"{\"ski")
+        raise http.client.IncompleteRead(b'{"ski')
 
 
 def test_an_incomplete_body_read_is_retried_like_a_dropped_connection():
