@@ -18,9 +18,12 @@ The user approved:
 - Explicit preview and apply, rather than automatically merging active setups.
 - Preserving recipient-local display settings, rather than importing sender
   hardware preferences or accidentally resetting a new profile to EVE defaults.
+- Copying saved geometry as-is, with a warning about different resolutions/UI
+  scales; the user accepted manual adjustment rather than automatic fitting.
 
-Complete setups still default to a new profile. The exact supported window set,
-display-mismatch policy, and publication workflow must be settled in the design.
+Complete setups still default to a new profile. The supported window set and
+publication workflow are proposed in the [design draft](overview-layout-sharing-design.md),
+which still requires user review before implementation planning.
 Probe copy/paste was reported working by the user; that is not a sign-off on every
 outstanding probe-sharing smoke-check item.
 
@@ -173,9 +176,9 @@ original folder has not been rechecked in the launcher after a restart.
 1. Define the coherent first supported window set and its required flags, stacks,
    overview groups and other dependencies. Do not call arbitrary DAT cloning
    complete portable layout support.
-2. Decide how different resolutions/UI scales are handled. Preserve recipient
-   display settings; do not claim automatic fitting before it is implemented
-   and verified. Never move or resize a running EVE client.
+2. Verify the approved as-is policy: preserve recipient display settings and
+   saved geometry, warn about possible manual adjustment, and do not implement
+   automatic fitting. Never move or resize a running EVE client.
 3. Define ordered label serialization and saved-versus-unsaved filter semantics.
 4. Define recipient-local seeding, missing local-file policy, new-profile staging,
    launcher visibility and failure recovery without changing existing profiles.
