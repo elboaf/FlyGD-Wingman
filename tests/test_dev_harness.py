@@ -700,7 +700,10 @@ def test_dev_account_labels_use_the_python_identity_data_without_node():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize("scenario", ["selected", "empty", "stale", "error"])
+@pytest.mark.parametrize(
+    "scenario",
+    ["selected", "empty", "stale", "error", "invalid", "conflict", "slow", "unsaved"],
+)
 def test_dev_formation_revisions_and_correlated_completion(scenario):
     # Execute the real standalone formation fixture block with only timer and
     # completion delivery seams. No fixture save/read implementation in tests.
@@ -735,10 +738,25 @@ async function main() {
   }
   assert.deepEqual(JSON.parse(exported.text), {format: 'wingman-preset', version: 1,
     type: 'probe-formations', formations: [{name: 'New', probes: [{x: 2000, y: 0, z: 0, range: 149597870700}]}]});
+  const parsedPromise = api.eve_settings_parse_formations(exported.text, ['NEW']); drain();
+  const parsed = await parsedPromise;
+  assert.equal(parsed.ok, true); assert.equal(parsed.formations[0].id, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed.conflicts)), [0]);
+  parsed.formations[0].name = 'Renamed';
+  const validatedPromise = api.eve_settings_validate_formation_import(parsed.formations, ['NEW']);
+  if (process.argv[3] === 'slow') assert.equal(timers[0].delay, 1500);
+  drain(); const validated = await validatedPromise;
+  assert.equal(validated.ok, true); assert.deepEqual(JSON.parse(JSON.stringify(validated.conflicts)), []);
+  const invalidPromise = api.eve_settings_parse_formations('{', []); drain();
+  assert.equal((await invalidPromise).ok, false);
+  const afterReview = api.eve_settings_formations('A'); drain();
+  assert.deepEqual(await afterReview, initial, 'review/validation must not modify the account');
+  assert.equal(done.length, 0);
   if (process.argv[3] === 'empty') { assert.deepEqual(JSON.parse(JSON.stringify(initial.formations)), []); return; }
   if (process.argv[3] === 'stale') {
     await api.eve_settings_save_formations('A', items, initial.content_revision, 'stale:1'); drain();
-    assert.equal(done[0].error_code, 'stale_file'); return;
+    assert.equal(done[0].error_code, 'stale_file');
+    assert.match(done[0].error, /Copy.*reload.*pasting/); return;
   }
   assert.equal(await api.eve_settings_save_formations('A', items, initial.content_revision, 'test:1'), true);
   drain(); assert.equal(done.length, 1);

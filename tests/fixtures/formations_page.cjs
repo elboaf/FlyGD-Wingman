@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const {spawnSync} = require('node:child_process');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
 
@@ -52,6 +53,7 @@ document.createElement = tag => new Element(tag);
 document.createElementNS = (ns, tag) => new Element(tag);
 const window = new Element('window');
 const reads = [], saves = [], confirms = [], exportRequests = [], clipboardWrites = [];
+const parses = [], validations = [];
 function deferred(args) {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -80,6 +82,8 @@ const WM = {
     if (method === 'eve_settings_formations') reads.push(request);
     else if (method === 'eve_settings_save_formations') saves.push(request);
     else if (method === 'eve_settings_export_formations') exportRequests.push(request);
+    else if (method === 'eve_settings_parse_formations') parses.push(request);
+    else if (method === 'eve_settings_validate_formation_import') validations.push(request);
     else assert.fail('Unexpected bridge call: ' + method);
     return request.promise;
   },
@@ -90,7 +94,7 @@ const WM = {
   }
 };
 vm.runInNewContext(fs.readFileSync(process.argv[4], 'utf8'), {
-  WM, document, window, navigator, console, Date, Math
+  WM, document, window, navigator, console, Date, Math, TextEncoder
 }, {filename: process.argv[4]});
 const A = 'a'.repeat(64), B = 'b'.repeat(64), C = 'c'.repeat(64);
 const accounts = [{path: 'choice-A', name: 'Account A'}, {path: 'choice-B', name: 'Account B'}];
@@ -98,7 +102,7 @@ function reply(revision = A, name = 'Original', path = 'resolved-A') {
   return {ok: true, path, name: 'Account', content_revision: revision,
     sharing_limits: {max_bytes: 65536, max_formations: 32, max_name_codepoints: 128,
       max_probes: 8, au_meters: 149597870700, min_range_meters: 149597.8707,
-      max_range_meters: 9804044142182400, max_coordinate_meters: 10000000000000000},
+      max_range_meters: 9804046054195200, max_coordinate_meters: 10000000000000000},
     formations: [
     {id: 7, name, probes: [{x: 2000, y: 0, z: 0, range: 598391482800}]}
   ]};
@@ -298,9 +302,253 @@ async function copyScenario() {
   assert.match(WM.el('fm-share-status').className, /err/);
   assert.equal(saves.length, 0); assert.equal(WM.el('fm-copy').disabled, false);
 }
+// Python, not a JS approximation, answers actual production requests. __new__
+// intentionally supplies no account/session state to these pure endpoints.
+function pythonReply(method, args) {
+  const result = spawnSync(process.argv[5], ['-c',
+    'import json,sys; from wingman.ui.api import Api; method,args=json.load(sys.stdin); print(json.dumps(getattr(Api.__new__(Api), method)(*args)))'],
+    {input: JSON.stringify([method, args]), encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+function deliverParse(request = parses.at(-1)) {
+  request.resolve(pythonReply('eve_settings_parse_formations', request.args));
+}
+function deliverAdd(request = validations.at(-1)) {
+  request.resolve(pythonReply('eve_settings_validate_formation_import', request.args));
+}
+const plain = value => JSON.parse(JSON.stringify(value));
+function shared(name = 'Incoming', range = 149597870700) {
+  return {name, probes: [{x: -1250.5, y: 3000, z: 2500.25, range}]};
+}
+function artifact(items = [shared()]) {
+  return JSON.stringify({format: 'wingman-preset', version: 1, type: 'probe-formations', formations: items});
+}
+function inputText(text) {
+  WM.el('fm-import-text').value = text;
+  WM.el('fm-import-text').dispatchEvent({type: 'input'});
+}
+function importNames() { return descendants(WM.el('fm-import-list')).filter(e => e.tagName === 'INPUT'); }
+function importButtons() { return descendants(WM.el('fm-import-list')).filter(e => e.tagName === 'BUTTON'); }
+function importRename(index, name) {
+  importNames()[index].value = name;
+  importNames()[index].dispatchEvent({type: 'input'});
+}
+function importStatus() { return WM.el('fm-import-status').textContent; }
+function assertReview(opened) {
+  assert.equal(WM.el('fm-import-work').parentNode, WM.el('fm-import-commit').parentNode,
+    'pinned actions must be siblings of the scroller, not its children');
+  assert.equal(WM.el('fm-import-work').parentNode, WM.el('fm-editor-work').parentNode);
+  assert.equal(WM.el('fm-import-work').hidden, !opened);
+  assert.equal(WM.el('fm-import-commit').hidden, !opened);
+  assert.equal(WM.el('fm-editor-work').hidden, opened);
+  assert.equal(WM.el('fm-commit').hidden, opened);
+  assert.equal(WM.el('fm-import-cancel').disabled, false);
+  assert.equal(WM.el('fm-back').disabled, false);
+}
+async function review(items = [shared()]) {
+  click('fm-paste'); inputText(artifact(items)); click('fm-import-review');
+  deliverParse(); await tick();
+}
+async function pasteScenario() {
+  if (scenario === 'paste-empty' || scenario === 'paste-invalid-destination') {
+    WM.openFormations(accounts, 'choice-A'); const data = reply();
+    if (scenario === 'paste-empty') data.formations = [];
+    else data.formations[0].probes = [];
+    reads.at(-1).resolve(data); await tick();
+  }
+  if (scenario === 'paste-cancel-draft') {
+    rename('Unsaved <draft>'); selectShare(0);
+    const row = rowButtons()[0];
+    click('fm-paste'); assertReview(true);
+    assert.equal(document.activeElement, WM.el('fm-import-text'));
+    assert.equal(WM.el('fm-add').disabled, true); assert.equal(WM.el('fm-save').disabled, true);
+    assert.equal(WM.el('fm-import-text').disabled, false);
+    click('fm-add'); click('fm-save'); assert.equal(rowButtons().length, 1);
+    inputText(artifact()); assert.equal(parses.length, 0, 'typing never crosses the bridge');
+    click('fm-import-review'); deliverParse(); await tick();
+    click('fm-import-cancel'); assertReview(false);
+    assert.equal(document.activeElement, WM.el('fm-paste'));
+    assert.equal(WM.el('fm-name').value, 'Unsaved <draft>'); assert.equal(rowButtons()[0], row);
+    assertShareCount(1); assertEditable('Unsaved <draft>');
+    assert.equal(saves.length, 0); assert.equal(reads.length, 1); return;
+  }
+  if (scenario === 'paste-invalid-text' || scenario === 'paste-byte-limit') {
+    click('fm-paste');
+    const texts = scenario === 'paste-byte-limit' ? ['é'.repeat(32769), '𐐀'.repeat(16385)]
+      : ['{', '['.repeat(2000) + ']'.repeat(2000), artifact().replace('"version":1', '"version":1,"version":1'), artifact().replace('"x":-1250.5', '"x":true'),
+        artifact([shared('Too small', 149597.87069999997)]), artifact([shared('Too big', 9804046054195202)]),
+        artifact().replace('"x":-1250.5', '"x":10000000000000001')];
+    for (const text of texts) {
+      inputText(text);
+      if (scenario === 'paste-byte-limit') {
+        assert.match(importStatus(), /65536.*UTF-8|UTF-8.*65536/);
+        assert.equal(WM.el('fm-import-text').value, text, 'oversize paste must not be clipped');
+        click('fm-import-review'); assert.equal(parses.length, 0);
+      } else {
+        click('fm-import-review'); deliverParse(); await tick(); assert.ok(importStatus());
+      }
+      assert.equal(WM.el('fm-import-add').disabled, true); assertReview(true);
+      assert.equal(importNames().length, 0); assert.equal(rowButtons().length, 1);
+    }
+    inputText(artifact()); click('fm-import-review'); deliverParse(); await tick();
+    assert.equal(WM.el('fm-import-add').disabled, false);
+    assert.equal(saves.length, 0); return;
+  }
+  if (scenario.includes('during-parse') || scenario === 'paste-rejected-parse') {
+    click('fm-paste'); inputText(artifact()); click('fm-import-review'); const old = parses.at(-1);
+    if (scenario === 'paste-text-during-parse') inputText(artifact([shared('Edited')]));
+    else if (scenario === 'paste-account-during-parse') switchTo('choice-B');
+    else if (scenario === 'paste-route-during-parse') WM.route('evesettings');
+    if (scenario === 'paste-rejected-parse') old.reject(new Error('offline')); else deliverParse(old);
+    await tick(); assert.equal(importNames().length, 0); assert.equal(saves.length, 0);
+    if (scenario === 'paste-rejected-parse') { assert.ok(importStatus()); assertReview(true); }
+    else if (scenario === 'paste-text-during-parse') {
+      assert.equal(WM.el('fm-import-text').value, artifact([shared('Edited')]));
+      click('fm-import-review'); deliverParse(); await tick(); assert.equal(importNames()[0].value, 'Edited');
+    } else assertReview(false);
+    return;
+  }
+  if (scenario === 'paste-range-cycles') {
+    const ranges = [149597.8707, 149597.87070000003, 9804046054195200,
+      9804046054195198, 187.25000012345 * 149597870700, 18469.135803 * 149597870700];
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const coordinates = [-1e16, -9999999999999998, 1e16, 9999999999999998, 0, -1250.5];
+      const items = ranges.map((range, i) => {
+        const f = shared('Cycle ' + cycle + ' / ' + i, range);
+        f.probes[0].x = coordinates[i]; return f;
+      });
+      const prior = rowButtons().length;
+      await review(items); click('fm-import-add'); deliverAdd(); await tick();
+      assert.equal(saves.length, cycle * 2, 'Add never invokes Save');
+      click('fm-save'); const request = saves.at(-1);
+      assert.equal(request.args[1][0].id, 7);
+      const batch = request.args[1].slice(prior);
+      assert.equal(batch.length, ranges.length);
+      batch.forEach((f, i) => {
+        assert.equal(f.id, null); assert.ok(Math.abs(f.probes[0].range - ranges[i]) <= Math.abs(ranges[i]) * Number.EPSILON);
+        assert.ok(Math.abs(f.probes[0].x - coordinates[i]) <= Math.abs(coordinates[i]) * Number.EPSILON);
+        assert.equal(f.probes[0].y, 3000); assert.equal(f.probes[0].z, 2500.25);
+      });
+      // Emulate only file reply/ID allocation, not ordinary fromMeters: the
+      // real page rereads these meter values and normalizes them itself.
+      complete(request); const saved = reply(B);
+      saved.formations = plain(request.args[1]).map((f, i) => ({...f, id: f.id === null ? 100 + i : f.id}));
+      reads.at(-1).resolve(saved); await tick();
+      assert.equal(WM.el('fm-name').value, items[0].name, 'post-save selection stays on first addition');
+      selectShare(prior); click('fm-copy'); const copied = exportRequests.at(-1);
+      assert.equal(copied.args[0][0].id, 100 + prior);
+      assert.equal(copied.args[0][0].probes[0].range, 149597.8707);
+      // A second Save after ordinary reload retains minted IDs and normalized
+      // ranges, including both near-boundary neighbors and fractional values.
+      rename(items[0].name + ' saved'); click('fm-save'); const second = saves.at(-1);
+      const normalized = [149597.8707, 149597.8707, 9804046054195200,
+        9804046054195200, 28012201288575, 18469.135803 * 149597870700];
+      second.args[1].slice(prior).forEach((f, i) => {
+        assert.equal(f.id, 100 + prior + i); assert.equal(f.probes[0].range, normalized[i]);
+        assert.ok(Math.abs(f.probes[0].x - coordinates[i]) <= Math.abs(coordinates[i]) * Number.EPSILON);
+      });
+      complete(second); saved.formations = plain(second.args[1]); reads.at(-1).resolve(saved); await tick();
+      // Count completed saves independently below, two per full cycle.
+      assert.equal(saves.length, (cycle + 1) * 2);
+    }
+    return;
+  }
+  const names = scenario === 'paste-conflict' ? ['Straße', 'Fresh']
+    : scenario === 'paste-unicode-name' ? ['𐐀'.repeat(128), '<img src=x onerror=alert(1)>'] : ['Incoming', 'Second'];
+  if (scenario === 'paste-conflict') rename('STRASSE');
+  const items = names.map(name => shared(name));
+  items[1].probes.push({x: 25000000, y: 0, z: 0, range: 149597870700});
+  await review(items);
+  assertReview(true); assert.equal(importNames().length, 2);
+  for (const field of importNames()) {
+    const label = field.parentNode.querySelector('label');
+    assert.equal(label.getAttribute('for'), field.id);
+    assert.ok(field.parentNode.children.some(e => e.id === field.getAttribute('aria-describedby')));
+    assert.equal(field.getAttribute('maxlength'), null);
+  }
+  assert.equal(descendants(WM.el('fm-import-list')).some(e => e.tagName === 'IMG'), false);
+  assert.deepEqual(plain(parses.at(-1).args[1]), scenario === 'paste-empty' ? [] : [scenario === 'paste-conflict' ? 'STRASSE' : 'Original']);
+  if (scenario === 'paste-conflict') {
+    assert.match(WM.el('fm-import-list').textContent, /already|conflict|used/i);
+    assert.equal(importNames()[0].value, 'Straße', 'no automatic rename');
+    importRename(0, ' Resolved ');
+    assert.equal(validations.length, 0, 'name typing must stay local');
+  }
+  if (scenario === 'paste-invalid-renames') {
+    for (const name of ['Second', '𐐀'.repeat(129), 'bad\u0000name', '']) {
+      importRename(0, name); click('fm-import-add'); deliverAdd(); await tick();
+      assertReview(true); assert.equal(rowButtons().length, 1); assert.ok(importStatus());
+      assert.equal(saves.length, 0);
+    }
+    importRename(0, 'Corrected');
+  }
+  if (scenario === 'paste-batch') {
+    selectShare(0); rowButtons()[0].click();
+    assert.equal(WM.el('fm-name').value, 'Original', 'import rendering cannot replace current draft');
+    importButtons()[1].click();
+    const probes = descendants(WM.el('fm-import-preview')).filter(e => e.getAttribute('class') === 'fm-probe');
+    assert.equal(probes.length, 2, 'review must draw selected incoming geometry');
+    assert.equal(WM.el('fm-name').value, 'Original');
+    assert.ok(descendants(WM.el('fm-import-preview')).some(e => e.className === 'fm-probe' || e.getAttribute('class') === 'fm-probe'));
+  }
+  if (scenario === 'paste-new-target-conflict') rename('INCOMING');
+  if (scenario === 'paste-route-during-add') importRename(0, 'Renamed before Add');
+  click('fm-import-add'); const pending = validations.at(-1);
+  assert.ok(pending, 'explicit Add must revalidate');
+  assert.equal(pending.args.length, 2); assert.equal(saves.length, 0);
+  const outstandingCount = validations.length;
+  if (scenario === 'paste-double-add') { click('fm-import-add'); assert.equal(validations.length, outstandingCount); }
+  if (scenario === 'paste-name-during-add') {
+    importRename(0, 'Later name');
+    assert.equal(pending.args[0][0].name, 'Incoming', 'request names must be a snapshot');
+  }
+  if (scenario === 'paste-text-during-add') inputText(artifact([shared('New text')]));
+  if (scenario === 'paste-draft-during-add') rename('Changed draft');
+  if (scenario === 'paste-route-during-add') {
+    assert.equal(pending.args[0][0].name, 'Renamed before Add'); WM.route('evesettings');
+  }
+  if (scenario === 'paste-account-during-add') switchTo('choice-B');
+  if (scenario === 'paste-reopen-during-add') WM.openFormations(accounts, 'choice-A');
+  if (scenario === 'paste-cancel-during-add') click('fm-import-cancel');
+  if (scenario === 'paste-rejected-add') pending.reject(new Error('offline')); else deliverAdd(pending);
+  await tick();
+  if (scenario === 'paste-new-target-conflict') {
+    assertReview(true); assert.equal(rowButtons().length, 1); assert.equal(saves.length, 0);
+    assert.deepEqual(plain(pending.args[1]), ['INCOMING']);
+    assert.equal(importNames()[0].getAttribute('aria-invalid'), 'true');
+    assert.equal(WM.el('fm-import-add').disabled, true); return;
+  }
+  if (scenario.includes('during-add') || scenario === 'paste-rejected-add') {
+    assert.equal(rowButtons().length, 1, 'a stale/refused result must not insert any part of a batch');
+    assert.equal(saves.length, 0);
+    if (['paste-name-during-add', 'paste-draft-during-add', 'paste-rejected-add'].includes(scenario)) {
+      assertReview(true); click('fm-import-add'); deliverAdd(); await tick();
+      assert.equal(rowButtons().length, 3, 'retry is usable after staleness/failure');
+    } else if (scenario === 'paste-text-during-add') {
+      assertReview(true); assert.equal(importNames().length, 0);
+      assert.equal(WM.el('fm-import-add').disabled, true);
+      assert.equal(WM.el('fm-import-text').value, artifact([shared('New text')]));
+    } else assertReview(false);
+    return;
+  }
+  assertReview(false);
+  const first = scenario === 'paste-empty' ? 0 : 1;
+  assert.equal(rowButtons().length, first + 2); assert.equal(document.activeElement, rowButtons()[first]);
+  assert.equal(saves.length, 0); assert.equal(reads.length, scenario === 'paste-empty' || scenario === 'paste-invalid-destination' ? 2 : 1);
+  if (scenario === 'paste-double-add') { deliverAdd(pending); await tick(); click('fm-import-add'); assert.equal(rowButtons().length, 3); }
+  if (scenario === 'paste-invalid-destination') { assert.equal(WM.el('fm-save').disabled, true); return; }
+  click('fm-save'); const added = saves[0].args[1].slice(first);
+  assert.deepEqual(added.map(f => f.id), [null, null]);
+  assert.equal(added[0].name, scenario === 'paste-conflict' ? 'Resolved' : scenario === 'paste-invalid-renames' ? 'Corrected' : names[0]);
+  assert.deepEqual(plain(added[0].probes), shared().probes);
+  if (first) assert.equal(saves[0].args[1][0].id, 7);
+  if (scenario === 'paste-batch') { assertShareCount(1); assert.equal(shareBoxes()[0].checked, true); }
+}
 async function main() {
   await open();
-  if (scenario.startsWith('copy-')) await copyScenario();
+  if (scenario.startsWith('paste-')) await pasteScenario();
+  else if (scenario.startsWith('copy-')) await copyScenario();
   else if (scenario === 'commit-keeps-newer-edit' || scenario === 'second-save-retained-draft') {
     rename('Submitted'); click('fm-save'); const first = saves[0];
     rename('Newer'); complete(first, {warning: 'Saved, but retention failed.'});

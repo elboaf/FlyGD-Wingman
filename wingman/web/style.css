@@ -4409,7 +4409,17 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
   display: flex; flex-direction: column; gap: 10px;
 }
-#fm-commit { flex: none; flex-wrap: wrap; row-gap: 4px; }
+.fm-work[hidden], #fm-editor-work[hidden], #fm-import-work[hidden],
+#fm-commit[hidden], #fm-import-commit[hidden] { display: none; }
+#fm-commit, #fm-import-commit { flex: none; flex-wrap: wrap; row-gap: 4px; }
+#fm-import-heading { margin: 0; font-size: var(--fs-body); color: var(--text); }
+#fm-import-text { flex: none; width: 100%; resize: vertical; min-height: 80px; }
+#fm-import-list { flex: none; display: flex; flex-direction: column; gap: 10px; }
+.fm-import-row { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.fm-import-row > .lab, .fm-import-row > .hint { flex-basis: 100%; margin: 0; }
+.fm-import-row > .field { flex: 1; min-width: 0; }
+.fm-import-row > .btn[aria-pressed="true"] { border-color: var(--brand-text); }
+#fm-import-status { flex-basis: 100%; margin-top: 0; min-height: 1.4em; overflow-wrap: anywhere; }
 #fm-commit .fm-save-note { flex-basis: 100%; margin-top: 0; }
 /* Keep the live region present before its text arrives, and wrap file errors
    rather than letting a long path widen the editor at the viewport floor. */
@@ -4453,13 +4463,13 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    margin, since formations.js sizes the projection off the SMALLER
    dimension either way. 150px is the floor below which the three rings
    stop being tellable apart. */
-#fm-preview {
+#fm-preview, #fm-import-preview {
   flex: 1 1 auto; min-height: 150px;
   width: auto; max-width: 100%; aspect-ratio: 1; align-self: center;
   background: var(--sunken); border: 1px solid var(--panel-border);
   border-radius: var(--radius); cursor: grab; touch-action: none;
 }
-#fm-preview:active { cursor: grabbing; }
+#fm-preview:active, #fm-import-preview:active { cursor: grabbing; }
 .fm-ring { fill: none; stroke: var(--panel-border); stroke-width: 1; }
 /* --fs-label and it MEANS it: formations.js sets the viewBox to the
    element's own CSS pixel size on every draw, so one SVG user unit is one

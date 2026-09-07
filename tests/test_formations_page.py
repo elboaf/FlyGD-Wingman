@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,30 @@ WEB = ROOT / "wingman" / "web"
         "start-refusal",
         "request-identity",
         "back-dirty",
+        "paste-cancel-draft",
+        "paste-batch",
+        "paste-empty",
+        "paste-invalid-destination",
+        "paste-conflict",
+        "paste-unicode-name",
+        "paste-invalid-text",
+        "paste-byte-limit",
+        "paste-invalid-renames",
+        "paste-text-during-parse",
+        "paste-name-during-add",
+        "paste-text-during-add",
+        "paste-new-target-conflict",
+        "paste-draft-during-add",
+        "paste-route-during-parse",
+        "paste-route-during-add",
+        "paste-account-during-parse",
+        "paste-account-during-add",
+        "paste-reopen-during-add",
+        "paste-cancel-during-add",
+        "paste-double-add",
+        "paste-rejected-parse",
+        "paste-rejected-add",
+        "paste-range-cycles",
         "copy-draft-selection",
         "copy-selection-identity",
         "copy-selection-replacement",
@@ -79,10 +104,11 @@ def test_formation_editor_runtime(tmp_path, scenario):
             str(markup),
             scenario,
             str(WEB / "formations.js"),
+            sys.executable,
         ],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=60,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

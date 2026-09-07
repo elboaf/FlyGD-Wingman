@@ -8115,6 +8115,32 @@ class Api:
         except ValueError as error:
             return {"ok": False, "error": str(error)}
 
+    def eve_settings_parse_formations(self, text: str, existing_names: list) -> dict:
+        """Review clipboard text against draft names, never against an account file."""
+        try:
+            found = _evesettings_formation_sharing.parse_text(text)
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        return self.eve_settings_validate_formation_import(
+            evesettings_formations.to_payload(found), existing_names
+        )
+
+    def eve_settings_validate_formation_import(
+        self, items: list, existing_names: list
+    ) -> dict:
+        """Revalidate an explicit Add snapshot; no pending Python import session."""
+        try:
+            found, conflicts = _evesettings_formation_sharing.prepare_import(
+                items, existing_names
+            )
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        return {
+            "ok": True,
+            "formations": evesettings_formations.to_payload(found),
+            "conflicts": conflicts,
+        }
+
     def eve_settings_save_formations(
         self,
         path: str,
@@ -8206,7 +8232,10 @@ class Api:
                 )
         except evesettings_codec.ContentChangedError:
             error_code = "stale_file"
-            error_message = "This account's settings changed. Nothing was saved. Your edits are still here."
+            error_message = (
+                "This account's settings changed since you opened them. Nothing was saved. "
+                "Copy the formations you want to keep, then reload the account before pasting them back."
+            )
         except ValueError as error:
             error_code = "invalid_request"
             error_message = str(error)

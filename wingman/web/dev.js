@@ -3051,6 +3051,40 @@
       })
     })});
   };
+  // These visual doubles only model the fixture shapes and ASCII conflicts.
+  // The executable page tests deliver real Python replies for strict JSON,
+  // Unicode casefold and numeric bounds; do not use this as a validator.
+  function devImportReply(items, existingNames) {
+    if (!Array.isArray(items) || !items.length) {
+      return {ok: false, error: 'Paste a formation preset (dev fixture).'};
+    }
+    var candidates = [], conflicts = [], seen = [];
+    var names = existingNames.map(function (name) { return name.toLowerCase(); });
+    for (var i = 0; i < items.length; i++) {
+      var f = items[i];
+      if (!f || typeof f.name !== 'string' || !f.name.trim() || !Array.isArray(f.probes) || !f.probes.length) {
+        return {ok: false, error: 'Each formation needs a name and probes (dev fixture).'};
+      }
+      var name = f.name.trim(), key = name.toLowerCase();
+      if (seen.indexOf(key) !== -1) { return {ok: false, error: 'A name is used twice (dev fixture).'}; }
+      seen.push(key);
+      if (names.indexOf(key) !== -1) { conflicts.push(i); }
+      candidates.push({id: null, name: name, probes: JSON.parse(JSON.stringify(f.probes))});
+    }
+    return {ok: true, formations: candidates, conflicts: conflicts};
+  }
+  api.eve_settings_parse_formations = function (text, existingNames) {
+    var wire;
+    try { wire = JSON.parse(text); }
+    catch (error) { return Promise.resolve({ok: false, error: 'Invalid formation JSON (dev fixture).'}); }
+    return Promise.resolve(devImportReply(wire && wire.formations, existingNames));
+  };
+  api.eve_settings_validate_formation_import = function (items, existingNames) {
+    var reply = devImportReply(items, existingNames);
+    return new Promise(function (resolve) {
+      setTimeout(function () { resolve(reply); }, formationsShareScenario === 'slow' ? 1500 : 150);
+    });
+  };
   // The save MINTS an id for every `id: null`, because write_formations
   // does -- above every id the file has ever held. Without this the stub
   // stored the page's own nulls and handed them straight back, so the
@@ -3070,7 +3104,7 @@
     } else if (formationsShareScenario === 'stale'
         || expectedRevision !== devFormationRevisions[path]) {
       done.error_code = 'stale_file';
-      done.error = "This account's settings changed. Nothing was saved. Your edits are still here.";
+      done.error = "This account's settings changed since you opened them. Nothing was saved. Copy the formations you want to keep, then reload the account before pasting them back.";
     } else {
       var existing = devFormationsByAccount[path] || [];
       var next = -1;
@@ -3148,13 +3182,23 @@
       window.setTimeout(function () {
         var boxes = WM.el('fm-list').querySelectorAll('input[type="checkbox"]');
         Array.prototype.forEach.call(boxes, function (box) { box.click(); });
-        if (formationsShareScenario === 'stale') {
+        if (formationsShareScenario === 'stale' || formationsShareScenario === 'unsaved') {
           var name = WM.el('fm-name');
           name.value = 'Recovery draft';
           name.dispatchEvent(new Event('change'));
-          WM.el('fm-save').click();
+          if (formationsShareScenario === 'stale') WM.el('fm-save').click();
         }
-        // Never copy automatically, even in the harness. The user owns that act.
+        if (['invalid', 'conflict', 'slow'].indexOf(formationsShareScenario) !== -1) {
+          api.eve_settings_export_formations([devFormations[0]]).then(function (reply) {
+            WM.el('fm-paste').click();
+            var text = WM.el('fm-import-text');
+            text.value = formationsShareScenario === 'invalid' ? '{' : reply.text;
+            text.dispatchEvent(new Event('input'));
+            WM.el('fm-import-review').click();
+          });
+        }
+        // Only browser-local fixture text above: never touch the clipboard
+        // automatically. Copying an unsaved draft remains an explicit action.
       }, 250);
       return;
     }

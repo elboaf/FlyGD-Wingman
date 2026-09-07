@@ -2975,6 +2975,95 @@ def test_state_reports_whether_formations_are_available(tmp_path, monkeypatch):
     assert state["selective_copy_available"] is True
 
 
+@pytest.mark.parametrize("operation", ["parse", "validate"])
+def test_formation_import_is_pure_and_casefolds_actual_draft_names(
+    tmp_path, monkeypatch, operation
+):
+    api = build(tmp_path, monkeypatch)
+    items = [
+        {
+            "id": None,
+            "name": name,
+            "probes": [{"x": 1000, "y": 0, "z": 0, "range": 149597870700}],
+        }
+        for name in [" Fresh ", "Straße", "Padded"]
+    ]
+    existing = ["STRASSE", " Padded ", "", "bad\x00name"] * 10
+    before_items = json.dumps([items, existing])
+    before_files = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    with api._eve_mutation:
+        if operation == "parse":
+            text = formation_sharing.export_text(items)
+            reply = api.eve_settings_parse_formations(text, existing)
+        else:
+            reply = api.eve_settings_validate_formation_import(items, existing)
+    assert reply["ok"] is True
+    assert reply["conflicts"] == [1]
+    assert [f["name"] for f in reply["formations"]] == ["Fresh", "Straße", "Padded"]
+    assert all(f["id"] is None for f in reply["formations"])
+    assert reply["formations"][0]["probes"] == items[0]["probes"]
+    assert json.dumps([items, existing]) == before_items
+    assert {
+        p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()
+    } == before_files
+    assert api._window.calls == []
+
+
+@pytest.mark.parametrize("operation", ["parse", "validate"])
+@pytest.mark.parametrize("bad", ["duplicate", "name", "id", "number", "existing"])
+def test_formation_import_rejects_invalid_batches_without_partial_results(
+    tmp_path, monkeypatch, operation, bad
+):
+    api = build(tmp_path, monkeypatch)
+    items = [
+        {
+            "id": None,
+            "name": name,
+            "probes": [{"x": 0, "y": 0, "z": 0, "range": 149597870700}],
+        }
+        for name in ["Straße", "Other"]
+    ]
+    existing = []
+    if bad == "duplicate":
+        items[1]["name"] = "STRASSE"
+    elif bad == "name":
+        items[1]["name"] = "𐐀" * 129
+    elif bad == "id":
+        items[1]["id"] = 7
+    elif bad == "number":
+        items[1]["probes"][0]["x"] = True
+    else:
+        existing = [None]
+    if operation == "parse":
+        portable = [
+            {k: v for k, v in f.items() if k != "id" or bad == "id"} for f in items
+        ]
+        text = json.dumps(
+            {
+                "format": "wingman-preset",
+                "version": 1,
+                "type": "probe-formations",
+                "formations": portable,
+            }
+        )
+        reply = api.eve_settings_parse_formations(text, existing)
+    else:
+        reply = api.eve_settings_validate_formation_import(items, existing)
+    assert reply["ok"] is False
+    assert reply["error"]
+    assert set(reply) == {"ok", "error"}
+    assert json.loads(json.dumps(reply)) == reply
+
+
+@pytest.mark.parametrize("text", [None, "{", "[" * 2000 + "]" * 2000, "é" * 32769])
+def test_formation_parse_handles_malformed_deep_and_oversize_text(text):
+    # No initialized state exists: a parser must not read an account or settings.
+    api = api_mod.Api.__new__(api_mod.Api)
+    reply = api.eve_settings_parse_formations(text, [])
+    assert reply["ok"] is False
+    assert reply["error"]
+
+
 def test_export_formations_does_not_need_an_account(tmp_path, monkeypatch):
     api = build(tmp_path, monkeypatch)
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -3301,7 +3390,7 @@ def test_formation_save_refuses_changed_bytes_at_every_boundary(
         "request_id": "race:1",
         "content_revision": "",
         "error_code": "stale_file",
-        "error": "This account's settings changed. Nothing was saved. Your edits are still here.",
+        "error": "This account's settings changed since you opened them. Nothing was saved. Copy the formations you want to keep, then reload the account before pasting them back.",
         "warning": "",
     }
     assert account.read_bytes() == changed

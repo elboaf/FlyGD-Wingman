@@ -4,10 +4,10 @@
  * app.js's WM.route map and index.html's #route-formations comment).
  *
  * Edit state lives here in km (positions) and AU (ranges); the bridge and
- * the .dat both speak meters. fromMeters handles reads; toMeters handles
- * Save and Copy snapshots. Never convert again in a caller: a formation
- * 1000x out still draws as a formation. Executable page tests check both
- * outgoing bridge boundaries.
+ * the .dat both speak meters. fromSharedMeters converts portable geometry;
+ * fromMeters additionally normalizes ordinary reads. toMeters handles Save
+ * and Copy snapshots. Never convert again in a caller: a formation 1000x
+ * out still draws as a formation. Executable page tests cover all callers.
  *
  * Ids travel with their formation (null = new). The client keys its
  * selectedFormationID on the id, so a save that re-numbered by list
@@ -67,6 +67,9 @@
   // Sharing selection is independent of the open editor row. Object identity
   // survives rename/deletion without moving a tick onto a different formation.
   var copySelection = [], copyAttempt = 0, sharingLimits = null;
+  // Review geometry remains canonical meters, separate from the draft. Attempts
+  // never reset: editing text/names, cancelling, or leaving invalidates replies.
+  var importReview = null, importAttempt = 0;
   var yaw = 0.6, pitch = 0.4, dragging = false, lastX = 0, lastY = 0;
 
   function probe(x, y, z) { return { x: x, y: y, z: z, range: 32 }; }
@@ -150,7 +153,7 @@
     markDirty(); renderProbes(); renderPreview();
   }
 
-  /* ---- meter boundary, load / save / copy ---- */
+  /* ---- meter boundary, ordinary reads / sharing / save ---- */
   // The range is rounded to six decimal places OF AN AU on the way in;
   // the positions are not.
   //
@@ -169,9 +172,18 @@
   // an unusual value at all. A position IS the user's own number, so it
   // is left exactly as the file has it.
   function fromMeters(f) {
-    return { id: f.id, name: f.name, probes: f.probes.map(function (p) {
-      return { x: p.x / KM, y: p.y / KM, z: p.z / KM,
-               range: Math.round(p.range / AU * 1e6) / 1e6 };
+    var converted = fromSharedMeters(f);
+    converted.id = f.id;
+    converted.probes.forEach(function (p) {
+      p.range = Math.round(p.range * 1e6) / 1e6;
+    });
+    return converted;
+  }
+  // Sharing preserves supported fractional ranges until an ordinary file read.
+  // Never reuse read normalization for an imported preview or Add snapshot.
+  function fromSharedMeters(f) {
+    return { id: null, name: f.name, probes: f.probes.map(function (p) {
+      return { x: p.x / KM, y: p.y / KM, z: p.z / KM, range: p.range / AU };
     }) };
   }
   function toMeters(f) {
@@ -217,6 +229,7 @@
   // the pane is still showing whatever the last account held, and there is
   // nothing there worth protecting from the file being opened.
   function load(path, mode, keepIndex, protect) {
+    closeImportReview(false);
     var startedAt = revision;
     if (mode === 'switch') { loadGeneration += 1; }
     var generation = loadGeneration, attempt = ++readAttempt;
@@ -313,7 +326,7 @@
   }
 
   function save() {
-    if (state.busy || !state.path || !state.contentRevision) { return; }
+    if (importReview || state.busy || !state.path || !state.contentRevision) { return; }
     var request = {
       id: pageSession + ':' + loadGeneration + ':' + (++saveSequence),
       path: state.path, generation: loadGeneration, revision: revision
@@ -346,6 +359,7 @@
   }
 
   function paintSharing() {
+    WM.setEnabled('fm-paste', !importReview && !state.busy && !!state.path && !!sharingLimits);
     WM.el('fm-copy').textContent = 'Copy selected (' + copySelection.length + ')';
     WM.setEnabled('fm-copy', !state.busy && copySelection.length > 0);
     WM.el('fm-share-hint').textContent = sharingLimits
@@ -393,6 +407,199 @@
 
   function saveStatus(text) {
     WM.el('fm-save-status').textContent = text;
+  }
+
+  /* ---- inline import review: no account mutation until explicit Save ---- */
+  function setImportStatus(text, isError) {
+    var status = WM.el('fm-import-status');
+    status.textContent = text;
+    status.className = isError ? 'hint err' : 'hint';
+  }
+
+  function importTextProblem(text) {
+    // TextEncoder counts UTF-8 bytes, not JS UTF-16 units. Python rejects bad
+    // Unicode too; this is immediate size feedback, not a second parser.
+    if (sharingLimits && new TextEncoder().encode(text).length > sharingLimits.max_bytes) {
+      return 'Shared text exceeds ' + sharingLimits.max_bytes
+        + ' UTF-8 bytes. Copy fewer formations.';
+    }
+    return '';
+  }
+
+  function paintImportButtons() {
+    var review = importReview;
+    WM.setEnabled('fm-import-review', !!review && !review.pending
+      && !!review.text.trim() && !importTextProblem(review.text));
+    WM.setEnabled('fm-import-add', !!review && !review.pending
+      && review.candidates.length > 0 && !review.conflicts.length);
+  }
+
+  function openImportReview() {
+    if (importReview || state.busy || !state.path || !sharingLimits) { return; }
+    importAttempt += 1;
+    importReview = { text: '', candidates: [], selected: 0, conflicts: [],
+      path: state.path, generation: loadGeneration, request: null, pending: '' };
+    WM.el('fm-import-text').value = '';
+    WM.el('fm-import-list').textContent = '';
+    WM.el('fm-editor-work').hidden = true;
+    WM.el('fm-commit').hidden = true;
+    WM.el('fm-import-work').hidden = false;
+    WM.el('fm-import-commit').hidden = false;
+    setImportStatus('Paste shared text, then choose Review. Nothing is saved until Save formations.', false);
+    renderImportPreview(); paintImportButtons(); paintCommit();
+    WM.el('fm-import-text').focus();
+  }
+
+  function closeImportReview(restoreInvokerFocus) {
+    importAttempt += 1;
+    importReview = null;
+    WM.el('fm-import-text').value = '';
+    WM.el('fm-import-list').textContent = '';
+    WM.el('fm-import-preview').textContent = '';
+    WM.el('fm-import-work').hidden = true;
+    WM.el('fm-import-commit').hidden = true;
+    WM.el('fm-editor-work').hidden = false;
+    WM.el('fm-commit').hidden = false;
+    setImportStatus('', false);
+    paintImportButtons(); paintCommit(); renderPreview();
+    // Do not rebuild the ordinary pane: Cancel must preserve raw input/focus
+    // targets as well as committed draft values and sharing ticks.
+    if (restoreInvokerFocus) { WM.el('fm-paste').focus(); }
+  }
+
+  function existingNames() {
+    return state.formations.map(function (f) { return f.name; });
+  }
+
+  function importReplyIsCurrent(review, request) {
+    if (importReview !== review || review.request !== request
+        || importAttempt !== request.attempt || WM.current_route !== 'formations'
+        || review.path !== state.path || review.generation !== loadGeneration) { return false; }
+    if (request.revision !== revision) {
+      importAttempt += 1;
+      review.pending = '';
+      setImportStatus('The draft changed while checking. Review or Add again.', true);
+      paintImportButtons();
+      return false;
+    }
+    return true;
+  }
+
+  function renderImportPreview() {
+    var f = importReview && importReview.candidates[importReview.selected];
+    renderFormationPreview(WM.el('fm-import-preview'), f ? fromSharedMeters(f) : null);
+  }
+
+  function paintImportRows() {
+    var review = importReview;
+    if (!review) { return; }
+    Array.prototype.forEach.call(WM.el('fm-import-list').children, function (row, i) {
+      var conflict = review.conflicts.indexOf(i) !== -1;
+      var name = review.candidates[i].name;
+      row.querySelector('.hint').textContent = conflict
+        ? 'This account already has this name. Choose a different name.' : '';
+      row.querySelector('input').setAttribute('aria-invalid', conflict ? 'true' : 'false');
+      row.querySelector('button').setAttribute('aria-label', 'Preview ' + name);
+      row.querySelector('button').setAttribute('aria-pressed', i === review.selected ? 'true' : 'false');
+    });
+  }
+
+  function renderImportList() {
+    var box = WM.el('fm-import-list'), review = importReview;
+    box.textContent = '';
+    review.candidates.forEach(function (f, i) {
+      var row = WM.make('div', 'fm-import-row');
+      var input = document.createElement('input');
+      input.type = 'text'; input.className = 'field'; input.value = f.name;
+      input.id = 'fm-import-name-' + i;
+      input.setAttribute('aria-describedby', 'fm-import-conflict-' + i);
+      var label = WM.make('label', 'lab', 'Formation ' + (i + 1) + ' name');
+      label.setAttribute('for', input.id);
+      var preview = WM.make('button', 'btn', 'Preview');
+      preview.type = 'button';
+      var conflict = WM.make('span', 'hint err');
+      conflict.id = 'fm-import-conflict-' + i;
+      row.appendChild(label); row.appendChild(input); row.appendChild(preview); row.appendChild(conflict);
+      input.addEventListener('input', function () {
+        if (importReview !== review) { return; }
+        f.name = input.value;
+        importAttempt += 1; review.pending = ''; review.conflicts = [];
+        setImportStatus('Names changed. Add formations checks every name again.', false);
+        // Paint in place so typing and the following native click keep focus.
+        paintImportRows(); paintImportButtons();
+      });
+      preview.addEventListener('click', function () {
+        if (importReview !== review) { return; }
+        review.selected = i; paintImportRows(); renderImportPreview();
+      });
+      box.appendChild(row);
+    });
+    paintImportRows(); renderImportPreview();
+  }
+
+  function reviewImport() {
+    var review = importReview;
+    if (!review || review.pending || !review.text.trim() || importTextProblem(review.text)) { return; }
+    var request = { attempt: ++importAttempt, revision: revision };
+    review.request = request;
+    review.pending = 'review'; review.candidates = []; review.conflicts = [];
+    renderImportList(); paintImportButtons(); setImportStatus('Reviewing formations…', false);
+    WM.send('eve_settings_parse_formations', review.text, existingNames()).then(function (reply) {
+      if (!importReplyIsCurrent(review, request)) { return; }
+      review.pending = '';
+      if (!reply || !reply.ok) {
+        setImportStatus((reply && reply.error) || 'Could not review formations.', true);
+      } else {
+        review.candidates = reply.formations; review.conflicts = reply.conflicts; review.selected = 0;
+        renderImportList();
+        setImportStatus(reply.conflicts.length ? 'Resolve the marked names before adding.'
+          : 'Review the names and previews, then Add formations to your draft.', !!reply.conflicts.length);
+      }
+      paintImportButtons();
+    }, function () {
+      if (!importReplyIsCurrent(review, request)) { return; }
+      review.pending = ''; setImportStatus('Could not review formations. Try Review again.', true);
+      paintImportButtons();
+    });
+  }
+
+  function addImport() {
+    var review = importReview;
+    if (!review || review.pending || !review.candidates.length || review.conflicts.length) { return; }
+    var request = { attempt: ++importAttempt, revision: revision };
+    review.request = request;
+    // Deep snapshot: later name edits must not alter an in-flight request.
+    var items = review.candidates.map(function (f) {
+      return { id: null, name: f.name, probes: f.probes.map(function (p) {
+        return { x: p.x, y: p.y, z: p.z, range: p.range };
+      }) };
+    });
+    review.pending = 'add'; paintImportButtons(); setImportStatus('Checking formations…', false);
+    WM.send('eve_settings_validate_formation_import', items, existingNames()).then(function (reply) {
+      if (!importReplyIsCurrent(review, request) || review.pending !== 'add') { return; }
+      review.pending = '';
+      if (!reply || !reply.ok || reply.conflicts.length) {
+        review.conflicts = reply && reply.ok ? reply.conflicts : [];
+        paintImportRows(); paintImportButtons();
+        setImportStatus(reply && reply.ok ? 'Resolve the marked names before adding.'
+          : (reply && reply.error) || 'Could not validate formations.', true);
+        return;
+      }
+      // Convert the whole batch before the one mutation. No IDs or file writes
+      // happen here; the existing explicit Save path alone owns those effects.
+      var firstAdded = state.formations.length;
+      var additions = reply.formations.map(fromSharedMeters);
+      state.formations = state.formations.concat(additions);
+      state.selected = firstAdded;
+      markDirty();
+      closeImportReview(false);
+      renderAll();
+      WM.el('fm-list').children[firstAdded].querySelector('.fm-item').focus();
+    }, function () {
+      if (!importReplyIsCurrent(review, request)) { return; }
+      review.pending = ''; setImportStatus('Could not validate formations. Try Add again.', true);
+      paintImportButtons();
+    });
   }
 
   function reload() {
@@ -455,7 +662,7 @@
 
   /* ---- rendering ---- */
   function renderAll() {
-    renderList(); renderPane(); renderPreview(); paintCommit();
+    renderList(); renderPane(); renderPreview(); renderImportPreview(); paintCommit();
   }
 
   function renderList() {
@@ -678,7 +885,10 @@
   var MARGIN = 26;
 
   function renderPreview() {
-    var svg = WM.el('fm-preview'), f = current();
+    renderFormationPreview(WM.el('fm-preview'), current());
+  }
+
+  function renderFormationPreview(svg, f) {
     var rect = svg.getBoundingClientRect();
     var w = Math.round(rect.width), h = Math.round(rect.height);
     var cx = w / 2, cy = h / 2;
@@ -804,7 +1014,7 @@
 
   function paintCommit() {
     var why = state.busy ? '' : problem();
-    WM.setEnabled('fm-save', state.dirty && !state.busy && !!state.contentRevision && !why);
+    WM.setEnabled('fm-save', !importReview && state.dirty && !state.busy && !!state.contentRevision && !why);
     WM.setEnabled('fm-reload', !!state.path && !state.busy);
     WM.el('fm-dirty').textContent = state.busy
       ? (pendingSave ? 'Saving…' : 'Loading…')
@@ -815,7 +1025,7 @@
     // engine's "Stopped" message was found in (style.css, .hint.err).
     // One class toggle over one element; no second accent, no dialog.
     WM.el('fm-dirty').className = why ? 'hint err' : 'hint';
-    WM.setEnabled('fm-add', !state.busy);
+    WM.setEnabled('fm-add', !importReview && !state.busy);
     WM.setEnabled('fm-account', !state.busy && accountChoices.length > 0);
     paintSharing();
   }
@@ -842,6 +1052,7 @@
     });
 
     WM.el('fm-add').addEventListener('click', function () {
+      if (importReview || state.busy) { return; }
       var pr = PRESETS.filter(function (x) {
         return x.id === preset.value;
       })[0] || PRESETS[0];
@@ -912,6 +1123,19 @@
     WM.el('fm-save').addEventListener('click', save);
     WM.el('fm-reload').addEventListener('click', reload);
     WM.el('fm-copy').addEventListener('click', copySelected);
+    WM.el('fm-paste').addEventListener('click', openImportReview);
+    WM.el('fm-import-review').addEventListener('click', reviewImport);
+    WM.el('fm-import-add').addEventListener('click', addImport);
+    WM.el('fm-import-cancel').addEventListener('click', function () { closeImportReview(true); });
+    WM.el('fm-import-text').addEventListener('input', function () {
+      if (!importReview) { return; }
+      importAttempt += 1;
+      importReview.text = WM.el('fm-import-text').value;
+      importReview.pending = ''; importReview.candidates = []; importReview.conflicts = [];
+      renderImportList(); paintImportButtons();
+      var why = importTextProblem(importReview.text);
+      setImportStatus(why || 'Text changed. Choose Review to check it.', !!why);
+    });
 
     WM.el('fm-account').addEventListener('change', function () {
       var nextPath = WM.el('fm-account').value, generation = loadGeneration;
@@ -933,11 +1157,13 @@
       });
     });
 
-    svg.addEventListener('mousedown', function (e) {
-      e.preventDefault();
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+    [svg, WM.el('fm-import-preview')].forEach(function (preview) {
+      preview.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
     });
     window.addEventListener('mouseup', function () { dragging = false; });
     window.addEventListener('mousemove', function (e) {
@@ -947,13 +1173,13 @@
                        Math.min(Math.PI / 2, pitch + (e.clientY - lastY) * 0.01));
       lastX = e.clientX;
       lastY = e.clientY;
-      renderPreview();
+      renderPreview(); renderImportPreview();
     });
 
     // The viewBox is the element's own pixel size, so a resize changes
     // every coordinate in the drawing.
     window.addEventListener('resize', function () {
-      if (WM.current_route === 'formations') { renderPreview(); }
+      if (WM.current_route === 'formations') { renderPreview(); renderImportPreview(); }
     });
 
     // Leaving invalidates outstanding reads, saves and confirmations. The
@@ -961,6 +1187,7 @@
     // must not leave the preview spinning under the next screen.
     document.addEventListener('wm:route', function (event) {
       if (event.detail !== 'formations') {
+        closeImportReview(false);
         dragging = false;
         loadGeneration += 1;
         pendingSave = null;

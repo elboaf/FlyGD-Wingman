@@ -3220,9 +3220,9 @@ def test_every_bridge_handler_has_exactly_one_owner():
 def test_the_formation_editor_converts_units_only_at_the_boundary():
     """The bridge speaks meters; the editor's fields are km and AU.
 
-    Read converts through fromMeters; both Save and Copy reuse toMeters.
-    A conversion in the caller as well would silently scale a formation twice.
-    Executable page tests assert the actual values sent across both boundaries.
+    Ordinary reads normalize through fromMeters, sharing through fromSharedMeters;
+    both Save and Copy reuse toMeters. No caller may convert a second time.
+    Executable page tests exercise sharing, Save and ordinary reload cycles.
     """
     js = _strip_js_comments((WEB / "formations.js").read_text(encoding="utf-8"))
     assert js.count("* KM") >= 1 and js.count("/ KM") >= 1
@@ -3234,6 +3234,12 @@ def test_the_formation_editor_converts_units_only_at_the_boundary():
     assert "eve_settings_save_formations" not in copy
     assert "state.path" not in copy
     assert "clipboard.readText" not in js
+    assert ".map(fromSharedMeters)" in js
+
+
+def test_formation_review_hidden_overrides_cover_both_work_and_commit_panes():
+    for ident in ("fm-editor-work", "fm-commit", "fm-import-work", "fm-import-commit"):
+        assert re.search(r"#" + ident + r"\[hidden\][^{]*\{\s*display:\s*none;", CSS)
 
 
 def test_the_formation_editor_guards_both_of_its_async_windows():
