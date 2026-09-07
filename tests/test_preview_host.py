@@ -911,6 +911,7 @@ def test_crop_state_keeps_temporary_status_and_busy_until_native_completion(crop
     h.start()
     assert h._ready.wait(5)
     h.request_crop("enabled", "Alice", False)
+    r.call(lambda: None)  # Submit on the pump before draining the store worker.
     r.store.drain().result(5)
     r.call(lambda: None)
     h.request_crop("select", "Alice")
