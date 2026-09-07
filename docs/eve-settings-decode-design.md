@@ -3,7 +3,7 @@
 Design. Base: `main` (074a0c6), 2026-08-29.
 
 **Destination:** drop this into FlyGD-Wingman as `docs/eve-settings-decode-design.md`
-alongside `docs/preview-config-design.md`. (`eve-settings-design.md` itself
+alongside `docs/history/preview-config-design.md`. (`eve-settings-design.md` itself
 now lives in `docs/history/`; references below use that path.) It is a *live* design, not a
 `docs/history/` record — move it there once the work lands.
 
