@@ -1,0 +1,72 @@
+{
+  "format": "wingman-preset",
+  "version": 1,
+  "type": "ui-setup",
+  "overview": {
+    "presets": [
+      {"name": "Synthetic Fleet", "groups": [25, 27], "filteredStates": [9], "alwaysShownStates": [12]},
+      {"name": "Synthetic Brackets", "groups": [6, 7], "filteredStates": [], "alwaysShownStates": []},
+      {"name": "Synthetic Travel", "groups": [8], "filteredStates": [9], "alwaysShownStates": []}
+    ],
+    "tabs": [
+      {"id": 0, "name": "Synthetic near", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": [0.2, 0.5, 1.0], "tabColumns": ["ICON", "DISTANCE", "NAME"], "tabColumnOrder": ["ICON", "DISTANCE", "NAME", "TYPE", "TAG", "CORPORATION", "ALLIANCE", "FACTION", "MILITIA", "SIZE", "VELOCITY", "RADIALVELOCITY", "TRANSVERSALVELOCITY", "ANGULARVELOCITY"]},
+      {"id": 1, "name": "Synthetic far", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 2, "name": "Synthetic travel", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": [0.1, 0.6, 0.1], "tabColumns": ["NAME", "DISTANCE"], "tabColumnOrder": ["NAME", "DISTANCE", "ICON"]},
+      {"id": 3, "name": "Synthetic fleet", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 4, "name": "Synthetic routes", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 5, "name": "Synthetic brackets", "overview": "Synthetic Brackets", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 6, "name": "Synthetic reserve", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 7, "name": "Synthetic retreat", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]}
+    ],
+    "windowGroups": [[0, 1, 2], [3, 4, 5], [6, 7]],
+    "shipLabels": [
+      {"type": null, "pre": "<b>Synthetic flight</b>", "post": "", "state": 1},
+      {"type": "pilot name", "pre": "Pilot: ", "post": " | ", "state": 1, "bold": false, "italic": false, "underline": false, "fontsize": null, "color": null},
+      {"type": null, "pre": "[", "post": "", "state": 1},
+      {"type": "corporation", "pre": "", "post": "]", "state": 1},
+      {"type": null, "pre": "<br>", "post": "", "state": 1},
+      {"type": "alliance", "pre": "(", "post": ")", "state": 1},
+      {"type": "ship type", "pre": " — ", "post": "", "state": 1},
+      {"type": null, "pre": " / ", "post": "", "state": 1},
+      {"type": "ship name", "pre": "'", "post": "'", "state": 0, "bold": false, "italic": false, "underline": false, "fontsize": null, "color": null}
+    ],
+    "settings": {
+      "flagOrder": [12, 9, 10], "flagStates": [12, 9],
+      "backgroundOrder": [9, 12, 10], "backgroundStates": [9, 12],
+      "overviewColumns": ["ICON", "DISTANCE", "NAME"],
+      "columnOrder": ["ICON", "DISTANCE", "NAME", "TYPE", "TAG", "CORPORATION", "ALLIANCE", "FACTION", "MILITIA", "SIZE", "VELOCITY", "RADIALVELOCITY", "TRANSVERSALVELOCITY", "ANGULARVELOCITY"],
+      "stateColors": [
+        {"category": "background", "state": 9, "color": [0.75, 0.0, 0.0, 1.0]},
+        {"category": "flag", "state": 12, "color": [0.0, 0.15, 0.6, 1.0]}
+      ],
+      "stateBlinks": [
+        {"category": "background", "state": 9, "blink": true},
+        {"category": "flag", "state": 12, "blink": false}
+      ],
+      "applyToOtherObjects": true, "applyToStructures": false,
+      "hideCorpTicker": false, "overviewBroadcastsToTop": true,
+      "showBiggestDamageDealers": false, "showInTargetRange": true,
+      "showModuleHairlines": false, "showCategoryInTargetRange_6": true,
+      "showCategoryInTargetRange_11": false, "showCategoryInTargetRange_18": true,
+      "targetCrosshair": false, "useSmallColorTags": true, "useSmallText": false,
+      "viewTactical": false, "viewTactical_camTactical": true
+    }
+  },
+  "layout": {
+    "windows": [
+      {"key": "overview", "geometry": [100, 120, 340, 500, 1920, 1080], "state": {"open": true, "minimized": false, "collapsed": false, "compact": true, "locked": false, "overlay": false, "lightBackground": true}},
+      {"key": "overview_1", "geometry": [-20, 200, 320, 420, 1600, 900], "state": {"open": true, "minimized": false}},
+      {"key": "overview_2", "geometry": [900, 100, 300, 400, 1920, 1080], "state": {"open": true}},
+      {"key": "selecteditemview", "geometry": [100, 10, 300, 100, 1920, 1080], "state": {"open": true}},
+      {"key": "probeScannerWindow", "geometry": [20, 600, 400, 250, 1600, 900], "state": {"open": false}},
+      {"key": "directionalScannerWindow", "geometry": [430, 600, 350, 250, 1600, 900], "state": {"open": true, "compact": true}},
+      {"key": "droneview", "geometry": [1400, 500, 240, 300, 1920, 1080], "state": {"open": false}},
+      {"key": "fleetwindow", "geometry": [10, 10, 280, 400, 1920, 1080], "state": {"open": true}},
+      {"key": "watchlistpanel", "geometry": [10, 420, 280, 200, 1920, 1080], "state": {"open": true}},
+      {"key": "standaloneBookmarkWnd", "geometry": [10, 630, 280, 200, 1920, 1080], "state": {"open": false}},
+      {"key": "solar_system_map_panel", "geometry": null, "state": {"open": false}},
+      {"key": "primary_map_panel", "geometry": null, "state": {}}
+    ],
+    "targetOrigin": [0.25, 0.75], "targetOriginLocked": false, "hudOffset": -160
+  }
+}

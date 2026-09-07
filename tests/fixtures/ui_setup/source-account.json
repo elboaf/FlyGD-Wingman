@@ -1,0 +1,91 @@
+{
+  "had_crc": true,
+  "doc": {
+    "bytes:overview": {
+      "bytes:overviewProfilePresets": {"tuple": ["long:116444736000000000", {
+        "utf8:Synthetic Fleet": {"bytes:groups": [25, 26], "bytes:filteredStates": [], "bytes:alwaysShownStates": []},
+        "utf8:Synthetic Brackets": {"bytes:groups": [6, 7], "bytes:filteredStates": [], "bytes:alwaysShownStates": []},
+        "utf8:Synthetic Travel": {"bytes:groups": [8], "bytes:filteredStates": [9], "bytes:alwaysShownStates": []},
+        "bytes:DefaultPreset_SyntheticBuiltin": {"bytes:groups": [90], "bytes:filteredStates": [], "bytes:alwaysShownStates": []}
+      }]},
+      "bytes:overviewProfilePresets_notSaved": {"tuple": ["long:116444736000000000", {
+        "utf8:Synthetic Fleet": {"bytes:groups": [25, 27], "bytes:filteredStates": [9], "bytes:alwaysShownStates": [12]}
+      }]},
+      "bytes:tabsettings_new": {"tuple": ["long:116444736000000000", {
+        "int:0": {"bytes:name": "utf8:Synthetic near", "bytes:overview": "utf8:Synthetic Fleet", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": [0.2, 0.5, 1.0], "bytes:tabColumns": ["bytes:ICON", "bytes:DISTANCE", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:DISTANCE", "bytes:NAME", "bytes:TYPE", "bytes:TAG", "bytes:CORPORATION", "bytes:ALLIANCE", "bytes:FACTION", "bytes:MILITIA", "bytes:SIZE", "bytes:VELOCITY", "bytes:RADIALVELOCITY", "bytes:TRANSVERSALVELOCITY", "bytes:ANGULARVELOCITY"]},
+        "int:1": {"bytes:name": "bytes:Synthetic far", "bytes:overview": "utf8:Synthetic Fleet", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": null, "bytes:tabColumns": ["bytes:ICON", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:NAME", "bytes:DISTANCE"]},
+        "int:2": {"bytes:name": "utf8:Synthetic travel", "bytes:overview": "utf8:Synthetic Travel", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": [0.1, 0.6, 0.1], "bytes:tabColumns": ["bytes:NAME", "bytes:DISTANCE"], "bytes:tabColumnOrder": ["bytes:NAME", "bytes:DISTANCE", "bytes:ICON"]},
+        "int:3": {"bytes:name": "utf8:Synthetic fleet", "bytes:overview": "utf8:Synthetic Fleet", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": null, "bytes:tabColumns": ["bytes:ICON", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:NAME", "bytes:DISTANCE"]},
+        "int:4": {"bytes:name": "utf8:Synthetic routes", "bytes:overview": "utf8:Synthetic Travel", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": null, "bytes:tabColumns": ["bytes:ICON", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:NAME", "bytes:DISTANCE"]},
+        "int:5": {"bytes:name": "utf8:Synthetic brackets", "bytes:overview": "utf8:Synthetic Brackets", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": null, "bytes:tabColumns": ["bytes:ICON", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:NAME", "bytes:DISTANCE"]},
+        "int:6": {"bytes:name": "utf8:Synthetic reserve", "bytes:overview": "utf8:Synthetic Fleet", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": null, "bytes:tabColumns": ["bytes:ICON", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:NAME", "bytes:DISTANCE"]},
+        "int:7": {"bytes:name": "utf8:Synthetic retreat", "bytes:overview": "utf8:Synthetic Travel", "bytes:bracket": "utf8:Synthetic Brackets", "bytes:color": null, "bytes:tabColumns": ["bytes:ICON", "bytes:NAME"], "bytes:tabColumnOrder": ["bytes:ICON", "bytes:NAME", "bytes:DISTANCE"]}
+      }]},
+      "bytes:tabsByWindowInstanceID": {"tuple": ["long:116444736000000000", [[0, 1, 2], [3, 4, 5], [6, 7]]]},
+      "bytes:shipLabels": {"tuple": ["long:116444736000000000", [
+        {"utf8:type": null, "utf8:pre": "utf8:<b>Synthetic flight</b>", "utf8:post": "utf8:", "utf8:state": 1},
+        {"bytes:type": "bytes:pilot name", "bytes:pre": "bytes:Pilot: ", "bytes:post": "bytes: | ", "bytes:state": 1, "bytes:bold": false, "bytes:italic": false, "bytes:underline": false, "bytes:fontsize": null, "bytes:color": null},
+        {"utf8:type": null, "utf8:pre": "utf8:[", "utf8:post": "utf8:", "utf8:state": 1},
+        {"utf8:type": "utf8:corporation", "utf8:pre": "utf8:", "utf8:post": "utf8:]", "utf8:state": 1},
+        {"utf8:type": null, "utf8:pre": "utf8:<br>", "utf8:post": "utf8:", "utf8:state": 1},
+        {"utf8:type": "utf8:alliance", "utf8:pre": "utf8:(", "utf8:post": "utf8:)", "utf8:state": 1},
+        {"utf8:type": "utf8:ship type", "utf8:pre": "utf8: — ", "utf8:post": "utf8:", "utf8:state": 1},
+        {"utf8:type": null, "utf8:pre": "utf8: / ", "utf8:post": "utf8:", "utf8:state": 1},
+        {"bytes:type": "bytes:ship name", "bytes:pre": "bytes:'", "bytes:post": "bytes:'", "bytes:state": 0, "bytes:bold": false, "bytes:italic": false, "bytes:underline": false, "bytes:fontsize": null, "bytes:color": null}
+      ]]},
+      "bytes:flagOrder2": {"tuple": ["long:116444736000000000", [12, 9, 10]]},
+      "bytes:flagStates2": {"tuple": ["long:116444736000000000", [12, 9]]},
+      "bytes:backgroundOrder2": {"tuple": ["long:116444736000000000", [9, 12, 10]]},
+      "bytes:backgroundStates2": {"tuple": ["long:116444736000000000", [9, 12]]},
+      "bytes:overviewColumns": {"tuple": ["long:116444736000000000", ["bytes:ICON", "bytes:DISTANCE", "bytes:NAME"]]},
+      "bytes:overviewColumnOrder": {"tuple": ["long:116444736000000000", ["bytes:ICON", "bytes:DISTANCE", "bytes:NAME", "bytes:TYPE", "bytes:TAG", "bytes:CORPORATION", "bytes:ALLIANCE", "bytes:FACTION", "bytes:MILITIA", "bytes:SIZE", "bytes:VELOCITY", "bytes:RADIALVELOCITY", "bytes:TRANSVERSALVELOCITY", "bytes:ANGULARVELOCITY"]]},
+      "bytes:stateColors": {"tuple": ["long:116444736000000000", {
+        "json:{\"tuple\":[\"bytes:background\",9]}": {"tuple": [0.75, 0.0, 0.0, 1.0]},
+        "json:{\"tuple\":[\"bytes:flag\",12]}": {"tuple": [0.0, 0.15, 0.6, 1.0]}
+      }]},
+      "bytes:stateBlinks": {"tuple": ["long:116444736000000000", {
+        "json:{\"tuple\":[\"bytes:background\",9]}": true,
+        "json:{\"tuple\":[\"bytes:flag\",12]}": false
+      }]},
+      "bytes:applyToOtherObjects": {"tuple": ["long:116444736000000000", true]},
+      "bytes:applyToStructures": {"tuple": ["long:116444736000000000", false]},
+      "bytes:hideCorpTicker": {"tuple": ["long:116444736000000000", 0]},
+      "bytes:overviewBroadcastsToTop": {"tuple": ["long:116444736000000000", true]},
+      "bytes:showBiggestDamageDealers": {"tuple": ["long:116444736000000000", false]},
+      "bytes:showInTargetRange": {"tuple": ["long:116444736000000000", true]},
+      "bytes:showModuleHairlines": {"tuple": ["long:116444736000000000", false]},
+      "bytes:showCategoryInTargetRange_6": {"tuple": ["long:116444736000000000", true]},
+      "bytes:showCategoryInTargetRange_11": {"tuple": ["long:116444736000000000", false]},
+      "bytes:showCategoryInTargetRange_18": {"tuple": ["long:116444736000000000", true]},
+      "bytes:targetCrosshair": {"tuple": ["long:116444736000000000", false]},
+      "bytes:useSmallColorTags": {"tuple": ["long:116444736000000000", true]},
+      "bytes:useSmallText": {"tuple": ["long:116444736000000000", 0]},
+      "bytes:viewTactical": {"tuple": ["long:116444736000000000", false]},
+      "bytes:viewTactical_camTactical": {"tuple": ["long:116444736000000000", true]},
+      "bytes:activeOverviewPreset": {"tuple": ["long:116444736000000000", "utf8:Synthetic Fleet"]},
+      "bytes:alwaysShow": {"tuple": ["long:116444736000000000", null]},
+      "bytes:filterOut": {"tuple": ["long:116444736000000000", null]},
+      "bytes:unfiltered": {"tuple": ["long:116444736000000000", null]},
+      "bytes:presetHistoryKeys": {"tuple": ["long:116444736000000000", {"bytes:synthetic": "utf8:Synthetic private source history"}]},
+      "bytes:restoreData": {"tuple": ["long:116444736000000000", {"bytes:synthetic": "utf8:Synthetic private source restore"}]}
+    },
+    "bytes:defaultoverview": {
+      "bytes:defaultOverviewID": {"tuple": ["long:116444736000000000", "bytes:SyntheticSourceDefaultIdentity"]},
+      "bytes:defaultOverviewInformedOfUpdate": {"tuple": ["long:116444736000000000", 1]},
+      "bytes:overviewID": {"tuple": ["long:116444736000000000", null]}
+    },
+    "bytes:tabgroups": {
+      "bytes:overviewTabs": {"tuple": ["long:116444736000000000", 1]},
+      "bytes:overviewTabs_names": {"tuple": ["long:116444736000000000", "utf8:Synthetic old tab label"]},
+      "bytes:syntheticUnrelatedTab": {"tuple": ["long:116444736000000000", 2]}
+    },
+    "bytes:ui": {
+      "bytes:targetOrigin": {"tuple": ["long:116444736000000000", {"tuple": [0.25, 0.75]}]},
+      "bytes:targetOriginLocked": {"tuple": ["long:116444736000000000", 0]},
+      "bytes:overviewProfileName": {"tuple": ["long:116444736000000000", "utf8:Synthetic private source profile"]},
+      "bytes:editHistory": {"tuple": ["long:116444736000000000", ["utf8:Synthetic private source history"]]}
+    },
+    "bytes:syntheticPrivate": {"bytes:accountID": 10, "bytes:marker": "utf8:Synthetic private source account"},
+    "bytes:audio": {"bytes:syntheticVolume": {"tuple": ["long:116444736000000000", 0.2]}}
+  }
+}
