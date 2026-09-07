@@ -320,6 +320,153 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
         assert call.keywords == [], method_name
 
 
+UPLOAD_CONTROLLER = API.parent.parent / "upload" / "controller.py"
+
+
+def uploader_publish_ports() -> list:
+    """Every `publish_*` field of UploaderPorts, derived from the dataclass."""
+    import dataclasses
+
+    from wingman.upload.controller import UploaderPorts
+
+    names = [
+        field.name
+        for field in dataclasses.fields(UploaderPorts)
+        if field.name.startswith("publish_")
+    ]
+    assert len(names) >= 9, names
+    return names
+
+
+def test_uploader_controller_factory_binds_named_semantic_ports():
+    source = API.read_text(encoding="utf-8")
+    factory = api_method_body("_build_uploader_controller")
+
+    assert "def _build_uploader_controller(" in source
+    assert "UploaderController(" in factory
+    assert "UploaderPorts(" in factory
+    # The gate is injected, never constructed here or in the controller:
+    # the updater and Quit claim against the same object from api.py.
+    assert "gate=self._work_gate" in factory
+    for port in uploader_publish_ports():
+        assert re.search(rf"\b{port}=self\._\w+", factory), port
+    for port, adapter in (
+        ("status", "_uploader_status"),
+        ("progress", "_uploader_progress"),
+        ("alert", "_uploader_alert"),
+        ("confirm", "_uploader_confirm"),
+        ("spawn", "_spawn_uploader_worker"),
+        ("watcher", "_uploader_watcher"),
+        ("update_preparing", "_uploader_update_preparing"),
+    ):
+        assert f"{port}=self.{adapter}" in factory, port
+    assert "self._uploader = self._build_uploader_controller(" in source
+
+
+def test_uploader_publish_ports_stay_literal_pushes_private_to_api():
+    """pushed_names() reads ui/api.py only. Every publish_* port must
+    therefore bind to an Api method whose body is one literal `_push("name")`
+    (or the existing `_push_auth`), so no handler name the uploader reaches
+    can sit outside that sweep. Derived from the ports dataclass so a port
+    added later is checked without anyone retyping the list here."""
+    factory = api_method_body("_build_uploader_controller")
+    allowed = set(allowlist())
+    for port in uploader_publish_ports():
+        bound = re.search(rf"\b{port}=self\.(_\w+)", factory)
+        assert bound, port
+        body = api_method_body(bound.group(1))
+        assert body, (port, bound.group(1))
+        pushes = re.findall(r'self\._push\(\s*"([A-Za-z0-9_]+)"', body)
+        if pushes:
+            assert len(pushes) == 1, (port, pushes)
+            assert pushes[0] in allowed, (port, pushes)
+        else:
+            assert "self._push_auth(" in body, port
+
+
+def test_uploader_controller_never_pushes_or_imports_the_bridge():
+    """The controller reaches the page only through its ports.
+
+    A `_push("...")` literal in wingman/upload would be a handler name
+    outside pushed_names()'s sweep -- the silent no-op CLAUDE.md warns
+    about, with no guard left to catch it -- and an import from `ui` would
+    put the window one attribute away from an upload worker.
+    """
+    # Walked with ast, not matched as substrings: the controller's own
+    # docstrings NAME `_push` and `evaluate_js` to explain the lost-push
+    # defence they implement, and a comment that must stay is not a call.
+    for path in (UPLOAD_CONTROLLER, UPLOAD_CONTROLLER.parent / "gate.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        reached = sorted(
+            {
+                node.attr
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Attribute)
+                and node.attr in ("_push", "evaluate_js", "_window")
+            }
+        )
+        assert reached == [], (path.name, reached)
+        imported = sorted(
+            node.module or ""
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and (
+                (node.level == 2 and (node.module or "").split(".")[0] == "ui")
+                or (node.module or "").startswith("wingman.ui")
+            )
+        )
+        assert imported == [], (path.name, imported)
+        assert not any(
+            alias.name.startswith("wingman.ui")
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        ), path.name
+
+
+def test_uploader_facade_methods_delegate_lexically_to_private_controller_methods():
+    source = API.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    assert "getattr(self._uploader" not in source
+    expected = {
+        "list_rows": ("list_rows", ["preselect"]),
+        "panel_text": ("panel_text", ["ids", "stitch"]),
+        "delete_selected": ("delete_selected", ["ids"]),
+        "copy_path": ("copy_path", ["row_id"]),
+        "open_path": ("open_path", ["row_id"]),
+        "play_recording": ("play_recording", ["row_id"]),
+        "rename_recording": ("rename_recording", ["row_id", "stem"]),
+        "open_recording_dir": ("open_recording_dir", []),
+        "start_upload": ("start_upload", ["title", "description", "stitch", "ids"]),
+        "cancel_upload": ("cancel_upload", []),
+        "retry": ("retry", []),
+        "post_recent_logs": ("post_recent_logs", []),
+        # Private, but __main__.poll_tick and _status/_progress read it, so
+        # it is a facade in every sense that matters here.
+        "_busy": ("busy", []),
+    }
+    methods = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    for method_name, (delegate_name, arg_names) in expected.items():
+        method = methods[method_name]
+        returns = [node for node in method.body if isinstance(node, ast.Return)]
+        assert returns, method_name
+        call = returns[-1].value
+        assert isinstance(call, ast.Call), method_name
+        assert isinstance(call.func, ast.Attribute), method_name
+        assert call.func.attr == delegate_name, method_name
+        owner = call.func.value
+        assert isinstance(owner, ast.Attribute), method_name
+        assert owner.attr == "_uploader", method_name
+        assert isinstance(owner.value, ast.Name) and owner.value.id == "self", (
+            method_name
+        )
+        assert [ast.unparse(arg) for arg in call.args] == arg_names, method_name
+        assert call.keywords == [], method_name
+
+
 def test_update_status_handler_is_allowlisted_and_registered_literally():
     source = (WEB / "app.js").read_text(encoding="utf-8")
 

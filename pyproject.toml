@@ -94,6 +94,7 @@ packages = [
     "wingman.telemetry",
     "wingman.evefittings",
     "wingman.fleetsharing",
+    "wingman.upload",
 ]
 
 [tool.setuptools.dynamic]
