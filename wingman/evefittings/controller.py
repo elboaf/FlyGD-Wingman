@@ -2107,10 +2107,9 @@ class FittingsController:
                 for item in self._state.entries
                 if item.id != entry_id
             )
-            # Only failed diagnostic history can reach here for this entry.
             # Protective successes refuse deletion above; unresolved intents
-            # retain their content-only recovery path. A failed record naming
-            # a now-gone entry cannot pass save validation.
+            # retain their content-only recovery path. Prune only failed
+            # diagnostic records, whose now-gone entry cannot pass validation.
             intents = tuple(
                 item
                 for item in self._state.intents

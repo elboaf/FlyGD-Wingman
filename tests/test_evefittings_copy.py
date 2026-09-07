@@ -736,6 +736,41 @@ def test_unsafe_get_timing_does_not_release_success(
     assert load_fittings(path)[0].intents[0].status == "success"
 
 
+def test_one_qualified_success_does_not_retire_a_younger_success_after_restart(
+    tmp_path,
+):
+    clock = [NOW]
+    controller, authority, client, path = make_controller(
+        tmp_path,
+        ready_state(count=2),
+        replies=[mutation(), mutation(), mutation()],
+        now=lambda: clock[0],
+    )
+    controller.start_copy(ready_ticket(controller, fit_ids=["fit-0"]))
+    clock[0] += timedelta(seconds=60)
+    controller.start_copy(ready_ticket(controller, fit_ids=["fit-1"]))
+    younger = load_fittings(path)[0].intents[-1]
+    clock[0] = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    assert controller.refresh([42])["ok"] is True
+    assert client.get_calls[-1][1] is None
+    assert load_fittings(path)[0].intents == (younger,)
+
+    restarted = FittingsController(
+        state_path=path,
+        names_path=tmp_path / "names.json",
+        authority=authority,
+        client=client,
+        now=lambda: clock[0],
+    )
+    authority.feature_lock = restarted._lock
+    ticket = restarted.preflight_copy(["fit-0", "fit-1"], [42])
+    assert [row["status"] for row in ticket["pairs"]] == ["ready", "present"]
+    result = restarted.start_copy(ticket["ticket_id"])
+    assert [row["attempted"] for row in result["results"]] == [True, False]
+    assert len(client.post_calls) == 3
+    assert younger in load_fittings(path)[0].intents
+
+
 def test_success_horizon_starts_at_completion_not_send(tmp_path):
     clock = [NOW]
     controller, _, client, path = make_controller(

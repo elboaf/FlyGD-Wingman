@@ -291,7 +291,10 @@ def test_completed_history_prunes_oldest_first_but_unresolved_never_prunes(tmp_p
     assert unresolved_ids == [f"unknown-{index}" for index in range(205)]
 
 
-@pytest.mark.parametrize("success_count", [199, 200, 201])
+@pytest.mark.parametrize(
+    "success_count",
+    [contracts.MAX_OPERATION_RECORDS + delta for delta in (-1, 0, 1)],
+)
 @pytest.mark.parametrize(
     "age", [timedelta(0), contracts.COMPLETED_OPERATION_MAX_AGE + timedelta(days=1)]
 )
