@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import threading
+import zipfile
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ import pytest
 from tests import fakes
 from tests.fakes import FakeWindow
 from wingman import paths, settings
-from wingman.evesettings import formation_sharing, tree
+from wingman.evesettings import codec, formation_sharing, formations, tree
 from wingman.evesettings import identity as evesettings_identity
 from wingman.preview import discovery as discovery_mod
 from wingman.ui import api as api_mod
@@ -3487,6 +3488,212 @@ def test_formation_save_failure_completes_once_without_pruning(
     assert done["content_revision"] == done["warning"] == ""
     assert done["error"] and done["request_id"] == "failure"
     assert account.read_bytes() == before and not prunes
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+
+
+@pytest.fixture(params=["lossless-filter", "native-codec"])
+def sharing_codec(request, monkeypatch):
+    if request.param == "native-codec":
+        if not codec.codec_available():
+            pytest.skip("settings codec not built")
+        return
+
+    # Replace only the subprocess transport, not snapshot/verification/backup
+    # or publication. Decode must consume the bytes supplied by the real writer.
+    def filter_bytes(mode, payload, **kwargs):
+        if mode == "encode":
+            return b"\x7d" + payload
+        assert mode == "decode" and payload.startswith(b"\x7d")
+        return payload[1:]
+
+    monkeypatch.setattr(codec, "_run", filter_bytes)
+
+
+@pytest.mark.parametrize("outcome", ["saved", "stale", "prune-failure"])
+@pytest.mark.parametrize(
+    "x,scan_range",
+    [
+        pytest.param(1000, 149597870700, id="whole"),
+        pytest.param(1000.125, 184688731163.59283, id="fractional"),
+        pytest.param(-1e16, 149597.8707, id="minimum"),
+        pytest.param(-9999999999999998, 149597.87070000003, id="minimum-neighbor"),
+        pytest.param(1e16, 9804046054195200, id="maximum"),
+        pytest.param(9999999999999998, 9804046054195198, id="maximum-neighbor"),
+        pytest.param(0, 187.25000012345 * 149597870700, id="fractional-au"),
+        pytest.param(-1250.5, 18469.135803 * 149597870700, id="fractional-large-au"),
+    ],
+)
+def test_shared_formation_lifecycle_between_accounts(
+    tmp_path, monkeypatch, sharing_codec, outcome, x, scan_range
+):
+    """Catch source-ID reuse, lost recipient state, stale writes and false failure.
+
+    Every account operation is production code; only the external codec (in
+    one matrix arm), ESI and Windows discovery use test seams. Files/backups are
+    test-owned, and even the housekeeping failure is injected below the API.
+    """
+    # Boundary neighbors and non-binary-exact ranges are also exercised by the
+    # production page's paste-range-cycles scenario, not just easy f64 values.
+    geometry = {"x": x, "y": -2000.625, "z": 0.375, "range": scan_range}
+
+    def document(entries, probe_values):
+        return formations.write_formations(
+            {},
+            formations.from_payload(
+                [
+                    {"id": ident, "name": name, "probes": [probe_values]}
+                    for ident, name in entries
+                ]
+            ),
+            now=1,
+        )
+
+    def seed(path, doc):
+        codec.write_document(path, codec.Document(doc, False), backup=lambda p: None)
+
+    api, source = account_setup(tmp_path, monkeypatch)
+    fake_status(api, monkeypatch)
+    monkeypatch.setattr(api, "_eve_client_running_strict", lambda: False)
+    target = source.with_name("core_user_2.dat")
+    seed(source, document([(900, "Incoming"), (901, "Straße")], geometry))
+    retained_geometry = {"x": 2500, "y": 1000, "z": -500, "range": 74798935350}
+    target_doc = document([(2, "Existing"), (17, "STRASSE")], retained_geometry)
+    target_doc["bytes:unrelated"] = "utf8:keep"
+    scratch = {"tuple": ["bytes:tempFormation", []]}
+    target_doc[formations.UI_KEY][formations.FORMATIONS_KEY]["tuple"][1]["int:-4"] = (
+        scratch
+    )
+    target_doc[formations.UI_KEY][formations.SELECTED_KEY]["tuple"][1] = 17
+    seed(target, target_doc)
+    source_before, target_before = source.read_bytes(), target.read_bytes()
+    store = paths.eve_settings_backup_dir()
+    sender = api.eve_settings_formations(str(source))
+    recipient = api.eve_settings_formations(str(target))
+    assert sender["ok"] and recipient["ok"]
+    assert sender["content_revision"] == hashlib.sha256(source_before).hexdigest()
+    assert recipient["content_revision"] == hashlib.sha256(target_before).hexdigest()
+    exported = api.eve_settings_export_formations(sender["formations"])
+    assert exported["ok"]
+    assert json.loads(exported["text"]) == {
+        "format": "wingman-preset",
+        "version": 1,
+        "type": "probe-formations",
+        "formations": [
+            {"name": "Incoming", "probes": [geometry]},
+            {"name": "Straße", "probes": [geometry]},
+        ],
+    }
+    names = [f["name"] for f in recipient["formations"]]
+    review = api.eve_settings_parse_formations(exported["text"], names)
+    assert review["ok"] and review["conflicts"] == [1]
+    assert [f["id"] for f in review["formations"]] == [None, None]
+    review["formations"][1]["name"] = "Imported Straße"
+    addition = api.eve_settings_validate_formation_import(review["formations"], names)
+    assert addition["ok"] and addition["conflicts"] == []
+    assert source.read_bytes() == source_before and target.read_bytes() == target_before
+    assert not list(store.glob("*.zip")), (
+        "Read/Copy/Review/Add must not back up or save"
+    )
+
+    if outcome == "stale":
+        target_doc["bytes:unrelated"] = "utf8:external"
+        seed(target, target_doc)
+        external = target.read_bytes()
+    elif outcome == "prune-failure":
+        # Exercise the real API's post-publication error boundary, not a fake
+        # worker/result. Actual backup creation and atomic publish still run.
+        def unavailable(*args, **kwargs):
+            raise OSError("retention unavailable")
+
+        monkeypatch.setattr(api_mod.evesettings_backup, "prune", unavailable)
+
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(
+        str(target),
+        recipient["formations"] + addition["formations"],
+        recipient["content_revision"],
+        "lifecycle:1",
+    )
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert done["request_id"] == "lifecycle:1"
+    assert done["path"] == str(target) and done["operation"] == "formations_save"
+    assert source.read_bytes() == source_before
+    assert api._eve_mutation.acquire(blocking=False)
+    api._eve_mutation.release()
+    if outcome == "stale":
+        assert not done["ok"] and done["error_code"] == "stale_file"
+        assert done["content_revision"] == done["warning"] == ""
+        assert "Nothing was saved" in done["error"]
+        assert target.read_bytes() == external
+        assert not list(store.glob("*.zip"))
+        return
+
+    assert done["ok"] and done["error"] == done["error_code"] == ""
+    assert bool(done["warning"]) == (outcome == "prune-failure")
+    if outcome == "prune-failure":
+        assert "saved" in done["warning"] and "pruned" in done["warning"]
+    assert done["content_revision"] == hashlib.sha256(target.read_bytes()).hexdigest()
+    assert done["content_revision"] != recipient["content_revision"]
+    saved = codec.read_document(target).doc
+    found = formations.read_formations(saved)
+    assert [(f.id, f.name) for f in found] == [
+        (2, "Existing"),
+        (17, "STRASSE"),
+        (18, "Incoming"),
+        (19, "Imported Straße"),
+    ]
+    assert [f["probes"] for f in formations.to_payload(found)] == [
+        [retained_geometry],
+        [retained_geometry],
+        [geometry],
+        [geometry],
+    ]
+    assert saved[formations.UI_KEY][formations.SELECTED_KEY]["tuple"][1] == 17
+    assert (
+        saved[formations.UI_KEY][formations.FORMATIONS_KEY]["tuple"][1]["int:-4"]
+        == scratch
+    )
+    assert saved["bytes:unrelated"] == "utf8:keep"
+    [archive] = list(store.glob("*.zip"))
+    with zipfile.ZipFile(archive) as backup:
+        assert backup.read(target.name) == target_before
+        assert source.name not in backup.namelist()
+    # Restore the real archive only into the test-owned root. This is not the
+    # still-required Windows/Backups-manager/live-EVE restoration smoke gate.
+    api_mod.evesettings_backup.restore(store, archive, tmp_path / "EVE")
+    assert target.read_bytes() == target_before and source.read_bytes() == source_before
+
+
+@pytest.mark.parametrize("boundary", ["outside", "symlink"])
+def test_shared_formation_account_boundary_cannot_escape_root(
+    tmp_path, monkeypatch, sharing_codec, boundary
+):
+    api, source = account_setup(tmp_path, monkeypatch)
+    fake_status(api, monkeypatch)
+    monkeypatch.setattr(api, "_eve_client_running_strict", lambda: False)
+    outside = tmp_path / "elsewhere" / "core_user_9.dat"
+    outside.parent.mkdir()
+    codec.write_document(outside, codec.Document({}, False), backup=lambda p: None)
+    before = outside.read_bytes()
+    requested = outside
+    if boundary == "symlink":
+        requested = source.with_name("core_user_9.dat")
+        try:
+            requested.symlink_to(outside)
+        except OSError as error:
+            pytest.skip(f"symlinks unavailable: {error}")
+    loaded = api.eve_settings_formations(str(requested))
+    assert not loaded["ok"] and "outside" in loaded["error"]
+    sent = fakes.record_pushes(api)
+    assert api.eve_settings_save_formations(
+        str(requested), [], hashlib.sha256(before).hexdigest(), "boundary:1"
+    )
+    [done] = fakes.payloads(sent, "onEveSettingsDone")
+    assert not done["ok"] and done["error_code"] == "invalid_request"
+    assert "outside" in done["error"] and done["content_revision"] == ""
+    assert outside.read_bytes() == before
+    assert not list(paths.eve_settings_backup_dir().glob("*.zip"))
     assert api._eve_mutation.acquire(blocking=False)
     api._eve_mutation.release()
 
