@@ -277,6 +277,37 @@ test('separate fields remain independent and an old reply cannot clear a newer e
   assert.match(p.el('msg-uploads').className, /err/);
 });
 
+for (const privacyFirst of [false, true]) {
+  test('an unrelated privacy success cannot hide a category refusal, privacyFirst=' + privacyFirst, async () => {
+    const p = page();
+    await p.submit('f-category', 'invalid');
+    await p.submit('f-privacy', 'private');
+    const error = Object.assign({}, refused, {error: 'Category must be a number.'});
+    if (privacyFirst) await p.reply('set_privacy', accepted);
+    await p.reply('set_category', error);
+    if (!privacyFirst) await p.reply('set_privacy', accepted);
+    assert.equal(p.el('f-category').value, '20');
+    assert.match(p.el('msg-uploads').textContent, /Category must be a number/);
+    await p.submit('f-category', '22');
+    await p.reply('set_category', accepted);
+    assert.equal(p.el('msg-uploads').textContent, '');
+  });
+}
+
+test('retrying one field clears only its own shared-slot error', async () => {
+  const p = page();
+  await p.submit('f-category', 'invalid');
+  await p.reply('set_category', Object.assign({}, refused, {error: 'Category rejected.'}));
+  await p.submit('f-privacy', 'private');
+  await p.reply('set_privacy', Object.assign({}, refused, {error: 'Privacy not saved.'}));
+  assert.match(p.el('msg-uploads').textContent, /Category rejected/);
+  assert.match(p.el('msg-uploads').textContent, /Privacy not saved/);
+  await p.submit('f-category', '22');
+  await p.reply('set_category', accepted);
+  assert.doesNotMatch(p.el('msg-uploads').textContent, /Category rejected/);
+  assert.match(p.el('msg-uploads').textContent, /Privacy not saved/);
+});
+
 test('folder acknowledgement does not label a later draft as saved', async () => {
   const p = page();
   await p.submit('f-recdir', 'C:\\accepted', 'keydown');

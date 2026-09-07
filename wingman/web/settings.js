@@ -210,9 +210,20 @@
 
   function fieldWrites(key) {
     if (!writes[key]) {
-      writes[key] = { edit: 0, request: 0, pending: 0, tail: Promise.resolve() };
+      writes[key] = { edit: 0, request: 0, pending: 0, error: '', tail: Promise.resolve() };
     }
     return writes[key];
+  }
+
+  // Privacy and Category share a slot but not an outcome: accepting one
+  // must not hide the other's current refusal, whichever reply arrives first.
+  function sayCommit(slot, text, tone) {
+    var errors = [];
+    Object.keys(writes).forEach(function (key) {
+      var state = writes[key];
+      if (state.slot === slot && state.error) { errors.push(state.error); }
+    });
+    say(slot, errors.length ? errors.join(' ') : text, errors.length ? 'err' : tone);
   }
 
   // Input and submission are different generations: an unsubmitted draft
@@ -236,6 +247,7 @@
   function commit(slot, args, key, value, revert, onApplied) {
     if (!hydrated) { return; }
     var state = fieldWrites(key);
+    state.slot = slot;
     var request = ++state.request;
     var edit = ++state.edit;
     state.pending += 1;
@@ -250,25 +262,31 @@
       // WM.send resolves to null on bridge failure (app.js). Refusal
       // restoration is authoritative, unlike focus-guarded hydration.
       if (!res || !res.applied) {
-        if (ownsMessage) {
-          say(slot, res ? (res.error || 'That value was not accepted.')
-                        : 'Could not reach the app. Nothing was changed.', 'err');
+        if (unchanged) {
+          state.error = res ? (res.error || 'That value was not accepted.')
+                            : 'Could not reach the app. Nothing was changed.';
+          sayCommit(slot);
+          if (revert) { revert(); }
         }
-        if (unchanged && revert) { revert(); }
         return;
       }
       current[key] = value;
+      var hadError = !!state.error;
+      state.error = '';
       // Effects outside the input describe accepted runtime state, even
       // while the control holds a newer draft. Pass the accepted value.
       if (onApplied) { onApplied(res, value, unchanged); }
-      if (!ownsMessage) { return; }
+      if (!ownsMessage) {
+        if (unchanged && hadError) { sayCommit(slot); }
+        return;
+      }
       if (!res.persisted) {
-        say(slot, 'Changed for this session, but could not be written to '
-                + 'settings — it will not survive a restart.', 'warn');
+        sayCommit(slot, 'Changed for this session, but could not be written to '
+                      + 'settings — it will not survive a restart.', 'warn');
         return;
       }
       // Folder notes report the real rebind cost, not an unsaved warning.
-      say(slot, res.note || '');
+      sayCommit(slot, res.note || '');
     });
   }
 
