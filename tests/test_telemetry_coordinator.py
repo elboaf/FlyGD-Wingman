@@ -1096,6 +1096,185 @@ class TestConsumerFailureIsolation:
 # ---------------------------------------------------------------------------
 
 
+def _record_shutdown_timeouts(
+    h, monkeypatch, *, discovery_costs=(), stream_costs=(), dispatcher_stuck=False
+):
+    """Record boundary budgets without sleeping or replacing coordinator logic."""
+    calls = []
+    discovery_stop = h.discovery.stop
+    stream_stop = h.stream.stop
+    discovery_costs = iter(discovery_costs)
+    stream_costs = iter(stream_costs)
+
+    def stop_discovery(timeout=5.0):
+        calls.append(("discovery", timeout))
+        h.mono[0] += next(discovery_costs, 0.0)
+        return discovery_stop(timeout)
+
+    def stop_stream(timeout=3.0):
+        calls.append(("stream", timeout))
+        h.mono[0] += next(stream_costs, 0.0)
+        return stream_stop(timeout)
+
+    class Worker:
+        alive = False
+
+        def start(self):
+            self.alive = True
+
+        def join(self, timeout):
+            calls.append(("dispatcher", timeout))
+            h.mono[0] += max(0.0, timeout)
+            self.alive = dispatcher_stuck
+
+        def is_alive(self):
+            return self.alive
+
+    worker = Worker()
+    monkeypatch.setattr(h.discovery, "stop", stop_discovery)
+    monkeypatch.setattr(h.stream, "stop", stop_stream)
+    monkeypatch.setattr(h.coordinator, "_thread_factory", lambda **_kw: worker)
+    return calls, worker
+
+
+class TestStopDeadline:
+    def test_producers_share_partially_consumed_budget(self, tmp_path, monkeypatch):
+        h = _harness(tmp_path)
+        calls, _ = _record_shutdown_timeouts(
+            h, monkeypatch, discovery_costs=(1.0,), stream_costs=(2.0,)
+        )
+        h.coordinator.reconcile()
+
+        assert h.coordinator.stop(timeout=5.0) is True
+
+        assert calls == [("discovery", 5.0), ("stream", 4.0), ("dispatcher", 2.0)]
+        assert h.mono[0] == 1005.0
+
+    def test_dispatcher_gets_remainder_after_both_producer_attempts(
+        self, tmp_path, monkeypatch
+    ):
+        h = _harness(
+            tmp_path,
+            discovery=FakeDiscovery(stop_results=[False, True]),
+            stream=FakeStream(stop_results=[False, True]),
+        )
+        calls, _ = _record_shutdown_timeouts(
+            h, monkeypatch, discovery_costs=(1.0, 1.0), stream_costs=(1.0, 1.0)
+        )
+        h.coordinator.reconcile()
+
+        assert h.coordinator.stop(timeout=5.0) is True
+
+        assert calls[-1] == ("dispatcher", 1.0)
+        assert calls[:-1] == [
+            ("discovery", 5.0),
+            ("stream", 4.0),
+            ("discovery", 3.0),
+            ("stream", 2.0),
+        ]
+        assert h.mono[0] == 1005.0
+
+    @pytest.mark.parametrize(
+        "timeout,discovery_cost,initial_budget",
+        [(5.0, 5.0, 5.0), (5.0, 6.0, 5.0), (0.0, 0.0, 0.0), (-2.0, 0.0, 0.0)],
+    )
+    def test_exhausted_budget_keeps_retry_and_retains_timed_out_producers(
+        self, tmp_path, monkeypatch, timeout, discovery_cost, initial_budget
+    ):
+        h = _harness(
+            tmp_path,
+            discovery=FakeDiscovery(stop_results=[False, False, False]),
+            stream=FakeStream(stop_results=[False, False, False]),
+        )
+        calls, _ = _record_shutdown_timeouts(
+            h, monkeypatch, discovery_costs=(discovery_cost,)
+        )
+        h.coordinator.reconcile()
+
+        assert h.coordinator.stop(timeout=timeout) is False
+
+        assert calls == [
+            ("discovery", initial_budget),
+            ("stream", 0.0),
+            ("discovery", 0.0),
+            ("stream", 0.0),
+            ("dispatcher", 0.0),
+        ]
+        assert h.coordinator._discovery_started is True
+        assert h.coordinator._stream_folder == tmp_path
+        assert h.discovery.subscribers == h.stream.subscribers == []
+
+        h.coordinator.reconcile()
+
+        assert h.discovery.starts == 1
+        assert h.stream.starts == [tmp_path]
+        assert h.discovery.subscribers == h.stream.subscribers == []
+
+    def test_deadline_includes_time_waiting_for_reconcile_lock(
+        self, tmp_path, monkeypatch
+    ):
+        h = _harness(tmp_path)
+        calls, _ = _record_shutdown_timeouts(h, monkeypatch)
+        h.coordinator.reconcile()
+
+        class DelayedLock:
+            def __enter__(self):
+                h.mono[0] += 1.0
+
+            def __exit__(self, *_args):
+                pass
+
+        monkeypatch.setattr(h.coordinator, "_reconcile_lock", DelayedLock())
+
+        assert h.coordinator.stop(timeout=5.0) is True
+
+        assert calls == [("discovery", 4.0), ("stream", 4.0), ("dispatcher", 4.0)]
+        assert h.mono[0] == 1005.0
+
+    def test_timed_out_dispatcher_is_retained_and_refuses_restart(
+        self, tmp_path, monkeypatch
+    ):
+        h = _harness(tmp_path)
+        calls, worker = _record_shutdown_timeouts(
+            h, monkeypatch, discovery_costs=(2.0,), dispatcher_stuck=True
+        )
+        h.coordinator.reconcile()
+
+        assert h.coordinator.stop(timeout=5.0) is False
+
+        assert calls[-1] == ("dispatcher", 3.0)
+        assert h.coordinator._worker is worker
+        assert h.coordinator._stop_event.is_set()
+        h.coordinator.reconcile()
+        assert h.coordinator._worker is worker
+        assert h.coordinator._running is False
+        assert h.discovery.starts == 1
+        assert h.stream.starts == [tmp_path]
+
+    def test_ordinary_reconcile_uses_no_argument_producer_stops(
+        self, tmp_path, monkeypatch
+    ):
+        h = _harness(tmp_path)
+        h.coordinator.reconcile()
+        discovery_stop = h.discovery.stop
+        stream_stop = h.stream.stop
+
+        # Zero-argument wrappers reject even explicit values equal to defaults.
+        def stop_discovery():
+            return discovery_stop()
+
+        def stop_stream():
+            return stream_stop()
+
+        monkeypatch.setattr(h.discovery, "stop", stop_discovery)
+        monkeypatch.setattr(h.stream, "stop", stop_stream)
+        h.flags["fleet"] = False
+
+        h.coordinator.reconcile()
+
+        assert h.discovery.stops == h.stream.stops == 1
+
+
 class TestLifecycle:
     def test_first_consumer_starts_each_service_exactly_once(self, tmp_path):
         h = _harness(tmp_path, preview=True, fleet=True, alerts=True)

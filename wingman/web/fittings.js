@@ -36,6 +36,8 @@
   var selected = {};       // entry_id -> true, pruned to the rendered page
   var progress = null;     // last refresh onFittingsProgress payload
   var copyOverlayOpen = false;
+  var copyDialogGeneration = 0;
+  var activeCopyTicket = '';
   var copyInvoker = null;
   var copyPhase = 'targets';
   var copyTargets = {};
@@ -166,6 +168,7 @@
     progress = null;
     copyOverlayOpen = false;
     copyPhase = 'targets';
+    activeCopyTicket = '';
     copyTargets = {};
     copyPreflight = null;
     alternateNames = {};
@@ -860,6 +863,8 @@
 
   function openCopyOverlay() {
     if (!visibleSelectedIds().length) return;
+    copyDialogGeneration += 1;
+    activeCopyTicket = '';
     copyInvoker = WM.el('fittings-copy-selected');
     copyOverlayOpen = true;
     copyPhase = 'targets';
@@ -876,6 +881,7 @@
   function closeCopyOverlay(force) {
     if (copyPhase === 'progress' && !force) return;
     if (force) copyPhase = 'targets';
+    activeCopyTicket = '';
     if (!copyOverlayOpen) {
       renderSelectionCount();
       return;
@@ -1000,11 +1006,12 @@
     WM.el('fittings-copy-review').disabled = true;
     WM.el('fittings-copy-status').textContent = 'Checking current fittings\u2026';
     var entryIds = visibleSelectedIds();
+    var generation = copyDialogGeneration;
     var pending = screenshotFixture
       ? Promise.resolve(screenshotPreflight(entryIds))
       : WM.send('fittings_preflight_copy', entryIds, selectedTargetIds(), choices);
     pending.then(function (payload) {
-      if (!copyOverlayOpen) return;
+      if (!copyOverlayOpen || generation !== copyDialogGeneration) return;
       if (!payload || !payload.accepted) {
         var rejection = payload && payload.error
           || 'The copy preflight could not be checked.';
@@ -1101,12 +1108,17 @@
   WM.el('fittings-copy-start').addEventListener('click', function () {
     if (!copyPreflight || copyPreflight.requires_resolution) return;
     var writes = copyPreflight.write_count || 0;
+    var generation = copyDialogGeneration;
+    var ticketId = copyPreflight.ticket_id;
     WM.confirm('Copy fittings',
       'Create exactly ' + writes + (writes === 1 ? ' fitting' : ' fittings')
       + ' in EVE? This only adds fittings; it never deletes or replaces one.')
       .then(function (confirmed) {
-        if (!confirmed || !copyOverlayOpen) return;
+        if (!confirmed || !copyOverlayOpen
+            || generation !== copyDialogGeneration
+            || !copyPreflight || copyPreflight.ticket_id !== ticketId) return;
         copyPhase = 'progress';
+        activeCopyTicket = ticketId;
         WM.el('fittings-copy-title').textContent = 'Copying fittings';
         WM.el('fittings-copy-body').textContent = '';
         WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
@@ -1114,8 +1126,11 @@
         WM.el('fittings-copy-status').textContent = 'Starting\u2026';
         copyButtons(false, false, true);
         renderSelectionCount();
-        WM.send('fittings_start_copy', copyPreflight.ticket_id).then(function (started) {
-          if (!started && copyOverlayOpen) {
+        WM.send('fittings_start_copy', ticketId).then(function (started) {
+          if (!started && copyOverlayOpen && copyPhase === 'progress'
+              && generation === copyDialogGeneration
+              && activeCopyTicket === ticketId) {
+            activeCopyTicket = '';
             copyPhase = 'preflight';
             WM.el('fittings-copy-status').textContent = 'The copy could not start.';
             renderCopyPreflight();
@@ -1131,7 +1146,12 @@
   });
 
   function onCopyProgress(payload) {
-    if (!copyOverlayOpen) return;
+    // Only the bounded screenshot-state handler populates screenshotFixture;
+    // without that explicit fixture, app pushes remain phase- and ticket-gated.
+    if (!copyOverlayOpen
+        || (!screenshotFixture && (copyPhase !== 'progress'
+                                   || !activeCopyTicket
+                                   || payload.ticket_id !== activeCopyTicket))) return;
     if (payload.phase === 'progress') {
       WM.el('fittings-copy-body').textContent = '';
       WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
@@ -1140,6 +1160,7 @@
       return;
     }
     if (payload.phase === 'complete') {
+      activeCopyTicket = '';
       copyPhase = 'results';
       selected = {};
       renderSelectionCount();

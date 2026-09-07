@@ -8447,6 +8447,7 @@ class Api:
                 {
                     "kind": "copy",
                     "phase": "complete",
+                    "ticket_id": ticket_id,
                     "operation_id": "",
                     "completed": 0,
                     "total": 0,
@@ -8473,6 +8474,7 @@ class Api:
                     {
                         "kind": "copy",
                         "phase": "complete",
+                        "ticket_id": ticket_id,
                         "operation_id": "",
                         "completed": 0,
                         "total": 0,
@@ -8485,6 +8487,7 @@ class Api:
                 {
                     "kind": "copy",
                     "phase": "complete",
+                    "ticket_id": ticket_id,
                     "operation_id": "",
                     "completed": 0,
                     "total": 0,

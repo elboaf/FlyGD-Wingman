@@ -131,6 +131,16 @@ def test_fittings_fixture_covers_library_import_and_access_scenarios():
     assert "fit-conflict-source" in DEV_JS
 
 
+def test_fittings_copy_progress_carries_the_consumed_ticket_id():
+    start = DEV_JS.index("api.fittings_start_copy = function (ticketId)")
+    end = DEV_JS.index("api.fittings_cancel_copy = function", start)
+    body = DEV_JS[start:end]
+
+    assert body.count("ticket_id: ticketId") == 2
+    assert re.search(r"phase: 'progress'[^}]*ticket_id: ticketId", body, re.DOTALL)
+    assert re.search(r"phase: 'complete'[^}]*ticket_id: ticketId", body, re.DOTALL)
+
+
 def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
     fixture = _fittings_screenshot_fixture()
     result = fixture["copy_result"]

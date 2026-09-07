@@ -423,6 +423,15 @@ def test_the_empty_state_names_the_folder_it_watched():
     assert "recording_dir" in LIST_JS
     assert re.search(r"WM\.make\('span', 'path'", LIST_JS)
     assert "#list-empty .path" in CSS_RAW
+    render_empty = LIST_JS[LIST_JS.index("function renderEmpty()") :]
+    render_empty = render_empty[: render_empty.index("document.addEventListener")]
+    rendered_copy = re.sub(r"'\s*\+\s*'", "", render_empty)
+    assert LIST_JS.count(r"Settings \u203A Folders") == 0
+    assert r"Choose one in Settings \u203A Uploading." in rendered_copy
+    assert (
+        r"Open folder below to check it, or change it in Settings \u203A Uploading."
+        in rendered_copy
+    )
 
 
 def test_the_folder_this_screen_is_about_can_be_opened_from_it():
