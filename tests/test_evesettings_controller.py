@@ -227,8 +227,8 @@ def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path, monkeypatch)
     """Only the worker releases the lock, and a worker that never started
     never will -- every later operation would be refused for good."""
     profile = eve_tree(tmp_path)
-    cfg = settings.load(tmp_path / "settings.json")
-    cfg["eve_settings"]["root"] = str(tmp_path / "EVE")
+    controller = build_controller(tmp_path)
+    controller._eve_section()["root"] = str(tmp_path / "EVE")
 
     class Refuses:
         def __init__(self, **kwargs):
@@ -237,11 +237,10 @@ def test_a_failed_spawn_does_not_strand_the_mutation_lock(tmp_path, monkeypatch)
         def start(self):
             raise RuntimeError("can't start new thread")
 
-    ports = dataclasses.replace(
-        build_controller(tmp_path)._ports,
+    controller._ports = dataclasses.replace(
+        controller._ports,
         spawn=lambda *, target, args=(), daemon=True: Refuses(),
     )
-    controller = ProfilesController(cfg, ports=ports)
     assert (
         controller.copy(
             str(profile / "core_char_1.dat"), [str(profile / "core_char_2.dat")]
@@ -276,14 +275,8 @@ def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(tmp_path):
         opened.append(initial)
         return str(tmp_path / "EVE")
 
-    cfg = settings.load(tmp_path / "settings.json")
-    controller = ProfilesController(
-        cfg,
-        ports=dataclasses.replace(
-            build_controller(tmp_path)._ports,
-            choose_root=dialog,
-        ),
-    )
+    controller = build_controller(tmp_path)
+    controller._ports = dataclasses.replace(controller._ports, choose_root=dialog)
     controller._eve_mutation.acquire()
     try:
         assert controller.pick_root() == ""
@@ -291,6 +284,7 @@ def test_picking_a_root_is_refused_while_a_mutation_holds_the_lock(tmp_path):
     finally:
         controller._eve_mutation.release()
     assert controller.pick_root() == str(tmp_path / "EVE")
+    assert controller._settings["eve_settings"]["root"] == str(tmp_path / "EVE")
 
 
 def test_selecting_releases_the_lock_for_the_next_mutation(tmp_path, monkeypatch):
@@ -309,14 +303,8 @@ def test_a_pick_root_that_raises_still_releases_the_lock(tmp_path, monkeypatch):
     def boom(initial):
         raise RuntimeError("no dialog here")
 
-    cfg = settings.load(tmp_path / "settings.json")
-    controller = ProfilesController(
-        cfg,
-        ports=dataclasses.replace(
-            build_controller(tmp_path)._ports,
-            choose_root=boom,
-        ),
-    )
+    controller = build_controller(tmp_path)
+    controller._ports = dataclasses.replace(controller._ports, choose_root=boom)
     with pytest.raises(RuntimeError):
         controller.pick_root()
     assert controller._eve_mutation.acquire(blocking=False) is True
@@ -432,14 +420,8 @@ def test_a_probe_that_cannot_be_spawned_does_not_wedge_the_lock(tmp_path, monkey
     def no_thread(*, target, args=(), daemon=True):
         raise RuntimeError("can't start new thread")
 
-    cfg = settings.load(tmp_path / "settings.json")
-    controller = ProfilesController(
-        cfg,
-        ports=dataclasses.replace(
-            build_controller(tmp_path)._ports,
-            spawn=no_thread,
-        ),
-    )
+    controller = build_controller(tmp_path)
+    controller._ports = dataclasses.replace(controller._ports, spawn=no_thread)
     controller._eve_refresh_running()
     assert controller._eve_probe.acquire(blocking=False) is True
     controller._eve_probe.release()
@@ -1234,7 +1216,7 @@ def test_a_failed_publication_rolls_back_from_the_backup_it_just_took(
     assert len(prunes) == 1
     assert controller._alerts[0][1] == "Replacement failed"
     assert "restored" in controller._alerts[0][2]
-    payload = controller._done_pushes[0]
+    (payload,) = controller._done_pushes
     assert payload["ok"] is False and payload["published"] is False
     assert payload["selection_persisted"] is True
     assert "restored" in payload["error"]
@@ -1271,7 +1253,7 @@ def test_a_failed_rollback_names_the_backup_and_prunes_nothing(tmp_path, monkeyp
     assert kind == "error"
     assert archives[0].name in body
     assert "Backups" in body
-    payload = controller._done_pushes[0]
+    (payload,) = controller._done_pushes
     assert payload["ok"] is False and payload["published"] is False
     assert payload["selection_persisted"] is True
     assert archives[0].name in payload["error"]
@@ -1291,7 +1273,7 @@ def test_an_unexpected_worker_failure_still_releases_and_completes_once(
 
     controller.copy_profile(str(source), "new", "Fleet")
 
-    payload = controller._done_pushes[0]
+    (payload,) = controller._done_pushes
     assert payload["ok"] is False and payload["published"] is False
     assert payload["selection_persisted"] is False
     assert payload["error"]
