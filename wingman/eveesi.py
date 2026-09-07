@@ -592,10 +592,23 @@ class EsiClient:
                         self._sleep(self._backoff(exc.headers, attempt))
                     continue
                 return EsiResponse(exc.code, None, text, "", method, path)
-            except (TimeoutError, urllib.error.URLError, OSError) as exc:
+            except (
+                TimeoutError,
+                urllib.error.URLError,
+                OSError,
+                http.client.IncompleteRead,
+            ) as exc:
                 # No response, so no headers to read a suggested wait from.
                 # The ladder is fixed and short: a refresh is sequential, so
                 # every second spent here delays every character behind it.
+                #
+                # IncompleteRead is listed by name because it is NOT an
+                # OSError: http.client's own chunked/length-based reader
+                # raises it from response.read() inside _read, when the
+                # connection drops mid-body. post_once handles it for the
+                # same reason; here it escaped _request entirely, and a
+                # Skills refresh pass died on the one character whose
+                # body was cut short instead of retrying it.
                 #
                 # Resets last_result to None: this attempt got no response
                 # at all, so if it turns out to be the last one, exhaustion
