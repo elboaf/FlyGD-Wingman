@@ -981,9 +981,13 @@ class ProfilesController:
                         "The base profile needs both core_public__.yaml and prefs.ini. Choose a normally initialized recipient profile.",
                     )
                 manifest = setup_profile.capture_manifest(plan)
+                revisions = {row.name: row.sha256 for row in manifest.files}
+                if not {account.path.name, character.path.name} <= revisions.keys():
+                    raise setup_model.SetupError(
+                        "stale_review", "The selected files changed during review."
+                    )
                 account_snapshot = evesettings_codec.read_snapshot(account.path)
                 character_snapshot = evesettings_codec.read_snapshot(character.path)
-                revisions = {row.name: row.sha256 for row in manifest.files}
                 if (
                     account_snapshot.content_revision != revisions[account.path.name]
                     or character_snapshot.content_revision

@@ -418,6 +418,37 @@ def test_review_checks_full_manifest_around_document_reads(setup, monkeypatch, c
 
 
 @pytest.mark.parametrize("which", ["account", "character"])
+def test_review_refuses_selected_file_missing_from_captured_manifest(
+    setup, monkeypatch, which
+):
+    controller, _, base = setup
+    selected = base.account_path if which == "account" else base.character_path
+    before = {p: p.read_bytes() for p in base.profile.iterdir()}
+    real_capture = setup_profile.capture_manifest
+
+    def capture_without_selected(plan):
+        selected.unlink()
+        try:
+            manifest = real_capture(plan)
+        finally:
+            selected.write_bytes(before[selected])
+        assert selected.name not in {row.name for row in manifest.files}
+        return manifest
+
+    monkeypatch.setattr(setup_profile, "capture_manifest", capture_without_selected)
+    monkeypatch.setattr(
+        codec,
+        "read_snapshot",
+        lambda *a, **kw: pytest.fail("selected manifest membership must precede reads"),
+    )
+    reply = review(controller, base)
+    assert not reply["ok"] and reply["error_code"] == "stale_review"
+    assert reply["error"] and not reply["review_id"]
+    assert controller._setup_review is None
+    assert {p: p.read_bytes() for p in base.profile.iterdir()} == before
+
+
+@pytest.mark.parametrize("which", ["account", "character"])
 def test_export_rechecks_both_revisions_after_projection(setup, monkeypatch, which):
     controller, source, _ = setup
     real_export = setup_documents.export_setup
