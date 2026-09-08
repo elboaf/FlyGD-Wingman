@@ -5,6 +5,7 @@ const {spawnSync} = require('node:child_process');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
 const coupled = scenario.startsWith('detached-') || scenario.startsWith('profiles-refresh-');
+const scrollCalls = [];
 
 // PageTree supplies real production ancestry/attributes. Only DOM mechanics and
 // bridge/clipboard delivery are doubled; no setup page state lives in this DOM.
@@ -68,7 +69,8 @@ class Element {
   }
   click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
   focus() { document.activeElement = this; }
-  scrollIntoView() {} // Geometry is checked by the isolated browser driver, not this DOM.
+  // Record the production request; rendered geometry still needs a browser.
+  scrollIntoView(options) { scrollCalls.push({id: this.id, options}); }
 }
 const ids = {};
 function build(node) {
@@ -180,7 +182,7 @@ if (scenario === 'forwarded-completion') {
   vm.runInNewContext(fs.readFileSync(owner, 'utf8'), {WM, document, window: {}, console, Promise});
   document.readyState = 'complete';
 }
-if (scenario === 'catalog-dialog-escape' || scenario === 'catalog-dialog-cancel') {
+if (scenario.startsWith('catalog-dialog-')) {
   const panel = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
   vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {window: {WM}, document, console, Promise});
 }
@@ -485,13 +487,70 @@ async function catalogMain() {
     await browse(); chooseCatalog(); WM.el('setup-catalog-use').focus(); click('setup-catalog-use');
     catalogReads.at(-1).resolve(catalogReply()); await tick();
     assert.equal(WM.el('overlay').hidden, false); assert.match(WM.el('dlg-body').textContent, /Setup a/);
+    const queued = scenario.includes('-queued-');
+    const accepted = scenario.endsWith('-accept');
+    const nextDialog = queued ? WM.confirm('Queued question', 'Unrelated decision', {destructive: true}) : null;
+    assert.match(WM.el('dlg-title').textContent, /Replace setup input/);
     if (scenario === 'catalog-dialog-escape') document.dispatchEvent({type: 'keydown', key: 'Escape'});
-    else click('dlg-cancel');
-    await tick(); assert.equal(WM.el('overlay').hidden, true);
+    else click(accepted ? 'dlg-ok' : 'dlg-cancel');
+    await tick();
     assert.equal(WM.current_route, 'uisetup', 'dialog Escape cancels replacement, not the import tool');
-    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
-    assert.equal(document.activeElement.id, 'setup-catalog-use', 'cancel returns focus to Use');
+    assert.equal(WM.el('setup-text').value, accepted ? catalogReply().text : original);
+    assert.equal(WM.el('setup-create').disabled, accepted);
+    assert.equal(WM.el('setup-summary').hidden, accepted);
+    assert.equal(WM.el('setup-name').value, 'Imported'); assert.equal(WM.el('setup-base').value, 'profile-A');
+    assert.equal(WM.el('setup-character').value, 'char-A'); assert.equal(WM.el('setup-account').value, 'account-A');
+    assert.equal(reviews.length, originalReviewCount); assert.equal(creates.length, 0);
+    if (queued) {
+      assert.equal(WM.el('overlay').hidden, false);
+      assert.equal(WM.el('dlg-title').textContent, 'Queued question');
+      assert.equal(document.activeElement.id, 'dlg-cancel', 'replacement must not steal focus from the next queued dialog');
+      click('dlg-cancel'); assert.equal(await nextDialog, false); await tick();
+      assert.equal(WM.el('overlay').hidden, true);
+      assert.equal(WM.el('setup-text').value, accepted ? catalogReply().text : original);
+      assert.equal(WM.el('setup-create').disabled, accepted);
+    } else {
+      assert.equal(WM.el('overlay').hidden, true);
+      assert.equal(document.activeElement.id, accepted ? 'setup-text' : 'setup-catalog-use',
+        'a single dialog returns focus to the input after acceptance or Use after cancel');
+    }
     return;
+  }
+  if (scenario === 'catalog-selection-scroll') {
+    scrollCalls.length = 0;
+    click('setup-catalog-open'); WM.el('setup-name').focus();
+    catalogs.at(-1).resolve({ok: true, error: '', entries: catalogEntries}); await tick();
+    assert.equal(document.activeElement.id, 'setup-name', 'background list completion must not steal focus');
+    assert.deepEqual(scrollCalls, [], 'background list completion must not scroll');
+    WM.el('setup-catalog-select').focus(); chooseCatalog();
+    assert.deepEqual(plain(scrollCalls), [{id: 'setup-catalog', options: {block: 'start'}}],
+      'focused selection reveals the existing catalog region in the work scroller');
+    assert.equal(document.activeElement.id, 'setup-catalog-select', 'revealing details must preserve keyboard selection');
+    assert.ok(WM.el('setup-catalog-details').textContent.includes(catalogEntries[0].description));
+    scrollCalls.length = 0; WM.el('setup-name').focus(); chooseCatalog(1);
+    assert.deepEqual(scrollCalls, [], 'selection without user focus must not move the work scroller');
+    assert.equal(document.activeElement.id, 'setup-name');
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(WM.el('setup-summary').hidden, false); assert.equal(reviews.length, originalReviewCount);
+    assert.equal(catalogReads.length, 0); assert.equal(discards.length, 0); assert.equal(creates.length, 0); return;
+  }
+  if (scenario === 'catalog-selection-status') {
+    await browse(); const prompt = catalogStatus();
+    assert.match(prompt, /Choose a setup/);
+    chooseCatalog();
+    assert.equal(catalogStatus(), '', 'valid selection retires the obsolete Choose prompt');
+    assert.ok(WM.el('setup-catalog-details').textContent.includes(catalogEntries[0].description));
+    click('setup-catalog-use');
+    catalogReads.at(-1).resolve({ok: false, entry: {}, text: '', summary: {}, error: 'Hash mismatch'}); await tick();
+    assert.match(catalogStatus(), /Hash mismatch/);
+    chooseCatalog(1); assert.equal(catalogStatus(), '', 'a new choice retires the previous entry error');
+    assert.equal(WM.el('setup-catalog-status').className, 'hint');
+    change('setup-catalog-select', '');
+    assert.equal(catalogStatus(), prompt, 'clearing the choice restores the selection prompt');
+    assert.equal(WM.el('setup-catalog-details').textContent, ''); assert.equal(WM.el('setup-catalog-use').disabled, true);
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(WM.el('setup-summary').hidden, false); assert.equal(reviews.length, originalReviewCount);
+    assert.equal(discards.length, 0); assert.equal(creates.length, 0); return;
   }
   if (scenario === 'catalog-list-after-create') {
     click('setup-catalog-open'); const old = catalogs.at(-1);

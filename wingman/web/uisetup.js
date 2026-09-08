@@ -361,7 +361,13 @@
       lines.push('Validation notes: ' + entry.verification);
     }
     WM.el('setup-catalog-details').textContent = lines.join('\n');
+    catalogStatus(entry ? '' : 'Choose a setup to see its source and intended display.');
     catalogControls();
+    // Reveal details in the existing work scroller, without moving keyboard
+    // focus or scrolling when a background update owns the selection.
+    if (entry && document.activeElement === WM.el('setup-catalog-select')) {
+      WM.el('setup-catalog').scrollIntoView({block: 'start'});
+    }
   }
 
   function browseCatalog() {
@@ -434,7 +440,8 @@
       catalogOrigin(reply.entry);
       clearCatalog();
       importControls();
-      WM.el('setup-text').focus();
+      // panel.js may already have opened the next queued dialog.
+      if (WM.el('overlay').hidden) WM.el('setup-text').focus();
     }
     WM.send('eve_settings_setup_catalog_entry', entry.id, entry.revision, entry.sha256)
       .then(function (reply) {
@@ -449,8 +456,8 @@
             else {
               finish('Input unchanged.');
               // The dialog cannot restore a disabled Use button until this
-              // response releases it. Restore it here, only while still owned.
-              WM.el('setup-catalog-use').focus();
+              // response releases it. Do not steal focus from a queued dialog.
+              if (WM.el('overlay').hidden) WM.el('setup-catalog-use').focus();
             }
           });
       }).catch(function () {
