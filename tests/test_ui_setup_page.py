@@ -38,7 +38,58 @@ SCENARIOS = [
     "unavailable-pairs",
 ]
 
+CATALOG_SCENARIOS = (
+    [
+        "catalog-browse-close",
+        "catalog-empty-retry",
+        "catalog-error-retry",
+        "catalog-dialog-escape",
+        "catalog-dialog-cancel",
+        "catalog-list-after-create",
+        "catalog-list-rejected",
+        "catalog-list-close-reopen",
+        "catalog-literal-selection",
+        "catalog-failed-entry",
+        "catalog-rejected-entry",
+        "catalog-use-empty",
+        "catalog-replacement",
+        "catalog-cancel-replacement",
+        "catalog-origin",
+        "catalog-selection-aba",
+        "catalog-confirm-selection-aba",
+    ]
+    + [
+        f"catalog-{stage}-after-{change}"
+        for stage in ("read", "confirm")
+        for change in (
+            "text",
+            "name",
+            "base",
+            "pair",
+            "labels",
+            "close",
+            "reopen",
+            "route",
+            "create",
+        )
+    ]
+    + [
+        f"catalog-{direction}-{source}"
+        for direction in ("supersedes", "superseded-by", "origin-cleared-by")
+        for source in ("paste", "file")
+    ]
+    + ["catalog-stale-manual-busy"]
+    + [
+        "catalog-dev-ordinary",
+        "catalog-dev-long",
+        "catalog-dev-empty",
+        "catalog-dev-error",
+        "catalog-dev-entry-error",
+    ]
+)
+
 IMPORT_SCENARIOS = [
+    *CATALOG_SCENARIOS,
     "context-does-not-select",
     "base-rosters-differ",
     "review-invalidated-by-text",

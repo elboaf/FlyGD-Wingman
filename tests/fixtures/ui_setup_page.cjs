@@ -21,6 +21,8 @@ class Element {
   querySelectorAll(selector) {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
     if (selector === '*') return all;
+    if (selector.includes(':not(')) return all.filter(el =>
+      !el.hidden && !el.disabled && (['BUTTON', 'INPUT', 'SELECT'].includes(el.tagName) || el.attrs.tabindex === '0'));
     return all.filter(el => {
       const match = selector.match(/^([\w-]+)?(?:\.([\w-]+))?(?:\[([\w-]+)="([^"]*)"\])?(:checked)?$/);
       assert.ok(match, 'DOM double needs selector: ' + selector);
@@ -53,10 +55,16 @@ class Element {
   get textContent() { return (this.text || '') + this.children.map(x => x.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
-  addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
+  contains(target) { return target === this || this.children.some(child => child.contains(target)); }
+  closest(selector) {
+    if (selector === '.route' && this.className.split(/\s+/).includes('route')) return this;
+    return this.parentNode ? this.parentNode.closest(selector) : null;
+  }
+  addEventListener(name, callback, capture = false) { (this.listeners[name] ||= []).push({callback, capture}); }
   dispatchEvent(event) {
-    event.target ||= this; event.preventDefault ||= () => {};
-    (this.listeners[event.type] || []).forEach(callback => callback(event));
+    event.target ||= this; event.preventDefault ||= () => { event.defaultPrevented = true; };
+    const listeners = this.listeners[event.type] || [];
+    [...listeners.filter(item => item.capture), ...listeners.filter(item => !item.capture)].forEach(item => item.callback(event));
   }
   click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
   focus() { document.activeElement = this; }
@@ -75,9 +83,16 @@ document.createElement = tag => new Element(tag);
 document.getElementById = id => ids[id] || null;
 const contexts = [], limits = [], snapshots = [], saves = [], clipboardWrites = [], mutations = [];
 const reviews = [], discards = [], creates = [], reads = [], clipboardReads = [], profilesReads = [];
+const catalogs = [], catalogReads = [], confirmations = [];
 let handlers = {}; let formationsCompletions = 0;
 const ordinaryCopies = [], rootPicks = [], identityChecks = [], identityConfirms = [];
 let nameResolutions = 0;
+const devCatalog = scenario.startsWith('catalog-dev-') ? {} : null;
+if (devCatalog) {
+  const source = fs.readFileSync(require('node:path').dirname(process.argv[4]) + '/dev.js', 'utf8');
+  vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='), source.indexOf('  function eveMutation(')),
+    {api: devCatalog, eve: {}, Promise, devSearch: new URLSearchParams('catalog=' + scenario.slice('catalog-dev-'.length)), setTimeout, window: {}});
+}
 function deferred(args) {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -92,6 +107,9 @@ const navigator = {clipboard: {readText: () => {
 if (scenario === 'copy-unavailable') delete navigator.clipboard;
 let WM = {
   current_route: 'evesettings',
+  confirm: (...args) => {
+    const pending = deferred(args); confirmations.push(pending); return pending.promise;
+  },
   handle: (name, handler) => { assert.equal(handlers[name], undefined); handlers[name] = handler; },
   formationsDone: () => { formationsCompletions++; },
   el: id => { assert.ok(ids[id], 'Missing production markup: ' + id); return ids[id]; },
@@ -106,11 +124,13 @@ let WM = {
     document.dispatchEvent({type: 'wm:route', detail: name});
   },
   send: (method, ...args) => {
+    if (devCatalog && ['eve_settings_setup_catalog', 'eve_settings_setup_catalog_entry'].includes(method)) return devCatalog[method](...args);
     const request = deferred(args);
     const destinations = {eve_settings_setup_context: contexts, eve_settings_setup_limits: limits,
       eve_settings_setup_export: snapshots, eve_settings_setup_save_file: saves,
       eve_settings_setup_review: reviews, eve_settings_setup_discard: discards,
       eve_settings_setup_create: creates, eve_settings_setup_read_file: reads,
+      eve_settings_setup_catalog: catalogs, eve_settings_setup_catalog_entry: catalogReads,
       eve_settings_state: profilesReads};
     if (coupled) {
       destinations.eve_settings_copy = ordinaryCopies;
@@ -159,6 +179,10 @@ if (scenario === 'forwarded-completion') {
   const owner = require('node:path').join(require('node:path').dirname(process.argv[4]), 'evesettings.js');
   vm.runInNewContext(fs.readFileSync(owner, 'utf8'), {WM, document, window: {}, console, Promise});
   document.readyState = 'complete';
+}
+if (scenario === 'catalog-dialog-escape' || scenario === 'catalog-dialog-cancel') {
+  const panel = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
+  vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {window: {WM}, document, console, Promise});
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const click = id => WM.el(id).click();
@@ -405,7 +429,222 @@ function freshReviewRequired() {
   assert.equal(WM.el('setup-review').disabled, false);
   assert.match(importStatus(), /review.*again|fresh review/i);
 }
+// Invented metadata lives only in this test fixture. Its artifact and summary
+// come from the existing production parser/exporter above.
+const catalogEntries = ['a', 'b'].map((id, i) => ({
+  id: 'test-' + id, revision: i + 3, title: 'Setup ' + id + ' é <img>',
+  description: 'Purpose <script>literal</script>',
+  sha256: require('node:crypto').createHash('sha256').update(exported.text + ' '.repeat(i + 1)).digest('hex'),
+  overview_sources: [{name: 'Overview <b>', author: 'Author <img>', reference: 'https://example.invalid/<literal>',
+    version: 'v1', license: 'Test only', license_file: 'Test.txt'}],
+  layout_author: 'Layout <author>', display: {width: 1920, height: 1080, ui_scale_percent: 100},
+  verification: 'Invented checks only, not live EVE verification.'
+}));
+function catalogReply(index = 0) {
+  return {ok: true, error: '', entry: catalogEntries[index], text: exported.text + ' '.repeat(index + 1), summary: exported.summary};
+}
+const catalogStatus = () => WM.el('setup-catalog-status').textContent;
+async function browse() {
+  click('setup-catalog-open');
+  assert.deepEqual(plain(catalogs.at(-1).args), []);
+  catalogs.at(-1).resolve({ok: true, error: '', entries: catalogEntries}); await tick();
+  assert.equal(WM.el('setup-catalog-select').value, '');
+}
+function chooseCatalog(index = 0) { change('setup-catalog-select', catalogEntries[index].id); }
+async function useCatalog() {
+  chooseCatalog(); click('setup-catalog-use'); catalogReads.at(-1).resolve(catalogReply()); await tick();
+  if (confirmations.length) { confirmations.at(-1).resolve(true); await tick(); }
+}
+async function catalogMain() {
+  await importOpen();
+  if (scenario === 'catalog-use-empty') input('setup-text', '');
+  else await reviewed();
+  const original = WM.el('setup-text').value, originalReviewCount = reviews.length;
+  if (scenario.startsWith('catalog-dev-')) {
+    click('setup-catalog-open'); await tick();
+    assert.equal(WM.el('setup-create').disabled, false);
+    if (scenario === 'catalog-dev-error') {
+      assert.match(catalogStatus(), /catalog/i); click('setup-catalog-retry'); await tick();
+    }
+    if (scenario === 'catalog-dev-empty') {
+      assert.match(catalogStatus(), /no complete/i); assert.equal(WM.el('setup-catalog-use').disabled, true); return;
+    }
+    const options = WM.el('setup-catalog-select').options;
+    assert.equal(options.length, 3); change('setup-catalog-select', options[scenario === 'catalog-dev-long' ? 2 : 1].value);
+    const details = WM.el('setup-catalog-details').textContent;
+    if (scenario === 'catalog-dev-long') { assert.ok(details.length > 2000); assert.match(details, /<literal>/); }
+    click('setup-catalog-use'); await tick();
+    if (scenario === 'catalog-dev-entry-error') {
+      assert.match(catalogStatus(), /mismatch|refus|could not/i); assert.equal(WM.el('setup-create').disabled, false); return;
+    }
+    assert.equal(WM.el('setup-text').value, original); confirmations.at(-1).resolve(true); await tick();
+    assert.notEqual(WM.el('setup-text').value, original); assert.match(WM.el('setup-catalog-origin').textContent, /Dev/);
+    assert.equal(WM.el('setup-create').disabled, true); assert.equal(reviews.length, originalReviewCount); return;
+  }
+  if (scenario.startsWith('catalog-dialog-')) {
+    await browse(); chooseCatalog(); WM.el('setup-catalog-use').focus(); click('setup-catalog-use');
+    catalogReads.at(-1).resolve(catalogReply()); await tick();
+    assert.equal(WM.el('overlay').hidden, false); assert.match(WM.el('dlg-body').textContent, /Setup a/);
+    if (scenario === 'catalog-dialog-escape') document.dispatchEvent({type: 'keydown', key: 'Escape'});
+    else click('dlg-cancel');
+    await tick(); assert.equal(WM.el('overlay').hidden, true);
+    assert.equal(WM.current_route, 'uisetup', 'dialog Escape cancels replacement, not the import tool');
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(document.activeElement.id, 'setup-catalog-use', 'cancel returns focus to Use');
+    return;
+  }
+  if (scenario === 'catalog-list-after-create') {
+    click('setup-catalog-open'); const old = catalogs.at(-1);
+    click('setup-create'); creates.at(-1).resolve({accepted: false, error: 'Busy'}); await tick();
+    old.resolve({ok: true, error: '', entries: catalogEntries}); await tick();
+    assert.equal(WM.el('setup-catalog').hidden, true, 'Create retires the picker, even if admission is refused');
+    await browse(); assert.equal(WM.el('setup-catalog-select').disabled, false); return;
+  }
+  if (['catalog-empty-retry', 'catalog-error-retry', 'catalog-list-rejected', 'catalog-list-close-reopen'].includes(scenario)) {
+    click('setup-catalog-open'); const old = catalogs.at(-1);
+    click('setup-catalog-open'); assert.equal(catalogs.length, 1, 'no duplicate list reads');
+    assert.equal(WM.el('setup-create').disabled, false, 'list read preserves review');
+    assert.equal(WM.el('setup-paste').disabled, false);
+    if (scenario === 'catalog-list-close-reopen') {
+      click('setup-catalog-close'); await browse();
+      const before = catalogStatus(); old.reject(new Error('old failure')); await tick();
+      assert.equal(catalogStatus(), before); assert.equal(WM.el('setup-catalog-select').options.length, 3);
+    } else {
+      if (scenario === 'catalog-empty-retry') old.resolve({ok: true, entries: [], error: ''});
+      else if (scenario === 'catalog-error-retry') old.resolve({ok: false, entries: [], error: 'Missing <catalog>'});
+      else old.reject(new Error('bridge disconnected'));
+      await tick(); assert.match(catalogStatus(), /no complete|missing|could not/i);
+      assert.equal(WM.el('setup-catalog-use').disabled, true);
+      assert.equal(WM.el('setup-create').disabled, false);
+      click('setup-catalog-retry'); catalogs.at(-1).resolve({ok: true, entries: catalogEntries, error: ''}); await tick();
+      assert.equal(WM.el('setup-catalog-select').disabled, false);
+    }
+    assert.equal(WM.el('setup-text').value, original); return;
+  }
+  await browse();
+  assert.equal(WM.el('setup-create').disabled, scenario === 'catalog-use-empty');
+  assert.equal(WM.el('setup-catalog-use').disabled, true, 'Use requires explicit selection');
+  click('setup-catalog-use'); assert.equal(catalogReads.length, 0);
+  if (scenario === 'catalog-browse-close') {
+    chooseCatalog(); click('setup-catalog-close');
+    assert.equal(WM.el('setup-catalog').hidden, true);
+    assert.equal(document.activeElement.id, 'setup-catalog-open');
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(reviews.length, originalReviewCount); assert.equal(creates.length, 0); return;
+  }
+  if (scenario.startsWith('catalog-origin-cleared-by-') || scenario === 'catalog-origin') {
+    await useCatalog();
+    assert.match(WM.el('setup-catalog-origin').textContent, /Setup a.*3/);
+    input('setup-name', 'Other local name'); change('setup-account', 'account-A');
+    assert.match(WM.el('setup-catalog-origin').textContent, /Setup a/);
+    if (scenario === 'catalog-origin') input('setup-text', WM.el('setup-text').value + 'edited');
+    else {
+      const file = scenario.endsWith('file'); click(file ? 'setup-file' : 'setup-paste');
+      assert.match(WM.el('setup-catalog-origin').textContent, /Setup a/, 'pending read is not a replacement');
+      (file ? reads : clipboardReads).at(-1).resolve(file ? {ok: true, cancelled: false, error: '', text: original} : original);
+      await tick();
+    }
+    assert.equal(WM.el('setup-catalog-origin').textContent, ''); return;
+  }
+  const manualFirst = scenario.startsWith('catalog-supersedes-') || scenario === 'catalog-stale-manual-busy';
+  const file = scenario.endsWith('file');
+  let manual;
+  if (manualFirst) {
+    click(file ? 'setup-file' : 'setup-paste'); manual = (file ? reads : clipboardReads).at(-1);
+  }
+  chooseCatalog();
+  if (scenario === 'catalog-literal-selection') {
+    const details = WM.el('setup-catalog-details').textContent;
+    for (const text of ['Purpose <script>literal</script>', 'Author <img>', 'Layout <author>', '1920', '1080', '100%', 'Invented checks', 'v1', 'Test only']) assert.ok(details.includes(text), text);
+    assert.equal(WM.el('setup-catalog-details').querySelectorAll('img').length, 0);
+    assert.equal(WM.el('setup-catalog-details').querySelectorAll('script').length, 0);
+    assert.equal(WM.el('setup-catalog-select').options[1].textContent, catalogEntries[0].title);
+  }
+  // A previously checked native-label choice must survive failure/cancel and
+  // clear only on an accepted replacement, not on selection or read start.
+  WM.el('setup-keep-labels').checked = true; WM.el('setup-label-choice').hidden = false;
+  click('setup-catalog-use'); const pending = catalogReads.at(-1);
+  assert.deepEqual(plain(pending.args), ['test-a', 3, catalogEntries[0].sha256]);
+  click('setup-catalog-use'); assert.equal(catalogReads.length, 1, 'duplicate Use disabled');
+  assert.equal(WM.el('setup-create').disabled, manualFirst || scenario === 'catalog-use-empty');
+  if (scenario === 'catalog-failed-entry' || scenario === 'catalog-rejected-entry') {
+    if (scenario === 'catalog-failed-entry') pending.resolve({ok: false, entry: {}, text: '', summary: {}, error: 'Hash <mismatch>'});
+    else pending.reject(new Error('transport'));
+    await tick(); assert.equal(WM.el('setup-text').value, original);
+    assert.equal(WM.el('setup-create').disabled, false); assert.equal(WM.el('setup-keep-labels').checked, true);
+    assert.equal(confirmations.length, 0); assert.match(catalogStatus(), /mismatch|could not/i);
+    assert.equal(WM.el('setup-catalog-use').disabled, false); return;
+  }
+  const delayedConfirm = scenario.startsWith('catalog-confirm-');
+  if (delayedConfirm) { pending.resolve(catalogReply()); await tick(); assert.equal(confirmations.length, 1); }
+  if (scenario.includes('-after-')) {
+    const action = scenario.split('-after-')[1];
+    if (action === 'text') input('setup-text', 'New text');
+    if (action === 'name') input('setup-name', 'New name');
+    if (action === 'base') change('setup-base', 'profile-B');
+    if (action === 'pair') change('setup-character', 'char-B');
+    if (action === 'labels') change('setup-keep-labels', '');
+    if (action === 'close' || action === 'reopen') {
+      click('setup-catalog-close'); if (action === 'reopen') await browse();
+    }
+    if (action === 'route') { WM.route('main'); await importOpen(); }
+    if (action === 'create') {
+      click('setup-create'); creates.at(-1).resolve({accepted: false, error: 'Busy'}); await tick();
+    }
+    const before = WM.el('setup-text').value, beforeStatus = importStatus(), beforeCatalog = catalogStatus();
+    if (delayedConfirm) confirmations.at(-1).resolve(true); else pending.resolve(catalogReply());
+    await tick(); assert.equal(WM.el('setup-text').value, before); assert.equal(importStatus(), beforeStatus);
+    assert.equal(catalogStatus(), beforeCatalog); assert.equal(WM.el('setup-catalog-origin').textContent, '');
+    assert.equal(confirmations.length, delayedConfirm ? 1 : 0); return;
+  }
+  if (scenario.endsWith('selection-aba')) {
+    chooseCatalog(1); chooseCatalog(0); click('setup-catalog-use'); const latest = catalogReads.at(-1);
+    assert.notEqual(latest, pending);
+    if (delayedConfirm) confirmations[0].resolve(true); else pending.resolve(catalogReply());
+    await tick(); assert.equal(WM.el('setup-text').value, original);
+    assert.equal(WM.el('setup-catalog-use').disabled, true, 'old callback cannot clear new busy state');
+    latest.resolve(catalogReply()); await tick(); confirmations.at(-1).resolve(true); await tick();
+    assert.equal(WM.el('setup-text').value, catalogReply().text); return;
+  }
+  if (scenario.startsWith('catalog-superseded-by-')) {
+    click(file ? 'setup-file' : 'setup-paste');
+    (file ? reads : clipboardReads).at(-1).resolve(file ? {ok: true, cancelled: false, error: '', text: 'Manual wins'} : 'Manual wins');
+    await tick(); pending.resolve(catalogReply()); await tick();
+    assert.equal(WM.el('setup-text').value, 'Manual wins'); assert.equal(confirmations.length, 0);
+    assert.equal(WM.el('setup-catalog-origin').textContent, ''); return;
+  }
+  pending.resolve(catalogReply()); await tick();
+  if (scenario === 'catalog-use-empty') assert.equal(confirmations.length, 0);
+  else {
+    assert.equal(WM.el('setup-text').value, original, 'read success alone cannot replace dirty source');
+    assert.match(confirmations.at(-1).args[1], /Setup a/);
+    confirmations.at(-1).resolve(scenario !== 'catalog-cancel-replacement'); await tick();
+  }
+  if (scenario === 'catalog-cancel-replacement') {
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(WM.el('setup-keep-labels').checked, true); assert.equal(WM.el('setup-label-choice').hidden, false);
+    assert.equal(WM.el('setup-catalog-select').value, 'test-a'); return;
+  }
+  assert.equal(WM.el('setup-text').value, catalogReply().text);
+  assert.equal(WM.el('setup-create').disabled, true); assert.equal(WM.el('setup-review').disabled, false);
+  assert.equal(WM.el('setup-keep-labels').checked, false); assert.equal(WM.el('setup-label-choice').hidden, true);
+  assert.equal(WM.el('setup-name').value, 'Imported'); assert.equal(WM.el('setup-base').value, 'profile-A');
+  assert.equal(WM.el('setup-character').value, 'char-A'); assert.equal(WM.el('setup-account').value, 'account-A');
+  assert.equal(document.activeElement.id, 'setup-text'); assert.match(WM.el('setup-catalog-origin').textContent, /Setup a.*3/);
+  assert.equal(reviews.length, originalReviewCount); assert.equal(creates.length, 0, 'no automatic Review/Create');
+  if (manualFirst) {
+    assert.equal(WM.el('setup-paste').disabled, false, 'superseded read cannot leave busy flag stuck');
+    if (scenario === 'catalog-stale-manual-busy') click('setup-paste');
+    manual.resolve(file ? {ok: true, cancelled: false, error: '', text: 'Old manual'} : 'Old manual'); await tick();
+    assert.equal(WM.el('setup-text').value, catalogReply().text); assert.match(WM.el('setup-catalog-origin').textContent, /Setup a/);
+    if (scenario === 'catalog-stale-manual-busy') {
+      assert.equal(WM.el('setup-paste').disabled, true, 'stale reply cannot clear newer manual busy flag');
+      clipboardReads.at(-1).resolve('Newest'); await tick(); assert.equal(WM.el('setup-text').value, 'Newest');
+    }
+  }
+}
 async function importMain() {
+  if (scenario.startsWith('catalog-')) { await catalogMain(); return; }
   if (scenario.startsWith('profiles-refresh-')) { await profilesRefreshMain(); return; }
   if (coupled) { await detachedMain(); return; }
   await importOpen();

@@ -30,7 +30,7 @@ from . import names as evesettings_names
 from . import ops as evesettings_ops
 from . import profilecopy as evesettings_profilecopy
 from . import selective as evesettings_selective
-from . import setup_documents, setup_model, setup_profile, setup_sharing
+from . import setup_catalog, setup_documents, setup_model, setup_profile, setup_sharing
 from . import tree as evesettings_tree
 
 logger = logging.getLogger(__name__)
@@ -621,6 +621,25 @@ class ProfilesController:
 
     def setup_limits(self) -> dict:
         return setup_model.limits_payload()
+
+    def setup_catalog(self) -> dict:
+        try:
+            return {"ok": True, "entries": setup_catalog.list_entries(), "error": ""}
+        except setup_catalog.SetupCatalogError as error:
+            return {"ok": False, "entries": [], "error": str(error)}
+
+    def setup_catalog_entry(self, preset_id: str, revision: int, sha256: str) -> dict:
+        try:
+            result = setup_catalog.read_entry(preset_id, revision, sha256)
+            return {"ok": True, **result, "error": ""}
+        except setup_catalog.SetupCatalogError as error:
+            return {
+                "ok": False,
+                "entry": {},
+                "text": "",
+                "summary": {},
+                "error": str(error),
+            }
 
     @staticmethod
     def _setup_require_entry(path: Path, *, directory: bool = False) -> None:

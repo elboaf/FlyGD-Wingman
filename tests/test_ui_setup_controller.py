@@ -10,7 +10,7 @@ from uuid import UUID
 
 import pytest
 
-from tests import fakes
+from tests import fakes, test_setup_catalog
 from tests.setup_fixtures import install_lossless_codec, seed_profile, wire
 from tests.test_evesettings_codec import CODEC
 from tests.test_evesettings_controller import QueuedThreads, build_controller
@@ -25,6 +25,8 @@ from wingman.evesettings import (
     setup_sharing,
 )
 from wingman.ui import api as api_mod
+
+catalog_fixture = test_setup_catalog.catalog_fixture
 
 
 @pytest.fixture
@@ -58,6 +60,103 @@ def export(controller, source):
     return controller.setup_export(
         str(source.profile), str(source.account_path), str(source.character_path)
     )
+
+
+@pytest.mark.parametrize("failure", ["none", "manifest", "artifact"])
+def test_catalog_reads_are_read_only_and_project_errors(
+    setup, catalog_fixture, monkeypatch, failure
+):
+    controller, _, base = setup
+    entry, text, directory = catalog_fixture
+    # A catalog read must not touch even an existing authorized offer.
+    offered = review(controller, base)
+    assert offered["ok"], offered
+    previous_offer = controller._setup_review
+    before = copy.deepcopy(controller._settings)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("catalog browsing invoked review/mutation/port authority")
+
+    for name in ("setup_review", "setup_create", "_eve_identity_hold"):
+        monkeypatch.setattr(controller, name, forbidden)
+    controller._ports = replace(
+        controller._ports,
+        **{field.name: forbidden for field in fields(controller._ports)},
+    )
+
+    class NoLock:
+        def acquire(self, *args, **kwargs):
+            forbidden()
+
+        def __enter__(self):
+            forbidden()
+
+    monkeypatch.setattr(controller, "_eve_mutation", NoLock())
+    if failure == "manifest":
+        (directory / "catalog.json").unlink()
+    elif failure == "artifact":
+        (directory / "synthetic-fleet-r1.json").unlink()
+    api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = controller
+    listing = api.eve_settings_setup_catalog()
+    loaded = api.eve_settings_setup_catalog_entry(
+        entry["id"], entry["revision"], entry["sha256"]
+    )
+    assert set(listing) == {"ok", "entries", "error"}
+    assert set(loaded) == {"ok", "entry", "text", "summary", "error"}
+    if failure == "manifest":
+        assert listing == {"ok": False, "entries": [], "error": listing["error"]}
+        assert "catalog.json" in listing["error"]
+    else:
+        assert listing == {"ok": True, "entries": [entry], "error": ""}
+    if failure == "none":
+        assert loaded["ok"] and loaded["error"] == ""
+        assert loaded["entry"] == entry and loaded["text"] == text
+        assert loaded["summary"]["counts"]["tabs"] == 8
+    else:
+        assert loaded == {
+            "ok": False,
+            "entry": {},
+            "text": "",
+            "summary": {},
+            "error": loaded["error"],
+        }
+        assert (
+            "catalog.json" in loaded["error"]
+            if failure == "manifest"
+            else "synthetic-fleet-r1.json" in loaded["error"]
+        )
+    assert controller._setup_review is previous_offer
+    assert controller._settings == before
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (None, 1, "a" * 64),
+        ("../outside", 1, "a" * 64),
+        ("synthetic-fleet", True, "a" * 64),
+        ("synthetic-fleet", 1, None),
+    ],
+)
+def test_catalog_bridge_arguments_refuse_at_reader_boundary(setup, monkeypatch, args):
+    from wingman import paths
+
+    controller, _, _ = setup
+    monkeypatch.setattr(
+        paths, "setup_presets_dir", lambda: pytest.fail("invalid identity reached I/O")
+    )
+    api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = controller
+    result = api.eve_settings_setup_catalog_entry(*args)
+    assert result == {
+        "ok": False,
+        "entry": {},
+        "text": "",
+        "summary": {},
+        "error": result["error"],
+    }
+    assert result["error"]
 
 
 def test_context_browsing_does_not_persist_selection(setup, monkeypatch):
