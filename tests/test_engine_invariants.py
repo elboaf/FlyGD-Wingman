@@ -438,6 +438,31 @@ def test_no_clipboard_read_can_pick_up_stale_data(source):
         )
 
 
+def test_setting_root_does_not_show_a_redundant_tooltip(lowered):
+    """Root state reaches the main strip and, when enabled, the sigbar.
+
+    Keep transient failure and conversion feedback as tooltips, but do not
+    cover EVE with a second rendering of the persistent root state whenever
+    Set Root runs.
+    """
+    start = lowered.index("dosemi:")
+    end = lowered.index("doconvertscout:")
+    body = lowered[start:end]
+    assert "showroottooltip" not in body
+    assert "tooltip" not in body
+
+
+def test_convert_scout_keeps_transient_result_feedback(lowered):
+    """Conversion failures and success are not represented in the sigbar."""
+    start = lowered.index("doconvertscout:")
+    end = lowered.index("doe:")
+    body = lowered[start:end]
+    assert "tooltip, failed to copy clipboard content" in body
+    assert "tooltip, no eve-scout bookmarks found in clipboard" in body
+    assert "tooltip, converted %convertedcount%" in body
+    assert body.count("settimer, removetooltip") == 3
+
+
 def test_grab_sig_reports_a_failed_copy(source):
     """DoQ must check ClipWait's ErrorLevel, not just read what it finds.
 
@@ -448,8 +473,8 @@ def test_grab_sig_reports_a_failed_copy(source):
     nothing about why.
 
     Checked here and not for the other readers because DoQ is the one whose
-    result is carried forward into later actions. DoSemi's failure is
-    visible in the tooltip and the status bar, and ReadField's is a paste
+    result is carried forward into later actions. DoSemi falls back to home
+    state, which Wingman's status strip reports, and ReadField's is a paste
     that does nothing; the author's script leaves both unchecked and this
     does not change that. DoConvertScout already reports its own.
     """

@@ -20,13 +20,15 @@
 ; other direction -- Wingman configures the engine through the INI and
 ; reads its state from the status file, and nothing sends it commands.
 ;
-; ONE behaviour block is not the author's: DoQ clears the clipboard before
-; its own Send ^c and checks ClipWait's ErrorLevel, so a copy that does not
-; land is reported instead of silently reading stale clipboard contents as
-; the signature. It is marked WINGMAN like the rest. The divergence is
-; deliberately the smallest available -- it applies the clear-then-check
-; shape the author already uses in DoConvertScout, so it is a fix worth
-; offering back upstream rather than a local invention.
+; Two behaviours differ from the author's script. DoQ clears the clipboard
+; before its own Send ^c and checks ClipWait's ErrorLevel, so a copy that does
+; not land is reported instead of silently reading stale clipboard contents as
+; the signature. Set Root also omits the author's persistent-state tooltip:
+; Wingman's main strip and optional floating sigbar already render that state,
+; while transient failure and conversion tooltips remain. The DoQ divergence is
+; deliberately the smallest available -- it applies the clear-then-check shape
+; the author already uses in DoConvertScout, so it is a fix worth offering back
+; upstream rather than a local invention.
 ; ============================================================
 #Persistent
 ; Force, explicitly: a duplicate spawn must replace the previous copy, not
@@ -235,21 +237,6 @@ JsonList(csv) {
         out .= (out = "" ? "" : ",") . """" . JsonEsc(A_LoopField) . """"
     return out
 }
-
-ShowRootTooltip:
-if (RootModeActive) {
-    NextNumDisplay   := BuildSystemKey(RootKey, NextNum,   False)
-    NextAlphaDisplay := BuildSystemKey(RootKey, NextAlpha, True)
-    if (RootKey = "")
-        TipText := "root: home mode`nnext num: " . NextNumDisplay . "  next alpha: " . NextAlphaDisplay
-    else
-        TipText := "root: " . RootKey . "`nnext num: " . NextNumDisplay . "  next alpha: " . NextAlphaDisplay
-} else {
-    TipText := "root: not set"
-}
-ToolTip, %TipText%
-SetTimer, RemoveTooltip, -2500
-Return
 
 RemoveTooltip:
 ToolTip
@@ -600,7 +587,6 @@ LastUsedNum          := ""
 LastUsedAlpha        := ""
 if (ClipSaved = "") {
     RootModeActive := True
-    GoSub, ShowRootTooltip
     Return
 }
 ValidCount := CountValidBookmarkLines(ClipSaved)
@@ -646,7 +632,6 @@ if (!RootModeActive) {
         ZeroMode       := False
         Clipboard      := RootKey
     }
-    GoSub, ShowRootTooltip
     Return
 }
 Loop, Parse, ClipSaved, `n, `r
@@ -682,7 +667,6 @@ Loop, Parse, ClipSaved, `n, `r
 FindNextNum()
 FindNextAlpha()
 Clipboard := RootKey
-GoSub, ShowRootTooltip
 Return
 
 DoConvertScout:
