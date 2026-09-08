@@ -315,8 +315,24 @@ def _python_body(step):
     return re.search(r"python - <<'(\w+)'\n([\s\S]+)\n\1", step["run"])[2]
 
 
-def test_ci_setup_prerequisites_precede_pytest_without_optional_gates():
-    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+# Each pytest job owns its prerequisites; a codec built by a later installer
+# job cannot help it. Derive the inventory so new workflows/jobs join both guards.
+PYTEST_JOBS = [
+    pytest.param(path, name, id=f"{path.name}:{name}")
+    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml"))
+    for name, job in yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"].items()
+    if any(
+        re.search(r"\bpytest(?:\s|$)", step.get("run", ""))
+        for step in job.get("steps", [])
+    )
+]
+
+
+@pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)
+def test_workflow_setup_prerequisites_precede_pytest_without_optional_gates(
+    workflow, job
+):
+    steps = _workflow_steps(workflow, job)
     names = [step.get("name") for step in steps]
     required = [
         "Check Node",
@@ -324,6 +340,7 @@ def test_ci_setup_prerequisites_precede_pytest_without_optional_gates():
         "Install the settings codec for tests",
     ]
     for name in required:
+        assert name in names, f"{workflow.name}:{job} is missing {name}"
         step = steps[names.index(name)]
         assert names.index("Install") < names.index(name) < names.index("Test")
         assert not step.get("continue-on-error") and "if" not in step
@@ -333,33 +350,46 @@ def test_ci_setup_prerequisites_precede_pytest_without_optional_gates():
         "cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml "
         "--target-dir packaging/settings-codec/target"
     )
-    assert names.index(required[1]) < names.index(required[2])
-    assert "-rs" in steps[names.index("Test")]["run"]
-    assert steps[names.index("Test settings codec")]["run"] == (
+    assert (
+        names.index(required[0]) < names.index(required[1]) < names.index(required[2])
+    )
+    for index, step in enumerate(steps):
+        if re.search(r"\bpytest(?:\s|$)", step.get("run", "")):
+            assert index > names.index(required[2])
+            assert "-rs" in step["run"].split()
+
+
+def test_ci_keeps_the_independent_codec_regression():
+    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    step = next(s for s in steps if s.get("name") == "Test settings codec")
+    assert step["run"] == (
         "cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml"
     )
 
 
-def test_ci_codec_install_fails_missing_build_then_copies_to_runtime_location(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)
+def test_workflow_codec_install_fails_missing_build_then_copies_to_runtime_location(
+    workflow, job, tmp_path, monkeypatch
 ):
     from wingman import paths
     from wingman.evesettings import codec
 
-    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    steps = _workflow_steps(workflow, job)
     step = next(
-        s for s in steps if s.get("name") == "Install the settings codec for tests"
+        (s for s in steps if s.get("name") == "Install the settings codec for tests"),
+        None,
     )
+    assert step is not None, f"{workflow.name}:{job} must install the codec"
     assert step["run"].startswith("uv run --no-sync python")
-    body = _python_body(step)
+    body = compile(_python_body(step), f"{workflow.name}:{job}:codec-install", "exec")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
     with pytest.raises(FileNotFoundError):
-        exec(compile(body, "ci-codec-install", "exec"), {})
+        exec(body, {})
     source = tmp_path / "packaging/settings-codec/target/release" / CODEC.name
     source.parent.mkdir(parents=True)
     source.write_bytes(b"synthetic release artifact")
-    exec(compile(body, "ci-codec-install", "exec"), {})
+    exec(body, {})
     target = tmp_path / "packaging/bin" / CODEC.name
     assert target.read_bytes() == b"synthetic release artifact"
     assert paths.codec_exe() == str(target) and codec.codec_available()
@@ -367,7 +397,7 @@ def test_ci_codec_install_fails_missing_build_then_copies_to_runtime_location(
     with pytest.raises(
         AssertionError, match="Native integration tests require the built codec"
     ):
-        exec(compile(body, "ci-codec-install", "exec"), {})
+        exec(body, {})
 
 
 @pytest.mark.parametrize("has_junit", [False, True])

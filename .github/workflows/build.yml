@@ -36,8 +36,32 @@ jobs:
         # pyproject.toml, which is the whole point. --frozen would install
         # a stale lockfile silently.
         run: uv sync --locked --extra dev
+      # Match CI's full-suite prerequisites here: the later installer job
+      # has its own runner and cannot supply this job's native codec.
+      - name: Check Node
+        shell: bash
+        run: node --version
+      - name: Build the settings codec for tests
+        shell: bash
+        run: cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target
+      - name: Install the settings codec for tests
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import os
+          import pathlib
+          import shutil
+          from wingman.evesettings import codec
+
+          name = "wingman-settings-codec" + (".exe" if os.name == "nt" else "")
+          source = pathlib.Path("packaging/settings-codec/target/release") / name
+          target = pathlib.Path("packaging/bin") / name
+          target.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(source, target)
+          assert codec.codec_available(), "Native integration tests require the built codec"
+          PY
       - name: Test
-        run: uv run --no-sync python -m pytest tests/ -v
+        run: uv run --no-sync python -m pytest tests/ -v -rs
 
   build:
     needs: test
