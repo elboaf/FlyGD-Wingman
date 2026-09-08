@@ -202,6 +202,8 @@ def test_profiles_controller_factory_binds_named_semantic_ports():
     assert "status=self._profiles_status" in source
     assert "confirm=self._profiles_confirm" in source
     assert "choose_root=self._choose_eve_settings_root" in source
+    assert "choose_setup_input=self._choose_setup_input" in source
+    assert "choose_setup_output=self._choose_setup_output" in source
     assert "spawn=self._spawn_profiles_worker" in source
     assert "advisory_client_running=self._profiles_advisory_client_running" in source
     assert "strict_client_running=self._profiles_strict_client_running" in source
@@ -233,6 +235,26 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
     assert "__getattr__(self" not in source
     expected = {
         "eve_settings_state": ("state", []),
+        "eve_settings_setup_limits": ("setup_limits", []),
+        "eve_settings_setup_context": ("setup_context", ["profile"]),
+        "eve_settings_setup_export": (
+            "setup_export",
+            ["expected_profile", "account_path", "character_path"],
+        ),
+        "eve_settings_setup_read_file": ("setup_read_file", []),
+        "eve_settings_setup_save_file": ("setup_save_file", ["text"]),
+        "eve_settings_setup_review": (
+            "setup_review",
+            [
+                "text",
+                "expected_profile",
+                "account_path",
+                "character_path",
+                "destination_name",
+                "keep_ship_labels",
+            ],
+        ),
+        "eve_settings_setup_discard": ("setup_discard", ["review_id"]),
         "eve_settings_pick_root": ("pick_root", []),
         "eve_settings_detect_root": ("detect_root", []),
         "eve_settings_select": ("select", ["server", "profile"]),

@@ -115,6 +115,8 @@ def build_controller(tmp_path, *, answer=True, spawn=None):
         status=lambda text: statuses.append(text),
         confirm=lambda title, body, **kw: answer,
         choose_root=lambda initial: "",
+        choose_setup_input=lambda: "",
+        choose_setup_output=lambda suggested: "",
         spawn=spawn_port,
         advisory_client_running=lambda: False,
         strict_client_running=lambda: False,
