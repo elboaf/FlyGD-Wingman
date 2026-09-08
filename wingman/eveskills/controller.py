@@ -1311,7 +1311,7 @@ class SkillsController:
                 else MSG_REAUTH
             )
             return None, error, True
-        return None, result.error, False
+        return None, _bounded_error(result.error), False
 
     def _commit_success(
         self, character_id: int, skills, queue, attributes, attributes_error: str
