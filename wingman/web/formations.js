@@ -31,6 +31,32 @@
 (function () {
   'use strict';
 
+  // Explicit tooling-only read state. Never installed by startup or Python;
+  // the real opener/renderers still own the view, and route leave retires it.
+  var screenshotFixture = null, screenshotLastAccount = '';
+  WM.formationsScreenshot = function (payload) {
+    if (!payload) {
+      if (!screenshotFixture) return;
+      closeImportReview(false);
+      loadGeneration += 1;
+      state.path = ''; state.contentRevision = ''; state.formations = [];
+      state.dirty = false; state.busy = false;
+      accountChoices = []; selectedAccountPath = '';
+      lastSuccessfulPath = screenshotLastAccount;
+      screenshotFixture = null;
+      return;
+    }
+    if (payload.kind !== 'formations-screenshot-v1' || JSON.stringify(payload).length > 65536
+        || !payload.accounts || payload.accounts.length !== 1 || !payload.snapshot
+        || !payload.snapshot.ok || !payload.snapshot.formations.length || !payload.import_reply) {
+      throw new Error('Invalid formations screenshot fixture');
+    }
+    WM.formationsScreenshot(null);
+    screenshotLastAccount = lastSuccessfulPath;
+    screenshotFixture = JSON.parse(JSON.stringify(payload));
+    WM.openFormations(screenshotFixture.accounts, screenshotFixture.accounts[0].path);
+  };
+
   var KM = 1000;
   var AU = 149597870700;
   // The launcher holds eight. Kept in step with formations.MAX_PROBES by
@@ -234,7 +260,9 @@
     if (mode === 'switch') { loadGeneration += 1; }
     var generation = loadGeneration, attempt = ++readAttempt;
     state.busy = true; paintCommit();
-    return WM.send('eve_settings_formations', path).then(function (reply) {
+    var pending = screenshotFixture ? Promise.resolve(JSON.parse(JSON.stringify(screenshotFixture.snapshot)))
+      : WM.send('eve_settings_formations', path);
+    return pending.then(function (reply) {
       // Even failure belongs to the request that caused it. Check identity
       // before clearing busy, showing a dialog, or touching either baseline.
       if (WM.current_route !== 'formations' || generation !== loadGeneration
@@ -326,6 +354,7 @@
   }
 
   function save() {
+    if (screenshotFixture) return;
     if (importReview || state.busy || !state.path || !state.contentRevision) { return; }
     var request = {
       id: pageSession + ':' + loadGeneration + ':' + (++saveSequence),
@@ -369,6 +398,7 @@
   }
 
   function copySelected() {
+    if (screenshotFixture) return;
     if (state.busy || !copySelection.length) { return; }
     var attempt = ++copyAttempt, generation = loadGeneration;
     var items = state.formations.filter(function (f) {
@@ -545,7 +575,9 @@
     review.request = request;
     review.pending = 'review'; review.candidates = []; review.conflicts = [];
     renderImportList(); paintImportButtons(); setImportStatus('Reviewing formations…', false);
-    WM.send('eve_settings_parse_formations', review.text, existingNames()).then(function (reply) {
+    var pending = screenshotFixture ? Promise.resolve(JSON.parse(JSON.stringify(screenshotFixture.import_reply)))
+      : WM.send('eve_settings_parse_formations', review.text, existingNames());
+    pending.then(function (reply) {
       if (!importReplyIsCurrent(review, request)) { return; }
       review.pending = '';
       if (!reply || !reply.ok) {
@@ -565,6 +597,7 @@
   }
 
   function addImport() {
+    if (screenshotFixture) return;
     var review = importReview;
     if (!review || review.pending || !review.candidates.length || review.conflicts.length) { return; }
     var request = { attempt: ++importAttempt, revision: revision };
@@ -1196,6 +1229,7 @@
     // must not leave the preview spinning under the next screen.
     document.addEventListener('wm:route', function (event) {
       if (event.detail !== 'formations') {
+        WM.formationsScreenshot(null);
         closeImportReview(false);
         dragging = false;
         loadGeneration += 1;

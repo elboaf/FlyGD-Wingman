@@ -156,6 +156,38 @@ vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='),
         }
 
 
+def test_tool_screenshot_fixtures_match_real_models_and_have_browser_drivers():
+    from wingman.preview import crops
+
+    raw = DEV_JS.split("var DEV_TOOL_SCREENSHOT_FIXTURE = ", 1)[1].lstrip()
+    fixture, _ = json.JSONDecoder().raw_decode(raw)
+    setup = fixture["setup"]
+    parsed = setup_sharing.parse_text(json.dumps(setup["artifact"]))
+    assert setup["summary"] == setup_model.summarize(parsed)
+    assert setup["limits"] == setup_model.limits_payload()
+    context = setup["context"]
+    assert context["characters"][0]["id"] in context["accounts"][0]["character_ids"]
+    formations = fixture["formations"]
+    assert (
+        formations["snapshot"]["sharing_limits"] == formation_sharing.limits_payload()
+    )
+    candidates = formation_sharing.parse_text(
+        formation_sharing.export_text(formations["import_reply"]["formations"])
+    )
+    assert candidates[0].name == formations["snapshot"]["formations"][0]["name"]
+    assert formations["import_reply"]["conflicts"] == [0]
+    crop = fixture["crop"]["crops"]
+    assert (
+        crops.serialize(crops.deserialize(crop["definitions"])) == crop["definitions"]
+    )
+    assert crop["cap"] == crops.MAX_LIVE_CROPS
+    assert crop["live_count"] == sum(
+        status == "live" for status in crop["statuses"].values()
+    )
+    for name in ("screenshotFormations", "screenshotSetup", "screenshotCrop"):
+        assert name + ": function" in DEV_JS
+
+
 def test_the_scan_found_both_sides():
     """A regex that silently matched nothing would make every assertion
     below pass while checking air -- the trap test_page_conventions.py

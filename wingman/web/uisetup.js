@@ -2,6 +2,39 @@
 (function () {
   'use strict';
 
+  var screenshotFixture = null;
+  // Like Fittings' screenshot read seam: bounded synthetic responses, never a
+  // replacement bridge. Save/Create/clipboard entry points refuse this state.
+  WM.uiSetupScreenshot = function (payload) {
+    if (!payload) {
+      if (!screenshotFixture) return;
+      clearImport();
+      invalidate();
+      context = null; roster = null; mode = '';
+      screenshotFixture = null;
+      return;
+    }
+    if (payload.kind !== 'ui-setup-screenshot-v1' || JSON.stringify(payload).length > 65536
+        || ['export', 'import'].indexOf(payload.mode) === -1 || !payload.context
+        || !payload.context.ok || !payload.context.accounts.length
+        || !payload.context.characters.length || !payload.limits || !payload.summary
+        || !payload.artifact || !payload.review_id) throw new Error('Invalid setup screenshot fixture');
+    WM.uiSetupScreenshot(null);
+    screenshotFixture = JSON.parse(JSON.stringify(payload));
+    WM.openUiSetup({mode: payload.mode, context: screenshotFixture.context,
+      preferred_character: screenshotFixture.context.characters[0].path});
+  };
+
+  function setupContext(profile) {
+    return screenshotFixture ? Promise.resolve(screenshotFixture.context)
+      : WM.send('eve_settings_setup_context', profile);
+  }
+
+  function setupLimits() {
+    return screenshotFixture ? Promise.resolve(screenshotFixture.limits)
+      : WM.send('eve_settings_setup_limits');
+  }
+
   var generation = 0;
   var context = null;
   var roster = null;
@@ -98,8 +131,7 @@
     status('Reading local profile context…');
     controls();
     var captured = generation;
-    Promise.all([WM.send('eve_settings_setup_context', profile),
-      WM.send('eve_settings_setup_limits')]).then(function (results) {
+    Promise.all([setupContext(profile), setupLimits()]).then(function (results) {
       if (!isCurrent(captured)) return;
       var payload = results[0], limits = results[1];
       if (!payload || !payload.ok) {
@@ -163,6 +195,7 @@
   }
 
   function snapshot(action) {
+    if (screenshotFixture && action !== 'preview') return;
     var source = pair();
     if (mode !== 'export' || !source || busy || WM.current_route !== 'uisetup') return;
     // A result is never reused by Copy/Save: the source files may have changed
@@ -172,8 +205,11 @@
     clearSummary();
     status('Taking a fresh snapshot for ' + source.label + '…');
     controls();
-    WM.send('eve_settings_setup_export', source.profile, source.account, source.character)
-      .then(function (result) {
+    var pending = screenshotFixture ? Promise.resolve({ok: true,
+      text: JSON.stringify(screenshotFixture.artifact), summary: screenshotFixture.summary,
+      warnings: screenshotFixture.warnings})
+      : WM.send('eve_settings_setup_export', source.profile, source.account, source.character);
+    pending.then(function (result) {
         if (!isCurrent(captured)) return;
         if (!result || !result.ok) {
           finish(captured, result && result.error || 'Could not read the setup. Retry with EVE closed.', true);
@@ -228,7 +264,7 @@
   }
 
   function discard(id) {
-    if (!id) return;
+    if (!id || screenshotFixture) return;
     // Best-effort cleanup has no page authority. In particular its delayed
     // response must never clear an offer issued by a newer review.
     WM.send('eve_settings_setup_discard', id).catch(function () {});
@@ -304,7 +340,7 @@
     // Typing a name/text while context is loading invalidates review, not this
     // independent read. A base change or leaving still invalidates the roster.
     var view = generation, read = ++draft.contextRead;
-    Promise.all([WM.send('eve_settings_setup_context', profile), WM.send('eve_settings_setup_limits')])
+    Promise.all([setupContext(profile), setupLimits()])
       .then(function (results) {
         if (!isCurrent(view) || !draft || read !== draft.contextRead) return;
         var payload = results[0], limits = results[1];
@@ -338,6 +374,7 @@
   }
 
   function readImport(file) {
+    if (screenshotFixture) return;
     if (!editable() || draft.reading) return;
     importChanged(false);
     var view = generation, version = draft.version;
@@ -402,10 +439,14 @@
     draft.reviewing = true;
     importStatus('Reviewing the setup and local base with EVE closed…');
     importControls();
-    WM.send('eve_settings_setup_review', draft.text, target.profile, target.account, target.character, name, keep)
-      .then(function (result) {
+    var screenshot = screenshotFixture;
+    var pending = screenshot ? Promise.resolve({ok: true, summary: screenshot.summary,
+      warnings: screenshot.warnings, review_id: screenshot.review_id})
+      : WM.send('eve_settings_setup_review', draft.text, target.profile, target.account, target.character, name, keep);
+    pending.then(function (result) {
         if (!isCurrent(view) || !draft || version !== draft.version) {
-          discard(result && result.review_id);
+          // A synthetic response arriving after cleanup owns no backend offer.
+          if (!screenshot) discard(result && result.review_id);
           return;
         }
         draft.reviewing = false;
@@ -439,6 +480,7 @@
   }
 
   function createImport() {
+    if (screenshotFixture) return;
     if (!editable() || !draft.review) return;
     requestSerial += 1;
     var pending = {view: generation, review: draft.review,
@@ -576,6 +618,7 @@
     });
     document.addEventListener('wm:route', function (event) {
       if (event.detail === 'uisetup') return;
+      WM.uiSetupScreenshot(null);
       clearImport();
       invalidate();
       context = null;

@@ -2459,7 +2459,98 @@
     });
   }
 
+  // Bounded presentation fixtures shared by the live screenshot tool and these
+  // browser drivers. Strict JSON: Python extracts this declaration without
+  // evaluating dev.js or installing its bridge doubles in the live app.
+  var DEV_TOOL_SCREENSHOT_FIXTURE = {
+    "formations": {
+      "kind": "formations-screenshot-v1",
+      "accounts": [{"path": "screenshot/account", "name": "Fleet account"}],
+      "snapshot": {
+        "ok": true, "path": "screenshot/account", "name": "Fleet account",
+        "content_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sharing_limits": {"max_bytes": 65536, "max_formations": 32, "max_name_codepoints": 128,
+          "max_probes": 8, "au_meters": 149597870700, "min_range_meters": 149597.8707,
+          "max_range_meters": 9804046054195200, "max_coordinate_meters": 10000000000000000},
+        "formations": [{"id": 0, "name": "Fleet diamond", "probes": [
+          {"x": -10000000, "y": 0, "z": 0, "range": 598391482800},
+          {"x": 10000000, "y": 0, "z": 0, "range": 598391482800},
+          {"x": 0, "y": -10000000, "z": 0, "range": 598391482800},
+          {"x": 0, "y": 10000000, "z": 0, "range": 598391482800}
+        ]}]
+      },
+      "import_reply": {"ok": true, "conflicts": [0], "formations": [
+        {"id": null, "name": "Fleet diamond", "probes": [
+          {"x": 0, "y": 0, "z": 0, "range": 1196782965600}
+        ]}
+      ]}
+    },
+    "setup": {
+      "kind": "ui-setup-screenshot-v1",
+      "context": {"ok": true, "root": "screenshot", "server": "tq", "profile": "screenshot/base",
+        "profiles": [{"path": "screenshot/base", "name": "Fleet base", "file_count": 4}],
+        "accounts": [{"path": "screenshot/base/account", "id": "1", "name": "Fleet account", "character_ids": ["2"]}],
+        "characters": [{"path": "screenshot/base/character", "id": "2", "name": "Aiga Otsolen"}],
+        "account_identity_available": true, "setup_available": true},
+      "limits": {"max_bytes": 2097152, "max_depth": 16, "max_nodes": 100000,
+        "max_presets": 256, "max_tabs": 8, "max_window_groups": 8, "max_ship_labels": 64,
+        "max_layout_windows": 32, "max_membership_ids": 8192, "max_id": 2147483647,
+        "max_name_codepoints": 512, "max_label_codepoints": 4096, "min_coordinate": -32768,
+        "max_coordinate": 32768, "min_size": 1, "max_size": 32768, "min_target_origin": 0,
+        "max_target_origin": 1, "min_hud_offset": -32768, "max_hud_offset": 32768,
+        "min_color": 0, "max_color": 1},
+      "artifact": {"format": "wingman-preset", "version": 1, "type": "ui-setup",
+        "overview": {"presets": [{"name": "Fleet", "groups": [25, 27], "filteredStates": [], "alwaysShownStates": []}],
+          "tabs": [{"id": 0, "name": "Fleet", "overview": "Fleet", "bracket": null, "color": null,
+            "tabColumns": ["ICON", "NAME", "DISTANCE"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"],
+            "showAll": false, "showNone": false, "showSpecials": false}],
+          "windowGroups": [[0]], "shipLabels": [], "settings": {}},
+        "layout": {"windows": [
+          {"key": "overview", "geometry": [20, 40, 300, 400, 1920, 1080], "state": {"open": true}},
+          {"key": "selecteditemview", "geometry": [340, 40, 300, 200, 1920, 1080], "state": {"open": true}},
+          {"key": "probeScannerWindow", "geometry": null, "state": {}},
+          {"key": "directionalScannerWindow", "geometry": null, "state": {}},
+          {"key": "droneview", "geometry": null, "state": {}},
+          {"key": "fleetwindow", "geometry": null, "state": {}},
+          {"key": "watchlistpanel", "geometry": null, "state": {}},
+          {"key": "standaloneBookmarkWnd", "geometry": null, "state": {}},
+          {"key": "solar_system_map_panel", "geometry": null, "state": {}},
+          {"key": "primary_map_panel", "geometry": null, "state": {}}
+        ], "targetOrigin": [0.25, 0.75], "targetOriginLocked": false, "hudOffset": -160}},
+      "summary": {"counts": {"presets": 1, "tabs": 1, "windowGroups": 1, "shipLabels": 0, "layoutWindows": 10},
+        "windowLabels": ["Overview", "Selected item", "Probe scanner", "Directional scanner", "Drones",
+          "Fleet", "Watch list", "Standalone bookmarks", "Solar-system map", "Primary map"],
+        "limitations": ["Only unstacked supported windows can be shared.",
+          "Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE."]},
+      "warnings": [], "review_id": "screenshot-only-review", "new_name": "Shared fleet"
+    },
+    "crop": {
+      "kind": "preview-crop-screenshot-v1", "owner": "Aiga Otsolen",
+      "crops": {"revision": 0, "definitions": {"Aiga Otsolen": {
+        "version": 1, "enabled": true,
+        "source": {"x": 0.1, "y": 0.2, "w": 0.4, "h": 0.3,
+          "original_client_w": 1920, "original_client_h": 1080, "original_px": [192, 216, 768, 324]},
+        "window": {"x": 40, "y": 40, "w": 384, "h": 162}
+      }}, "operations": {}, "statuses": {"Aiga Otsolen": "live"},
+        "live_count": 1, "cap": 8, "runtime_enabled": true, "busy": false}
+    }
+  };
+
   window.DEV = {
+    screenshotFormations: function () {
+      WM.formationsScreenshot(JSON.parse(JSON.stringify(DEV_TOOL_SCREENSHOT_FIXTURE.formations)));
+    },
+    screenshotSetup: function (mode) {
+      var payload = JSON.parse(JSON.stringify(DEV_TOOL_SCREENSHOT_FIXTURE.setup));
+      payload.mode = mode || 'export';
+      WM.uiSetupScreenshot(payload);
+    },
+    screenshotCrop: function () {
+      WM.route('settings'); WM.section('previews');
+      var payload = JSON.parse(JSON.stringify(DEV_TOOL_SCREENSHOT_FIXTURE.crop));
+      payload.preview = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+      WM.previewCropScreenshot(payload);
+    },
     // previewCrops('offline'|'crop-only'|'cap-full'|'pending'|'failed-save'|
     // 'degraded'|'stopping'|'master-off'|'event-before-receipt'|'no-op').
     previewCrops: _devCropScenario,

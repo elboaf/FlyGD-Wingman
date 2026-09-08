@@ -221,6 +221,38 @@
   WM.handle('onPreviewCrops', function (payload) {
     acceptCrops(payload);
   });
+  // This fixture replaces the entire preview table, not just the crop field.
+  // Keep write/read entry points and delayed dialog continuations local-only
+  // while installed; the ordinary bridge remains untouched for other pages.
+  var screenshotLive = null;
+  WM.previewCropScreenshot = function (payload) {
+    if (!payload) {
+      if (!screenshotLive) return;
+      state = screenshotLive.state;
+      cropState = screenshotLive.crops;
+      cropHydrated = screenshotLive.hydrated;
+      screenshotLive = null;
+      openDetailName = null;
+      // Buffered host outcomes must retire real requests before repainting.
+      // Use their operation IDs, never infer success from the fixture.
+      settleCropRequests();
+      requestRender();
+      return;
+    }
+    if (payload.kind !== 'preview-crop-screenshot-v1' || JSON.stringify(payload).length > 65536
+        || !payload.preview || !payload.crops || !payload.crops.definitions[payload.owner]) {
+      throw new Error('Invalid crop screenshot fixture');
+    }
+    WM.previewCropScreenshot(null);
+    var live = {state: state, crops: cropState, hydrated: cropHydrated};
+    var fixture = JSON.parse(JSON.stringify(payload));
+    // Fixture revisions are not host revisions. Preserve the host snapshot,
+    // render in a separate revision domain, then restore the latest live push.
+    cropState = {revision: -1, definitions: {}, operations: {}, statuses: {}};
+    fixture.preview.crops = fixture.crops;
+    window.onPreviewHotkeys(fixture.preview);
+    screenshotLive = live;
+  };
   var cropState = {revision: -1, definitions: {}, operations: {}, statuses: {}};
   var cropHydrated = false;
   var cropRequests = Object.create(null);
@@ -672,15 +704,16 @@
     // and their labels have to agree.
     var typed = WM.make('button', 'linkbtn', 'Edit…');
     typed.addEventListener('click', function () {
+      if (screenshotLive) { return; }
       endCapture();
       // The app's own dialog -- see the matching comment in bookmarks.js.
       WM.prompt('Keybind for "' + label + '"',
                 'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
                 gesture || '').then(function (text) {
-        if (text === null) { return; }
+        if (screenshotLive || text === null) { return; }
         if (text === '') { onSet(''); return; }
         WM.send('parse_preview_bind', text).then(function (result) {
-          if (!result) { return; }
+          if (screenshotLive || !result) { return; }
           if (result.error) {
             WM.send('alert_bookmarks',
                     'That is not a keybind Windows can register. It needs at '
@@ -798,6 +831,7 @@
   }
 
   function settleCropRequests(recovered) {
+    if (screenshotLive) { return; }
     Object.keys(cropRequests).forEach(function (name) {
       var request = cropRequests[name];
       if (!request.received) { return; }
@@ -816,6 +850,12 @@
   }
 
   function acceptCrops(payload, quiet, recovered) {
+    if (screenshotLive) {
+      if (payload && payload.revision >= screenshotLive.crops.revision) {
+        screenshotLive.crops = payload; screenshotLive.hydrated = true;
+      }
+      return;
+    }
     if (!payload || payload.revision < cropState.revision) { return; }
     // Only the root HOST delivery revision orders this whole snapshot. Store
     // outcome revisions describe persistence, not runtime transitions.
@@ -848,6 +888,7 @@
   }
 
   function refreshCrops(request) {
+    if (screenshotLive) { return Promise.resolve(); }
     return WM.send('get_preview_crop_state').then(function (payload) {
       if (payload) {
         acceptCrops(payload, false, request);
@@ -858,6 +899,7 @@
   }
 
   function requestCrop(name, action, wanted, control) {
+    if (screenshotLive) return;
     if (!cropHydrated || cropRequests[name] || cropPending(name) || cropsStopping()) { return; }
     endCapture();
     var request = {action: action, wanted: wanted, control: control,
@@ -975,6 +1017,7 @@
     var remove = WM.make('button', 'btn danger', 'Remove');
     remove.setAttribute('data-preview-detail-control', 'crop-remove');
     remove.addEventListener('click', function () {
+      if (screenshotLive) { return; }
       if (!cropHydrated || cropRequests[name] || cropPending(name)) { return; }
       endCapture();
       var interaction = detailInteraction;
@@ -1087,6 +1130,7 @@
     WM.setEnabled(btn, !off);
     btn.setAttribute('data-preview-detail-control', 'size');
     btn.addEventListener('click', function () {
+      if (screenshotLive) { return; }
       // Same trap bookmarks.js documents: an armed capture's document
       // keydown handler preventDefault()s every key, so a prompt opened
       // while one is live cannot be typed into.
@@ -1095,9 +1139,9 @@
       WM.prompt('Size for "' + name + '"', sizeHint(name),
                 size ? size[0] + 'x' + size[1] : '')
         .then(function (text) {
-          if (text === null || text === '') { return; }
+          if (screenshotLive || text === null || text === '') { return; }
           WM.send('parse_preview_size', text).then(function (parsed) {
-            if (!parsed) { return; }
+            if (screenshotLive || !parsed) { return; }
             if (parsed.error) {
               WM.send('alert_bookmarks', parsed.error);
               return;
@@ -1162,6 +1206,7 @@
     btn.setAttribute('data-preview-detail-control', 'copy');
     WM.setEnabled(btn, !off);
     btn.addEventListener('click', function () {
+      if (screenshotLive) { return; }
       endCapture();
       var interaction = detailInteraction;
       var attempt = ++copyAttempt;
@@ -1183,6 +1228,7 @@
       WM.choose('Copy preview geometry',
                 'Copy saved size and position to "' + name + '".',
                 groups, 'Copy').then(function (source) {
+        if (screenshotLive) { return; }
         if (source === null) {
           clearDetailFocus(name, 'copy');
           return;
@@ -1308,6 +1354,7 @@
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
+      if (screenshotLive) { return; }
       var wanted = box.checked;
       // Sampled before the bridge call, exactly as makeSizeButton does:
       // onPreviewHotkeys replaces `state` wholesale and fires whenever an
@@ -1429,6 +1476,7 @@
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
+      if (screenshotLive) { return; }
       // `wanted` is what the BOX now says (this character is previewed);
       // `excluded` is what the roster stores, and they are opposites. The
       // endpoint keeps the roster's sense, so the inversion happens here,
@@ -1494,6 +1542,7 @@
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
     box.addEventListener('change', function () {
+      if (screenshotLive) { return; }
       var wanted = box.checked;
       // The fourth handler of this shape, and the last to get the guard.
       // Same reasoning as the other three.
@@ -1515,6 +1564,7 @@
   }
 
   function beginCapture(button, onSet) {
+    if (screenshotLive) { return; }
     if (capturing) {
       // Revert the previous button WITHOUT a full re-render: that would
       // detach the button just clicked before it is armed below. Same trap
@@ -1954,6 +2004,7 @@
   }
 
   function send(next) {
+    if (screenshotLive) { return; }
     // Held across the bridge call. onPreviewHotkeys replaces `state`
     // wholesale and fires whenever an EVE client opens or closes --
     // routinely while someone is setting a bind. Without this, a save
@@ -2022,6 +2073,7 @@
     // must be rejected immediately, before endCapture() or any send.
     // requestRender() defers during capture, so without this guard old
     // controls remain live and a repeated click under capture would race.
+    if (screenshotLive) { return; }
     if (groupBusy) { return; }
     endCapture();
     // Participates in the shared groupBusy serialisation lock so that
@@ -2104,6 +2156,7 @@
       // Synchronous guard: a concurrent write must be rejected before any
       // state change.  Without this, rapid changes under an armed capture
       // (where requestRender() defers) can stack.
+      if (screenshotLive) { return; }
       if (groupBusy) { return; }
       var selectedId = sel.value;
       rememberDetailFocus(characterName, 'group');
@@ -2171,11 +2224,12 @@
   function renameGroup(group) {
     // Synchronous guard: reject if a write is already in flight before
     // ending capture or opening the prompt.
+    if (screenshotLive) { return; }
     if (groupBusy) { return; }
     endCapture();
     WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
               group.name).then(function (text) {
-      if (text === null || text.trim() === '') { return; }
+      if (screenshotLive || text === null || text.trim() === '') { return; }
       groupBusy = true;
       requestRender();
       var before = pushes;
@@ -2248,6 +2302,7 @@
   function deleteGroup(group) {
     // Synchronous guard: reject if a write is already in flight before
     // ending capture or computing the member count.
+    if (screenshotLive) { return; }
     if (groupBusy) { return; }
     endCapture();
     var gbc = state.hotkeys.group_by_character || {};
@@ -2259,7 +2314,7 @@
     var msg = 'Delete group "' + group.name + '"? ' + memberText +
               ' will return to All only cycling.';
     WM.confirm('Delete group', msg).then(function (confirmed) {
-      if (!confirmed) { return; }
+      if (screenshotLive || !confirmed) { return; }
       groupBusy = true;
       requestRender();
       var before = pushes;
@@ -2337,6 +2392,7 @@
     WM.setEnabled(nameField, !groupBusy);
 
     function doAdd() {
+      if (screenshotLive) { return; }
       if (groupBusy) { return; }
       var name = nameField.value.trim();
       if (!name) { return; }
@@ -2413,6 +2469,7 @@
   }
 
   function refresh(beforeRender) {
+    if (screenshotLive) { return Promise.resolve(); }
     // Only receipts already received when this getter starts can be recovered
     // from absent history. An earlier read cannot settle a later request.
     var recover = Object.keys(cropRequests).map(function (name) {
@@ -2420,6 +2477,11 @@
     }).filter(function (request) { return request.received; });
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
+      if (screenshotLive) {
+        screenshotLive.state = payload;
+        acceptCrops(payload.crops, true);
+        return;
+      }
       state = payload;
       pushes += 1;
       state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
@@ -2482,6 +2544,11 @@
   // the two lists together.
   WM.handle('onPreviewHotkeys', function (payload) {
     if (!payload) { return; }
+    if (screenshotLive) {
+      screenshotLive.state = payload;
+      acceptCrops(payload.crops, true);
+      return;
+    }
     state = payload;
     pushes += 1;
     state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
@@ -2568,7 +2635,12 @@
   // (dispatched only when the global settings payload changes) would not
   // fire on a plain tab switch and was the wrong event to listen for here.
   // wm:section, not wm:route -- see the matching comment in bookmarks.js.
+  document.addEventListener('wm:route', function (event) {
+    if (event.detail !== 'settings') WM.previewCropScreenshot(null);
+  });
   document.addEventListener('wm:section', function (event) {
+    if (event.detail !== 'previews') WM.previewCropScreenshot(null);
+    if (screenshotLive) { return; }
     copyAttempt += 1;
     copyStatus('', false);
     cropHydrated = false;
