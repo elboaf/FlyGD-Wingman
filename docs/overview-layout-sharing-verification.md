@@ -1,6 +1,74 @@
 # Overview/layout sharing: verification record
 
-## Final-review fix candidate
+## Engineering-approved acceptance candidate
+
+**Verified source:** `fdc04b32b1195cef10c3fe906920b734dd70cf4e`.
+The parent independently verified checkout
+`527cb78cfdecd4175a3acfdd147336cbfe2b03c0` (the source plus its documentation).
+Implementation, scoped polish, independent whole-branch review and the one final
+fix-wave rereview are now complete. **No known code-review findings remain.**
+This is an engineering-approved acceptance candidate, not a release-validated or
+installed Windows build.
+
+The whole-branch review covered every changed file in
+`a38c7a09b268ca2c95805088e407056e8b7d1f31..b4b8fe7ffa155d2131bee9f2e1295bb01d3cdf9c`.
+It confirmed the earlier three polish fixes and found one remaining Profiles
+response-order race. The scoped rereview of `b4b8fe7..527cb78` marked that finding
+**ADDRESSED / APPROVED**, with no new breakage: older state responses cannot undo
+newer rendered state, and refresh promises, original payloads and follow-up
+ownership remain intact. No second broad review or unreviewed source fix followed.
+
+### Parent's independent final gates
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv sync --locked --extra dev
+# Passed: resolved 56 packages, checked 39.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-parent-final-fixed --junitxml=/tmp/wingman-parent-final-fixed.xml
+# 8,254 passed, 11 skipped in 328.82s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff check .
+# All checks passed.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff format --check .
+# 316 files already formatted.
+node --check wingman/web/uisetup.js
+node --check wingman/web/evesettings.js
+node --check wingman/web/app.js
+node --check wingman/web/dev.js
+node --check tests/fixtures/formations_page.cjs
+node --check tests/fixtures/ui_setup_page.cjs
+# All six passed.
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+# 1 passed, 0 failed/ignored.
+git diff a38c7a0..HEAD --check
+# Passed; tracked worktree clean before this evidence-only update.
+```
+
+The parent also checked actual bundled-path codec availability and SHA-256
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+JUnit independently confirmed 89 setup-page, 116 dev-harness and 11 integration
+cases passed, with no codec/Node skips. All 11 skips are the Windows-only cases
+listed below. The parent inspected representative final native-warning and
+detached-publication-warning screenshots; browser execution remains the recorded
+Task 8–11 runs, not a new parent browser or Windows run.
+
+### Remaining acceptance, not unfinished implementation
+
+- Hosted Ubuntu/Windows CI has not been dispatched.
+- The frozen Windows archive/licence check is wired and source-tested; actual
+  frozen imports, WebView2/DPI, native dialogs, OS clipboard and assistive-technology
+  checks remain OPEN.
+- A genuine fresh recipient and a deliberately different initialized recipient
+  still need the actual Share → Import → Review → Create flow, EVE reload/fidelity
+  and local-display checks, plus launcher restart/discovery/explicit selection.
+
+No live profiles, EVE windows, launcher selections or real clipboard were changed
+by this engineering verification. Nothing was pushed, merged, released or
+installed into the user's app. Preserve the linked worktree and recovery evidence.
+The manual checklist remains an acceptance contract, not a request for more
+isolated schema experiments. Earlier checkpoints below retain their historical
+pending gates and observations; this section supplies the current engineering
+status.
+
+## Final-review fix candidate (earlier checkpoint)
 
 **Source candidate:** `fdc04b32b1195cef10c3fe906920b734dd70cf4e`
 (`fix: admit Profiles refresh responses in request order`), over review-fix base
