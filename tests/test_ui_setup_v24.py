@@ -1,6 +1,7 @@
 """V24.01 compatibility rules; synthetic documents and one public default body."""
 
 import copy
+import json
 
 import pytest
 
@@ -978,6 +979,344 @@ def test_export_apply_roundtrip_preserves_source_setup_but_not_recipient_identit
     assert out_a.doc["bytes:syntheticPrivate"]["bytes:accountID"] == 20
     assert out_c.doc["bytes:syntheticPrivate"]["bytes:characterID"] == 30
     assert "bytes:SortHeadersSettings2" not in out_c.doc["bytes:ui"]
+
+
+@pytest.mark.parametrize("generation", ["saved", "first", "second", "empty-second"])
+def test_dat_compat_omitted_always_shown_exports_effective_body_without_mutation(
+    generation,
+):
+    account, character = documents()
+    overview = account.doc["bytes:overview"]
+    saved = value(account, "overview", "overviewProfilePresets")
+    saved["utf8:Synthetic Fleet"].pop("bytes:alwaysShownStates")
+    first = value(account, "overview", "overviewProfilePresets_notSaved")
+    first["utf8:Synthetic Fleet"].pop("bytes:alwaysShownStates")
+    if generation == "saved":
+        del overview["bytes:overviewProfilePresets_notSaved"]
+    elif generation in ("second", "empty-second"):
+        overview["bytes:overviewProfilePresets_notSaved2"] = stamp(
+            {
+                "utf8:Synthetic Fleet": {
+                    "bytes:groups": [7, 7, 6],
+                    "bytes:filteredStates": [9, 9],
+                }
+            }
+            if generation == "second"
+            else {}
+        )
+    before = copy.deepcopy((account, character))
+    envelope, warnings = adapter.export_setup(account, character)
+    fleet = next(
+        row
+        for row in envelope["overview"]["presets"]
+        if row["name"] == "Synthetic Fleet"
+    )
+    assert fleet == {
+        "name": "Synthetic Fleet",
+        "groups": [7, 7, 6]
+        if generation == "second"
+        else [25, 27]
+        if generation == "first"
+        else [25, 26],
+        "filteredStates": [9, 9]
+        if generation == "second"
+        else [9]
+        if generation == "first"
+        else [],
+        "alwaysShownStates": [],
+    }
+    assert len(warnings) == (1 if generation in ("first", "second") else 0)
+    if warnings:
+        assert "1" in warnings[0]
+    assert parse_text(json.dumps(envelope)).overview == envelope["overview"]
+    fleet["alwaysShownStates"].append(1)
+    fresh, _ = adapter.export_setup(account, character)
+    assert fresh["overview"]["presets"][0]["alwaysShownStates"] == []
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize("changed", [False, True], ids=["equivalent", "changed"])
+def test_dat_compat_omitted_recipient_field_retains_equivalent_record_or_applies_change(
+    changed,
+):
+    account, character = documents("recipient")
+    saved = value(account, "overview", "overviewProfilePresets")
+    saved["utf8:Synthetic Fleet"].pop("bytes:alwaysShownStates")
+    saved["bytes:Unrelated"] = {"future": [1]}
+    for key in ("overviewProfilePresets_notSaved", "overviewProfilePresets_notSaved2"):
+        account.doc["bytes:overview"][f"bytes:{key}"] = stamp(
+            {
+                "utf8:Synthetic Fleet": {
+                    "bytes:groups": [7],
+                    "bytes:filteredStates": [],
+                },
+                "bytes:Unrelated": {"future": [2]},
+            }
+        )
+    parsed = native_definition(
+        "Synthetic Fleet",
+        {
+            "groups": [7, 7, 6] if changed else [88],
+            "filteredStates": [10],
+            "alwaysShownStates": [],
+        },
+    )
+    before = copy.deepcopy((account, character, parsed))
+    out_a, out_c = apply(account, character, parsed)
+    output_saved = value(out_a, "overview", "overviewProfilePresets")
+    if changed:
+        assert output_saved["utf8:Synthetic Fleet"] == {
+            "bytes:groups": [7, 7, 6],
+            "bytes:filteredStates": [10],
+            "bytes:alwaysShownStates": [],
+        }
+    else:
+        assert (
+            out_a.doc["bytes:overview"]["bytes:overviewProfilePresets"]
+            == account.doc["bytes:overview"]["bytes:overviewProfilePresets"]
+        )
+    assert {
+        key: record
+        for key, record in output_saved.items()
+        if key != "utf8:Synthetic Fleet"
+    } == {key: record for key, record in saved.items() if key != "utf8:Synthetic Fleet"}
+    for key in ("overviewProfilePresets_notSaved", "overviewProfilePresets_notSaved2"):
+        assert value(out_a, "overview", key) == {"bytes:Unrelated": {"future": [2]}}
+    assert out_a.doc["bytes:syntheticPrivate"] == account.doc["bytes:syntheticPrivate"]
+    assert out_c == character
+    assert (account, character, parsed) == before
+
+
+@pytest.mark.parametrize("side", ["source", "recipient"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        False,
+        "bytes:",
+        {},
+        {"tuple": []},
+        [True],
+        [1.0],
+        [-1],
+        [2**31],
+        [1] * 8193,
+    ],
+    ids=[
+        "null",
+        "false",
+        "text",
+        "dict",
+        "tuple-tag",
+        "bool-id",
+        "float-id",
+        "negative-id",
+        "large-id",
+        "budget",
+    ],
+)
+def test_dat_compat_present_invalid_always_shown_is_not_defaulted(side, bad):
+    account, character = documents(side)
+    name = "DefaultPreset_SyntheticBuiltin"
+    value(account, "overview", "overviewProfilePresets")[f"bytes:{name}"][
+        "bytes:alwaysShownStates"
+    ] = bad
+    before = copy.deepcopy((account, character))
+    with pytest.raises(model.SetupError) as caught:
+        if side == "source":
+            adapter.export_setup(account, character)
+        else:
+            apply(account, character, native_definition(name, PUBLIC_BODY))
+    assert caught.value.code == f"{side}_shape"
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize("side", ["source", "recipient"])
+@pytest.mark.parametrize(
+    "bad",
+    ["groups", "filteredStates", "unknown", "utf8-alias", "bare-alias", "dual-alias"],
+)
+def test_dat_compat_omission_does_not_relax_required_fields_or_aliases(side, bad):
+    account, character = documents(side)
+    name = "DefaultPreset_SyntheticBuiltin"
+    record = value(account, "overview", "overviewProfilePresets")[f"bytes:{name}"]
+    del record["bytes:alwaysShownStates"]
+    if bad in ("groups", "filteredStates"):
+        del record[f"bytes:{bad}"]
+    elif bad == "unknown":
+        record["bytes:future"] = []
+    elif bad == "bare-alias":
+        record["alwaysShownStates"] = []
+    else:
+        record["utf8:alwaysShownStates"] = []
+        if bad == "dual-alias":
+            record["bytes:alwaysShownStates"] = []
+    before = copy.deepcopy((account, character))
+    with pytest.raises(model.SetupError) as caught:
+        if side == "source":
+            adapter.export_setup(account, character)
+        else:
+            apply(account, character, native_definition(name, PUBLIC_BODY))
+    assert caught.value.code == f"{side}_shape"
+    assert (account, character) == before
+
+
+def test_portable_compat_always_shown_omission_still_refuses_full_json():
+    data = wire()
+    del data["overview"]["presets"][0]["alwaysShownStates"]
+    with pytest.raises(model.SetupError) as caught:
+        parse_text(json.dumps(data))
+    assert caught.value.code == "invalid_fields"
+    assert "alwaysShownStates" in str(caught.value)
+
+
+@pytest.mark.parametrize("consumer", ["export", "import", "external"])
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "noncanonical"])
+def test_dat_compat_omitted_empty_protected_body_still_requires_public_fingerprint(
+    consumer, canonical
+):
+    account, character = documents("source" if consumer == "export" else "recipient")
+    record = physical(PUBLIC_BODY)
+    del record["bytes:alwaysShownStates"]
+    if not canonical:
+        record["bytes:groups"] = [1]
+    value(account, "overview", "overviewProfilePresets")[f"bytes:{PUBLIC_NAME}"] = (
+        record
+    )
+    if consumer == "export":
+        value(account, "overview", "tabsettings_new")["int:0"]["bytes:overview"] = (
+            f"bytes:{PUBLIC_NAME}"
+        )
+    before = copy.deepcopy((account, character))
+
+    def run():
+        if consumer == "export":
+            return adapter.export_setup(account, character)
+        parsed = (
+            external_native()
+            if consumer == "external"
+            else native_definition(PUBLIC_NAME, PUBLIC_BODY)
+        )
+        return apply(account, character, parsed)
+
+    if not canonical:
+        with pytest.raises(model.SetupError) as caught:
+            run()
+        assert caught.value.code == "protected_definition"
+    elif consumer == "export":
+        envelope, _ = run()
+        assert next(
+            row for row in envelope["overview"]["presets"] if row["name"] == PUBLIC_NAME
+        ) == {"name": PUBLIC_NAME, **PUBLIC_BODY}
+    else:
+        out_a, _ = run()
+        assert (
+            value(out_a, "overview", "overviewProfilePresets")[f"bytes:{PUBLIC_NAME}"]
+            == record
+        )
+        if consumer == "import":
+            assert out_a == account
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize(
+    "field,raw,expected",
+    [
+        ("bold", 0, False),
+        ("italic", 0, False),
+        ("underline", 0, False),
+        ("underline", 1, True),
+        ("bold", 1, 1),
+        ("italic", 1, 1),
+        ("bold", True, True),
+        ("bold", False, False),
+        ("italic", True, True),
+        ("italic", False, False),
+        ("underline", True, True),
+        ("underline", False, False),
+    ],
+)
+@pytest.mark.parametrize("encoding", ["bytes", "utf8"])
+def test_dat_compat_label_flags_project_without_mutation_or_equivalent_recipient_rewrite(
+    field, raw, expected, encoding
+):
+    source_a, source_c = documents()
+    recipient_a, recipient_c = documents("recipient")
+    label = {"type": "pilot name", "pre": "Invented ", "post": "!", "state": 1}
+    plain = {"type": None, "pre": " / ", "post": "", "state": 1}
+    raw_labels = [
+        {
+            f"{encoding}:type": "utf8:pilot name",
+            f"{encoding}:pre": "utf8:Invented ",
+            f"{encoding}:post": "utf8:!",
+            f"{encoding}:state": 1,
+            f"{encoding}:{field}": raw,
+        },
+        {
+            "bytes:type": None,
+            "bytes:pre": "bytes: / ",
+            "bytes:post": "bytes:",
+            "bytes:state": 1,
+        },
+    ]
+    raw_labels.append(copy.deepcopy(raw_labels[0]))
+    for account in (source_a, recipient_a):
+        account.doc["bytes:overview"]["bytes:shipLabels"] = stamp(
+            copy.deepcopy(raw_labels)
+        )
+    before = copy.deepcopy((source_a, source_c, recipient_a, recipient_c))
+    artifact, _ = adapter.export_setup(source_a, source_c)
+    labels = artifact["overview"]["shipLabels"]
+    assert labels == [{**label, field: expected}, plain, {**label, field: expected}]
+    assert type(labels[0][field]) is type(expected)
+    assert type(labels[2][field]) is type(expected)
+    parsed = parse_text(json.dumps(artifact))
+    out_a, out_c = apply(recipient_a, recipient_c, parsed)
+    assert json.dumps(out_a.doc["bytes:overview"]["bytes:shipLabels"]) == json.dumps(
+        recipient_a.doc["bytes:overview"]["bytes:shipLabels"]
+    )
+    reexported, _ = adapter.export_setup(out_a, out_c)
+    assert json.dumps(reexported["overview"]["shipLabels"]) == json.dumps(labels)
+    labels[0]["pre"] = "changed"
+    assert labels[2]["pre"] == "Invented "
+    assert (source_a, source_c, recipient_a, recipient_c) == before
+    for account in (source_a, recipient_a):
+        # Ordinary dictionary equality would hide integer-to-boolean mutation.
+        assert json.dumps(value(account, "overview", "shipLabels")) == json.dumps(
+            raw_labels
+        )
+
+
+@pytest.mark.parametrize("side", ["source", "recipient"])
+@pytest.mark.parametrize("field", ["bold", "italic", "underline"])
+@pytest.mark.parametrize(
+    "bad", [None, -1, 2, 0.0, 1.0, "bytes:0", "utf8:1", [], {}, {"tuple": []}]
+)
+def test_dat_compat_label_flags_do_not_admit_other_truthy_or_falsy_values(
+    side, field, bad
+):
+    account, character = documents(side)
+    value(account, "overview", "shipLabels")[0][f"bytes:{field}"] = bad
+    before = copy.deepcopy((account, character))
+    with pytest.raises(model.SetupError) as caught:
+        if side == "source":
+            adapter.export_setup(account, character)
+        else:
+            apply(account, character)
+    assert caught.value.code == f"{side}_shape"
+    assert "Ship label" in str(caught.value)
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize(
+    "field,raw", [("bold", 0), ("italic", 0), ("underline", 0), ("underline", 1)]
+)
+def test_portable_compat_legacy_label_integers_still_refuse_full_json(field, raw):
+    data = wire()
+    data["overview"]["shipLabels"][0][field] = raw
+    with pytest.raises(model.SetupError) as caught:
+        parse_text(json.dumps(data))
+    assert caught.value.code == "invalid_type"
 
 
 def test_public_column_catalogue_and_supported_enums_cannot_drift():

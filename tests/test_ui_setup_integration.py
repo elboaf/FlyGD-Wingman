@@ -309,6 +309,85 @@ def test_facade_export_review_create_publishes_exact_recipient_setup(pipeline):
 
 
 @pytest.mark.parametrize("pipeline", ["native"], indirect=True)
+def test_facade_dat_compat_normalizes_only_projected_values_through_native_codec(
+    pipeline,
+):
+    api, source, base, queued, sent = pipeline
+    source_a = codec.read_document(source.account_path)
+    value(source_a, "overview", "overviewProfilePresets")[
+        "utf8:Synthetic Brackets"
+    ].pop("bytes:alwaysShownStates")
+    value(source_a, "overview", "overviewProfilePresets_notSaved")[
+        "utf8:Synthetic Fleet"
+    ].pop("bytes:alwaysShownStates")
+    source_labels = value(source_a, "overview", "shipLabels")
+    source_labels[0].update({"bytes:bold": 0, "bytes:italic": 0, "bytes:underline": 0})
+    source_labels[1].update({"bytes:bold": 1, "bytes:italic": 1, "bytes:underline": 1})
+    codec.write_document(source.account_path, source_a, backup=lambda path: None)
+    base_a = codec.read_document(base.account_path)
+    saved = value(base_a, "overview", "overviewProfilePresets")
+    saved["utf8:Synthetic Fleet"].pop("bytes:alwaysShownStates")
+    saved["bytes:DefaultPreset_SyntheticBuiltin"].pop("bytes:alwaysShownStates")
+    base_labels = value(base_a, "overview", "shipLabels")
+    base_labels[0].update({"bytes:bold": 0, "bytes:italic": 0, "bytes:underline": 0})
+    base_labels[1]["bytes:underline"] = 1
+    codec.write_document(base.account_path, base_a, backup=lambda path: None)
+    before = files_under(base.root)
+
+    result = api.eve_settings_setup_export(
+        str(source.profile), str(source.account_path), str(source.character_path)
+    )
+    assert result["ok"], result
+    artifact = json.loads(result["text"])
+    definitions = {row["name"]: row for row in artifact["overview"]["presets"]}
+    assert definitions["Synthetic Fleet"] == {
+        "name": "Synthetic Fleet",
+        "groups": [25, 27],
+        "filteredStates": [9],
+        "alwaysShownStates": [],
+    }
+    assert definitions["Synthetic Brackets"]["alwaysShownStates"] == []
+    for field in ("bold", "italic", "underline"):
+        assert artifact["overview"]["shipLabels"][0][field] is False
+    assert artifact["overview"]["shipLabels"][1]["underline"] is True
+    reviewed = review(api, base, result["text"])
+    assert files_under(base.root) == before
+    destination, done = create(api, base, queued, sent, reviewed)
+    assert done["ok"] and done["published"] and done["selection_persisted"]
+    account, _character = assert_recipient_preserved(base, destination, before)
+    output_saved = value(account, "overview", "overviewProfilePresets")
+    assert output_saved["utf8:Synthetic Fleet"] == {
+        "bytes:groups": [25, 27],
+        "bytes:filteredStates": [9],
+        "bytes:alwaysShownStates": [],
+    }
+    assert output_saved["bytes:DefaultPreset_SyntheticBuiltin"] == {
+        "bytes:groups": [90],
+        "bytes:filteredStates": [],
+    }
+    labels = value(account, "overview", "shipLabels")
+    for field in ("bold", "italic", "underline"):
+        assert labels[0][f"bytes:{field}"] is False
+    assert labels[1]["bytes:underline"] is True
+    for field in ("bold", "italic"):
+        assert type(labels[1][f"bytes:{field}"]) is int
+        assert labels[1][f"bytes:{field}"] == 1
+    # Explicitly distinguish source integers from encoded output booleans.
+    original = codec.read_document(source.account_path)
+    assert type(value(original, "overview", "shipLabels")[0]["bytes:bold"]) is int
+    assert original == source_a
+    result = api.eve_settings_setup_export(
+        str(destination),
+        str(destination / base.account_path.name),
+        str(destination / base.character_path.name),
+    )
+    assert result["ok"], result
+    reexported = json.loads(result["text"])
+    assert reexported["overview"]["shipLabels"] == artifact["overview"]["shipLabels"]
+    assert reexported["layout"] == artifact["layout"]
+
+
+@pytest.mark.parametrize("pipeline", ["native"], indirect=True)
 @pytest.mark.parametrize("count", [9, 20])
 def test_facade_twenty_tab_budget_exports_creates_and_reexports_real_codec(
     pipeline, count
