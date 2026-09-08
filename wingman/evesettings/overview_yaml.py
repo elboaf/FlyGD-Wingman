@@ -2,10 +2,12 @@
 
 The shapes and palette are inventoried in docs/ui-setup-field-map.md. Missing
 aggregates retain recipient values; supplied aggregates replace them. These are
-Wingman policies, not experimentally proved EVE resets. Publication is separate
-and remains gated on physical default/cache/retirement evidence.
+Wingman policies, not a generic implementation of EVE's native import resets.
+Current-client physical rules live in setup_documents; publication is separate.
 """
 
+import copy
+import json
 import re
 from collections import Counter
 
@@ -176,8 +178,16 @@ def _state_records(value, *, colors):
 
 
 def _labels(value, order):
+    value = _list(value, "Ship labels")
+    order = _list(order, "Ship label order")
+    # Linebreak order can expand a single body; bound both sides before copying.
+    if max(len(value), len(order)) > model.MAX_SHIP_LABELS:
+        raise SetupError(
+            "collection_limit",
+            f"Ship labels: at most {model.MAX_SHIP_LABELS} records/order slots are supported.",
+        )
     labels = []
-    for item in _list(value, "Ship labels"):
+    for item in value:
         kind, content = _pair(item, "Ship label")
         label = _record(
             content,
@@ -200,20 +210,42 @@ def _labels(value, order):
                 "unsupported_variant", "Ship label outer and record types must agree."
             )
         labels.append(label)
-    order = _list(order, "Ship label order")
     if any(kind not in model.LABEL_TYPES for kind in order):
         raise SetupError("unsupported_variant", "Unsupported ship label order type.")
     counts = Counter(label["type"] for label in labels)
-    if Counter(order) != counts:
+    ordered_counts = Counter(order)
+    # _LoadGeneralSettings:1044 permits repeated linebreak order slots after
+    # type-keyed conversion. No such exception exists for null literals.
+    if any(
+        ordered_counts[kind] != counts[kind]
+        and not (
+            kind == "linebreak" and counts[kind] >= 1 and ordered_counts[kind] >= 1
+        )
+        for kind in counts.keys() | ordered_counts.keys()
+    ):
         raise SetupError(
             "invalid_order", "Ship label order must cover exactly the supplied records."
         )
-    ambiguous = any(count > 1 for count in counts.values())
-    # For duplicates, even a stable sort invents a decorator-slot assignment.
+    ambiguous = any(
+        count > 1
+        and (
+            kind != "linebreak"
+            or len(
+                {
+                    json.dumps(label, sort_keys=True)
+                    for label in labels
+                    if label["type"] == kind
+                }
+            )
+            > 1
+        )
+        for kind, count in counts.items()
+    )
+    # For ambiguous duplicates, even a stable sort invents a decorator slot.
     # Preserve the supplied records verbatim for review and require retention.
     if not ambiguous:
         by_type = {label["type"]: label for label in labels}
-        labels = [by_type[kind] for kind in order]
+        labels = [copy.deepcopy(by_type[kind]) for kind in order]
     return labels, ambiguous
 
 
@@ -252,6 +284,7 @@ def normalize(value: object) -> ParsedSetup:
                         "color",
                         "tabColumns",
                         "tabColumnOrder",
+                        *model.TAB_FLAGS,
                     ),
                 ),
             }
@@ -283,8 +316,8 @@ def normalize(value: object) -> ParsedSetup:
         settings.update(_record(value["userSettings"], "User settings", _USER_SETTINGS))
     if settings or "userSettings" in value:
         overview["settings"] = settings
-    # The model owns semantic/null/optional rules and reference closure. No
-    # external sentinel has been proved; never borrow a recipient definition.
+    # Only the exact bracket sentinel/null bypass named closure. Never borrow
+    # an omitted definition from the recipient.
     overview = model.validate_overview(overview, partial=True)
     warnings = (
         "Absent native options retain recipient values; supplied aggregates replace them.",

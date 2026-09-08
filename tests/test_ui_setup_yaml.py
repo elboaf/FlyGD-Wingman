@@ -69,6 +69,9 @@ def test_native_input_does_not_fabricate_layout_or_drop_labels():
         "color": None,
         "tabColumns": ["NAME", "ICON"],
         "tabColumnOrder": ["ICON", "DISTANCE", "NAME"],
+        "showAll": False,
+        "showNone": False,
+        "showSpecials": False,
     }
     summary = model.summarize(parsed)
     assert summary["counts"]["layoutWindows"] == 0
@@ -238,8 +241,11 @@ def test_no_unproved_sentinel_or_recipient_name_can_resolve_a_reference(
     for pair in value["tabSetup"][0][1]:
         if pair[0] == field:
             pair[1] = reference
-    with pytest.raises(model.SetupError):
-        parse(value)
+    if field == "bracket" and reference is None:
+        assert parse(value).overview["tabs"][0]["bracket"] is None
+    else:
+        with pytest.raises(model.SetupError):
+            parse(value)
 
 
 def test_supplied_tabs_need_included_dependencies_even_when_presets_are_absent():

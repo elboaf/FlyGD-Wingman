@@ -70,7 +70,7 @@
       "bytes:restoreData": {"tuple": ["long:116444736000000000", {"bytes:synthetic": "utf8:Synthetic private source restore"}]}
     },
     "bytes:defaultoverview": {
-      "bytes:defaultOverviewID": {"tuple": ["long:116444736000000000", "bytes:SyntheticSourceDefaultIdentity"]},
+      "bytes:defaultOverviewID": {"tuple": ["long:116444736000000000", "bytes:jotunn_default"]},
       "bytes:defaultOverviewInformedOfUpdate": {"tuple": ["long:116444736000000000", 1]},
       "bytes:overviewID": {"tuple": ["long:116444736000000000", null]}
     },

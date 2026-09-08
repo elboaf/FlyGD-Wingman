@@ -294,7 +294,13 @@ def test_every_setting_clear_is_full_only(field):
     ids=["empty", "blank", "long", "nul", "high", "low", "null", "int"],
 )
 def test_names_and_references_are_valid_text(path, value):
-    assert_error("invalid_text", model.validate_wingman, changed(path, value))
+    if path[-1] == "bracket" and value is None:
+        assert (
+            model.validate_wingman(changed(path, value)).overview["tabs"][0]["bracket"]
+            is None
+        )
+    else:
+        assert_error("invalid_text", model.validate_wingman, changed(path, value))
 
 
 def test_names_are_exact_text_not_trimmed_casefolded_or_unicode_normalized():
@@ -376,10 +382,7 @@ def test_membership_bounds_and_duplicates(field):
         0,
     ]
     source["overview"]["presets"][0][field] = [1, 1]
-    if field == "groups":
-        assert model.validate_wingman(source).overview["presets"][0][field] == [1, 1]
-    else:
-        assert_error("duplicate_id", model.validate_wingman, source)
+    assert model.validate_wingman(source).overview["presets"][0][field] == [1, 1]
     source["overview"]["presets"][0][field] = list(range(8192))
     assert len(model.validate_wingman(source).overview["presets"][0][field]) == 8192
     source["overview"]["presets"][0][field].append(8192)
@@ -493,7 +496,7 @@ def test_label_text_limit_preserves_markup_and_unicode(field):
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("type", "linebreak"),
+        ("type", "LINEBREAK"),
         ("type", "unknown"),
         ("type", False),
         ("pre", None),
@@ -504,11 +507,11 @@ def test_label_text_limit_preserves_markup_and_unicode(field):
         ("state", True),
         ("state", 2),
         ("state", 0.0),
-        ("fontsize", 11),
-        ("fontsize", 12),
+        ("fontsize", 10),
+        ("fontsize", 13),
         ("fontsize", False),
-        ("color", [1.0, 1.0, 1.0]),
-        ("bold", 1),
+        ("color", [1.0, 1.0, 1.0, 1.0]),
+        ("bold", 2),
         ("italic", 0),
         ("underline", None),
     ],
@@ -524,11 +527,11 @@ def test_label_text_limit_preserves_markup_and_unicode(field):
         "bool-state",
         "state2",
         "float-state",
-        "font11",
-        "font12",
+        "font10",
+        "font13",
         "font-bool",
-        "rgb",
-        "bold-int",
+        "rgba",
+        "bold2",
         "italic-int",
         "underline-null",
     ],

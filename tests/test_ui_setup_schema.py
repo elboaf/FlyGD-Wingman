@@ -1,8 +1,8 @@
 """Preparatory fixture contracts, NOT setup importer or live-EVE acceptance.
 
 Independent literals catch lost label multiplicity, shared mutable factories,
-source/recipient conflation, and bypassed codec/file boundaries. No production
-projection, cache reset or protected-definition classifier exists in this task.
+source/recipient conflation, and bypassed codec/file boundaries. Pure projection
+and current-client behavior are exercised separately in the adapter tests.
 """
 
 import copy

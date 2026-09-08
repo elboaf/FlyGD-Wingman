@@ -9,14 +9,14 @@
       {"name": "Synthetic Travel", "groups": [8], "filteredStates": [9], "alwaysShownStates": []}
     ],
     "tabs": [
-      {"id": 0, "name": "Synthetic near", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": [0.2, 0.5, 1.0], "tabColumns": ["ICON", "DISTANCE", "NAME"], "tabColumnOrder": ["ICON", "DISTANCE", "NAME", "TYPE", "TAG", "CORPORATION", "ALLIANCE", "FACTION", "MILITIA", "SIZE", "VELOCITY", "RADIALVELOCITY", "TRANSVERSALVELOCITY", "ANGULARVELOCITY"]},
-      {"id": 1, "name": "Synthetic far", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
-      {"id": 2, "name": "Synthetic travel", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": [0.1, 0.6, 0.1], "tabColumns": ["NAME", "DISTANCE"], "tabColumnOrder": ["NAME", "DISTANCE", "ICON"]},
-      {"id": 3, "name": "Synthetic fleet", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
-      {"id": 4, "name": "Synthetic routes", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
-      {"id": 5, "name": "Synthetic brackets", "overview": "Synthetic Brackets", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
-      {"id": 6, "name": "Synthetic reserve", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
-      {"id": 7, "name": "Synthetic retreat", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]}
+      {"id": 0, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic near", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": [0.2, 0.5, 1.0], "tabColumns": ["ICON", "DISTANCE", "NAME"], "tabColumnOrder": ["ICON", "DISTANCE", "NAME", "TYPE", "TAG", "CORPORATION", "ALLIANCE", "FACTION", "MILITIA", "SIZE", "VELOCITY", "RADIALVELOCITY", "TRANSVERSALVELOCITY", "ANGULARVELOCITY"]},
+      {"id": 1, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic far", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 2, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic travel", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": [0.1, 0.6, 0.1], "tabColumns": ["NAME", "DISTANCE"], "tabColumnOrder": ["NAME", "DISTANCE", "ICON"]},
+      {"id": 3, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic fleet", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 4, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic routes", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 5, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic brackets", "overview": "Synthetic Brackets", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 6, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic reserve", "overview": "Synthetic Fleet", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]},
+      {"id": 7, "showAll": false, "showNone": false, "showSpecials": false, "name": "Synthetic retreat", "overview": "Synthetic Travel", "bracket": "Synthetic Brackets", "color": null, "tabColumns": ["ICON", "NAME"], "tabColumnOrder": ["ICON", "NAME", "DISTANCE"]}
     ],
     "windowGroups": [[0, 1, 2], [3, 4, 5], [6, 7]],
     "shipLabels": [

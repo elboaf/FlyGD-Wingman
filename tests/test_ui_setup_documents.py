@@ -44,7 +44,7 @@ def supported_recipient():
 
 
 def incoming():
-    """Distinct incoming custom name avoids the recipient's differing collision."""
+    """Distinct incoming custom name exercises insertion, not replacement."""
     data = wire()
     data["overview"]["presets"][0]["name"] = "Incoming Fleet"
     for tab in data["overview"]["tabs"]:
@@ -75,8 +75,13 @@ def test_full_apply_changes_owned_records_not_recipient_identity_or_metadata():
     out_a, out_c = apply(account, character, parsed)
     assert (account, character, parsed) == before
     assert out_a.had_crc is False and out_c.had_crc is False
-    for section in ("defaultoverview", "tabgroups", "syntheticPrivate", "audio"):
+    for section in ("defaultoverview", "syntheticPrivate", "audio"):
         assert out_a.doc[f"bytes:{section}"] == account.doc[f"bytes:{section}"]
+    assert value(out_a, "tabgroups", "overviewTabs") == 0
+    assert (
+        out_a.doc["bytes:tabgroups"]["bytes:syntheticUnrelatedTab"]
+        == account.doc["bytes:tabgroups"]["bytes:syntheticUnrelatedTab"]
+    )
     for section in ("ui", "syntheticPrivate"):
         assert out_c.doc[f"bytes:{section}"] == character.doc[f"bytes:{section}"]
     for key in (
@@ -108,6 +113,9 @@ def test_full_apply_changes_owned_records_not_recipient_identity_or_metadata():
         "bytes:overview": "utf8:Incoming Fleet",
         "bytes:bracket": "utf8:Synthetic Brackets",
         "bytes:color": [0.2, 0.5, 1.0],
+        "bytes:showAll": False,
+        "bytes:showNone": False,
+        "bytes:showSpecials": False,
         "bytes:tabColumns": ["bytes:ICON", "bytes:DISTANCE", "bytes:NAME"],
         "bytes:tabColumnOrder": [
             "bytes:ICON",
@@ -311,7 +319,10 @@ def test_tab_replacement_preserves_opaque_nonimported_old_tab_definition(native)
             out_a.doc["bytes:overview"][f"bytes:{key}"]
             == account.doc["bytes:overview"][f"bytes:{key}"]
         )
-    assert out_a.doc["bytes:tabgroups"] == account.doc["bytes:tabgroups"]
+    if native:
+        assert out_a.doc["bytes:tabgroups"] == account.doc["bytes:tabgroups"]
+    else:
+        assert value(out_a, "tabgroups", "overviewTabs") == 0
     assert value(out_a, "overview", "tabsettings_new")["int:0"]["bytes:overview"] == (
         "utf8:Added" if native else "utf8:Incoming Fleet"
     )
@@ -348,9 +359,9 @@ def test_opaque_imported_definition_collision_still_requires_full_validation():
 @pytest.mark.parametrize(
     "name",
     ["Synthetic Fleet", "DefaultPreset_SyntheticBuiltin"],
-    ids=["custom-unknown", "reserved"],
+    ids=["custom", "prefix-lookalike"],
 )
-def test_differing_collision_refuses_without_a_guessed_classifier(name):
+def test_differing_custom_collision_replaces_under_exact_jotunn_classification(name):
     account, character = supported_recipient()
     parsed = model.ParsedSetup(
         "native-yaml",
@@ -366,10 +377,17 @@ def test_differing_collision_refuses_without_a_guessed_classifier(name):
         },
         None,
     )
-    refuse(account, character, "definition_collision", name, parsed)
+    out_a, out_c = apply(account, character, parsed)
+    key = ("bytes:" if name.startswith("DefaultPreset_") else "utf8:") + name
+    assert value(out_a, "overview", "overviewProfilePresets")[key] == {
+        "bytes:groups": [1],
+        "bytes:filteredStates": [],
+        "bytes:alwaysShownStates": [],
+    }
+    assert out_c == character
 
 
-def test_reserved_looking_new_name_refuses_but_identical_existing_is_preserved():
+def test_prefix_lookalike_new_name_is_custom_and_identical_existing_is_preserved():
     account, character = supported_recipient()
     parsed = model.ParsedSetup(
         "native-yaml",
@@ -388,7 +406,10 @@ def test_reserved_looking_new_name_refuses_but_identical_existing_is_preserved()
     out_a, _ = apply(account, character, parsed)
     assert out_a == account
     parsed.overview["presets"][0]["name"] = "DefaultPreset_New"
-    refuse(account, character, "unclassified_definition", "DefaultPreset_New", parsed)
+    out_a, _ = apply(account, character, parsed)
+    assert value(out_a, "overview", "overviewProfilePresets")["utf8:DefaultPreset_New"][
+        "bytes:groups"
+    ] == [90]
 
 
 def test_native_filter_only_preserves_grouping_selectors_layout_and_absent_options():
@@ -448,9 +469,21 @@ def test_native_ambiguous_labels_require_explicit_retention_of_entire_opaque_seq
     assert out_c == character
 
 
-def test_original_rich_recipient_refuses_surplus_not_silently_repaired():
+def test_original_rich_recipient_retires_surplus_without_erasing_geometry_or_history():
     account, character = documents("recipient")
-    refuse(account, character, "surplus_overview", "overview_3")
+    out_a, out_c = apply(account, character)
+    assert value(out_c, "windows", "openWindows")["bytes:overview_3"] is False
+    assert (
+        value(out_c, "windows", "windowSizesAndPositions_1")["bytes:overview_3"]
+        == value(character, "windows", "windowSizesAndPositions_1")["bytes:overview_3"]
+    )
+    assert (
+        out_c.doc["bytes:syntheticPrivate"] == character.doc["bytes:syntheticPrivate"]
+    )
+    assert (
+        out_a.doc["bytes:overview"]["bytes:restoreData"]
+        == account.doc["bytes:overview"]["bytes:restoreData"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -464,7 +497,7 @@ def test_every_included_recipient_window_stack_is_checked(window):
     refuse(account, character, "affected_stack", window)
 
 
-def test_surplus_stack_is_checked_before_retirement_refusal():
+def test_surplus_stack_is_checked_before_retirement():
     account, character = documents("recipient")
     value(character, "windows", "stacksWindows")["bytes:overview_3"] = (
         "bytes:MixedStack"
@@ -494,7 +527,11 @@ def test_native_tab_change_checks_primary_stack_even_without_layout():
 def test_unsupported_or_dangling_active_reference_refuses(active):
     account, character = supported_recipient()
     account.doc["bytes:overview"]["bytes:activeOverviewPreset"] = stamp(active)
-    refuse(account, character, "active_reference", "activeOverviewPreset")
+    if active == "utf8:Missing":
+        out_a, _ = apply(account, character)
+        assert value(out_a, "overview", "activeOverviewPreset") == "utf8:Incoming Fleet"
+    else:
+        refuse(account, character, "active_reference", "activeOverviewPreset")
 
 
 def test_active_reference_absence_is_not_replaced_with_first_filter():
@@ -507,12 +544,14 @@ def test_active_reference_absence_is_not_replaced_with_first_filter():
 @pytest.mark.parametrize(
     "selector", ["overviewTabs", "overviewTabs_names"], ids=["id", "name"]
 )
-def test_changed_tab_structure_with_either_selector_refuses(selector):
+def test_changed_tab_structure_resets_both_selection_forms(selector):
     account, character = supported_recipient()
     account.doc["bytes:tabgroups"][f"bytes:{selector}"] = stamp(
         0 if selector == "overviewTabs" else "utf8:Synthetic local tab"
     )
-    refuse(account, character, "tab_selection", selector)
+    out_a, _ = apply(account, character)
+    assert value(out_a, "tabgroups", "overviewTabs") == 0
+    assert "bytes:overviewTabs_names" not in out_a.doc["bytes:tabgroups"]
 
 
 @pytest.mark.parametrize("key", ["alwaysShow", "filterOut", "unfiltered"])
@@ -583,13 +622,18 @@ def test_unsupported_or_dual_aliases_and_stamp_shapes_refuse(kind):
     refuse(account, character, "recipient_shape", "recipient")
 
 
-def test_target_lock_unproved_true_or_nonzero_storage_refuses_locally():
+def test_target_lock_true_and_integer_one_are_supported_but_other_integers_refuse():
     account, character = supported_recipient()
     parsed = incoming()
     parsed.layout["targetOriginLocked"] = True
-    refuse(account, character, "target_lock", "targetOriginLocked", parsed)
+    out_a, _ = apply(account, character, parsed)
+    assert type(value(out_a, "ui", "targetOriginLocked")) is int
+    assert value(out_a, "ui", "targetOriginLocked") == 1
     account.doc["bytes:ui"]["bytes:targetOriginLocked"] = stamp(1)
-    refuse(account, character, "target_lock", "targetOriginLocked")
+    out_a, _ = apply(account, character)
+    assert value(out_a, "ui", "targetOriginLocked") == 0
+    account.doc["bytes:ui"]["bytes:targetOriginLocked"] = stamp(2)
+    refuse(account, character, "recipient_shape", "targetOriginLocked")
 
 
 def selector_native():
@@ -616,7 +660,7 @@ def selector_native():
                     "name": name,
                     "overview": "Added",
                     "bracket": "Added",
-                    "color": None,
+                    "color": [0.7, 0.7, 0.7] if i == 0 else None,
                     "tabColumns": ["NAME"],
                     "tabColumnOrder": ["NAME", "ICON"],
                 }
@@ -662,9 +706,16 @@ def order_only_case():
     for record in tabs.values():
         record["bytes:overview"] = "utf8:Added"
         record["bytes:bracket"] = "utf8:Added"
+        record.update(
+            {
+                "bytes:showAll": False,
+                "bytes:showNone": False,
+                "bytes:showSpecials": False,
+            }
+        )
     tabs["int:0"].update(
         {
-            "bytes:color": None,
+            "bytes:color": [0.7, 0.7, 0.7],
             "bytes:tabColumns": ["bytes:NAME"],
             "bytes:tabColumnOrder": ["bytes:NAME", "bytes:ICON"],
         }
@@ -676,9 +727,10 @@ def order_only_case():
     }
     data = wire()
     data["overview"].update(selector_native().overview)
-    # Native grouping follows tab sequence by policy; use full input to isolate
-    # tab-map encounter order from the unchanged explicit group list.
+    # The artifact sequence and its group subsequence must agree. Dense output
+    # makes this the client's sorted physical-ID order, not map encounter order.
     data["overview"]["tabs"].reverse()
+    data["overview"]["windowGroups"][0].reverse()
     data["layout"]["windows"] = [
         row
         for row in data["layout"]["windows"]
@@ -692,15 +744,16 @@ def test_no_selector_order_only_tab_replacement_updates_order_and_stamp():
     before = copy.deepcopy((account, character, parsed))
     out_a, _ = apply(account, character, parsed)
     tabs = value(out_a, "overview", "tabsettings_new")
-    assert list(tabs) == ["int:3", "int:2", "int:1", "int:0"]
-    assert tabs == value(account, "overview", "tabsettings_new")
+    assert list(tabs) == ["int:0", "int:1", "int:2", "int:3"]
+    assert tabs["int:0"]["bytes:name"] == "utf8:Synthetic local fourth"
+    assert tabs["int:3"]["bytes:name"] == "utf8:Synthetic local tab"
     assert out_a.doc["bytes:overview"]["bytes:tabsettings_new"]["tuple"][0] == STAMP
     for key in ("tabsByWindowInstanceID", "overviewProfilePresets"):
         assert (
             out_a.doc["bytes:overview"][f"bytes:{key}"]
             == account.doc["bytes:overview"][f"bytes:{key}"]
         )
-    assert out_a.doc["bytes:tabgroups"] == account.doc["bytes:tabgroups"]
+    assert value(out_a, "tabgroups", "overviewTabs") == 0
     assert (account, character, parsed) == before
     assert list(value(account, "overview", "tabsettings_new")) == [
         "int:0",
@@ -713,6 +766,7 @@ def test_no_selector_order_only_tab_replacement_updates_order_and_stamp():
 def test_unchanged_tab_sequence_does_not_rewrite_nested_map_order_or_stamp():
     account, character, parsed = order_only_case()
     parsed.overview["tabs"].reverse()
+    parsed.overview["windowGroups"][0].reverse()
     tabs = value(account, "overview", "tabsettings_new")
     tabs["int:0"] = dict(reversed(list(tabs["int:0"].items())))
     saved = value(account, "overview", "overviewProfilePresets")
@@ -727,7 +781,7 @@ def test_unchanged_tab_sequence_does_not_rewrite_nested_map_order_or_stamp():
 
 @pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
 @pytest.mark.parametrize("crc", [False, True], ids=["plain", "crc"])
-def test_order_only_replacement_survives_native_codec_without_id_remapping(
+def test_order_only_replacement_survives_native_codec_in_sorted_physical_order(
     tmp_path, crc
 ):
     account, character, parsed = order_only_case()
@@ -738,9 +792,11 @@ def test_order_only_replacement_survives_native_codec_without_id_remapping(
     )
     readback = codec.read_document(target, exe=lambda: str(CODEC))
     tabs = value(readback, "overview", "tabsettings_new")
-    # Dict equality (including the codec writer's check) ignores this ordering.
-    assert list(tabs) == ["int:3", "int:2", "int:1", "int:0"]
-    assert [row["bytes:name"] for row in tabs.values()] == [
+    assert set(tabs) == {"int:0", "int:1", "int:2", "int:3"}
+    # GetTabIDs:1193 sorts physical IDs; insertion order is not rendering proof.
+    assert [
+        tabs[key]["bytes:name"] for key in sorted(tabs, key=lambda key: int(key[4:]))
+    ] == [
         "utf8:Synthetic local fourth",
         "utf8:Synthetic local third",
         "utf8:Synthetic local second",
@@ -751,7 +807,7 @@ def test_order_only_replacement_survives_native_codec_without_id_remapping(
     assert readback == out_a
 
 
-@pytest.mark.parametrize("change", ["id", "order", "name", "groups"])
+@pytest.mark.parametrize("change", ["id", "order", "name", "groups", "color"])
 def test_selector_invalidation_guards_each_structural_dimension(change):
     account, character = selector_recipient()
     parsed = selector_native()
@@ -763,6 +819,8 @@ def test_selector_invalidation_guards_each_structural_dimension(change):
         parsed.overview["windowGroups"][0].reverse()
     elif change == "name":
         parsed.overview["tabs"][0]["name"] = "Renamed"
+    elif change == "color":
+        parsed.overview["tabs"][0]["color"] = None
     else:
         # Full input adds a group without changing the ordered tab identities.
         data = wire()
@@ -772,18 +830,28 @@ def test_selector_invalidation_guards_each_structural_dimension(change):
             row for row in data["layout"]["windows"] if row["key"] != "overview_2"
         ]
         parsed = model.validate_wingman(data)
-    refuse(account, character, "tab_selection", "overviewTabs", parsed)
+    out_a, _ = apply(account, character, parsed)
+    if change == "id":
+        # Artifact-local IDs are normalized back to the same physical identity.
+        assert out_a.doc["bytes:tabgroups"] == account.doc["bytes:tabgroups"]
+    else:
+        assert value(out_a, "tabgroups", "overviewTabs") == 0
+        assert "bytes:overviewTabs_names" not in out_a.doc["bytes:tabgroups"]
 
 
 @pytest.mark.parametrize(
     "record",
     [stamp(True), stamp(999), stamp("utf8:0")],
-    ids=["bool", "dangling", "text"],
+    ids=["bool", "out-of-range-ordinal", "text"],
 )
 def test_malformed_selector_refuses_even_with_unchanged_structure(record):
     account, character = selector_recipient()
     account.doc["bytes:tabgroups"]["bytes:overviewTabs"] = record
-    refuse(account, character, "tab_selection", "overviewTabs", selector_native())
+    if type(record["tuple"][1]) is int:
+        out_a, _ = apply(account, character, selector_native())
+        assert value(out_a, "tabgroups", "overviewTabs") == 999
+    else:
+        refuse(account, character, "tab_selection", "overviewTabs", selector_native())
 
 
 def test_stack_secondary_index_cannot_hide_affected_membership():
@@ -885,10 +953,19 @@ def test_malformed_section_refuses(section):
     refuse(account, character, "recipient_shape", section)
 
 
-def test_missing_account_topology_refuses_without_activating_cached_windows():
+def test_missing_account_topology_defaults_without_activating_cached_windows():
     account, character = supported_recipient()
     del account.doc["bytes:overview"]["bytes:tabsByWindowInstanceID"]
-    refuse(account, character, "recipient_shape", "tabsByWindowInstanceID")
+    out_a, out_c = apply(account, character)
+    assert value(out_a, "overview", "tabsByWindowInstanceID") == [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7],
+    ]
+    assert (
+        value(out_c, "windows", "openWindows")["bytes:overview_3"]
+        == value(character, "windows", "openWindows")["bytes:overview_3"]
+    )
 
 
 def test_full_keep_labels_retains_the_complete_existing_stamped_sequence():
@@ -946,7 +1023,16 @@ def test_complete_native_fixture_applies_configuration_only_with_explicit_label_
     )
     assert out_c == character
     rich_a, rich_c = documents("recipient")
-    refuse(rich_a, rich_c, "surplus_overview", "overview_1", parsed, keep=True)
+    rich_out_a, rich_out_c = apply(rich_a, rich_c, parsed, keep=True)
+    assert (
+        rich_out_a.doc["bytes:overview"]["bytes:shipLabels"]
+        == rich_a.doc["bytes:overview"]["bytes:shipLabels"]
+    )
+    for key in ("bytes:overview_1", "bytes:overview_2", "bytes:overview_3"):
+        assert value(rich_out_c, "windows", "openWindows")[key] is False
+    assert value(rich_out_c, "windows", "windowSizesAndPositions_1") == value(
+        rich_c, "windows", "windowSizesAndPositions_1"
+    )
 
 
 @pytest.mark.parametrize("native", [False, True], ids=["full", "native"])

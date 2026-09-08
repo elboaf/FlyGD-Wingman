@@ -1,4 +1,7 @@
-"""Invented setup evidence for tests; never read a user's settings directory.
+"""Synthetic setup fixtures; never read a user's settings directory.
+
+The public Jotunn context is recognized; identities and setup content are invented.
+Public canonical regression data is separately labeled in test_ui_setup_v24.py.
 
 Factories reload JSON so mutating one review/document cannot mutate a later
 case. The portable fixture is hand-authored independently of the DAT fixtures,

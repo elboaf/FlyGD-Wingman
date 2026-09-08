@@ -313,7 +313,7 @@ def test_export_canonical_clear_expansion_must_still_fit_structural_budget():
         "flagStates": list(range(8192)),
         "flagOrder": list(range(8192)),
         "backgroundStates": list(range(8192)),
-        "backgroundOrder": list(range(1158)),
+        "backgroundOrder": list(range(1110)),
     }
     # Exactly 100,000 nodes before normalizing 19 omitted setting overrides.
     # An exporter must not emit JSON that its own structural gate cannot read.

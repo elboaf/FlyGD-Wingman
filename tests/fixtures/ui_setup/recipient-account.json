@@ -52,7 +52,7 @@
       "bytes:restoreData": {"tuple": ["long:116444736010000000", {"bytes:synthetic": "utf8:Synthetic private recipient restore"}]}
     },
     "bytes:defaultoverview": {
-      "bytes:defaultOverviewID": {"tuple": ["long:116444736010000000", "bytes:SyntheticRecipientDefaultIdentity"]},
+      "bytes:defaultOverviewID": {"tuple": ["long:116444736010000000", "bytes:jotunn_default"]},
       "bytes:defaultOverviewInformedOfUpdate": {"tuple": ["long:116444736010000000", 2]},
       "bytes:overviewID": {"tuple": ["long:116444736010000000", null]}
     },

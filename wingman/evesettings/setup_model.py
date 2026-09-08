@@ -2,8 +2,8 @@
 
 These are Wingman v1 support limits, not EVE maxima or proof of persisted-data
 behavior. Validation grants no authority to publish a profile. In particular,
-physical boolean mappings, protected definitions, caches and window retirement
-still need independent adapter evidence.
+physical representations remain the adapter's responsibility; current-client
+compatibility evidence is recorded in docs/ui-setup-client-evidence.md.
 """
 
 from dataclasses import dataclass
@@ -70,7 +70,18 @@ COLUMNS = (
     "VELOCITY",
 )
 STATE_CATEGORIES = ("background", "flag")
-LABEL_TYPES = (None, "pilot name", "corporation", "alliance", "ship type", "ship name")
+BRACKET_SHOW_ALL = "_BracketFilterShowAll"
+TAB_FLAGS = ("showAll", "showNone", "showSpecials")
+TAB_COLUMNS = ("tabColumns", "tabColumnOrder")
+LABEL_TYPES = (
+    None,
+    "pilot name",
+    "corporation",
+    "alliance",
+    "ship type",
+    "ship name",
+    "linebreak",
+)
 LABEL_BOOLEAN_FIELDS = ("bold", "italic", "underline")
 LABEL_NULL_FIELDS = ("fontsize", "color")
 ID_SETTINGS = ("flagOrder", "flagStates", "backgroundOrder", "backgroundStates")
@@ -317,10 +328,12 @@ def _presets(value):
                 # exact sequence; each entry still consumes the same budgets.
                 "groups": _ids(item["groups"], "Preset groups", unique=False),
                 "filteredStates": _ids(
-                    item["filteredStates"], "Preset filtered states"
+                    item["filteredStates"], "Preset filtered states", unique=False
                 ),
                 "alwaysShownStates": _ids(
-                    item["alwaysShownStates"], "Preset always-shown states"
+                    item["alwaysShownStates"],
+                    "Preset always-shown states",
+                    unique=False,
                 ),
             }
         )
@@ -328,7 +341,7 @@ def _presets(value):
     return result
 
 
-def _tabs(value):
+def _tabs(value, *, partial):
     result = []
     for item in _list(value, "Tabs", maximum=MAX_TABS, minimum=1):
         _fields(
@@ -339,10 +352,10 @@ def _tabs(value):
                 "overview",
                 "bracket",
                 "color",
-                "tabColumns",
-                "tabColumnOrder",
+                *(() if partial else TAB_COLUMNS),
             ),
             "Tab",
+            optional=TAB_FLAGS + (TAB_COLUMNS if partial else ()),
         )
         result.append(
             {
@@ -354,7 +367,9 @@ def _tabs(value):
                     "Tab overview reference",
                     name=True,
                 ),
-                "bracket": _text(
+                "bracket": None
+                if item["bracket"] is None
+                else _text(
                     item["bracket"],
                     MAX_NAME_CODEPOINTS,
                     "Tab bracket reference",
@@ -363,8 +378,8 @@ def _tabs(value):
                 "color": None
                 if item["color"] is None
                 else _units(item["color"], 3, "Tab RGB color"),
-                "tabColumns": _columns(item["tabColumns"], "Tab columns"),
-                "tabColumnOrder": _columns(item["tabColumnOrder"], "Tab column order"),
+                **{key: _columns(item[key], key) for key in TAB_COLUMNS if key in item},
+                **{key: _boolean(item.get(key, False), key) for key in TAB_FLAGS},
             }
         )
     _unique([item["id"] for item in result], "Tab IDs")
@@ -382,23 +397,41 @@ def _labels(value):
         )
         label = {
             "type": _enum(item["type"], LABEL_TYPES, "Ship label type"),
-            "pre": _text(item["pre"], MAX_LABEL_CODEPOINTS, "Ship label pre"),
-            "post": _text(item["post"], MAX_LABEL_CODEPOINTS, "Ship label post"),
-            "state": _integer(item["state"], 0, 1, "Ship label state"),
+            **{
+                key: None
+                if item["type"] == "linebreak" and item[key] is None
+                else _text(item[key], MAX_LABEL_CODEPOINTS, f"Ship label {key}")
+                for key in ("pre", "post")
+            },
+            "state": None
+            if item["type"] == "linebreak" and item["state"] is None
+            else _integer(item["state"], 0, 1, "Ship label state"),
         }
         # Optional presence is meaningful. In particular, do not fill absent
         # formatting fields or collapse repeated literal/type records.
         for key in LABEL_BOOLEAN_FIELDS:
             if key in item:
-                label[key] = _boolean(item[key], f"Ship label {key}")
-        for key in LABEL_NULL_FIELDS:
-            if key in item:
-                if item[key] is not None:
-                    raise SetupError(
-                        "unsupported_variant",
-                        f"Ship label {key}: only null is supported.",
-                    )
-                label[key] = None
+                label[key] = (
+                    1
+                    if key in ("bold", "italic")
+                    and type(item[key]) is int
+                    and item[key] == 1
+                    else _boolean(item[key], f"Ship label {key}")
+                )
+        if "fontsize" in item:
+            size = item["fontsize"]
+            if size is not None and (type(size) is not int or size not in (11, 12)):
+                raise SetupError(
+                    "unsupported_variant",
+                    "Ship label fontsize: expected 11, 12 or null.",
+                )
+            label["fontsize"] = size
+        if "color" in item:
+            label["color"] = (
+                None
+                if item["color"] is None
+                else _units(item["color"], 3, "Ship label RGB color")
+            )
         result.append(label)
     return result
 
@@ -448,7 +481,8 @@ def validate_overview(value: object, *, partial: bool) -> dict:
 
     Supplied partial tabs must already have groups and self-contained named
     dependencies. A native parser owns its explicit one-group policy; this
-    model never binds a missing reference to a recipient or invents sentinels.
+    model never binds a missing reference to a recipient; only the exact known
+    bracket sentinel and null may bypass named-definition closure.
     """
     check_structure_budget(value)
     _fields(
@@ -462,10 +496,12 @@ def validate_overview(value: object, *, partial: bool) -> dict:
     if "presets" in value:
         result["presets"] = _presets(value["presets"])
     if "tabs" in value:
-        result["tabs"] = _tabs(value["tabs"])
+        result["tabs"] = _tabs(value["tabs"], partial=partial)
         names = {item["name"] for item in result.get("presets", [])}
         for tab in result["tabs"]:
             for field in ("overview", "bracket"):
+                if field == "bracket" and tab[field] in (None, BRACKET_SHOW_ALL):
+                    continue
                 if tab[field] not in names:
                     raise SetupError(
                         "dangling_reference",
@@ -487,6 +523,13 @@ def validate_overview(value: object, *, partial: bool) -> dict:
                 "invalid_groups",
                 "Every tab must belong to exactly one nonempty window group, with no dangling tab IDs.",
             )
+        sequence = [tab["id"] for tab in result["tabs"]]
+        for group in groups:
+            if group != [tab_id for tab_id in sequence if tab_id in group]:
+                raise SetupError(
+                    "invalid_order",
+                    "Window group order contradicts the ordered tab sequence.",
+                )
         result["windowGroups"] = groups
     if "shipLabels" in value:
         result["shipLabels"] = _labels(value["shipLabels"])

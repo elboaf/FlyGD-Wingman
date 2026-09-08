@@ -1,7 +1,7 @@
 # Wingman overview and in-space layout presets
 
 Date: 2026-09-07
-Status: approved design; pure model/parsers and bounded recipient-document application (Task 4a) implemented. No profile publication or GUI integration yet. See the [implementation plan](overview-layout-sharing-plan.md), [parser checkpoint](overview-layout-sharing-verification.md) and [application checkpoint](ui-setup-application-verification.md).
+Status: approved design; pure model/parsers, current-client export/application (Task 4b) and hidden recipient staging (Task 5) implemented. No controller/UI publication integration yet. See the [implementation plan](overview-layout-sharing-plan.md), [parser checkpoint](overview-layout-sharing-verification.md) and [application checkpoint](ui-setup-application-verification.md).
 Base: `a38c7a0` plus the discovery record committed in `ed6aa16`.
 Evidence: [overview/layout discovery](overview-layout-sharing-discovery.md).
 
@@ -45,8 +45,10 @@ actual clipboard promise, not merely successful serialization. User-authored
 names and label markup travel as text; export is not an anonymization service.
 
 The exported filter definitions represent the effective persisted snapshot:
-valid entries in `overviewProfilePresets_notSaved` override saved definitions of
-the same name in the exported copy. Show a warning/count when this occurs. Do not
+the present `overviewProfilePresets_notSaved2` map (even empty) takes precedence
+over `overviewProfilePresets_notSaved`; only when the second map is absent does
+the first apply. Effective entries override selected saved definitions of the
+same name in the exported copy. Show a warning/count when this occurs. Do not
 save those changes back to the sender, export the cache itself, or imply that
 unflushed changes in a running client were captured.
 
@@ -150,7 +152,9 @@ The overview model contains:
   always-shown states. Names and references retain exact text, not casefolded or
   automatically renamed equivalents.
 - Ordered tabs with names, colours, overview/bracket filter references and per-tab
-  column selections/order.
+  column selections/order and showAll/showNone/showSpecials bracket flags. Full
+  export materializes client column defaults; native column omission retains
+  recipient physical-slot overrides/presence.
 - Explicit overview-window grouping using artifact-local ordinals and tab IDs.
 - Ordered ship-label records, preserving repeated null-type literal entries and
   supported formatting fields. Never turn them into a type-keyed dictionary.
@@ -170,8 +174,13 @@ styles or window groups. Remove stale unsaved overrides for imported definitions
 
 Do not overwrite recipient default-profile identity or built-in definitions by
 assuming every named entry is custom. If an incoming definition conflicts with a
-protected built-in definition, allow only an identical definition; otherwise
-refuse with an actionable explanation. Do not silently rename references.
+protected built-in definition, require the versioned public canonical fingerprint
+for the incoming body and any recipient collision; equality of two incorrect
+saved bodies is not enough. The first supported context is exactly Jotunn, with
+its exact stored-name domain; prefix/case/legacy-name lookalikes are custom.
+Missing protected source bodies are not reconstructed from hashes. See the
+[current-client evidence](ui-setup-client-evidence.md) for provenance and rules;
+otherwise refuse the affected case with an actionable explanation. Do not silently rename references.
 
 The adapter must explicitly handle load-bearing selection/cache references to
 replaced data. It may reset only specifically understood references to a valid

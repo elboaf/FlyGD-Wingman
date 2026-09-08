@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.setup_fixtures import install_lossless_codec, seed_profile
+from tests.setup_fixtures import documents, install_lossless_codec, seed_profile
 from tests.test_evesettings_codec import CODEC
 from tests.test_evesettings_profilecopy import _make_junction
 from tests.test_ui_setup_documents import incoming, supported_recipient, value
@@ -28,12 +28,8 @@ from wingman.evesettings import (
 def base(tmp_path, monkeypatch):
     install_lossless_codec(monkeypatch)
     base = seed_profile(tmp_path)
-    # Explicit supported recipient branch; neither a sender clone nor a mock
-    # of application. The original rich recipient remains a refusal fixture.
-    for path, document in zip(
-        (base.account_path, base.character_path), supported_recipient(), strict=True
-    ):
-        codec.write_document(path, document, backup=lambda path: None)
+    # The original rich recipient exercises real replacement and retirement;
+    # neither a sender clone nor a mocked application/relaxed staging guard.
     (base.profile / "core_char_31.dat").write_bytes(b"unselected character")
     (base.profile / "core_user_21.dat").write_bytes(b"unselected account")
     (base.profile / "notes.txt").write_bytes(b"unrelated notes")
@@ -152,7 +148,14 @@ def test_hidden_stage_patches_both_selected_documents_and_preserves_base(base):
             character.doc["bytes:windows"]["bytes:shipuialignleftoffset"]["tuple"][0]
             == "long:116444746000000000"
         )
-        for section in ("syntheticPrivate", "defaultoverview", "audio", "tabgroups"):
+        assert value(character, "windows", "openWindows")["bytes:overview_3"] is False
+        assert value(account, "tabgroups", "overviewTabs") == 0
+        assert "bytes:overviewTabs_names" not in account.doc["bytes:tabgroups"]
+        assert (
+            account.doc["bytes:tabgroups"]["bytes:syntheticUnrelatedTab"]
+            == original_account.doc["bytes:tabgroups"]["bytes:syntheticUnrelatedTab"]
+        )
+        for section in ("syntheticPrivate", "defaultoverview", "audio"):
             assert (
                 account.doc[f"bytes:{section}"]
                 == original_account.doc[f"bytes:{section}"]
@@ -659,8 +662,8 @@ def test_codec_writes_are_guarded_by_reviewed_revisions(base, monkeypatch, which
 @pytest.mark.parametrize(
     "case,code",
     [
-        ("rich", "surplus_overview"),
-        ("collision", "definition_collision"),
+        ("surplus-stack", "affected_stack"),
+        ("collision", "protected_definition"),
         ("bad-character", "recipient_shape"),
         ("stack", "affected_stack"),
     ],
@@ -668,16 +671,22 @@ def test_codec_writes_are_guarded_by_reviewed_revisions(base, monkeypatch, which
 def test_adapter_refusals_propagate_before_either_document_is_encoded(
     base, monkeypatch, case, code
 ):
-    from tests.setup_fixtures import documents, wire
+    from tests.setup_fixtures import wire
     from wingman.evesettings import setup_profile
 
     parsed = incoming()
-    if case == "rich":
+    if case == "surplus-stack":
         account, character = documents("recipient")
+        value(character, "windows", "stacksWindows")["bytes:overview_3"] = "bytes:Mixed"
     else:
         account, character = supported_recipient()
         if case == "collision":
-            parsed = setup_model.validate_wingman(wire())
+            data = wire()
+            data["overview"]["presets"][0]["name"] = "DefaultPreset_639431"
+            for tab in data["overview"]["tabs"]:
+                if tab["overview"] == "Synthetic Fleet":
+                    tab["overview"] = "DefaultPreset_639431"
+            parsed = setup_model.validate_wingman(data)
         elif case == "bad-character":
             character.doc["bytes:windows"]["bytes:shipuialignleftoffset"]["tuple"][
                 1
@@ -738,9 +747,13 @@ def test_native_configuration_keeps_labels_and_all_character_layout(base):
         assert value(account, "overview", "tabsByWindowInstanceID") == [
             [0, 1, 2, 3, 4, 5, 6, 7]
         ]
-        assert codec.read_document(
-            staged.path / base.character_path.name
-        ) == codec.read_document(base.character_path)
+        character = codec.read_document(staged.path / base.character_path.name)
+        original_character = codec.read_document(base.character_path)
+        assert value(character, "windows", "windowSizesAndPositions_1") == value(
+            original_character, "windows", "windowSizesAndPositions_1"
+        )
+        for key in ("bytes:overview_1", "bytes:overview_2", "bytes:overview_3"):
+            assert value(character, "windows", "openWindows")[key] is False
     assert_unchanged(base, before)
 
 
@@ -810,7 +823,7 @@ def test_synthetic_staging_round_trips_two_documents_through_native_codec(
     monkeypatch.setattr(codec, "_run", run)
     base = seed_profile(tmp_path)
     for path, document in zip(
-        (base.account_path, base.character_path), supported_recipient(), strict=True
+        (base.account_path, base.character_path), documents("recipient"), strict=True
     ):
         codec.write_document(
             path, codec.Document(document.doc, crc), backup=lambda path: None
