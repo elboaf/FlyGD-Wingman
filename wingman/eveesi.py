@@ -163,6 +163,183 @@ class EsiResponse:
         return self.status == 304
 
 
+@dataclass(frozen=True, kw_only=True)
+class AuthenticatedGetResult:
+    """One authority-backed GET outcome without domain persistence policy."""
+
+    response: EsiResponse | None
+    error: str
+    authority_invalidated: bool
+    authority_reason: str
+    endpoint_denied: bool
+    authority_error: bool
+
+
+_AUTHENTICATED_ERROR_MAX_CHARS = 4096
+_HTTP_PARSER_FAILURES = (
+    http.client.BadStatusLine,
+    http.client.LineTooLong,
+    http.client.UnknownProtocol,
+)
+
+
+def _is_expected_get_failure(exc: BaseException) -> bool:
+    """Whether *exc* describes an external response rather than client misuse.
+
+    The header-count limit raises the exact HTTPException base class. Other
+    subclasses can instead report invalid connection state caused by caller
+    sequencing, so they remain visible unless they are known parser failures.
+    """
+    return type(exc) is http.client.HTTPException or isinstance(
+        exc, (OSError, ValueError, RecursionError, *_HTTP_PARSER_FAILURES)
+    )
+
+
+def _authenticated_error(value: object, tokens: tuple[str, ...]) -> str:
+    text = str(value)
+    if not text:
+        text = (
+            value.__class__.__name__
+            if isinstance(value, BaseException)
+            else "ESI request failed."
+        )
+    for token in tokens:
+        if token:
+            text = text.replace(token, "[redacted]")
+    return text[:_AUTHENTICATED_ERROR_MAX_CHARS]
+
+
+def authenticated_get(
+    authority,
+    client,
+    *,
+    character_id,
+    capability,
+    path,
+    etag=None,
+) -> AuthenticatedGetResult:
+    """Perform one capability-authorized GET with one rejected-token retry.
+
+    Lifecycle leases and all domain commits remain with the caller. Only the
+    shared authority classifies grant invalidation; endpoint 401/403 responses
+    are reported separately so feature controllers can apply their own wording.
+    """
+    used_tokens: tuple[str, ...] = ()
+    token_result = authority.access_token(character_id, capability)
+    token = token_result.token
+    if token is None:
+        return AuthenticatedGetResult(
+            response=None,
+            error=_authenticated_error(token_result.error, used_tokens),
+            authority_invalidated=token_result.grant_invalidated,
+            authority_reason=token_result.reason,
+            endpoint_denied=False,
+            authority_error=True,
+        )
+
+    used_tokens = (token,)
+    try:
+        response = client.get(path, token=token, etag=etag)
+    except (OSError, ValueError, RecursionError, http.client.HTTPException) as exc:
+        if not _is_expected_get_failure(exc):
+            raise
+        return AuthenticatedGetResult(
+            response=None,
+            error=_authenticated_error(exc, used_tokens),
+            authority_invalidated=False,
+            authority_reason="",
+            endpoint_denied=False,
+            authority_error=False,
+        )
+
+    if response.status == 401:
+        # Exactly one retry, and only one. A replacement token rejected seconds
+        # later is not a clock-skew problem another rotation can solve; looping
+        # here would keep spending the shared ESI error-limit budget on the same
+        # refusal and could prevent unrelated characters from refreshing.
+        token_result = authority.access_token(
+            character_id, capability, rejected_token=token
+        )
+        retry_token = token_result.token
+        if retry_token is None:
+            return AuthenticatedGetResult(
+                response=None,
+                error=_authenticated_error(token_result.error, used_tokens),
+                authority_invalidated=token_result.grant_invalidated,
+                authority_reason=token_result.reason,
+                endpoint_denied=False,
+                authority_error=True,
+            )
+        used_tokens = (*used_tokens, retry_token)
+        try:
+            response = client.get(path, token=retry_token, etag=etag)
+        except (OSError, ValueError, RecursionError, http.client.HTTPException) as exc:
+            if not _is_expected_get_failure(exc):
+                raise
+            return AuthenticatedGetResult(
+                response=None,
+                error=_authenticated_error(exc, used_tokens),
+                authority_invalidated=False,
+                authority_reason="",
+                endpoint_denied=False,
+                authority_error=False,
+            )
+        if response.status == 401:
+            # Endpoint refusal is not a verdict on the shared grant: another
+            # capability may still be authorized. Only authority's refresh/JWT
+            # checks can invalidate the grant, so repeated 401 and the 403 below
+            # stay endpoint-denial outcomes.
+            return AuthenticatedGetResult(
+                response=None,
+                error=_authenticated_error(
+                    f"ESI request failed (401): {response.error}", used_tokens
+                ),
+                authority_invalidated=False,
+                authority_reason="",
+                endpoint_denied=True,
+                authority_error=False,
+            )
+
+    if response.status == 403:
+        # Scope refusal belongs to this endpoint/capability; deleting the shared
+        # grant here could throw away access that still works for another
+        # feature. Authority alone decides whether that grant is invalid.
+        return AuthenticatedGetResult(
+            response=None,
+            error=_authenticated_error(
+                f"ESI request failed (403): {response.error}", used_tokens
+            ),
+            authority_invalidated=False,
+            authority_reason="",
+            endpoint_denied=True,
+            authority_error=False,
+        )
+    if response.status not in {200, 304}:
+        # Every other non-success is transient at this seam. In particular,
+        # EsiClient synthesizes 503 after retry exhaustion without a final
+        # response, so that status did not necessarily come from ESI and cannot
+        # justify a persistent authority or endpoint-denial classification.
+        return AuthenticatedGetResult(
+            response=None,
+            error=_authenticated_error(
+                f"ESI request failed ({response.status}): {response.error}",
+                used_tokens,
+            ),
+            authority_invalidated=False,
+            authority_reason="",
+            endpoint_denied=False,
+            authority_error=False,
+        )
+    return AuthenticatedGetResult(
+        response=response,
+        error="",
+        authority_invalidated=False,
+        authority_reason="",
+        endpoint_denied=False,
+        authority_error=False,
+    )
+
+
 @dataclass(frozen=True)
 class MutationResponse:
     """The outcome of exactly one mutation attempt.

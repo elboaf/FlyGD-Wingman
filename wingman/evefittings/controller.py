@@ -21,7 +21,7 @@ from pathlib import Path
 from ..eveauth import application
 from ..eveauth.cleanup import CleanupVerification
 from ..eveauth.controller import MutationResult
-from ..eveesi import EsiClient
+from ..eveesi import EsiClient, authenticated_get
 from . import contracts, names, store
 from .model import (
     FINGERPRINT_VERSION,
@@ -326,6 +326,10 @@ class FittingsController:
             return self._result(character_id, False, error)
 
         timestamp = self._now()
+        # A rollback during the request cannot establish cache-age evidence.
+        # Keep this check before the monotonic snapshot timestamp clamp below.
+        if timestamp < requested_utc:
+            reconcile = False
         if response.not_modified:
             with self._lock:
                 current = self._snapshot_locked(character_id)
@@ -405,43 +409,19 @@ class FittingsController:
             )
 
     def _authorised_get(self, character_id: int, etag: str):
-        token_result = self._authority.access_token(character_id, application.FITTINGS)
-        token = token_result.token
-        if token is None:
-            return None, _bounded_error(token_result.error or MSG_REAUTH)
-
-        path = contracts.GET_PATH.format(character_id=character_id)
-        try:
-            response = self._client.get(path, token=token, etag=etag or None)
-        except (OSError, ValueError, RecursionError) as exc:
-            return None, _bounded_error(exc)
-        if response.status == 401:
-            token_result = self._authority.access_token(
-                character_id,
-                application.FITTINGS,
-                rejected_token=token,
-            )
-            if token_result.token is None:
-                return None, _bounded_error(token_result.error or MSG_REAUTH)
-            try:
-                response = self._client.get(
-                    path,
-                    token=token_result.token,
-                    etag=etag or None,
-                )
-            except (OSError, ValueError, RecursionError) as exc:
-                return None, _bounded_error(exc)
-            if response.status == 401:
-                return None, MSG_REAUTH
-        if response.status == 403:
-            # Endpoint status is not an OAuth verdict.  Authority retains the
-            # shared grant, which may still be valid for Skills.
+        result = authenticated_get(
+            self._authority,
+            self._client,
+            character_id=character_id,
+            capability=application.FITTINGS,
+            path=contracts.GET_PATH.format(character_id=character_id),
+            etag=etag or None,
+        )
+        if result.response is not None:
+            return result.response, ""
+        if result.endpoint_denied:
             return None, MSG_REAUTH
-        if response.status not in {200, 304}:
-            return None, _bounded_error(
-                f"ESI request failed ({response.status}): {response.error}"
-            )
-        return response, ""
+        return None, _bounded_error(result.error or MSG_REAUTH)
 
     def _import_locked(
         self,
@@ -563,11 +543,25 @@ class FittingsController:
             return False
         return any(
             intent.character_id == character_id
-            and intent.unresolved
-            and requested_utc
-            >= (intent.sent_utc or intent.created_utc)
-            + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+            and self._intent_reconciliation_due(intent, requested_utc)
             for intent in self._state.intents
+        )
+
+    @staticmethod
+    def _intent_reconciliation_due(
+        intent: WriteIntent, requested_utc: datetime
+    ) -> bool:
+        # For a 201, completion is the first point by which we know the create
+        # happened. A delayed response must not shorten its cache horizon; max
+        # also keeps a rolled-back completion clock from doing so.
+        evidence_utc = max(
+            value
+            for value in (intent.created_utc, intent.sent_utc, intent.completed_utc)
+            if value is not None
+        )
+        return (intent.unresolved or intent.status == "success") and (
+            requested_utc - evidence_utc
+            >= timedelta(seconds=contracts.READ_CACHE_SECONDS)
         )
 
     def _reconcile_intents_locked(
@@ -589,14 +583,17 @@ class FittingsController:
         }
         resolved = []
         for intent in self._state.intents:
-            evidence_utc = intent.sent_utc or intent.created_utc
             if (
                 intent.character_id != character_id
-                or not intent.unresolved
-                or requested_utc
-                < evidence_utc + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+                or not self._intent_reconciliation_due(intent, requested_utc)
             ):
                 resolved.append(intent)
+                continue
+            if intent.status == "success":
+                # Only this cache-qualified full snapshot retires success
+                # protection, whether it confirms presence or real removal.
+                # Early positive content still imports immediately, but cannot
+                # release protection against a later pre-create cached absence.
                 continue
             presence = present_by_content.get(intent.content)
             if presence is None:
@@ -1074,14 +1071,13 @@ class FittingsController:
         )
         if authoritative:
             return True
-        # A valid 201 is locally known presence until a newer authoritative
-        # refresh reconciles it. Ignoring a newer empty snapshot would turn
-        # disposable local evidence into a sticky remote fact.
+        # A valid 201 protects against duplicate creates until cache-qualified
+        # reconciliation retires its record. A later HTTP 200 receipt alone can
+        # still contain a pre-create snapshot, and cannot supersede this fact.
         return any(
             intent.character_id == character_id
             and intent.content == content
             and intent.status == "success"
-            and self._local_evidence_is_current_locked(intent)
             for intent in self._state.intents
         )
 
@@ -1298,6 +1294,26 @@ class FittingsController:
                     if readiness:
                         status, error = readiness
                         return self._copy_row(pair, status, error), ""
+                    # Reserve room for a possible success before persisting an
+                    # in_flight intent, not merely when preflighting the batch.
+                    # The copy gate serializes creates; unrelated unresolved
+                    # intents are exempt and must not become a global quota.
+                    if (
+                        store.protected_success_count(self._state.intents)
+                        >= contracts.MAX_OPERATION_RECORDS
+                    ):
+                        return (
+                            self._copy_row(
+                                pair,
+                                "unavailable",
+                                "Local copy-safety evidence is full. Wait at least "
+                                f"{contracts.READ_CACHE_SECONDS} seconds after the latest copy, "
+                                "then refresh characters with successful "
+                                "copies before trying again. Cached or failed refreshes may "
+                                "require another refresh.",
+                            ),
+                            "",
+                        )
                     assert entry is not None and entry.deployment_template is not None
                     write_intent = WriteIntent(
                         operation_id=operation_id,
@@ -2046,6 +2062,18 @@ class FittingsController:
                     "This fitting is still present on a character.",
                 )
                 return False
+            if any(
+                item.library_entry_id == entry_id and item.status == "success"
+                for item in self._state.intents
+            ):
+                self._alert(
+                    "warning",
+                    "Fitting not deleted",
+                    "A successful copy still protects this fitting. Wait at least "
+                    f"{contracts.READ_CACHE_SECONDS} seconds after copying, then refresh "
+                    "that character before deleting it.",
+                )
+                return False
             if not any(item.id == entry_id for item in self._state.entries):
                 return False
             entries = tuple(
@@ -2055,11 +2083,9 @@ class FittingsController:
                 for item in self._state.entries
                 if item.id != entry_id
             )
-            # Completed write-intent HISTORY may reference a deleted entry
-            # once the copy engine exists; unresolved intents are never
-            # pruned, but a terminal record naming a now-gone entry cannot
-            # pass save validation and would otherwise wedge every future
-            # save.
+            # Protective successes refuse deletion above; unresolved intents
+            # retain their content-only recovery path. Prune only failed
+            # diagnostic records, whose now-gone entry cannot pass validation.
             intents = tuple(
                 item
                 for item in self._state.intents

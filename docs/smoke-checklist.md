@@ -5245,3 +5245,81 @@ behaviour a lexical guard cannot reach.
       its title and accessible name read `Settings — update available`, and
       the dot survives opening Settings (the `.active` state does not erase
       it).
+
+## Architecture remediation integration — native follow-up
+
+These items are **unverified until exercised on Windows/WebView2**. Passing
+pytest, the Node runtime harnesses, or a plain-browser render does not check
+these boxes. Record the candidate SHA, Windows/display-scaling configuration,
+scenario and observed result. Use disposable state, recording/profile trees,
+and scripted transports or development fault injection for failure/race cases.
+No live uploads, fitting writes or real profile overwrites are required here.
+Never move or resize a real EVE client window.
+
+- [ ] **Refused settings remain refused.** Inject a settings persistence failure
+      while changing privacy and a folder. The control returns to its last
+      accepted value, the error is inline, and the rejected value does not
+      change upload privacy or rebind the watcher. Restart against the disposable
+      state and confirm the previous saved value remains in effect.
+- [ ] **Acknowledgements do not erase drafts.** Accept Category 22, submit an
+      invalid value, and confirm refusal restores 22 even while focused. Repeat
+      with a delayed accepted retry followed by a newer draft: the draft remains
+      and the obsolete refusal clears. Another field's refusal and newer
+      folder/webhook blur warnings must survive that acknowledgement.
+- [ ] **Preview reads see committed preferences.** Delay and then fail a
+      settings save while the native preview pump is active. Configuration
+      callbacks keep returning committed values without waiting on persistence;
+      rejected draft preferences never take effect. A successful retry publishes
+      the new preferences without blocking the pump on disk work.
+- [ ] **Fleet delivery cannot stall telemetry.** Delay Fleet presentation through
+      a controlled development seam while telemetry continues. Other subscribers
+      keep receiving updates. Release it: display catches up to the latest state
+      and admitted seen-character history obeys the existing roster/cap policy.
+- [ ] **Fleet replacement rejects stale continuations.** Disable/re-enable or
+      close/recreate the bar with old delivery held. Release old work and confirm
+      it cannot redirect to the replacement window. Exercise Quit with stalled
+      delivery; the presentation-worker stop must remain bounded rather than
+      waiting indefinitely for that delivery. Already-entered calls are not
+      assumed cancellable.
+- [ ] **Recording scans cannot roll the list back.** With distinct disposable
+      folders, delay an old scan, switch folders, then release it. Only the newer
+      accepted folder appears. Repeat a same-folder refresh with selection and
+      a rename; old results must not restore obsolete row IDs or the old name.
+- [ ] **Probe ownership survives refresh.** Delay an old drain after entry, start
+      replacement work, then release it. Replacement duration answers arrive;
+      the old callback cannot consume its queue or stop its scheduler. A late
+      background answer cannot replace a definitive answer for the same row.
+- [ ] **Completed-upload evidence does not wait on painting.** With a simulated
+      successful upload, hold an unrelated row publication. Inspect the temporary
+      link store before releasing it: the URL is already saved, including for an
+      obsolete original row ID. Repeat across rename; the URL follows the correct
+      captured file, while stale IDs cannot repaint replacement rows.
+- [ ] **Authority cleanup stays ordered.** With scripted identities, overlap
+      authority membership changes with participant reconciliation/refresh. Once
+      removal completes, later stale work must not resurrect that character's
+      Skills/Fittings data. No live account removal is needed for this case.
+- [ ] **Fitting successes retain protection against cached absence.** Using a
+      scripted successful write and subsequent reads, verify 304, cached and
+      too-early absent responses do not permit a duplicate create or discard
+      protective success evidence. Exercise the qualifying full-read rule in
+      `docs/reference/fittings-write-evidence.md`, including restart and capacity
+      refusal, without sending a real fitting POST.
+- [ ] **Profiles rechecks safety after confirmation.** In a disposable profile
+      tree, make a selected target unsafe while the confirmation is open, then
+      accept. Confirm the unsafe target is not modified and the refusal is
+      reported; stale pre-confirmation eligibility must not authorize a write.
+- [ ] **Skills survives route/read/push races.** Delay initial hydration, leave
+      and return, then deliver replies in the old order. The screen must recover
+      rather than remain fetching. A newer push must survive an older read or
+      null/failure response; detail selection must not revert to an old request.
+- [ ] **Supplemental read failure does not become core failure.** Script valid
+      Skills and queue responses followed by malformed attributes JSON or HTTP
+      framing. Core readiness updates, whole-character/progress errors stay empty,
+      and the retained attributes remain unconfirmed with a persisted supplemental
+      error. Also check ordinary Skills/Fittings GET refresh and endpoint denial;
+      endpoint 401/403 must not invalidate an otherwise valid shared grant.
+
+**Known separate limitation:** the pre-existing refresh-during-foreground-probe
+captured-duration gap (coordinator follow-up E-F1) is not fixed by the same-row
+precedence check above. A green run here must not be reported as proving captured
+upload-job, replacement-row and persisted-duration agreement across snapshots.

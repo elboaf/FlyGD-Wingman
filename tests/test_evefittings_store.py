@@ -291,6 +291,65 @@ def test_completed_history_prunes_oldest_first_but_unresolved_never_prunes(tmp_p
     assert unresolved_ids == [f"unknown-{index}" for index in range(205)]
 
 
+@pytest.mark.parametrize(
+    "success_count",
+    [contracts.MAX_OPERATION_RECORDS + delta for delta in (-1, 0, 1)],
+)
+@pytest.mark.parametrize(
+    "age", [timedelta(0), contracts.COMPLETED_OPERATION_MAX_AGE + timedelta(days=1)]
+)
+def test_success_evidence_survives_compaction_save_load_and_history_bounds(
+    tmp_path, success_count, age
+):
+    entry = library_entry()
+    successes = tuple(
+        intent(
+            "success",
+            operation_id=f"success-{index}",
+            entry=entry,
+            created_utc=NOW - age,
+        )
+        for index in range(success_count)
+    )
+    # Unresolved records are NOT charged against the terminal-history limit.
+    unknowns = tuple(
+        intent(
+            "unknown",
+            operation_id=f"unknown-{index}",
+            entry=entry,
+            created_utc=NOW - age,
+        )
+        for index in range(contracts.MAX_OPERATION_RECORDS + 1)
+    )
+    failed = tuple(
+        intent("failed", operation_id=f"failed-{index:03}", entry=entry)
+        for index in range(contracts.MAX_OPERATION_RECORDS)
+    )
+    state = FittingsState(entries=(entry,), intents=(*successes, *unknowns, *failed))
+    expected_failures = max(0, contracts.MAX_OPERATION_RECORDS - success_count)
+    expected = (
+        *successes,
+        *unknowns,
+        *(failed[-expected_failures:] if expected_failures else ()),
+    )
+    compacted = store.bounded_operation_history(state, NOW)
+    assert compacted.intents == expected
+    path = tmp_path / "evidence.json"
+    save_fittings(path, state, now=lambda: NOW)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert len(document["intents"]) == len(expected)
+    loaded, warnings = load_fittings(path)
+    assert warnings == ()
+    assert loaded.intents == expected
+
+    # Exercise load pruning independently of the save-side pruning above.
+    document["intents"] = [store._intent_to_dict(item) for item in state.intents]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    loaded, warnings = load_fittings(path)
+    assert warnings == ()
+    assert loaded.intents == expected
+
+
 def test_save_builds_the_supersession_index_once(tmp_path, monkeypatch):
     path = tmp_path / "eve_fittings.json"
     entries = tuple(library_entry(entry_id=f"fit-{index}") for index in range(300))

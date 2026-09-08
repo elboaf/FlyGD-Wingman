@@ -579,23 +579,18 @@ def test_concurrent_partial_forgets_keep_every_blocked_id(tmp_path):
     )
     authority.register_participant(application.FITTINGS, Participant())
 
-    original = authority._cleanup_verification_for_removal
+    # Membership transactions now serialize through cleanup bookkeeping. Race
+    # their entry instead of requiring both to be inside that transaction; the
+    # substantive guarantee is still that neither blocked ID is overwritten.
     barrier = threading.Barrier(2)
-
-    def split_removal_update(capability, character_id, result):
-        verification = original(capability, character_id, result)
-        if capability == application.SKILLS:
-            barrier.wait(timeout=2)
-        return verification
-
-    authority._cleanup_verification_for_removal = split_removal_update
     results = {}
-    first = threading.Thread(
-        target=lambda: results.setdefault(42, authority.forget(42))
-    )
-    second = threading.Thread(
-        target=lambda: results.setdefault(43, authority.forget(43))
-    )
+
+    def forget(character_id):
+        barrier.wait(timeout=2)
+        results[character_id] = authority.forget(character_id)
+
+    first = threading.Thread(target=forget, args=(42,))
+    second = threading.Thread(target=forget, args=(43,))
 
     first.start()
     second.start()

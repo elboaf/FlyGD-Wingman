@@ -2321,6 +2321,26 @@ class ProfilesController:
                     backup=self._eve_auto_backup,
                 )
             else:
+                # EVE can start while the confirmation is on screen. Recheck
+                # before any selective-copy reads, backups, or writes begin.
+                try:
+                    running = self._ports.strict_client_running()
+                except Exception:
+                    logger.exception("Could not verify that EVE is closed")
+                    self._ports.alert(
+                        "error",
+                        "Copy not started",
+                        "Wingman could not verify that EVE is closed. "
+                        "Close EVE and retry.",
+                    )
+                    return
+                if running:
+                    self._ports.alert(
+                        "error",
+                        "Copy not started",
+                        "EVE is running. Close EVE and retry.",
+                    )
+                    return
                 report = evesettings_ops.copy_selected_to_targets(
                     source,
                     targets,

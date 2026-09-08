@@ -84,14 +84,14 @@ MSG_CLEANUP_SAVE_FAILED = "Could not save Skills cleanup."
 MSG_ATTRIBUTES_UNREADABLE = "EVE returned no usable character attributes."
 
 
-def _bounded_error(exc: BaseException) -> str:
-    """A roster-row message for an exception nothing else classified.
+def _bounded_error(value: object) -> str:
+    """A roster-row message for a failure nothing else classified.
 
-    The exception text is kept because it is the only diagnostic the user
+    The failure text is kept because it is the only diagnostic the user
     will see -- the log has the traceback, the row has this -- but it is
     capped, since a decode error can quote the body it choked on.
     """
-    text = str(exc) or exc.__class__.__name__
+    text = str(value) or value.__class__.__name__
     return f"{MSG_REFRESH_FAILED}: {text}"[:MAX_ERROR_CHARS]
 
 
@@ -1230,14 +1230,13 @@ class SkillsController:
             try:
                 return self._refresh_one_leased(character_id)
             except Exception as exc:
-                # One character's bad reply must not abort the pass for
-                # every character behind it. _authorised_get calls the
-                # client bare, and eveesi raises ValueError for an oversize
-                # or malformed body rather than returning an error
-                # response; before this clause that escaped to
-                # _refresh_worker's catch-all, which logged "refresh
-                # failed", left the remaining characters unrefreshed and
-                # showed nothing on the row that caused it. Mirrors
+                # Expected transport, size and decode failures are normalized
+                # at the authenticated adapter seam. This guard still isolates
+                # parse/commit failures plus programmer or otherwise
+                # unclassified per-character errors after that seam; without
+                # it, one bad character reaches the worker catch-all, leaves
+                # every character behind it unrefreshed and records nothing on
+                # the row that caused the failure. Mirrors
                 # evefittings.controller._refresh_one.
                 message = _bounded_error(exc)
                 logger.warning(
@@ -1290,66 +1289,31 @@ class SkillsController:
             character_id, skills, queue, attributes, attributes_error
         )
 
-    def _access_token(self, character_id: int, *, rejected=None):
-        """Request one Skills-capable token from shared authority.
-
-        A token may carry a non-empty persistence warning. Presence of the
-        token, not an empty error string, decides success; the warning stays
-        visible through the immutable authority row joined into the payload.
-        """
-        result = self._authority.access_token(
-            character_id,
-            application.SKILLS,
-            rejected_token=rejected,
+    def _authorised_get(self, character_id: int, path: str, etag: str):
+        """Apply Skills wording to the shared authenticated GET outcome."""
+        result = esi_mod.authenticated_get(
+            self._authority,
+            self._client,
+            character_id=character_id,
+            capability=application.SKILLS,
+            path=path,
+            etag=etag or None,
         )
-        error = result.error
-        if result.token is None and result.grant_invalidated:
+        if result.response is not None:
+            return result.response, "", False
+        if result.endpoint_denied:
+            return None, MSG_REAUTH, False
+        if result.authority_invalidated:
             error = (
                 MSG_OWNER_CHANGE_DETECTED
-                if result.reason == ACCESS_REASON_OWNER_CHANGED
+                if result.authority_reason == ACCESS_REASON_OWNER_CHANGED
                 else MSG_REAUTH
             )
-        return result.token, error, result.grant_invalidated
-
-    def _authorised_get(self, character_id: int, path: str, etag: str):
-        """One authorised GET with exactly one 401 retry.
-
-        Returns (response, error, definitive). `response` is None on
-        failure; on success it is either a 200 or a 304, and the caller must
-        treat both as "this half is current".
-        """
-        token, error, definitive = self._access_token(character_id)
-        if token is None:
-            return None, error, definitive
-
-        response = self._client.get(path, token=token, etag=etag or None)
-        if response.status == 401:
-            # One retry, and only one. A token minted seconds ago and
-            # rejected again is not a clock-skew problem, it is a revoked
-            # grant, and retrying forever would spend the error-limit
-            # budget discovering that repeatedly.
-            token, error, definitive = self._access_token(character_id, rejected=token)
-            if token is None:
-                return None, error, definitive
-            response = self._client.get(path, token=token, etag=etag or None)
-            if response.status == 401:
-                # An endpoint rejection is not evidence that the shared grant
-                # is invalid. Authority alone classifies refresh/JWT outcomes.
-                return None, MSG_REAUTH, False
-
-        if response.status == 403:
-            # Scope claims remain authoritative. This endpoint error belongs
-            # to Skills and must not delete a grant Fittings may also use.
-            return None, MSG_REAUTH, False
-        if not (response.ok or response.not_modified):
-            # Includes esi.py's synthetic 503 for retry exhaustion, which
-            # did not necessarily come from ESI -- transient either way.
-            return (
-                None,
-                f"ESI request failed ({response.status}): {response.error}",
-                False,
-            )
-        return response, "", False
+            return None, error, True
+        if result.authority_error:
+            return None, result.error[:MAX_ERROR_CHARS], False
+        logger.warning("Skills ESI read failed for %s: %s", character_id, result.error)
+        return None, _bounded_error(result.error), False
 
     def _commit_success(
         self, character_id: int, skills, queue, attributes, attributes_error: str

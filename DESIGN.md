@@ -10,17 +10,23 @@ here that a regex cannot see is the reason this file exists as well.
 
 The stack is plain HTML, CSS and ES5-flavoured JavaScript in a WebView2
 window (pywebview), Windows only, dark only. No framework, no build step,
-no bundler. Focused Node harnesses now execute selected production modules against
+no bundler. Focused Node harnesses execute selected production modules against
 DOM/bridge doubles, including setup sharing's owner and route wiring. They do not
 render CSS or exercise Windows/WebView2.
 
 
 ## The one rule that explains most of the others
 
-**A rendered browser check is not Windows/WebView2 acceptance.** The original
-rule here predated the focused Node harnesses and isolated Chromium checks.
-`pytest` proves Python and selected JavaScript lifecycle behavior, with most web
-conventions still checked lexically; it does not see CSS layout. Browser geometry
+**Only a real Windows/WebView2 run proves the shipped window.** The Node
+smoke runner loads every page module; focused runtime harnesses also execute
+production handlers with controlled DOM/bridge doubles and delayed replies,
+including Settings, Skills and setup sharing. They catch registration and
+response-ordering failures, not layout, focus behavior in WebView2, or native
+lifecycle behavior. `pytest` proves Python and selected JavaScript lifecycle
+behavior, with most web conventions still checked lexically; it does not render
+the page.
+
+**A rendered browser check is not Windows/WebView2 acceptance.** Browser geometry
 and interaction checks must be recorded separately from installed Windows smoke
 results. The historical floor measurements below retain that distinction.
 
@@ -138,7 +144,7 @@ remains open.
 
 **This does not resolve the "Unresolved" question directly above, and is
 not offered as a substitute for it.** This file's own opening rule is that
-nothing renders this page except a real Windows machine; headless
+only a real Windows/WebView2 run proves the shipped window; headless
 Chromium is not WebView2 and cannot reproduce Windows' DPI rounding — the
 fact that makes an 840 logical minimum measure as 839 CSS px at 200% is a
 WinForms/Windows behaviour (`ui/window.py`'s `MinimumSize` /
@@ -596,9 +602,18 @@ each: **refused** (revert the control, explain inline), **applied but not
 persisted** (leave the control, warn it will not survive a restart),
 **done**.
 
-**A refusal reverts the control. A failed write does not.** The setting
-really did take effect for the session; snapping the control back would
-misreport it.
+**A rolled-back write is a refusal, not a session-only success.**
+`settings.update()` restores the previous settings when persistence fails;
+those endpoints must return `applied: false, persisted: false` and must not
+run their dependent runtime effects. Reserve **applied but not persisted**
+for an operation whose effect really remains active after the failed write.
+
+**Revert to the last acknowledged submission, not a stale hydration value.**
+Each field serializes its writes and tracks its accepted baseline separately
+from newer drafts. A refusal restores that baseline only if the request
+still owns the control; an older reply must not erase newer typing or a
+queued submission. A successful retry retires its obsolete refusal without
+erasing another field's error or replacing a newer draft warning.
 
 **Discrete controls commit on change. Free text does not commit on blur.**
 Folders and the webhook commit on Enter, or via an explicit affordance

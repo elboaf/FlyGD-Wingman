@@ -162,6 +162,11 @@ class AuthorityController:
         self._save_authority = save_authority
 
         self._lock = threading.RLock()
+        # Membership commits and their full-roster projections are one ordered
+        # transaction. Take lifecycle -> roster -> brief authority sections;
+        # release authority before feature hooks (Skills reads it under its own
+        # lock). Reads, token refresh and shutdown must never wait on this gate.
+        self._roster_gate = threading.RLock()
         if authority is None:
             loaded, warnings = state_mod.load_authority(self._state_path)
             if loaded is None:
@@ -605,7 +610,7 @@ class AuthorityController:
         if wanted is None:
             return MutationResult(False, False, "Unknown EVE character.")
         gate = self._lifecycle_gate(wanted)
-        with gate:
+        with gate, self._roster_gate:
             participants = self._participant_slots_snapshot()
             participants_by_capability = dict(participants)
             refusals = []
@@ -676,27 +681,28 @@ class AuthorityController:
                     continue
                 verification = self._blocked_unavailable_cleanup(capability, wanted)
                 cleanup_errors.append(verification.error)
-            self._changed_safely()
-            if cleanup_errors:
-                return MutationResult(True, False, cleanup_errors[0])
-            return MutationResult(True, True, "")
+        self._changed_safely()
+        if cleanup_errors:
+            return MutationResult(True, False, cleanup_errors[0])
+        return MutationResult(True, True, "")
 
     def register_participant(
         self, capability: str, participant: CharacterParticipant
     ) -> CleanupVerification:
         """Register one named feature owner and reconcile its derived roster."""
         self._capability_scopes(capability)
-        with self._lock:
-            existing = self._participants.get(capability)
-            if existing is not None:
-                raise ValueError(
-                    f"EVE capability {capability!r} is already registered."
-                )
-            self._participants[capability] = participant
-            roster = tuple(self._snapshot(row) for row in self._state.characters)
-        self._reconcile_participant(capability, participant, roster)
-        with self._lock:
-            return self._aggregate_cleanup_verification_locked()
+        with self._roster_gate:
+            with self._lock:
+                existing = self._participants.get(capability)
+                if existing is not None:
+                    raise ValueError(
+                        f"EVE capability {capability!r} is already registered."
+                    )
+                self._participants[capability] = participant
+                roster = tuple(self._snapshot(row) for row in self._state.characters)
+            self._reconcile_participant(capability, participant, roster)
+            with self._lock:
+                return self._aggregate_cleanup_verification_locked()
 
     def shutdown(self) -> None:
         """Stop accepting token work and cancel a pending browser authorization."""
@@ -714,7 +720,7 @@ class AuthorityController:
         scopes: frozenset[str],
     ) -> None:
         try:
-            roster = self._run_auth(attempt=attempt, scopes=scopes)
+            self._run_auth(attempt=attempt, scopes=scopes)
         except loopback_mod.CallbackCancelled:
             logger.info("EVE authorization cancelled")
             self._finish_attempt(attempt, "")
@@ -747,9 +753,6 @@ class AuthorityController:
                 self._alert("warning", "Sign-in failed", body)
             return
 
-        participants = self._participant_slots_snapshot()
-        for capability, participant in participants:
-            self._reconcile_participant(capability, participant, roster)
         self._changed_safely()
 
     def _run_auth(
@@ -757,7 +760,7 @@ class AuthorityController:
         *,
         attempt: _AuthorizationAttempt,
         scopes: frozenset[str],
-    ) -> tuple[AuthorityCharacter, ...]:
+    ) -> None:
         pkce = self._sso.generate_pkce()
         with self._listener_factory(
             host=application.REDIRECT_HOST,
@@ -784,7 +787,7 @@ class AuthorityController:
             required_scopes=scopes,
             key_source=self._keys(),
         )
-        return self._commit_authorization(
+        self._commit_authorization(
             attempt=attempt,
             identity=identity,
             token_set=token_set,
@@ -796,14 +799,15 @@ class AuthorityController:
         attempt: _AuthorizationAttempt,
         identity,
         token_set,
-    ) -> tuple[AuthorityCharacter, ...]:
+    ) -> None:
         character_id = identity.character_id
-        known_generations = dict(attempt.known_generations)
         gate = self._lifecycle_gate(character_id)
         with gate:
-            unknown_verification = None
-            if character_id not in known_generations:
-                unknown_verification = self._verify_unknown_character(character_id)
+            if character_id not in dict(attempt.known_generations):
+                with self._roster_gate:
+                    with self._lock:
+                        self._check_authorization_locked(attempt)
+                    self._verify_unknown_character_under_roster_gate(character_id)
             try:
                 blob = self._wrap_token(token_set.refresh_token)
             except Exception as exc:
@@ -811,105 +815,122 @@ class AuthorityController:
                     "Could not save the sign-in", str(exc)
                 ) from exc
 
-            with self._lock:
+            # Wrapping can invoke external code; membership and cleanup may
+            # have changed while it ran. Accept only after checking again under
+            # the roster gate, and keep that gate through feature persistence.
+            with self._roster_gate:
+                self._commit_roster_authorization(attempt, identity, token_set, blob)
+
+    def _check_authorization_locked(self, attempt: _AuthorizationAttempt) -> None:
+        if (
+            self._active_attempt is not attempt
+            or self._cancellation_generation != attempt.cancellation_generation
+            or attempt.cancelled.is_set()
+            or self._stopping.is_set()
+        ):
+            raise loopback_mod.CallbackCancelled()
+        if self._generation_roster_locked() != attempt.known_generations:
+            body = (
+                "The character roster changed: a character was forgotten "
+                "or is no longer at the authorisation generation that "
+                "started this sign-in."
+            )
+            self._finalize_attempt_locked(attempt, body)
+            raise _AuthorizationFailure("Sign-in not completed", body, finalized=True)
+
+    def _commit_roster_authorization(self, attempt, identity, token_set, blob) -> None:
+        """Caller owns the character lifecycle and roster gates, in that order."""
+        character_id = identity.character_id
+        with self._lock:
+            self._check_authorization_locked(attempt)
+        unknown_verification = None
+        if character_id not in dict(attempt.known_generations):
+            unknown_verification = self._verify_unknown_character_under_roster_gate(
+                character_id
+            )
+        # Cleanup hooks can stall. Cancellation and grant invalidation remain
+        # independent of the roster gate, so recheck at the durable commit point.
+        with self._lock:
+            self._check_authorization_locked(attempt)
+            current = self._find_locked(character_id)
+            generation = self._generations.get(character_id, 0)
+            if current is None:
                 if (
-                    self._active_attempt is not attempt
-                    or self._cancellation_generation != attempt.cancellation_generation
-                    or attempt.cancelled.is_set()
+                    unknown_verification is not None
+                    and not unknown_verification.applied
                 ):
-                    raise loopback_mod.CallbackCancelled()
-
-                if self._generation_roster_locked() != attempt.known_generations:
-                    body = (
-                        "The character roster changed: a character was forgotten "
-                        "or is no longer at the authorisation generation that "
-                        "started this sign-in."
-                    )
+                    body = unknown_verification.error or "Reconcile first."
                     self._finalize_attempt_locked(attempt, body)
                     raise _AuthorizationFailure(
                         "Sign-in not completed",
                         body,
                         finalized=True,
                     )
-
-                current = self._find_locked(character_id)
-                generation = self._generations.get(character_id, 0)
-                if current is None:
-                    if (
-                        unknown_verification is not None
-                        and not unknown_verification.applied
-                    ):
-                        body = unknown_verification.error or "Reconcile first."
-                        self._finalize_attempt_locked(attempt, body)
-                        raise _AuthorizationFailure(
-                            "Sign-in not completed",
-                            body,
-                            finalized=True,
-                        )
-                    if len(self._state.characters) >= state_mod.MAX_CHARACTERS:
-                        body = (
-                            f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
-                            "characters. Forget one before adding another."
-                        )
-                        self._finalize_attempt_locked(attempt, body)
-                        raise _AuthorizationFailure(
-                            "Too many characters",
-                            body,
-                            finalized=True,
-                        )
-
-                stored_owner = current.owner_hash if current is not None else ""
-                if current is not None and not _owner_matches(
-                    stored_owner,
-                    identity.owner_hash,
-                ):
+                if len(self._state.characters) >= state_mod.MAX_CHARACTERS:
                     body = (
-                        "Character ownership changed. Forget the existing character "
-                        "before authenticating it again."
+                        f"Wingman stores at most {state_mod.MAX_CHARACTERS} "
+                        "characters. Forget one before adding another."
                     )
                     self._finalize_attempt_locked(attempt, body)
                     raise _AuthorizationFailure(
-                        "Sign-in not completed",
+                        "Too many characters",
                         body,
                         finalized=True,
                     )
 
-                row = state_mod.AuthorityCharacter(
-                    character_id=character_id,
-                    character_name=identity.name,
-                    owner_hash=_merged_owner(stored_owner, identity.owner_hash),
-                    scopes=tuple(sorted(identity.scopes)),
-                    authenticated_utc=self._now(),
-                    needs_reauth=False,
-                    refresh_token_blob=blob,
+            stored_owner = current.owner_hash if current is not None else ""
+            if current is not None and not _owner_matches(
+                stored_owner,
+                identity.owner_hash,
+            ):
+                body = (
+                    "Character ownership changed. Forget the existing character "
+                    "before authenticating it again."
                 )
-                candidate = self._with_row_locked(row)
-                try:
-                    self._save_authority(self._state_path, candidate)
-                except (OSError, ValueError):
-                    logger.warning("Could not persist EVE authorization", exc_info=True)
-                    body = (
-                        "The sign-in was not saved and the previous authority remains "
-                        "in use."
-                    )
-                    self._finalize_attempt_locked(attempt, body)
-                    raise _AuthorizationFailure(
-                        "Could not save the sign-in",
-                        body,
-                        finalized=True,
-                    )
+                self._finalize_attempt_locked(attempt, body)
+                raise _AuthorizationFailure(
+                    "Sign-in not completed",
+                    body,
+                    finalized=True,
+                )
 
-                self._state = candidate
-                self._persistence_errors.pop(character_id, None)
-                self._refresh_tokens.pop(character_id, None)
-                self._access_tokens[character_id] = (
-                    token_set.access_token,
-                    self._now() + timedelta(seconds=max(0, int(token_set.expires_in))),
+            row = state_mod.AuthorityCharacter(
+                character_id=character_id,
+                character_name=identity.name,
+                owner_hash=_merged_owner(stored_owner, identity.owner_hash),
+                scopes=tuple(sorted(identity.scopes)),
+                authenticated_utc=self._now(),
+                needs_reauth=False,
+                refresh_token_blob=blob,
+            )
+            candidate = self._with_row_locked(row)
+            try:
+                self._save_authority(self._state_path, candidate)
+            except (OSError, ValueError):
+                logger.warning("Could not persist EVE authorization", exc_info=True)
+                body = (
+                    "The sign-in was not saved and the previous authority remains "
+                    "in use."
                 )
-                self._generations.setdefault(character_id, generation)
-                roster = tuple(self._snapshot(row) for row in self._state.characters)
-                self._finalize_attempt_locked(attempt, "")
-        return roster
+                self._finalize_attempt_locked(attempt, body)
+                raise _AuthorizationFailure(
+                    "Could not save the sign-in",
+                    body,
+                    finalized=True,
+                )
+
+            self._state = candidate
+            self._persistence_errors.pop(character_id, None)
+            self._refresh_tokens.pop(character_id, None)
+            self._access_tokens[character_id] = (
+                token_set.access_token,
+                self._now() + timedelta(seconds=max(0, int(token_set.expires_in))),
+            )
+            self._generations.setdefault(character_id, generation)
+            roster = tuple(self._snapshot(row) for row in self._state.characters)
+            self._finalize_attempt_locked(attempt, "")
+        for capability, participant in self._participant_slots_snapshot():
+            self._reconcile_participant(capability, participant, roster)
 
     def _finish_attempt(
         self,
@@ -1110,31 +1131,37 @@ class AuthorityController:
         if wanted is None:
             return MutationResult(False, False, "Unknown EVE character.")
         gate = self._lifecycle_gate(wanted)
-        with gate:
-            with self._lock:
-                roster = tuple(self._snapshot(row) for row in self._state.characters)
-                participants = tuple(
-                    (capability, participant)
-                    for capability, participant in self._participants.items()
-                    if participant is not None
-                    and (
-                        not self._cleanup_verification[capability].verified
-                        or self._cleanup_verification[capability].blocked_character_ids
-                    )
+        with gate, self._roster_gate:
+            return self._verify_unknown_character_under_roster_gate(wanted)
+
+    def _verify_unknown_character_under_roster_gate(
+        self, wanted: int
+    ) -> MutationResult:
+        """Already gated — never acquire another lifecycle under the roster gate."""
+        with self._lock:
+            roster = tuple(self._snapshot(row) for row in self._state.characters)
+            participants = tuple(
+                (capability, participant)
+                for capability, participant in self._participants.items()
+                if participant is not None
+                and (
+                    not self._cleanup_verification[capability].verified
+                    or self._cleanup_verification[capability].blocked_character_ids
                 )
-            for capability, participant in participants:
-                self._reconcile_participant(capability, participant, roster)
-            with self._lock:
-                verification = self._aggregate_cleanup_verification_locked()
-            if not verification.verified:
-                return MutationResult(
-                    False,
-                    False,
-                    verification.error or "Reconcile first.",
-                )
-            if wanted in verification.blocked_character_ids:
-                return MutationResult(False, False, "Reconcile first.")
-            return MutationResult(True, True, "")
+            )
+        for capability, participant in participants:
+            self._reconcile_participant(capability, participant, roster)
+        with self._lock:
+            verification = self._aggregate_cleanup_verification_locked()
+        if not verification.verified:
+            return MutationResult(
+                False,
+                False,
+                verification.error or "Reconcile first.",
+            )
+        if wanted in verification.blocked_character_ids:
+            return MutationResult(False, False, "Reconcile first.")
+        return MutationResult(True, True, "")
 
     @staticmethod
     def _notify_participants(participants, hook: str, character_id: int) -> None:

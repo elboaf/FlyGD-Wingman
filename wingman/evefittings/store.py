@@ -571,22 +571,41 @@ def _intent_identity(intent: WriteIntent) -> tuple[str, int, CanonicalContent]:
     return intent.operation_id, intent.character_id, intent.content
 
 
+def protected_success_count(intents: tuple[WriteIntent, ...]) -> int:
+    # Success records remain protective until the controller retires them with
+    # a cache-qualified 200. Neither their age nor snapshot receipt time proves
+    # absence. This also conservatively retains successes from older binaries.
+    return sum(intent.status == "success" for intent in intents)
+
+
 def _bounded_completed_history(
     intents: tuple[WriteIntent, ...], now: datetime
 ) -> tuple[WriteIntent, ...]:
     cutoff = now - contracts.COMPLETED_OPERATION_MAX_AGE
+    history_slots = max(
+        0, contracts.MAX_OPERATION_RECORDS - protected_success_count(intents)
+    )
     completed = sorted(
         (
             intent
             for intent in intents
             if not intent.unresolved
+            and intent.status != "success"
             and (intent.completed_utc or intent.created_utc) >= cutoff
         ),
         key=lambda intent: (intent.created_utc, intent.operation_id),
-    )[-contracts.MAX_OPERATION_RECORDS :]
-    keep = {id(intent) for intent in completed}
+    )
+    keep = (
+        {id(intent) for intent in completed[-history_slots:]}
+        if history_slots
+        else set()
+    )
+    # Over-limit input is preserved, not repaired by destroying safety evidence.
+    # Unresolved records keep their independent exemption from BOTH bounds.
     return tuple(
-        intent for intent in intents if intent.unresolved or id(intent) in keep
+        intent
+        for intent in intents
+        if intent.unresolved or intent.status == "success" or id(intent) in keep
     )
 
 

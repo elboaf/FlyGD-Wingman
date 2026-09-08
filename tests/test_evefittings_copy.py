@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from wingman.eveesi import MutationResponse
+from wingman.eveesi import EsiResponse, MutationResponse
 from wingman.evefittings import contracts
 from wingman.evefittings.controller import FittingsController
 from wingman.evefittings.model import (
@@ -156,6 +156,18 @@ class FakeClient:
         self.post_calls = []
         self.authority = None
         self.on_post = None
+        self.get_calls = []
+        self.get_reply = EsiResponse(
+            200, [], "", '"snapshot"', "GET", "/characters/42/fittings"
+        )
+        self.on_get = None
+
+    def get(self, path, *, token, etag=None):
+        assert self.authority.active_character == int(path.split("/")[2])
+        self.get_calls.append((path, etag))
+        if self.on_get is not None:
+            self.on_get()
+        return self.get_reply
 
     def post_once(self, path, body, *, token):
         assert self.authority.active_character == int(path.split("/")[2])
@@ -192,6 +204,7 @@ def make_controller(
     replies=(),
     save_state=save_fittings,
     progress=None,
+    now=lambda: NOW,
 ):
     path = tmp_path / "eve_fittings.json"
     save_fittings(path, state)
@@ -203,7 +216,7 @@ def make_controller(
         names_path=tmp_path / "eve_fitting_names.json",
         authority=authority,
         client=client,
-        now=lambda: NOW,
+        now=now,
         save_state=save_state,
         progress=progress or (lambda payload: None),
     )
@@ -639,6 +652,398 @@ def test_ordinary_four_hundred_persists_outcome_before_the_next_pair(tmp_path):
         "post:2",
         "save:success",
     ]
+
+
+@pytest.mark.parametrize("etag", ['"cached-before-post"', ""])
+def test_cached_empty_200_cannot_reopen_copy_after_success_even_after_restart(
+    tmp_path, etag
+):
+    clock = [NOW]
+    controller, authority, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation(), mutation()], now=lambda: clock[0]
+    )
+    first = controller.start_copy(ready_ticket(controller))
+    assert first["results"][0]["status"] == "success"
+    assert controller.preflight_copy(["fit-0"], [42])["pairs"][0]["status"] == "present"
+    saved_success = load_fittings(path)[0].intents
+    client.get_reply = replace(client.get_reply, etag=etag)
+    clock[0] += timedelta(seconds=2)
+    assert controller.refresh([42])["ok"] is True
+    second = controller.preflight_copy(["fit-0"], [42])
+    controller.start_copy(second["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert second["pairs"][0]["status"] == "present"
+    assert load_fittings(path)[0].intents == saved_success
+
+    restarted = FittingsController(
+        state_path=path,
+        names_path=tmp_path / "names.json",
+        authority=authority,
+        client=client,
+        now=lambda: clock[0],
+    )
+    authority.feature_lock = restarted._lock
+    ticket = restarted.preflight_copy(["fit-0"], [42])
+    restarted.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert ticket["pairs"][0]["status"] == "present"
+    assert restarted.state.intents == saved_success
+
+
+@pytest.mark.parametrize("status", [200, 304])
+@pytest.mark.parametrize("etag", ['"before-post"', ""])
+def test_only_post_horizon_full_content_releases_success_for_explicit_copy(
+    tmp_path, status, etag
+):
+    clock = [NOW]
+    controller, _, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation(), mutation()], now=lambda: clock[0]
+    )
+    controller.start_copy(ready_ticket(controller))
+    clock[0] += timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    client.get_reply = replace(client.get_reply, status=status, etag=etag)
+    assert controller.refresh([42])["ok"] is True
+    assert client.get_calls[-1][1] is None
+    ticket = controller.preflight_copy(["fit-0"], [42])
+    assert ticket["pairs"][0]["status"] == ("ready" if status == 200 else "present")
+    assert len(load_fittings(path)[0].intents) == (0 if status == 200 else 1)
+    controller.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == (2 if status == 200 else 1)
+    assert all(item.status == "success" for item in load_fittings(path)[0].intents)
+
+
+@pytest.mark.parametrize(
+    ("start_seconds", "finish_seconds"),
+    [(299, 310), (-1, 310), (301, 299)],
+)
+def test_unsafe_get_timing_does_not_release_success(
+    tmp_path, start_seconds, finish_seconds
+):
+    clock = [NOW]
+    controller, _, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation(), mutation()], now=lambda: clock[0]
+    )
+    controller.start_copy(ready_ticket(controller))
+    clock[0] = NOW + timedelta(seconds=start_seconds)
+    client.on_get = lambda: clock.__setitem__(
+        0, NOW + timedelta(seconds=finish_seconds)
+    )
+    assert controller.refresh([42])["ok"] is True
+    ticket = controller.preflight_copy(["fit-0"], [42])
+    controller.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert ticket["pairs"][0]["status"] == "present"
+    assert load_fittings(path)[0].intents[0].status == "success"
+
+
+def test_one_qualified_success_does_not_retire_a_younger_success_after_restart(
+    tmp_path,
+):
+    clock = [NOW]
+    controller, authority, client, path = make_controller(
+        tmp_path,
+        ready_state(count=2),
+        replies=[mutation(), mutation(), mutation()],
+        now=lambda: clock[0],
+    )
+    controller.start_copy(ready_ticket(controller, fit_ids=["fit-0"]))
+    clock[0] += timedelta(seconds=60)
+    controller.start_copy(ready_ticket(controller, fit_ids=["fit-1"]))
+    younger = load_fittings(path)[0].intents[-1]
+    clock[0] = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    assert controller.refresh([42])["ok"] is True
+    assert client.get_calls[-1][1] is None
+    assert load_fittings(path)[0].intents == (younger,)
+
+    restarted = FittingsController(
+        state_path=path,
+        names_path=tmp_path / "names.json",
+        authority=authority,
+        client=client,
+        now=lambda: clock[0],
+    )
+    authority.feature_lock = restarted._lock
+    ticket = restarted.preflight_copy(["fit-0", "fit-1"], [42])
+    assert [row["status"] for row in ticket["pairs"]] == ["ready", "present"]
+    result = restarted.start_copy(ticket["ticket_id"])
+    assert [row["attempted"] for row in result["results"]] == [True, False]
+    assert len(client.post_calls) == 3
+    assert younger in load_fittings(path)[0].intents
+
+
+def test_success_horizon_starts_at_completion_not_send(tmp_path):
+    clock = [NOW]
+    controller, _, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation(), mutation()], now=lambda: clock[0]
+    )
+    client.on_post = lambda _: clock.__setitem__(0, NOW + timedelta(seconds=60))
+    controller.start_copy(ready_ticket(controller))
+    clock[0] = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    assert controller.refresh([42])["ok"] is True
+    ticket = controller.preflight_copy(["fit-0"], [42])
+    controller.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert load_fittings(path)[0].intents[0].completed_utc == NOW + timedelta(
+        seconds=60
+    )
+
+
+def test_positive_content_immediately_establishes_presence_without_losing_protection(
+    tmp_path,
+):
+    clock = [NOW]
+    controller, _, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation(), mutation()], now=lambda: clock[0]
+    )
+    controller.start_copy(ready_ticket(controller))
+    clock[0] += timedelta(seconds=1)
+    fit = controller.state.entries[0]
+    body = {"fitting_id": 9001, **client.post_calls[0][1]}
+    client.get_reply = replace(client.get_reply, data=[body])
+    assert controller.refresh([42])["ok"] is True
+    assert load_fittings(path)[0].presences[0].library_entry_id == fit.id
+    # An early positive followed by another cache's older empty body is still unsafe.
+    clock[0] += timedelta(seconds=1)
+    client.get_reply = replace(client.get_reply, data=[])
+    assert controller.refresh([42])["ok"] is True
+    ticket = controller.preflight_copy([fit.id], [42])
+    controller.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert load_fittings(path)[0].intents[0].status == "success"
+
+
+def state_with_history(*, successes=0, failures=0, unknowns=0):
+    state = ready_state(count=2, character_ids=(42, 43))
+    history = tuple(
+        intent(f"{status}-{index}", 43, state.entries[0], status=status)
+        for status, count in (
+            ("success", successes),
+            ("failed", failures),
+            ("unknown", unknowns),
+        )
+        for index in range(count)
+    )
+    return replace(state, intents=history)
+
+
+@pytest.mark.parametrize(
+    "success_count",
+    [contracts.MAX_OPERATION_RECORDS, contracts.MAX_OPERATION_RECORDS + 1],
+)
+def test_full_or_overfull_success_evidence_refuses_before_intent_save_and_post(
+    tmp_path, success_count
+):
+    saved = []
+
+    def record_save(path, state):
+        saved.append(state)
+        save_fittings(path, state)
+
+    state = state_with_history(successes=success_count)
+    controller, _, client, path = make_controller(
+        tmp_path,
+        state,
+        replies=[mutation()],
+        save_state=record_save,
+    )
+    assert len(controller.state.intents) == success_count
+    ticket = controller.preflight_copy(["fit-0"], [42])
+    result = controller.start_copy(ticket["ticket_id"])
+    assert client.post_calls == []
+    assert saved == []
+    assert result["results"][0]["attempted"] is False
+    assert "refresh" in result["results"][0]["error"].lower()
+    assert load_fittings(path)[0].intents == state.intents
+    # Success is still success, not an unresolved-intent veto on Forget.
+    assert controller.prepare_forget(43).applied is True
+
+
+def test_each_pair_reserves_success_capacity_and_evicts_diagnostics_first(tmp_path):
+    state = state_with_history(
+        successes=contracts.MAX_OPERATION_RECORDS - 1,
+        failures=3,
+        unknowns=contracts.MAX_OPERATION_RECORDS + 1,
+    )
+    candidates = []
+
+    def record_save(path, candidate):
+        candidates.append(candidate)
+        save_fittings(path, candidate)
+
+    controller, _, client, path = make_controller(
+        tmp_path,
+        state,
+        replies=[mutation(), mutation()],
+        save_state=record_save,
+    )
+    # Both pairs were preflighted together, before the first consumed the last slot.
+    ticket = ready_ticket(controller, fit_ids=["fit-0", "fit-1"])
+    result = controller.start_copy(ticket)
+    assert len(client.post_calls) == 1
+    assert [row["attempted"] for row in result["results"]] == [True, False]
+    assert result["results"][0]["status"] == "success"
+    assert "refresh" in result["results"][1]["error"].lower()
+    assert len(candidates) == 2  # durable in_flight, then its success; no second intent
+    loaded, _ = load_fittings(path)
+    assert loaded == controller.state
+    assert (
+        sum(item.status == "success" for item in loaded.intents)
+        == contracts.MAX_OPERATION_RECORDS
+    )
+    assert (
+        sum(item.unresolved for item in loaded.intents)
+        == contracts.MAX_OPERATION_RECORDS + 1
+    )
+    assert not any(item.status == "failed" for item in loaded.intents)
+
+
+def test_diagnostic_and_unresolved_history_do_not_consume_success_capacity(tmp_path):
+    state = state_with_history(
+        failures=contracts.MAX_OPERATION_RECORDS,
+        unknowns=contracts.MAX_OPERATION_RECORDS + 1,
+    )
+    controller, _, client, path = make_controller(tmp_path, state, replies=[mutation()])
+    result = controller.start_copy(ready_ticket(controller))
+    assert result["results"][0]["status"] == "success"
+    assert len(client.post_calls) == 1
+    loaded, _ = load_fittings(path)
+    assert loaded == controller.state
+    assert (
+        sum(item.unresolved for item in loaded.intents)
+        == contracts.MAX_OPERATION_RECORDS + 1
+    )
+    assert (
+        sum(not item.unresolved for item in loaded.intents)
+        == contracts.MAX_OPERATION_RECORDS
+    )
+    assert loaded.intents[-1].status == "success"
+
+
+@pytest.mark.parametrize("positive", [False, True])
+def test_qualifying_refresh_releases_evidence_capacity_and_keeps_safe_operations_available(
+    tmp_path, positive
+):
+    clock = [NOW]
+    state = state_with_history(successes=contracts.MAX_OPERATION_RECORDS)
+    controller, _, client, path = make_controller(
+        tmp_path, state, replies=[mutation()], now=lambda: clock[0]
+    )
+    blocked = controller.preflight_copy(["fit-0"], [42])
+    result = controller.start_copy(blocked["ticket_id"])
+    assert result["results"][0]["attempted"] is False
+    assert len(client.post_calls) == 0
+    # The refusals do not prevent refresh, including refresh of another character.
+    clock[0] += timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    if positive:
+        fit = state.entries[0]
+        client.get_reply = replace(
+            client.get_reply,
+            data=[
+                {
+                    "fitting_id": 9001,
+                    "name": fit.preferred_name,
+                    "description": fit.preferred_description,
+                    "ship_type_id": fit.content.ship_type_id,
+                    "items": [{"flag": "HiSlot0", "quantity": 1, "type_id": 200}],
+                }
+            ],
+        )
+    assert controller.refresh([43])["ok"] is True
+    assert load_fittings(path)[0].intents == ()
+    assert bool(load_fittings(path)[0].presences) is positive
+    client.get_reply = replace(client.get_reply, data=[])
+    assert controller.refresh([42])["ok"] is True
+    result = controller.start_copy(ready_ticket(controller))
+    assert result["results"][0]["status"] == "success"
+    assert len(client.post_calls) == 1
+    assert len(load_fittings(path)[0].intents) == 1
+
+
+def test_failed_reconciliation_save_retains_success_and_blocks_duplicate(tmp_path):
+    clock = [NOW]
+    candidates = []
+
+    def save_until_refresh(path, state):
+        candidates.append(state)
+        if clock[0] > NOW:
+            raise OSError("disk full")
+        save_fittings(path, state)
+
+    controller, _, client, path = make_controller(
+        tmp_path,
+        ready_state(),
+        replies=[mutation(), mutation()],
+        now=lambda: clock[0],
+        save_state=save_until_refresh,
+    )
+    controller.start_copy(ready_ticket(controller))
+    before = load_fittings(path)[0]
+    clock[0] += timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    assert controller.refresh([42])["ok"] is False
+    assert candidates[-1].intents == ()  # attempted retirement did not commit
+    assert controller.state == load_fittings(path)[0] == before
+    ticket = controller.preflight_copy(["fit-0"], [42])
+    controller.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert ticket["pairs"][0]["status"] == "present"
+
+
+@pytest.mark.parametrize(
+    "first_response", [mutation(400), mutation(response_received=False)]
+)
+def test_non_success_does_not_consume_the_last_success_slot(tmp_path, first_response):
+    state = state_with_history(successes=contracts.MAX_OPERATION_RECORDS - 1)
+    controller, _, client, path = make_controller(
+        tmp_path,
+        state,
+        replies=[first_response, mutation()],
+    )
+    result = controller.start_copy(ready_ticket(controller, fit_ids=["fit-0", "fit-1"]))
+    assert result["results"][1]["status"] == "success"
+    assert len(client.post_calls) == 2
+    loaded, _ = load_fittings(path)
+    assert loaded == controller.state
+    assert (
+        sum(item.status == "success" for item in loaded.intents)
+        == contracts.MAX_OPERATION_RECORDS
+    )
+    assert sum(item.unresolved for item in loaded.intents) == (
+        0 if first_response.response_received else 1
+    )
+
+
+def test_rolled_back_post_completion_cannot_shorten_success_horizon(tmp_path):
+    clock = [NOW]
+    controller, _, client, path = make_controller(
+        tmp_path,
+        ready_state(),
+        replies=[mutation(), mutation()],
+        now=lambda: clock[0],
+    )
+    client.on_post = lambda _: clock.__setitem__(0, NOW - timedelta(seconds=60))
+    controller.start_copy(ready_ticket(controller))
+    clock[0] = NOW + timedelta(seconds=contracts.READ_CACHE_SECONDS - 1)
+    assert controller.refresh([42])["ok"] is True
+    ticket = controller.preflight_copy(["fit-0"], [42])
+    controller.start_copy(ticket["ticket_id"])
+    assert len(client.post_calls) == 1
+    assert len(load_fittings(path)[0].intents) == 1
+
+
+def test_library_deletion_cannot_discard_protective_success(tmp_path):
+    clock = [NOW]
+    controller, _, client, path = make_controller(
+        tmp_path, ready_state(), replies=[mutation()], now=lambda: clock[0]
+    )
+    controller.start_copy(ready_ticket(controller))
+    before = load_fittings(path)[0]
+    assert controller.delete_entry("fit-0") is False
+    assert load_fittings(path)[0] == before
+    clock[0] += timedelta(seconds=contracts.READ_CACHE_SECONDS)
+    assert controller.refresh([42])["ok"] is True
+    assert controller.delete_entry("fit-0") is True
+    assert not any(item.id == "fit-0" for item in load_fittings(path)[0].entries)
+    assert len(client.post_calls) == 1
 
 
 def test_durable_success_blocks_an_immediate_duplicate_copy(tmp_path):
