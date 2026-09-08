@@ -22,8 +22,11 @@ class Element {
   querySelectorAll(selector) {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
     if (selector === '*') return all;
+    if (selector === '.route.active') return all.filter(el =>
+      ['route', 'active'].every(name => el.className.split(/\s+/).includes(name)));
     if (selector.includes(':not(')) return all.filter(el =>
-      !el.hidden && !el.disabled && (['BUTTON', 'INPUT', 'SELECT'].includes(el.tagName) || el.attrs.tabindex === '0'));
+      !el.hidden && !el.disabled && (['BUTTON', 'INPUT', 'SELECT'].includes(el.tagName)
+        || (el.tagName === 'TEXTAREA' && selector.includes('textarea')) || el.attrs.tabindex === '0'));
     return all.filter(el => {
       const match = selector.match(/^([\w-]+)?(?:\.([\w-]+))?(?:\[([\w-]+)="([^"]*)"\])?(:checked)?$/);
       assert.ok(match, 'DOM double needs selector: ' + selector);
@@ -68,6 +71,12 @@ class Element {
     [...listeners.filter(item => item.capture), ...listeners.filter(item => !item.capture)].forEach(item => item.callback(event));
   }
   click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
+  getClientRects() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.hidden || node.style.display === 'none') return [];
+    }
+    return [{}];
+  }
   focus() { document.activeElement = this; }
   // Record the production request; rendered geometry still needs a browser.
   scrollIntoView(options) { scrollCalls.push({id: this.id, options}); }
@@ -123,6 +132,7 @@ let WM = {
   setEnabled: (id, value) => { WM.el(id).disabled = !value; },
   route: name => {
     WM.current_route = name;
+    document.querySelectorAll('.route').forEach(route => route.classList.toggle('active', route.id === 'route-' + name));
     document.dispatchEvent({type: 'wm:route', detail: name});
   },
   send: (method, ...args) => {
@@ -184,7 +194,14 @@ if (scenario === 'forwarded-completion') {
 }
 if (scenario.startsWith('catalog-dialog-')) {
   const panel = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
-  vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {window: {WM}, document, console, Promise});
+  vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {
+    window: {WM, getComputedStyle: node => {
+      for (; node; node = node.parentNode) {
+        if (node.style.visibility) return {visibility: node.style.visibility};
+      }
+      return {visibility: 'visible'};
+    }}, document, console, Promise
+  });
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const click = id => WM.el(id).click();
@@ -483,13 +500,28 @@ async function catalogMain() {
     assert.notEqual(WM.el('setup-text').value, original); assert.match(WM.el('setup-catalog-origin').textContent, /Dev/);
     assert.equal(WM.el('setup-create').disabled, true); assert.equal(reviews.length, originalReviewCount); return;
   }
+  if (scenario === 'catalog-dialog-hidden-target' || scenario === 'catalog-dialog-invisible-target') {
+    // Shared-panel boundary: a still-enabled invoker becomes unavailable while
+    // the dialog is open. Synthetic DOM only — no invented catalog state.
+    const container = new Element('div'), invoker = new Element('button');
+    WM.el('setup-work').appendChild(container); container.appendChild(invoker);
+    invoker.focus();
+    const question = WM.confirm('Visibility boundary', 'Continue?');
+    if (scenario === 'catalog-dialog-hidden-target') container.hidden = true;
+    else container.style.visibility = 'hidden';
+    click('dlg-ok'); assert.equal(await question, true); await tick();
+    assert.equal(document.activeElement.id, 'setup-back', 'an unavailable invoker falls back past the hidden export subview');
+    assert.equal(invoker.disabled, false, 'visibility, not disabling, makes this invoker unavailable');
+    return;
+  }
   if (scenario.startsWith('catalog-dialog-')) {
     await browse(); chooseCatalog(); WM.el('setup-catalog-use').focus(); click('setup-catalog-use');
     catalogReads.at(-1).resolve(catalogReply()); await tick();
     assert.equal(WM.el('overlay').hidden, false); assert.match(WM.el('dlg-body').textContent, /Setup a/);
     const queued = scenario.includes('-queued-');
     const accepted = scenario.endsWith('-accept');
-    const nextDialog = queued ? WM.confirm('Queued question', 'Unrelated decision', {destructive: true}) : null;
+    const ordinary = scenario.includes('-ordinary-');
+    const nextDialog = queued ? WM.confirm('Queued question', 'Unrelated decision', {destructive: !ordinary}) : null;
     assert.match(WM.el('dlg-title').textContent, /Replace setup input/);
     if (scenario === 'catalog-dialog-escape') document.dispatchEvent({type: 'keydown', key: 'Escape'});
     else click(accepted ? 'dlg-ok' : 'dlg-cancel');
@@ -504,11 +536,19 @@ async function catalogMain() {
     if (queued) {
       assert.equal(WM.el('overlay').hidden, false);
       assert.equal(WM.el('dlg-title').textContent, 'Queued question');
-      assert.equal(document.activeElement.id, 'dlg-cancel', 'replacement must not steal focus from the next queued dialog');
-      click('dlg-cancel'); assert.equal(await nextDialog, false); await tick();
+      assert.equal(document.activeElement.id, ordinary ? 'dlg-ok' : 'dlg-cancel', 'replacement must not steal focus from the next queued dialog');
+      // Native Enter activates the focused button; this harness supplies that click.
+      document.activeElement.click(); assert.equal(await nextDialog, ordinary); await tick();
       assert.equal(WM.el('overlay').hidden, true);
       assert.equal(WM.el('setup-text').value, accepted ? catalogReply().text : original);
       assert.equal(WM.el('setup-create').disabled, accepted);
+      assert.equal(WM.el('setup-catalog').hidden, accepted);
+      assert.equal(WM.el('setup-catalog-use').disabled, accepted);
+      assert.equal(document.activeElement.id, accepted ? 'setup-back' : 'setup-catalog-use',
+        'the final queue drain restores a visible enabled control, not hidden export/catalog controls');
+      assert.equal(document.activeElement.disabled, false);
+      assert.ok(document.activeElement.getClientRects().length > 0);
+      assert.equal(document.activeElement.closest('.route').id, 'route-uisetup');
     } else {
       assert.equal(WM.el('overlay').hidden, true);
       assert.equal(document.activeElement.id, accepted ? 'setup-text' : 'setup-catalog-use',
