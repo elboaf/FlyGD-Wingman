@@ -287,6 +287,64 @@ def test_identical_collision_keeps_physical_record_and_removes_only_imported_uns
     assert out_c == character
 
 
+@pytest.mark.parametrize("native", [False, True], ids=["full", "native"])
+def test_tab_replacement_preserves_opaque_nonimported_old_tab_definition(native):
+    account, character = selector_recipient() if native else supported_recipient()
+    saved = value(account, "overview", "overviewProfilePresets")
+    saved["utf8:Synthetic Local"]["bytes:future"] = {"bytes:opaque": [1, 2]}
+    # This definition is referenced by old tabs and activeOverviewPreset, but
+    # neither replacement imports it or needs to interpret its membership.
+    before = copy.deepcopy((account, character))
+    parsed = selector_native() if native else incoming()
+    out_a, out_c = apply(account, character, parsed)
+    assert (account, character) == before
+    assert value(out_a, "overview", "overviewProfilePresets")[
+        "utf8:Synthetic Local"
+    ] == {
+        "bytes:groups": [89],
+        "bytes:filteredStates": [],
+        "bytes:alwaysShownStates": [10],
+        "bytes:future": {"bytes:opaque": [1, 2]},
+    }
+    for key in ("activeOverviewPreset", "overviewProfilePresets_notSaved"):
+        assert (
+            out_a.doc["bytes:overview"][f"bytes:{key}"]
+            == account.doc["bytes:overview"][f"bytes:{key}"]
+        )
+    assert out_a.doc["bytes:tabgroups"] == account.doc["bytes:tabgroups"]
+    assert value(out_a, "overview", "tabsettings_new")["int:0"]["bytes:overview"] == (
+        "utf8:Added" if native else "utf8:Incoming Fleet"
+    )
+    if native:
+        assert out_c == character
+
+
+@pytest.mark.parametrize("field", ["overview", "bracket"])
+def test_old_tab_dangling_reference_still_refuses(field):
+    account, character = supported_recipient()
+    value(account, "overview", "tabsettings_new")["int:0"][f"bytes:{field}"] = (
+        "utf8:Missing"
+    )
+    refuse(account, character, "recipient_shape", "dangling reference Missing")
+
+
+def test_opaque_imported_definition_collision_still_requires_full_validation():
+    account, character = supported_recipient()
+    value(account, "overview", "overviewProfilePresets")["utf8:Added"] = {
+        "bytes:groups": [25],
+        "bytes:filteredStates": [],
+        "bytes:alwaysShownStates": [],
+        "bytes:future": [1],
+    }
+    refuse(
+        account,
+        character,
+        "recipient_shape",
+        "overviewProfilePresets Added",
+        selector_native(),
+    )
+
+
 @pytest.mark.parametrize(
     "name",
     ["Synthetic Fleet", "DefaultPreset_SyntheticBuiltin"],
@@ -595,6 +653,102 @@ def test_unchanged_tab_identity_order_grouping_preserves_selectors_but_replaces_
         == "utf8:Added"
     )
     assert out_c == character
+
+
+def order_only_case():
+    """Keep recipient identities and grouping; match only its tab payloads."""
+    account, character = supported_recipient()
+    tabs = value(account, "overview", "tabsettings_new")
+    for record in tabs.values():
+        record["bytes:overview"] = "utf8:Added"
+        record["bytes:bracket"] = "utf8:Added"
+    tabs["int:0"].update(
+        {
+            "bytes:color": None,
+            "bytes:tabColumns": ["bytes:NAME"],
+            "bytes:tabColumnOrder": ["bytes:NAME", "bytes:ICON"],
+        }
+    )
+    value(account, "overview", "overviewProfilePresets")["utf8:Added"] = {
+        "bytes:groups": [25],
+        "bytes:filteredStates": [],
+        "bytes:alwaysShownStates": [],
+    }
+    data = wire()
+    data["overview"].update(selector_native().overview)
+    # Native grouping follows tab sequence by policy; use full input to isolate
+    # tab-map encounter order from the unchanged explicit group list.
+    data["overview"]["tabs"].reverse()
+    data["layout"]["windows"] = [
+        row
+        for row in data["layout"]["windows"]
+        if row["key"] not in ("overview_1", "overview_2")
+    ]
+    return account, character, model.validate_wingman(data)
+
+
+def test_no_selector_order_only_tab_replacement_updates_order_and_stamp():
+    account, character, parsed = order_only_case()
+    before = copy.deepcopy((account, character, parsed))
+    out_a, _ = apply(account, character, parsed)
+    tabs = value(out_a, "overview", "tabsettings_new")
+    assert list(tabs) == ["int:3", "int:2", "int:1", "int:0"]
+    assert tabs == value(account, "overview", "tabsettings_new")
+    assert out_a.doc["bytes:overview"]["bytes:tabsettings_new"]["tuple"][0] == STAMP
+    for key in ("tabsByWindowInstanceID", "overviewProfilePresets"):
+        assert (
+            out_a.doc["bytes:overview"][f"bytes:{key}"]
+            == account.doc["bytes:overview"][f"bytes:{key}"]
+        )
+    assert out_a.doc["bytes:tabgroups"] == account.doc["bytes:tabgroups"]
+    assert (account, character, parsed) == before
+    assert list(value(account, "overview", "tabsettings_new")) == [
+        "int:0",
+        "int:1",
+        "int:2",
+        "int:3",
+    ]
+
+
+def test_unchanged_tab_sequence_does_not_rewrite_nested_map_order_or_stamp():
+    account, character, parsed = order_only_case()
+    parsed.overview["tabs"].reverse()
+    tabs = value(account, "overview", "tabsettings_new")
+    tabs["int:0"] = dict(reversed(list(tabs["int:0"].items())))
+    saved = value(account, "overview", "overviewProfilePresets")
+    saved["utf8:Added"] = dict(reversed(list(saved["utf8:Added"].items())))
+    out_a, _ = apply(account, character, parsed)
+    for key in ("tabsettings_new", "overviewProfilePresets"):
+        # Compare serialized insertion order as well as the original stamp.
+        assert json.dumps(out_a.doc["bytes:overview"][f"bytes:{key}"]) == json.dumps(
+            account.doc["bytes:overview"][f"bytes:{key}"]
+        )
+
+
+@pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
+@pytest.mark.parametrize("crc", [False, True], ids=["plain", "crc"])
+def test_order_only_replacement_survives_native_codec_without_id_remapping(
+    tmp_path, crc
+):
+    account, character, parsed = order_only_case()
+    out_a, _ = apply(codec.Document(account.doc, crc), character, parsed)
+    target = tmp_path / "order.dat"
+    codec.write_document(
+        target, out_a, backup=lambda path: None, exe=lambda: str(CODEC)
+    )
+    readback = codec.read_document(target, exe=lambda: str(CODEC))
+    tabs = value(readback, "overview", "tabsettings_new")
+    # Dict equality (including the codec writer's check) ignores this ordering.
+    assert list(tabs) == ["int:3", "int:2", "int:1", "int:0"]
+    assert [row["bytes:name"] for row in tabs.values()] == [
+        "utf8:Synthetic local fourth",
+        "utf8:Synthetic local third",
+        "utf8:Synthetic local second",
+        "utf8:Synthetic local tab",
+    ]
+    assert value(readback, "overview", "tabsByWindowInstanceID") == [[0, 1, 2, 3]]
+    assert readback.had_crc is crc
+    assert readback == out_a
 
 
 @pytest.mark.parametrize("change", ["id", "order", "name", "groups"])

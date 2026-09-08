@@ -111,11 +111,15 @@ def _map_setting(section, name, *, required=False):
     return _mapping(value, name)
 
 
-def _put(section, name, value, stamp):
+def _put(section, name, value, stamp, *, ordered_map=False):
     key = f"bytes:{name}"
     if value is _MISSING:
         section.pop(key, None)
-    elif key not in section or section[key]["tuple"][1] != value:
+    elif (
+        key not in section
+        or section[key]["tuple"][1] != value
+        or (ordered_map and list(section[key]["tuple"][1]) != list(value))
+    ):
         section[key] = {"tuple": [stamp, value]}
 
 
@@ -245,9 +249,11 @@ def _tabs(overview):
     for name in dependencies:
         if name not in names:
             _shape(f"tabsettings_new dangling reference {name}")
-        definitions.append(
-            _definition(saved[names[name]], name, "tabsettings_new definition")
-        )
+        # The portable validator requires self-contained definitions, but old
+        # topology needs only reference existence. These name-only witnesses
+        # never leave validation; actual bodies stay opaque until a collision
+        # requires _apply_definitions to interpret them.
+        definitions.append({"name": name, **{field: [] for field in _PRESET_FIELDS}})
     groups = _setting(overview, "tabsByWindowInstanceID")
     if groups is _MISSING:
         # An absent topology does not authorize deriving activity from geometry.
@@ -590,7 +596,15 @@ def apply_setup(
         )
     _apply_definitions(overview, incoming.get("presets", []), stamp)
     if "tabs" in incoming:
-        _put(overview, "tabsettings_new", _tab_records(incoming["tabs"]), stamp)
+        # Only this map's encounter order is part of the tab-sequence contract.
+        # Do not make opaque nested maps order-sensitive or remap physical IDs.
+        _put(
+            overview,
+            "tabsettings_new",
+            _tab_records(incoming["tabs"]),
+            stamp,
+            ordered_map=True,
+        )
         _put(overview, "tabsByWindowInstanceID", incoming["windowGroups"], stamp)
     if "shipLabels" in incoming and not keep_ship_labels:
         current = _setting(overview, "shipLabels")
