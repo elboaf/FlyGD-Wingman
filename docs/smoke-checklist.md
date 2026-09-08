@@ -328,8 +328,16 @@ somewhere stale and nothing on that screen is worth reviewing.
       top, middle, bottom, open Configure detail, Copy picker, groups, and
       840x625 floor rather than presenting the top of a long nested scroller
       as the complete screen. The floor shot starts at the collapsed roster
-      heading; a detail left open by an earlier stage is a capture defect. A
-      blank screen in the set is a real defect, not a capture artifact -- one
+      heading; a detail left open by an earlier stage is a capture defect.
+      The separate saved-crop floor capture deliberately opens Configure and
+      shows **Reselect…**, saved-crop status and controls. Profiles also has
+      fixture-backed captures of the populated Formations editor, formation
+      import review with a name conflict, Share setup from a synthetic confirmed
+      pair, and Import setup review before Create. Check their manifest `fixture`
+      annotations and verify no Save/Create/clipboard action runs. These are
+      synthetic presentation checks, not acceptance of real EVE file operations
+      or native crop behavior; the dedicated interaction checks remain required.
+      A blank screen in the set is a real defect, not a capture artifact -- one
       bad handler name silently disables every registration below it.
 
 ### Window chrome

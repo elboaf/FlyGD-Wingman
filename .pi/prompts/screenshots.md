@@ -61,13 +61,27 @@ short form; `wslpath` derives the Windows argument after `cd`:
 
 Say briefly what to expect: it asks them to right-click the Wingman tray icon
 and choose Quit (only the tray menu can exit it — `close()` hides; see
-`wingman/ui/api.py`), then launches from the selected checkout, walks **33
-screens**, including **Settings — Characters**, **Settings — Characters
-(waiting)**, **Settings — Characters (partial cleanup)**, **Settings —
-Characters (narrow 840x625)** and **Fittings — Narrow (840x625)**, and
-relaunches their app afterward. The set also includes the focused
-**Profiles — Identify accounts** and **Profiles — Backups** routes. If
-Wingman is not running when they start, it says so and skips the restore.
+`wingman/ui/api.py`), then launches from the selected checkout, walks the screen
+inventory in that checkout's `scripts/shoot_screens.py`, and relaunches their app
+afterward.
+Derive any quoted capture count from `SCREENS`; do not keep a separate count
+in this prompt. The set includes **Settings — Characters**, **Settings —
+Characters (waiting)**, **Settings — Characters (partial cleanup)**, and
+**Settings — Characters (narrow 840x625)**; **Fittings — Narrow (840x625)**;
+**Profiles — Identify accounts** and **Profiles — Backups**; plus these
+fixture-backed captures:
+
+- **Profiles — Formations**: populated editor and selected probe details.
+- **Profiles — Formation import**: reviewed import with a name conflict.
+- **Profiles — Share setup**: overview and layout export from a synthetic pair.
+- **Profiles — Import setup review**: reviewed setup, stopping before Create.
+- **Settings — Previews (saved crop 840x625)**: saved-crop Configure controls.
+
+The new stages use local fixture reads, not private EVE files, and perform no
+Save/Create/clipboard actions. Their manifest entries identify the fixture
+source. They show synthetic presentation states, not evidence that a real
+import, export or native crop operation succeeded. First-run remains excluded.
+If Wingman is not running when they start, it says so and skips the restore.
 
 Mention `--port` if the default is busy, `--settle-ms` if a screen looks
 half-drawn, and `--out` only when relevant.
@@ -81,6 +95,8 @@ Read `<out_dir>/manifest.json` and validate and report all of these fields:
 - `eve_shown`. When false, the set is correctly reduced to the four non-EVE
   screens and the manifest's `skipped` list must name every EVE-gated screen;
   say so explicitly, or a set of four reads as truncated.
+- Each shot's optional `fixture` field. Label these captures as synthetic
+  presentation evidence, not live account/profile data or completed operations.
 - `engine_present`. When false, Settings — Bookmarks shows the shooter's
   engine-missing state rather than the real configured screen; call that out.
 - `branch`, `sha`, and `dirty`. Confirm the set came from the checkout the user
