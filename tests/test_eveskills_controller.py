@@ -346,6 +346,7 @@ def test_one_malformed_esi_body_does_not_abort_the_pass_for_the_rest(tmp_path):
 
     first, second = controller._state.characters
     assert first.character_id == 95 and second.character_id == 96
+    assert first.error.startswith(controller_mod.MSG_REFRESH_FAILED)
     assert "exceeded" in first.error
     assert first.fetched_utc == T0, "last-good data is kept, not discarded"
     assert second.error == ""
@@ -428,6 +429,22 @@ def test_authority_action_text_is_bounded_without_skills_prefix(tmp_path):
     assert invalidated is False
     assert error == action[: controller_mod.MAX_ERROR_CHARS]
     assert not error.startswith(f"{controller_mod.MSG_REFRESH_FAILED}:")
+
+
+def test_non_denial_http_error_keeps_declared_skills_wording(tmp_path):
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        client=FakeEsi(skills=[esi_response(500, error="upstream")]),
+    )
+
+    response, error, invalidated = controller._authorised_get(
+        95, "/v4/characters/95/skills/", ""
+    )
+
+    assert response is None
+    assert invalidated is False
+    assert error == "Skills refresh failed: ESI request failed (500): upstream"
 
 
 def test_external_read_error_keeps_skills_wording_and_logs_safe_diagnostic(

@@ -163,7 +163,7 @@ class EsiResponse:
         return self.status == 304
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class AuthenticatedGetResult:
     """One authority-backed GET outcome without domain persistence policy."""
 
@@ -234,6 +234,10 @@ def authenticated_get(
         )
 
     if response.status == 401:
+        # Exactly one retry, and only one. A replacement token rejected seconds
+        # later is not a clock-skew problem another rotation can solve; looping
+        # here would keep spending the shared ESI error-limit budget on the same
+        # refusal and could prevent unrelated characters from refreshing.
         token_result = authority.access_token(
             character_id, capability, rejected_token=token
         )
@@ -260,6 +264,10 @@ def authenticated_get(
                 authority_error=False,
             )
         if response.status == 401:
+            # Endpoint refusal is not a verdict on the shared grant: another
+            # capability may still be authorized. Only authority's refresh/JWT
+            # checks can invalidate the grant, so repeated 401 and the 403 below
+            # stay endpoint-denial outcomes.
             return AuthenticatedGetResult(
                 response=None,
                 error=_authenticated_error(
@@ -272,6 +280,9 @@ def authenticated_get(
             )
 
     if response.status == 403:
+        # Scope refusal belongs to this endpoint/capability; deleting the shared
+        # grant here could throw away access that still works for another
+        # feature. Authority alone decides whether that grant is invalid.
         return AuthenticatedGetResult(
             response=None,
             error=_authenticated_error(
@@ -283,6 +294,10 @@ def authenticated_get(
             authority_error=False,
         )
     if response.status not in {200, 304}:
+        # Every other non-success is transient at this seam. In particular,
+        # EsiClient synthesizes 503 after retry exhaustion without a final
+        # response, so that status did not necessarily come from ESI and cannot
+        # justify a persistent authority or endpoint-denial classification.
         return AuthenticatedGetResult(
             response=None,
             error=_authenticated_error(

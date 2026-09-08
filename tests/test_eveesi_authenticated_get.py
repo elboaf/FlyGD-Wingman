@@ -47,10 +47,9 @@ class Client:
         return outcome
 
 
-def authenticated_get(authority, client, **kwargs):
-    adapter = getattr(eveesi, "authenticated_get", None)
-    assert adapter is not None, "shared authenticated GET adapter is missing"
-    return adapter(authority, client, **kwargs)
+def test_result_contract_requires_named_fields():
+    with pytest.raises(TypeError):
+        eveesi.AuthenticatedGetResult(None, "", False, "", False, False)
 
 
 @pytest.mark.parametrize("status", [200, 304])
@@ -59,7 +58,7 @@ def test_success_returns_the_exact_response_and_preserves_the_caller_etag(status
     authority = Authority(token_result(FIRST_TOKEN))
     client = Client(expected)
 
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         authority,
         client,
         character_id=95,
@@ -85,7 +84,7 @@ def test_one_401_refreshes_with_the_rejected_token_and_retries_once():
     )
     client = Client(response(401, error="expired"), expected)
 
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         authority,
         client,
         character_id=95,
@@ -113,7 +112,7 @@ def test_endpoint_denial_does_not_claim_authority_invalidation(statuses):
     authority = Authority(*authority_results)
     client = Client(*(response(status, error="denied") for status in statuses))
 
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         authority,
         client,
         character_id=95,
@@ -135,7 +134,7 @@ def test_token_acquisition_failure_is_classified_as_an_authority_error():
     )
     client = Client()
 
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         authority,
         client,
         character_id=95,
@@ -163,7 +162,7 @@ def test_authority_invalidation_after_401_remains_distinct_bounded_and_redacted(
     )
     client = Client(response(401, error="expired"))
 
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         authority,
         client,
         character_id=95,
@@ -196,7 +195,7 @@ def test_expected_get_exceptions_are_bounded_and_redact_every_used_token(
     authority = Authority(*authority_results)
     client = Client(*outcomes)
 
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         authority,
         client,
         character_id=95,
@@ -215,7 +214,7 @@ def test_expected_get_exceptions_are_bounded_and_redact_every_used_token(
 
 
 def test_empty_expected_exception_uses_its_class_name():
-    result = authenticated_get(
+    result = eveesi.authenticated_get(
         Authority(token_result(FIRST_TOKEN)),
         Client(OSError()),
         character_id=95,
@@ -233,7 +232,7 @@ def test_type_error_from_get_escapes_instead_of_hiding_a_programmer_error():
     client = Client(TypeError("broken client contract"))
 
     with pytest.raises(TypeError, match="broken client contract"):
-        authenticated_get(
+        eveesi.authenticated_get(
             authority,
             client,
             character_id=95,
@@ -243,9 +242,5 @@ def test_type_error_from_get_escapes_instead_of_hiding_a_programmer_error():
 
 
 def test_skills_compatibility_module_re_exports_the_adapter_contract():
-    result_type = getattr(eveesi, "AuthenticatedGetResult", None)
-    adapter = getattr(eveesi, "authenticated_get", None)
-
-    assert result_type is not None
-    assert skills_esi.AuthenticatedGetResult is result_type
-    assert skills_esi.authenticated_get is adapter
+    assert skills_esi.AuthenticatedGetResult is eveesi.AuthenticatedGetResult
+    assert skills_esi.authenticated_get is eveesi.authenticated_get

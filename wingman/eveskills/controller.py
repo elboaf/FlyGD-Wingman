@@ -84,14 +84,14 @@ MSG_CLEANUP_SAVE_FAILED = "Could not save Skills cleanup."
 MSG_ATTRIBUTES_UNREADABLE = "EVE returned no usable character attributes."
 
 
-def _bounded_error(exc: BaseException) -> str:
-    """A roster-row message for an exception nothing else classified.
+def _bounded_error(value: object) -> str:
+    """A roster-row message for a failure nothing else classified.
 
-    The exception text is kept because it is the only diagnostic the user
+    The failure text is kept because it is the only diagnostic the user
     will see -- the log has the traceback, the row has this -- but it is
     capped, since a decode error can quote the body it choked on.
     """
-    text = str(exc) or exc.__class__.__name__
+    text = str(value) or value.__class__.__name__
     return f"{MSG_REFRESH_FAILED}: {text}"[:MAX_ERROR_CHARS]
 
 
@@ -1230,14 +1230,13 @@ class SkillsController:
             try:
                 return self._refresh_one_leased(character_id)
             except Exception as exc:
-                # One character's bad reply must not abort the pass for
-                # every character behind it. _authorised_get calls the
-                # client bare, and eveesi raises ValueError for an oversize
-                # or malformed body rather than returning an error
-                # response; before this clause that escaped to
-                # _refresh_worker's catch-all, which logged "refresh
-                # failed", left the remaining characters unrefreshed and
-                # showed nothing on the row that caused it. Mirrors
+                # Expected transport, size and decode failures are normalized
+                # at the authenticated adapter seam. This guard still isolates
+                # parse/commit failures plus programmer or otherwise
+                # unclassified per-character errors after that seam; without
+                # it, one bad character reaches the worker catch-all, leaves
+                # every character behind it unrefreshed and records nothing on
+                # the row that caused the failure. Mirrors
                 # evefittings.controller._refresh_one.
                 message = _bounded_error(exc)
                 logger.warning(
