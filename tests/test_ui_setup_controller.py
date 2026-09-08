@@ -292,7 +292,7 @@ def test_review_binds_original_selection_and_distinct_sibling_without_effects(
     assert UUID(reply["review_id"]).version == 4
     assert offer.review_id == reply["review_id"]
     assert offer.text == text and offer.keep_ship_labels is False
-    assert offer.selection_context.profile == str(source.profile)
+    assert Path(offer.selection_context.profile) == source.profile
     assert offer.generation == controller._eve_generation()
     assert offer.plan.source == base.profile
     assert (
@@ -1124,7 +1124,7 @@ def test_create_is_new_only_correlated_and_single_use_even_before_start_reply(
     before = files_under(base.root)
     settings_before = copy.deepcopy(controller._settings)
     offer, queued = queue_create(controller, base)
-    assert offer.selection_context.profile == str(source.profile)
+    assert Path(offer.selection_context.profile) == source.profile
     assert offer.plan.source == base.profile
     assert controller._settings == settings_before
     assert not controller.setup_create(offer.review_id, "double")["accepted"]
