@@ -149,7 +149,7 @@ vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='),
     if kind == "max":
         assert outcomes["good"]["summary"]["counts"] == {
             "presets": 256,
-            "tabs": 8,
+            "tabs": 20,
             "windowGroups": 8,
             "shipLabels": 64,
             "layoutWindows": 17,

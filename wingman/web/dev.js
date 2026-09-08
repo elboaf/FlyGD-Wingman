@@ -3118,7 +3118,7 @@
   // Setup export fixtures are read-only: no real clipboard, file dialog or
   // EVE file is accessed by these bridge doubles. Counts follow their artifact.
   var DEV_SETUP_LIMITS = {max_bytes: 2097152, max_depth: 16, max_nodes: 100000,
-    max_presets: 256, max_tabs: 8, max_window_groups: 8, max_ship_labels: 64,
+    max_presets: 256, max_tabs: 20, max_window_groups: 8, max_ship_labels: 64,
     max_layout_windows: 32, max_membership_ids: 8192, max_id: 2147483647,
     max_name_codepoints: 512, max_label_codepoints: 4096, min_coordinate: -32768,
     max_coordinate: 32768, min_size: 1, max_size: 32768, min_target_origin: 0,
@@ -3214,9 +3214,13 @@
     setupRow.name = new Array(501).join('N') + ' <tab ' + setupTab + '>';
     setupRow.overview = 'Filter ' + setupTab;
     DEV_SETUP_MAX.overview.tabs.push(setupRow);
-    DEV_SETUP_MAX.overview.windowGroups.push([setupTab]);
-    if (setupTab) DEV_SETUP_MAX.layout.windows.push({key: 'overview_' + setupTab,
-      geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}});
+    // The tab budget is larger than the independent active-window budget.
+    if (setupTab < DEV_SETUP_LIMITS.max_window_groups) {
+      DEV_SETUP_MAX.overview.windowGroups.push([]);
+      if (setupTab) DEV_SETUP_MAX.layout.windows.push({key: 'overview_' + setupTab,
+        geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}});
+    }
+    DEV_SETUP_MAX.overview.windowGroups[setupTab % DEV_SETUP_LIMITS.max_window_groups].push(setupTab);
   }
   DEV_SETUP_MAX.overview.shipLabels = [];
   for (var setupLabel = 0; setupLabel < DEV_SETUP_LIMITS.max_ship_labels; setupLabel++) {

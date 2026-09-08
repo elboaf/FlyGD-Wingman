@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import Literal
 
-from .setup_compat import JOTUNN_FINGERPRINTS
+from .setup_compat import CLIENT_TAB_SLOTS, JOTUNN_FINGERPRINTS
 
 FORMAT = "wingman-preset"
 VERSION = 1
@@ -20,7 +20,9 @@ MAX_BYTES = 2 * 1024 * 1024
 MAX_DEPTH = 16
 MAX_NODES = 100_000
 MAX_PRESETS = 256
-MAX_TABS = 8
+# Match the evidenced physical slot capacity; portable IDs remain logical.
+# The v1 shape is unchanged — older builds refuse artifacts above eight tabs.
+MAX_TABS = CLIENT_TAB_SLOTS
 MAX_WINDOW_GROUPS = 8
 MAX_SHIP_LABELS = 64
 MAX_LAYOUT_WINDOWS = 32

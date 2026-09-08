@@ -13,6 +13,7 @@ from tests.html_tree import PageTree
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman/web"
 SCENARIOS = [
+    "twenty-tab-help",
     "export-source-change",
     "export-route-exit",
     "export-reopen",

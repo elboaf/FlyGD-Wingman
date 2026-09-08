@@ -6,11 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from tests.setup_fixtures import documents, install_lossless_codec, wire
+from tests.setup_fixtures import (
+    documents,
+    install_lossless_codec,
+    source_with_tabs,
+    wire,
+    wire_with_tabs,
+)
 from tests.test_evesettings_codec import CODEC
 from wingman.evesettings import codec
 from wingman.evesettings import setup_model as model
-from wingman.evesettings.setup_documents import apply_setup
+from wingman.evesettings.setup_documents import apply_setup, export_setup
 from wingman.evesettings.setup_sharing import parse_text
 
 STAMP = "long:116444736420000000"
@@ -66,6 +72,93 @@ def refuse(account, character, code, context, parsed=None, *, keep=False):
     assert error.value.code == code
     assert context in str(error.value)
     assert (account, character, parsed) == before
+
+
+@pytest.mark.parametrize("group_count", [1, 8])
+def test_twenty_sparse_logical_tabs_apply_densely_and_reexport_without_loss(
+    group_count,
+):
+    data = wire_with_tabs(20, group_count=group_count)
+    logical_ids = [2147483647 - 13 * i for i in range(20)]
+    for tab, logical_id in zip(data["overview"]["tabs"], logical_ids, strict=True):
+        tab["id"] = logical_id
+    dense_groups = copy.deepcopy(data["overview"]["windowGroups"])
+    data["overview"]["windowGroups"] = [
+        [logical_ids[i] for i in group] for group in dense_groups
+    ]
+    parsed = model.validate_wingman(data)
+    account, character = documents("recipient")
+    before = copy.deepcopy((account, character, parsed))
+    out_a, out_c = apply(account, character, parsed)
+    assert (account, character, parsed) == before
+    tabs = value(out_a, "overview", "tabsettings_new")
+    assert set(tabs) == {f"int:{i}" for i in range(20)}
+    assert tabs["int:19"]["bytes:name"] == "utf8:Synthetic tab 19"
+    assert value(out_a, "overview", "tabsByWindowInstanceID") == dense_groups
+    exported, _ = export_setup(out_a, out_c)
+    assert exported["overview"]["tabs"] == [
+        {**tab, "id": i} for i, tab in enumerate(data["overview"]["tabs"])
+    ]
+    assert exported["overview"]["windowGroups"] == dense_groups
+    assert exported["layout"] == data["layout"]
+
+
+def test_nine_sparse_physical_tabs_include_slot19_and_remap_groups_densely():
+    account, character = source_with_tabs(9)
+    tabs = value(account, "overview", "tabsettings_new")
+    tabs["int:19"] = tabs.pop("int:8")
+    account.doc["bytes:overview"]["bytes:tabsByWindowInstanceID"] = stamp(
+        [[19, 2, 0], [7, 3, 1], [6, 5, 4]]
+    )
+    exported, _ = export_setup(account, character)
+    assert [tab["id"] for tab in exported["overview"]["tabs"]] == [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        19,
+    ]
+    assert exported["overview"]["windowGroups"] == [[0, 2, 19], [1, 3, 7], [4, 5, 6]]
+    out_a, out_c = apply(*documents("recipient"), model.validate_wingman(exported))
+    assert value(out_a, "overview", "tabsByWindowInstanceID") == [
+        [0, 2, 8],
+        [1, 3, 7],
+        [4, 5, 6],
+    ]
+    assert (
+        value(out_a, "overview", "tabsettings_new")["int:8"]["bytes:name"]
+        == "utf8:Synthetic tab 8"
+    )
+    reexported, _ = export_setup(out_a, out_c)
+    assert len(reexported["overview"]["tabs"]) == 9
+    assert reexported["layout"] == exported["layout"]
+
+
+def test_twenty_one_physical_source_tabs_refuse_slot20_instead_of_truncating():
+    account, character = source_with_tabs(21)
+    before = copy.deepcopy((account, character))
+    with pytest.raises(model.SetupError, match=r"physical slots 0\.\.19") as caught:
+        export_setup(account, character)
+    assert caught.value.code == "source_shape"
+    assert (account, character) == before
+
+
+def test_twenty_tabs_still_refuse_an_affected_stack():
+    account, character = documents("recipient")
+    value(character, "windows", "stacksWindows")["bytes:overview_7"] = (
+        "bytes:InventedStack"
+    )
+    refuse(
+        account,
+        character,
+        "affected_stack",
+        "overview_7",
+        model.validate_wingman(wire_with_tabs(20, group_count=8)),
+    )
 
 
 def test_full_apply_changes_owned_records_not_recipient_identity_or_metadata():

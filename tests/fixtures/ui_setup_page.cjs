@@ -247,7 +247,13 @@ async function main() {
   if (process.argv[6] === 'import') { await importMain(); console.log('PASS ' + scenario); return; }
   assert.equal(WM.el('us-copy').disabled, true);
   assert.equal(WM.el('us-save').disabled, true);
-  if (scenario === 'context-failure') {
+  if (scenario === 'twenty-tab-help') {
+    await open();
+    assert.match(WM.el('us-limits').textContent, /20 tabs, 8 overview groups/);
+    click('us-back');
+    await importOpen();
+    assert.match(WM.el('setup-limits').textContent, /20 tabs, 8 overview groups/);
+  } else if (scenario === 'context-failure') {
     WM.openUiSetup({mode: 'export', context: context(), preferred_character: ''});
     limits.at(-1).resolve(python('limits')); contexts.at(-1).reject(new Error('offline')); await tick();
     assert.match(status(), /context|profile/i); assert.equal(WM.el('us-copy').disabled, true);

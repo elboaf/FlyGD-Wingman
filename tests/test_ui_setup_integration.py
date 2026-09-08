@@ -11,9 +11,16 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests import fakes
-from tests.setup_fixtures import install_lossless_codec, seed_profile
+from tests.setup_fixtures import (
+    install_lossless_codec,
+    native_with_tabs,
+    seed_profile,
+    source_with_tabs,
+    wire_with_tabs,
+)
 from tests.test_evesettings_codec import CODEC
 from tests.test_evesettings_controller import QueuedThreads
 from tests.test_ui_setup_controller import files_under
@@ -301,17 +308,73 @@ def test_facade_export_review_create_publishes_exact_recipient_setup(pipeline):
     assert value(account, "overview", "useSmallText") is False
 
 
+@pytest.mark.parametrize("pipeline", ["native"], indirect=True)
+@pytest.mark.parametrize("count", [9, 20])
+def test_facade_twenty_tab_budget_exports_creates_and_reexports_real_codec(
+    pipeline, count
+):
+    api, source, base, queued, sent = pipeline
+    for path, document in zip(
+        (source.account_path, source.character_path),
+        source_with_tabs(count),
+        strict=True,
+    ):
+        codec.write_document(path, document, backup=lambda path: None)
+    before = files_under(base.root)
+    text = exported_text(api, source)
+    exported = json.loads(text)
+    assert exported["version"] == 1
+    assert len(exported["overview"]["tabs"]) == count
+    assert exported["overview"]["tabs"][-1]["name"] == f"Synthetic tab {count - 1}"
+    assert exported["overview"]["windowGroups"] == [list(range(count))]
+    reviewed = review(api, base, text)
+    assert reviewed["ok"], reviewed
+    assert reviewed["summary"]["counts"]["tabs"] == count
+    assert files_under(base.root) == before
+    destination, done = create(api, base, queued, sent, reviewed)
+    assert done["ok"] and done["published"] and done["selection_persisted"]
+    account, character = assert_recipient_preserved(base, destination, before)
+    assert len(value(account, "overview", "tabsettings_new")) == count
+    assert value(character, "windows", "windowSizesAndPositions_1")[
+        "bytes:overview"
+    ] == {"tuple": [100, 120, 340, 500, 1920, 1080]}
+    result = api.eve_settings_setup_export(
+        str(destination),
+        str(destination / base.account_path.name),
+        str(destination / base.character_path.name),
+    )
+    assert result["ok"], result
+    reexported = json.loads(result["text"])
+    for field in ("tabs", "windowGroups", "shipLabels", "settings"):
+        assert reexported["overview"][field] == exported["overview"][field]
+    assert reexported["layout"] == exported["layout"]
+    assert result["summary"]["counts"]["tabs"] == count
+
+
+@pytest.mark.parametrize("pipeline", ["native"], indirect=True)
+def test_facade_twenty_one_tabs_cannot_offer_or_create_a_profile(pipeline):
+    api, _source, base, queued, sent = pipeline
+    before = files_under(base.root)
+    refused = review(api, base, json.dumps(wire_with_tabs(21)))
+    assert not refused["ok"] and refused["error_code"] == "collection_limit"
+    assert not refused["review_id"]
+    assert not api.eve_settings_setup_create(refused["review_id"], "oversized")[
+        "accepted"
+    ]
+    assert not queued.queued and not fakes.payloads(sent, "onEveSettingsDone")
+    assert files_under(base.root) == before
+
+
 @pytest.mark.parametrize("pipeline", ["lossless", "native"], indirect=True)
-def test_facade_native_yaml_keeps_distinct_ordered_recipient_labels(pipeline):
+@pytest.mark.parametrize("count", [8, 9, 20])
+def test_facade_native_yaml_keeps_distinct_ordered_recipient_labels(pipeline, count):
     api, _source, base, queued, sent = pipeline
     # The recipient fixture's two-record sequence is deliberately NOT the
     # sender's nine records or the YAML's ambiguous nine-record ordering.
     original_a = codec.read_document(base.account_path)
     original_c = codec.read_document(base.character_path)
     before = files_under(base.root)
-    text = (Path(__file__).parent / "fixtures/ui_setup/native-complete.yaml").read_text(
-        encoding="utf-8"
-    )
+    text = yaml.safe_dump(native_with_tabs(count), allow_unicode=True)
     refused = review(api, base, text)
     assert not refused["ok"] and refused["needs_label_choice"]
     assert refused["error_code"] == "label_choice_required" and not refused["review_id"]
@@ -340,9 +403,9 @@ def test_facade_native_yaml_keeps_distinct_ordered_recipient_labels(pipeline):
         account.doc["bytes:overview"]["bytes:shipLabels"]
         == original_a.doc["bytes:overview"]["bytes:shipLabels"]
     )
-    assert value(account, "overview", "tabsByWindowInstanceID") == [
-        [0, 1, 2, 3, 4, 5, 6, 7]
-    ]
+    assert value(account, "overview", "tabsByWindowInstanceID") == [list(range(count))]
+    assert len(value(account, "overview", "tabsettings_new")) == count
+    assert reviewed["summary"]["counts"]["tabs"] == count
     assert (
         value(account, "overview", "tabsettings_new")["int:0"]["bytes:overview"]
         == "utf8:Synthetic Filter 00"
