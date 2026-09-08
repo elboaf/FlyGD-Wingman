@@ -164,6 +164,118 @@ class EsiResponse:
 
 
 @dataclass(frozen=True)
+class AuthenticatedGetResult:
+    """One authority-backed GET outcome without domain persistence policy."""
+
+    response: EsiResponse | None
+    error: str
+    authority_invalidated: bool
+    authority_reason: str
+    endpoint_denied: bool
+
+
+_AUTHENTICATED_ERROR_MAX_CHARS = 4096
+
+
+def _authenticated_error(value: object, tokens: tuple[str, ...]) -> str:
+    text = str(value or "ESI request failed.")
+    for token in tokens:
+        if token:
+            text = text.replace(token, "[redacted]")
+    return text[:_AUTHENTICATED_ERROR_MAX_CHARS]
+
+
+def authenticated_get(
+    authority,
+    client,
+    *,
+    character_id,
+    capability,
+    path,
+    etag=None,
+) -> AuthenticatedGetResult:
+    """Perform one capability-authorized GET with one rejected-token retry.
+
+    Lifecycle leases and all domain commits remain with the caller. Only the
+    shared authority classifies grant invalidation; endpoint 401/403 responses
+    are reported separately so feature controllers can apply their own wording.
+    """
+    used_tokens: tuple[str, ...] = ()
+    token_result = authority.access_token(character_id, capability)
+    token = token_result.token
+    if token is None:
+        return AuthenticatedGetResult(
+            None,
+            _authenticated_error(token_result.error, used_tokens),
+            token_result.grant_invalidated,
+            token_result.reason,
+            False,
+        )
+
+    used_tokens = (token,)
+    try:
+        response = client.get(path, token=token, etag=etag)
+    except (OSError, ValueError, RecursionError) as exc:
+        return AuthenticatedGetResult(
+            None, _authenticated_error(exc, used_tokens), False, "", False
+        )
+
+    if response.status == 401:
+        token_result = authority.access_token(
+            character_id, capability, rejected_token=token
+        )
+        retry_token = token_result.token
+        if retry_token is None:
+            return AuthenticatedGetResult(
+                None,
+                _authenticated_error(token_result.error, used_tokens),
+                token_result.grant_invalidated,
+                token_result.reason,
+                False,
+            )
+        used_tokens = (*used_tokens, retry_token)
+        try:
+            response = client.get(path, token=retry_token, etag=etag)
+        except (OSError, ValueError, RecursionError) as exc:
+            return AuthenticatedGetResult(
+                None, _authenticated_error(exc, used_tokens), False, "", False
+            )
+        if response.status == 401:
+            return AuthenticatedGetResult(
+                None,
+                _authenticated_error(
+                    f"ESI request failed (401): {response.error}", used_tokens
+                ),
+                False,
+                "",
+                True,
+            )
+
+    if response.status == 403:
+        return AuthenticatedGetResult(
+            None,
+            _authenticated_error(
+                f"ESI request failed (403): {response.error}", used_tokens
+            ),
+            False,
+            "",
+            True,
+        )
+    if response.status not in {200, 304}:
+        return AuthenticatedGetResult(
+            None,
+            _authenticated_error(
+                f"ESI request failed ({response.status}): {response.error}",
+                used_tokens,
+            ),
+            False,
+            "",
+            False,
+        )
+    return AuthenticatedGetResult(response, "", False, "", False)
+
+
+@dataclass(frozen=True)
 class MutationResponse:
     """The outcome of exactly one mutation attempt.
 

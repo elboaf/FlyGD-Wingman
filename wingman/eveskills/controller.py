@@ -1290,66 +1290,28 @@ class SkillsController:
             character_id, skills, queue, attributes, attributes_error
         )
 
-    def _access_token(self, character_id: int, *, rejected=None):
-        """Request one Skills-capable token from shared authority.
-
-        A token may carry a non-empty persistence warning. Presence of the
-        token, not an empty error string, decides success; the warning stays
-        visible through the immutable authority row joined into the payload.
-        """
-        result = self._authority.access_token(
-            character_id,
-            application.SKILLS,
-            rejected_token=rejected,
+    def _authorised_get(self, character_id: int, path: str, etag: str):
+        """Apply Skills wording to the shared authenticated GET outcome."""
+        result = esi_mod.authenticated_get(
+            self._authority,
+            self._client,
+            character_id=character_id,
+            capability=application.SKILLS,
+            path=path,
+            etag=etag or None,
         )
-        error = result.error
-        if result.token is None and result.grant_invalidated:
+        if result.response is not None:
+            return result.response, "", False
+        if result.endpoint_denied:
+            return None, MSG_REAUTH, False
+        if result.authority_invalidated:
             error = (
                 MSG_OWNER_CHANGE_DETECTED
-                if result.reason == ACCESS_REASON_OWNER_CHANGED
+                if result.authority_reason == ACCESS_REASON_OWNER_CHANGED
                 else MSG_REAUTH
             )
-        return result.token, error, result.grant_invalidated
-
-    def _authorised_get(self, character_id: int, path: str, etag: str):
-        """One authorised GET with exactly one 401 retry.
-
-        Returns (response, error, definitive). `response` is None on
-        failure; on success it is either a 200 or a 304, and the caller must
-        treat both as "this half is current".
-        """
-        token, error, definitive = self._access_token(character_id)
-        if token is None:
-            return None, error, definitive
-
-        response = self._client.get(path, token=token, etag=etag or None)
-        if response.status == 401:
-            # One retry, and only one. A token minted seconds ago and
-            # rejected again is not a clock-skew problem, it is a revoked
-            # grant, and retrying forever would spend the error-limit
-            # budget discovering that repeatedly.
-            token, error, definitive = self._access_token(character_id, rejected=token)
-            if token is None:
-                return None, error, definitive
-            response = self._client.get(path, token=token, etag=etag or None)
-            if response.status == 401:
-                # An endpoint rejection is not evidence that the shared grant
-                # is invalid. Authority alone classifies refresh/JWT outcomes.
-                return None, MSG_REAUTH, False
-
-        if response.status == 403:
-            # Scope claims remain authoritative. This endpoint error belongs
-            # to Skills and must not delete a grant Fittings may also use.
-            return None, MSG_REAUTH, False
-        if not (response.ok or response.not_modified):
-            # Includes esi.py's synthetic 503 for retry exhaustion, which
-            # did not necessarily come from ESI -- transient either way.
-            return (
-                None,
-                f"ESI request failed ({response.status}): {response.error}",
-                False,
-            )
-        return response, "", False
+            return None, error, True
+        return None, result.error, False
 
     def _commit_success(
         self, character_id: int, skills, queue, attributes, attributes_error: str

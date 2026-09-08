@@ -21,7 +21,7 @@ from pathlib import Path
 from ..eveauth import application
 from ..eveauth.cleanup import CleanupVerification
 from ..eveauth.controller import MutationResult
-from ..eveesi import EsiClient
+from ..eveesi import EsiClient, authenticated_get
 from . import contracts, names, store
 from .model import (
     FINGERPRINT_VERSION,
@@ -409,43 +409,19 @@ class FittingsController:
             )
 
     def _authorised_get(self, character_id: int, etag: str):
-        token_result = self._authority.access_token(character_id, application.FITTINGS)
-        token = token_result.token
-        if token is None:
-            return None, _bounded_error(token_result.error or MSG_REAUTH)
-
-        path = contracts.GET_PATH.format(character_id=character_id)
-        try:
-            response = self._client.get(path, token=token, etag=etag or None)
-        except (OSError, ValueError, RecursionError) as exc:
-            return None, _bounded_error(exc)
-        if response.status == 401:
-            token_result = self._authority.access_token(
-                character_id,
-                application.FITTINGS,
-                rejected_token=token,
-            )
-            if token_result.token is None:
-                return None, _bounded_error(token_result.error or MSG_REAUTH)
-            try:
-                response = self._client.get(
-                    path,
-                    token=token_result.token,
-                    etag=etag or None,
-                )
-            except (OSError, ValueError, RecursionError) as exc:
-                return None, _bounded_error(exc)
-            if response.status == 401:
-                return None, MSG_REAUTH
-        if response.status == 403:
-            # Endpoint status is not an OAuth verdict.  Authority retains the
-            # shared grant, which may still be valid for Skills.
+        result = authenticated_get(
+            self._authority,
+            self._client,
+            character_id=character_id,
+            capability=application.FITTINGS,
+            path=contracts.GET_PATH.format(character_id=character_id),
+            etag=etag or None,
+        )
+        if result.response is not None:
+            return result.response, ""
+        if result.endpoint_denied:
             return None, MSG_REAUTH
-        if response.status not in {200, 304}:
-            return None, _bounded_error(
-                f"ESI request failed ({response.status}): {response.error}"
-            )
-        return response, ""
+        return None, _bounded_error(result.error or MSG_REAUTH)
 
     def _import_locked(
         self,

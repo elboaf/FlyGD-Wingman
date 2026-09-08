@@ -23,12 +23,14 @@ from ..eveesi import (
     NETWORK_BACKOFF_S,
     RETRY_STATUSES,
     TIMEOUT_S,
+    AuthenticatedGetResult,
     EsiClient,
     EsiResponse,
     MutationResponse,
     _NoRedirectHandler,
     _opener,
     application,
+    authenticated_get,
     validate_path,
 )
 
@@ -41,11 +43,13 @@ __all__ = [
     "NETWORK_BACKOFF_S",
     "RETRY_STATUSES",
     "TIMEOUT_S",
+    "AuthenticatedGetResult",
     "EsiClient",
     "EsiResponse",
     "MutationResponse",
     "_NoRedirectHandler",
     "_opener",
     "application",
+    "authenticated_get",
     "validate_path",
 ]

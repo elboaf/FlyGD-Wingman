@@ -5,10 +5,12 @@ sockets, no browser, no real threads unless the test says so, and `tmp_path`
 for the state file, the id cache, and the plans folder.
 """
 
+import io
 import json
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 from types import SimpleNamespace
 
 import pytest
@@ -319,11 +321,9 @@ def test_refresh_body_key_error_is_not_mistaken_for_missing_authority(tmp_path):
 
 def test_one_malformed_esi_body_does_not_abort_the_pass_for_the_rest(tmp_path):
     """eveesi raises ValueError for an oversize or unparseable body rather
-    than returning an error response, and _authorised_get calls the client
-    bare. Before the per-character guard that ValueError climbed out of
-    _refresh_pass into the worker's catch-all: the pass logged "refresh
-    failed", every character behind the bad one stayed unrefreshed, and
-    the row that caused it showed nothing."""
+    than returning an error response. The authenticated-read boundary must
+    normalize that failure so the pass still reaches later characters and
+    records the failing character's stale snapshot."""
     clock = Clock()
     clock.advance(3600)
     esi = FakeEsi()
@@ -345,7 +345,6 @@ def test_one_malformed_esi_body_does_not_abort_the_pass_for_the_rest(tmp_path):
 
     first, second = controller._state.characters
     assert first.character_id == 95 and second.character_id == 96
-    assert first.error.startswith(controller_mod.MSG_REFRESH_FAILED)
     assert "exceeded" in first.error
     assert first.fetched_utc == T0, "last-good data is kept, not discarded"
     assert second.error == ""
@@ -402,9 +401,11 @@ def test_owner_change_mapping_uses_reason_not_human_text(tmp_path):
         authority=authority,
     )
 
-    token, error, invalidated = controller._access_token(95)
+    response, error, invalidated = controller._authorised_get(
+        95, "/v4/characters/95/skills/", ""
+    )
 
-    assert token is None
+    assert response is None
     assert invalidated is True
     assert error == "Character ownership changed. Re-authenticate this character."
 
@@ -933,7 +934,10 @@ class FakeEsi:
         else:
             script = self.queue
         assert script, f"unscripted ESI call: {path}"
-        return script.pop(0) if len(script) > 1 else script[0]
+        outcome = script.pop(0) if len(script) > 1 else script[0]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
     def post(self, path, body, *, token=None):
         raise AssertionError(f"unexpected POST {path}")
@@ -1348,6 +1352,7 @@ def test_committed_estimate_inputs_survive_a_reload(tmp_path):
         pytest.param(
             esi_response(200, {"charisma": 19}, etag='"a2"'), id="malformed_body"
         ),
+        pytest.param(OSError("attributes transport failed"), id="transport_error"),
     ],
 )
 def test_a_failed_attributes_call_still_commits_the_core_snapshot(tmp_path, response):
@@ -1382,6 +1387,76 @@ def test_a_failed_attributes_call_still_commits_the_core_snapshot(tmp_path, resp
     assert ch.attributes == ATTRIBUTES_BODY
     assert ch.attributes_fetched_utc == T0
     assert ch.attributes_fetched_utc < ch.fetched_utc
+
+
+class RawEsiResponse:
+    def __init__(self, payload: bytes):
+        self.status = 200
+        self.headers = Message()
+        self._body = io.BytesIO(payload)
+
+    def read(self, size=-1):
+        return self._body.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class RawEsiTransport:
+    def __init__(self, payloads):
+        self._payloads = list(payloads)
+
+    def __call__(self, _request, timeout=None):
+        return RawEsiResponse(self._payloads.pop(0))
+
+
+@pytest.mark.parametrize(
+    ("attributes_payload", "expected_error"),
+    [
+        pytest.param(b"{", "Expecting property name", id="malformed_json"),
+        pytest.param(
+            b"x" * (esi_mod.MAX_SUCCESS_BODY_BYTES + 1),
+            "exceeded",
+            id="oversized_body",
+        ),
+    ],
+)
+def test_real_esi_attribute_decode_failures_commit_core_only(
+    tmp_path, attributes_payload, expected_error
+):
+    """The real decoder raises after both valid core responses. That
+    supplemental exception must not escape to the whole-character guard."""
+    clock = Clock()
+    clock.advance(3600)
+    transport = RawEsiTransport(
+        [
+            json.dumps(SKILLS_BODY).encode("utf-8"),
+            json.dumps(QUEUE_BODY).encode("utf-8"),
+            attributes_payload,
+        ]
+    )
+    client = esi_mod.EsiClient(
+        user_agent="TestAgent/1.0", transport=transport, sleep=lambda _seconds: None
+    )
+
+    controller, pushed, _ = run_refresh(tmp_path, client, clock=clock)
+
+    ch = controller._state.find(95)
+    assert ch.active_levels == {3327: 4}
+    assert ch.skill_points == {3327: 200000}
+    assert ch.queue and ch.fetched_utc == clock.value
+    assert ch.error == ""
+    assert expected_error in ch.attributes_error
+    assert ch.attributes == ATTRIBUTES_BODY
+    persisted, _ = state_mod.load(tmp_path / "eve_skills.json")
+    persisted_ch = persisted.find(95)
+    assert persisted_ch.error == ""
+    assert persisted_ch.attributes_error == ch.attributes_error
+    progress = [p for handler, p in pushed if handler == "onSkillsProgress"]
+    assert [p["error"] for p in progress] == [""]
 
 
 def test_a_supplemental_failure_persists_beside_the_unmoved_pair(tmp_path):
@@ -1714,10 +1789,9 @@ def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path)
     is correct in memory), but until the write reaches disk the NEXT launch
     would authenticate with a stale one, and nothing on the row said so.
 
-    Calls _access_token directly rather than through refresh_characters():
-    _commit_success's own save runs moments later in the same pass and
-    would overwrite ch.error on any success, masking exactly the failure
-    this test exists to catch.
+    Calls the read adapter directly rather than through refresh_characters():
+    _commit_success's own save runs moments later in the same pass. The
+    authority warning remains on its joined row while the GET still succeeds.
     """
     character = with_snapshot()
     controller, _, _ = build(
@@ -1733,11 +1807,13 @@ def test_a_failed_save_during_token_rotation_is_surfaced_not_swallowed(tmp_path)
 
     controller._authority._save_authority = fail_save
 
-    token, warning, invalidated = controller._access_token(character.character_id)
+    response, error, invalidated = controller._authorised_get(
+        character.character_id, "/v4/characters/95/skills/", ""
+    )
 
-    assert token == "access-1", "the refresh itself still succeeded"
+    assert response is not None, "the refresh itself still succeeded"
+    assert error == ""
     assert invalidated is False
-    assert "could not be saved" in warning
     assert (
         controller._authority._state.characters[0].refresh_token_blob == "refresh-1"
     ), "rotated correctly in memory"
