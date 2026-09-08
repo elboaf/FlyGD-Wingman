@@ -128,6 +128,9 @@ def test_persisted_document_holds_only_the_documented_fields(tmp_path):
         "observed_participation",
         "pending_recovery",
         "pending_source_commands",
+        "pending_pairing",
+        "pending_participation",
+        "auth_pause",
     }
     assert document["last_revision"] == 7
     assert set(document["identity"]) == {

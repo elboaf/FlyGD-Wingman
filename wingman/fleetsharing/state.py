@@ -15,6 +15,7 @@ import re
 from contextlib import suppress
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .. import atomicio
 from ..eveauth import dpapi
@@ -22,7 +23,7 @@ from . import crypto, protocol
 from .config import canonical_origin
 
 MAX_STATE_FILE_BYTES = 64 * 1024
-STATE_VERSION = 2
+STATE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -48,8 +49,37 @@ class PendingRecovery:
 
 
 @dataclass(frozen=True)
+class PendingPairing:
+    """Candidate key/origin live in SharingState; exposure follows durable admission."""
+
+    mode: str
+    pairing_id: str | None = None
+    approval_url: str | None = None
+    expires_at: str | None = None
+    completion_attempted: bool = False
+
+
+@dataclass(frozen=True)
+class PendingParticipation:
+    """An explicit action, not a copy of Settings. Unbound On needs fresh consent."""
+
+    intent_id: str
+    enabled: bool
+    expected_generation: int | None = None
+    attempted: bool = False
+
+
+@dataclass(frozen=True)
+class AuthPause:
+    """Only proof outcomes are durable; generic HTTP errors are not revocation."""
+
+    result: str
+    retry_not_before: str | None = None
+
+
+@dataclass(frozen=True)
 class SharingState:
-    """Version 2; missing device/expiry/capabilities mean unknown, not unpaired.
+    """Version 3; missing device/expiry/capabilities mean unknown, not unpaired.
 
     last_revision is the highest ATTEMPTED signed revision, saved BEFORE send.
     All signed calls share it. Replacement sessions reset only session-bound
@@ -69,6 +99,9 @@ class SharingState:
     observed_participation: protocol.Participation | None = None
     pending_recovery: PendingRecovery | None = None
     pending_source_commands: tuple[protocol.SourceCommand, ...] = ()
+    pending_pairing: PendingPairing | None = None
+    pending_participation: PendingParticipation | None = None
+    auth_pause: AuthPause | None = None
 
 
 EMPTY = SharingState()
@@ -197,7 +230,59 @@ def _session_fields(raw: dict) -> dict:
     }
 
 
-def _parse_v2(raw: object, *, salvage_session: bool = False) -> SharingState:
+def _pending_pairing(value: object, origin: str | None) -> PendingPairing:
+    d = protocol.exact_object(
+        value, "mode pairing_id approval_url expires_at completion_attempted"
+    )
+    mode = protocol.enum(d["mode"], ("initial", "upgrade", "fresh"))
+    attempted = protocol.boolean(d["completion_attempted"])
+    pair_id, url, expiry = d["pairing_id"], d["approval_url"], d["expires_at"]
+    if pair_id is None:
+        if url is not None or expiry is not None or attempted:
+            raise ValueError("Incomplete fleet pairing journal.")
+    else:
+        if not isinstance(pair_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9._-]{1,128}", pair_id
+        ):
+            raise ValueError("Invalid fleet pairing ID.")
+        protocol.text(url, 2048)
+        parsed = urlsplit(url)
+        if (
+            any(c.isspace() for c in url)
+            or "\\" in url
+            or canonical_origin(f"{parsed.scheme}://{parsed.netloc}") != origin
+        ):
+            raise ValueError("Fleet approval URL origin mismatch.")
+        protocol.utc_date(expiry)
+    return PendingPairing(mode, pair_id, url, expiry, attempted)
+
+
+def _pending_participation(value: object) -> PendingParticipation:
+    d = protocol.exact_object(value, "intent_id enabled expected_generation attempted")
+    return PendingParticipation(
+        protocol.uuid(d["intent_id"]),
+        protocol.boolean(d["enabled"]),
+        _optional(
+            lambda v: protocol.integer(v, 0, protocol.INT4_MAX - 1),
+            d["expected_generation"],
+        ),
+        protocol.boolean(d["attempted"]),
+    )
+
+
+def _auth_pause(value: object) -> AuthPause:
+    d = protocol.exact_object(value, "result retry_not_before")
+    result = protocol.enum(
+        d["result"],
+        ("device_revoked", "device_key_conflict", "account_ineligible", "retry_later"),
+    )
+    deadline = _optional(protocol.utc_date, d["retry_not_before"])
+    if (result in ("account_ineligible", "retry_later")) != (deadline is not None):
+        raise ValueError("Invalid fleet authentication pause.")
+    return AuthPause(result, deadline)
+
+
+def _parse_v3(raw: object, *, salvage_session: bool = False) -> SharingState:
     d = protocol.exact_object(
         raw, "version " + " ".join(f.name for f in fields(SharingState))
     )
@@ -206,8 +291,15 @@ def _parse_v2(raw: object, *, salvage_session: bool = False) -> SharingState:
     origin = _optional(canonical_origin, d["relay_origin"])
     pending = _optional(_pending_recovery, d["pending_recovery"])
     commands = _pending_commands(d["pending_source_commands"])
+    pairing = (
+        None
+        if d["pending_pairing"] is None
+        else _pending_pairing(d["pending_pairing"], origin)
+    )
+    participation = _optional(_pending_participation, d["pending_participation"])
+    pause = _optional(_auth_pause, d["auth_pause"])
     if (identity is not None and origin is None) or (
-        (pending or commands) and identity is None
+        (pending or commands or pairing or participation or pause) and identity is None
     ):
         raise ValueError("Fleet identity and intents require an origin binding.")
     try:
@@ -232,6 +324,24 @@ def _parse_v2(raw: object, *, salvage_session: bool = False) -> SharingState:
         ),
         pending_recovery=pending,
         pending_source_commands=commands,
+        pending_pairing=pairing,
+        pending_participation=participation,
+        auth_pause=pause,
+    )
+
+
+def _migrate_v2(raw: dict) -> SharingState:
+    # Exact Task 6 documents have none of the V3 keys. Never interpret absent
+    # journals as corrupt data, nor backfill feature/capability/consent authority.
+    new_fields = {"pending_pairing", "pending_participation", "auth_pause"}
+    protocol.exact_object(
+        raw,
+        "version "
+        + " ".join(f.name for f in fields(SharingState) if f.name not in new_fields),
+    )
+    return _parse_v3(
+        {**raw, "version": STATE_VERSION, **dict.fromkeys(new_fields)},
+        salvage_session=True,
     )
 
 
@@ -295,7 +405,9 @@ def load(path: Path) -> SharingState:
             return EMPTY
         if raw["version"] == 1:
             return _migrate_v1(raw)
-        return _parse_v2(raw, salvage_session=True)
+        if raw["version"] == 2:
+            return _migrate_v2(raw)
+        return _parse_v3(raw, salvage_session=True)
     except (OSError, ValueError):
         return EMPTY
 
@@ -310,5 +422,5 @@ def save(path: Path, state: SharingState) -> None:
     data = json.dumps(_to_dict(state), indent=2, allow_nan=False)
     if len(data.encode("utf-8")) > MAX_STATE_FILE_BYTES:
         raise ValueError("Fleet state exceeds the size limit.")
-    _parse_v2(protocol.decode_json(data.encode("utf-8")))
+    _parse_v3(protocol.decode_json(data.encode("utf-8")))
     atomicio.write_atomic(Path(path), data)

@@ -61,6 +61,8 @@ def test_malformed_persisted_public_key_cannot_escape_state_loader(
             for key in ("identity", "relay_origin", "session_id", "last_revision")
         }
     data["version"] = version
+    for key in ("pending_pairing", "pending_participation", "auth_pause"):
+        data.pop(key, None)
     data["identity"]["public_key_spki_b64"] = base64.b64encode(
         invalid_recovery_spki(case)
     ).decode()
@@ -84,6 +86,8 @@ def test_valid_persisted_der_alias_preserves_the_canonical_identity(tmp_path, ve
             for key in ("identity", "relay_origin", "session_id", "last_revision")
         }
     data["version"] = version
+    for key in ("pending_pairing", "pending_participation", "auth_pause"):
+        data.pop(key, None)
     canonical = base64.b64decode(original.identity.public_key_spki_b64)
     data["identity"]["public_key_spki_b64"] = base64.b64encode(
         canonical + b"\x00" * 46
@@ -98,7 +102,7 @@ def test_v2_roundtrip_preserves_all_bindings_without_remote_payloads(tmp_path):
     s.save(path, state)
     assert s.load(path) == state
     raw = json.loads(path.read_text())
-    assert raw["version"] == 2
+    assert raw["version"] == 3
     assert raw["pending_source_commands"] == [
         {
             "operation": "start",
@@ -137,10 +141,10 @@ def test_v1_migration_preserves_registered_key_origin_and_opaque_session(tmp_pat
         result.approved_capabilities is None and result.observed_participation is None
     )
     s.save(path, result)
-    assert json.loads(path.read_text())["version"] == 2
+    assert json.loads(path.read_text())["version"] == 3
 
 
-@pytest.mark.parametrize("version", [None, True, 1.0, 0, 3, "2"])
+@pytest.mark.parametrize("version", [None, True, 1.0, 0, 4, "2"])
 def test_unknown_or_malformed_state_version_is_not_guessed(tmp_path, version):
     path = tmp_path / "state.json"
     state = paired()
@@ -251,6 +255,8 @@ def test_bracketed_authority_corruption_cannot_redirect_loaded_identity(
             key: data[key]
             for key in ("identity", "relay_origin", "session_id", "last_revision")
         }
+    for key in ("pending_pairing", "pending_participation", "auth_pause"):
+        data.pop(key, None)
     data.update(version=version, relay_origin=origin)
     path.write_text(json.dumps(data))
     before = path.read_bytes()
@@ -269,6 +275,8 @@ def test_valid_ipv6_state_origin_normalizes_without_losing_identity(tmp_path, ve
             key: data[key]
             for key in ("identity", "relay_origin", "session_id", "last_revision")
         }
+    for key in ("pending_pairing", "pending_participation", "auth_pause"):
+        data.pop(key, None)
     data.update(version=version, relay_origin="HTTPS://[2001:0DB8:0:0:0:0:0:1]:443/")
     path.write_text(json.dumps(data))
     assert s.load(path) == replace(original, relay_origin="https://[2001:db8::1]")
@@ -366,7 +374,7 @@ def test_duplicate_json_and_unknown_durable_payload_fail_closed(tmp_path):
     path = tmp_path / "state.json"
     s.save(path, paired())
     raw = path.read_text()
-    path.write_text(raw.replace('"version": 2', '"version": 2, "version": 2'))
+    path.write_text(raw.replace('"version": 3', '"version": 3, "version": 3'))
     assert s.load(path) == s.EMPTY
     s.save(path, paired())
     data = json.loads(path.read_text())
