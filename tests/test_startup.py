@@ -80,6 +80,12 @@ def startup(monkeypatch, tmp_path):
     # thread, nothing to tear down. The first-run push is deferred onto a
     # daemon timer that outlives the test harmlessly.
     monkeypatch.setattr(main_mod, "resolve_recording_dir", lambda cfg: None)
+    # Ordering tests inject their own services when needed. Leaving these real
+    # constructs Windows-only objects that the recording-only shutdown spies
+    # below cannot clean up; Linux's None builders used to hide that leak.
+    monkeypatch.setattr(main_mod, "build_preview_host", lambda *_args: None)
+    monkeypatch.setattr(main_mod, "build_alert_policy", lambda *_args: None)
+    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: None)
 
     def fake_build_tray(on_open, on_quit):
         captured["on_open"] = on_open
@@ -213,6 +219,8 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
 
     def during_run():
         api = startup.captured["api"]
+        assert api._preview_host is None
+        assert api._telemetry is telemetry
         api._fleetbar_window = SimpleNamespace(
             destroy=lambda: order.append("fleet_destroy")
         )

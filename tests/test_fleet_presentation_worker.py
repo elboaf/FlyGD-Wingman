@@ -6,6 +6,12 @@ import pytest
 
 from tests.test_api import make_api
 from tests.test_fleet_bar import FleetWindow
+
+# Import the fixture too: importing FleetWindow alone does not register its
+# module's headless helpers, and Windows then rejects the fake's missing HWND.
+from tests.test_fleet_bar import (
+    _headless_fleet_window_helpers as _headless_fleet_window_helpers,
+)
 from tests.test_telemetry_coordinator import _harness, _roster, _session
 from wingman import settings
 from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
@@ -525,7 +531,14 @@ def test_disable_reenable_with_same_generation_retires_blocked_delivery(
     import json
 
     from tests.test_fleet_bar import FakeTelemetry
+    from wingman.ui import fleetbar
 
+    def unexpected_create(*args, **kwargs):
+        raise AssertionError(
+            "a live fake Fleet window must not trigger native creation"
+        )
+
+    monkeypatch.setattr(fleetbar, "create", unexpected_create)
     telemetry = FakeTelemetry()
     telemetry.reconcile = lambda: 1  # sharing keeps the coordinator activation alive
     telemetry.subscribe_fleet = lambda _cb: lambda: None
@@ -549,8 +562,9 @@ def test_disable_reenable_with_same_generation_retires_blocked_delivery(
         frames.append(json.loads(script.split("window.onFleetSnapshot(", 1)[1][:-1]))
         delivered.set()
 
+    bar = api._fleetbar_window
     monkeypatch.setattr(api._window, "evaluate_js", stall)
-    monkeypatch.setattr(api._fleetbar_window, "evaluate_js", display)
+    monkeypatch.setattr(bar, "evaluate_js", display)
     api._install_fleet_generation(1)
     assert api._start_fleet_presentation()
     api._receive_fleet_snapshot(snapshot("Retired"))
@@ -567,6 +581,8 @@ def test_disable_reenable_with_same_generation_retires_blocked_delivery(
         toggler.start()
         assert toggled.wait(1), "WebView must not hold the native lifecycle lock"
         assert all(result["applied"] for result in toggle_results)
+        assert api._fleetbar_window is bar
+        assert not bar.hidden
         assert api._fleet_snapshot is None
         api._receive_fleet_snapshot(snapshot("Current"))
         release.set()
