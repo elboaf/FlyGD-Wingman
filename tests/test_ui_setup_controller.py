@@ -2,8 +2,10 @@
 
 import contextlib
 import copy
+import errno
 import io
 import json
+import logging
 from dataclasses import fields, replace
 from pathlib import Path
 from uuid import UUID
@@ -19,6 +21,7 @@ from wingman import atomicio
 from wingman.evesettings import (
     codec,
     profilecopy,
+    setup_catalog,
     setup_documents,
     setup_model,
     setup_profile,
@@ -126,6 +129,102 @@ def test_catalog_reads_are_read_only_and_project_errors(
             if failure == "manifest"
             else "synthetic-fleet-r1.json" in loaded["error"]
         )
+    assert controller._setup_review is previous_offer
+    assert controller._settings == before
+
+
+@pytest.mark.parametrize(
+    "facade,adapter,args,empty",
+    [
+        ("setup_catalog", "list_entries", (), {"entries": []}),
+        (
+            "setup_catalog_entry",
+            "read_entry",
+            ("synthetic-fleet", 1, "a" * 64),
+            {"entry": {}, "text": "", "summary": {}},
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "cause_type,code,winerror,diagnostic",
+    [
+        (FileNotFoundError, errno.ENOENT, None, "I/O failure: FileNotFoundError"),
+        (PermissionError, errno.EACCES, None, "I/O failure: PermissionError"),
+        (PermissionError, errno.EACCES, 32, "I/O failure: PermissionError"),
+        (OSError, None, None, "I/O failure: OSError"),
+        (None, None, None, "refused (cause=none)"),
+        (ValueError, None, None, "refused (cause=ValueError)"),
+    ],
+    ids=["missing", "permission", "sharing", "no-codes", "no-cause", "decoder"],
+)
+def test_catalog_diagnostics_are_safe_and_read_only(
+    setup,
+    monkeypatch,
+    caplog,
+    facade,
+    adapter,
+    args,
+    empty,
+    cause_type,
+    code,
+    winerror,
+    diagnostic,
+):
+    controller, _, _ = setup
+    before = copy.deepcopy(controller._settings)
+    previous_offer = controller._setup_review
+    private_path = r"C:\invented-private\pilot\notice.txt"
+    private_body = "Invented private notice and setup body"
+    cause = None
+    if cause_type is not None:
+        cause = (
+            cause_type(code, private_body, private_path)
+            if issubclass(cause_type, OSError)
+            else cause_type(private_body + private_path)
+        )
+        if winerror is not None:
+            # Linux does not populate the Windows-only field itself.
+            cause.winerror = winerror
+    safe_text = (
+        "Cannot read bundled catalog.json. Check the Wingman installation."
+        if isinstance(cause, OSError)
+        else "Catalog entry has missing or unknown fields."
+    )
+    failure = setup_catalog.SetupCatalogError(safe_text)
+
+    def refuse(*_args):
+        raise failure from cause
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("catalog diagnostics invoked authority ports")
+
+    monkeypatch.setattr(setup_catalog, adapter, refuse)
+    controller._ports = replace(
+        controller._ports,
+        **{field.name: forbidden for field in fields(controller._ports)},
+    )
+    api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = controller
+    with caplog.at_level(logging.WARNING, logger="wingman.evesettings.controller"):
+        result = getattr(api, "eve_settings_" + facade)(*args)
+
+    assert result == {"ok": False, **empty, "error": safe_text}
+    assert failure.__cause__ is cause
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert facade in record.getMessage()
+    assert diagnostic in record.getMessage()
+    if isinstance(cause, OSError):
+        assert f"errno={code}" in record.getMessage()
+        assert f"winerror={winerror}" in record.getMessage()
+    else:
+        assert "I/O" not in record.getMessage()
+        assert "errno=" not in record.getMessage()
+        assert "winerror=" not in record.getMessage()
+    assert record.exc_info is None and record.stack_info is None
+    assert private_path not in caplog.text
+    assert private_body not in caplog.text
+    assert "notice.txt" not in caplog.text
     assert controller._setup_review is previous_offer
     assert controller._settings == before
 

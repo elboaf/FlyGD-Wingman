@@ -36,6 +36,27 @@ from . import tree as evesettings_tree
 logger = logging.getLogger(__name__)
 
 
+def _log_setup_catalog_error(
+    operation: str, error: setup_catalog.SetupCatalogError
+) -> None:
+    # Causes can contain private paths or document text; keep only type/OS codes.
+    cause = error.__cause__
+    if isinstance(cause, OSError):
+        logger.warning(
+            "%s I/O failure: %s (errno=%s, winerror=%s)",
+            operation,
+            type(cause).__name__,
+            cause.errno,
+            getattr(cause, "winerror", None),
+        )
+    else:
+        logger.warning(
+            "%s refused (cause=%s)",
+            operation,
+            type(cause).__name__ if cause is not None else "none",
+        )
+
+
 @dataclass(frozen=True)
 class ProfilesPorts:
     """Named effects only; spawn returns an unstarted worker handle.
@@ -626,6 +647,7 @@ class ProfilesController:
         try:
             return {"ok": True, "entries": setup_catalog.list_entries(), "error": ""}
         except setup_catalog.SetupCatalogError as error:
+            _log_setup_catalog_error("setup_catalog", error)
             return {"ok": False, "entries": [], "error": str(error)}
 
     def setup_catalog_entry(self, preset_id: str, revision: int, sha256: str) -> dict:
@@ -633,6 +655,7 @@ class ProfilesController:
             result = setup_catalog.read_entry(preset_id, revision, sha256)
             return {"ok": True, **result, "error": ""}
         except setup_catalog.SetupCatalogError as error:
+            _log_setup_catalog_error("setup_catalog_entry", error)
             return {
                 "ok": False,
                 "entry": {},
