@@ -67,7 +67,12 @@ explicit and exercise them through tests.
 
 ## Development sequence
 
-Resume Task 4 in bounded slices. First implement pure recipient-document
+Task 4a is now implemented and reviewed at `c282dd5`; see the
+[pure application verification](ui-setup-application-verification.md). The full
+exporter and unresolved application cases remain Task 4b, not completed product
+behavior.
+
+The reassessed sequence resumes Task 4 in bounded slices. First implement pure recipient-document
 application for the supported branches and explicit refusal of the unresolved
 ones. It remains unexposed: no controller endpoint, filesystem publication or GUI
 is enabled by this slice.

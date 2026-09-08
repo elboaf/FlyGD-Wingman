@@ -4,7 +4,7 @@
 
 **Goal:** Export a faithful Wingman overview/in-space-layout preset and apply it to a new recipient profile, preserving recipient-local display preferences and existing profiles.
 
-**Execution checkpoint:** Tasks 1–3 are implemented and task-reviewed at `904d1a8`. Task 4 resumes in bounded pure-adapter slices under the [case-based gate reassessment](overview-layout-sharing-reassessment.md); unresolved export classification, differing-name replacement, selector invalidation and surplus retirement remain required cases, not completed functionality. See [verification and decisions](overview-layout-sharing-verification.md). This is not a completed feature or release sign-off.
+**Execution checkpoint:** Tasks 1–3 are implemented and task-reviewed at `904d1a8`. Task 4a's pure recipient-document application is implemented and reviewed at `c282dd5`; see its [verification](ui-setup-application-verification.md). Under the [case-based gate reassessment](overview-layout-sharing-reassessment.md), unresolved Task 4b export classification, differing-name replacement, selector invalidation and surplus retirement remain required cases, not completed functionality. See [verification and decisions](overview-layout-sharing-verification.md). This is not a completed feature or release sign-off.
 
 **Architecture:** Pure validation and decoded-document adapters feed a recipient-local staged profile constructor. `ProfilesController` owns context, review authorization and mutation lifecycle; `Api` remains a thin facade with named file-dialog ports. One focused Profiles subroute owns transient UI state and receives completion through the existing event owner.
 

@@ -1,7 +1,7 @@
 # Wingman overview and in-space layout presets
 
 Date: 2026-09-07
-Status: approved design; pure model/parsers implemented through plan Task 3. Settings writes remain blocked on evidence. See the [implementation plan](overview-layout-sharing-plan.md) and [verification checkpoint](overview-layout-sharing-verification.md).
+Status: approved design; pure model/parsers and bounded recipient-document application (Task 4a) implemented. No profile publication or GUI integration yet. See the [implementation plan](overview-layout-sharing-plan.md), [parser checkpoint](overview-layout-sharing-verification.md) and [application checkpoint](ui-setup-application-verification.md).
 Base: `a38c7a0` plus the discovery record committed in `ed6aa16`.
 Evidence: [overview/layout discovery](overview-layout-sharing-discovery.md).
 
