@@ -97,6 +97,14 @@ IMPORT_SCENARIOS = [
     "detached-two-creates",
     "detached-ordinary-copy",
     "detached-other-route",
+    "detached-refresh-race",
+    "detached-refresh-race-newer-review",
+    "detached-refresh-race-ordinary-copy",
+    "profiles-refresh-in-order",
+    "profiles-refresh-newer-null",
+    "profiles-refresh-older-null",
+    "profiles-refresh-root-followup",
+    "profiles-refresh-roster-followup",
 ]
 
 

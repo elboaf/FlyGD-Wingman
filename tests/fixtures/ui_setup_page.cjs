@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const {spawnSync} = require('node:child_process');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
-const coupled = scenario.startsWith('detached-');
+const coupled = scenario.startsWith('detached-') || scenario.startsWith('profiles-refresh-');
 
 // PageTree supplies real production ancestry/attributes. Only DOM mechanics and
 // bridge/clipboard delivery are doubled; no setup page state lives in this DOM.
@@ -76,7 +76,8 @@ document.getElementById = id => ids[id] || null;
 const contexts = [], limits = [], snapshots = [], saves = [], clipboardWrites = [], mutations = [];
 const reviews = [], discards = [], creates = [], reads = [], clipboardReads = [], profilesReads = [];
 let handlers = {}; let formationsCompletions = 0;
-const ordinaryCopies = [];
+const ordinaryCopies = [], rootPicks = [], identityChecks = [], identityConfirms = [];
+let nameResolutions = 0;
 function deferred(args) {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -113,7 +114,10 @@ let WM = {
       eve_settings_state: profilesReads};
     if (coupled) {
       destinations.eve_settings_copy = ordinaryCopies;
-      if (method === 'eve_settings_resolve_names') return Promise.resolve(true);
+      destinations.eve_settings_pick_root = rootPicks;
+      destinations.eve_settings_identification_check = identityChecks;
+      destinations.eve_settings_identification_confirm = identityConfirms;
+      if (method === 'eve_settings_resolve_names') { nameResolutions++; return Promise.resolve(true); }
     }
     if (method === 'eve_settings_setup_create') {
       assert.equal(WM.el('setup-create').disabled, true, 'lock before sending Create');
@@ -396,6 +400,7 @@ function freshReviewRequired() {
   assert.match(importStatus(), /review.*again|fresh review/i);
 }
 async function importMain() {
+  if (scenario.startsWith('profiles-refresh-')) { await profilesRefreshMain(); return; }
   if (coupled) { await detachedMain(); return; }
   await importOpen();
   if (scenario === 'context-does-not-select') {
@@ -626,6 +631,9 @@ async function coupledOpen() {
   input('setup-text', exported.text); input('setup-name', 'Imported');
 }
 async function detachedMain() {
+  const refreshRace = scenario.startsWith('detached-refresh-race');
+  const newerReview = scenario.endsWith('-newer-review');
+  const ordinaryCopy = scenario.endsWith('-ordinary-copy');
   WM.route('evesettings'); profilesReads.at(-1).resolve(profilesState()); await tick();
   await coupledOpen(); await reviewed(); click('setup-create'); const pending = creates.at(-1);
   if (scenario === 'detached-early-done') {
@@ -645,8 +653,9 @@ async function detachedMain() {
   assert.equal(WM.el('setup-character').options.length, 1, 'private roster cleared');
   assert.equal(WM.el('setup-summary').hidden, true);
   assert.equal(discards.length, 0, 'sent Create is not cancelled');
-  // Crucially, the read triggered by Back settles BEFORE the worker finishes.
-  profilesReads.at(-1).resolve(profilesState()); await tick();
+  // Cover both a fully settled Back read and one overtaken by completion.
+  const backRead = profilesReads.at(-1);
+  if (!refreshRace) { backRead.resolve(profilesState()); await tick(); }
   const beforeReads = profilesReads.length;
   if (scenario === 'detached-refused') {
     pending.resolve({accepted: false, error: 'Busy <operation>'}); await tick();
@@ -668,10 +677,10 @@ async function detachedMain() {
   }
   if (scenario === 'detached-rejected-starter') { pending.reject(new Error('Lost starter')); await tick(); }
   let newer;
-  if (scenario === 'detached-newer-review' || scenario === 'detached-two-creates') {
+  if (newerReview || scenario === 'detached-two-creates') {
     await coupledOpen(); await reviewed('r2');
     if (scenario === 'detached-two-creates') { click('setup-create'); newer = creates.at(-1); newer.resolve({accepted: true}); await tick(); }
-  } else if (scenario === 'detached-ordinary-copy') {
+  } else if (ordinaryCopy) {
     change('es-source', 'char-A'); click('es-all'); click('es-copy');
     assert.equal(ordinaryCopies.length, 1); ordinaryCopies[0].resolve(true); await tick();
     assert.match(WM.el('es-copy').textContent, /operation in progress/i);
@@ -689,8 +698,20 @@ async function detachedMain() {
   // An authoritative selection can differ from the payload path. Never choose
   // payload.path, and do not force navigation back from another tool/route.
   assert.equal(WM.el('es-profile').value, 'profile-A');
-  profilesReads.at(-1).resolve(profilesState('profile-B')); await tick();
-  assert.equal(WM.el('es-profile').value, 'profile-B');
+  const fresh = profilesState('profile-B');
+  if (refreshRace) {
+    fresh.profile = 'profile-created';
+    fresh.profiles.push({path: 'profile-created', name: 'Created profile', file_count: 4});
+  }
+  profilesReads.at(-1).resolve(fresh); await tick();
+  assert.equal(WM.el('es-profile').value, fresh.profile);
+  if (refreshRace) {
+    const profiles = WM.el('es-profile').options.map(option => [option.value, option.textContent]);
+    backRead.resolve(profilesState()); await tick();
+    assert.equal(WM.el('es-profile').value, 'profile-created', 'late Back read must not revert the completion selection');
+    assert.deepEqual(WM.el('es-profile').options.map(option => [option.value, option.textContent]), profiles,
+      'late Back read must not remove the newly created profile');
+  }
   assert.equal(WM.current_route, currentRoute); assert.equal(document.activeElement, focus);
   assert.deepEqual([importStatus(), WM.el('setup-text').value, WM.el('setup-create').disabled, WM.el('setup-summary').hidden], draftBefore);
   const message = WM.el('es-setup-status').textContent;
@@ -704,13 +725,13 @@ async function detachedMain() {
   handlers.onEveSettingsDone({...result, error: 'Duplicate', published: false});
   assert.equal(profilesReads.length, beforeReads + 1); assert.equal(WM.el('es-setup-status').textContent, message);
   assert.equal(formationsCompletions, 0);
-  if (scenario === 'detached-newer-review') {
+  if (newerReview) {
     click('setup-create'); assert.equal(creates.at(-1).args[0], 'r2');
   } else if (newer) {
     handlers.onEveSettingsDone(completion(newer.args, {path: 'settings_Newer'}));
     assert.match(importStatus(), /settings_Newer/); assert.equal(profilesReads.length, beforeReads + 2);
     profilesReads.at(-1).resolve(profilesState()); await tick();
-  } else if (scenario === 'detached-ordinary-copy') {
+  } else if (ordinaryCopy) {
     assert.equal(WM.el('es-copy').disabled, true); assert.match(WM.el('es-copy').textContent, /operation in progress/i);
     assert.equal(WM.el('es-copy-followup').hidden, true);
     assert.equal(WM.el('es-targets').querySelectorAll('input').filter(el => el.checked).length, 1);
@@ -719,5 +740,57 @@ async function detachedMain() {
     profilesReads.at(-1).resolve(profilesState()); await tick();
   }
   assert.equal(mutations.length, 0, 'completion never selects or calls a mutation');
+}
+async function profilesRefreshMain() {
+  WM.route('evesettings'); profilesReads.at(-1).resolve(profilesState()); await tick();
+  let older;
+  if (scenario === 'profiles-refresh-root-followup') {
+    click('es-all'); click('es-profile-copy-open'); input('es-profile-copy-name', 'Local draft');
+    click('es-pick'); rootPicks.at(-1).resolve(''); await tick();
+    older = profilesReads.at(-1);
+  } else if (scenario === 'profiles-refresh-roster-followup') {
+    WM.route('accountidentity'); profilesReads.at(-1).resolve(profilesState()); await tick();
+    click('es-identify-check');
+    identityChecks.at(-1).resolve({status: 'candidate', identification_generation: 1,
+      account: {id: '10', option: 'Account A'}, characters: [{id: '11', name: 'Pilot A'}]}); await tick();
+    click('es-identify-link');
+    assert.deepEqual(plain(identityConfirms.at(-1).args), ['10', '11', 'Account A']);
+    identityConfirms.at(-1).resolve({applied: true, error: ''}); await tick();
+    older = profilesReads.at(-1);
+  } else {
+    handlers.onEveSettingsNames({}); older = profilesReads.at(-1);
+  }
+  handlers.onEveSettingsNames({}); const newer = profilesReads.at(-1);
+  const oldState = profilesState('profile-B'), newState = profilesState();
+  newState.profiles.push({path: 'profile-created', name: 'Created profile', file_count: 4});
+  if (scenario === 'profiles-refresh-in-order') {
+    older.resolve(oldState); await tick();
+    assert.equal(WM.el('es-profile').value, 'profile-B', 'a pending newer read must not starve available state');
+    newer.resolve(newState); await tick();
+    assert.equal(WM.el('es-profile').value, 'profile-A');
+  } else if (scenario === 'profiles-refresh-newer-null') {
+    // WM.send maps missing methods and rejected bridge calls to null. A failed
+    // newer read must neither clear state nor suppress a useful older payload.
+    newer.resolve(null); await tick();
+    assert.equal(WM.el('es-profile').value, 'profile-A');
+    older.resolve(oldState); await tick();
+    assert.equal(WM.el('es-profile').value, 'profile-B');
+    handlers.onEveSettingsNames({}); profilesReads.at(-1).resolve(newState); await tick();
+    assert.equal(WM.el('es-profile').options.length, 3, 'later reads still work after null');
+  } else {
+    newer.resolve(newState); await tick();
+    const namesBefore = nameResolutions;
+    older.resolve(scenario === 'profiles-refresh-older-null' ? null : oldState); await tick();
+    assert.equal(WM.el('es-profile').value, 'profile-A', 'follow-up must not render its superseded payload');
+    assert.equal(WM.el('es-profile').options.length, 3);
+    if (scenario === 'profiles-refresh-root-followup') {
+      assert.equal(WM.el('es-profile-copy-panel').hidden, true, 'root follow-up still receives its changed-context payload');
+      assert.equal(WM.el('es-targets').querySelectorAll('input').filter(el => el.checked).length, 0);
+      assert.equal(nameResolutions, namesBefore + 1, 'root follow-up still resolves names after settlement');
+    } else if (scenario === 'profiles-refresh-roster-followup') {
+      assert.match(WM.el('ai-progress').textContent, /Review roster/);
+      assert.equal(document.activeElement.id, 'ai-roster-heading', 'roster continuation still runs after its read settles');
+    }
+  }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

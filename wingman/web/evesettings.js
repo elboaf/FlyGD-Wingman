@@ -10,6 +10,8 @@
   'use strict';
 
   var state = null;
+  var refreshSerial = 0;
+  var renderedRefresh = 0;
   var selected = {};
   // Choices belong to a kind: both payloads may use the same id for groups
   // with different settings semantics. Missing ids are initialized when
@@ -82,8 +84,15 @@
   }
 
   function refresh() {
+    var serial = ++refreshSerial;
     return WM.send('eve_settings_state').then(function (payload) {
-      render(payload);
+      // A slow Back/name read must not undo a newer completion snapshot.
+      // Pending or failed reads do not supersede useful state; only a rendered
+      // payload does. Callers still receive their own payload for follow-ups.
+      if (payload && serial > renderedRefresh) {
+        render(payload);
+        renderedRefresh = serial;
+      }
       return payload;
     });
   }
