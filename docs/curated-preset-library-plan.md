@@ -147,7 +147,7 @@ Discoveries required narrowly extending `panel.js`'s existing focus fallback and
 
 ## Task 3 — real full setups, provenance, packaging and application evidence
 
-**Status:** content admission is blocked on author-confirmed EVE resolution/UI scale, public layout credit and the Z-S source/version. Privacy text review and public filter comparisons are recorded, but are not substitutes for those facts or redistribution evidence. Do not add fake metadata, an empty production catalog or copied private snapshots to make packaging appear complete.
+**Status:** on 2026-09-08 the user confirmed both layouts were personally arranged at **3840×2160, 150% EVE UI scale**, approved **FlyGD Wingman** as their layout credit, and identified Z-S as **v10.07.29**. These settle the author/display metadata; the exact Z-S edition's upstream source/licence evidence remains unresolved before bundling. Privacy text review and public filter comparisons are recorded, but are not substitutes for redistribution evidence. Do not add fake metadata, an empty production catalog or copied private snapshots to make packaging appear complete.
 
 **Files:** production assets, content reference, notices, package configuration/build assertions, catalog/packaging/integration tests, README and smoke checklist.
 

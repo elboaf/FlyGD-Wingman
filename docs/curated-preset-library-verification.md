@@ -2,7 +2,7 @@
 
 ## Scope and current status
 
-**Current code checkpoint:** `f9636ef09d2ad5d6e1a183b8ca2c9128db37f492`. Library Tasks 1–2 are implemented, reviewed and verified. Task 3 content admission/packaging is blocked on the requested author/source facts; no production catalog or real preset assets are in the repository. The complete-library acceptance floor is not met yet.
+**Current code checkpoint:** `f9636ef09d2ad5d6e1a183b8ca2c9128db37f492`. Library Tasks 1–2 are implemented, reviewed and verified. Task 3 author/display metadata has now been confirmed as recorded below; upstream evidence for Z-S v10.07.29 remains unresolved before content admission. No production catalog or real preset assets are in the repository. The complete-library acceptance floor is not met yet.
 
 **Compatibility-prerequisite checkpoint:** `ec41d514ed3f61ffb2d898453490104be740408c`, after independent final review and scoped polish (no fixes needed). The first sections record the prerequisite needed to export the user's actual full setup candidates; subsequent library task evidence appears below. This does **not** claim that the complete library, bundled content admission, publication, or in-game acceptance is complete.
 
@@ -162,7 +162,15 @@ A read-only membership comparison against Iridium's pinned `releases/iridium_ove
 
 Z-S's captured content does **not** match the linked 2019 edition. Against `Full packs/Z-S Appearance - v9.00.0347 Stylized.yaml` in the pinned April-2019 archive, 55 names are shared: **13 membership matches, 42 differences**; the candidate additionally carries two referenced current canonical defaults. Archive SHA-256: `677a879f743da8bd69b8f0697b717061f55ec53fd24624f85890f95682956cc6`. The archive was read in memory with file/count/byte limits, never executed or extracted into the repository. Those differences do not identify their origin: a different release, local edits or client-side changes remain possible. The old GPL text alone does not establish the captured edition's provenance.
 
-Intended display settings and public layout credit remain author-confirmation gates. The saved geometry reference is 2560×1440, while copied preferences include a remembered fullscreen scale of 1.5; neither alone establishes the active/intended mode or resolution. No catalog metadata is fabricated from these hints, and no private artifact or source snapshot has entered version control.
+The saved geometry reference is 2560×1440, while copied preferences include a remembered fullscreen scale of 1.5; these alone did not establish the intended mode/resolution. On 2026-09-08 the user explicitly confirmed **3840×2160 and 150% EVE UI scale for both**, said they arranged the windows, and approved **FlyGD Wingman** as the layout credit. The user also identified Z-S as **v10.07.29**. Those facts are recorded from author confirmation, not inferred from geometry. Original overview authors/terms remain separate. Both exact artifact hashes above were reverified after this confirmation; no private artifact or source snapshot has entered version control.
+
+## Follow-up on Z-S provenance
+
+The original author's current [Customizer README](https://github.com/Arziel1992/Z-S-Overview-Customizer/blob/03537e87941296176ace73cda96a60ca78af817a/README.md) identifies **Kismeteer** as the volunteer currently maintaining Z-S. [Kismeteer's public overview page](https://www.wckg.net/home/kisover) confirms that role and directs users to the in-game Z-S version, while linking the original pack repository.
+
+That Customizer bundles a public **v10.06.09** YAML, not the author-reported v10.07.29 capture. A bounded read-only comparison of that YAML (SHA-256 `412541b10959c186dc7958a66fd4362484b72dabce0e3bf12728a57c1aa5f346`) found 39 matching filter memberships after ignoring name markup, 16 differences, and the two referenced canonical defaults absent from that source. This comparison does not change any captured bytes or establish exact edition identity.
+
+The original pack repository declares GPLv3, while the current Customizer declares AGPLv3 for its project. Neither has been substituted for confirmation of the current in-game capture's applicable terms. Its source/licence admission remains open; no maintainer was contacted, no public issue was opened and no assets were admitted. The user-owned layout credit/display facts are settled and must not be requested again.
 
 ## Library Task 2 — picker, corrections and scoped polish
 
@@ -225,7 +233,7 @@ The parent inspected both final JUnit documents. Each platform passed all **145 
 
 Tasks 1–2 are substantial because they add a distribution schema/public read interfaces and integrate asynchronous draft/dialog ownership. The highest-risk decisions are exact identity/byte binding without granting recipient authority, late-source cancellation, and shared focus ownership. The existing independent import/review/create path remains the commit boundary. Task-specific decisions are recorded here and in the SDD task reports/ledger; no unrelated implementation-notes document was used as evidence.
 
-The next work is Task 3, after author/source facts are confirmed: admit at least two real full setups, include notices and exact source/display evidence, wire packaging/frozen inventory checks, and exercise the bundled entries through native profile creation. Then repeat whole-feature review and acceptance. No placeholder production catalog, fake display attribution, private snapshots, push, PR, build dispatch, installation or live-EVE operation substitutes for that gate.
+The next work is Task 3, after the remaining upstream terms are confirmed (the user's layout/display facts are settled): admit at least two real full setups, include notices and exact source/display evidence, wire packaging/frozen inventory checks, and exercise the bundled entries through native profile creation. Then repeat whole-feature review and acceptance. No placeholder production catalog, fake display attribution, private snapshots, push, PR, build dispatch, installation or live-EVE operation substitutes for that gate.
 
 ### Reviewer knowledge check
 
