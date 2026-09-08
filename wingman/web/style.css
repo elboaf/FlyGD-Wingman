@@ -2652,9 +2652,9 @@ button.btn:disabled,
   #preview-binds .row > .lab { grid-column: 1 / -1; }
 }
 
-/* Offline is information, not an error (previews.js): dim rather than
-   hide, so a character who has logged out still shows its saved binding. */
-#preview-binds .row > .lab.dim { color: var(--text-faint); }
+/* The sticky Offline heading carries state. These names still identify
+   editable settings, so keep them readable rather than looking disabled. */
+#preview-binds .row > .lab.dim { color: var(--text-dim); }
 
 /* One character detail spans the grid rather than becoming an extra table
    cell. It keeps rare assignment and geometry changes close to the row
@@ -4376,18 +4376,34 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #us-work, #setup-work { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 #us-work p, #setup-work p { max-width: 75ch; margin: 6px 0 12px; overflow-wrap: anywhere; }
 #us-work h2, #setup-work h2 { margin: 12px 0 6px; font-size: var(--fs-body); font-weight: 600; }
-#us-work h3 { margin: 10px 0 4px; font-size: var(--fs-body); font-weight: 400; color: var(--text-dim); }
+/* A decision summary, not another card. Padding reserves space inside the
+   programmatic focus ring without clipping it against the scrolling edge. */
+#us-summary, #setup-summary { margin: 12px 0; padding: 12px; }
+#us-work #us-summary-heading, #setup-work #setup-summary-heading { margin: 0 0 12px; }
+#route-uisetup .us-review {
+  display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px 12px; margin: 0;
+}
+#route-uisetup .us-review dt { color: var(--text-dim); font-weight: 600; }
+#route-uisetup .us-review dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+#us-work .us-review p, #setup-work .us-review p { margin: 0; }
+#setup-work .us-review p + p { margin-top: 4px; }
+#route-uisetup .us-details { margin: 12px 0; }
+#route-uisetup .us-details > summary { cursor: pointer; color: var(--text-dim); padding: 6px; }
+#route-uisetup .us-details > summary:hover { color: var(--text); }
+#route-uisetup .us-details > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: -2px;
+}
 .us-pickers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .us-pickers .lab { display: block; color: var(--text-dim); margin-bottom: 4px; }
 .us-pickers .field { width: 100%; min-width: 0; }
 .us-pickers .field:disabled { color: var(--text-faint); opacity: .5; }
 #us-warnings, #setup-warnings { color: var(--warn); }
 #us-actions, #setup-actions { flex: none; border-top: 1px solid var(--panel-border); padding-top: 10px; }
-#us-display-notice, #setup-display-notice { margin: 0 0 10px; max-width: 75ch; }
 #us-status, #setup-status { margin: 6px 0 0; min-height: 18px; max-height: 72px; overflow-y: auto; overflow-wrap: anywhere; }
 .us-shell[hidden] { display: none; }
 #us-summary[hidden], #us-export[hidden], #setup-import[hidden],
-#setup-summary[hidden], #setup-label-choice[hidden], #setup-native[hidden] { display: none; }
+#setup-summary[hidden], #setup-label-choice[hidden], #setup-native[hidden],
+#setup-display-notice[hidden] { display: none; }
 #setup-work > .lab { display: block; color: var(--text-dim); margin: 10px 0 4px; }
 #setup-text, #setup-name { display: block; width: 100%; margin-bottom: 10px; }
 #setup-text { resize: vertical; min-height: 72px; max-height: 180px; }
@@ -4510,34 +4526,37 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #fm-balance-note { margin-top: 0; }
 #fm-dirty { margin-top: 0; }
 
-/* The preview ABSORBS the pane's slack; every other child keeps its
-   height. A fixed 300px square measured 603px of scroller content against
-   521 available at the 840x625 floor, and the thing that fell off the
-   bottom was the commit row.
-
-   Height comes from `flex`, width follows it through aspect-ratio, and
-   `align-self: center` is what stops the column's default stretch from
-   setting the width first and fighting the ratio. The drawing is round
-   and reads best in a square; a full-width box would only add dead
-   margin, since formations.js sizes the projection off the SMALLER
-   dimension either way. 150px is the floor below which the three rings
-   stop being tellable apart. */
+/* The preview row absorbs slack without growing its existing 150px floor,
+   below which the three rings stop being tellable apart. Put the ring key
+   beside the SVG, not over it or in an extra row that displaces controls.
+   The plot still sizes itself from its smaller side. */
+.fm-preview-box {
+  display: flex; flex: 1 1 150px; min-height: 150px; min-width: 0;
+  align-items: center; justify-content: center; gap: 16px;
+}
 #fm-preview, #fm-import-preview {
-  flex: 1 1 auto; min-height: 150px;
-  width: auto; max-width: 100%; aspect-ratio: 1; align-self: center;
+  flex: 0 1 auto; min-height: 150px; height: 100%;
+  width: auto; max-width: calc(100% - 110px - 16px); aspect-ratio: 1;
   background: var(--sunken); border: 1px solid var(--panel-border);
   border-radius: var(--radius); cursor: grab; touch-action: none;
+  overflow: hidden;
 }
+.fm-ring-key {
+  flex: 0 0 110px; color: var(--text-faint); font-size: var(--fs-label);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.fm-ring-key[hidden] { display: none; }
+.fm-ring-key-title { margin-bottom: 2px; }
+.fm-ring-label { font-variant-numeric: tabular-nums; }
 #fm-preview:active, #fm-import-preview:active { cursor: grabbing; }
 .fm-ring { fill: none; stroke: var(--panel-border); stroke-width: 1; }
 /* --fs-label and it MEANS it: formations.js sets the viewBox to the
    element's own CSS pixel size on every draw, so one SVG user unit is one
    CSS pixel here. A fixed square viewBox would have scaled this type down
    to about 5px at the 840x625 floor. */
-.fm-ring-label, .fm-probe-label {
+.fm-probe-label {
   fill: var(--text-faint); font-size: var(--fs-label);
 }
-.fm-ring-label { text-anchor: end; }
 .fm-tether {
   stroke: var(--panel-border); stroke-width: 1; stroke-dasharray: 2 3;
 }
@@ -5274,6 +5293,11 @@ button.btn.danger:disabled {
   font-size: var(--fs-muted);
 }
 
+/* A deployment blocker must survive a long name or collection list. */
+.fit-deployability {
+  flex: none; white-space: nowrap; color: var(--warn); font-size: var(--fs-body);
+}
+
 .fit-detail {
   padding: 4px 10px 12px 29px;
   display: flex; flex-direction: column; gap: 10px;
@@ -5343,8 +5367,11 @@ button.btn.danger:disabled {
   border-bottom: 1px solid var(--row-line);
 }
 .fit-copy-target:last-child { border-bottom: 0; }
-.fit-copy-target .check { flex: 1; }
-.fit-copy-target-state { color: var(--text-faint); font-size: var(--fs-muted); }
+.fit-copy-target .check { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fit-copy-target-state {
+  max-width: 55%; color: var(--text-dim); font-size: var(--fs-body);
+}
+.fit-copy-limit { color: var(--text-dim); font-size: var(--fs-body); }
 .fit-copy-summary {
   padding: 9px 10px; background: var(--sunken); border: 1px solid var(--field-border);
   border-radius: var(--radius-sm); color: var(--text-dim); font-size: var(--fs-muted);
@@ -5352,13 +5379,13 @@ button.btn.danger:disabled {
 .fit-copy-pair {
   display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr);
   gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--row-line);
+  overflow-wrap: anywhere;
 }
 .fit-copy-pair:last-child { border-bottom: 0; }
 .fit-copy-guidance { grid-column: 1 / -1; }
 .fit-copy-pair-name, .fit-copy-result { color: var(--text); }
-.fit-copy-character, .fit-copy-detail {
-  color: var(--text-faint); font-size: var(--fs-muted);
-}
+.fit-copy-character { color: var(--text); font-size: var(--fs-body); }
+.fit-copy-detail { color: var(--text-dim); font-size: var(--fs-body); }
 .fit-copy-resolution {
   grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
 }

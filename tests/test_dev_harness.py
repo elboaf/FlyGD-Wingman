@@ -232,8 +232,10 @@ def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
         "unattempted_throttle",
         "failed",
     }
-    assert "counts.ready > 20" in DEV_JS
-    assert "Split this copy into batches of 20 fittings or fewer." in DEV_JS
+    from wingman.evefittings.contracts import MAX_COPY_WRITES
+
+    assert fixture.get("max_copy_writes") == MAX_COPY_WRITES
+    assert "counts.ready > DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes" in DEV_JS
     assert "phase: 'progress'" in DEV_JS
     assert "phase: 'complete'" in DEV_JS
     assert result["write_count"] == sum(

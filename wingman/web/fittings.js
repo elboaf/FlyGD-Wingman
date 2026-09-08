@@ -141,6 +141,7 @@
       total: entries.length,
       page: 1,
       page_size: 100,
+      max_copy_writes: screenshotFixture.max_copy_writes,
       filters: currentFilters(),
       refreshing: false
     };
@@ -583,11 +584,13 @@
              + (row.presence_count === 1 ? ' character' : ' characters'));
     if (row.collection_ids.length) meta.push(collectionNames(row.collection_ids));
     if (row.superseded_by) meta.push('Superseded');
-    if (!row.deployable) meta.push('Not deployable');
     if (metadataDrafts[row.id]) meta.push('Unsaved changes');
     toggle.appendChild(WM.make('span', 'fit-meta', meta.join(' \u00b7 ')));
     toggle.addEventListener('click', function () { toggleRow(row.id); });
     top.appendChild(toggle);
+    if (!row.deployable) {
+      top.appendChild(WM.make('span', 'fit-deployability', 'Not deployable'));
+    }
 
     node.appendChild(top);
     if (expandedId === row.id) node.appendChild(detailNode(row));
@@ -1070,6 +1073,11 @@
     host.textContent = '';
     host.appendChild(WM.make('p', 'fit-copy-summary',
       visibleSelectedIds().length + ' selected. Choose target characters.'));
+    if (STATE && STATE.max_copy_writes) {
+      host.appendChild(WM.make('p', 'fit-copy-limit',
+        'Each copy allows up to ' + STATE.max_copy_writes + ' additions across all targets. '
+        + 'Review counts only new additions; fittings already present do not count.'));
+    }
     var targets = WM.make('div', 'fit-copy-targets');
     ((STATE && STATE.characters) || []).forEach(function (character) {
       var row = WM.make('div', 'fit-copy-target');
@@ -1090,8 +1098,10 @@
       row.appendChild(label);
       if (!copyEligible(character)) {
         row.appendChild(WM.make('span', 'fit-copy-target-state',
-          character.status !== 'enabled' ? 'Fittings not enabled'
-            : character.stale ? 'Refresh failed' : 'Refresh required'));
+          character.status !== 'enabled'
+            ? 'Use Authenticate character\u2026 in Settings \u203a Characters.'
+            : character.stale ? 'Refresh failed. Use Refresh characters.'
+              : 'Use Refresh characters first.'));
       }
       targets.appendChild(row);
     });
@@ -1312,9 +1322,9 @@
 
   function copyResultLabel(status) {
     var labels = {
-      success: 'Success', present: 'Already present',
+      success: 'Copied', present: 'Already present',
       conflict_skipped: 'Conflict / skipped', failed: 'Failed',
-      unknown: 'Unknown', unattempted_throttle: 'Unattempted due to throttle',
+      unknown: 'Needs verification', unattempted_throttle: 'Not attempted: rate limit',
       cancelled: 'Cancelled', unavailable: 'Unavailable',
       invalid_ticket: 'Preflight expired. Review the copy again.',
       needs_resolution: 'Resolve every name conflict before copying.',
@@ -1333,7 +1343,7 @@
       unknown: 'Check the target\u2019s Personal Fittings in EVE, then refresh characters before any retry. The fitting may already exist.',
       unattempted_throttle: 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.',
       cancelled: 'Not attempted. Review a new copy if this fitting is still needed.',
-      unavailable: 'Check the reason, enable Fittings in Settings \u203a Characters if needed, then refresh the target and review a new copy.',
+      unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a Characters. Then refresh the target and review a new copy.',
       invalid_ticket: 'Preflight expired. Close these results and review a new copy.',
       needs_resolution: 'Close these results and resolve every name conflict in a new copy review.',
       busy: 'Another fitting copy is running. Wait for it to finish before reviewing a new copy.',
@@ -1353,7 +1363,7 @@
       } else counts.other += 1;
     });
     return counts.success + ' copied \u00b7 ' + counts.present + ' already present'
-      + ' \u00b7 ' + counts.unknown + ' unknown \u00b7 ' + counts.failed + ' failed'
+      + ' \u00b7 ' + counts.unknown + ' needs verification \u00b7 ' + counts.failed + ' failed'
       + ' \u00b7 ' + counts.other + ' not copied';
   }
 
