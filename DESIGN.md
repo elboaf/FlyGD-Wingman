@@ -10,18 +10,25 @@ here that a regex cannot see is the reason this file exists as well.
 
 The stack is plain HTML, CSS and ES5-flavoured JavaScript in a WebView2
 window (pywebview), Windows only, dark only. No framework, no build step,
-no bundler. Automated JavaScript checks execute selected page logic, but do
-not render the shipped window.
+no bundler. Focused Node harnesses execute selected production modules against
+DOM/bridge doubles, including setup sharing's owner and route wiring. They do not
+render CSS or exercise Windows/WebView2.
 
 
 ## The one rule that explains most of the others
 
 **Only a real Windows/WebView2 run proves the shipped window.** The Node
-smoke runner loads every page module; the Settings and Skills runtime
-harnesses also execute handlers with controlled DOM/bridge stubs and delayed
-replies. They catch registration and response-ordering failures, not layout,
-focus behavior in WebView2, or native lifecycle behavior. `pytest` proves the
-Python side and checks web-source conventions; it does not render the page.
+smoke runner loads every page module; focused runtime harnesses also execute
+production handlers with controlled DOM/bridge doubles and delayed replies,
+including Settings, Skills and setup sharing. They catch registration and
+response-ordering failures, not layout, focus behavior in WebView2, or native
+lifecycle behavior. `pytest` proves Python and selected JavaScript lifecycle
+behavior, with most web conventions still checked lexically; it does not render
+the page.
+
+**A rendered browser check is not Windows/WebView2 acceptance.** Browser geometry
+and interaction checks must be recorded separately from installed Windows smoke
+results. The historical floor measurements below retain that distinction.
 
 The failure mode that follows is specific and quiet. Handlers register at
 the top of each module's IIFE, so one bad name throws mid-module and every

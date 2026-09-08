@@ -22,7 +22,13 @@ from pathlib import Path
 import pytest
 
 from wingman import bookmarks
-from wingman.evesettings import formation_sharing, identity, selective
+from wingman.evesettings import (
+    formation_sharing,
+    identity,
+    selective,
+    setup_model,
+    setup_sharing,
+)
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -73,6 +79,81 @@ def _fixture_body(marker: str) -> str:
     block = DEV_JS[DEV_JS.index(marker) :]
     block = block[: block.index("\n  };")]
     return re.sub(r"(?m)^\s*//.*$", "", block)
+
+
+def test_setup_bridge_has_dev_doubles():
+    assert {
+        "eve_settings_setup_context",
+        "eve_settings_setup_limits",
+        "eve_settings_setup_export",
+        "eve_settings_setup_save_file",
+        "eve_settings_setup_read_file",
+        "eve_settings_setup_review",
+        "eve_settings_setup_discard",
+        "eve_settings_setup_create",
+    } <= _stubbed()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("kind", ["wingman", "native", "max"])
+def test_setup_dev_fixture_matches_real_limits_and_summary(kind):
+    script = r"""
+const fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const api = {}, eve = {root: 'root', server: 'tq', profile: 'base',
+  profiles: [{path: 'base', name: 'Base', file_count: 4}, {path: 'other', name: 'Other', file_count: 4}],
+  accounts: [{path: 'a', id: '1', name: 'Account', character_ids: ['2']}],
+  characters: [{path: 'c', id: '2', name: 'Pilot'}]};
+vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='),
+  source.indexOf('  function eveMutation(')), {api, eve, Promise,
+    devSearch: new URLSearchParams('setup=' + process.argv[2]), setTimeout, window: {}});
+(async () => {
+  const result = await Promise.all([api.eve_settings_setup_limits(), api.eve_settings_setup_context('base'),
+    api.eve_settings_setup_export('base', 'a', 'c'), api.eve_settings_setup_context('other'),
+    api.eve_settings_setup_read_file()]);
+  const text = result[4].text;
+  const bad = await api.eve_settings_setup_review('not a fixture', 'base', 'a', 'c', 'New', false);
+  const choice = await api.eve_settings_setup_review(text, 'base', 'a', 'c', 'New', false);
+  const good = await api.eve_settings_setup_review(text, 'base', 'a', 'c', 'New', true);
+  const wrong = await api.eve_settings_setup_discard('wrong');
+  const discarded = await api.eve_settings_setup_discard(good.review_id);
+  console.log(JSON.stringify([...result, {bad, choice, good, wrong, discarded, selected: eve.profile}]));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(WEB / "dev.js"), kind],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    limits, context, exported, other, imported, outcomes = json.loads(result.stdout)
+    assert limits == setup_model.limits_payload()
+    assert context["profile"] == "base"
+    assert context["accounts"][0]["character_ids"] == ["2"]
+    parsed = setup_sharing.parse_text(exported["text"])
+    assert exported["summary"] == setup_model.summarize(parsed)
+    assert {row["path"] for row in context["characters"]}.isdisjoint(
+        row["path"] for row in other["characters"]
+    )
+    assert context["accounts"] != other["accounts"]
+    assert outcomes["selected"] == "base"
+    parsed_import = setup_sharing.parse_text(imported["text"])
+    assert outcomes["good"]["summary"] == setup_model.summarize(parsed_import)
+    assert outcomes["good"]["ok"] and outcomes["good"]["review_id"]
+    assert not outcomes["bad"]["ok"] and not outcomes["bad"]["review_id"]
+    assert outcomes["wrong"] is False and outcomes["discarded"] is True
+    assert outcomes["choice"]["needs_label_choice"] is (kind == "native")
+    if kind == "max":
+        assert outcomes["good"]["summary"]["counts"] == {
+            "presets": 256,
+            "tabs": 8,
+            "windowGroups": 8,
+            "shipLabels": 64,
+            "layoutWindows": 17,
+        }
 
 
 def test_the_scan_found_both_sides():

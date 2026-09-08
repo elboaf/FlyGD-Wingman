@@ -1,0 +1,44 @@
+{
+  "had_crc": true,
+  "doc": {
+    "bytes:windows": {
+      "bytes:windowSizesAndPositions_1": {"tuple": ["long:116444736000000000", {
+        "bytes:overview": {"tuple": [100, 120, 340, 500, 1920, 1080]},
+        "bytes:overview_1": {"tuple": [-20, 200, 320, 420, 1600, 900]},
+        "bytes:overview_2": {"tuple": [900, 100, 300, 400, 1920, 1080]},
+        "bytes:overview_3": {"tuple": [70, 80, 300, 240, 1600, 900]},
+        "bytes:selecteditemview": {"tuple": [100, 10, 300, 100, 1920, 1080]},
+        "bytes:probeScannerWindow": {"tuple": [20, 600, 400, 250, 1600, 900]},
+        "bytes:directionalScannerWindow": {"tuple": [430, 600, 350, 250, 1600, 900]},
+        "bytes:droneview": {"tuple": [1400, 500, 240, 300, 1920, 1080]},
+        "bytes:fleetwindow": {"tuple": [10, 10, 280, 400, 1920, 1080]},
+        "bytes:watchlistpanel": {"tuple": [10, 420, 280, 200, 1920, 1080]},
+        "bytes:standaloneBookmarkWnd": {"tuple": [10, 630, 280, 200, 1920, 1080]},
+        "utf8:SyntheticPrivateChat": {"tuple": [2, 4, 100, 200, 800, 600]}
+      }]},
+      "bytes:openWindows": {"tuple": ["long:116444736000000000", {
+        "bytes:overview": true, "bytes:overview_1": true, "bytes:overview_2": true,
+        "bytes:overview_3": false, "bytes:selecteditemview": true,
+        "bytes:probeScannerWindow": false, "bytes:directionalScannerWindow": true,
+        "bytes:droneview": false, "bytes:fleetwindow": true, "bytes:watchlistpanel": true,
+        "bytes:standaloneBookmarkWnd": false, "bytes:solar_system_map_panel": false,
+        "utf8:SyntheticPrivateChat": true
+      }]},
+      "bytes:minimizedWindows": {"tuple": ["long:116444736000000000", {
+        "bytes:overview": false, "bytes:overview_1": false, "bytes:overview_3": false,
+        "utf8:SyntheticPrivateChat": false
+      }]},
+      "bytes:collapsedWindows": {"tuple": ["long:116444736000000000", {"bytes:overview": false}]},
+      "bytes:compactWindows": {"tuple": ["long:116444736000000000", {"bytes:overview": true, "bytes:directionalScannerWindow": true}]},
+      "bytes:lockedWindows": {"tuple": ["long:116444736000000000", {"bytes:overview": false}]},
+      "bytes:isOverlayedWindows": {"tuple": ["long:116444736000000000", {"bytes:overview": false}]},
+      "bytes:isLightBackgroundWindows": {"tuple": ["long:116444736000000000", {"bytes:overview": true, "utf8:SyntheticPrivateChat": true}]},
+      "bytes:stacksWindows": {"tuple": ["long:116444736000000000", {"bytes:overview": null, "bytes:overview_3": "bytes:SyntheticStack"}]},
+      "bytes:preferredIdxInStack3": {"tuple": ["long:116444736000000000", {"bytes:SyntheticStack": {"bytes:overview_3": 0}}]},
+      "bytes:shipuialignleftoffset": {"tuple": ["long:116444736000000000", -160]},
+      "bytes:__version__": {"tuple": ["long:116444736000000000", 1]}
+    },
+    "bytes:ui": {"bytes:chatchannels": {"tuple": ["long:116444736000000000", ["utf8:Synthetic private source channel"]]}},
+    "bytes:syntheticPrivate": {"bytes:characterID": 11, "bytes:marker": "utf8:Synthetic private source character"}
+  }
+}

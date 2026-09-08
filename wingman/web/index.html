@@ -1691,6 +1691,9 @@
         <span id="es-profile-tools-label" class="es-profile-tools-label">Profile tools</span>
         <button class="btn" id="es-backups-open" type="button">Backups…</button>
         <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
+        <button class="btn" id="es-setup-share" type="button" disabled>Share setup…</button>
+        <button class="btn" id="es-setup-import" type="button" disabled>Import setup…</button>
+        <p class="hint" id="es-setup-status" role="status" aria-live="polite"></p>
       </div>
 
       <section class="card">
@@ -1919,6 +1922,125 @@
           </div>
           <p id="es-manage-status" class="field-msg" role="status"></p>
         </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sharing is a focused Profiles tool, not another title-bar destination. -->
+  <div class="route" id="route-uisetup">
+    <div class="us-shell" id="us-export">
+      <div class="row us-heading">
+        <button class="btn" id="us-back" type="button">&lsaquo; Profiles</button>
+        <h1>Share setup</h1>
+      </div>
+      <div id="us-work">
+        <p class="hint">Close every EVE client before taking a snapshot. Export never writes EVE settings.</p>
+        <div class="us-pickers">
+          <div>
+            <label class="lab" for="us-profile">Source profile</label>
+            <select class="field" id="us-profile" disabled></select>
+          </div>
+          <div>
+            <label class="lab" for="us-character">Source character</label>
+            <select class="field" id="us-character" disabled></select>
+          </div>
+          <div>
+            <label class="lab" for="us-account">Confirmed account</label>
+            <select class="field" id="us-account" disabled></select>
+          </div>
+        </div>
+        <p class="hint">Choose both local files from a confirmed account/character association. Missing a match? Return to Profiles, Accounts, Identify accounts.</p>
+        <section id="us-summary" aria-labelledby="us-summary-heading" hidden>
+          <h2 id="us-summary-heading">Snapshot contents</h2>
+          <p id="us-source"></p>
+          <p id="us-counts"></p>
+          <p class="hint" id="us-warnings"></p>
+          <h3>Included layout windows</h3>
+          <p id="us-windows"></p>
+        </section>
+        <section aria-labelledby="us-excluded-heading">
+          <h2 id="us-excluded-heading">Not included</h2>
+          <p class="hint">Chat windows and channel membership, inventory and item-specific windows, dialog history, Neocom, info panels and ship-specific module arrangements.</p>
+          <p class="hint">Only unstacked supported windows can be shared. Unsupported stacks block export rather than silently losing part of the setup.</p>
+          <p class="hint">Names and ship-label markup are shared as text, not anonymized. Account/character IDs, source paths, history and hardware preferences are not included.</p>
+        </section>
+        <p class="hint" id="us-limits"></p>
+      </div>
+      <!-- Siblings of the scroller: long errors, rosters and window lists must
+           not push the only exit or the export actions below the floor. -->
+      <div id="us-actions">
+        <p class="hint" id="us-display-notice">Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.</p>
+        <div class="row">
+          <button class="btn acc" id="us-copy" type="button" disabled>Copy setup</button>
+          <button class="btn" id="us-save" type="button" disabled>Save file…</button>
+          <button class="btn" id="us-refresh" type="button" disabled>Refresh source</button>
+        </div>
+        <p class="hint" id="us-status" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+    <div class="us-shell" id="setup-import" hidden>
+      <div class="row us-heading">
+        <button class="btn" id="setup-back" type="button">Cancel</button>
+        <h1>Import setup</h1>
+      </div>
+      <div id="setup-work">
+        <p class="hint">Create a new profile from a local base. Your existing profiles stay unchanged. Close every EVE client before Review and Create.</p>
+        <label class="lab" for="setup-text">Wingman preset or native overview YAML</label>
+        <textarea class="field" id="setup-text" rows="3" spellcheck="false"></textarea>
+        <div class="row">
+          <button class="btn" id="setup-paste" type="button">Paste</button>
+          <button class="btn" id="setup-file" type="button">Choose file…</button>
+        </div>
+        <div class="us-pickers">
+          <div>
+            <label class="lab" for="setup-base">Local base profile</label>
+            <select class="field" id="setup-base" disabled></select>
+          </div>
+          <div>
+            <label class="lab" for="setup-character">Recipient character</label>
+            <select class="field" id="setup-character" disabled></select>
+          </div>
+          <div>
+            <label class="lab" for="setup-account">Confirmed account</label>
+            <select class="field" id="setup-account" disabled></select>
+          </div>
+        </div>
+        <p class="hint">Both local files and a confirmed account/character association are required. Missing a match? Return to Profiles, Accounts, Identify accounts.</p>
+        <label class="lab" for="setup-name">New profile name</label>
+        <input class="field" id="setup-name" type="text" autocomplete="off">
+        <div id="setup-label-choice" hidden>
+          <p class="hint">This YAML cannot reproduce the ordered ship-label sequence. Use a Wingman preset for complete labels, or explicitly retain yours.</p>
+          <label class="check"><input id="setup-keep-labels" type="checkbox"><span class="box"></span>Keep my ship labels</label>
+        </div>
+        <section id="setup-summary" aria-labelledby="setup-summary-heading" tabindex="-1" hidden>
+          <h2 id="setup-summary-heading">Review new profile</h2>
+          <p id="setup-type"></p>
+          <p id="setup-counts"></p>
+          <p id="setup-target"></p>
+          <p id="setup-destination"></p>
+          <p class="hint" id="setup-retention"></p>
+          <p class="hint">Account-level changes also affect other characters of this account if they later use the new profile.</p>
+          <p id="setup-native" class="hint" hidden></p>
+          <p id="setup-windows"></p>
+          <p class="hint" id="setup-limitations"></p>
+          <p class="hint" id="setup-warnings"></p>
+        </section>
+        <section aria-labelledby="setup-excluded-heading">
+          <h2 id="setup-excluded-heading">Not included</h2>
+          <p class="hint">Chat windows and channel membership, inventory and item-specific windows, dialog history, Neocom, info panels and ship-specific module arrangements.</p>
+          <p class="hint">Affected supported windows must be unstacked, including surplus overview instances being retired. Unsupported stacks block creation.</p>
+          <p class="hint">Names and ship-label markup are text, not anonymized. No sender account/character IDs, source paths or hardware preferences are imported.</p>
+        </section>
+        <p class="hint" id="setup-limits"></p>
+      </div>
+      <div id="setup-actions">
+        <p class="hint" id="setup-display-notice">Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.</p>
+        <div class="row">
+          <button class="btn" id="setup-review" type="button" disabled>Review</button>
+          <button class="btn" id="setup-create" type="button" disabled>Create profile</button>
+          <button class="btn" id="setup-refresh" type="button">Refresh base</button>
+        </div>
+        <p class="hint" id="setup-status" role="status" aria-live="polite" tabindex="-1"></p>
       </div>
     </div>
   </div>
@@ -2409,6 +2531,7 @@
   <script src="alerts.js"></script>
   <script src="evesettings.js"></script>
   <script src="formations.js"></script>
+  <script src="uisetup.js"></script>
   <script src="list.js"></script>
   <script src="panel.js"></script>
   <script src="settings.js"></script>

@@ -10,12 +10,15 @@ import contextlib
 import datetime
 import logging
 import os
+import stat
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import atomicio
 from .. import settings as settings_mod
 from . import backup as evesettings_backup
 from . import characters as evesettings_characters
@@ -27,6 +30,7 @@ from . import names as evesettings_names
 from . import ops as evesettings_ops
 from . import profilecopy as evesettings_profilecopy
 from . import selective as evesettings_selective
+from . import setup_documents, setup_model, setup_profile, setup_sharing
 from . import tree as evesettings_tree
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,8 @@ class ProfilesPorts:
     status: Callable[[str], None]
     confirm: Callable[..., bool]
     choose_root: Callable[[str], str]
+    choose_setup_input: Callable[[], str]
+    choose_setup_output: Callable[[str], str]
     spawn: Callable[..., threading.Thread]
     advisory_client_running: Callable[[], bool]
     strict_client_running: Callable[[], bool]
@@ -123,6 +129,21 @@ class _EveCandidate:
     generation: int
     account_id: str
     character_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _SetupReview:
+    review_id: str
+    text: str
+    keep_ship_labels: bool
+    selection_context: _EveContext
+    generation: int
+    plan: evesettings_profilecopy.ProfileCopyPlan
+    account_filename: str
+    character_filename: str
+    account_id: str
+    character_id: str
+    manifest: setup_profile.ProfileManifest
 
 
 # Saved account names and links carry no datasource, so this product reads
@@ -201,6 +222,9 @@ class ProfilesController:
         # overlap, and a slow probe finishing after a fast one would
         # otherwise publish the OLDER observation and leave it cached.
         self._eve_probe = threading.Lock()
+        # Only original text/choices and immutable filesystem/context authority;
+        # parsed models and recipient documents never outlive a review call.
+        self._setup_review: _SetupReview | None = None
 
     @staticmethod
     def _field_ok(persisted: bool = True) -> dict:
@@ -424,6 +448,20 @@ class ProfilesController:
             return False
         return True
 
+    def _eve_describe_file(self, record, identity_names, identity_links) -> dict:
+        identity = self._eve_identity(record.path, identity_names, identity_links)
+        item = {
+            "path": str(record.path),
+            "id": record.file_id,
+            "name": identity["option"],
+            "display_name": identity["primary"],
+            "display_meta": identity["secondary"],
+        }
+        if record.kind == "account":
+            item["account_name"] = identity_names.get(record.file_id, "")
+            item["character_ids"] = list(identity_links.get(record.file_id, []))
+        return item
+
     def state(self) -> dict:
         """The whole visible tree. Cheap enough to answer on the bridge
         thread: scandir over a few dozen files, and listing backups is one
@@ -461,20 +499,6 @@ class ProfilesController:
         visible_characters = [
             record for record in found.characters if record.file_id not in deleted_ids
         ]
-
-        def describe(record):
-            identity = self._eve_identity(record.path, identity_names, identity_links)
-            item = {
-                "path": str(record.path),
-                "id": record.file_id,
-                "name": identity["option"],
-                "display_name": identity["primary"],
-                "display_meta": identity["secondary"],
-            }
-            if record.kind == "account":
-                item["account_name"] = identity_names.get(record.file_id, "")
-                item["character_ids"] = list(identity_links.get(record.file_id, []))
-            return item
 
         def backup_payload(item):
             display_name, display_meta = self._eve_backup_identity(
@@ -515,7 +539,10 @@ class ProfilesController:
             sortable at all.
             """
             return sorted(
-                (describe(r) for r in records),
+                (
+                    self._eve_describe_file(r, identity_names, identity_links)
+                    for r in records
+                ),
                 key=lambda row: (row["name"].casefold(), row["id"]),
             )
 
@@ -583,12 +610,687 @@ class ProfilesController:
             # install" error.
             "formations_available": codec_available,
             "selective_copy_available": codec_available,
+            "setup_available": codec_available,
             "copy_groups": {
                 "characters": evesettings_selective.groups_payload("character"),
                 "accounts": evesettings_selective.groups_payload("account"),
             },
             "backups": [backup_payload(item) for item in listed],
         }
+
+    def setup_limits(self) -> dict:
+        return setup_model.limits_payload()
+
+    @staticmethod
+    def _setup_require_entry(path: Path, *, directory: bool = False) -> None:
+        """Setup reads refuse aliases too; ordinary profile-copy rules stay intact."""
+        info = path.lstat()
+        linked = stat.S_ISLNK(info.st_mode) or bool(
+            getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        )
+        regular = (
+            stat.S_ISDIR(info.st_mode)
+            if directory
+            else (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+        )
+        if linked or not regular or ".." in path.parts:
+            raise setup_model.SetupError(
+                "invalid_request",
+                "Choose an ordinary local profile and settings files, not linked aliases.",
+            )
+
+    def _setup_selection(self):
+        found = self._eve_discover()
+        section = self._eve_section()
+        _, server, profile = evesettings_tree.normalize_selection(
+            section.get("root"), section.get("server"), section.get("profile")
+        )
+        if (
+            found.unreadable
+            or found.too_broad
+            or found.root is None
+            or found.server is None
+            or found.profile is None
+            or (server is not None and server != found.server)
+            or (profile is not None and profile != found.profile)
+        ):
+            raise setup_model.SetupError(
+                "invalid_request",
+                "The Profiles selection changed or cannot be read. Reopen Profiles.",
+            )
+        if not self._eve_context(found).trusted:
+            raise setup_model.SetupError("invalid_request", _EVE_IDENTITY_UNAVAILABLE)
+        for path in (found.root, found.server, found.profile):
+            self._setup_require_entry(path, directory=True)
+        if found.server != found.root and found.server.parent != found.root:
+            raise setup_model.SetupError(
+                "invalid_request", "The server is outside the selected root."
+            )
+        if found.profile.parent != found.server:
+            raise setup_model.SetupError(
+                "invalid_request", "The profile is outside the selected server."
+            )
+        evesettings_tree.require_under(found.root, found.server)
+        evesettings_tree.require_under(found.server, found.profile)
+        return found
+
+    def _setup_found(self, profile: str):
+        selected = self._setup_selection()
+        if not isinstance(profile, str) or not profile:
+            raise setup_model.SetupError(
+                "invalid_request", "Choose a local base profile."
+            )
+        requested = Path(profile)
+        if requested.parent != selected.server:
+            raise setup_model.SetupError(
+                "invalid_request", "Choose a sibling profile on the selected server."
+            )
+        self._setup_require_entry(requested, directory=True)
+        found = evesettings_tree.discover(selected.root, selected.server, requested)
+        if found.profile != requested or found.unreadable or found.too_broad:
+            raise setup_model.SetupError(
+                "invalid_request", "That profile is no longer available."
+            )
+        evesettings_tree.require_under(selected.server, requested)
+        return found, self._eve_context(selected)
+
+    def _setup_links(self, found) -> dict:
+        """Confirmed ownership is server-owned; an offline second owner is ambiguous."""
+        saved = self._eve_section().get("account_characters") or {}
+        local_characters = {row.file_id for row in found.characters}
+        return {
+            row.file_id: [
+                cid
+                for cid in saved.get(row.file_id, [])
+                if cid in local_characters
+                and not self._eve_is_deleted(cid)
+                and sum(cid in values for values in saved.values()) == 1
+            ]
+            for row in found.accounts
+        }
+
+    def _setup_pair(self, found, account_path: str, character_path: str):
+        pair = []
+        for requested, records in (
+            (account_path, found.accounts),
+            (character_path, found.characters),
+        ):
+            if not isinstance(requested, str) or not requested:
+                raise setup_model.SetupError(
+                    "invalid_request", "Choose a local account and character pair."
+                )
+            path = Path(requested)
+            record = next((row for row in records if row.path == path), None)
+            if record is None or path.parent != found.profile:
+                raise setup_model.SetupError(
+                    "invalid_request", "The selected pair is not in this profile."
+                )
+            self._setup_require_entry(path)
+            evesettings_tree.require_under(found.profile, path)
+            pair.append(record)
+        account, character = pair
+        if character.file_id not in self._setup_links(found).get(account.file_id, []):
+            raise setup_model.SetupError(
+                "invalid_request",
+                "Choose an unambiguous confirmed account/character pair with both local files.",
+            )
+        return account, character
+
+    def setup_context(self, profile: str) -> dict:
+        reply = {
+            "ok": False,
+            "error": "",
+            "root": "",
+            "server": "",
+            "profile": "",
+            "profiles": [],
+            "accounts": [],
+            "characters": [],
+            "account_identity_available": False,
+            "setup_available": evesettings_codec.codec_available(),
+        }
+        # Unlike state(), browsing must neither probe/publish nor resolve names.
+        with self._eve_identity_hold() as held:
+            if not held:
+                return {**reply, "error": "Another Profiles operation is running."}
+            try:
+                found, _ = self._setup_found(profile)
+                links = self._setup_links(found)
+                names = self._eve_section().get("account_names") or {}
+                characters = [
+                    row
+                    for row in found.characters
+                    if not self._eve_is_deleted(row.file_id)
+                ]
+
+                def roster(records):
+                    for row in records:
+                        self._setup_require_entry(row.path)
+                    return sorted(
+                        (self._eve_describe_file(row, names, links) for row in records),
+                        key=lambda row: (row["name"].casefold(), row["id"]),
+                    )
+
+                return {
+                    **reply,
+                    "ok": True,
+                    "root": str(found.root),
+                    "server": str(found.server),
+                    "profile": str(found.profile),
+                    "account_identity_available": True,
+                    "profiles": [
+                        {
+                            "path": str(p.path),
+                            "name": p.name,
+                            "file_count": p.file_count,
+                        }
+                        for p in found.profiles
+                    ],
+                    "accounts": roster(found.accounts),
+                    "characters": roster(characters),
+                }
+            except (OSError, ValueError) as error:
+                return {**reply, "error": str(error)}
+
+    def _setup_require_closed(self) -> None:
+        try:
+            refusal = self._ports.profile_copy_refusal()
+        except Exception as error:
+            raise setup_model.SetupError(
+                "eve_not_closed",
+                "Wingman could not verify that EVE is closed. Close EVE and retry.",
+            ) from error
+        if refusal is not None:
+            raise setup_model.SetupError("eve_not_closed", refusal)
+        if not evesettings_codec.codec_available():
+            raise setup_model.SetupError(
+                "unsupported_setup",
+                "The settings codec is not available in this install.",
+            )
+
+    def _setup_require_context(self, context: _EveContext, generation: int) -> None:
+        if (
+            self._eve_context(self._setup_selection()) != context
+            or self._eve_generation() != generation
+        ):
+            raise setup_model.SetupError(
+                "stale_review",
+                "The Profiles selection or identification changed. Review the setup again.",
+            )
+
+    def setup_export(
+        self, expected_profile: str, account_path: str, character_path: str
+    ) -> dict:
+        reply = {"ok": False, "error": "", "text": "", "summary": {}, "warnings": []}
+        with self._eve_identity_hold() as held:
+            if not held:
+                return {**reply, "error": "Another Profiles operation is running."}
+            try:
+                self._setup_require_closed()
+                generation = self._eve_generation()
+                found, context = self._setup_found(expected_profile)
+                account, character = self._setup_pair(
+                    found, account_path, character_path
+                )
+                account_snapshot = evesettings_codec.read_snapshot(account.path)
+                character_snapshot = evesettings_codec.read_snapshot(character.path)
+                envelope, warnings = setup_documents.export_setup(
+                    account_snapshot.document, character_snapshot.document
+                )
+                text = setup_sharing.export_text(envelope)
+                summary = setup_model.summarize(setup_model.validate_wingman(envelope))
+                self._setup_require_context(context, generation)
+                found, _ = self._setup_found(expected_profile)
+                self._setup_pair(found, account_path, character_path)
+                self._setup_require_closed()
+                evesettings_codec.require_content_revision(
+                    account.path, account_snapshot.content_revision
+                )
+                evesettings_codec.require_content_revision(
+                    character.path, character_snapshot.content_revision
+                )
+                return {
+                    **reply,
+                    "ok": True,
+                    "text": text,
+                    "summary": summary,
+                    "warnings": list(warnings),
+                }
+            except (OSError, ValueError, evesettings_codec.CodecError) as error:
+                return {**reply, "error": str(error)}
+
+    def setup_read_file(self) -> dict:
+        reply = {"ok": False, "cancelled": False, "error": "", "text": ""}
+        try:
+            chosen = self._ports.choose_setup_input()
+            if not chosen:
+                return {**reply, "cancelled": True}
+            with Path(chosen).open("rb") as stream:
+                raw = stream.read(setup_model.MAX_BYTES + 1)
+            if len(raw) > setup_model.MAX_BYTES:
+                raise setup_model.SetupError(
+                    "byte_limit", "Shared setup file exceeds the UTF-8 byte limit."
+                )
+            text = raw.decode("utf-8-sig")
+            setup_model.check_text_budget(text)
+            return {**reply, "ok": True, "text": text}
+        except Exception as error:
+            # Native dialog implementations can raise platform-specific exceptions.
+            logger.exception("Could not read a shared UI setup file")
+            return {**reply, "error": str(error)}
+
+    def setup_save_file(self, text: str) -> dict:
+        reply = {"ok": False, "cancelled": False, "error": "", "path": ""}
+        try:
+            parsed = setup_sharing.parse_text(text)
+            if parsed.source_kind != "wingman":
+                raise setup_model.SetupError(
+                    "unsupported_setup",
+                    "Only a full Wingman JSON setup can be saved here.",
+                )
+            canonical = setup_sharing.export_text(
+                {
+                    "format": setup_model.FORMAT,
+                    "version": setup_model.VERSION,
+                    "type": setup_model.TYPE,
+                    "overview": parsed.overview,
+                    "layout": parsed.layout,
+                }
+            )
+            chosen = self._ports.choose_setup_output("wingman-ui-setup.json")
+            if not chosen:
+                return {**reply, "cancelled": True}
+            destination = Path(chosen)
+            if destination.suffix.lower() != ".json":
+                raise setup_model.SetupError(
+                    "invalid_request", "Choose a .json filename for the shared setup."
+                )
+            atomicio.write_atomic(destination, canonical)
+            return {**reply, "ok": True, "path": str(destination)}
+        except Exception as error:
+            # A failed dialog/publication is an error, never cancellation or a saved path.
+            logger.exception("Could not save a shared UI setup file")
+            return {**reply, "error": str(error)}
+
+    def setup_review(
+        self,
+        text: str,
+        expected_profile: str,
+        account_path: str,
+        character_path: str,
+        destination_name: str,
+        keep_ship_labels: bool = False,
+    ) -> dict:
+        reply = {
+            "ok": False,
+            "error": "",
+            "error_code": "",
+            "review_id": "",
+            "summary": {},
+            "warnings": [],
+            "needs_label_choice": False,
+        }
+        with self._eve_identity_hold() as held:
+            if not held:
+                return {
+                    **reply,
+                    "error_code": "busy",
+                    "error": "Another Profiles operation is running.",
+                }
+            # Admission replaces the old authorization even when parsing fails.
+            self._setup_review = None
+            try:
+                self._setup_require_closed()
+                generation = self._eve_generation()
+                found, context = self._setup_found(expected_profile)
+                account, character = self._setup_pair(
+                    found, account_path, character_path
+                )
+                if type(keep_ship_labels) is not bool:
+                    raise setup_model.SetupError(
+                        "invalid_request", "Choose whether to keep your ship labels."
+                    )
+                parsed = setup_sharing.parse_text(text)
+                reply["summary"] = setup_model.summarize(parsed)
+                reply["warnings"] = list(parsed.warnings)
+                if parsed.ambiguous_labels and not keep_ship_labels:
+                    reply["needs_label_choice"] = True
+                    raise setup_model.SetupError(
+                        "label_choice_required",
+                        "Choose Keep my ship labels explicitly for this YAML.",
+                    )
+                try:
+                    plan = evesettings_profilecopy.prepare_copy(
+                        found, expected_profile, "new", destination_name
+                    )
+                except ValueError as error:
+                    collision = isinstance(destination_name, str) and any(
+                        row.name.casefold() == destination_name.strip().casefold()
+                        for row in found.profiles
+                    )
+                    raise setup_model.SetupError(
+                        "destination_exists" if collision else "invalid_request",
+                        str(error),
+                    ) from error
+                if any(
+                    not (plan.source / name).exists()
+                    for name in ("core_public__.yaml", "prefs.ini")
+                ):
+                    raise setup_model.SetupError(
+                        "missing_local_preferences",
+                        "The base profile needs both core_public__.yaml and prefs.ini. Choose a normally initialized recipient profile.",
+                    )
+                manifest = setup_profile.capture_manifest(plan)
+                revisions = {row.name: row.sha256 for row in manifest.files}
+                if not {account.path.name, character.path.name} <= revisions.keys():
+                    raise setup_model.SetupError(
+                        "stale_review", "The selected files changed during review."
+                    )
+                account_snapshot = evesettings_codec.read_snapshot(account.path)
+                character_snapshot = evesettings_codec.read_snapshot(character.path)
+                if (
+                    account_snapshot.content_revision != revisions[account.path.name]
+                    or character_snapshot.content_revision
+                    != revisions[character.path.name]
+                ):
+                    raise setup_model.SetupError(
+                        "stale_review", "The selected files changed during review."
+                    )
+                setup_profile.require_manifest(plan, manifest)
+                # Same pure application as staging, with no encode/write or publication.
+                setup_documents.apply_setup(
+                    account_snapshot.document,
+                    character_snapshot.document,
+                    parsed,
+                    keep_ship_labels=keep_ship_labels,
+                    now=time.time(),
+                )
+                self._setup_require_context(context, generation)
+                found, _ = self._setup_found(expected_profile)
+                self._setup_pair(found, account_path, character_path)
+                self._setup_require_closed()
+                setup_profile.require_manifest(plan, manifest)
+                offer = _SetupReview(
+                    str(uuid.uuid4()),
+                    text,
+                    keep_ship_labels,
+                    context,
+                    generation,
+                    plan,
+                    account.path.name,
+                    character.path.name,
+                    account.file_id,
+                    character.file_id,
+                    manifest,
+                )
+                # Cancellation/deletion may claim a generation without the mutation
+                # hold. Compare-and-install under its lock so it cannot half-happen.
+                with self._eve_identification_lock:
+                    if generation != self._eve_identification_generation:
+                        raise setup_model.SetupError(
+                            "stale_review",
+                            "Identification changed. Review the setup again.",
+                        )
+                    self._setup_review = offer
+                return {**reply, "ok": True, "review_id": offer.review_id}
+            except setup_model.SetupError as error:
+                return {**reply, "error": str(error), "error_code": error.code}
+            except FileExistsError as error:
+                return {
+                    **reply,
+                    "error": str(error),
+                    "error_code": "destination_exists",
+                }
+            except (OSError, ValueError, evesettings_codec.CodecError) as error:
+                return {**reply, "error": str(error), "error_code": "unsupported_setup"}
+
+    def setup_discard(self, review_id: str) -> bool:
+        with self._eve_identity_hold() as held:
+            if not held:
+                return False
+            offer = self._setup_review
+            if (
+                offer is None
+                or not isinstance(review_id, str)
+                or offer.review_id != review_id
+            ):
+                return False
+            try:
+                self._setup_require_context(offer.selection_context, offer.generation)
+            except (OSError, ValueError):
+                return False
+            self._setup_review = None
+            return True
+
+    def _setup_require_offer(self, offer: _SetupReview) -> None:
+        """Revalidate selection authority separately from the browsed sibling base."""
+        try:
+            self._setup_require_context(offer.selection_context, offer.generation)
+            if self._eve_identification is not None:
+                raise ValueError("Finish or cancel account identification first.")
+            found, _ = self._setup_found(str(offer.plan.source))
+            account, character = self._setup_pair(
+                found,
+                str(offer.plan.source / offer.account_filename),
+                str(offer.plan.source / offer.character_filename),
+            )
+            if (account.file_id, character.file_id) != (
+                offer.account_id,
+                offer.character_id,
+            ) or not {offer.account_filename, offer.character_filename} <= {
+                row.name for row in offer.manifest.files
+            }:
+                raise ValueError("The reviewed account/character pair changed.")
+        except (OSError, ValueError) as error:
+            raise setup_model.SetupError("stale_review", str(error)) from error
+        for name in ("core_public__.yaml", "prefs.ini"):
+            if not (offer.plan.source / name).exists():
+                raise setup_model.SetupError(
+                    "missing_local_preferences",
+                    f"The base profile is missing required local preferences: {name}.",
+                )
+        # Discovery supplies the case-insensitive collision rule on Linux too;
+        # lexists also refuses files and dangling links not offered as profiles.
+        if os.path.lexists(offer.plan.destination) or any(
+            row.path.name.casefold() == offer.plan.destination.name.casefold()
+            for row in found.profiles
+        ):
+            raise setup_model.SetupError(
+                "destination_exists", f"{offer.plan.destination_name!r} already exists."
+            )
+
+    def setup_create(self, review_id: str, request_id: str) -> dict:
+        """Consume one reviewed offer, never queue or change selection at admission."""
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
+            return {
+                "accepted": False,
+                "error": "A create request needs a request ID of 1 to 128 characters.",
+            }
+        if self._eve_identification is not None:
+            return {
+                "accepted": False,
+                "error": "Finish or cancel account identification first.",
+            }
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "accepted": False,
+                "error": "Another Profiles operation is running.",
+            }
+        offer = self._setup_review
+        consumed = False
+        worker_entered = False
+        handed_off = False
+
+        def worker():
+            nonlocal worker_entered
+            # A port may finish inline before start() returns (or raises). Once
+            # entered, only the worker owns release/completion; never restore it.
+            worker_entered = True
+            self._eve_setup_create_worker(offer, request_id)
+
+        try:
+            if (
+                offer is None
+                or not isinstance(review_id, str)
+                or offer.review_id != review_id
+            ):
+                raise setup_model.SetupError(
+                    "stale_review",
+                    "That review is no longer available. Review the setup again.",
+                )
+            self._setup_require_closed()
+            self._setup_require_offer(offer)
+            setup_profile.require_manifest(offer.plan, offer.manifest)
+            self._setup_require_offer(offer)
+            with self._eve_identification_lock:
+                if (
+                    self._setup_review is not offer
+                    or offer.generation != self._eve_identification_generation
+                ):
+                    raise setup_model.SetupError(
+                        "stale_review",
+                        "Identification changed. Review the setup again.",
+                    )
+                self._setup_review = None
+                consumed = True
+            self._ports.spawn(target=worker, args=(), daemon=True).start()
+            handed_off = True
+        except Exception as error:
+            if worker_entered:
+                logger.exception("Setup worker entered before its start handle failed")
+                return {"accepted": True, "error": None}
+            logger.warning("Setup creation not started: %s", error)
+            return {
+                "accepted": False,
+                "error": str(error) or "Setup creation could not be started.",
+            }
+        finally:
+            if not handed_off and not worker_entered:
+                try:
+                    if consumed and self._setup_review is None:
+                        # Still holding mutation authority: another review cannot
+                        # race restoration. Cancellation can, so compare generation
+                        # again under its own lock after all external checks.
+                        self._setup_require_closed()
+                        self._setup_require_offer(offer)
+                        setup_profile.require_manifest(offer.plan, offer.manifest)
+                        self._setup_require_offer(offer)
+                        with self._eve_identification_lock:
+                            if (
+                                self._setup_review is None
+                                and offer.generation
+                                == self._eve_identification_generation
+                            ):
+                                self._setup_review = offer
+                except Exception:
+                    # A failed start is retryable only while the same review is
+                    # still valid. Leave stale authority consumed, not resurrected.
+                    logger.info(
+                        "Setup review expired during worker start", exc_info=True
+                    )
+                finally:
+                    self._eve_mutation.release()
+        return {"accepted": True, "error": None}
+
+    def _eve_setup_create_worker(self, offer: _SetupReview, request_id: str) -> None:
+        published = False
+        created = None
+        selection_persisted = False
+        error_code = "create_failed"
+        error_message = "Setup creation was interrupted."
+        warning = ""
+        try:
+            parsed = setup_sharing.parse_text(offer.text)
+            if parsed.ambiguous_labels and not offer.keep_ship_labels:
+                raise setup_model.SetupError(
+                    "unsupported_setup",
+                    "Review the setup and choose Keep my ship labels.",
+                )
+            self._setup_require_offer(offer)
+            try:
+                setup_profile.require_manifest(offer.plan, offer.manifest)
+            except ValueError as error:
+                raise setup_model.SetupError("stale_review", str(error)) from error
+            self._setup_require_closed()
+            with setup_profile.stage_setup(
+                offer.plan,
+                offer.manifest,
+                offer.account_filename,
+                offer.character_filename,
+                parsed,
+                keep_ship_labels=offer.keep_ship_labels,
+                now=time.time(),
+            ) as staged:
+                self._setup_require_offer(offer)
+                try:
+                    setup_profile.require_manifest(offer.plan, offer.manifest)
+                except ValueError as error:
+                    raise setup_model.SetupError("stale_review", str(error)) from error
+                self._setup_require_closed()
+                # The process probe can be slow. Its CLOSED answer cannot make
+                # context or filesystem observations from before it fresh again.
+                self._setup_require_offer(offer)
+                try:
+                    setup_profile.require_manifest(offer.plan, offer.manifest)
+                except ValueError as error:
+                    raise setup_model.SetupError("stale_review", str(error)) from error
+                # Hashing may outlive cancellation or a learned deletion. Neither
+                # needs the mutation hold to invalidate this offer's authority.
+                self._setup_require_offer(offer)
+                # The offer helper also discovers files after checking generation;
+                # cancellation during that work must still invalidate publication.
+                if offer.generation != self._eve_generation():
+                    raise setup_model.SetupError(
+                        "stale_review",
+                        "Identification changed. Review the setup again.",
+                    )
+                created = evesettings_profilecopy.publish_new(staged)
+                # This is the irreversible outcome, before cleanup, persistence,
+                # or page status. None of those may invite a duplicate retry.
+                published = True
+                error_code = ""
+                error_message = ""
+            selection_persisted = self._eve_select_created_profile(offer.plan, created)
+            if not selection_persisted:
+                warning = (
+                    f"Created {offer.plan.destination_name}, but Wingman could not remember "
+                    "the selection. Select it from Profile."
+                )
+            self._ports.status(f"Created {offer.plan.destination_name}.")
+        except Exception as error:
+            if published:
+                logger.exception("Setup profile created, but a follow-up effect failed")
+                warning = " ".join(
+                    filter(
+                        None,
+                        [warning, f"Profile created, but a follow-up failed: {error}"],
+                    )
+                )
+            else:
+                logger.exception("Setup profile creation failed")
+                error_message = str(error) or "Setup creation could not be completed."
+                if isinstance(error, setup_model.SetupError):
+                    error_code = error.code
+                elif isinstance(error, evesettings_codec.ContentChangedError):
+                    error_code = "stale_review"
+                elif isinstance(error, FileExistsError):
+                    error_code = "destination_exists"
+                else:
+                    error_code = "create_failed"
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(
+                published,
+                operation="ui_setup_create",
+                request_id=request_id,
+                review_id=offer.review_id,
+                published=published,
+                path=str(created) if published else "",
+                selection_persisted=selection_persisted,
+                error_code=error_code,
+                error=error_message,
+                warning=warning,
+            )
 
     def _eve_refresh_running(self) -> None:
         """Re-probe for a running client, off the bridge thread.

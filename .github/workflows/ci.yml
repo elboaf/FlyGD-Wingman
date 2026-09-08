@@ -72,9 +72,9 @@ jobs:
           print("WebView2 detection predicate agrees across installer.iss and preflight.py")
           PY
       - name: Load every page module under node
-        # The web layer's first EXECUTABLE gate. Nothing in pytest renders
-        # or runs web/*.js; handlers register at the top of each module's
-        # IIFE, so one bad name throws mid-module and every registration
+        # The page-wide EXECUTABLE gate complements focused Node harnesses;
+        # neither renders CSS or WebView2. Handlers register at each module's
+        # IIFE top level, so one bad name throws mid-module and every registration
         # below it silently never runs -- the screen loads as an inert,
         # empty copy of itself with no error anywhere a user or a test
         # would look. `onEveSettingsRunning` did exactly that to the whole
@@ -87,10 +87,10 @@ jobs:
         # on a real payload, a missing element id, or CSS -- the script's
         # header says exactly where it stops.
         #
-        # Run here with the runner's preinstalled node rather than from
-        # pytest, so it gates even though the windows-latest test job has
-        # no node and tests/test_js_smoke.py skips there. No setup-node:
-        # the script is stdlib-only and any current node runs it.
+        # Keep this direct gate independent of pytest. Both test runners
+        # also require Node before running the suite, so its Node harnesses
+        # cannot silently skip. No setup-node: the runner supplies Node,
+        # and this stdlib-only script needs no npm install.
         run: node scripts/js_smoke.js
 
       - name: Install uv
@@ -187,12 +187,38 @@ jobs:
         # pyproject.toml, which is the whole point. --frozen would install
         # a stale lockfile silently.
         run: uv sync --locked --extra dev
+      # Availability-gated codec/Node tests must run on BOTH platforms, not
+      # quietly skip because cargo test only builds its own test executable.
+      # Explicit bash also gives heredocs and fail-fast native commands the
+      # same semantics on windows-latest (whose default shell is PowerShell).
+      - name: Check Node
+        shell: bash
+        run: node --version
+      - name: Build the settings codec for tests
+        shell: bash
+        run: cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target
+      - name: Install the settings codec for tests
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import os
+          import pathlib
+          import shutil
+          from wingman.evesettings import codec
+
+          name = "wingman-settings-codec" + (".exe" if os.name == "nt" else "")
+          source = pathlib.Path("packaging/settings-codec/target/release") / name
+          target = pathlib.Path("packaging/bin") / name
+          target.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(source, target)
+          assert codec.codec_available(), "Native integration tests require the built codec"
+          PY
       - name: Test
         # junitxml: the "Surface failures" step turns it into ::error::
         # annotations, which are readable from the API without an
         # authenticated log fetch -- the only way to see which tests
         # failed when no human is signed in.
-        run: uv run --no-sync python -m pytest tests/ -v --junitxml=pytest-result.xml
+        run: uv run --no-sync python -m pytest tests/ -v -rs --junitxml=pytest-result.xml
       - name: Test settings codec
         run: cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
       - name: Surface failures
@@ -200,8 +226,12 @@ jobs:
         shell: bash
         run: |
           uv run --no-sync python - <<'EOF'
+          import pathlib
           import xml.etree.ElementTree as ET
 
+          if not pathlib.Path("pytest-result.xml").is_file():
+              print("::notice::pytest-result.xml is absent; inspect the failed prerequisite step")
+              raise SystemExit(0)
           root = ET.parse("pytest-result.xml").getroot()
           for case in root.iter("testcase"):
               for failure in (*case.findall("failure"), *case.findall("error")):

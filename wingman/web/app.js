@@ -135,14 +135,14 @@
   // Routes that show no title-bar chrome: no destination buttons, no
   // gear. These entries are here because the screen must not be leavable
   // sideways -- see the block inside WM.route that reads this list.
-  WM.CHROMELESS_ROUTES = ['firstrun', 'formations', 'accountidentity'];
+  WM.CHROMELESS_ROUTES = ['firstrun', 'formations', 'accountidentity', 'uisetup'];
 
   WM.route = function (name) {
     // Bookmarks and Previews are NOT here any more: both are sections of
     // the Settings route, reached through WM.section.
-    // formations, accountidentity and backups have no title-bar buttons:
+    // formations, accountidentity, uisetup and backups have no title-bar buttons:
     // all are SUB-SCREENS of Profiles, reached from that destination.
-    // The formation editor and account identification are focused workflows,
+    // Editing, identification and setup sharing are focused workflows,
     // so they hide the bar outright; see CHROMELESS_ROUTES. Backups is ordinary
     // management and keeps the destination chrome, with Profiles lit below.
     var routes = { main: 'route-main', settings: 'route-settings',
@@ -151,6 +151,7 @@
                    skills: 'route-skills',
                    fittings: 'route-fittings',
                    formations: 'route-formations',
+                   uisetup: 'route-uisetup',
                    accountidentity: 'route-accountidentity',
                    backups: 'route-backups' };
     Object.keys(routes).forEach(function (key) {
@@ -161,15 +162,15 @@
     // the whole bar and read as having left the destination entirely.
     // This mapping is the answer to "where am I", not merely "what button was
     // clicked". It keeps Profiles visibly selected on Backups and preserves
-    // the correct state behind the hidden bar on the two focused workflows.
+    // the correct state behind the hidden bar on the focused workflows.
     var lit = (name === 'formations' || name === 'accountidentity'
-      || name === 'backups') ? 'evesettings' : name;
+      || name === 'backups' || name === 'uisetup') ? 'evesettings' : name;
     Array.prototype.forEach.call(
       document.querySelectorAll('.navbtn'), function (btn) {
         btn.classList.toggle('active', btn.dataset.route === lit);
       });
     WM.el('btn-settings').classList.toggle('active', name === 'settings');
-    // Three routes offer no chrome. First run is not dismissable: there is
+    // Focused routes offer no chrome. First run is not dismissable: there is
     // nowhere else to go yet. Account identity is a focused setup flow whose
     // Back control cancels its ephemeral observation. The formation editor
     // holds unsaved edits and `< Profiles` is the only exit that asks before
@@ -178,6 +179,8 @@
     // editor five exits of which four threw edits away in silence. Visibility
     // is decided HERE, per route, rather than by each editor toggling it on
     // entry and exit: apply_eve_gate below can route away without using Back.
+    // Setup sharing likewise has one explicit exit that discards private input
+    // and review state; an already-sent Create retains only its receipt.
     var chromeless = WM.CHROMELESS_ROUTES.indexOf(name) !== -1;
     WM.el('btn-settings').hidden = chromeless;
     WM.el('routenav').hidden = chromeless;
@@ -272,7 +275,7 @@
   // anyone standing on a hidden destination, or the nav disappears around
   // them and there is no way back.
   WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
-                   'accountidentity', 'backups'];
+                   'accountidentity', 'backups', 'uisetup'];
   // Alerts and Characters are EVE-gated for the same reason Bookmarks and
   // Previews are: with the gate off they configure nothing that can happen
   // without an EVE install or an authenticated EVE account. Of the six

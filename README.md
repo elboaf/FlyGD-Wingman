@@ -434,9 +434,15 @@ upload again.
 
 ## Building from source
 
+Before the full suite, install **Node and Rust/Cargo** and follow the
+[release-codec build/install prerequisites](docs/overview-layout-sharing-verification.md#local-verification-prerequisites)
+for this checkout. Node executes the focused page harnesses; native setup tests
+require the actual codec in `packaging/bin`, not only Cargo's test executable.
+Missing-codec/Node coverage must not be counted as a passing full run.
+
 ```bash
 python -m pip install -e ".[dev]"
-python -m pytest tests/
+python -m pytest tests/ -rs
 uv run --extra dev ruff check .
 uv run --extra dev ruff format --check .
 python -m wingman

@@ -21,10 +21,10 @@ Two things live here and both matter:
   (say, a `try` that catches and logs instead of counting). The self-test
   is what proves the gate is not a no-op.
 
-Skipped, not failed, where node is absent: windows-latest's job installs
-no node, and a contributor without it should not see a red suite for a
-check CI runs on ubuntu-latest regardless. `test_ci_runs_the_gate_directly`
-below is what keeps that skip from becoming the only place the gate runs.
+Skipped where node is absent for focused local runs; that is not acceptable
+full-suite coverage. CI requires node before pytest on both platforms and
+also runs this gate directly in `checks`. `test_ci_runs_the_gate_directly`
+below keeps that independent page-loading gate in place.
 """
 
 import re
@@ -169,10 +169,9 @@ def test_the_gate_keeps_reporting_past_the_first_throw(tmp_path):
 
 
 def test_ci_runs_the_gate_directly():
-    """The skip above must not be the only place the gate runs. CI's
-    `checks` job calls the script with node directly, so the gate holds
-    even on a runner whose pytest job has no node -- and a step deleted
-    from ci.yml fails here rather than silently un-gating the web layer."""
+    """CI's `checks` job calls the script directly, independently of pytest.
+    Deleting that step must fail here rather than silently leaving page
+    loading entirely to the full-suite job."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "node scripts/js_smoke.js" in workflow
 

@@ -36,9 +36,16 @@ source directory), the legacy `AppId` uninstall key in
 
 ## Commands
 
+Full-suite prerequisites include **Node on PATH and the built release settings
+codec installed in this checkout's `packaging/bin`**. Follow the
+[local prerequisite commands](docs/overview-layout-sharing-verification.md#local-verification-prerequisites)
+before pytest. Native setup integration deliberately fails if the codec is absent;
+Node/native skips are not acceptable full-suite coverage. CI checks Node and
+builds/installs the codec before pytest, plus runs the independent Cargo regression.
+
 ```bash
 uv sync --locked --extra dev              # what CI installs
-uv run --no-sync python -m pytest tests/  # full suite (~3 min)
+uv run --no-sync python -m pytest tests/ -rs  # full suite; inspect skips
 uv run --extra dev ruff check .
 uv run --extra dev ruff format --check .  # CI gates on this; run it locally
 python -m wingman            # run the app (Windows only)
@@ -53,10 +60,11 @@ uv run python -m pytest tests/test_api_upload.py::test_name -v
 
 CI (`.github/workflows/ci.yml`) has two jobs. `checks` (ubuntu) asserts the
 WebView2 detection predicate agrees between `packaging/installer.iss` and
-`ui/preflight.py`. `test` runs pytest on **both** ubuntu-latest and
-windows-latest, `ruff check`, `ruff format --check`, and `cargo test` for the
-settings-codec sidecar in `packaging/settings-codec/`. The old grep that
-compared three hand-typed version literals is gone on purpose: the version is
+`ui/preflight.py`, and runs `ruff check`, `ruff format --check` and the executable
+JS smoke gate. `test` runs pytest on **both** ubuntu-latest and windows-latest,
+and `cargo test` for the settings-codec sidecar in `packaging/settings-codec/`.
+The old grep that compared three hand-typed version literals is gone on purpose:
+the version is
 derived from `wingman/__init__.py` and `tests/test_packaging_version.py`
 asserts the derivation chain instead. Do not reinstate the grep.
 
@@ -194,7 +202,7 @@ sees it), `scheduler.py`, and two auxiliary always-on-top windows,
 **Web layer** (`wingman/web/`): `app.js` is the shell and bridge client with a
 strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
 `index.html` in this order: `characters`, `bookmarks`, `previews`, `alerts`,
-`evesettings` (the Profiles route), `formations`, `list`, `panel` (upload
+`evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 `firstrun`, `dev`. `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts, and leaving is load-bearing
@@ -207,20 +215,22 @@ tests do not see them.
 
 ## Working on the UI
 
-**Nothing in the test suite renders the page.** pytest reads web source
-lexically; it never executes it. Handlers register at the top of each module's
-IIFE, so one bad name throws mid-module and every registration below it silently
-never runs — the screen loads as an inert, empty copy of itself with no error
-anywhere. Assume a new screen is broken until opened by hand, and treat
+**Nothing in the pytest suite renders the page.** Most web guards are lexical;
+the Node smoke gate executes top-level page scripts, and focused Node harnesses
+execute production modules against DOM/bridge doubles (including setup's real
+route/owner wiring), not CSS or WebView2. Handlers register at the top of each
+module's IIFE, so one bad name throws mid-module and every registration below it
+silently never runs — the screen loads as an inert, empty copy of itself with no
+error anywhere. Assume a new screen is broken until opened by hand, and treat
 `docs/smoke-checklist.md` as part of the change.
 
-The lexical guards that stand in for a JS harness — keep them green and extend
-them when you add a convention:
+The lexical guards cover conventions beyond the focused runtime harnesses;
+keep them and the executable smoke gate green and extend them with new conventions:
 - `test_bridge_contract.py` — every `_push("name")` in `ui/api.py` exists in
   `WM.HANDLERS`, every `WM.send('name')` exists on `Api`, every handler has
   exactly one owner, and facades delegate to their controller.
 - `scripts/js_smoke.js` (run by CI's `checks` job and by `test_js_smoke.py`
-  where node is on PATH) — the one **executable** gate: loads `app.js` and
+  where node is on PATH) — the **executable top-level** gate: loads `app.js` and
   every `<script src>` of all three pages under node with a DOM stub and
   fails on anything an IIFE throws at top level (unknown handler names,
   misspelled identifiers, missing `WM.*` members, wrong script order). It

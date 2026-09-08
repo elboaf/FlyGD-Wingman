@@ -2,16 +2,17 @@
 
 Date: 2026-09-06
 Base: `57ce91d` — Harden accessibility, build reproducibility, and Settings docs (#171)
-Status: phase 1 implemented, with local verification and polish corrections recorded in the [verification record](history/probe-formation-sharing-verification.md). Independent task and whole-branch reviews are complete with no outstanding code findings; Windows/WebView2, real-clipboard, and live-EVE acceptance remain open. Requirements below are unchanged; see the [phase-1 implementation plan](history/probe-formation-sharing-plan.md).
+Status: phase 1 implemented, with local verification and polish corrections recorded in the [verification record](history/probe-formation-sharing-verification.md). Independent task and whole-branch reviews are complete with no outstanding code findings; Windows/WebView2, real-clipboard, and live-EVE acceptance remain open. The phase-1 requirements below are unchanged; see the [phase-1 implementation plan](history/probe-formation-sharing-plan.md).
 
 ## Outcome and roadmap
 
 Players can exchange useful EVE settings between separate Wingman installations without exchanging account files or identities. The highest-value outcome is a complete ready-to-fly UI setup, not formations alone. Formations are the first release because their portable data model is already understood.
 
 1. **Probe formations:** copy/paste selected named formations into an existing account's formation editor.
-2. **Overview configuration:** share supported overview content without promising a complete window arrangement.
-3. **Complete UI setups:** combine supported account and character components; default to a new EVE settings profile so the existing setup remains available.
-4. **Curated library:** discover and distribute the same preset artifacts. Start with reviewed presets, not a community publishing service.
+2. **Overview and supported UI layouts:** combine supported account and character components in a Wingman preset, including overview-window grouping and ordered labels. Default to a new EVE settings profile so the existing setup remains available, while preserving recipient-local display settings. Native EVE YAML is a limited configuration-only compatibility input.
+3. **Curated library:** discover and distribute the same preset artifacts. Start with reviewed presets, not a community publishing service.
+
+**Roadmap revision, 2026-09-07:** the user approved bringing layout work forward rather than shipping overview configuration alone. The native export/import experiment did not reproduce window placement/grouping or all custom-label entries. See the [discovery record](overview-layout-sharing-discovery.md) for measured results, limitations and remaining design decisions. This revision does not expand the implemented probe-sharing contract or claim that the next importer is implemented.
 
 Individual presets target an existing profile with backups. Complete setups default to a new profile. Later phases require their own investigation and design; they are not included in the first implementation.
 

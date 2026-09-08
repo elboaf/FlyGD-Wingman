@@ -183,6 +183,13 @@ def _open_file_dialog_kind():
     return webview.FileDialog.OPEN
 
 
+def _save_file_dialog_kind():
+    """Keep the pinned pywebview SAVE constant behind the same lazy seam."""
+    import webview
+
+    return webview.FileDialog.SAVE
+
+
 def _with_fetch_labels(payload: dict) -> dict:
     """Add a rendered `fetched_label` beside each character's fetched_utc.
 
@@ -4708,6 +4715,8 @@ class Api:
                 status=self._profiles_status,
                 confirm=self._profiles_confirm,
                 choose_root=self._choose_eve_settings_root,
+                choose_setup_input=self._choose_setup_input,
+                choose_setup_output=self._choose_setup_output,
                 spawn=self._spawn_profiles_worker,
                 advisory_client_running=self._profiles_advisory_client_running,
                 strict_client_running=self._profiles_strict_client_running,
@@ -4742,6 +4751,24 @@ class Api:
     def _choose_eve_settings_root(self, initial: str) -> str:
         chosen = self._window.create_file_dialog(
             _folder_dialog_kind(), directory=initial
+        )
+        return str(chosen[0]) if chosen else ""
+
+    def _choose_setup_input(self) -> str:
+        chosen = self._window.create_file_dialog(
+            _open_file_dialog_kind(),
+            directory="",
+            allow_multiple=False,
+            file_types=("UI setup (*.json;*.yaml;*.yml)",),
+        )
+        return str(chosen[0]) if chosen else ""
+
+    def _choose_setup_output(self, suggested: str) -> str:
+        chosen = self._window.create_file_dialog(
+            _save_file_dialog_kind(),
+            directory="",
+            save_filename=suggested,
+            file_types=("Wingman UI setup (*.json)",),
         )
         return str(chosen[0]) if chosen else ""
 
@@ -4812,6 +4839,49 @@ class Api:
 
     def eve_settings_state(self) -> dict:
         return self._profiles.state()
+
+    def eve_settings_setup_limits(self) -> dict:
+        return self._profiles.setup_limits()
+
+    def eve_settings_setup_context(self, profile: str) -> dict:
+        return self._profiles.setup_context(profile)
+
+    def eve_settings_setup_export(
+        self, expected_profile: str, account_path: str, character_path: str
+    ) -> dict:
+        return self._profiles.setup_export(
+            expected_profile, account_path, character_path
+        )
+
+    def eve_settings_setup_read_file(self) -> dict:
+        return self._profiles.setup_read_file()
+
+    def eve_settings_setup_save_file(self, text: str) -> dict:
+        return self._profiles.setup_save_file(text)
+
+    def eve_settings_setup_review(
+        self,
+        text: str,
+        expected_profile: str,
+        account_path: str,
+        character_path: str,
+        destination_name: str,
+        keep_ship_labels: bool = False,
+    ) -> dict:
+        return self._profiles.setup_review(
+            text,
+            expected_profile,
+            account_path,
+            character_path,
+            destination_name,
+            keep_ship_labels,
+        )
+
+    def eve_settings_setup_discard(self, review_id: str) -> bool:
+        return self._profiles.setup_discard(review_id)
+
+    def eve_settings_setup_create(self, review_id: str, request_id: str) -> dict:
+        return self._profiles.setup_create(review_id, request_id)
 
     def eve_settings_pick_root(self) -> str:
         return self._profiles.pick_root()

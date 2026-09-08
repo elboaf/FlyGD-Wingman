@@ -766,8 +766,7 @@ def test_open_settings_section_enters_characters_once_and_keeps_last_destination
           return node;
         }}
 
-        const routeNames = ['main', 'settings', 'firstrun', 'evesettings', 'skills',
-                            'fittings', 'formations', 'accountidentity', 'backups'];
+        const routeNames = {json.dumps(re.findall('id="route-([a-z0-9-]+)"', HTML))};
         routeNames.forEach(function (name) {{
           add('route-' + name, name === 'main' ? ['route', 'active'] : ['route']);
         }});

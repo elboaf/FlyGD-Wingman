@@ -15,6 +15,14 @@ from wingman.ui.api import Api
 
 PROFILE_METHODS = (
     "eve_settings_state",
+    "eve_settings_setup_limits",
+    "eve_settings_setup_context",
+    "eve_settings_setup_export",
+    "eve_settings_setup_read_file",
+    "eve_settings_setup_save_file",
+    "eve_settings_setup_review",
+    "eve_settings_setup_discard",
+    "eve_settings_setup_create",
     "eve_settings_pick_root",
     "eve_settings_detect_root",
     "eve_settings_select",
@@ -40,6 +48,14 @@ PROFILE_METHODS = (
 
 PROFILE_SIGNATURES = {
     "eve_settings_state": "(self) -> dict",
+    "eve_settings_setup_limits": "(self) -> dict",
+    "eve_settings_setup_context": "(self, profile: str) -> dict",
+    "eve_settings_setup_export": "(self, expected_profile: str, account_path: str, character_path: str) -> dict",
+    "eve_settings_setup_read_file": "(self) -> dict",
+    "eve_settings_setup_save_file": "(self, text: str) -> dict",
+    "eve_settings_setup_review": "(self, text: str, expected_profile: str, account_path: str, character_path: str, destination_name: str, keep_ship_labels: bool = False) -> dict",
+    "eve_settings_setup_discard": "(self, review_id: str) -> bool",
+    "eve_settings_setup_create": "(self, review_id: str, request_id: str) -> dict",
     "eve_settings_pick_root": "(self) -> str",
     "eve_settings_detect_root": "(self) -> str",
     "eve_settings_select": "(self, server: str, profile: str) -> bool",
@@ -76,6 +92,14 @@ PROFILE_SIGNATURES = {
 
 PROFILE_DELEGATES = {
     "eve_settings_state": "state",
+    "eve_settings_setup_limits": "setup_limits",
+    "eve_settings_setup_context": "setup_context",
+    "eve_settings_setup_export": "setup_export",
+    "eve_settings_setup_read_file": "setup_read_file",
+    "eve_settings_setup_save_file": "setup_save_file",
+    "eve_settings_setup_review": "setup_review",
+    "eve_settings_setup_discard": "setup_discard",
+    "eve_settings_setup_create": "setup_create",
     "eve_settings_pick_root": "pick_root",
     "eve_settings_detect_root": "detect_root",
     "eve_settings_select": "select",
@@ -107,6 +131,8 @@ PROFILE_PORTS = (
     "status",
     "confirm",
     "choose_root",
+    "choose_setup_input",
+    "choose_setup_output",
     "spawn",
     "advisory_client_running",
     "strict_client_running",
@@ -118,6 +144,7 @@ PROFILE_PORTS = (
 )
 
 PROFILE_RUNTIME_FIELDS = (
+    "_setup_review",
     "_eve_mutation",
     "_eve_identification_lock",
     "_eve_identification_generation",
@@ -182,6 +209,48 @@ class _ProfilesSpy:
 
     def state(self):
         return self._record("state")
+
+    def setup_limits(self):
+        return self._record("setup_limits")
+
+    def setup_context(self, profile):
+        return self._record("setup_context", profile)
+
+    def setup_export(self, expected_profile, account_path, character_path):
+        return self._record(
+            "setup_export", expected_profile, account_path, character_path
+        )
+
+    def setup_read_file(self):
+        return self._record("setup_read_file")
+
+    def setup_save_file(self, text):
+        return self._record("setup_save_file", text)
+
+    def setup_review(
+        self,
+        text,
+        expected_profile,
+        account_path,
+        character_path,
+        destination_name,
+        keep_ship_labels=False,
+    ):
+        return self._record(
+            "setup_review",
+            text,
+            expected_profile,
+            account_path,
+            character_path,
+            destination_name,
+            keep_ship_labels,
+        )
+
+    def setup_discard(self, review_id):
+        return self._record("setup_discard", review_id)
+
+    def setup_create(self, review_id, request_id):
+        return self._record("setup_create", review_id, request_id)
 
     def pick_root(self):
         return self._record("pick_root")
@@ -362,6 +431,10 @@ def test_profiles_controller_construction_has_no_effects_and_factory_runs_last(
         "_choose_eve_settings_root",
         trap("_choose_eve_settings_root"),
     )
+    monkeypatch.setattr(api_mod.Api, "_choose_setup_input", trap("choose_setup_input"))
+    monkeypatch.setattr(
+        api_mod.Api, "_choose_setup_output", trap("choose_setup_output")
+    )
     monkeypatch.setattr(
         api_mod.Api,
         "_spawn_profiles_worker",
@@ -423,6 +496,18 @@ def test_profiles_controller_construction_has_no_effects_and_factory_runs_last(
     ("api_name", "controller_name", "args"),
     [
         ("eve_settings_state", "state", ()),
+        ("eve_settings_setup_limits", "setup_limits", ()),
+        ("eve_settings_setup_context", "setup_context", ("sibling",)),
+        ("eve_settings_setup_export", "setup_export", ("base", "account", "character")),
+        ("eve_settings_setup_read_file", "setup_read_file", ()),
+        ("eve_settings_setup_save_file", "setup_save_file", ("text",)),
+        (
+            "eve_settings_setup_review",
+            "setup_review",
+            ("text", "base", "account", "character", "New", True),
+        ),
+        ("eve_settings_setup_discard", "setup_discard", ("review-id",)),
+        ("eve_settings_setup_create", "setup_create", ("review-id", "request-id")),
         ("eve_settings_pick_root", "pick_root", ()),
         ("eve_settings_detect_root", "detect_root", ()),
         ("eve_settings_select", "select", ("tranquility", "settings_Default")),
@@ -472,6 +557,15 @@ def test_profiles_facade_methods_delegate_directly_to_the_private_controller(
     assert spy.calls == [(controller_name, args)]
     assert all(actual is original for actual, original in zip(spy.calls[0][1], args))
     assert result is spy.returns[controller_name]
+
+
+def test_profiles_setup_review_delegate_preserves_keep_labels_default(tmp_path):
+    api, _window = _build_api(tmp_path)
+    spy = _ProfilesSpy()
+    api._profiles = spy
+    args = ("text", "base", "account", "character", "New")
+    assert api.eve_settings_setup_review(*args) is spy.returns["setup_review"]
+    assert spy.calls == [("setup_review", (*args, False))]
 
 
 def test_profiles_copy_delegate_preserves_the_omitted_groups_default(tmp_path):

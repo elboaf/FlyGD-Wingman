@@ -54,6 +54,7 @@ dependencies = [
     # silently take the EVE SSO token verifier's RS256 dependency with
     # them. That failure would surface at authentication, not at install.
     "cryptography",
+    "pyyaml>=6.0.3",
 ]
 
 [project.urls]

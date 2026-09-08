@@ -10,6 +10,8 @@
   'use strict';
 
   var state = null;
+  var refreshSerial = 0;
+  var renderedRefresh = 0;
   var selected = {};
   // Choices belong to a kind: both payloads may use the same id for groups
   // with different settings semantics. Missing ids are initialized when
@@ -82,8 +84,15 @@
   }
 
   function refresh() {
+    var serial = ++refreshSerial;
     return WM.send('eve_settings_state').then(function (payload) {
-      render(payload);
+      // A slow Back/name read must not undo a newer completion snapshot.
+      // Pending or failed reads do not supersede useful state; only a rendered
+      // payload does. Callers still receive their own payload for follow-ups.
+      if (payload && serial > renderedRefresh) {
+        render(payload);
+        renderedRefresh = serial;
+      }
       return payload;
     });
   }
@@ -125,6 +134,7 @@
     renderTargets();
     renderBackups();
     paintFormationsTool();
+    paintSetupTool();
   }
 
   // No root, or a folder Python could not read through: there is nothing
@@ -964,6 +974,14 @@
                   && !state.identification_active);
   }
 
+  function paintSetupTool() {
+    // setup_context owns codec/confirmed-pair availability, not ordinary copy
+    // mode or its target checkboxes. Let the tool explain missing links.
+    var available = !!(state && state.profile && !busy && !state.identification_active);
+    WM.setEnabled('es-setup-share', available);
+    WM.setEnabled('es-setup-import', available);
+  }
+
   function button(text, handler, extra) {
     var el = document.createElement('button');
     el.className = extra ? 'btn ' + extra : 'btn';
@@ -1053,6 +1071,7 @@
     // The editor entry is inert while a copy or restore is in flight, and
     // paintCommit does not own that availability decision.
     paintFormationsTool();
+    paintSetupTool();
     // Same rule as paintCommit/paintFormationsTool above: the disclosure and
     // its opener own the whole of their own enabled state, so a mutation
     // elsewhere on the route cannot leave either behind mid-repaint.
@@ -1445,6 +1464,18 @@
       }
     });
 
+    WM.el('es-setup-share').addEventListener('click', function () {
+      if (!state || !WM.openUiSetup) return;
+      WM.openUiSetup({mode: 'export', context: state,
+        preferred_character: kind() === 'characters' ? WM.el('es-source').value : ''});
+    });
+
+    WM.el('es-setup-import').addEventListener('click', function () {
+      if (!state || !WM.openUiSetup) return;
+      WM.openUiSetup({mode: 'import', context: state,
+        preferred_character: kind() === 'characters' ? WM.el('es-source').value : ''});
+    });
+
     WM.el('es-formations-open').addEventListener('click', function () {
       // Guarded on WM.openFormations rather than assumed: formations.js
       // loads after this file, and a page that lost the script tag would
@@ -1590,6 +1621,14 @@
   // forwarded instead; formations.js exposes WM.formationsDone and ignores
   // anything that arrives while its route is not showing.
   WM.handle('onEveSettingsDone', function (payload) {
+    // Setup completions are correlated by their tool, never by the ordinary
+    // copy form's pendingMutation. Late setup pushes cannot settle that form.
+    if (payload.operation === 'ui_setup_create') {
+      // Receipt ownership survives Back. Re-read even for failure/warnings;
+      // another operation may already have changed the authoritative selection.
+      if (WM.uiSetupDone && WM.uiSetupDone(payload)) refresh();
+      return;
+    }
     var completedMutation = pendingMutation;
     pendingMutation = '';
     if (WM.formationsDone) WM.formationsDone(payload);

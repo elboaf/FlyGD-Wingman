@@ -3101,6 +3101,204 @@
     return Promise.resolve({ accepted: true, value: wanted, error: null });
   };
 
+  // Setup export fixtures are read-only: no real clipboard, file dialog or
+  // EVE file is accessed by these bridge doubles. Counts follow their artifact.
+  var DEV_SETUP_LIMITS = {max_bytes: 2097152, max_depth: 16, max_nodes: 100000,
+    max_presets: 256, max_tabs: 8, max_window_groups: 8, max_ship_labels: 64,
+    max_layout_windows: 32, max_membership_ids: 8192, max_id: 2147483647,
+    max_name_codepoints: 512, max_label_codepoints: 4096, min_coordinate: -32768,
+    max_coordinate: 32768, min_size: 1, max_size: 32768, min_target_origin: 0,
+    max_target_origin: 1, min_hud_offset: -32768, max_hud_offset: 32768,
+    min_color: 0, max_color: 1};
+  var DEV_SETUP_WINDOWS = {overview: 'Overview', selecteditemview: 'Selected item',
+    probeScannerWindow: 'Probe scanner', directionalScannerWindow: 'Directional scanner',
+    droneview: 'Drones', fleetwindow: 'Fleet', watchlistpanel: 'Watch list',
+    standaloneBookmarkWnd: 'Standalone bookmarks', solar_system_map_panel: 'Solar-system map',
+    primary_map_panel: 'Primary map'};
+  var DEV_SETUP_ARTIFACT = {format: 'wingman-preset', version: 1, type: 'ui-setup',
+    overview: {
+      presets: [{name: 'Fleet é', groups: [25, 27], filteredStates: [9], alwaysShownStates: []}],
+      tabs: [{id: 0, name: 'Fleet', overview: 'Fleet é', bracket: null, color: null,
+        showAll: false, showNone: false, showSpecials: false,
+        tabColumns: ['ICON', 'NAME', 'DISTANCE'], tabColumnOrder: ['ICON', 'NAME', 'DISTANCE']}],
+      windowGroups: [[0]],
+      shipLabels: [{type: null, pre: '<b>Fleet</b> ', post: '', state: 1},
+        {type: 'pilot name', pre: '', post: '', state: 1},
+        {type: null, pre: ' · ', post: '', state: 1}],
+      settings: {}
+    },
+    layout: {windows: Object.keys(DEV_SETUP_WINDOWS).map(function (key) {
+      return {key: key, geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}};
+    }), targetOrigin: [0.25, 0.75], targetOriginLocked: false, hudOffset: -160}
+  };
+  api.eve_settings_setup_limits = function () {
+    return Promise.resolve(JSON.parse(JSON.stringify(DEV_SETUP_LIMITS)));
+  };
+  function devSetupContext(profile) {
+    var first = profile === eve.profiles[0].path;
+    // Not just a different token on the same flat roster: the second local
+    // base owns distinct files, identities and confirmed associations.
+    var accounts = first ? eve.accounts : [
+      {path: profile + '/core_user_901.dat', id: '901', name: 'Reserve account', character_ids: ['902']}];
+    var characters = first ? eve.characters : [
+      {path: profile + '/core_char_902.dat', id: '902', name: 'Reserve pilot é <literal>'}];
+    if (devSearch.get('setup') === 'max') {
+      accounts = accounts.map(function (row) {
+        var copy = JSON.parse(JSON.stringify(row)); copy.name = new Array(181).join('A') + ' <account>'; return copy;
+      });
+      characters = characters.map(function (row) {
+        var copy = JSON.parse(JSON.stringify(row)); copy.name = new Array(181).join('é') + ' <pilot>'; return copy;
+      });
+    }
+    var valid = eve.profiles.some(function (row) { return row.path === profile; });
+    return {ok: valid, error: valid ? '' : 'Choose an available local base.', root: eve.root, server: eve.server,
+      profile: profile, profiles: eve.profiles, accounts: valid ? accounts : [],
+      characters: valid ? characters : [], account_identity_available: true, setup_available: true};
+  }
+  api.eve_settings_setup_context = function (profile) {
+    return Promise.resolve(JSON.parse(JSON.stringify(devSetupContext(profile))));
+  };
+  api.eve_settings_setup_export = function (profile, accountPath, characterPath) {
+    var local = devSetupContext(profile);
+    var account = local.accounts.filter(function (row) { return row.path === accountPath; })[0];
+    var character = local.characters.filter(function (row) { return row.path === characterPath; })[0];
+    if (!account || !character || account.character_ids.indexOf(character.id) === -1) {
+      return Promise.resolve({ok: false, error: 'Choose a confirmed local pair.', text: '', summary: {}, warnings: []});
+    }
+    var overview = DEV_SETUP_ARTIFACT.overview;
+    return Promise.resolve({ok: true, error: '', text: JSON.stringify(DEV_SETUP_ARTIFACT),
+      summary: {counts: {presets: overview.presets.length, tabs: overview.tabs.length,
+        windowGroups: overview.windowGroups.length, shipLabels: overview.shipLabels.length,
+        layoutWindows: DEV_SETUP_ARTIFACT.layout.windows.length},
+        windowLabels: Object.keys(DEV_SETUP_WINDOWS).map(function (key) { return DEV_SETUP_WINDOWS[key]; }),
+        limitations: ['Only unstacked supported windows can be shared.',
+          'Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.']},
+      warnings: ['1 effective unsaved filter definition overrides its saved definition in this snapshot.']});
+  };
+  api.eve_settings_setup_save_file = function (text) {
+    return Promise.resolve({ok: true, cancelled: false, error: '', path: 'Dev preview only, no file written'});
+  };
+
+  var setupScenario = devSearch.get('setup') || 'wingman';
+  var devSetupOffer = null, devSetupSerial = 0, devSetupCreating = false;
+  var DEV_SETUP_NATIVE_TEXT = 'presets:\n- [Fleet, [[groups, [25]], [filteredStates, []], [alwaysShownStates, []]]]\n'
+    + 'tabSetup:\n- [0, [[name, Fleet], [overview, Fleet], [bracket, null], [color, null]]]\n'
+    + 'shipLabelOrder: [null, null]\nshipLabels:\n'
+    + '- [null, [[type, null], [pre, "<b>Fleet</b>"], [post, ""], [state, 1]]]\n'
+    + '- [null, [[type, null], [pre, " / "], [post, ""], [state, 1]]]\n';
+  var DEV_SETUP_MAX = JSON.parse(JSON.stringify(DEV_SETUP_ARTIFACT));
+  DEV_SETUP_MAX.overview.presets = [];
+  for (var setupIndex = 0; setupIndex < DEV_SETUP_LIMITS.max_presets; setupIndex++) {
+    DEV_SETUP_MAX.overview.presets.push({name: 'Filter ' + setupIndex, groups: [25], filteredStates: [], alwaysShownStates: []});
+  }
+  DEV_SETUP_MAX.overview.presets[DEV_SETUP_MAX.overview.presets.length - 1].name = new Array(DEV_SETUP_LIMITS.max_name_codepoints + 1).join('é');
+  DEV_SETUP_MAX.overview.tabs = [];
+  DEV_SETUP_MAX.overview.windowGroups = [];
+  for (var setupTab = 0; setupTab < DEV_SETUP_LIMITS.max_tabs; setupTab++) {
+    var setupRow = JSON.parse(JSON.stringify(DEV_SETUP_ARTIFACT.overview.tabs[0]));
+    setupRow.id = setupTab;
+    setupRow.name = new Array(501).join('N') + ' <tab ' + setupTab + '>';
+    setupRow.overview = 'Filter ' + setupTab;
+    DEV_SETUP_MAX.overview.tabs.push(setupRow);
+    DEV_SETUP_MAX.overview.windowGroups.push([setupTab]);
+    if (setupTab) DEV_SETUP_MAX.layout.windows.push({key: 'overview_' + setupTab,
+      geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}});
+  }
+  DEV_SETUP_MAX.overview.shipLabels = [];
+  for (var setupLabel = 0; setupLabel < DEV_SETUP_LIMITS.max_ship_labels; setupLabel++) {
+    DEV_SETUP_MAX.overview.shipLabels.push({type: null, pre: new Array(DEV_SETUP_LIMITS.max_label_codepoints + 1).join('é'), post: '', state: 1});
+  }
+  function devSetupSummary(artifact, native) {
+    var overview = artifact.overview;
+    var warnings = native ? ['Absent native options retain recipient values; supplied aggregates replace them.',
+      'Supplied native tabs become one primary overview group, without imported geometry.'] : [];
+    return {counts: {presets: overview.presets.length, tabs: overview.tabs.length,
+      windowGroups: overview.windowGroups.length, shipLabels: overview.shipLabels.length,
+      layoutWindows: native ? 0 : artifact.layout.windows.length},
+      windowLabels: native ? [] : artifact.layout.windows.map(function (row) {
+        return DEV_SETUP_WINDOWS[row.key] || 'Overview ' + (Number(row.key.split('_')[1]) + 1);
+      }), limitations: ['Only unstacked supported windows can be shared.'].concat(native ? [
+        'Overview configuration only — no window layout.',
+        'Choose Keep my ship labels explicitly; the input cannot reproduce the ordered label sequence.'
+      ].concat(warnings) : ['Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.'])};
+  }
+  api.eve_settings_setup_read_file = function () {
+    // A fixture picker, never an OS dialog or filesystem read.
+    return Promise.resolve({ok: true, cancelled: false, error: '', text: setupScenario === 'native'
+      ? DEV_SETUP_NATIVE_TEXT : JSON.stringify(setupScenario === 'max' ? DEV_SETUP_MAX : DEV_SETUP_ARTIFACT)});
+  };
+  api.eve_settings_setup_review = function (text, profile, accountPath, characterPath, name, keep) {
+    var reply = {ok: false, error: '', error_code: '', review_id: '', summary: {}, warnings: [], needs_label_choice: false};
+    if (devSetupCreating) {
+      reply.error = 'Another Profiles operation is running.';
+      reply.error_code = 'busy';
+      return Promise.resolve(reply);
+    }
+    devSetupOffer = null;
+    var local = devSetupContext(profile);
+    var account = local.accounts.filter(function (row) { return row.path === accountPath; })[0];
+    var character = local.characters.filter(function (row) { return row.path === characterPath; })[0];
+    if (!local.ok || !account || !character || account.character_ids.indexOf(character.id) === -1) {
+      reply.error = 'Choose a confirmed local pair.';
+    } else if (!name.trim() || eve.profiles.some(function (row) { return row.name.toLowerCase() === name.trim().toLowerCase(); })) {
+      reply.error = 'Choose a new profile name.';
+    } else if (setupScenario === 'eve-unknown') {
+      reply.error = 'Cannot confirm that EVE is closed. Close EVE and Review again.';
+      reply.error_code = 'eve_not_closed';
+    } else {
+      // Deliberately NOT a second parser. Only named synthetic fixtures can
+      // succeed; arbitrary/malformed text must never acquire dev authority.
+      var native = text === DEV_SETUP_NATIVE_TEXT;
+      var artifact = text === JSON.stringify(DEV_SETUP_MAX) ? DEV_SETUP_MAX
+        : text === JSON.stringify(DEV_SETUP_ARTIFACT) ? DEV_SETUP_ARTIFACT : null;
+      if (!native && !artifact) reply.error = 'Dev preview accepts only its synthetic fixtures. Choose file to load one.';
+      else {
+        if (native) artifact = {overview: {presets: [{}], tabs: [{}], windowGroups: [[0]], shipLabels: [{}, {}]}};
+        reply.summary = devSetupSummary(artifact, native);
+        reply.warnings = native ? reply.summary.limitations.slice(3) : [];
+        if (native && !keep) {
+          reply.needs_label_choice = true;
+          reply.error = 'Choose Keep my ship labels explicitly for this YAML.';
+          reply.error_code = 'label_choice_required';
+        } else {
+          reply.ok = true;
+          reply.review_id = 'dev-setup-' + (++devSetupSerial);
+          devSetupOffer = {id: reply.review_id, name: name.trim()};
+        }
+      }
+    }
+    return Promise.resolve(reply);
+  };
+  api.eve_settings_setup_discard = function (id) {
+    if (!devSetupOffer || devSetupOffer.id !== id || devSetupCreating) return Promise.resolve(false);
+    devSetupOffer = null;
+    return Promise.resolve(true);
+  };
+  api.eve_settings_setup_create = function (reviewId, requestId) {
+    if (!devSetupOffer || devSetupOffer.id !== reviewId || !requestId || devSetupCreating) {
+      return Promise.resolve({accepted: false, error: 'Review the setup again.'});
+    }
+    if (setupScenario === 'refused') return Promise.resolve({accepted: false, error: 'Another Profiles operation is running.'});
+    var offer = devSetupOffer;
+    devSetupOffer = null;
+    devSetupCreating = true;
+    if (setupScenario !== 'busy') setTimeout(function () {
+      devSetupCreating = false;
+      var createdPath = 'dev/settings_' + offer.name;
+      var published = setupScenario !== 'stale';
+      if (published) {
+        eve.profiles.push({path: createdPath, name: offer.name, file_count: 4});
+        if (setupScenario !== 'warning') eve.profile = createdPath;
+      }
+      window.onEveSettingsDone({ok: published, operation: 'ui_setup_create', request_id: requestId,
+        review_id: reviewId, published: published, path: published ? createdPath : '',
+        selection_persisted: published && setupScenario !== 'warning', error_code: published ? '' : 'stale_review',
+        error: published ? '' : 'The base files changed. Review again.',
+        warning: setupScenario === 'warning' ? 'Profile created, but Wingman could not remember the selection.' : ''});
+    }, 1200);
+    return Promise.resolve({accepted: true, error: ''});
+  };
+
   // Every mutation returns "a worker started" and then pushes, because the
   // page's `if (!accepted) setBusy(false)` branch exists for the case where
   // one did NOT -- a stub that answered synchronously would leave the busy
