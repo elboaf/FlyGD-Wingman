@@ -89,6 +89,7 @@ missing when the title bar filled up:
 | Bookmarks | primary | twice, ever | a Settings section |
 | Alerts | part of previews | twice, ever | a Settings section |
 | Fleet combat bar | part of client awareness | twice, ever | Settings › Previews and a status-strip toggle |
+| Fleet sharing | optional shared client awareness | setup and boss changes | Settings › Previews |
 | Skills | secondary | rarely | a destination |
 | Fittings | secondary | rarely | a destination |
 
@@ -180,6 +181,20 @@ dependable incoming-effect-ended event, observed EWAR clears after 30 seconds
 without that character producing outgoing damage or receiving another tracked
 EWAR event. A missing log is shown as missing data, never as a fabricated zero,
 and the bar never moves an EVE client or sends input to one.
+
+
+### Fleet sharing setup stays beside the Fleet combat bar
+
+Settings › Previews holds the optional connection, **Share my fleet telemetry**,
+and owned-boss **Start / Stop** controls. Pairing, granting Fleet Read, and
+opening the source view never turn sharing on or start a source. One owned
+boss authorization covers eligible account-linked alts automatically; the
+selector is not an alt publication checklist and does not prove boss status.
+Local preference, saved intent and server observations are separate facts.
+Off inhibits transmission immediately even if saving fails; server Off/Stop
+may still be pending. Source controls work with sharing and local displays off,
+and closing the view never Stops a source. This setup surface does not add a
+remote-row display; shared display integration is separate work.
 
 
 ## What it must not become

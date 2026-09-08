@@ -322,12 +322,9 @@ def _fleet_bar_defaults() -> dict:
 def _fleet_sharing_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global.
 
-    Off by default, with no UI control anywhere in this tracer: `enabled`
-    is the single predicate that decides whether Wingman's local combat-
-    log-derived DPS/EWAR display is ever transmitted to authGD. Tests and
-    the isolated tracer harness are its only activation seams -- an
-    ordinary install stays local-only, matching `fleet_bar` and every
-    other section above it.
+    Off by default. Settings > Previews owns the explicit local preference;
+    the sharing worker independently reconciles server consent before any
+    sparse telemetry may leave this machine.
     """
     return {"enabled": False}
 
@@ -403,10 +400,7 @@ DEFAULTS = {
     # default: starting it opens a second WebView2 host and begins shared
     # discovery work that only fleet-multiboxers need.
     "fleet_bar": _fleet_bar_defaults(),
-    # The shared fleet-telemetry tracer's one activation predicate: built
-    # by _fleet_sharing_defaults() for the same fresh-dict-every-call
-    # reason as every section above. Off by default, and this tracer
-    # ships no UI to turn it on -- see validated_fleet_sharing.
+    # Optional sharing is off by default and never implied by pairing.
     "fleet_sharing": _fleet_sharing_defaults(),
 }
 
@@ -761,12 +755,8 @@ def validated_fleet_sharing(raw) -> dict:
     """Same posture as validated_fleet_bar: a malformed section falls back
     whole, and only a real bool can flip `enabled`.
 
-    This is the one predicate a future pairing/coordinator task reads to
-    decide whether fleet sharing may ever publish. There is deliberately
-    no UI writer for it in this tracer -- an explicit `True` round-trips
-    through load()/save() normalization like any other validated section,
-    but nothing shipped here can set it from anywhere but a test or the
-    isolated tracer harness.
+    This local preference permits collection, not publication authority.
+    The worker also requires observed server consent and current eligibility.
     """
     section = _fleet_sharing_defaults()
     if not isinstance(raw, dict):
@@ -966,6 +956,36 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     payload["fleet_bar"] = validated_fleet_bar(payload.get("fleet_bar"))
     payload["fleet_sharing"] = validated_fleet_sharing(payload.get("fleet_sharing"))
     atomicio.write_atomic(path, json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def apply_fleet_sharing(
+    data: dict, enabled: bool, *, current=lambda: True, path: Path | None = None
+) -> dict:
+    """Apply this session's explicit preference even if the disk is unavailable.
+
+    Unlike update(), this narrow privacy control must not roll live Off back to
+    On after a failed save. The bridge inhibits first, before waiting for I/O.
+    A superseded bridge action cannot later overwrite the newer preference.
+    """
+    if type(enabled) is not bool:
+        return {"applied": False, "persisted": False, "error": "Choose On or Off."}
+    with _SAVE_LOCK:
+        if not current():
+            return {
+                "applied": False,
+                "persisted": False,
+                "error": "A newer sharing choice replaced this one.",
+            }
+        data["fleet_sharing"] = {"enabled": enabled}
+        try:
+            _save_locked(data, path)
+        except OSError:
+            return {
+                "applied": True,
+                "persisted": False,
+                "error": "Applied for this session only. Your saved choice may return after restart.",
+            }
+    return {"applied": True, "persisted": True, "error": None}
 
 
 @contextlib.contextmanager

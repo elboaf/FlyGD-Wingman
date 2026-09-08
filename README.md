@@ -111,6 +111,30 @@ tests on invented recipients are not packaged WebView2 or live-EVE acceptance;
 those manual checks remain open. Community additions go through content review,
 not an in-app publishing service.
 
+### Fleet sharing setup
+
+In a build with **Fleet sharing** under **Settings → Previews**, choose
+**Connect…** and approve the device in the configured authGD site's browser
+page. Pairing does not enable telemetry. **Share my fleet telemetry** is a
+separate, default-off choice; only current DPS and scram / point state are
+shared, never raw logs or history.
+
+For roster verification, select your owned fleet boss. If needed, choose
+**Grant Fleet Read…**, using the same authGD account as the paired device,
+then **Refresh** and **Start verification** explicitly. One boss authorization
+covers eligible account-linked alts automatically; the other participants and
+alts need no Fleet Read grant. Start can be pending or paused, not immediately
+active. **Stop** targets the exact source, including a queued Start.
+
+The card separates local preference, queued/saved commands and server state.
+Off immediately inhibits local transmission; pending server actions can take
+longer. A failed preference save is marked as session-only with a restart
+warning. Source controls remain usable with sharing, previews and Fleet Bar
+off; closing the card or window never Stops a source. Enable EVE tools in
+**Settings → General** if their setup sections are hidden. This change exposes
+setup and source controls, not a remote fleet-row display or an older-release
+compatibility promise.
+
 ### Character crops — unreleased, release gates blocked
 
 The production crop implementation on this branch is configured under

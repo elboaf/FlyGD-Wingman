@@ -2722,6 +2722,21 @@ button.btn:disabled,
    removing the flex layout that applies while the panel is open. */
 .preview-group-manager:not([open]) > .group-manager-body { display: none; }
 
+/* Sharing is a sibling card, never subordinate to the Preview master. */
+#fleet-sharing { overflow-wrap: anywhere; }
+#fleet-sharing > h3 { margin: 16px 0 8px; font-size: var(--fs-body); color: var(--text-dim); }
+#fleet-sharing > p { margin: 8px 0; }
+#fleet-sharing [hidden] { display: none; }
+#sharing-boss { flex: 1 1 100%; min-width: 0; width: 100%; max-width: 100%; }
+#sharing-eligible { margin-top: 12px; }
+#sharing-eligible > summary { cursor: pointer; color: var(--text-dim); }
+.sharing-list { max-height: 160px; overflow-y: auto; padding-left: 20px; }
+.sharing-sources { max-height: 300px; overflow-y: auto; }
+.sharing-source { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.sharing-source[hidden] { display: none; }
+.sharing-source-text { flex: 1; min-width: 0; }
+.sharing-source > .btn { flex: none; }
+
 /* Fleet visibility stays in one native disclosure outside the toggle row.
    The renderer moves keyed rows between the groups instead of replacing this
    element, so the browser-owned open state survives every telemetry update. */

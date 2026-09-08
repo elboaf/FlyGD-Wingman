@@ -32,7 +32,8 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass, replace
+import webbrowser
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from .. import __version__ as _version
@@ -362,6 +363,8 @@ class Api:
         preview_host=None,
         skills=None,
         telemetry=None,
+        fleet_sharing=None,
+        telemetry_factory=None,
         authority=None,
         fittings=None,
         authority_warnings=(),
@@ -448,6 +451,50 @@ class Api:
         # or when optional construction failed; every call site degrades to
         # an inert preview/alert/fleet state.
         self._telemetry = telemetry
+        self._telemetry_factory = telemetry_factory
+        self._eve_runtime_lock = threading.RLock()
+        self._eve_runtime_closed = False
+        self._eve_runtime_stop_requested = False
+        self._eve_runtime_active = 0
+        self._eve_runtime_idle = threading.Event()
+        self._eve_runtime_idle.set()
+        self._fleet_sharing = fleet_sharing
+        self._sharing_delivery_lock = threading.Lock()
+        # Reservations, not a lock held across callback-capable worker calls.
+        # Synchronous callbacks may submit a newer Off from inside an On.
+        self._sharing_active = 0
+        self._sharing_submissions_done = threading.Event()
+        self._sharing_submissions_done.set()
+        self._sharing_closed = False
+        self._sharing_started = False
+        self._sharing_resumed = False
+        self._sharing_starting = False
+        self._sharing_start_done = threading.Event()
+        self._sharing_watch = False
+        self._sharing_watch_applying = False
+        self._sharing_section_open = False
+        self._sharing_window_visible = True
+        self._sharing_runtime_error = None
+        self._sharing_page_ready = False
+        self._sharing_status = None
+        self._sharing_timer = None
+        self._sharing_dirty = False
+        self._sharing_status_unsubscribe = None
+        self._sharing_unsubscribe = None
+        self._sharing_preference_order = 0
+        self._sharing_preference_error = None
+        # Publish completed local application, never Settings' in-flight save
+        # mutation. Worker submission order alone cannot order these inputs.
+        self._sharing_enabled = bool(
+            state.settings.get("fleet_sharing", {}).get("enabled")
+        )
+        self._sharing_telemetry_available = telemetry is not None
+        self._sharing_presentation = None
+        self._sharing_presentation_order = 0
+        self._sharing_pair_action = None
+        self._sharing_browser_action = None
+        self._sharing_browser_error = None
+        self._sharing_browser_retry = None
 
         self._spawn = spawn
         self._timer = timer
@@ -502,6 +549,11 @@ class Api:
         # adapters resolve the window and replaceable effects when invoked;
         # construction itself must not touch the page or start Profiles work.
         self._profiles = self._build_profiles_controller()
+        if self._fleet_sharing is not None:
+            self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
+                self._receive_fleet_sharing_status
+            )
+            self._sharing_status = self._fleet_sharing.status()
 
     # ----- page -> Python -------------------------------------------------
 
@@ -537,6 +589,7 @@ class Api:
         Only the tray's Quit destroys, and it calls window.destroy()
         directly rather than coming through this method.
         """
+        self._set_sharing_window_visible(False)
         self._window.hide()
 
     # ----- Python -> page -------------------------------------------------
@@ -1087,6 +1140,8 @@ class Api:
 
     def _page_ready(self) -> None:
         """Start optional network work only after WebView2 owns the page."""
+        self._sharing_page_ready = True
+        self._schedule_fleet_sharing_push()
         self.refresh_auth()
         self._cleanup_update_staging_once()
         self._start_update_check(automatic=True)
@@ -1967,6 +2022,30 @@ class Api:
                     "Turn off " + " and ".join(running) + " first — hiding "
                     "them here would leave them running with no way to "
                     "switch them off."
+                )
+        if not enabled and self._fleet_sharing is not None:
+            sharing = self.fleet_sharing_state()
+            metadata = sharing["metadata"]
+            if (
+                sharing["enabled"]
+                or not metadata["loaded"]
+                or sharing["pending_sources"]
+                or (
+                    metadata["binding"]
+                    and sharing["participation"]
+                    in ("queued", "persisted", "needs_confirmation")
+                )
+                or sharing["pairing"]
+                in ("queued", "persisted", "awaiting_approval", "needs_retry")
+                or (metadata["binding"] and sharing["sources"] is None)
+                or any(
+                    row["state"] != "ended"
+                    for row in (sharing["sources"] or {}).get("sources", [])
+                )
+            ):
+                return self._field_refused(
+                    "Keep EVE tools visible while fleet sharing or roster sources need attention. "
+                    "Open Settings > Previews to turn sharing Off, Stop sources, or refresh unknown source state."
                 )
         return self._write_setting("show_eve_tools", enabled)
 
@@ -2985,13 +3064,578 @@ class Api:
             },
         )
 
+    # ---- Fleet sharing setup / source controls -------------------------
+
+    @contextlib.contextmanager
+    def _sharing_submission(self):
+        with self._sharing_delivery_lock:
+            available = self._fleet_sharing is not None and not self._sharing_closed
+            if available:
+                self._sharing_active += 1
+                self._sharing_submissions_done.clear()
+        try:
+            yield available
+        finally:
+            if available:
+                with self._sharing_delivery_lock:
+                    self._sharing_active -= 1
+                    if not self._sharing_active:
+                        self._sharing_submissions_done.set()
+
+    def _start_fleet_sharing(self) -> bool:
+        worker = self._fleet_sharing
+        with self._sharing_delivery_lock:
+            if worker is None or self._sharing_closed:
+                return False
+            if self._sharing_started:
+                return True
+            if self._sharing_starting:
+                return False
+            self._sharing_starting = True
+            self._sharing_start_done.clear()
+            resume = not self._sharing_resumed
+            self._sharing_resumed = True
+        try:
+            if resume:
+                worker.resume_pending()
+            started = worker.start()
+            with self._sharing_delivery_lock:
+                closed = self._sharing_closed
+                self._sharing_started = started and not closed
+            if closed:
+                worker.stop(timeout=5.0)
+                return False
+            return started
+        finally:
+            with self._sharing_delivery_lock:
+                self._sharing_starting = False
+                self._sharing_start_done.set()
+
+    def _receive_fleet_sharing_status(self, status) -> None:
+        # May run synchronously during submission or on the I/O owner. No page,
+        # browser, settings or native work here, and no lifecycle lock inversion.
+        with self._sharing_delivery_lock:
+            if self._sharing_closed:
+                return
+            if (
+                self._sharing_status is not None
+                and status.order <= self._sharing_status.order
+            ):
+                return
+            if (
+                self._sharing_status is not None
+                and status.metadata.binding != self._sharing_status.metadata.binding
+            ) or (
+                self._sharing_browser_retry == "pair"
+                and status.pairing_action_id == self._sharing_browser_action
+                and status.pairing == "acknowledged"
+            ):
+                # Completed pairing has no admission left to retry. An unrelated
+                # Fleet Read browser failure still belongs to its grant action.
+                self._sharing_browser_error = None
+                self._sharing_browser_retry = None
+            self._sharing_status = status
+            self._sharing_preference_order = status.participation_order
+        self._schedule_fleet_sharing_push()
+
+    def _schedule_fleet_sharing_push(self):
+        with self._sharing_delivery_lock:
+            if self._sharing_closed:
+                return
+            self._sharing_dirty = True
+            if self._sharing_timer is not None:
+                return
+            # A matching explicit pairing action may finish after the page is
+            # hidden. Hydration/restart alone never creates such an action.
+            if not (
+                (self._sharing_watch and self._sharing_page_ready)
+                or self._sharing_pair_action
+            ):
+                return
+            timer = self._timer(0.02, self._deliver_fleet_sharing)
+            timer.daemon = True
+            self._sharing_timer = timer
+        timer.start()
+
+    def _deliver_fleet_sharing(self):
+        with self._sharing_delivery_lock:
+            if self._sharing_closed:
+                self._sharing_timer = None
+                return
+            self._sharing_dirty = False
+            status = self._sharing_status
+            action = self._sharing_pair_action
+            url = None
+            if (
+                status is not None
+                and action == status.pairing_action_id
+                and status.pairing in ("acknowledged", "rejected", "needs_retry")
+            ):
+                self._sharing_pair_action = None
+            if (
+                status is not None
+                and action
+                and status.pairing_action_id == action
+                and self._sharing_browser_action == action
+                and status.pairing == "awaiting_approval"
+                and status.approval_url
+            ):
+                url = status.approval_url
+                self._sharing_pair_action = None  # once, including open failure
+            push = self._sharing_watch and self._sharing_page_ready
+        try:
+            if url:
+                self._finish_sharing_browser(
+                    action,
+                    status.metadata.binding,
+                    self._open_sharing_browser(url),
+                    "pair",
+                )
+            if push:
+                self._push("onFleetSharingState", self.fleet_sharing_state())
+        finally:
+            # Retain the reservation through a potentially blocked WebView call:
+            # status traffic replaces one cache, never grows a fleet of timers.
+            with self._sharing_delivery_lock:
+                self._sharing_timer = None
+                again = self._sharing_dirty
+            if again:
+                self._schedule_fleet_sharing_push()
+
+    def _begin_sharing_browser(self, action):
+        with self._sharing_delivery_lock:
+            self._sharing_browser_action = action
+            self._sharing_pair_action = None
+            self._sharing_browser_error = None
+            self._sharing_browser_retry = None
+
+    def _finish_sharing_browser(self, action, binding, opened, kind):
+        with self._sharing_delivery_lock:
+            if (
+                self._sharing_closed
+                or self._sharing_browser_action != action
+                or self._sharing_status is None
+                or self._sharing_status.metadata.binding != binding
+                or (
+                    kind == "pair"
+                    and (
+                        self._sharing_status.pairing_action_id != action
+                        or self._sharing_status.pairing != "awaiting_approval"
+                    )
+                )
+            ):
+                return
+            self._sharing_browser_retry = None if opened else kind
+            self._sharing_browser_error = (
+                None
+                if opened
+                else (
+                    "Could not open your browser. Use Retry setup to try again."
+                    if kind == "pair"
+                    else "Could not open your browser. Choose Grant Fleet Read to try again."
+                )
+            )
+        self._schedule_fleet_sharing_push()
+
+    @staticmethod
+    def _open_sharing_browser(url):
+        try:
+            return bool(webbrowser.open(url))
+        except Exception:  # noqa: BLE001 - browser failure cannot stop status delivery or leak URL details
+            logger.warning("Fleet sharing browser could not open")
+            return False
+
+    def fleet_sharing_state(self) -> dict:
+        from ..fleetsharing.config import resolve_relay_origin
+        from ..fleetsharing.worker import SharingStatus
+
+        with self._sharing_delivery_lock:
+            status = self._sharing_status or SharingStatus("stopped")
+            payload = asdict(status)
+            payload.update(
+                available=self._fleet_sharing is not None and not self._sharing_closed,
+                enabled=self._sharing_enabled,
+                preference_order=self._sharing_preference_order,
+                preference_error=self._sharing_preference_error,
+                runtime_error=self._sharing_runtime_error,
+                browser_error=self._sharing_browser_error,
+                browser_retry=self._sharing_browser_retry,
+                telemetry_available=self._sharing_telemetry_available,
+                configured_origin=resolve_relay_origin(),
+            )
+            # The persisted URL is only for a current explicit browser action.
+            payload.pop("approval_url", None)
+            if payload != self._sharing_presentation:
+                self._sharing_presentation_order += 1
+                self._sharing_presentation = payload
+            return dict(payload, presentation_order=self._sharing_presentation_order)
+
+    def fleet_sharing_watch(self, enabled) -> dict:
+        if type(enabled) is not bool:
+            return {"queued": False, "error": "Choose an open or closed source view."}
+        with self._sharing_submission() as available:
+            if not available:
+                return {"queued": False, "error": "Fleet sharing is unavailable."}
+            with self._sharing_delivery_lock:
+                self._sharing_section_open = enabled
+                self._sharing_watch = enabled and self._sharing_window_visible
+            accepted = self._apply_sharing_watch()
+        if enabled:
+            self._start_fleet_sharing()
+            self._schedule_fleet_sharing_push()
+        return {"queued": accepted, "state": self.fleet_sharing_state()}
+
+    def _apply_sharing_watch(self):
+        # One effect owner reconciles the latest desired value. A reentrant
+        # callback can update desire without blocking on its own outer effect.
+        with self._sharing_delivery_lock:
+            if self._sharing_watch_applying:
+                return True
+            self._sharing_watch_applying = True
+            desired = self._sharing_watch and not self._sharing_closed
+        try:
+            while True:
+                accepted = self._fleet_sharing.set_source_watch(desired)
+                with self._sharing_delivery_lock:
+                    latest = self._sharing_watch and not self._sharing_closed
+                    if desired == latest:
+                        self._sharing_watch_applying = False
+                        return accepted
+                    desired = latest
+        except BaseException:
+            with self._sharing_delivery_lock:
+                self._sharing_watch_applying = False
+            raise
+
+    def _set_sharing_window_visible(self, visible) -> None:
+        with self._sharing_submission() as available:
+            if not available:
+                return
+            with self._sharing_delivery_lock:
+                self._sharing_window_visible = visible
+                self._sharing_watch = self._sharing_section_open and visible
+            self._apply_sharing_watch()
+        if visible:
+            self._schedule_fleet_sharing_push()
+
+    def fleet_sharing_pair(self, mode="initial", use_configured_origin=False) -> dict:
+        if (
+            mode not in ("initial", "upgrade", "fresh")
+            or type(use_configured_origin) is not bool
+            or (use_configured_origin and mode != "fresh")
+        ):
+            return {"queued": False, "error": "Choose a setup action."}
+        action = str(uuid.uuid4())
+        with self._sharing_submission() as available:
+            if not available:
+                return {"queued": False, "error": "Fleet sharing is unavailable."}
+            from ..fleetsharing.config import resolve_relay_origin
+
+            self._begin_sharing_browser(action)
+            accepted = self._fleet_sharing.request_pairing(
+                mode=mode,
+                action_id=action,
+                configured_origin=resolve_relay_origin()
+                if use_configured_origin
+                else None,
+            )
+            with self._sharing_delivery_lock:
+                if (
+                    accepted
+                    and self._sharing_browser_action == action
+                    and self._sharing_status is not None
+                    and self._sharing_status.pairing_action_id == action
+                ):
+                    self._sharing_pair_action = action
+        self._start_fleet_sharing()
+        self._schedule_fleet_sharing_push()
+        return {
+            "queued": accepted,
+            "action_id": action,
+            "state": self.fleet_sharing_state(),
+        }
+
+    def fleet_sharing_set_enabled(self, enabled) -> dict:
+        if type(enabled) is not bool:
+            return self._field_refused("Choose On or Off.")
+        with self._sharing_submission() as available:
+            if not available:
+                return self._field_refused("Fleet sharing is unavailable.")
+            # Always explicit, even if the stored value already agrees. Off
+            # reaches the worker's inhibit latch BEFORE any preference I/O.
+            intent = self._fleet_sharing.request_participation(enabled)
+        if intent is None:
+            return self._field_refused("The sharing choice could not be queued.")
+        self._start_fleet_sharing()
+
+        def current():
+            with self._sharing_delivery_lock:
+                return (
+                    not self._sharing_closed
+                    and self._sharing_status is not None
+                    and self._sharing_status.participation_intent_id == intent
+                )
+
+        result = settings_mod.apply_fleet_sharing(
+            self._state.settings, enabled, current=current
+        )
+        with self._sharing_delivery_lock:
+            if self._sharing_status.participation_intent_id == intent:
+                if result["applied"]:
+                    self._sharing_enabled = enabled
+                self._sharing_preference_error = result["error"]
+        runtime_error = None
+        try:
+            self._reconcile_eve_runtime()
+        except Exception:  # noqa: BLE001 - the preference already applied; never report a native failure as a refused save
+            runtime_error = "Local telemetry could not start. Restart Wingman to retry."
+            logger.warning("Fleet sharing telemetry reconciliation failed")
+        with self._sharing_delivery_lock:
+            if self._sharing_status.participation_intent_id == intent:
+                self._sharing_runtime_error = runtime_error
+        self._schedule_fleet_sharing_push()
+        return {
+            **result,
+            "queued": True,
+            "intent_id": intent,
+            "runtime_error": runtime_error,
+            "state": self.fleet_sharing_state(),
+        }
+
+    def _sharing_owned_character(self, character_id, binding, state=None):
+        from ..fleetsharing import protocol
+
+        try:
+            protocol.integer(character_id, 1, protocol.JS_SAFE_MAX)
+        except ValueError:
+            return None
+        if state is None:
+            state = self.fleet_sharing_state()
+        if not binding or binding != state["metadata"]["binding"]:
+            return None
+        return next(
+            (
+                character
+                for character in (state["sources"] or {}).get("characters", ())
+                if character["character_id"] == character_id
+            ),
+            None,
+        )
+
+    def fleet_sharing_start_source(
+        self, character_id, character_link_epoch, binding
+    ) -> dict:
+        from ..fleetsharing import protocol
+
+        try:
+            protocol.uuid(character_link_epoch)
+        except ValueError:
+            return {"queued": False, "error": "Refresh the owned boss list."}
+        with self._sharing_submission() as available:
+            character = self._sharing_owned_character(character_id, binding)
+            if (
+                not available
+                or character is None
+                or character["character_link_epoch"] != character_link_epoch
+                or not character["has_fleet_read"]
+                or not character["token_usable"]
+            ):
+                return {
+                    "queued": False,
+                    "error": "Choose an owned boss with usable Fleet Read.",
+                }
+            source_id = self._fleet_sharing.request_source_start(
+                character_id, character_link_epoch, binding=binding
+            )
+        self._start_fleet_sharing()
+        return {
+            "queued": source_id is not None,
+            "source_id": source_id,
+            "state": self.fleet_sharing_state(),
+        }
+
+    def fleet_sharing_stop_source(self, source_id, binding) -> dict:
+        from ..fleetsharing import protocol
+
+        try:
+            source_id = protocol.uuid(source_id).lower()
+        except ValueError:
+            return {"queued": False, "error": "Choose a source from this account."}
+        with self._sharing_submission() as available:
+            state = self.fleet_sharing_state()
+            sources = (state["sources"] or {}).get("sources", ())
+            source = next(
+                (row for row in sources if row["source_id"].lower() == source_id), None
+            )
+            pending = any(
+                row["source_id"].lower() == source_id
+                for row in state["pending_sources"]
+            )
+            if (
+                not available
+                or not binding
+                or binding != state["metadata"]["binding"]
+                or not (source or pending)
+            ):
+                return {"queued": False, "error": "Refresh the owned source list."}
+            accepted = self._fleet_sharing.request_source_stop(
+                source_id,
+                expected_generation=source["generation"] if source else 0,
+                binding=binding,
+            )
+        self._start_fleet_sharing()
+        return {
+            "queued": accepted,
+            "source_id": source_id,
+            "state": self.fleet_sharing_state(),
+        }
+
+    def fleet_sharing_grant_fleet_read(self, character_id, binding) -> dict:
+        state = self.fleet_sharing_state()
+        if (
+            self._sharing_closed
+            or self._sharing_owned_character(character_id, binding, state) is None
+        ):
+            return {"queued": False, "error": "Choose a character from this account."}
+        origin = state["metadata"]["paired_origin"]
+        action = str(uuid.uuid4())
+        self._begin_sharing_browser(action)
+
+        def open_grant():
+            # Revalidate after scheduling: never let an old selection navigate
+            # using a new identity/origin. This action grants only; it never Starts.
+            if (
+                not self._sharing_closed
+                and self._sharing_browser_action == action
+                and self._sharing_owned_character(character_id, binding) is not None
+            ):
+                opened = self._open_sharing_browser(
+                    origin + "/auth/eve/fleet-read?character=" + str(character_id)
+                )
+                self._finish_sharing_browser(action, binding, opened, "grant")
+
+        timer = self._timer(0, open_grant)
+        timer.daemon = True
+        timer.start()
+        return {
+            "queued": True,
+            "action_id": action,
+            "error": None,
+            "state": self.fleet_sharing_state(),
+        }
+
+    def shutdown_fleet_sharing(self) -> bool:
+        with self._sharing_delivery_lock:
+            self._sharing_closed = True
+            self._sharing_watch = False
+            timer, self._sharing_timer = self._sharing_timer, None
+            unsubscribe, self._sharing_status_unsubscribe = (
+                self._sharing_status_unsubscribe,
+                None,
+            )
+            starting = self._sharing_starting
+        if timer is not None:
+            timer.cancel()
+        if unsubscribe is not None:
+            unsubscribe()
+        with self._eve_runtime_lock:
+            unsubscribe, self._sharing_unsubscribe = self._sharing_unsubscribe, None
+        if unsubscribe is not None:
+            unsubscribe()
+        worker = self._fleet_sharing
+        if worker is None:
+            return True
+        if not self._sharing_submissions_done.wait(5.0):
+            return False
+        worker.set_source_watch(False)
+        if starting and not self._sharing_start_done.wait(5.0):
+            return False
+        try:
+            stopped = worker.stop(timeout=5.0)
+        except Exception:
+            # Main still owes native/coordinator/controller teardown. Keep the
+            # owner so the later unconditional shutdown pass can retry its join.
+            logger.exception("Fleet sharing worker did not stop cleanly")
+            return False
+        if not stopped:
+            logger.warning("Fleet sharing is still stopping")
+        return stopped
+
     # ---- EVE client previews ------------------------------------------
 
     def _reconcile_eve_runtime(self) -> int | None:
-        """Bring the sole shared EVE telemetry runtime in line with settings."""
+        """Reconcile shared telemetry without owning local Fleet presentation."""
+        with self._eve_runtime_lock:
+            if self._eve_runtime_closed:
+                return None
+            # The production factory constructs inert collaborators only; it
+            # never starts a thread or invokes subscribers. Retain one runtime,
+            # including after a failed/timed-out stop, rather than replacing it.
+            if self._telemetry is None and self._telemetry_factory is not None:
+                self._telemetry = self._telemetry_factory()
+            telemetry = self._telemetry
+            with self._sharing_delivery_lock:
+                self._sharing_telemetry_available = telemetry is not None
+        if telemetry is None:
+            return None
+        # Never take Fleet's lifecycle lock under the runtime lock: toggles
+        # already take them in the opposite order. The local owner alone starts
+        # its worker before subscribing, and alone closes/detaches on shutdown.
+        if not self._start_fleet_presentation():
+            logger.warning("Fleet presentation is unavailable")
+        with self._eve_runtime_lock:
+            if self._eve_runtime_closed:
+                return None
+            if (
+                self._sharing_unsubscribe is None
+                and self._fleet_sharing is not None
+                and not self._sharing_closed
+            ):
+                # Coordinator registration only changes its subscriber list;
+                # delivery is asynchronous, never an immediate callback.
+                self._sharing_unsubscribe = telemetry.subscribe_fleet(
+                    self._fleet_sharing.submit
+                )
+            self._eve_runtime_active += 1
+            self._eve_runtime_idle.clear()
+        try:
+            # The coordinator serializes its own effects. No API runtime lock
+            # may cover start/stop/join or a callback into another consumer.
+            return telemetry.reconcile()
+        finally:
+            with self._eve_runtime_lock:
+                self._eve_runtime_active -= 1
+                last = self._eve_runtime_active == 0
+                stop_requested = self._eve_runtime_stop_requested
+            try:
+                if last and stop_requested:
+                    # A bounded shutdown may already have returned. The last
+                    # admitted effect still owes teardown, never resurrection.
+                    self._stop_eve_telemetry()
+            finally:
+                with self._eve_runtime_lock:
+                    if not self._eve_runtime_active:
+                        self._eve_runtime_idle.set()
+
+    def _close_eve_runtime(self) -> None:
+        """Reject new reconciliation before subscriptions or windows are removed."""
+        with self._eve_runtime_lock:
+            self._eve_runtime_closed = True
+
+    def _stop_eve_telemetry(self) -> None:
         if self._telemetry is not None:
-            return self._telemetry.reconcile()
-        return None
+            try:
+                if self._telemetry.stop() is False:
+                    logger.warning("EVE telemetry runtime is still stopping")
+            except Exception:
+                logger.exception("EVE telemetry runtime did not stop cleanly")
+
+    def _request_eve_discovery(self) -> None:
+        # Bound once before Preview starts; lazy telemetry replacement must not
+        # try to reconfigure an already-running native host.
+        telemetry = self._telemetry
+        if telemetry is not None:
+            telemetry.request_discovery()
 
     def start_previews_if_enabled(self) -> None:
         """Start Preview if enabled, then reconcile all shared EVE telemetry.
@@ -3085,6 +3729,8 @@ class Api:
         thread owning HWNDs and Wingman lingering in Task Manager after
         it has left the tray.
         """
+        self._close_eve_runtime()
+        self.shutdown_fleet_sharing()
         if self._preview_host is not None:
             try:
                 self._preview_host.stop(final=True)
@@ -3093,11 +3739,14 @@ class Api:
         # Also called by main before native destruction. Idempotence covers
         # headless shutdown and retries after a blocked presentation owner.
         self._stop_fleet_presentation()
-        if self._telemetry is not None:
-            try:
-                self._telemetry.stop()
-            except Exception:
-                logger.exception("EVE telemetry runtime did not stop cleanly")
+        # A returning in-flight reconcile owes eventual stop only after both
+        # subscriptions have detached, not merely because admission closed.
+        with self._eve_runtime_lock:
+            self._eve_runtime_stop_requested = True
+        if self._eve_runtime_idle.wait(5.0):
+            self._stop_eve_telemetry()
+        else:
+            logger.warning("EVE telemetry reconciliation is still stopping")
 
     def capture_preview_bind(self, parts) -> dict:
         return preview_gestures.from_capture(parts if isinstance(parts, dict) else {})

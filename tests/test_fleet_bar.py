@@ -50,6 +50,7 @@ class FleetWindow(FakeWindow):
 class FakeTelemetry:
     def __init__(self):
         self.reconciled = 0
+        self.subscribers = []
         self.generation = 0
         self.latest = FleetSnapshot(
             rows=(),
@@ -61,6 +62,10 @@ class FakeTelemetry:
         self.reconciled += 1
         self.generation += 1
         return self.generation
+
+    def subscribe_fleet(self, callback):
+        self.subscribers.append(callback)
+        return lambda: self.subscribers.remove(callback)
 
     def requested_fleet_generation(self):
         return self.generation
@@ -1131,7 +1136,15 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
     from wingman import __main__ as main_mod
 
     source = inspect.getsource(main_mod.main)
-    assert "telemetry.subscribe_fleet" in source
+    from wingman.ui.api import Api
+
+    runtime = inspect.getsource(Api._reconcile_eve_runtime)
+    presentation = inspect.getsource(Api._start_fleet_presentation)
+    assert "telemetry.subscribe_fleet" in runtime
+    assert "self._fleet_sharing.submit" in runtime
+    assert "self._telemetry.subscribe_fleet" in presentation
+    assert "self._receive_fleet_snapshot" in presentation
+    assert "api._start_fleet_presentation()" in source
     assert "fleetbar.restore" in source
     assert "api._fleetbar_quitting = True" in source
     assert "fleet.destroy()" in source

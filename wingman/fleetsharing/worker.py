@@ -14,6 +14,7 @@ requests leave journals for reconciliation, not an obsolete acknowledgement.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import random
 import secrets
@@ -70,10 +71,36 @@ ERROR_CODES = frozenset(
 
 
 @dataclass(frozen=True)
+class SharingMetadata:
+    """Safe observations only. The binding fingerprints the SAVED key/origin."""
+
+    loaded: bool = False
+    binding: str | None = None
+    paired_origin: str | None = None
+    device_id: str | None = None
+    has_session: bool = False
+    session_expires_at: str | None = None
+    feature_enabled: bool | None = None
+    approved_capabilities: tuple[str, ...] | None = None
+    session_approved_capabilities: tuple[str, ...] | None = None
+    acknowledged_capabilities: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class PendingSourceStatus:
+    source_id: str
+    operation: str
+    character_id: int | None
+    stage: str
+
+
+@dataclass(frozen=True)
 class SharingStatus:
     state: Literal["stopped", "connecting", "active", "verifying", "refused", "error"]
     detail: str | None = None
     participation: str | None = None
+    participation_intent_id: str | None = None
+    participation_order: int = 0
     source_control: str | None = None
     pairing: str | None = None
     approval_url: str | None = None
@@ -81,6 +108,12 @@ class SharingStatus:
     eligibility: p.Eligibility | None = None
     observed_participation: p.Participation | None = None
     local_inhibited: bool = False
+    metadata: SharingMetadata = SharingMetadata()
+    pending_sources: tuple[PendingSourceStatus, ...] = ()
+    # Bounded session-only terminal results for absent IDs (not source history).
+    source_results: tuple[PendingSourceStatus, ...] = ()
+    order: int = 0
+    pairing_action_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +132,7 @@ class _Command:
     kind: str
     payload: object
     identity_epoch: int
+    binding: str | None
 
 
 @dataclass(frozen=True)
@@ -187,6 +221,8 @@ class FleetSharingWorker:
         self._probe_used = False
         self._restart_requested = False
         self._status = SharingStatus("stopped")
+        self._durable_sources: tuple[PendingSourceStatus, ...] = ()
+        self._pairing_action_id = None
         self._subscribers: dict[str, dict[object, Callable]] = {
             "status": {},
             "remote": {},
@@ -227,8 +263,10 @@ class FleetSharingWorker:
             self._latest = (snapshot, self._clock())
         self._pending.set()
 
-    def _queue(self, key, kind, payload):
+    def _queue(self, key, kind, payload, *, binding=None):
         with self._lock:
+            if binding is not None and binding != self._status.metadata.binding:
+                return None
             if (
                 kind == "source"
                 and key not in self._commands
@@ -241,32 +279,55 @@ class FleetSharingWorker:
                 self._identity_epoch += 1
                 self._inhibit = True
                 changes = dict(
-                    pairing="queued", approval_url=None, local_inhibited=True
+                    pairing="queued",
+                    approval_url=None,
+                    local_inhibited=True,
+                    pairing_action_id=payload[2],
                 )
             elif kind == "participation":
                 self._participation_generation += 1
                 self._inhibit = True
                 changes = dict(
-                    participation="queued", local_inhibited=True, eligibility=None
+                    participation="queued",
+                    local_inhibited=True,
+                    eligibility=None,
+                    participation_intent_id=payload.intent_id,
+                    participation_order=self._sequence + 1,
                 )
             elif kind == "source":
                 source_id = payload.source_id
                 self._source_generations[source_id] = (
                     self._source_generations.get(source_id, 0) + 1
                 )
-                changes = dict(source_control="queued")
+                changes = dict(
+                    source_control="queued",
+                    source_results=tuple(
+                        item
+                        for item in self._status.source_results
+                        if item.source_id.lower() != source_id.lower()
+                    ),
+                )
             self._sequence += 1
-            command = _Command(self._sequence, kind, payload, self._identity_epoch)
+            command = _Command(
+                self._sequence, kind, payload, self._identity_epoch, binding
+            )
             self._commands[key] = command
             # Publish queue status before the owner can consume this command.
             # Callbacks are deliberately deferred until BOTH locks are released.
             with self._status_lock:
-                self._status = status = replace(self._status, **changes)
+                self._status = status = replace(
+                    self._status,
+                    **changes,
+                    order=self._status.order + 1,
+                    pending_sources=self._pending_sources_locked(),
+                )
         self._pending.set()
         self._notify("status", status)
         return command
 
-    def request_pairing(self, *, mode="initial", configured_origin=None) -> bool:
+    def request_pairing(
+        self, *, mode="initial", configured_origin=None, action_id=None
+    ) -> bool:
         """Queue initial/retry, same-key upgrade, or explicitly authorized fresh setup.
 
         Fresh is admitted by the owner only after proved terminal auth or an
@@ -277,8 +338,14 @@ class FleetSharingWorker:
             configured_origin is not None and not isinstance(configured_origin, str)
         ):
             return False
+        if action_id is not None:
+            try:
+                p.uuid(action_id)
+            except ValueError:
+                return False
         accepted = (
-            self._queue("pairing", "pairing", (mode, configured_origin)) is not None
+            self._queue("pairing", "pairing", (mode, configured_origin, action_id))
+            is not None
         )
         if accepted:
             self._clear_remote()
@@ -297,7 +364,7 @@ class FleetSharingWorker:
         return intent.intent_id
 
     def request_source_start(
-        self, character_id: int, character_link_epoch: str
+        self, character_id: int, character_link_epoch: str, *, binding=None
     ) -> str | None:
         """Create identity/time at the explicit action, never at a later retry."""
         try:
@@ -309,10 +376,12 @@ class FleetSharingWorker:
             )
         except (ValueError, TypeError):
             return None
-        return command.source_id if self._queue_source(command) else None
+        return (
+            command.source_id if self._queue_source(command, binding=binding) else None
+        )
 
     def request_source_stop(
-        self, source_id: str, *, expected_generation: int = 0
+        self, source_id: str, *, expected_generation: int = 0, binding=None
     ) -> bool:
         try:
             command = p.StopSource(
@@ -321,10 +390,79 @@ class FleetSharingWorker:
             )
         except ValueError:
             return False
-        return self._queue_source(command)
+        return self._queue_source(command, binding=binding)
 
-    def _queue_source(self, command):
-        return self._queue("source:" + command.source_id, "source", command) is not None
+    def _queue_source(self, command, *, binding=None):
+        return (
+            self._queue(
+                "source:" + command.source_id, "source", command, binding=binding
+            )
+            is not None
+        )
+
+    @staticmethod
+    def _source_summary(command, stage):
+        return PendingSourceStatus(
+            command.source_id,
+            "start" if isinstance(command, p.StartSource) else "stop",
+            command.character_id if isinstance(command, p.StartSource) else None,
+            stage,
+        )
+
+    def _command_binding_current(self, command, metadata):
+        # A queued setup reserves a future epoch before its key is saved. Bound
+        # controls from the still-visible old identity must not inherit that key.
+        return command.identity_epoch >= self._identity_floor and (
+            command.binding is None or command.binding == metadata.binding
+        )
+
+    def _pending_sources_locked(self, metadata=None):
+        metadata = metadata or self._status.metadata
+        pending = {item.source_id.lower(): item for item in self._durable_sources}
+        for command in self._commands.values():
+            if command.kind == "source" and self._command_binding_current(
+                command, metadata
+            ):
+                item = self._source_summary(command.payload, "queued")
+                pending[item.source_id.lower()] = item
+        return tuple(pending.values())
+
+    def _project_saved(self):
+        """Owner-only projection; queue threads merge against this immutable cache."""
+        state = self._state
+        binding = None
+        if state.identity is not None:
+            binding = hashlib.sha256(
+                (
+                    state.relay_origin + "\n" + state.identity.public_key_spki_b64
+                ).encode()
+            ).hexdigest()
+        metadata = SharingMetadata(
+            loaded=True,
+            binding=binding,
+            paired_origin=state.relay_origin,
+            device_id=state.device_id,
+            has_session=state.session_id is not None,
+            session_expires_at=state.session_expires_at,
+            feature_enabled=state.feature_enabled,
+            approved_capabilities=state.approved_capabilities,
+            session_approved_capabilities=state.session_approved_capabilities,
+            acknowledged_capabilities=state.acknowledged_capabilities,
+        )
+        with self._lock:
+            self._durable_sources = tuple(
+                self._source_summary(command, "persisted")
+                for command in state.pending_source_commands
+            )
+        changes = {}
+        if self.status().metadata.binding != binding:
+            changes = dict(
+                sources=None,
+                eligibility=None,
+                source_results=(),
+                observed_participation=state.observed_participation,
+            )
+        self._update_status(metadata=metadata, **changes)
 
     def set_source_watch(self, enabled: bool) -> bool:
         if type(enabled) is not bool:
@@ -390,8 +528,16 @@ class FleetSharingWorker:
             if fence is not None and self._fence_locked() != fence:
                 raise _Obsolete
             with self._status_lock:
-                status = replace(self._status, **changes)
+                status = replace(
+                    self._status,
+                    **changes,
+                    pending_sources=self._pending_sources_locked(
+                        changes.get("metadata")
+                    ),
+                )
                 changed = self._status != status
+                if changed:
+                    status = replace(status, order=self._status.order + 1)
                 self._status = status
         if changed:
             self._notify("status", status)
@@ -575,6 +721,7 @@ class FleetSharingWorker:
         ):
             self._identity_floor = fence.identity
         self._state = candidate
+        self._project_saved()
         self._check(replace(fence, session=candidate.session_id), work=work)
 
     def _reset_session(self):
@@ -597,6 +744,7 @@ class FleetSharingWorker:
         if self._state is not None:
             return
         self._state = self._load_state()
+        self._project_saved()
         # The previous process may have just completed an attempt. Its monotonic
         # clock cannot be persisted, so pay one conservative bucket interval on
         # startup rather than causing our own refusal after an immediate restart.
@@ -641,7 +789,7 @@ class FleetSharingWorker:
             self._check(fence)
             if command.kind == "pairing":
                 self._ingest_pairing(command, fence)
-            elif command.identity_epoch >= self._identity_floor:
+            elif self._command_binding_current(command, self.status().metadata):
                 self._ingest_control(command, fence)
             self._drop_command(key, command)
 
@@ -649,9 +797,10 @@ class FleetSharingWorker:
         with self._lock:
             if self._commands.get(key) == command:
                 self._commands.pop(key)
+        self._update_status()
 
     def _ingest_pairing(self, command, fence):
-        mode, configured = command.payload
+        mode, configured, action_id = command.payload
         state = self._state
         changed_origin = False
         try:
@@ -719,6 +868,7 @@ class FleetSharingWorker:
             )
         self._persist(candidate, fence)
         self._reset_session()
+        self._pairing_action_id = action_id
         self._update_status(
             fence=replace(fence, session=self._state.session_id),
             state="connecting",
@@ -1266,7 +1416,10 @@ class FleetSharingWorker:
                 replace(self._state, pending_pairing=pairing), fence, work=work
             )
             self._update_status(
-                pairing="awaiting_approval", approval_url=pairing.approval_url
+                fence=fence,
+                pairing="awaiting_approval",
+                approval_url=pairing.approval_url,
+                pairing_action_id=self._pairing_action_id,
             )
         elif operation == "complete_pairing":
             candidate = replace(
@@ -1361,6 +1514,7 @@ class FleetSharingWorker:
         commands = self._state.pending_source_commands
         updated = []
         clear = expired = False
+        expired_results = []
         for command in commands:
             if command.source_id not in self._source_observe:
                 updated.append(command)
@@ -1385,6 +1539,7 @@ class FleetSharingWorker:
                     updated.append(command)
                 else:
                     expired = True
+                    expired_results.append(self._source_summary(command, "expired"))
             # An already admitted ID is acknowledged, even ended. An absent
             # expired Start is finished without ever minting another consent.
         self._persist(
@@ -1400,7 +1555,11 @@ class FleetSharingWorker:
         self._sources = result
         self._due["sources"] = self._clock() + 2.0
         self._update_status(
+            fence=fence,
             sources=result,
+            source_results=(*self.status().source_results, *expired_results)[
+                -p.MAX_SOURCE_INTENTS :
+            ],
             source_control="persisted"
             if updated
             else "expired"
@@ -1421,7 +1580,21 @@ class FleetSharingWorker:
         )
         self._source_observe.discard(command.source_id)
         self._due["sources"] = 0
-        self._update_status(source_control="acknowledged")
+        # The individual response is an observation of THIS UUID, not every
+        # queued row. Retain it until the next complete owned-source read.
+        if self._sources is not None:
+            self._sources = replace(
+                self._sources,
+                sources=(
+                    *(
+                        v
+                        for v in self._sources.sources
+                        if v.source_id.lower() != view.source_id.lower()
+                    ),
+                    view,
+                ),
+            )
+        self._update_status(source_control="acknowledged", sources=self._sources)
         if view.state == "ended":
             self._clear_remote()
 
@@ -1516,4 +1689,10 @@ class FleetSharingWorker:
             self._due["catalogue"] = self._due["eligibility"] = 0
 
 
-__all__ = ["FleetSharingWorker", "RemoteEvent", "SharingStatus"]
+__all__ = [
+    "FleetSharingWorker",
+    "PendingSourceStatus",
+    "RemoteEvent",
+    "SharingMetadata",
+    "SharingStatus",
+]
