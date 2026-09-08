@@ -302,6 +302,14 @@
         });
     });
     row.appendChild(typed);
+    if (id === 'FormatEnf') {
+      var help = WM.make('span', 'hint bind-help',
+        'Press this keybind in an EVE bookmark name field to apply FlyGD formatting.');
+      help.id = 'eve-format-help';
+      button.setAttribute('aria-describedby', help.id);
+      typed.setAttribute('aria-describedby', help.id);
+      row.appendChild(help);
+    }
     return row;
   }
 

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const web = process.argv[3];
+const scrolls = [];
 class Element {
   constructor(tag, attrs = {}) {
     this.tagName = tag.toUpperCase(); this.attrs = {...attrs};
@@ -75,7 +76,7 @@ class Element {
   }
   click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
   focus() { document.activeElement = this; }
-  scrollIntoView() {}
+  scrollIntoView(options) { scrolls.push({element: this, options}); }
   getBoundingClientRect() { return {width: 400, height: 240, top: 0, bottom: 240, left: 0, right: 400}; }
 }
 function build(node) { const el = new Element(node.tag, node.attrs); node.children.forEach(child => el.appendChild(build(child))); return el; }
@@ -107,7 +108,8 @@ WM.send = (method, ...args) => {
 };
 WM.confirm = () => { if (staging) assert.fail('Unexpected confirmation'); return Promise.resolve(false); };
 const crop = data.key.startsWith('settings-');
-const moduleName = crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
+const moduleName = data.key === 'fittings-detail' ? 'fittings'
+  : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
 run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
@@ -217,7 +219,72 @@ async function cropRegression() {
     }
   }
 }
+async function fittingsDetailRegression() {
+  const scenario = data.regression;
+  const pendingState = deferred();
+  bridgeReply = method => { assert.equal(method, 'fittings_state'); return pendingState.promise; };
+  WM.route('fittings'); await tick(); calls.length = 0; staging = true;
+  const step = async expression => { if (expression) run(expression); await tick(); };
+  const toggle = name => document.querySelectorAll('#fittings-list .fit-row-toggle')
+    .find(el => el.querySelector('.fit-name').textContent === name);
+  const verify = () => { if (data.verify) run(data.verify); };
+  // Start exactly where the preceding Alliance capture leaves the real page.
+  await step(data.fixture); await step(data.reset);
+  await step(data.previous_prepare); await step(data.previous_stage);
+  assert.equal(toggle('Merlin - Fleet Doctrine').getAttribute('aria-expanded'), 'true');
+  for (let iteration = 0; iteration < 2; iteration++) {
+    WM.route('fittings'); await tick();
+    await step(data.prepare); await step(data.fixture); await step(data.reset);
+    await step(data.fittings_prepare);
+    const waiting = deferred();
+    const nativePromise = window.Promise;
+    if (['unresolved', 'late-reset', 'late-reinject'].includes(scenario)) {
+      // Delay the fixture read's delivery, not the renderer or its handlers.
+      window.Promise = {resolve: value => waiting.promise.then(() => value)};
+    }
+    run(data.stage); window.Promise = nativePromise;
+    if (scenario === 'late-reset') run(data.reset);
+    if (scenario === 'late-reinject') run(data.fixture);
+    if (scenario !== 'unresolved') waiting.resolve();
+    await tick();
+    if (scenario === 'late-state') {
+      pendingState.resolve({available: false, rows: [], collections: [], characters: [], filters: {}});
+      await tick();
+    }
+    const row = toggle('Rifter - Solo PvP').closest('.fit-row');
+    if (scenario === 'unresolved') assert.match(row.querySelector('.fit-detail').textContent, /Loading/);
+    else if (['late-reset', 'late-reinject'].includes(scenario)) {
+      assert.equal(toggle('Rifter - Solo PvP').getAttribute('aria-expanded'), 'false');
+      assert.equal(row.querySelector('.fit-detail'), null, 'late detail must not undo a reset');
+    } else {
+      assert.equal(toggle('Rifter - Solo PvP').getAttribute('aria-expanded'), 'true');
+      assert.equal(document.querySelectorAll('.fit-row.open').length, 1);
+      const texts = selector => row.querySelectorAll(selector).map(el => el.textContent);
+      assert.deepEqual(texts('.fit-rack-name'), ['High power', 'Medium power', 'Low power']);
+      assert.deepEqual(texts('.fit-item-name'), ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
+      assert.deepEqual(texts('.fit-alias-row'), ['Rifter - Solo PvP', 'Rifter Tackle Fit']);
+      assert.deepEqual(texts('.fit-presence-name'), ['Aria Voss', 'Bex Talon']);
+      verify();
+      assert.ok(scrolls.at(-1)?.element === toggle('Rifter - Solo PvP'),
+        'frame the newly rendered detail row, not the stale toggle from before its reply');
+      assert.equal(scrolls.at(-1).options.block, 'start');
+      assert.equal(scrolls.at(-1).options.behavior, 'instant');
+    }
+    if (scenario === 'collapsed') toggle('Rifter - Solo PvP').click();
+    else if (scenario === 'wrong-target') { toggle('Merlin - Fleet Doctrine').click(); await tick(); }
+    else if (scenario.startsWith('missing-')) {
+      const selector = {'missing-detail': '.fit-detail', 'missing-rack': '.fit-rack',
+        'missing-alias': '.fit-alias-row', 'missing-presence': '.fit-presence-row'}[scenario];
+      const missing = row.querySelector(selector); missing.parentNode.removeChild(missing);
+    }
+    if (['settled', 'late-state'].includes(scenario)) verify();
+    else assert.throws(verify, /Screenshot content did not settle: fittings-detail/);
+    assert.equal(calls.length, 0, 'all fixture actions and delayed replies remain local');
+  }
+  console.log('PASS screenshot fittings-detail ' + scenario);
+}
 (async () => {
+  if (moduleName === 'fittings') { await fittingsDetailRegression(); return; }
   WM.route(crop ? 'settings' : moduleName);
   if (crop) WM.section('previews');
   await tick(); calls.length = 0;

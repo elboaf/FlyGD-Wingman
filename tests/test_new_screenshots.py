@@ -49,7 +49,13 @@ def run_screenshot_page(tmp_path, key, regression=None):
         "cleanup": shoot.new_screen_cleanup_script(screen),
         "regression": regression,
     }
-    if regression:
+    if key == "fittings-detail":
+        data["fixture"] = shoot.fittings_fixture_setup_script()
+        data["reset"] = shoot._fittings_reset_script()
+        data["fittings_prepare"] = shoot._fittings_prepare_script(key)
+        data["previous_prepare"] = shoot._fittings_prepare_script("fittings-alliance")
+        data["previous_stage"] = shoot._fittings_setup_script("fittings-alliance")
+    elif regression:
         data["crop_fixture"] = shoot.load_dev_tool_screenshot_fixture()["crop"]
         data["crop_fixture"]["preview"] = shoot.load_dev_preview_fixture()
     path = tmp_path / "capture.json"
@@ -74,6 +80,26 @@ def run_screenshot_page(tmp_path, key, regression=None):
 @pytest.mark.parametrize("key", sorted(KEYS))
 def test_new_capture_staging_executes_without_bridge_or_clipboard(tmp_path, key):
     run_screenshot_page(tmp_path, key)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "settled",
+        "collapsed",
+        "wrong-target",
+        "missing-detail",
+        "missing-rack",
+        "missing-alias",
+        "missing-presence",
+        "unresolved",
+        "late-reset",
+        "late-reinject",
+        "late-state",
+    ],
+)
+def test_fittings_detail_capture_requires_settled_named_detail(tmp_path, scenario):
+    run_screenshot_page(tmp_path, "fittings-detail", scenario)
 
 
 @pytest.mark.parametrize(
