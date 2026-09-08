@@ -67,6 +67,12 @@ from ..upload.controller import (
 )
 from ..upload.gate import WorkGate
 from . import copy as copy_mod
+from .fleetpresentation import (
+    FleetDelivery,
+    FleetPresentationWorker,
+    RosterMemory,
+    RosterWrite,
+)
 from .rows import RowSnapshot
 from .scheduler import Scheduler
 
@@ -287,6 +293,10 @@ def _empty_fittings_state(warnings=None) -> dict:
     }
 
 
+class _SettingUnchanged(Exception):
+    """Exit a serialized no-op without rewriting the complete settings file."""
+
+
 @dataclass
 class AppState:
     """Everything the bridge needs that is not the page.
@@ -370,9 +380,14 @@ class Api:
         self._fleet_expected_generation = None  # rejecting sentinel
         self._fleet_presentation_revision = 0
         self._fleet_roster_signature = None
-        self._fleet_pending_seen = []
+        self._fleet_roster = RosterMemory()
         self._fleet_snapshot = None
         self._fleet_unsubscribe = None
+        self._fleet_activation = 0
+        self._fleet_settings_dirty = False
+        # Construction is inert. Main starts the owner before subscribing;
+        # the dispatcher only folds state and sets its wakeup bit.
+        self._fleet_worker = FleetPresentationWorker(self._present_fleet_snapshot)
         # pywebview serves bridge calls concurrently. Window construction,
         # show/hide, page-ready reveal, and shutdown must have one lifecycle
         # owner or a late enable can orphan an untracked topmost WebView.
@@ -1768,20 +1783,20 @@ class Api:
         restores the live dict if the write raises, so a failed write
         leaves the stored value as it was.
         """
-        if self._state.settings.get(key) == value:
-            # Not merely an optimisation. settings.save projects the
-            # COMPLETE document, so a no-op write is a full rewrite -- and
-            # an immediate-save page re-emits on every render.
-            return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
+                # Decide under serialization: an unlocked comparison can
+                # acknowledge another writer's value before it rolls back.
+                if doc.get(key) == value:
+                    raise _SettingUnchanged
                 doc[key] = value
+        except _SettingUnchanged:
+            return self._field_ok()
         except OSError:
-            # Reported, not raised: a settings file that cannot be written
-            # must not stop the setting taking effect, but the page has to
-            # be able to say the choice is not saved.
+            # update() rolled back; reporting session-only success would
+            # leave the control showing a value the runtime does not use.
             logger.exception("Could not persist %s", key)
-            return self._field_ok(persisted=False)
+            return self._field_refused("Could not save this to settings.")
         return self._field_ok()
 
     def set_start_on_login(self, value) -> dict:
@@ -2233,7 +2248,7 @@ class Api:
         running = None if snapshot is None else {row.character for row in snapshot.rows}
         names = set(section.get("seen") or ())
         names.update(section.get("hidden") or ())
-        names.update(self._fleet_pending_seen)
+        names.update(self._fleet_roster.pending)
         if running is not None:
             names.update(running)
         hidden = set(section.get("hidden") or ())
@@ -2310,11 +2325,10 @@ class Api:
             settings_payload, _ = self._fleet_payloads_locked()
         return settings_payload
 
-    def _push_fleet_bar_state(self, payload: dict | None = None) -> None:
-        self._push(
-            "onFleetBarState",
-            payload if payload is not None else self.fleet_bar_settings(),
-        )
+    def _push_fleet_bar_state(self) -> None:
+        # Always read the latest state on the presentation owner. A bridge
+        # caller may still hold the native lifecycle lock here.
+        self._queue_fleet_presentation(settings_changed=True)
 
     def fleet_bar_snapshot(self) -> dict:
         """Current complete display payload, also used by the bar at boot."""
@@ -2322,12 +2336,11 @@ class Api:
             _, display_payload = self._fleet_payloads_locked()
         return display_payload
 
-    def _push_fleet_snapshot(self, payload: dict | None = None) -> None:
-        bar = self._fleetbar_window
-        if bar is None:
+    def _push_fleet_snapshot(self, payload: dict, delivery: FleetDelivery) -> None:
+        # Never look up a new bar after an earlier stage waited in WebView.
+        bar = delivery.fleetbar
+        if bar is None or not self._fleet_delivery_current(delivery):
             return
-        if payload is None:
-            payload = self.fleet_bar_snapshot()
         script = (
             f"window.onFleetSnapshot && window.onFleetSnapshot({json.dumps(payload)})"
         )
@@ -2336,45 +2349,111 @@ class Api:
         except Exception:
             logger.debug("Fleet Bar snapshot push failed", exc_info=True)
 
-    def _remember_fleet_roster(self, current: list[str], pending: list[str]) -> bool:
-        """Persist a roster transition without holding the presentation lock.
+    def _fleet_state_push(
+        self, handler: str, payload: dict, delivery: FleetDelivery
+    ) -> None:
+        script = f"window.{handler} && window.{handler}({_page_payload(payload)})"
+        for target in (delivery.main, delivery.sigbar):
+            if not self._fleet_delivery_current(delivery):
+                return
+            if target is not None:
+                try:
+                    target.evaluate_js(script)
+                except Exception:
+                    logger.debug("Fleet state push failed", exc_info=True)
 
-        The current snapshot wins over names pending from a failed earlier save,
-        which win over the persisted memory.  A metric-only publication never
-        reaches here, so a disk error is retried only when the roster changes.
-        """
-        candidate = []
+    def _fleet_delivery_current(self, delivery: FleetDelivery) -> bool:
+        with self._fleet_presentation_lock:
+            return self._fleet_delivery_current_locked(delivery)
+
+    def _fleet_delivery_current_locked(self, delivery: FleetDelivery) -> bool:
+        return (
+            not self._fleetbar_quitting
+            and delivery.activation == self._fleet_activation
+            and delivery.revision == self._fleet_presentation_revision
+            and delivery.main is self._window
+            and delivery.sigbar is self._sigbar_window
+            and delivery.fleetbar is self._fleetbar_window
+        )
+
+    def _queue_fleet_presentation(self, *, settings_changed=False) -> None:
+        with self._fleet_presentation_lock:
+            if self._fleetbar_quitting:
+                return
+            if settings_changed:
+                self._fleet_settings_dirty = True
+                self._next_fleet_revision_locked()
+            self._fleet_worker.notify()
+
+    def _present_fleet_snapshot(self) -> None:
+        """The worker alone performs persistence and all Fleet presentation I/O."""
+        with self._fleet_presentation_lock:
+            if self._fleetbar_quitting:
+                return
+            delivery = FleetDelivery(
+                self._fleet_activation,
+                self._fleet_presentation_revision,
+                self._window,
+                self._sigbar_window,
+                self._fleetbar_window,
+            )
+            write = self._fleet_roster.take()
+        if write is not None:
+            self._remember_fleet_roster(write)
+        if not self._fleet_delivery_current(delivery):
+            # Target changes (notably sig-bar creation) need not publish any
+            # telemetry. Preserve a wakeup even when this was the only job.
+            self._queue_fleet_presentation()
+            return
+        with self._fleet_presentation_lock:
+            settings_payload, display_payload = self._fleet_payloads_locked()
+            settings_changed = self._fleet_settings_dirty
+        if settings_changed:
+            self._fleet_state_push("onFleetBarState", settings_payload, delivery)
+        self._push_fleet_snapshot(display_payload, delivery)
+        with self._fleet_presentation_lock:
+            if self._fleet_delivery_current_locked(delivery):
+                self._fleet_settings_dirty = False
+            elif not self._fleetbar_quitting:
+                self._fleet_worker.notify()
+
+    def _remember_fleet_roster(self, write: RosterWrite) -> None:
+        """Persist a folded batch; acknowledge only its captured admissions."""
+        candidate = None
         try:
             with settings_mod.update(self._state.settings) as doc:
                 section = dict(doc.get("fleet_bar") or {})
                 persisted = list(section.get("seen") or ())
-                candidate = self._fleet_unique_names([*current, *pending, *persisted])
                 normalized = settings_mod.validated_fleet_bar(
-                    {**section, "seen": candidate}
+                    {
+                        **section,
+                        "seen": self._fleet_unique_names(
+                            [*write.priority, *write.pending, *persisted]
+                        ),
+                    }
                 )["seen"]
                 if normalized == persisted:
                     candidate = normalized
                     raise _FleetVisibilityNoChange()
                 section["seen"] = normalized
                 doc["fleet_bar"] = section
-                candidate = normalized
+            candidate = normalized
         except _FleetVisibilityNoChange:
             pass
         except OSError:
             logger.exception("Could not persist the Fleet character roster")
-            return False
-        with self._fleet_presentation_lock:
-            saved = set(candidate)
-            self._fleet_pending_seen = [
-                name for name in self._fleet_pending_seen if name not in saved
-            ]
-        return True
+        finally:
+            # No settings lock is held here. Later admissions (including a
+            # repeat of a saved name) must survive this older acknowledgement.
+            with self._fleet_presentation_lock:
+                self._fleet_roster.acknowledge(write, candidate)
 
     def _receive_fleet_snapshot(self, snapshot) -> None:
-        """Coordinator subscriber; safe on its dispatcher thread."""
+        """Dispatcher handoff: state only, never I/O, joins or thread startup."""
         with self._fleet_presentation_lock:
             if (
-                snapshot.activation_generation == 0
+                self._fleetbar_quitting
+                or snapshot.activation_generation == 0
                 or snapshot.activation_generation != self._fleet_expected_generation
             ):
                 return
@@ -2384,21 +2463,37 @@ class Api:
             self._next_fleet_revision_locked()
             self._fleet_roster_signature = signature
             if roster_changed:
-                self._fleet_pending_seen = self._fleet_unique_names(
-                    [*self._fleet_pending_seen, *signature]
+                self._fleet_roster.admit(signature)
+                self._fleet_settings_dirty = True
+            self._fleet_worker.notify()
+
+    def _start_fleet_presentation(self) -> bool:
+        """Start before subscribing; retries never allocate a second owner."""
+        with self._fleetbar_lifecycle_lock:
+            if self._fleetbar_quitting or not self._fleet_worker.start():
+                return False
+            if self._telemetry is not None and self._fleet_unsubscribe is None:
+                self._fleet_unsubscribe = self._telemetry.subscribe_fleet(
+                    self._receive_fleet_snapshot
                 )
-                current = sorted(signature, key=lambda name: (name.casefold(), name))
-                pending = list(self._fleet_pending_seen)
-        if roster_changed:
-            self._remember_fleet_roster(current, pending)
-            with self._fleet_presentation_lock:
-                settings_payload, display_payload = self._fleet_payloads_locked()
-            self._push_fleet_bar_state(settings_payload)
-        else:
-            display_payload = self.fleet_bar_snapshot()
-        # pywebview can synchronously enter page code, so the presentation
-        # lock protects state only and is deliberately released before JS.
-        self._push_fleet_snapshot(display_payload)
+            return True
+
+    def _stop_fleet_presentation(self, timeout: float = 1.0) -> bool:
+        """Close, detach, then join without holding native/presentation locks."""
+        with self._fleetbar_lifecycle_lock:
+            self._fleetbar_quitting = True
+            self._close_fleet_presentation()
+            unsubscribe = self._fleet_unsubscribe
+            self._fleet_unsubscribe = None
+        if unsubscribe is not None:
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception("Fleet snapshot subscriber did not detach cleanly")
+        stopped = self._fleet_worker.stop(timeout)
+        if not stopped:
+            logger.warning("Fleet presentation worker is still stopping")
+        return stopped
 
     def set_fleet_bar_character_visible(self, name, visible) -> dict:
         """Persist one exact character visibility choice without touching Preview."""
@@ -2448,9 +2543,8 @@ class Api:
         if changed:
             with self._fleet_presentation_lock:
                 self._next_fleet_revision_locked()
-                settings_payload, display_payload = self._fleet_payloads_locked()
-            self._push_fleet_bar_state(settings_payload)
-            self._push_fleet_snapshot(display_payload)
+                settings_payload, _ = self._fleet_payloads_locked()
+            self._push_fleet_bar_state()
             return {
                 "applied": True,
                 "persisted": True,
@@ -2476,6 +2570,7 @@ class Api:
                 self._fleet_roster_signature,
                 self._fleet_presentation_revision,
             )
+            self._fleet_activation += 1
             self._fleet_expected_generation = None
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
@@ -2501,6 +2596,7 @@ class Api:
     def _install_fleet_generation(self, generation: int | None) -> None:
         """Open acceptance for one coordinator reservation, still on WAITING."""
         with self._fleet_presentation_lock:
+            self._fleet_activation += 1
             self._fleet_expected_generation = generation
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
@@ -2551,6 +2647,8 @@ class Api:
         with self._fleetbar_lifecycle_lock:
             if self._fleetbar_quitting:
                 return self._field_refused("Wingman is shutting down.")
+            if on and not self._start_fleet_presentation():
+                return self._field_refused("The Fleet Bar could not be opened.")
             return self._toggle_fleet_bar(bool(on))
 
     def _toggle_fleet_bar(self, on: bool) -> dict:
@@ -2587,7 +2685,7 @@ class Api:
                     bar = fleetbar.create(self, hidden=True)
                 elif self._fleetbar_ready:
                     fleetbar.reveal_bar(bar)
-                    self._push_fleet_snapshot()
+                    self._queue_fleet_presentation()
             elif fleetbar.is_alive(bar):
                 fleetbar.hide_bar(bar)
         except Exception:
@@ -2643,7 +2741,7 @@ class Api:
                 return
             try:
                 fleetbar.reveal_bar(bar)
-                self._push_fleet_snapshot()
+                self._queue_fleet_presentation()
             except Exception:
                 logger.exception("Fleet Bar window could not be revealed")
                 self._toggle_fleet_bar(False)
@@ -2899,23 +2997,16 @@ class Api:
             and self._preview_host.is_stopping
         ):
             return False
-        section = self._state.settings.setdefault("preview", {})
-        if section.get("enabled") == enabled:
-            # A no-op toggle rewrites the whole settings document for
-            # nothing (settings.save projects every key), and the page can
-            # emit one on re-render. PreviewHost.start/stop are idempotent
-            # too, so this is belt and braces -- but the redundant write is
-            # real.
-            #
-            # True, not None: this is a SUCCESS path. Returning None here
-            # gave it exactly the failure the truthy return below exists to
-            # prevent -- WM.send resolves to null on a bridge error, so the
-            # page would read a no-op toggle as a failed call and revert
-            # the checkbox.
-            return True
         try:
             with settings_mod.update(self._state.settings) as cfg:
-                cfg.setdefault("preview", {})["enabled"] = enabled
+                section = cfg.setdefault("preview", {})
+                if section.get("enabled") == enabled:
+                    raise _SettingUnchanged
+                section["enabled"] = enabled
+        except _SettingUnchanged:
+            # True, not None: a serialized no-op is success, but must not
+            # rewrite the document or restart an already-running host.
+            return True
         except OSError:
             # Only a committed master setting authorizes runtime changes.
             logger.exception("Could not persist the preview setting")
@@ -2948,20 +3039,9 @@ class Api:
                 self._preview_host.stop(final=True)
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        # The fleet subscriber detaches BEFORE telemetry stops -- the same
-        # rule __main__ applies to the sharing worker. The coordinator's
-        # dispatcher drains and publishes one last batch on the way down,
-        # and with this callback still attached that publication routed
-        # into a fleet-bar window the preview teardown above had already
-        # destroyed. Detaching first means the final batch has nowhere to
-        # go, which is the correct answer at shutdown.
-        unsubscribe = self._fleet_unsubscribe
-        self._fleet_unsubscribe = None
-        if unsubscribe is not None:
-            try:
-                unsubscribe()
-            except Exception:
-                logger.exception("Fleet snapshot subscriber did not detach cleanly")
+        # Also called by main before native destruction. Idempotence covers
+        # headless shutdown and retries after a blocked presentation owner.
+        self._stop_fleet_presentation()
         if self._telemetry is not None:
             try:
                 self._telemetry.stop()
@@ -3543,27 +3623,21 @@ class Api:
         select left showing it would be showing a state the app is not
         in.
 
-        `path` is walked fresh against `self._state.settings` both for the
-        no-op check and inside the `update()` block, never against a
-        `preview` reference held across the call: `_normalize` reassigns
-        `preview` wholesale on every write (settings.py:373-378), so a
-        reference captured before `update()` is stale by the time it
-        returns.
+        The no-op check shares the mutation's serialization. An unlocked
+        comparison could acknowledge another writer's tentative value just
+        before it rolls back. Walk `path` inside the transaction as well:
+        normalization replaces nested sections on every settings write.
         """
-        node = self._state.settings.get("preview", {})
-        for key in path[:-1]:
-            node = node.get(key, {})
-        if node.get(path[-1]) == value:
-            # Same rationale as _write_setting's no-op guard: a save
-            # projects the complete document, so this would otherwise be a
-            # full rewrite for a value that has not changed.
-            return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
                 node = doc.setdefault("preview", {})
                 for key in path[:-1]:
                     node = node.setdefault(key, {})
+                if node.get(path[-1]) == value:
+                    raise _SettingUnchanged
                 node[path[-1]] = value
+        except _SettingUnchanged:
+            return self._field_ok()
         except OSError:
             logger.exception("Could not persist preview setting %s", ".".join(path))
             return self._field_refused("Could not save this to settings.")
@@ -3714,17 +3788,15 @@ class Api:
         floor_w, floor_h = preview_window.MIN_SIZE
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
-        section = self._state.settings.get("preview", {})
-        if section.get("width") == width and section.get("height") == height:
-            # Same no-op guard every other preview write carries: a save
-            # projects the complete document, so an unchanged pair would
-            # otherwise be a full rewrite.
-            return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
                 node = doc.setdefault("preview", {})
+                if node.get("width") == width and node.get("height") == height:
+                    raise _SettingUnchanged
                 node["width"] = width
                 node["height"] = height
+        except _SettingUnchanged:
+            return self._field_ok()
         except OSError:
             logger.exception("Could not persist the default preview size")
             return self._field_refused("Could not save this to settings.")
@@ -3972,8 +4044,12 @@ class Api:
 
     def _toggle_preview_roster(self, key: str, name: str, member: bool) -> dict:
         """Add or remove *name* from the character-name list at
-        preview.<key> (locked, never_minimize or excluded), then persist through
-        _write_preview_setting.
+        preview.<key> (locked, never_minimize or excluded).
+
+        For `locked`, *member* is the desired effective lock; its difference
+        from the default is resolved inside the same transaction as the
+        roster read. Neither a concurrent default change nor another
+        character's edit may be lost behind an accepted response.
 
         A list, not a per-character flag: Task 1 moved lock storage out of
         preview.layouts precisely because that entry is dropped whenever it
@@ -3990,13 +4066,25 @@ class Api:
         why the live-update call stays with the caller rather than moving
         in here (two restyle, one sweeps and rebinds).
         """
-        current = list(self._state.settings.get("preview", {}).get(key) or [])
-        if member:
-            if name not in current:
-                current.append(name)
-        else:
-            current = [n for n in current if n != name]
-        return self._write_preview_setting((key,), current)
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                section = doc.setdefault("preview", {})
+                if key == "locked":
+                    member = member != bool(section.get("lock_default"))
+                current = list(section.get(key) or [])
+                if (name in current) == member:
+                    raise _SettingUnchanged
+                if member:
+                    current.append(name)
+                else:
+                    current = [n for n in current if n != name]
+                section[key] = current
+        except _SettingUnchanged:
+            return self._field_ok()
+        except OSError:
+            logger.exception("Could not persist preview roster %s", key)
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
 
     def set_preview_locked(self, name, locked) -> dict:
         """Persist whether *name*'s preview is locked against drag, then
@@ -4012,9 +4100,7 @@ class Api:
         With lock_default off (the shipped default) the expression is
         `bool(locked)` and this method behaves exactly as it always has.
         """
-        section = self._state.settings.get("preview", {})
-        member = bool(locked) != bool(section.get("lock_default"))
-        result = self._toggle_preview_roster("locked", name, member)
+        result = self._toggle_preview_roster("locked", name, bool(locked))
         if self._preview_host is not None:
             self._preview_host.restyle()
         return result
@@ -4252,26 +4338,12 @@ class Api:
         next restart will discard is the failure this shape exists to
         prevent.
         """
-        enabled = bool(enabled)
-        section = self._state.settings.setdefault("preview", {})
-        persisted = True
-        if section.get("restore_preview_positions") != enabled:
-            try:
-                # Through settings.update, not save(): the mutation must
-                # happen inside _SAVE_LOCK or a concurrent writer is
-                # reverted. update() also restores the live dict if the
-                # block raises, so a failed write leaves the stored value
-                # as it was and the next toggle retries on its own --
-                # which is why this needs no dirty-flag of its own.
-                with settings_mod.update(self._state.settings) as doc:
-                    doc.setdefault("preview", {})["restore_preview_positions"] = enabled
-            except OSError:
-                # Logged and reported, not raised. A settings file that
-                # cannot be written must not break the toggle -- but the
-                # page has to be able to say the choice is not saved.
-                persisted = False
-                logger.exception("Could not persist restore_preview_positions")
-        return {"applied": True, "persisted": persisted}
+        result = self._write_preview_setting(
+            ("restore_preview_positions",), bool(enabled)
+        )
+        # Preserve this older endpoint's two-key result shape while sharing
+        # the serialized no-op and truthful rollback handling above.
+        return {"applied": result["applied"], "persisted": result["persisted"]}
 
     def _push_first_run_when_ready(self) -> None:
         """Tell the page to show its first-run route, once it can hear it.

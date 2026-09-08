@@ -65,8 +65,18 @@ class FakeRows:
     def rows(self):
         return [{"id": rid} for rid in self.infos]
 
-    def rebuild(self, directory, preselect=None):
+    def scan(self, directory):
+        return list(self.infos.values())
+
+    def install(self, infos, preselect=None, link_urls=None):
+        if link_urls is not None:
+            self.links = {
+                rid: link_urls.get(info.path) for rid, info in self.infos.items()
+            }
         return self.rows()
+
+    def rebuild(self, directory, preselect=None):
+        return self.install(self.scan(directory), preselect=preselect)
 
     def rename(self, row_id, new_path):
         info = self.infos.get(row_id)

@@ -25,8 +25,8 @@
   var pendingDetail = {}; // character_id -> in-flight request id
   var detailSeq = 0;
   var filterText = '';
-  var asked = false;      // has the page asked Python for state yet
-  var requestSequence = 0; // drops stale skills_state reads
+  var statePending = false; // current read in flight; STATE proves hydration
+  var requestSequence = 0; // orders reads against newer reads AND renders
   var autoExpanded = false; // has the one-shot small-roster expansion run
   var copyStatusPlan = ''; // plan named by the current clipboard attempt
   var copyAttemptSeq = 0; // invalidates superseded asynchronous completions
@@ -106,6 +106,10 @@
 
   function render(payload) {
     if (!payload) return;
+    // A push can overtake a cached read, even with the same selection.
+    // Reads check ownership before rendering, so they cannot reject themselves.
+    requestSequence += 1;
+    statePending = false;
     STATE = payload;
     // Every cached detail was computed from the PREVIOUS onSkills payload's
     // character/plan data, and a fresh payload means a character's skills,
@@ -149,17 +153,14 @@
   function requestState() {
     requestSequence += 1;
     var wanted = requestSequence;
+    statePending = true;
     WM.send('skills_state').then(function (payload) {
-      // A null/undefined reply means the request itself failed rather
-      // than answering with an empty state -- render() already no-ops on
-      // that, but leaving `asked` set would make every later route entry
-      // believe the initial ask already happened and skip retrying it
-      // forever, stranding the page with no state at all.
-      if (!payload) {
-        asked = false;
-        return;
-      }
-      if (wanted !== requestSequence || WM.current_route !== 'skills') return;
+      if (wanted !== requestSequence) return;
+      // Release only this read's claim, including failures (WM.send turns
+      // rejections into null). A discarded hidden reply must allow another
+      // entry to hydrate, without erasing useful state from an earlier render.
+      statePending = false;
+      if (!payload || WM.current_route !== 'skills') return;
       render(payload);
     });
   }
@@ -169,11 +170,10 @@
     // The page asks; Python does not push unprompted at boot. Same rule
     // app.js:139-148 follows for rows and settings -- a subsystem that
     // costs nothing until you open it cannot be pushing state at launch.
-    // Asked on FIRST entry only: after that every mutation pushes onSkills,
-    // so re-asking on each entry would be a redundant round trip carrying
-    // the largest payload in the app.
-    if (asked) return;
-    asked = true;
+    // Once hydrated, every mutation pushes onSkills. Reuse that state and
+    // coalesce entries while a read is pending, but retry if the first reply
+    // failed or was discarded while hidden.
+    if (STATE || statePending) return;
     requestState();
   });
 

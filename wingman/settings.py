@@ -9,6 +9,7 @@ import copy
 import json
 import re
 import threading
+import weakref
 from pathlib import Path
 
 from . import atomicio, bookmarks, paths
@@ -897,6 +898,54 @@ def load(path: Path | None = None) -> dict:
 _SAVE_LOCK = threading.Lock()
 
 
+class _CommittedPreview:
+    """Document-scoped configuration for readers that cannot wait for disk."""
+
+    __slots__ = ("__weakref__", "_document", "_snapshot")
+
+    def __init__(self, document: dict, snapshot: dict):
+        # Dicts cannot be weak-referenced. Retaining this document prevents
+        # its identity being reused while a consumer still holds the reader.
+        self._document = document
+        self._snapshot = snapshot
+
+    def get(self, key, default=None):
+        # The pump never acquires _SAVE_LOCK. Published storage is detached
+        # and never mutated, so copying a captured value needs no lock.
+        return copy.deepcopy(self._snapshot.get(key, default))
+
+    def snapshot(self) -> dict:
+        return copy.deepcopy(self._snapshot)
+
+
+# The consumers, not this index, own reader/document lifetime. A strong-value
+# registry would retain every document ever opened, even after its host died.
+_COMMITTED_PREVIEWS: weakref.WeakValueDictionary[int, _CommittedPreview] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _prepare_preview_snapshot(data: dict) -> dict:
+    return copy.deepcopy(data.get("preview", {}))
+
+
+def committed_preview(data: dict) -> _CommittedPreview:
+    """Register before constructing Preview consumers; retain the returned reader.
+
+    Initial configuration comes from the loaded document under writer
+    serialization, never from an in-flight candidate. Only update() advances
+    it afterwards, including layout/crop writes and unrelated normalization.
+    Direct save() retains its persistence-only semantics; production mutations
+    must continue using update(). Do not call this inside an update() block.
+    """
+    with _SAVE_LOCK:
+        reader = _COMMITTED_PREVIEWS.get(id(data))
+        if reader is None:
+            reader = _CommittedPreview(data, _prepare_preview_snapshot(data))
+            _COMMITTED_PREVIEWS[id(data)] = reader
+        return reader
+
+
 def save(data: dict, path: Path | None = None) -> None:
     with _SAVE_LOCK:
         _save_locked(data, path)
@@ -957,19 +1006,30 @@ def update(data: dict, path: Path | None = None):
     an update() call goes stale even though `data` itself does not. Hold
     `data`, not `data["preview"]`, across a call.
 
-    DO NOT call save() or update() from inside an update() block. The lock
-    is not reentrant and the process will deadlock.
+    Registered Preview readers see only detached committed configuration.
+    Prepare it after normalization but BEFORE saving: a failed allocation must
+    roll back before disk commits. Publication is a non-failing reference swap,
+    outside the rollback handler and before releasing writer serialization.
+    Other readers of `data` remain outside this isolation guarantee.
+
+    DO NOT call save(), update() or committed_preview() from inside an update()
+    block. The lock is not reentrant and the process will deadlock.
     """
     with _SAVE_LOCK:
         before = copy.deepcopy(data)
+        reader = _COMMITTED_PREVIEWS.get(id(data))
         try:
             yield data
             _normalize(data)
+            if reader is not None:
+                prepared = _prepare_preview_snapshot(data)
             _save_locked(data, path)
         except BaseException:
             data.clear()
             data.update(before)
             raise
+        if reader is not None:
+            reader._snapshot = prepared
 
 
 def update_section(

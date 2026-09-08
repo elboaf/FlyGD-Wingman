@@ -223,7 +223,13 @@ def test_valid_empty_refresh_replaces_authoritative_presence(tmp_path):
     assert controller.state.entries[0].id == "existing-entry"
 
 
-def test_later_empty_refresh_stops_treating_local_success_as_presence(tmp_path):
+@pytest.mark.parametrize(
+    ("age_seconds", "expected"),
+    [(60, "present"), (contracts.READ_CACHE_SECONDS, "ready")],
+)
+def test_only_cache_qualified_empty_refresh_retires_local_success(
+    tmp_path, age_seconds, expected
+):
     def success_intent(entry):
         return WriteIntent(
             operation_id="successful-copy",
@@ -231,9 +237,9 @@ def test_later_empty_refresh_stops_treating_local_success_as_presence(tmp_path):
             library_entry_id=entry.id,
             content=entry.content,
             status="success",
-            created_utc=NOW - timedelta(minutes=2),
-            sent_utc=NOW - timedelta(minutes=2),
-            completed_utc=NOW - timedelta(minutes=1),
+            created_utc=NOW - timedelta(seconds=age_seconds + 60),
+            sent_utc=NOW - timedelta(seconds=age_seconds + 60),
+            completed_utc=NOW - timedelta(seconds=age_seconds),
             remote_fitting_id=99,
         )
 
@@ -247,8 +253,8 @@ def test_later_empty_refresh_stops_treating_local_success_as_presence(tmp_path):
     result = controller.preflight_copy(["existing-entry"], [42])
 
     assert controller.character_status(42).content_utc == NOW
-    assert result["pairs"][0]["status"] == "ready"
-    assert result["write_count"] == 1
+    assert result["pairs"][0]["status"] == expected
+    assert result["write_count"] == (1 if expected == "ready" else 0)
 
 
 def test_later_refresh_clears_an_older_local_capacity_block(tmp_path):
@@ -313,10 +319,13 @@ def test_schema_invalid_200_does_not_advance_authoritative_content_time(tmp_path
     assert controller.character_status(42).content_utc == first_content_utc
 
 
-def test_oversized_transport_failure_retains_prior_presence_stale(tmp_path):
+@pytest.mark.parametrize("exception_type", [OSError, ValueError, RecursionError])
+def test_expected_get_failure_is_bounded_and_retains_prior_presence_stale(
+    tmp_path, exception_type
+):
     controller, _authority, _esi, _path = make_controller(
         tmp_path,
-        [ValueError("ESI response exceeded the bounded body limit")],
+        [exception_type("ESI read failed: " + ("x" * 5000))],
         initial=seeded_state(),
     )
 
@@ -324,8 +333,10 @@ def test_oversized_transport_failure_retains_prior_presence_stale(tmp_path):
 
     assert result["ok"] is False
     assert controller.state.presences == seeded_state().presences
-    assert controller.character_status(42).stale is True
-    assert "bounded body limit" in controller.character_status(42).error
+    snapshot = controller.character_status(42)
+    assert snapshot.stale is True
+    assert snapshot.error.startswith("ESI read failed")
+    assert len(snapshot.error) <= 4096
 
 
 def test_304_confirms_retained_data_without_replacing_it(tmp_path):

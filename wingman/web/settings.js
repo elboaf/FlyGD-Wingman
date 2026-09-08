@@ -39,7 +39,7 @@
   var TARGET_COST = { recording: FOLDER_COST, gamelogs: GAMELOG_COST };
   var TARGET_NOUN = { recording: 'recording', gamelogs: 'gamelogs' };
 
-  var current = {};    // last settings dict from Python
+  var current = {};    // hydrated values, advanced by accepted field writes
   var detected = {};   // detected-folder suggestions from the same payload
 
   // ---- Update status (About card) --------------------------------------
@@ -196,6 +196,7 @@
   // reopens it for any early focus, so nothing may commit until the first
   // payload has landed.
   var hydrated = false;
+  var displayedRefusals = {};
 
   function say(slot, text, tone) {
     var el = WM.el(slot);
@@ -203,43 +204,94 @@
     el.textContent = text || '';
     el.className = 'field-msg' + (tone ? ' ' + tone : '');
     el.hidden = !text;
+    displayedRefusals[slot] = false;
   }
 
-  // `revert` repaints the field from the last known-good payload. Called
-  // only when Python REFUSED a value -- never on a failed write, where the
-  // setting really did take effect for this session and snapping the
-  // control back would misreport it.
-  function commit(slot, args, revert, onOk) {
+  var writes = {};
+  var messageGeneration = {};
+
+  function fieldWrites(key) {
+    if (!writes[key]) {
+      writes[key] = { edit: 0, request: 0, pending: 0, error: '', tail: Promise.resolve() };
+    }
+    return writes[key];
+  }
+
+  // Privacy and Category share a slot but not an outcome: accepting one
+  // must not hide the other's current refusal, whichever reply arrives first.
+  function sayCommit(slot, text, tone) {
+    var errors = [];
+    Object.keys(writes).forEach(function (key) {
+      var state = writes[key];
+      if (state.slot === slot && state.error) { errors.push(state.error); }
+    });
+    say(slot, errors.length ? errors.join(' ') : text, errors.length ? 'err' : tone);
+    displayedRefusals[slot] = errors.length > 0;
+  }
+
+  // Input and submission are different generations: an unsubmitted draft
+  // must survive a reply too, even if it happens to equal an older value.
+  var FIELD_KEYS = {
+    'f-privacy': 'privacy', 'f-category': 'category', 'f-recdir': 'recording_dir',
+    'f-gamelogs': 'gamelogs_dir', 'f-webhook': 'discord_webhook'
+  };
+  Object.keys(FIELD_KEYS).forEach(function (id) {
+    WM.el(id).addEventListener('input', function () {
+      fieldWrites(FIELD_KEYS[id]).edit += 1;
+    });
+  });
+
+  function pending(key) { return writes[key] && writes[key].pending; }
+
+  // `value` is captured/normalized at submission, NEVER read from a later
+  // input value. Serialize per field because pywebview runs calls on
+  // separate threads: ignoring old replies alone cannot order the writes.
+  // Other fields remain independent; webhook Set and Remove share a key.
+  function commit(slot, args, key, value, revert, onApplied) {
     if (!hydrated) { return; }
-    WM.send.apply(null, args).then(function (res) {
-      // WM.send resolves to null on any bridge failure rather than
-      // rejecting (app.js). A dict is always truthy, so null is still the
-      // only thing that means "the call never landed".
-      if (!res) {
-        say(slot, 'Could not reach the app. Nothing was changed.', 'err');
-        if (revert) { revert(); }
+    var state = fieldWrites(key);
+    state.slot = slot;
+    var request = ++state.request;
+    var edit = ++state.edit;
+    state.pending += 1;
+    var message = (messageGeneration[slot] || 0) + 1;
+    messageGeneration[slot] = message;
+    state.tail = state.tail.then(function () {
+      return WM.send.apply(null, args);
+    }).then(function (res) {
+      state.pending -= 1;
+      var unchanged = state.request === request && state.edit === edit;
+      var ownsMessage = unchanged && messageGeneration[slot] === message;
+      // WM.send resolves to null on bridge failure (app.js). Refusal
+      // restoration is authoritative, unlike focus-guarded hydration.
+      if (!res || !res.applied) {
+        if (unchanged) {
+          state.error = res ? (res.error || 'That value was not accepted.')
+                            : 'Could not reach the app. Nothing was changed.';
+          sayCommit(slot);
+          if (revert) { revert(); }
+        }
         return;
       }
-      if (!res.applied) {
-        say(slot, res.error || 'That value was not accepted.', 'err');
-        if (revert) { revert(); }
+      current[key] = value;
+      var hadError = !!state.error;
+      state.error = '';
+      // Effects outside the input describe accepted runtime state, even
+      // while the control holds a newer draft. Pass the accepted value.
+      if (onApplied) { onApplied(res, value, unchanged); }
+      if (!ownsMessage) {
+        // An accepted retry retires its refusal even with a newer draft.
+        // Repaint only refusal feedback: a later blur warning owns the slot.
+        if (hadError && displayedRefusals[slot]) { sayCommit(slot); }
         return;
       }
       if (!res.persisted) {
-        // In effect for this session but not on disk. The control stays
-        // where the user put it; what it cannot do is survive a restart,
-        // and saying nothing is how they find that out the hard way.
-        say(slot, 'Changed for this session, but could not be written to '
-                + 'settings — it will not survive a restart.', 'warn');
+        sayCommit(slot, 'Changed for this session, but could not be written to '
+                      + 'settings — it will not survive a restart.', 'warn');
         return;
       }
-      // A `note` is the endpoint reporting what the commit actually
-      // did, with a number no hint written beforehand could have had --
-      // set_folder's is the only one so far (round 3, B11). Neutral tone
-      // on purpose: it is not a warning, and it replaces any blur warning
-      // still sitting in the slot.
-      say(slot, res.note || '');
-      if (onOk) { onOk(res); }
+      // Folder notes report the real rebind cost, not an unsaved warning.
+      sayCommit(slot, res.note || '');
     });
   }
 
@@ -256,14 +308,12 @@
     return picked ? picked.value : 'toast';
   }
 
-  // Every successful commit pushes the COMPLETE settings payload back, so
-  // a plain assignment would rewrite whichever field the user is still
-  // typing in -- including rewriting a path into str(Path(...)) form
-  // under the cursor. The focused field is left alone; it holds the more
-  // recent value by definition.
+  // Hydration leaves the focused field alone. Per-field writes do not
+  // push a settings document; their refusals restore directly instead of
+  // using this guard, or Enter could never revert a focused invalid value.
   function setField(id, value) {
     var el = WM.el(id);
-    if (!el || el === document.activeElement) { return; }
+    if (!el || el === document.activeElement || pending(FIELD_KEYS[id])) { return; }
     el.value = value;
   }
 
@@ -273,28 +323,38 @@
   // as an empty tooltip.
   function setTitle(id, value) {
     var el = WM.el(id);
-    if (!el || el === document.activeElement) { return; }
+    if (!el || el === document.activeElement || pending(FIELD_KEYS[id])) { return; }
     if (value) { el.title = value; } else { el.removeAttribute('title'); }
   }
 
   function render(payload) {
     var s = payload.settings || {};
     var d = payload.detected || {};
-    current = s;
+    var values = {
+      privacy: s.privacy || 'unlisted', category: s.category || '20',
+      notify_mode: s.notify_mode || 'toast', show_eve_tools: s.show_eve_tools !== false,
+      recording_dir: s.recording_dir || '', gamelogs_dir: s.gamelogs_dir || '',
+      discord_webhook: s.discord_webhook || '', start_on_login: !!payload.start_on_login
+    };
+    // A document received during a write may predate it. Keep that
+    // field's baseline and draft; its own acknowledgement settles both.
+    Object.keys(values).forEach(function (key) {
+      if (!pending(key)) { current[key] = values[key]; }
+    });
     detected = d;
-    setField('f-privacy', s.privacy || 'unlisted');
-    setField('f-category', s.category || '20');
-    if (document.activeElement
+    setField('f-privacy', current.privacy);
+    setField('f-category', current.category);
+    if (!pending('notify_mode') && document.activeElement
         && document.activeElement.name !== 'notify') {
-      setNotify(s.notify_mode || 'toast');
+      setNotify(current.notify_mode);
     }
     // Absent means shown: an upgrading user's file predates the key, and
     // hiding four things they already use would be a silent removal.
-    if (WM.el('show-eve-tools') !== document.activeElement) {
-      WM.el('show-eve-tools').checked = s.show_eve_tools !== false;
+    if (!pending('show_eve_tools') && WM.el('show-eve-tools') !== document.activeElement) {
+      WM.el('show-eve-tools').checked = current.show_eve_tools;
     }
-    setField('f-recdir', s.recording_dir || '');
-    setField('f-gamelogs', s.gamelogs_dir || '');
+    setField('f-recdir', current.recording_dir);
+    setField('f-gamelogs', current.gamelogs_dir);
     // An <input> cannot ellipsize and does not wrap, so a path longer than
     // the field is cut mid-word with nothing to say it was cut
     // (walkthrough Settings 16). S2's stacking widened the field to 422px,
@@ -303,17 +363,19 @@
     // 59 characters. The hover title is the only place the whole value can
     // be read back, on a field whose entire job is naming a location the
     // user has to confirm.
-    setTitle('f-recdir', s.recording_dir || '');
-    setTitle('f-gamelogs', s.gamelogs_dir || '');
+    setTitle('f-recdir', current.recording_dir);
+    setTitle('f-gamelogs', current.gamelogs_dir);
     // The input holds the REAL value and the browser draws the mask, so
     // the mask can never be written back over the stored webhook — the
     // failure mode a hand-rolled bullet string invites.
-    setField('f-webhook', s.discord_webhook || '');
+    setField('f-webhook', current.discord_webhook);
     // webhook_status() is a pure Python function with its own test and is
     // the only description of what is stored; discord.describe omits the
     // token by construction. TOP-LEVEL key, and never reconstructed here.
-    WM.el('webhook-status').textContent = payload.webhook_status
-      || (s.discord_webhook ? '' : 'not configured');
+    if (!pending('discord_webhook')) {
+      WM.el('webhook-status').textContent = payload.webhook_status
+        || (current.discord_webhook ? '' : 'not configured');
+    }
     // X1 / Settings 14. Show reveals nothing and Remove removes nothing
     // when there is no webhook stored, and both rendered at full strength.
     // The app already KNOWS neither can act from the state it is holding,
@@ -324,7 +386,9 @@
     // The FIELD stays live -- it is the only route back out of the state
     // that disabled these two, which the helper's own comment forbids
     // closing off.
-    renderWebhook(payload.webhook_status, !!s.discord_webhook);
+    if (!pending('discord_webhook')) {
+      renderWebhook(payload.webhook_status, !!current.discord_webhook);
+    }
     // Round 3, B11 and R4's finding 1. This slot used to explain what
     // Detect READS, which is the least valuable thing on the card and was
     // occupying the space the consequence needed. All three controls on
@@ -363,8 +427,8 @@
     // M3. Read live from the registry on every render rather than from a
     // stored setting, so an entry the user deleted by hand outside Wingman
     // shows as off here instead of claiming to be on.
-    if (WM.el('start-on-login') !== document.activeElement) {
-      WM.el('start-on-login').checked = !!payload.start_on_login;
+    if (!pending('start_on_login') && WM.el('start-on-login') !== document.activeElement) {
+      WM.el('start-on-login').checked = current.start_on_login;
     }
     // Last: everything above has painted real values, so a commit fired
     // from here on sends what is stored rather than a blank form.
@@ -379,13 +443,14 @@
   WM.el('show-eve-tools').addEventListener('change', function () {
     var box = WM.el('show-eve-tools');
     commit('msg-general', ['set_show_eve_tools', box.checked],
-           function () { box.checked = !box.checked; },
+           'show_eve_tools', box.checked,
+           function () { box.checked = current.show_eve_tools; },
            // Applied HERE, not left to the wm:settings push: the per-field
            // endpoints deliberately do not push, because re-sending the
            // whole payload is what used to rewrite the field still being
            // edited. Without this the value was written and nothing
            // repainted until the next launch -- the tabs stayed put.
-           function () { WM.apply_eve_gate(box.checked); });
+           function (res, value) { WM.apply_eve_gate(value); });
   });
 
   // M3. Start-on-login writes outside the app's own config -- an
@@ -398,29 +463,33 @@
   WM.el('start-on-login').addEventListener('change', function () {
     var box = WM.el('start-on-login');
     commit('msg-about', ['set_start_on_login', box.checked],
-           function () { box.checked = !box.checked; });
+           'start_on_login', box.checked,
+           function () { box.checked = current.start_on_login; });
   });
 
   // Discrete controls commit on change. There is nothing to mistype, the
   // value is one of a fixed set, and a refusal is recoverable.
   WM.el('f-privacy').addEventListener('change', function () {
-    commit('msg-uploads', ['set_privacy', WM.el('f-privacy').value],
-           function () { setField('f-privacy', current.privacy || 'unlisted'); });
+    var field = WM.el('f-privacy');
+    commit('msg-uploads', ['set_privacy', field.value], 'privacy', field.value,
+           function () { field.value = current.privacy; });
   });
 
   // `change` on a text input fires on blur AND on Enter. That is safe for
   // this field -- it drives nothing but its own value, and a refusal is
   // shown inline. It is NOT safe for the folders and the webhook below.
   WM.el('f-category').addEventListener('change', function () {
-    commit('msg-uploads', ['set_category', WM.el('f-category').value],
-           function () { setField('f-category', current.category || '20'); });
+    var field = WM.el('f-category');
+    commit('msg-uploads', ['set_category', field.value], 'category', field.value.trim(),
+           function () { field.value = current.category; });
   });
 
   Array.prototype.forEach.call(
     document.querySelectorAll('input[name="notify"]'), function (input) {
       input.addEventListener('change', function () {
-        commit('msg-notify', ['set_notify_mode', notifyValue()],
-               function () { setNotify(current.notify_mode || 'toast'); });
+        var value = notifyValue();
+        commit('msg-notify', ['set_notify_mode', value], 'notify_mode', value,
+               function () { setNotify(current.notify_mode); });
       });
     });
 
@@ -450,11 +519,16 @@
   function commitFolder(which) {
     var field = WM.el(TARGET_FIELD[which]);
     if (!field) { return; }
-    commit(TARGET_MSG[which], ['set_folder', which, field.value], function () {
-      setField(TARGET_FIELD[which],
-               (which === 'gamelogs' ? current.gamelogs_dir
-                                     : current.recording_dir) || '');
-    });
+    var key = which === 'gamelogs' ? 'gamelogs_dir' : 'recording_dir';
+    // The accepted UI representation is the trimmed submission. Python
+    // owns Path normalization and returns no canonical-path field.
+    commit(TARGET_MSG[which], ['set_folder', which, field.value], key, field.value.trim(),
+      function () {
+        field.value = current[key];
+        field.title = current[key];
+      }, function (res, value, unchanged) {
+        if (unchanged) { field.title = value; }
+      });
   }
 
   function applyFolder(which, path) {
@@ -526,10 +600,10 @@
     // the summary line kept reading `not configured` and Show/Remove
     // stayed disabled until the next launch.
     commit('msg-discord', ['set_discord_webhook', webhook.value],
-           function () { setField('f-webhook', current.discord_webhook || ''); },
-           function (res) {
-             current.discord_webhook = webhook.value;
-             renderWebhook(res.webhook_status, true);
+           'discord_webhook', webhook.value.trim(),
+           function () { webhook.value = current.discord_webhook; },
+           function (res, value) {
+             renderWebhook(res.webhook_status, !!value);
            });
   });
 
@@ -569,10 +643,9 @@
                { destructive: true })
       .then(function (ok) {
         if (!ok) { return; }
-        commit('msg-discord', ['clear_discord_webhook'], null,
-               function (res) {
-                 current.discord_webhook = '';
-                 setField('f-webhook', '');
+        commit('msg-discord', ['clear_discord_webhook'], 'discord_webhook', '', null,
+               function (res, value, unchanged) {
+                 if (unchanged) { webhook.value = value; }
                  renderWebhook(res.webhook_status, false);
                });
       });
@@ -656,8 +729,8 @@
   });
 
   // No save / cancel block. Every field above commits on its own, and a
-  // Cancel would promise a rollback nothing here can perform: `current` is
-  // reassigned on every render, so no pre-edit snapshot survives.
+  // Cancel would promise a rollback nothing here can perform: `current`
+  // tracks accepted values, not a screen-wide pre-edit snapshot.
 }());
 
 // ---- EVE client previews -------------------------------------------------
@@ -822,26 +895,36 @@
   // rather than as peers. The switch owning its dependants is what makes
   // one sentence enough. See the previews-depends block at the foot of
   // this file.
+  var hydrated = false;
+  var lastGood = true;
+  var generation = 0;
+  var pending = 0;
+  var writes = Promise.resolve();
+
   box.addEventListener('change', function () {
+    if (!hydrated) { return; }
     var wanted = box.checked;
-    // WM.send resolves to null on any bridge failure rather than
-    // rejecting (app.js:38-43). A dict is always truthy, so null is
-    // still the only thing that reverts the box -- and a failed write
-    // is no longer mistaken for one.
-    WM.send('set_restore_preview_positions', wanted).then(function (res) {
-      if (!res) { box.checked = !wanted; return; }
+    var request = ++generation;
+    pending += 1;
+    // Match the scalar fields: order writes, remember accepted values,
+    // and never let an earlier reply repaint a later toggle.
+    writes = writes.then(function () {
+      return WM.send('set_restore_preview_positions', wanted);
+    }).then(function (res) {
+      pending -= 1;
+      if (res && res.applied) { lastGood = wanted; }
+      if (request !== generation) { return; }
+      if (!res || !res.applied) {
+        box.checked = lastGood;
+        say((res && res.error) || 'Could not save this.');
+        return;
+      }
       if (!res.persisted) {
-        // The setting really did change for this session, so the box
-        // stays where the user put it. What it cannot do is survive a
-        // restart, and saying nothing is how they find that out the
-        // hard way.
         say('Reopening previews in place is ' + (wanted ? 'on' : 'off')
           + ' for this session, but could not be written to settings — '
           + 'it will not survive a restart.');
       } else {
-        // The checkbox itself is the success feedback. Restoring the
-        // hint (rather than confirming) clears a prior failure message
-        // without adding noise on every successful toggle.
+        // The checkbox is the success feedback; clear any prior error.
         say('');
       }
     });
@@ -854,19 +937,19 @@
     var s = (ev.detail || {}).settings || {};
     // Absent means on: an upgrading user's file predates the key, and
     // showing the box unchecked would misreport what will happen.
-    box.checked = !(s.preview
-      && s.preview.restore_preview_positions === false);
+    if (!pending) {
+      lastGood = !(s.preview && s.preview.restore_preview_positions === false);
+      box.checked = lastGood;
+    }
+    hydrated = true;
   });
 }());
 
 // ---- Preview labels -------------------------------------------------------
-// Same shape as restore-preview-positions above, with one difference:
-// _write_preview_setting (ui/api.py) reports a persistence failure as
-// `applied: false`, not `applied: true, persisted: false` -- settings_mod.
-// update restores the LIVE dict on OSError here, so the value genuinely
-// never took effect either. That is why this checks `res.applied` before
-// falling back to `res.persisted`, rather than only the falsy-`res` check
-// restore-preview-positions's writer gets away with.
+// Like restore-preview-positions above, a persistence failure is
+// `applied: false`: settings_mod.update restores the LIVE dict on OSError,
+// so the value genuinely never took effect. Check `res.applied` before
+// `res.persisted`, or a refused value would be shown as session-only.
 (function () {
   var box = WM.el('preview-show-labels');
   var status = WM.el('preview-show-labels-status');

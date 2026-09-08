@@ -11,8 +11,16 @@ from types import SimpleNamespace
 import pytest
 
 from tests.fakes import FakeWindow
-from tests.test_api import decode_payload, make_api
+from tests.test_api import decode_payload
+from tests.test_api import make_api as _make_api
 from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
+
+
+def make_api(*args, **kwargs):
+    """These contract tests drain explicitly; worker races live in their own file."""
+    api = _make_api(*args, **kwargs)
+    api._start_fleet_presentation = lambda: True
+    return api
 
 
 class FleetWindow(FakeWindow):
@@ -309,6 +317,7 @@ def test_toggle_refuses_to_create_after_shutdown_starts(api, monkeypatch):
 
 def test_toggle_pushes_one_authoritative_state_to_main_page(api):
     api.toggle_fleet_bar(True)
+    api._fleet_worker.iterate_once()
 
     scripts = getattr(api._window, "evaluated", [])
     state_pushes = [script for script in scripts if "onFleetBarState" in script]
@@ -386,6 +395,7 @@ def test_creation_failure_with_failed_rollback_reopens_current_generation(
     api._telemetry.reconcile = reconcile
 
     result = api.toggle_fleet_bar(True)
+    api._fleet_worker.iterate_once()
 
     assert result == {
         "applied": False,
@@ -426,6 +436,7 @@ def test_reenable_does_not_flash_previous_generation_rows(api):
     api.toggle_fleet_bar(False)
     api._fleetbar_window.calls.clear()
     api.toggle_fleet_bar(True)
+    api._fleet_worker.iterate_once()
 
     script = _fleet_scripts(api._fleetbar_window)[-1]
     payload = json.loads(script.split("window.onFleetSnapshot(", 1)[1][:-1])
@@ -468,6 +479,7 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
     )
 
     api._receive_fleet_snapshot(snapshot)
+    api._fleet_worker.iterate_once()
 
     script = _fleet_scripts(api._fleetbar_window)[-1]
     payload = json.loads(script.split("window.onFleetSnapshot(", 1)[1][:-1])
@@ -587,7 +599,7 @@ def test_fleet_settings_reports_unknown_when_consumer_is_inactive(api):
 
 def test_fleet_roster_persists_current_pending_then_prior_without_duplicates(api):
     api._state.settings["fleet_bar"]["seen"] = ["Persisted", "Current"]
-    api._fleet_pending_seen = ["Pending", "Current"]
+    api._fleet_roster.pending = dict.fromkeys(["Pending", "Current"], 0)
     api._fleet_expected_generation = 1
 
     api._receive_fleet_snapshot(
@@ -598,12 +610,13 @@ def test_fleet_roster_persists_current_pending_then_prior_without_duplicates(api
         )
     )
 
+    api._fleet_worker.iterate_once()
     assert api._state.settings["fleet_bar"]["seen"] == [
         "Current",
         "Pending",
         "Persisted",
     ]
-    assert api._fleet_pending_seen == []
+    assert list(api._fleet_roster.pending) == []
 
 
 def test_fleet_roster_sorts_current_tier_before_pending_and_persisted_names(api):
@@ -623,6 +636,7 @@ def test_fleet_roster_sorts_current_tier_before_pending_and_persisted_names(api)
         )
     )
 
+    api._fleet_worker.iterate_once()
     assert api._state.settings["fleet_bar"]["seen"] == [
         "Alice",
         "alice",
@@ -653,9 +667,10 @@ def test_failed_roster_memory_write_keeps_pending_until_next_roster_transition(
         activation_generation=1,
     )
     api._receive_fleet_snapshot(first)
+    api._fleet_worker.iterate_once()
 
     assert api._state.settings["fleet_bar"]["seen"] == ["Persisted"]
-    assert api._fleet_pending_seen == ["Alice"]
+    assert list(api._fleet_roster.pending) == ["Alice"]
     api._receive_fleet_snapshot(
         FleetSnapshot(
             rows=(FleetRow("Alice", 99),),
@@ -663,6 +678,7 @@ def test_failed_roster_memory_write_keeps_pending_until_next_roster_transition(
             activation_generation=1,
         )
     )
+    api._fleet_worker.iterate_once()
     assert calls == 1
 
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", original_save)
@@ -674,12 +690,13 @@ def test_failed_roster_memory_write_keeps_pending_until_next_roster_transition(
         )
     )
 
+    api._fleet_worker.iterate_once()
     assert api._state.settings["fleet_bar"]["seen"] == [
         "Alice",
         "Bravo",
         "Persisted",
     ]
-    assert api._fleet_pending_seen == []
+    assert list(api._fleet_roster.pending) == []
 
 
 def test_failed_roster_memory_stays_known_through_off_on_before_next_roster(
@@ -704,14 +721,15 @@ def test_failed_roster_memory_stays_known_through_off_on_before_next_roster(
             activation_generation=1,
         )
     )
-    assert api._fleet_pending_seen == ["Alice"]
+    api._fleet_worker.iterate_once()
+    assert list(api._fleet_roster.pending) == ["Alice"]
 
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", original_save)
     api.toggle_fleet_bar(False)
     api.toggle_fleet_bar(True)
 
     assert api._fleet_snapshot is None
-    assert api._fleet_pending_seen == ["Alice"]
+    assert list(api._fleet_roster.pending) == ["Alice"]
     assert api.fleet_bar_settings()["characters"] == [
         {"name": "Alice", "running": None, "visible": True},
         {"name": "Persisted", "running": None, "visible": True},
@@ -726,6 +744,7 @@ def test_metric_only_snapshot_does_not_push_main_fleet_state(api):
         activation_generation=1,
     )
     api._receive_fleet_snapshot(first)
+    api._fleet_worker.iterate_once()
     api._window.evaluated.clear()
 
     api._receive_fleet_snapshot(
@@ -737,6 +756,7 @@ def test_metric_only_snapshot_does_not_push_main_fleet_state(api):
         )
     )
 
+    api._fleet_worker.iterate_once()
     assert not [
         script for script in api._window.evaluated if "onFleetBarState" in script
     ]
@@ -770,6 +790,8 @@ def test_visibility_write_failure_refuses_and_rolls_back(api, monkeypatch):
             activation_generation=1,
         )
     )
+
+    api._fleet_worker.iterate_once()
 
     def fail_save(*_args, **_kwargs):
         raise OSError("disk full")
@@ -830,6 +852,7 @@ def test_visibility_noop_does_not_write_and_restore_is_allowed_at_the_cap(
             activation_generation=1,
         )
     )
+    api._fleet_worker.iterate_once()
     api._state.settings["fleet_bar"]["hidden"] = ["Alice"] + [
         f"Hidden {index}" for index in range(63)
     ]
@@ -917,6 +940,7 @@ def test_snapshot_push_targets_only_the_fleet_window(api):
     )
 
     api._receive_fleet_snapshot(snapshot)
+    api._fleet_worker.iterate_once()
 
     assert _fleet_scripts(api._fleetbar_window)
     assert not _fleet_scripts(api._window)

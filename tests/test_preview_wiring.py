@@ -565,7 +565,7 @@ def test_a_failed_position_write_is_reported_rather_than_claimed(tmp_path, monke
     api = make_api(tmp_path, preview_host=FakeHost())
     api._state.settings["preview"] = {}
     assert api.set_restore_preview_positions(False) == {
-        "applied": True,
+        "applied": False,
         "persisted": False,
     }
 
@@ -898,10 +898,8 @@ def test_write_alert_setting_still_nests_under_preview_alerts(tmp_path, monkeypa
 
 
 def test_the_host_reads_the_position_setting_live(monkeypatch):
-    """build_preview_host must hand the host something that re-reads the
-    document, not the value the app started with: the toggle changes
-    mid-session, and settings._normalize replaces the whole preview
-    section on every write."""
+    """The host must follow committed updates, not its startup section:
+    settings._normalize replaces the whole preview section on every write."""
     from types import SimpleNamespace
 
     from wingman import __main__ as main_mod
@@ -921,8 +919,11 @@ def test_the_host_reads_the_position_setting_live(monkeypatch):
     host = main_mod.build_preview_host(state, {})
     assert host._restoring() is True
 
-    # A whole new section object, as _normalize produces.
-    state.settings["preview"] = {"restore_preview_positions": False}
+    from wingman import settings
+
+    monkeypatch.setattr(settings, "_save_locked", lambda *args: None)
+    with settings.update(state.settings) as live:
+        live["preview"]["restore_preview_positions"] = False
     assert host._restoring() is False
 
 
@@ -941,8 +942,7 @@ def test_the_host_restores_positions_when_the_key_is_absent(monkeypatch):
 def test_the_host_reads_show_labels_and_opacity_live(monkeypatch):
     """Same reasoning as test_the_host_reads_the_position_setting_live:
     Settings has no Save button, so build_preview_host must hand the host
-    callables that re-read state.settings on every call, not the values
-    captured at app start."""
+    callables that follow committed settings, not the values at app start."""
     from types import SimpleNamespace
 
     from wingman import __main__ as main_mod
@@ -964,8 +964,11 @@ def test_the_host_reads_show_labels_and_opacity_live(monkeypatch):
     assert host._labels_shown() is False
     assert host._current_opacity() == 180
 
-    # A whole new section object, as _normalize produces.
-    state.settings["preview"] = {"show_labels": True, "opacity": 90}
+    from wingman import settings
+
+    monkeypatch.setattr(settings, "_save_locked", lambda *args: None)
+    with settings.update(state.settings) as live:
+        live["preview"].update(show_labels=True, opacity=90)
     assert host._labels_shown() is True
     assert host._current_opacity() == 90
 
@@ -1018,12 +1021,13 @@ def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):
     assert host._is_never_minimize("Alice") is True
     assert host._is_locked("Bravo") is True
 
-    # A whole new section object, as _normalize produces.
-    state.settings["preview"] = {
-        "minimize_inactive_clients": False,
-        "never_minimize": [],
-        "locked": [],
-    }
+    from wingman import settings
+
+    monkeypatch.setattr(settings, "_save_locked", lambda *args: None)
+    with settings.update(state.settings) as live:
+        live["preview"].update(
+            minimize_inactive_clients=False, never_minimize=[], locked=[]
+        )
     assert host._minimizing_inactive() is False
     assert host._is_never_minimize("Alice") is False
     assert host._is_locked("Bravo") is False
@@ -1032,8 +1036,8 @@ def test_the_host_reads_minimize_inactive_and_the_rosters_live(monkeypatch):
 def test_the_host_reads_hide_on_lost_focus_live(monkeypatch):
     """Ticking the box has to reach previews that are already running, and
     _normalize hands back a whole new section object rather than mutating
-    the old one -- so the host must read through to state.settings, not
-    capture the dict it was built with."""
+    the old one -- so the host must follow committed updates, not capture
+    the dict it was built with."""
     from types import SimpleNamespace
 
     from wingman import __main__ as main_mod
@@ -1043,7 +1047,11 @@ def test_the_host_reads_hide_on_lost_focus_live(monkeypatch):
     host = main_mod.build_preview_host(state, {})
     assert host._hiding_on_lost_focus() is True
 
-    state.settings["preview"] = {"hide_on_lost_focus": False}
+    from wingman import settings
+
+    monkeypatch.setattr(settings, "_save_locked", lambda *args: None)
+    with settings.update(state.settings) as live:
+        live["preview"]["hide_on_lost_focus"] = False
     assert host._hiding_on_lost_focus() is False
 
 
@@ -1409,9 +1417,8 @@ def test_toggling_minimize_inactive_live_disables_never_minimize_rows():
 
 
 def test_build_preview_host_wires_the_disabled_roster(monkeypatch):
-    """Read live off the section, like the other two rosters: ticking the
-    box writes settings and the host must see it on the very next sweep,
-    without a restart."""
+    """Read committed settings, like the other rosters: after ticking the
+    box saves, the host must see it on the next sweep without a restart."""
     from types import SimpleNamespace
 
     from wingman import __main__ as main_mod
@@ -1422,8 +1429,11 @@ def test_build_preview_host_wires_the_disabled_roster(monkeypatch):
     assert host._is_excluded("Alice") is True
     assert host._is_excluded("Bravo") is False
 
-    # A whole new section object, as _normalize produces.
-    state.settings["preview"] = {"excluded": []}
+    from wingman import settings
+
+    monkeypatch.setattr(settings, "_save_locked", lambda *args: None)
+    with settings.update(state.settings) as live:
+        live["preview"]["excluded"] = []
     assert host._is_excluded("Alice") is False
 
 

@@ -377,8 +377,14 @@ def build_preview_host(state, api_box):
         from .preview.host import PreviewHost
         from .preview.store import LayoutStore
 
+        # Register before any consumer is constructed. Callbacks retain the
+        # document-scoped reader and never wait on persistence or see a
+        # tentative setting (especially opt-in client minimizing). Separate
+        # callbacks may still straddle committed revisions; this is not an
+        # atomic effective-policy read across the host's existing interface.
+        preview_config = settings_mod.committed_preview(state.settings)
+        section = preview_config.snapshot()
         store = LayoutStore(update_settings=lambda: settings_mod.update(state.settings))
-        section = state.settings.get("preview", {})
         crop_store = CropStore(
             update_settings=lambda: settings_mod.update(state.settings),
             initial=preview_crops.deserialize(section.get("crops")),
@@ -428,88 +434,74 @@ def build_preview_host(state, api_box):
                 api.push_bind_captured(gesture)
 
         def restore_positions():
-            # Read per placement, never captured. The toggle changes
-            # mid-session, and settings._normalize replaces the whole
-            # preview section object on every write -- so this reads
-            # through `state`, which keeps its identity, rather than
-            # holding the section.
+            # Read the latest committed placement policy, not a startup
+            # section or the live document settings.update mutates during I/O.
             #
             # Absent means on: an upgrading user's file predates the key,
             # and defaulting to off would silently discard every position
             # they have.
-            return bool(
-                state.settings.get("preview", {}).get("restore_preview_positions", True)
-            )
+            return bool(preview_config.get("restore_preview_positions", True))
 
         def show_labels():
-            # Same reasoning as restore_positions above: read through
-            # `state` on every call, never captured. Absent means on --
+            # Same committed read as restore_positions. Absent means on --
             # it is what shipped, and defaulting off would silently
             # restyle every existing install's previews.
-            return bool(state.settings.get("preview", {}).get("show_labels", True))
+            return bool(preview_config.get("show_labels", True))
 
         def opacity():
-            return int(state.settings.get("preview", {}).get("opacity", 255))
+            return int(preview_config.get("opacity", 255))
 
         def minimize_inactive_clients():
             # Absent means off: minimizing a real EVE client window must
             # be asked for, never assumed by an upgrading install.
-            return bool(
-                state.settings.get("preview", {}).get(
-                    "minimize_inactive_clients", False
-                )
-            )
+            return bool(preview_config.get("minimize_inactive_clients", False))
 
         def hide_on_lost_focus():
             # Absent means off, and for a related reason to
             # minimize_inactive_clients above: taking every preview off
             # the screen is a change a user has to ask for, not one an
             # upgrading install is given.
-            return bool(
-                state.settings.get("preview", {}).get("hide_on_lost_focus", False)
-            )
+            return bool(preview_config.get("hide_on_lost_focus", False))
 
         def never_minimize():
             # A character-name list, not a per-character flag -- see
             # PreviewHost._is_never_minimize. Read live for the same
             # reason as restore_positions: the roster is edited while
             # previews are running.
-            return list(state.settings.get("preview", {}).get("never_minimize", []))
+            return preview_config.get("never_minimize", [])
 
         def locked():
             # Same shape as never_minimize, and for the same reason: a
             # per-character callable would need the character key at
             # construction time, which this function does not have.
-            return list(state.settings.get("preview", {}).get("locked", []))
+            return preview_config.get("locked", [])
 
         def excluded():
             # Same shape and same live read as the two rosters above. The
             # default is an EMPTY list rather than anything cleverer: a
             # settings file predating this key must leave every character's
             # preview working, not blank the screen on upgrade.
-            return list(state.settings.get("preview", {}).get("excluded", []))
+            return preview_config.get("excluded", [])
 
         def snap():
             # Read live for the same reason as restore_positions: the
             # setting is changed while previews are running.
-            return state.settings.get("preview", {}).get("snap", True) is not False
+            return preview_config.get("snap", True) is not False
 
         def lock_aspect():
             # Live, same as snap: the checkbox must reach an open preview.
-            return (
-                state.settings.get("preview", {}).get("lock_aspect", True) is not False
-            )
+            return preview_config.get("lock_aspect", True) is not False
 
         def selection_color():
             # Live, same as snap: the picker must recolour an open
             # preview's ring through _restyle, not on a restart.
-            return state.settings.get("preview", {}).get("selection_color", "#00c8dc")
+            return preview_config.get("selection_color", "#00c8dc")
 
         def lock_default():
             # Live, same as the roster it modifies. False when absent, so a
             # settings file predating the key resolves _is_locked to plain
             # membership -- the behaviour that shipped.
-            return state.settings.get("preview", {}).get("lock_default", False) is True
+            return preview_config.get("lock_default", False) is True
 
         def default_size():
             # THE ONE SETTING HERE THAT WAS NOT LIVE. preview.width/height
@@ -523,7 +515,7 @@ def build_preview_host(state, api_box):
             # The floors are settings.py's (120x90, validated_preview), not
             # restated here -- this only has to survive a section that
             # predates the keys.
-            section_now = state.settings.get("preview", {})
+            section_now = preview_config.snapshot()
             return (section_now.get("width", 320), section_now.get("height", 210))
 
         return PreviewHost(
@@ -923,8 +915,8 @@ def main() -> int:
         telemetry=telemetry,
     )
     api_box["api"] = api
-    if telemetry is not None:
-        api._fleet_unsubscribe = telemetry.subscribe_fleet(api._receive_fleet_snapshot)
+    if telemetry is not None and not api._start_fleet_presentation():
+        logger.error("Fleet presentation could not start")
     # Migration and authority composition happen after Api construction so
     # warnings have a durable route payload and callbacks bind eagerly. They
     # still happen before the window starts and before any EVE feature work.
@@ -957,6 +949,10 @@ def main() -> int:
         # Neither auxiliary-window path takes shutdown_lock, so a creation
         # already in progress can finish and be observed without inversion.
         with shutdown_lock:
+            # Close acceptance and detach BEFORE joining or destroying any
+            # target. A timed-out WebView owner stays tracked but cannot start
+            # a later delivery stage; no native/presentation lock covers join.
+            api._stop_fleet_presentation()
             with api._fleetbar_lifecycle_lock:
                 api._fleetbar_quitting = True
                 fleet = api._fleetbar_window
@@ -1116,6 +1112,8 @@ def main() -> int:
     # this callback on its own thread once the GUI loop owns the main one.
     window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
 
+    # Also covers GUI exit paths that did not request destroy_windows().
+    api._stop_fleet_presentation()
     icon.stop()
     if scheduler is not None:
         scheduler.stop()

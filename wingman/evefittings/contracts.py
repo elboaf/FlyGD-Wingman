@@ -65,10 +65,12 @@ MAX_COLLECTION_NAME_CHARS = 80
 MAX_ALIASES_PER_ENTRY = 100
 PAGE_SIZE = 100
 MAX_OPERATION_RECORDS = 200
-# Terminal copy results are diagnostic history, not safety state. Ninety
-# days keeps recent support context while preventing the count cap from
-# becoming the only retention policy on quiet installations. Unresolved
-# intents are exempt from both limits.
+# Failed copy results are disposable diagnostic history. Successful copies
+# remain protective until a cache-qualified refresh retires them; they consume
+# the count budget before diagnostics and are never age-pruned. If protection
+# fills that budget, refuse new creates rather than evicting evidence. Loaded
+# over-limit evidence stays intact. Unresolved intents remain exempt from both
+# limits and are not charged against this count budget.
 COMPLETED_OPERATION_MAX_AGE = timedelta(days=90)
 MAX_STATE_BYTES = 64 * 1024 * 1024
 

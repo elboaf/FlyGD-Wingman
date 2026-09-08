@@ -38,20 +38,27 @@ def test_a_refusal_is_distinguishable_from_a_failed_write(monkeypatch, tmp_path)
     assert ok == {"applied": True, "persisted": True, "error": None}
 
 
-def test_an_unwritable_settings_file_still_applies_the_change(monkeypatch, tmp_path):
-    """A settings file that cannot be written must not stop the setting
-    taking effect -- but the page has to be able to say it is not saved,
-    or the control shows a choice the next restart discards."""
+def test_an_unwritable_settings_file_refuses_the_rolled_back_change(
+    monkeypatch, tmp_path
+):
+    """The response must describe the restored runtime value, not the request."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
 
     def boom(data, path=None):
         raise OSError("read-only")
 
     monkeypatch.setattr(api_mod.settings_mod, "_save_locked", boom)
+    before = api._state.settings["privacy"]
     result = api.set_privacy("public")
 
-    assert result["applied"] is True
+    assert result["applied"] is False
     assert result["persisted"] is False
+    assert result["error"]
+    assert api._state.settings["privacy"] == before
+    # Repeating the refused choice must retry rather than acknowledge a
+    # session-only value which was never actually applied.
+    assert api.set_privacy("public")["applied"] is False
+    assert api._state.settings["privacy"] == before
 
 
 # ---- the no-op guard --------------------------------------------------
