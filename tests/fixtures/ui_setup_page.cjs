@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const {spawnSync} = require('node:child_process');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
+const coupled = scenario.startsWith('detached-');
 
 // PageTree supplies real production ancestry/attributes. Only DOM mechanics and
 // bridge/clipboard delivery are doubled; no setup page state lives in this DOM.
@@ -13,17 +14,39 @@ class Element {
     this.id = attrs.id || ''; this.className = attrs.class || '';
     this.children = []; this.listeners = {}; this.value = attrs.value || '';
     this.disabled = 'disabled' in attrs; this.hidden = 'hidden' in attrs;
+    this.checked = 'checked' in attrs; this.style = {};
+    this.dataset = Object.fromEntries(Object.entries(attrs).filter(([key]) => key.startsWith('data-')).map(([key, value]) => [key.slice(5), value]));
   }
   appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
   querySelectorAll(selector) {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
     if (selector === '*') return all;
-    return all.filter(el => selector === el.tagName.toLowerCase());
+    return all.filter(el => {
+      const match = selector.match(/^([\w-]+)?(?:\.([\w-]+))?(?:\[([\w-]+)="([^"]*)"\])?(:checked)?$/);
+      assert.ok(match, 'DOM double needs selector: ' + selector);
+      return (!match[1] || el.tagName.toLowerCase() === match[1])
+        && (!match[2] || el.className.split(/\s+/).includes(match[2]))
+        && (!match[3] || el.attrs[match[3]] === match[4]) && (!match[5] || el.checked);
+    });
   }
-  get classList() { return {toggle: (name, on) => {
-    const list = this.className.split(/\s+/).filter(x => x && x !== name);
-    if (on) list.push(name); this.className = list.join(' ');
-  }}; }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  get classList() { return {
+    toggle: (name, on) => {
+      const list = this.className.split(/\s+/).filter(x => x && x !== name);
+      if (on) list.push(name); this.className = list.join(' ');
+    },
+    remove: name => this.classList.toggle(name, false),
+    add: name => this.classList.toggle(name, true)
+  }; }
+  set innerHTML(text) { assert.equal(text, '', 'Only DOM clearing is doubled'); this.textContent = ''; }
+  set value(value) {
+    this._value = value;
+    if (this.tagName === 'SELECT' && this.children) this.children.forEach(child => { child.selected = child.value === value; });
+  }
+  get value() {
+    if (this.tagName !== 'SELECT' || !this.children.length) return this._value || '';
+    return (this.children.find(child => child.selected) || this.children[0]).value;
+  }
   get options() { return this.children; }
   get selectedIndex() { return this.children.findIndex(child => child.value === this.value); }
   set textContent(text) { this.children = []; this.text = String(text); }
@@ -49,9 +72,11 @@ function build(node) {
 const document = build(page);
 document.readyState = 'complete';
 document.createElement = tag => new Element(tag);
+document.getElementById = id => ids[id] || null;
 const contexts = [], limits = [], snapshots = [], saves = [], clipboardWrites = [], mutations = [];
 const reviews = [], discards = [], creates = [], reads = [], clipboardReads = [], profilesReads = [];
-const handlers = {}; let formationsCompletions = 0;
+let handlers = {}; let formationsCompletions = 0;
+const ordinaryCopies = [];
 function deferred(args) {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -64,7 +89,7 @@ const navigator = {clipboard: {readText: () => {
   const write = deferred([text]); clipboardWrites.push(write); return write.promise;
 }}};
 if (scenario === 'copy-unavailable') delete navigator.clipboard;
-const WM = {
+let WM = {
   current_route: 'evesettings',
   handle: (name, handler) => { assert.equal(handlers[name], undefined); handlers[name] = handler; },
   formationsDone: () => { formationsCompletions++; },
@@ -86,10 +111,15 @@ const WM = {
       eve_settings_setup_review: reviews, eve_settings_setup_discard: discards,
       eve_settings_setup_create: creates, eve_settings_setup_read_file: reads,
       eve_settings_state: profilesReads};
+    if (coupled) {
+      destinations.eve_settings_copy = ordinaryCopies;
+      if (method === 'eve_settings_resolve_names') return Promise.resolve(true);
+    }
     if (method === 'eve_settings_setup_create') {
       assert.equal(WM.el('setup-create').disabled, true, 'lock before sending Create');
       assert.equal(WM.el('setup-text').disabled, true, 'lock editing before sending Create');
       assert.match(WM.el('setup-back').textContent, /Back/);
+      if (scenario === 'detached-early-done') handlers.onEveSettingsDone(completion(args));
       if (scenario === 'done-before-accepted' || scenario === 'done-before-refused') {
         assert.equal(WM.uiSetupDone(completion(args)), true, 'identity must exist before send');
       }
@@ -100,9 +130,23 @@ const WM = {
 };
 assert.ok(ids['route-uisetup'], 'Missing production setup route');
 assert.ok(fs.existsSync(process.argv[4]), 'Missing production setup module');
-vm.runInNewContext(fs.readFileSync(process.argv[4], 'utf8'), {
-  WM, document, window: {}, navigator, console, Promise
-}, {filename: process.argv[4]});
+if (coupled) {
+  // Real shell route dispatch, sole completion owner, both modules' complete
+  // DOM wiring and renderers. Only bridge delivery and DOM mechanics are seams.
+  const bridge = WM.send, formationsDone = WM.formationsDone;
+  const window = new Element('window');
+  const directory = require('node:path').dirname(process.argv[4]);
+  const runtime = vm.createContext({window, document, navigator, console, Promise,
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }});
+  vm.runInContext(fs.readFileSync(directory + '/app.js', 'utf8'), runtime);
+  WM = runtime.WM = window.WM; WM.send = bridge; WM.formationsDone = formationsDone; handlers = window;
+  vm.runInContext(fs.readFileSync(directory + '/evesettings.js', 'utf8'), runtime);
+  vm.runInContext(fs.readFileSync(process.argv[4], 'utf8'), runtime);
+} else {
+  vm.runInNewContext(fs.readFileSync(process.argv[4], 'utf8'), {
+    WM, document, window: {}, navigator, console, Promise
+  }, {filename: process.argv[4]});
+}
 if (scenario === 'forwarded-completion') {
   // Execute the entire production owner. Only defer DOMContentLoaded wiring;
   // completion handlers register immediately, exactly as they do in the app.
@@ -352,6 +396,7 @@ function freshReviewRequired() {
   assert.match(importStatus(), /review.*again|fresh review/i);
 }
 async function importMain() {
+  if (coupled) { await detachedMain(); return; }
   await importOpen();
   if (scenario === 'context-does-not-select') {
     assert.equal(WM.el('setup-base').value, 'profile-A'); click('setup-back');
@@ -425,7 +470,7 @@ async function importMain() {
     if (scenario === 'cancel-during-review') { pending.resolve(offer()); await tick(); }
     assert.deepEqual(plain(discards.at(-1).args), ['r1']); assert.equal(creates.length, 0);
     assert.equal(WM.el('setup-text').value, '');
-  } else if (scenario === 'yaml-label-choice' || scenario === 'yaml-no-layout') {
+  } else if (scenario === 'yaml-label-choice' || scenario === 'yaml-no-layout' || scenario === 'yaml-warning-once') {
     const native = python('native'); assert.equal(native.ambiguous, true);
     input('setup-text', native.text); click('setup-review');
     reviews.at(-1).resolve({...offer('', native), ok: false, needs_label_choice: true,
@@ -439,6 +484,21 @@ async function importMain() {
     assert.equal(reviews.at(-1).args[5], true); reviews.at(-1).resolve(offer('native', native)); await tick();
     assert.match(WM.el('setup-counts').textContent, /42 filters.*8 tabs.*1 overview group.*0 layout windows/);
     assert.match(WM.el('setup-retention').textContent, /ship labels.*retained|keep.*ship labels/i);
+    if (scenario === 'yaml-warning-once') {
+      // The real parser puts native warnings in both lists. Preserve distinct
+      // messages and warning emphasis, but give each sentence one owner.
+      const shared = native.warnings[0];
+      assert.ok(native.summary.limitations.includes(shared));
+      const summaryText = WM.el('setup-summary').textContent;
+      assert.equal(summaryText.split(shared).length - 1, 1, 'native warning rendered once');
+      assert.ok(WM.el('setup-warnings').textContent.includes(shared));
+      input('setup-name', 'Distinct warnings'); click('setup-review');
+      reviews.at(-1).resolve({...offer('distinct', native), warnings: [...native.warnings, 'A distinct warning.', 'A distinct warning.']}); await tick();
+      assert.equal(WM.el('setup-summary').textContent.split('A distinct warning.').length - 1, 1);
+      for (const limitation of native.summary.limitations.filter(text => !native.warnings.includes(text))) {
+        assert.ok(WM.el('setup-limitations').textContent.includes(limitation));
+      }
+    }
     if (scenario === 'yaml-label-choice') {
       input('setup-text', exported.text); assert.equal(WM.el('setup-keep-labels').checked, false);
       assert.equal(WM.el('setup-label-choice').hidden, true); assert.equal(WM.el('setup-create').disabled, true);
@@ -505,12 +565,12 @@ async function importMain() {
     if (scenario === 'forwarded-completion') {
       handlers.onEveSettingsDone(completion(pending.args));
       assert.match(importStatus(), /created.*settings_Imported/);
-      assert.equal(formationsCompletions, 0); assert.equal(profilesReads.length, 0);
+      assert.equal(formationsCompletions, 0); assert.equal(profilesReads.length, 1);
       const hook = WM.uiSetupDone; delete WM.uiSetupDone;
       handlers.onEveSettingsDone(completion(pending.args)); WM.uiSetupDone = hook;
       assert.equal(formationsCompletions, 0);
       handlers.onEveSettingsDone({ok: true, operation: 'formation_save'});
-      assert.equal(formationsCompletions, 1); assert.equal(profilesReads.length, 1);
+      assert.equal(formationsCompletions, 1); assert.equal(profilesReads.length, 2);
     } else if (scenario === 'failed-create') {
       assert.equal(WM.uiSetupDone(completion(pending.args, {published: false, ok: false, error: 'Stage <failed>', error_code: 'create_failed', path: ''})), true);
       freshReviewRequired(); const before = importStatus(); pending.resolve({accepted: true}); await tick();
@@ -530,7 +590,7 @@ async function importMain() {
       assert.match(importStatus(), /leaving does not cancel/i); click('setup-back');
       assert.equal(discards.length, 0, 'a sent create cannot be cancelled');
       await importOpen(); const before = importStatus();
-      assert.equal(WM.uiSetupDone(completion(pending.args)), false);
+      assert.equal(WM.uiSetupDone(completion(pending.args)), true, 'detached receipt is owned, not the newer draft');
       pending.resolve({accepted: true, error: ''}); await tick(); assert.equal(importStatus(), before);
     } else {
       pending.resolve({accepted: true, error: ''}); await tick();
@@ -551,5 +611,113 @@ async function importMain() {
   assert.equal(mutations.length, 0, 'no selection or other EVE mutation endpoint');
   assert.equal(snapshots.length, 0, 'import never exports a local snapshot');
   assert.equal(WM.el('setup-back').disabled, false);
+}
+function profilesState(profile = 'profile-A') {
+  return {...context(), profile, servers: [{path: 'server', name: 'Tranquility'}],
+    eve_running: false, unreadable: false, too_broad: false, identity_characters: [],
+    identification_active: false, identification_generation: 0, selective_copy_available: false,
+    formations_available: false, backups: [], backups_unreadable: false, auto_keep: 5};
+}
+async function coupledOpen() {
+  click('es-setup-import');
+  assert.equal(WM.current_route, 'uisetup');
+  contexts.at(-1).resolve(context()); limits.at(-1).resolve(python('limits')); await tick();
+  change('setup-character', 'char-A'); change('setup-account', 'account-A');
+  input('setup-text', exported.text); input('setup-name', 'Imported');
+}
+async function detachedMain() {
+  WM.route('evesettings'); profilesReads.at(-1).resolve(profilesState()); await tick();
+  await coupledOpen(); await reviewed(); click('setup-create'); const pending = creates.at(-1);
+  if (scenario === 'detached-early-done') {
+    assert.match(importStatus(), /created/i);
+    profilesReads.at(-1).resolve(profilesState()); await tick();
+  } else if (scenario === 'detached-lost-starter') {
+    pending.resolve(null); await tick(); assert.match(importStatus(), /could not confirm/i);
+  } else if (scenario !== 'detached-refused' && scenario !== 'detached-rejected-starter') {
+    pending.resolve({accepted: true}); await tick();
+  }
+  click('setup-back');
+  assert.equal(WM.current_route, 'evesettings');
+  assert.equal(WM.el('route-evesettings').className.includes('active'), true);
+  assert.equal(WM.el('routenav').hidden, false);
+  assert.equal(document.activeElement.id, 'es-setup-import');
+  assert.equal(WM.el('setup-text').value, ''); assert.equal(WM.el('setup-name').value, '');
+  assert.equal(WM.el('setup-character').options.length, 1, 'private roster cleared');
+  assert.equal(WM.el('setup-summary').hidden, true);
+  assert.equal(discards.length, 0, 'sent Create is not cancelled');
+  // Crucially, the read triggered by Back settles BEFORE the worker finishes.
+  profilesReads.at(-1).resolve(profilesState()); await tick();
+  const beforeReads = profilesReads.length;
+  if (scenario === 'detached-refused') {
+    pending.resolve({accepted: false, error: 'Busy <operation>'}); await tick();
+    assert.ok(WM.el('es-setup-status'), 'Profiles must have an owned outcome surface');
+    assert.match(WM.el('es-setup-status').textContent, /Busy <operation>/);
+    assert.deepEqual(plain(discards.at(-1).args), ['r1']);
+    const before = WM.el('es-setup-status').textContent;
+    handlers.onEveSettingsDone(completion(pending.args));
+    assert.equal(profilesReads.length, beforeReads); assert.equal(WM.el('es-setup-status').textContent, before);
+    return;
+  }
+  if (scenario === 'detached-early-done') {
+    assert.ok(WM.el('es-setup-status'), 'Profiles must retain the completed outcome after Back');
+    const before = WM.el('es-setup-status').textContent;
+    pending.resolve({accepted: false, error: 'Late refusal'}); await tick();
+    handlers.onEveSettingsDone(completion(pending.args));
+    assert.equal(profilesReads.length, beforeReads); assert.equal(WM.el('es-setup-status').textContent, before);
+    assert.match(before, /created/i); return;
+  }
+  if (scenario === 'detached-rejected-starter') { pending.reject(new Error('Lost starter')); await tick(); }
+  let newer;
+  if (scenario === 'detached-newer-review' || scenario === 'detached-two-creates') {
+    await coupledOpen(); await reviewed('r2');
+    if (scenario === 'detached-two-creates') { click('setup-create'); newer = creates.at(-1); newer.resolve({accepted: true}); await tick(); }
+  } else if (scenario === 'detached-ordinary-copy') {
+    change('es-source', 'char-A'); click('es-all'); click('es-copy');
+    assert.equal(ordinaryCopies.length, 1); ordinaryCopies[0].resolve(true); await tick();
+    assert.match(WM.el('es-copy').textContent, /operation in progress/i);
+  } else if (scenario === 'detached-other-route') WM.route('main');
+  const currentRoute = WM.current_route, focus = document.activeElement;
+  const draftBefore = [importStatus(), WM.el('setup-text').value, WM.el('setup-create').disabled, WM.el('setup-summary').hidden];
+  const extra = scenario === 'detached-failure' ? {ok: false, published: false, error: 'Stage <failed>', path: ''}
+    : scenario === 'detached-warning' ? {warning: 'Could not remember <selection>.', selection_persisted: false}
+      : scenario === 'detached-warning-fallback' ? {selection_persisted: false} : {};
+  const result = completion(pending.args, extra);
+  for (const wrong of [{request_id: 'wrong'}, {review_id: 'wrong'}]) handlers.onEveSettingsDone({...result, ...wrong});
+  assert.equal(profilesReads.length, beforeReads, 'unowned events cannot refresh');
+  handlers.onEveSettingsDone(result);
+  assert.equal(profilesReads.length, beforeReads + 1, 'owned detached completion must request fresh Profiles state');
+  // An authoritative selection can differ from the payload path. Never choose
+  // payload.path, and do not force navigation back from another tool/route.
+  assert.equal(WM.el('es-profile').value, 'profile-A');
+  profilesReads.at(-1).resolve(profilesState('profile-B')); await tick();
+  assert.equal(WM.el('es-profile').value, 'profile-B');
+  assert.equal(WM.current_route, currentRoute); assert.equal(document.activeElement, focus);
+  assert.deepEqual([importStatus(), WM.el('setup-text').value, WM.el('setup-create').disabled, WM.el('setup-summary').hidden], draftBefore);
+  const message = WM.el('es-setup-status').textContent;
+  assert.equal(WM.el('es-setup-status').getAttribute('role'), 'status');
+  assert.equal(WM.el('es-setup-status').children.length, 0);
+  if (result.published) {
+    assert.match(message, /created.*settings_Imported/i); assert.match(message, /restart.*launcher/i);
+    if (extra.warning) assert.ok(message.includes(extra.warning));
+    if (scenario === 'detached-warning-fallback') assert.match(message, /could not remember/i);
+  } else { assert.ok(message.includes(extra.error)); assert.match(WM.el('es-setup-status').className, /err/); }
+  handlers.onEveSettingsDone({...result, error: 'Duplicate', published: false});
+  assert.equal(profilesReads.length, beforeReads + 1); assert.equal(WM.el('es-setup-status').textContent, message);
+  assert.equal(formationsCompletions, 0);
+  if (scenario === 'detached-newer-review') {
+    click('setup-create'); assert.equal(creates.at(-1).args[0], 'r2');
+  } else if (newer) {
+    handlers.onEveSettingsDone(completion(newer.args, {path: 'settings_Newer'}));
+    assert.match(importStatus(), /settings_Newer/); assert.equal(profilesReads.length, beforeReads + 2);
+    profilesReads.at(-1).resolve(profilesState()); await tick();
+  } else if (scenario === 'detached-ordinary-copy') {
+    assert.equal(WM.el('es-copy').disabled, true); assert.match(WM.el('es-copy').textContent, /operation in progress/i);
+    assert.equal(WM.el('es-copy-followup').hidden, true);
+    assert.equal(WM.el('es-targets').querySelectorAll('input').filter(el => el.checked).length, 1);
+    handlers.onEveSettingsDone({operation: 'copy', ok: true});
+    assert.equal(WM.el('es-copy-followup').hidden, false, 'only ordinary completion settles ordinary pendingMutation');
+    profilesReads.at(-1).resolve(profilesState()); await tick();
+  }
+  assert.equal(mutations.length, 0, 'completion never selects or calls a mutation');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -170,7 +170,7 @@
         btn.classList.toggle('active', btn.dataset.route === lit);
       });
     WM.el('btn-settings').classList.toggle('active', name === 'settings');
-    // Three routes offer no chrome. First run is not dismissable: there is
+    // Focused routes offer no chrome. First run is not dismissable: there is
     // nowhere else to go yet. Account identity is a focused setup flow whose
     // Back control cancels its ephemeral observation. The formation editor
     // holds unsaved edits and `< Profiles` is the only exit that asks before
@@ -179,6 +179,8 @@
     // editor five exits of which four threw edits away in silence. Visibility
     // is decided HERE, per route, rather than by each editor toggling it on
     // entry and exit: apply_eve_gate below can route away without using Back.
+    // Setup sharing likewise has one explicit exit that discards private input
+    // and review state; an already-sent Create retains only its receipt.
     var chromeless = WM.CHROMELESS_ROUTES.indexOf(name) !== -1;
     WM.el('btn-settings').hidden = chromeless;
     WM.el('routenav').hidden = chromeless;

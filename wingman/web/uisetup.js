@@ -9,6 +9,9 @@
   var mode = '';
   var draft = null;
   var requestSerial = 0;
+  // Leaving destroys the private draft, not ownership of a sent Create. The
+  // worker releases its lock before pushing, so more than one receipt can wait.
+  var receipts = [];
 
   function isCurrent(captured) {
     return captured === generation && WM.current_route === 'uisetup';
@@ -213,6 +216,17 @@
     node.className = error ? 'hint err' : 'hint';
   }
 
+  function profilesStatus(text, error) {
+    var node = WM.el('es-setup-status');
+    node.textContent = text;
+    node.className = error ? 'hint err' : 'hint';
+  }
+
+  function retireReceipt(pending) {
+    pending.completed = true;
+    receipts = receipts.filter(function (item) { return item !== pending; });
+  }
+
   function discard(id) {
     if (!id) return;
     // Best-effort cleanup has no page authority. In particular its delayed
@@ -371,8 +385,13 @@
     WM.el('setup-native').textContent = native ? 'Overview configuration only; no window layout. Supplied tabs become one group in the primary overview window. Primary and non-overview geometry stay local; surplus overview instances are retired. Absent options, including omitted column settings, stay local.' : '';
     WM.el('setup-native').hidden = !native;
     WM.el('setup-windows').textContent = native ? 'No layout windows imported.' : 'Included layout windows: ' + result.summary.windowLabels.join(', ');
-    WM.el('setup-limitations').textContent = result.summary.limitations.join(' ');
-    WM.el('setup-warnings').textContent = result.warnings.join(' ');
+    var warnings = result.warnings.filter(function (text, index, items) { return items.indexOf(text) === index; });
+    // Native parser warnings also appear in limitations. Keep their emphasized
+    // owner below without dropping distinct limitations or extra worker warnings.
+    WM.el('setup-limitations').textContent = result.summary.limitations.filter(function (text, index, items) {
+      return warnings.indexOf(text) === -1 && items.indexOf(text) === index;
+    }).join(' ');
+    WM.el('setup-warnings').textContent = warnings.join(' ');
     WM.el('setup-summary').hidden = false;
   }
 
@@ -426,22 +445,31 @@
       request: 'setup-' + Date.now() + '-' + requestSerial, completed: false};
     // A worker can finish before the starter promise resolves, even before
     // send returns. Install identity and lock the draft BEFORE crossing bridge.
+    receipts.push(pending);
     draft.creating = pending;
     draft.review = '';
     importStatus('Creating profile. Leaving does not cancel creation.');
     importControls();
     function current() { return isCurrent(pending.view) && draft && draft.creating === pending && !pending.completed; }
     function uncertain() {
-      if (!current()) return;
-      importStatus('Could not confirm whether creation started. Leaving does not cancel creation. Return to Profiles and check before trying again.', true);
+      if (pending.completed) return;
+      var text = 'Could not confirm whether creation started. Leaving does not cancel creation. Check Profiles before trying again.';
+      profilesStatus(text, true);
+      if (current()) importStatus(text, true);
     }
     WM.send('eve_settings_setup_create', pending.review, pending.request).then(function (reply) {
-      if (!current()) return;
+      if (pending.completed) return;
       if (reply && reply.accepted === false) {
-        draft.creating = null;
+        var attached = current();
+        retireReceipt(pending);
         discard(pending.review);
-        importChanged(false);
-        importStatus((reply.error || 'Creation was not started.') + ' Review the setup again before creating.', true);
+        var text = (reply.error || 'Creation was not started.') + ' Review the setup again before creating.';
+        profilesStatus(text, true);
+        if (attached) {
+          draft.creating = null;
+          importChanged(false);
+          importStatus(text, true);
+        }
       } else if (!reply || reply.accepted !== true) uncertain();
     }, uncertain);
   }
@@ -478,23 +506,31 @@
   };
 
   WM.uiSetupDone = function (payload) {
-    var pending = draft && draft.creating;
-    if (!payload || payload.operation !== 'ui_setup_create' || !pending || pending.completed
-        || !isCurrent(pending.view) || payload.request_id !== pending.request
-        || payload.review_id !== pending.review) return false;
-    pending.completed = true;
-    if (payload.published) {
-      draft.published = true;
-      importStatus('Profile created: ' + payload.path + '. Restart the launcher to refresh its profile list, then select it there. Wingman has not activated it in EVE.'
+    if (!payload || payload.operation !== 'ui_setup_create') return false;
+    var pending = receipts.filter(function (item) {
+      return payload.request_id === item.request && payload.review_id === item.review;
+    })[0];
+    if (!pending) return false;
+    retireReceipt(pending);
+    var text = payload.published
+      ? 'Profile created: ' + payload.path + '. Restart the launcher to refresh its profile list, then select it there. Wingman has not activated it in EVE.'
         + (payload.warning ? ' ' + payload.warning : '')
-        + (!payload.selection_persisted && !payload.warning ? ' Wingman could not remember the new selection; choose the created profile in Profiles.' : ''));
-    } else {
-      draft.creating = null;
-      importChanged(false);
-      importStatus((payload.error || 'Profile creation failed.') + ' Review the setup again before creating.', true);
+        + (!payload.selection_persisted && !payload.warning ? ' Wingman could not remember the new selection; choose the created profile in Profiles.' : '')
+      : (payload.error || 'Profile creation failed.') + ' Review the setup again before creating.';
+    profilesStatus(text, !payload.published);
+    // This receipt still owns an outcome after Back, but not the current tool's
+    // draft, authorization, focus or route. The sole completion owner refreshes
+    // Profiles from state, never by selecting the outcome's path.
+    if (isCurrent(pending.view) && draft && draft.creating === pending) {
+      if (payload.published) draft.published = true;
+      else {
+        draft.creating = null;
+        importChanged(false);
+      }
+      importStatus(text, !payload.published);
+      importControls();
+      WM.el('setup-status').focus();
     }
-    importControls();
-    WM.el('setup-status').focus();
     return true;
   };
 

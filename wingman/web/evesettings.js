@@ -1615,7 +1615,9 @@
     // Setup completions are correlated by their tool, never by the ordinary
     // copy form's pendingMutation. Late setup pushes cannot settle that form.
     if (payload.operation === 'ui_setup_create') {
-      if (WM.uiSetupDone) WM.uiSetupDone(payload);
+      // Receipt ownership survives Back. Re-read even for failure/warnings;
+      // another operation may already have changed the authoritative selection.
+      if (WM.uiSetupDone && WM.uiSetupDone(payload)) refresh();
       return;
     }
     var completedMutation = pendingMutation;

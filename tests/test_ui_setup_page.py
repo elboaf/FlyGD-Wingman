@@ -84,6 +84,19 @@ IMPORT_SCENARIOS = [
     "import-context-failure",
     "import-late-context",
     "import-limits-failure",
+    "yaml-warning-once",
+    "detached-success",
+    "detached-failure",
+    "detached-warning",
+    "detached-warning-fallback",
+    "detached-lost-starter",
+    "detached-rejected-starter",
+    "detached-refused",
+    "detached-early-done",
+    "detached-newer-review",
+    "detached-two-creates",
+    "detached-ordinary-copy",
+    "detached-other-route",
 ]
 
 

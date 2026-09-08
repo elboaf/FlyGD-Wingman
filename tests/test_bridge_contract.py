@@ -344,7 +344,8 @@ def test_setup_completion_cannot_settle_an_ordinary_profiles_mutation():
     done = source.split("WM.handle('onEveSettingsDone', function (payload) {", 1)[1]
     handoff, ordinary = done.split("var completedMutation = pendingMutation;", 1)
     assert "if (payload.operation === 'ui_setup_create')" in handoff
-    assert "if (WM.uiSetupDone) WM.uiSetupDone(payload);" in handoff
+    # Runtime coverage also executes both modules with the shell's real routes.
+    assert "if (WM.uiSetupDone && WM.uiSetupDone(payload)) refresh();" in handoff
     assert "return;" in handoff
     assert "pendingMutation =" not in handoff
     assert "setBusy(" not in handoff

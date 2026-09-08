@@ -2910,6 +2910,9 @@ button.btn:disabled,
   border-top: 1px solid var(--panel-border);
 }
 .es-profile-tools[hidden] { display: none; }
+/* A sent setup can finish after Back. Keep its live outcome beside its tools,
+   not in the upload-owned status strip or a newer setup's private draft. */
+#es-setup-status { flex-basis: 100%; margin: 0; min-height: 18px; overflow-wrap: anywhere; }
 .es-profile-tools-label {
   flex: none; color: var(--text-label); font-size: var(--fs-muted);
   letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
