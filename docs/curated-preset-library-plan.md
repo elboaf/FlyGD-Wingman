@@ -10,14 +10,14 @@
 
 **Spec:** [curated-preset-library-design.md](curated-preset-library-design.md).
 
-**Status:** Proposed, pending user approval. Independent proposal review approved the architecture/scope direction; its two-entry acceptance floor and source-reader race coverage corrections are incorporated. Documents only exist so far; no application implementation or phase-3 acceptance is claimed.
+**Status:** Catalog implementation remains proposed, pending overall approval. The separately approved compatibility prerequisite is implemented in `7783eaf` and `ec41d51`; [verification](curated-preset-library-verification.md) records its reviews, passing Linux suite, Windows coverage and remaining symlink-privilege failures. No complete library or phase-3 acceptance is claimed.
 
 ## Global constraints
 
 - Worktree: `/mnt/c/dev/flygd-wingman/.worktrees/curated-preset-library`; branch `feature/curated-preset-library`; base `75f3288e84c80018d6cee421ae2f32577ece53d3`.
 - Bundled-only distribution. New releases can change available presets, never previously imported copies.
 - Window arrangement is essential. Full `ui-setup` artifacts only; no formation changes or native-only catalog entries.
-- Reuse existing strict schemas, parsers, review/controller ownership, manifests, one-shot creation and EVE-closed checks. No schema/adapter expansion to make a catalog entry pass.
+- Reuse existing strict schemas, parsers, review/controller ownership, manifests, one-shot creation and EVE-closed checks. The user approved the bounded twenty-tab prerequisite below, superseding the previous blanket exclusion; the separately documented DAT corrections preserve existing portable field semantics. No unrelated adapter/schema changes are implicitly authorized.
 - Do not search private DATs/captures. Inspect only deliberately designated artifacts. Preserve earlier worktrees and recovery evidence.
 - Geometry stays as saved. Recipient resolution/UI scale/preferences remain local. Never move/resize real EVE windows.
 - Catalog metadata stays outside artifact envelopes. Text-only rendering. No paths/URLs accepted from callers for artifact loading.
@@ -56,7 +56,7 @@ Existing:
 
 Read the spec and handover; confirm linked worktree identity and clean baseline. If upstream moved, inspect relevant differences before choosing whether to integrate; never overwrite another session's work.
 
-- [ ] Create a checkout-specific environment outside NTFS if useful:
+- [x] Create a checkout-specific environment outside NTFS if useful:
 
 ```bash
 UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv sync --locked --extra dev
@@ -67,6 +67,17 @@ UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python
 ```
 
 Record exact baseline and skips. Missing codec/Node is not acceptable coverage. Stop on unexplained baseline failures rather than broadening scope to fix them.
+
+## Prerequisite task — expand the tab budget to the established slot domain
+
+**Status:** implemented after the user's concrete approval on 2026-09-08. Code reviews/polish are complete; the verification record retains the three Windows symlink-privilege failures and unperformed live-EVE checks rather than declaring every gate green.
+
+- [x] TDD for 9/20 tabs, one/eight groups, 21-tab/nine-group refusal, exact assignment/order and required geometry. Keep version 1, eight groups, 32 layout records and other budgets; derive `MAX_TABS` from existing `CLIENT_TAB_SLOTS`.
+- [x] Physical slot-19/sparse-to-dense remapping, slot-20 refusal, native twenty-tab one-group application and unchanged recipient geometry.
+- [x] Native-codec facade export/review/create/re-export with distinct invented recipients, plus both help areas consuming the new backend limit. No truncation or original-file mutation.
+- [x] Separate DAT-only omitted-`alwaysShownStates` correction grounded in current public-client getters. Preserve required fields, strict aliases/present values, canonical guards and portable JSON; test source, effective overrides, affected recipients and nonmutation.
+- [x] Separate DAT label projection normalizes exact integer zero to false for bold/italic/underline and underline integer one to true; preserve existing bold/italic integer one, booleans, optional absence and ordered/repeated labels. Current client field reads/formatters establish the effects. Other variants and public JSON remain strict.
+- [x] Independent reviews, scoped polish, fresh Linux/Windows gates and replay of both untouched private candidates. Both complete artifacts passed Windows native-codec new-profile/re-export checks on invented recipients. No live EVE profile was changed; this is not library-content approval.
 
 ## Task 1 — read-only catalog boundary
 
@@ -134,7 +145,7 @@ Use stable IDs `setup-catalog-open`, `setup-catalog-close`, `setup-catalog-selec
 
 **Consumes:** deliberately selected author exports and confirmed source/display/permission facts. This is a content dependency, not permission to search private evidence. Tasks 1–2 can use synthetic test data while exports arrive; feature acceptance cannot bypass this task.
 
-- [ ] Inspect designated full export bytes with existing parser/summary, and record their hashes. Inspect tab/label text for privacy and validate source/redistribution statements. Confirm the advertised window arrangement and intended display context with its author. Do not rewrite, normalize or silently repair the exported bytes. The user nominated Iridium, Signal Cartel, Kisover and Z-S GitLab; the spec records primary-source findings. Prefer Iridium's explicitly licensed current release for the initial derivative, but require an author-chosen edition of at most eight tabs (the full upstream v3.11.1 has thirteen). Signal Cartel/Kisover need a recorded permission grant; do not treat a public channel as permission. Distinguish Z-S's old GitLab snapshot from current in-game maintenance.
+- [ ] Inspect designated full export bytes with existing parser/summary, and record their hashes. Inspect tab/label text for privacy and validate source/redistribution statements. Confirm the advertised window arrangement and intended display context with its author. Do not rewrite, normalize or silently repair the exported bytes. The user nominated Iridium, Signal Cartel, Kisover and Z-S GitLab; the spec records primary-source findings. Prefer Iridium's explicitly licensed current release for the initial derivative. The full upstream v3.11.1 has thirteen tabs; the user's preserved arranged candidate has nine. Do not cut either to eight: the twenty-tab prerequisite accommodates them. Signal Cartel/Kisover need a recorded permission grant; do not treat a public channel as permission. Distinguish Z-S's old GitLab snapshot from current in-game maintenance.
 - [ ] Write the exact admission evidence to `docs/reference/curated-preset-content.md`; add approved artifacts, catalog metadata, source notices/license text. Obtain at least two approved, distinct complete arrangements, initially targeting scanning and fleet roles. Do not fabricate a second candidate if only one is approved: report that the content dependency remains open. Candidate role/name is not evidence of suitability.
 - [ ] Add failing inventory tests which validate every shipped entry, exact hash and full-artifact type; require at least two genuine, distinct complete setups; reject orphaned artifact files. Bind evidence/metadata to the content hash. Guard against production assets importing synthetic fixture names/content. Synthetic negative cases stay temporary.
 - [ ] Add end-to-end tests that obtain text through the catalog facade and then call the real existing `eve_settings_setup_review` and `eve_settings_setup_create` paths with distinct invented recipient data and the bundled release codec. Assert unchanged base/unselected settings/local display-file bytes, intended groups/ordered labels/layout, single-use publication and refusal paths. Use independent expected content facts; a summary alone is not an application oracle. Existing importer regression suites remain authoritative for their wider cases.

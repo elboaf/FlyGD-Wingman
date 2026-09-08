@@ -1,0 +1,134 @@
+# Complete setup library — compatibility prerequisite verification
+
+## Scope and current status
+
+**Verified production source:** `ec41d514ed3f61ffb2d898453490104be740408c`, after independent final review and scoped polish (no fixes needed). This record concerns the prerequisite needed to export the user's actual full setup candidates. It does **not** claim that the curated library UI, bundled content admission, publication, or in-game acceptance is complete.
+
+The user approved a twenty-tab portable budget instead of trimming real overview packs. A separate physical-DAT correction addresses omitted `alwaysShownStates` and exact legacy integer label flags, after read-only current-client inspection established their meaning. Portable JSON remains strict. Private captures are not repository fixtures or approved bundled data.
+
+## Isolation and captures
+
+Worktree: `.worktrees/curated-preset-library`, branch `feature/curated-preset-library`. Base `75f3288e84c80018d6cee421ae2f32577ece53d3`; initial proposal commit `7c151b9581b48121a5c478aaf018f667b8456405`.
+
+At the user's direction, captured the newest already-confirmed pair in the designated Test profile, first for Iridium and later for Z-S. Recency selected between confirmed pairs, never established account ownership. Production setup context/pair validation and the actual Windows closed-state probe were used. Source account/character files and local preference bytes were preserved privately outside the checkout, with SHA-256 receipts and independent verification of all four copied files per candidate. Source files and Wingman settings remained unchanged during each capture. Neither capture was published or included in tests.
+
+Structural observations, without copying personal contents into this record:
+- Iridium candidate: nine tabs, three groups (6/2/1). Original export stopped at eight-tab admission. A subsequent replay reached integer-zero label formatting.
+- Z-S candidate: six tabs, three groups (4/1/1). Eight saved filter definitions omit `alwaysShownStates`; underline also uses integer one.
+
+The original snapshots remain untouched. Replay uses those snapshots, not whichever setup later occupies the live Test profile. Strict export/reparse and synthetic-recipient application are engineering checks, not proof of EVE rendering or redistribution permission.
+
+## Baseline actually run
+
+Linked checkout, Linux, before source changes:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv sync --locked --extra dev
+node --version
+cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target
+cp packaging/settings-codec/target/release/wingman-settings-codec packaging/bin/wingman-settings-codec
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python -c 'from wingman.evesettings import codec; assert codec.codec_available()'
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-curated-baseline
+```
+
+Result: **8,537 passed, 11 skipped in 470.20s**. All eleven skips are Windows-only: three ordinary junction cases, two setup junction cases, DPAPI, WinDLL, one message-pump test and three Win32 binding cases. No native-codec or Node coverage skipped. Node was v26.5.0; locked release codec build/install succeeded.
+
+Windows capture uses a separate locked environment under Windows TEMP, with source imported from this linked checkout. The installed app's codec was copied into ignored worktree `packaging/bin`; source/copy SHA-256 both `18b85ebda93670814f68793e87a971c5d510cd0b0946f226dc6c2ba85c577eef`. This copied a test/runtime dependency, not an installation or build dispatch.
+
+## Twenty-tab task evidence
+
+Commit: `7783eaf4bf436b2a29b8a95e10ab9e6f531398aa` — `feat: support twenty-tab portable setups`.
+
+The limit derives from existing `CLIENT_TAB_SLOTS`. Version 1, eight groups, 32 layout records and all other resource/domain checks remain unchanged. The dev maximum now distributes twenty tabs across eight groups rather than inventing twenty overview windows; production UI help already derives its limits.
+
+Implementer TDD:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python -m pytest tests/test_ui_setup_model.py tests/test_ui_setup_sharing.py tests/test_ui_setup_yaml.py tests/test_ui_setup_documents.py tests/test_ui_setup_integration.py tests/test_ui_setup_page.py tests/test_dev_harness.py -k 'twenty or sparse_physical or full_twenty or facade_native_yaml or limits_payload or setup_dev_fixture' --tb=short -q
+```
+
+- RED: **27 failed, 10 passed, 973 deselected**, from old eight-tab admission/help/dev behavior.
+- GREEN: **37 passed, 973 deselected**.
+- Broad focused setup/dev suite: **1,478 passed, two Windows-junction skips in 303.18s**; no Node/native skips. An earlier 240-second timeout was superseded by this completed run.
+- Ruff lint and format, executable JS smoke, changed-JS syntax and diff checks passed.
+- Independent task review: **SpecCompliance PASS, TaskQuality PASS**, no actionable findings. This was read-only code review, not independent test execution.
+
+Parent Windows selected run initially yielded **33 passed, four missing-Node skips**. That result is incomplete coverage and not a final gate. A temporary official Windows Node v24.20.0 LTS runtime was subsequently provisioned outside the repository; its ZIP SHA-256 `6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba` matched the official `SHASUMS256.txt`. No system install or persistent PATH change occurred. Final Windows commands must prepend that directory to PATH.
+
+## Physical adapter and final review
+
+Commit `ec41d514ed3f61ffb2d898453490104be740408c` — `fix: normalize client-proved physical preset representations` — changes only the physical definition and label projections. [Current-client evidence](reference/setup-preset-compatibility.md) records hashes, observed getters/formatters and the semantic boundary without vendoring game code.
+
+TDD selected command:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python -m pytest tests/test_ui_setup_v24.py tests/test_ui_setup_integration.py -k 'dat_compat or portable_compat' -q --tb=short -rs
+```
+
+RED was **21 failed, 113 passed**; final GREEN was **134 passed**. Two new fixture expectations initially confused saved and unsaved filtered-state bodies and were corrected from the existing invented fixture; no extra production behavior change followed. The broader adapter/model/sharing/YAML/integration/codec gate passed **1,142 tests with no skips**. Ruff and diff checks passed.
+
+Independent final review of `7c151b9..ec41d51` returned **SpecCompliance PASS, TaskQuality PASS**, with no actionable findings. It additionally exercised a combined twenty-tab/legacy-representation path in memory, including five strict-portable refusals. That check did not access private captures. Scoped `polish-core --fix` found no safe fixes or outstanding reports: general code review, silent-failure analysis and comment/evidence analysis all returned no findings. No new types were introduced, so a separate type-design analysis was unnecessary. Parent-owned proposal/checkpoint prose was checked separately from the committed code review range.
+
+## Fresh final engineering gates
+
+After all source changes and reviews, the parent ran:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-curated-final-linux --junitxml=/tmp/wingman-curated-final-linux.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync ruff format --check .
+node scripts/js_smoke.js
+node --check wingman/web/dev.js
+node --check tests/fixtures/ui_setup_page.cjs
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+git diff 7c151b9..HEAD --check
+git diff --check
+```
+
+- Linux full suite: **8,704 passed, 11 Windows-only skips in 462.28s**. Same skip categories as baseline; no Node/native skips.
+- Ruff lint passed; format check: **331 files already formatted**.
+- Executable JS smoke passed all three pages; both explicit syntax checks passed.
+- Cargo regression: **one passed**, none failed/ignored.
+- Diff checks passed. No production source changed after these gates.
+
+Windows ran from this linked checkout with the locked capture venv, UTF-8 mode and the temporary Node directory prepended to CMD PATH:
+
+```bat
+%TEMP%\wingman-curated-capture-venv\Scripts\python.exe -X utf8 -B -m pytest tests/test_ui_setup_controller.py tests/test_ui_setup_documents.py tests/test_ui_setup_integration.py tests/test_ui_setup_model.py tests/test_ui_setup_page.py tests/test_ui_setup_profile.py tests/test_ui_setup_schema.py tests/test_ui_setup_sharing.py tests/test_ui_setup_v24.py tests/test_ui_setup_yaml.py tests/test_dev_harness.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_evesettings_codec.py -q -rs --basetemp=%TEMP%\wingman-curated-final-win --junitxml=%TEMP%\wingman-curated-final-win.xml
+```
+
+Windows result: **1,889 passed, 25 skipped, three failed in 208.11s**. The skips are explicitly POSIX-only special-file/unprivileged-symlink and case-sensitive-alias cases. All three failures are `WinError 1314` while the unchanged test fixtures attempt to create symlinks, before the application assertions:
+
+- `test_context_refuses_fallback_or_untrusted_bases[escaped]`
+- `test_pairs_require_unambiguous_confirmed_links_and_real_local_files[export-escape]`
+- `test_pairs_require_unambiguous_confirmed_links_and_real_local_files[review-escape]`
+
+`tests/test_ui_setup_controller.py` is unchanged by both commits. These are environment-blocked verification cases, **not a passing Windows gate**. No test was suppressed, and Windows Developer Mode, privileges or security policy were not changed. They need a suitably privileged runner or separately authorized environment setup.
+
+The parent independently inspected both JUnit documents. On **each** platform all **19 setup integration cases**, **90 setup-page runtime cases** and **116 dev-harness cases** passed without skips. Node and native-codec coverage is present in the final runs; the earlier missing-Node run is superseded. Neither Node nor Python tests render Windows/WebView2.
+
+## Actual candidate replay
+
+The reviewed production adapter exported both untouched private snapshots through the installed Windows codec, and strict full-artifact reparsing succeeded:
+
+| Candidate | UTF-8 bytes | Filters | Tabs / groups | Ordered labels | Layout records | SHA-256 |
+| --- | ---: | ---: | --- | ---: | ---: | --- |
+| Iridium-based default | 43,447 | 38 | 9 / 3 | 7 | 12 | `6b212cdc34a8ed8b2a65b53a69e1f4b95d9d1f66abf1e504da18beace24be8a2` |
+| Z-S-based default | 62,577 | 57 | 6 / 3 | 7 | 12 | `4c894d18da520457d9622ac4474ae0e08eeaf40574dca1e6cde607b6505e1bb3` |
+
+A separate parent Windows exercise supplied each exact artifact through the existing facade review/create integration harness with **invented recipient files**, actual codec encode/read-back and new-directory publication. It verified exact imported tabs, grouping, ordered labels, settings and layout through re-export, each incoming definition, unchanged original recipient files, preserved recipient identities/non-owned sections and byte-identical local preferences/unselected DATs. Intentional duplicate-Create probes produced the existing consumed-review refusal; no second profile was created. Temporary invented recipients were removed by their owned temporary-directory context. No real EVE profile was targeted.
+
+The candidates and their capture/export receipts remain private under Windows TEMP's `wingman-curated-library-candidates` directory, outside version control. Convenient copies are named `iridium-default.wingman.json` and `zs-default.wingman.json`; their hashes match the table. Raw source snapshots retain all capture hashes. The replay scripts are local verification tools, not a new app entry point or public artifact format. The installed app was not upgraded by these source changes.
+
+## Remaining acceptance and boundaries
+
+- Three Windows symlink-permission cases remain unresolved locally; no fully passing Windows suite is claimed.
+- No Windows/WebView2 rendering or actual EVE import/reload of these new candidate artifacts was performed. Earlier phase validation is not relabelled as candidate-specific acceptance.
+- Library UI, catalog packaging and approved content/provenance/display metadata remain future work under the library plan. Successful export/application engineering checks are not gameplay endorsement or redistribution permission.
+- No live-profile edits, real-window movement/resizing, launcher changes, push, PR, hosted build, release, installation or content publication occurred.
+
+### Rulings made during this prerequisite
+
+- Implement the separately approved compatibility prerequisite before the proposed library: this avoids pretending that raw snapshots are already importable content; the cost is a separate prerequisite checkpoint.
+- Default only omitted DAT `alwaysShownStates` after the client getter proved its empty-list semantics. If wrong it would change filter meaning; source/recipient tests, strict public input and independent evidence review constrain that risk.
+- Normalize only the observed/equivalent exact integer style values at the DAT boundary, retaining existing accepted representations elsewhere. If wrong it would change label appearance; type-sensitive nonmutation, ordered-label and actual native-candidate fidelity checks constrain that risk.

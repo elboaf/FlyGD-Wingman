@@ -1,6 +1,6 @@
 # Curated library of complete overview and layout setups
 
-Status: proposal for approval — no implementation authorized by this document.
+Status: library implementation remains proposed. The user separately approved the compatibility prerequisite; its implementation and verification are recorded in [the checkpoint](curated-preset-library-verification.md).
 Base: `75f3288e84c80018d6cee421ae2f32577ece53d3` (current main when the planning worktree was created).
 
 ## Outcome and decisions
@@ -48,7 +48,7 @@ The user nominated these sources; investigation is source selection, not approva
 
 | Source | Evidence checked | Admission consequence |
 | --- | --- | --- |
-| [Iridium](https://github.com/iridiumops/overview) | `license.md` explicitly licenses v2.1.0 onward under MIT OR BSD-3-Clause. Latest API release was v3.11.1 (2026-07-28); source inspected at `afb001962f5458dee1f21be00c20dc80121ecffb`. Its main YAML has 13 tab records and 38 definitions. | Strongest first base; elect MIT and carry the copyright/permission notice. Wingman's existing limit is eight tabs: author a deliberate, documented selection of at most eight, not a silent truncation. |
+| [Iridium](https://github.com/iridiumops/overview) | `license.md` explicitly licenses v2.1.0 onward under MIT OR BSD-3-Clause. Latest API release was v3.11.1 (2026-07-28); source inspected at `afb001962f5458dee1f21be00c20dc80121ecffb`. Its main YAML has 13 tab records and 38 definitions. | Strongest first base; elect MIT and carry the copyright/permission notice. The user rejects trimming to Wingman's old eight-tab budget; the bounded twenty-tab prerequisite below supersedes that earlier recommendation. |
 | [Signal Cartel / Explorer's Overview](https://wiki.signalcartel.space/Public:Signal_Cartel_Overview_Pack) | Public page describes exploration-first presets, current maintainer Echerie Saissore, 2026 changelog updates and in-game distribution through Explorer's Overview. No explicit artifact redistribution license was found in the fetched page. | Good exploration candidate; obtain a clear redistribution grant before bundling. A public channel or wiki-content license is not automatically an artifact license. |
 | [Kisover](https://www.wckg.net/home/kisover) | Author describes a maintained in-game pack, fleet-role filters and multi-window arrangements. No explicit artifact redistribution license or downloadable versioned artifact was found in the fetched page. | Candidate after permission and exact in-game source/export identity are recorded. Do not infer multi-window behavior or authority from screenshots alone. |
 | [Z-S GitLab](https://gitlab.com/Arziel/Z-S-Overview-Pack/) | Project API identifies `master`; latest branch commit `594b37af9f91714ed7f0a41169bef810d2a983a6` is dated 2019-08-27. README declares GPLv3 and v9.00.0347/April 2019 compatibility. Kisover's page recommends the in-game version and says its author also maintains Z-S. | Do not represent this GitLab snapshot as the current in-game pack. Record the exact selected version and confirm terms for current modifications before using them. |
@@ -62,7 +62,7 @@ Earlier unsupplied candidates (including Iterami) are not launch commitments. No
 An artifact enters the release bundle only after:
 
 1. Redistribution permission and attribution are established, including upstream conditions and the layout contributor's permission.
-2. Existing full-artifact parsing succeeds with no adapter/schema expansion or lossy normalization to make it pass. In particular, full setups stay within eight tabs/eight groups and the supported unstacked-window subset. For an upstream pack with more tabs, the author deliberately creates the smaller arranged edition in EVE before exporting; document the selection and keep unrelated upstream filter definitions where the exporter includes them.
+2. Existing full-artifact parsing succeeds after the explicitly proposed twenty-tab compatibility prerequisite, without other unreviewed adapter/schema expansion or lossy normalization. Retain eight groups and the supported unstacked-window subset. Do not trim incoming tabs to satisfy the obsolete eight-tab budget. A distinct representation refusal still needs a focused evidence-backed decision; increasing the tab budget is not permission to reinterpret unrelated fields.
 3. A reviewer inspects text for unwanted personal content, verifies the claimed scope, and binds the review record to the exact hash.
 4. Automated library-to-review-to-create tests exercise the unchanged importer with distinct recipient fixtures and the native codec.
 5. The author/operator records an actual complete import into a disposable, independently initialized recipient and checks the named layout, groups and labels. Previous phase validation establishes the importer, not these new content choices. This is a usable feature check, not another sequence of isolated schema experiments.
@@ -70,6 +70,21 @@ An artifact enters the release bundle only after:
 Record content evidence in `docs/reference/curated-preset-content.md` and shipped concise metadata. Include relevant license text with bundled assets. Reviewers do not fabricate author/operator evidence. Feedback changes the content revision in a later release. Removed entries disappear from the catalog but do not remove imported profiles.
 
 At least two genuinely useful, approved complete setups are required for initial feature acceptance. They may share an overview base but must offer distinct usable arrangements. If content is unavailable, report the feature as awaiting that dependency rather than reducing the acceptance floor. An empty, single-entry or synthetic-only catalog is not completion. Synthetic data stays in test fixtures and `dev.js` only. Community contributions follow the same admission process; distribution/publication permissions remain explicit.
+
+## Compatibility prerequisite from the actual candidates
+
+The user explicitly requested expanding the portable exporter rather than trimming real overview packs. Both designated Test-profile candidates were preserved outside the repository as private account/character/display snapshots, with all copied bytes hash-verified and source files/settings unchanged. Both now export/reparse and pass Windows native-codec new-profile/re-export checks against invented recipients; the checkpoint separates that engineering result from pending live-EVE and content admission. At acquisition, neither produced a valid full portable artifact; the original blockers were:
+
+- Iridium-based default: nine saved tabs in three groups (6/2/1); export refuses the eight-tab budget.
+- Z-S-based default: six saved tabs in three groups (4/1/1); eight saved filter definitions omit `alwaysShownStates`, and the existing adapter requires that field. Tab expansion alone does not solve this refusal.
+
+**Approved bounded amendment (2026-09-08):** derive `setup_model.MAX_TABS` from the existing `setup_compat.CLIENT_TAB_SLOTS = 20`. The documented client slot domain and physical adapter already support IDs 0–19. Keep eight groups, 32 layout records, all reference/order/presence/geometry/stack checks and the existing file/node/depth budgets. One-group native input consequently accepts up to twenty tabs too; no separate per-window eight-tab validator exists. Test nine/twenty accepted, twenty-one refused, sparse-to-dense mapping through slot 19 and actual native-codec application/re-export. UI help already derives the backend limit.
+
+Keep artifact version 1: field meanings and representation are unchanged. Older builds continue rejecting artifacts with more than eight tabs; document that receiving them requires an updated Wingman. This is an admission-budget expansion, not a restart of the earlier schema work.
+
+The Z-S omitted-field case is a separate compatibility correction. Static inspection of the current public client establishes that `GetAlwaysShownStates` and `GetAlwaysShownStatesByPresetKey` use a dictionary lookup with an empty-list default; the constant names the exact `alwaysShownStates` field. Normalize only that omitted DAT field to a fresh empty list in the exported semantic definition. Keep other required fields, unknown-field/alias checks, present-invalid-value refusal and the strict portable JSON requirement unchanged. The same physical-definition reader covers affected recipient comparisons and canonical protected checks, which need regression coverage. Do not edit private captures or treat export/reparse success as content approval. The independently stated public-client evidence and hashes must accompany the correction; do not vendor client code.
+
+Replaying Iridium after lifting the tab guard also reached legacy integer label styles: italic/underline integer zero, and Z-S contains underline integer one. The current client's raw label-field reads and truth-test formatting helpers establish their boolean effects. At the DAT projection boundary only, normalize exact integer zero to false for bold/italic/underline and exact integer one to true for underline. Preserve existing accepted bold/italic integer one, booleans, optional-field absence and ordered/repeated records. Other values remain refused; portable JSON validation is unchanged. This correction needs source/recipient/nonmutation and native-codec tests alongside the omitted-state correction, not additional schema experiments.
 
 ## Smallest complete UX
 
@@ -153,6 +168,6 @@ A read-only independent `review` agent approved the architecture/scope direction
 
 ## Exclusions and adaptation points
 
-No formation changes; no native-overview-only library entries; no schema/adapter expansion; no synthesized full layout from recipient data; no automatic fitting; no hosted catalog; no authentication; no community publishing UI; no installed-preset tracking or update reminders; no screenshots of private layouts committed; no unrelated refactors.
+No formation changes; no native-overview-only library entries; no unapproved schema/adapter expansion beyond the documented tab-budget and physical-DAT compatibility prerequisites; no synthesized full layout from recipient data; no automatic fitting; no hosted catalog; no authentication; no community publishing UI; no installed-preset tracking or update reminders; no screenshots of private layouts committed; no unrelated refactors.
 
 Revisit the plan only if an actual supplied artifact is refused by the shipped support boundary, redistribution rights are unavailable, its geometry requires unsupported stacks/windows, or proposed content cannot be validated. Do not silently broaden the schema or substitute an empty catalog. Routine copy/layout choices within this brief are local implementation decisions, not new approval gates.
