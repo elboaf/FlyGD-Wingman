@@ -178,7 +178,7 @@
 
   function renderSummary(result, source) {
     var counts = result.summary.counts;
-    WM.el('us-source').textContent = 'Source: ' + source.label;
+    WM.el('us-source').textContent = source.label;
     WM.el('us-counts').textContent = [quantity(counts.presets, 'filter'),
       quantity(counts.tabs, 'tab'), quantity(counts.windowGroups, 'overview group'),
       quantity(counts.shipLabels, 'ship label'), quantity(counts.layoutWindows, 'layout window')].join(' · ');
@@ -217,7 +217,7 @@
         }
         renderSummary(result, source);
         if (action === 'preview') {
-          finish(captured, 'Snapshot ready. Copy and Save each read a fresh snapshot.');
+          finish(captured, 'Snapshot ready to share.');
         } else if (action === 'copy') {
           var failed = function () {
             finish(captured, 'Could not copy to the clipboard. Try again or use Save file.', true);
@@ -276,6 +276,7 @@
       WM.el('setup-' + id).textContent = '';
     });
     WM.el('setup-native').hidden = true;
+    WM.el('setup-display-notice').hidden = true;
   }
 
   function clearImport() {
@@ -411,22 +412,29 @@
     // The validated Wingman model always has overview geometry. Zero imported
     // layout windows is the native configuration-only case, not local geometry.
     var native = counts.layoutWindows === 0;
-    WM.el('setup-type').textContent = native ? 'Native overview YAML' : 'Wingman overview and in-space layout preset';
+    WM.el('setup-type').textContent = native
+      ? 'Replaces the active overview configuration from native YAML; no window layout is imported.'
+      : 'Replaces the active overview configuration and supported in-space layout from the Wingman preset.';
     WM.el('setup-counts').textContent = [quantity(counts.presets, 'filter'), quantity(counts.tabs, 'tab'),
       quantity(counts.windowGroups, 'overview group'), quantity(counts.shipLabels, 'ship label'),
       quantity(counts.layoutWindows, 'layout window')].join(' · ');
-    WM.el('setup-target').textContent = 'Recipient: ' + target.label;
-    WM.el('setup-destination').textContent = 'New profile: ' + name.trim() + '. Existing profiles will not be overwritten.';
-    WM.el('setup-retention').textContent = 'Retained from your local base: resolution, display mode, monitor preferences, UI scale, core_public__.yaml and prefs.ini, and unrelated settings.'
-      + (keep ? ' Your complete ship labels are retained.' : ' Imported overview configuration replaces the active setup; unrelated saved filters remain.');
+    WM.el('setup-target').textContent = target.label;
+    WM.el('setup-destination').textContent = name.trim() + '. Existing profiles will not be overwritten.';
+    WM.el('setup-retention').textContent = 'Resolution, display mode, monitor preferences, UI scale, unrelated settings and unrelated saved filters from your local base.'
+      + (keep ? ' Your complete ship labels are retained.' : '');
     WM.el('setup-native').textContent = native ? 'Overview configuration only; no window layout. Supplied tabs become one group in the primary overview window. Primary and non-overview geometry stay local; surplus overview instances are retired. Absent options, including omitted column settings, stay local.' : '';
     WM.el('setup-native').hidden = !native;
     WM.el('setup-windows').textContent = native ? 'No layout windows imported.' : 'Included layout windows: ' + result.summary.windowLabels.join(', ');
     var warnings = result.warnings.filter(function (text, index, items) { return items.indexOf(text) === index; });
+    // Give the copied-layout caveat one owner, only for a layout import. Exact
+    // equality preserves distinct backend context; the runtime test uses the
+    // real model's notice so these two existing copies cannot silently drift.
+    var display = WM.el('setup-display-notice');
+    display.hidden = native || warnings.indexOf(display.textContent) !== -1;
     // Native parser warnings also appear in limitations. Keep their emphasized
     // owner below without dropping distinct limitations or extra worker warnings.
     WM.el('setup-limitations').textContent = result.summary.limitations.filter(function (text, index, items) {
-      return warnings.indexOf(text) === -1 && items.indexOf(text) === index;
+      return text !== display.textContent && warnings.indexOf(text) === -1 && items.indexOf(text) === index;
     }).join(' ');
     WM.el('setup-warnings').textContent = warnings.join(' ');
     WM.el('setup-summary').hidden = false;

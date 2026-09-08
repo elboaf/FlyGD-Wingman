@@ -15,6 +15,37 @@ is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
 
+## Operational legibility and review clarity
+
+Check at 840×625 CSS pixels and at a wider window. Browser checks supplement,
+but do not replace, these Windows/WebView2 checks.
+
+- [ ] **Editable offline names remain readable.** In Settings → Previews,
+      scroll into the offline roster. The sticky Offline heading remains visible;
+      names do not look disabled, and Configure still opens the correct row.
+- [ ] **Copy status is not lost in metadata.** In Fittings, a non-deployable fit
+      keeps its status readable with a long fitting name. Copy results clearly
+      associate each status and recovery instruction with its target character.
+- [ ] **Removal outcomes identify the character.** With controlled failed,
+      incomplete-cleanup and lost-reply responses, confirm the notice names the
+      selected pilot even after a roster refresh. Only a confirmed removal says
+      the pilot was removed. Incomplete cleanup directs the user to restart
+      Wingman; it does not claim that refreshing the roster repairs saved state.
+- [ ] **The copy limit describes additions, not selected fittings.** Guidance is
+      visible before review. More than 20 selected fits can still be reviewed
+      when enough already exist on the targets; more than 20 actual additions
+      across targets remain refused. Nothing is retried automatically.
+- [ ] **Setup review keeps consequences visible.** Check portable setup and
+      native overview YAML imports. Recipient, new profile, changes, retained
+      settings, account consequences and any required ship-label choice remain
+      visible outside the detail disclosures. Open those disclosures by keyboard.
+      A layout caveat appears once for a layout import, never for overview-only
+      YAML. Review focus has breathing room, and commit controls remain reachable.
+- [ ] **Formation scale labels stay separate from probes.** Check an empty,
+      origin-only and multi-probe formation. Rotate the drawing: the scale key
+      remains readable and identifies ring order without overlapping probe labels.
+      Coordinates, range values and save behavior are unchanged.
+
 ## Install
 - [ ] Installer runs without an admin prompt
 - [ ] Installer wizard, Start Menu entry, and Add/Remove Programs all read

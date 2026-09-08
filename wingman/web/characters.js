@@ -313,8 +313,13 @@
     return (result && result.error) || 'Could not cancel EVE sign-in.';
   }
 
-  function forgetError(result) {
-    return (result && result.error) || 'Could not forget this character.';
+  function forgetError(result, characterName) {
+    if (!result) {
+      return 'Could not confirm whether ' + characterName + ' was removed. '
+        + 'Reopen Characters to check the roster before trying again.';
+    }
+    return 'Could not forget ' + characterName + '.'
+      + (result.error ? ' ' + result.error : '');
   }
 
   function makeRow(row) {
@@ -449,13 +454,15 @@
         renderNotice();
         WM.send('eve_characters_forget', characterId).then(function (result) {
           if (!result || !result.applied) {
-            showNotice(forgetError(result), 'err');
+            showNotice(forgetError(result, characterName), 'err');
             return;
           }
           if (!result.persisted) {
-            showNotice((result && result.error)
-              || 'This character was removed, but some cleanup was not saved.',
-              'warn');
+            // A roster read cannot retry participant cleanup. Startup can;
+            // retain the removed identity after its row leaves the roster.
+            showNotice(characterName + ' was removed, but cleanup is incomplete. '
+              + 'Restart Wingman to retry cleanup before adding this character again.'
+              + (result.error ? '\n' + result.error : ''), 'warn');
             announce(characterName + ' was removed.');
             requestState();
             return;

@@ -352,7 +352,18 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_characters_warnings_menu_and_global_auth_commands_behave_together():
+@pytest.mark.parametrize(
+    "forget_result",
+    [
+        {"applied": True, "persisted": False, "error": "Cleanup was not saved."},
+        {"applied": True, "persisted": False, "error": ""},
+        {"applied": False, "persisted": False, "error": "Copy is still running."},
+        None,
+    ],
+)
+def test_characters_warnings_menu_and_global_auth_commands_behave_together(
+    forget_result,
+):
     script = textwrap.dedent(
         rf"""
         const vm = require('vm');
@@ -598,11 +609,7 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
 
           const replacementTrigger = findByClass(roster, 'characters-menu-trigger');
           replacementTrigger.dispatchEvent({{ type: 'click' }});
-          forgetResult = {{
-            applied: true,
-            persisted: false,
-            error: 'Cleanup was not saved.'
-          }};
+          forgetResult = {json.dumps(forget_result)};
           forget.dispatchEvent({{ type: 'click' }});
           await tick();
           await tick();
@@ -693,7 +700,21 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
     assert result["rowAuthButtonPresent"] is False
     assert result["menuClosedAfterAuthorityRender"] is True
     assert result["menuLabelAfterAuthorityRender"] == "Character actions"
-    assert "Cleanup was not saved." in result["localNoticeWithWarnings"]
+    # The menu has closed and later roster reads can replace this row. The
+    # operation's captured identity, not the latest roster, owns its outcome.
+    operation_notice = result["localNoticeWithWarnings"]
+    assert "Replacement Pilot" in operation_notice
+    if forget_result and forget_result["applied"]:
+        assert "was removed" in operation_notice
+        assert "Restart Wingman" in operation_notice
+    elif forget_result:
+        assert "Could not forget" in operation_notice
+        assert "was removed" not in operation_notice
+    else:
+        assert "Could not confirm whether" in operation_notice
+        assert "before trying again" in operation_notice
+    if forget_result and forget_result["error"]:
+        assert forget_result["error"] in operation_notice
     assert (
         "Restored eve_authority.json from backup." in result["localNoticeWithWarnings"]
     )
@@ -704,9 +725,10 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together():
     assert result["preservedRosterRowCount"] == 2
     assert result["preservedRosterName"] == "Replacement Pilot"
     assert result["emptyHiddenAfterReadError"] is True
-    assert "Cleanup was not saved." in result["readErrorNotice"]
+    assert operation_notice.split("\n")[0] in result["readErrorNotice"]
     assert "Could not refresh the authorized characters." in result["readErrorNotice"]
     assert result["recoveredRosterName"] == "Recovered Pilot"
+    assert "Replacement Pilot" in result["noticeAfterRecovery"]
     assert result["noticeAfterRecovery"] == result["localNoticeWithWarnings"]
     assert result["authDisabledImmediately"] is True
     assert result["cancelDisabledImmediately"] is True

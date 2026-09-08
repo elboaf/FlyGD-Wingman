@@ -427,12 +427,12 @@ def test_copy_conflicts_offer_alternate_name_or_explicit_skip():
 
 def test_copy_results_name_every_terminal_category_and_never_offer_retry():
     for label in (
-        "Success",
+        "Copied",
         "Already present",
         "Conflict / skipped",
         "Failed",
-        "Unknown",
-        "Unattempted due to throttle",
+        "Needs verification",
+        "Not attempted",
         "Cancelled",
     ):
         assert label in FITTINGS_JS
@@ -1205,7 +1205,7 @@ async function runStateMachineScenario() {
     assert.ok(calls.some(call => call[0] === 'fittings_start_copy'));
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       completed: 1, total: 1, result: {status: 'success'}});
-    assert.equal(el('fittings-copy-status').textContent, 'Success');
+    assert.equal(el('fittings-copy-status').textContent, 'Copied');
     assert.equal(el('fittings-copy-close').disabled, true);
     key('Escape');
     el('fittings-copy-close').click();

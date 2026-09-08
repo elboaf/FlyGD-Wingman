@@ -20,7 +20,13 @@ class Element {
     this.value = attrs.value || '';
     this.style = {};
   }
-  appendChild(node) { this.children.push(node); node.parentNode = this; return node; }
+  appendChild(node) {
+    if (node.parentNode) node.parentNode.children.splice(node.parentNode.children.indexOf(node), 1);
+    this.children.push(node); node.parentNode = this; return node;
+  }
+  insertBefore(node, reference) {
+    this.children.splice(this.children.indexOf(reference), 0, node); node.parentNode = this; return node;
+  }
   set textContent(text) { this.children = []; this.text = String(text); }
   get textContent() { return (this.text || '') + this.children.map(x => x.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
@@ -30,7 +36,7 @@ class Element {
       ? element.className.split(' ').includes(selector.slice(1))
       : element.tagName.toLowerCase() === selector) || null;
   }
-  getBoundingClientRect() { return {width: 300, height: 200}; }
+  getBoundingClientRect() { return this.rect || {width: 300, height: 200}; }
   addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
   dispatchEvent(event) {
     event.target ||= this;
@@ -618,9 +624,94 @@ async function deleteScenario() {
   assert.equal(WM.el('fm-dirty').textContent, 'Unsaved changes');
   assert.equal(saves.length, saveCount);
 }
+function svgNodes(svg, cls) {
+  return descendants(svg).filter(e => e.getAttribute('class') === cls);
+}
+function ringLabels(svg) {
+  // Accept labels anywhere first: the precision test must expose rounding,
+  // independently of whether the annotation lane has been implemented yet.
+  return descendants(svg.parentNode).filter(e =>
+    (e.className || e.getAttribute('class')) === 'fm-ring-label');
+}
+function assertExternalKey(svg, expected) {
+  assert.deepEqual(ringLabels(svg).map(e => e.textContent), expected);
+  assert.equal(svgNodes(svg, 'fm-ring-label').length, 0,
+    'ring distances must not share the rotating probe drawing area');
+  const key = descendants(svg.parentNode).find(e => e.id === svg.getAttribute('aria-describedby'));
+  assert.ok(key, 'the SVG must describe its scale through the visible external key');
+  assert.match(key.textContent, /inner.*outer/i, 'the key must explain which ring each distance names');
+  assert.equal(key.hidden, false);
+  assert.equal(svg.getAttribute('role'), 'img');
+  assert.ok(svg.getAttribute('aria-label'));
+}
+async function previewScenario() {
+  const svg = WM.el('fm-preview');
+  svg.rect = {width: 150, height: 150};
+  const data = reply();
+  if (scenario === 'preview-key-separation') {
+    data.formations[0].probes = [
+      {x: -10000000, y: 0, z: 0, range: 598391482800},
+      {x: 10000000, y: 0, z: 0, range: 598391482800},
+      {x: 0, y: -10000000, z: 0, range: 598391482800},
+      {x: 0, y: 10000000, z: 0, range: 598391482800}
+    ];
+  } else if (scenario === 'preview-origin-scale') data.formations[0].probes[0].x = 0;
+  else if (scenario === 'preview-fractional-scale') data.formations[0].probes[0].x = 7000;
+  WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+  assert.equal(svg.getAttribute('viewBox'), '0 0 150 150');
+  assert.equal(svgNodes(svg, 'fm-ring').length, 3);
+  if (scenario === 'preview-origin-scale' || scenario === 'preview-fractional-scale') {
+    assertExternalKey(svg, scenario === 'preview-origin-scale'
+      ? ['0.5 km', '1 km', '1.5 km'] : ['2.5 km', '5 km', '7.5 km']);
+  } else if (scenario === 'preview-key-separation') {
+    assertExternalKey(svg, ['5,000 km', '10,000 km', '15,000 km']);
+    assert.equal(svgNodes(svg, 'fm-probe').length, 4);
+  } else if (scenario === 'preview-empty-scale') {
+    assertExternalKey(svg, ['1 km', '2 km', '3 km']);
+    WM.el('fm-probes').children.find(e => e.textContent === 'Remove').click();
+    assert.equal(svgNodes(svg, 'fm-ring').length, 0);
+    assert.equal(ringLabels(svg).length, 0, 'removing the last probe must clear the previous scale');
+    assert.equal(svgNodes(svg, 'fm-ship').length, 1);
+    data.formations = [];
+    WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+    assert.equal(svg.children.length, 0); assert.equal(ringLabels(svg).length, 0);
+  } else if (scenario === 'preview-import-key') {
+    const imported = WM.el('fm-import-preview'); imported.rect = {width: 150, height: 150};
+    const incoming = shared(); incoming.probes[0] = {x: 0, y: 0, z: 0, range: 149597870700};
+    await review([incoming]);
+    assertExternalKey(imported, ['0.5 km', '1 km', '1.5 km']);
+    assert.equal(svgNodes(imported, 'fm-probe').length, 1);
+    inputText('');
+    assert.equal(svgNodes(imported, 'fm-ring').length, 0);
+    assert.equal(ringLabels(imported).length, 0, 'invalidating a review must clear its scale');
+  } else if (scenario === 'preview-rotation') {
+    const positions = () => svgNodes(svg, 'fm-probe').map(e => [e.getAttribute('cx'), e.getAttribute('cy')]);
+    const before = positions();
+    // Original 150px projection of (2, 0, 0) km, checked independently.
+    assert.ok(Math.abs(Number(before[0][0]) - 101.96096) < 0.001);
+    assert.ok(Math.abs(Number(before[0][1]) - 67.817) < 0.001);
+    svg.dispatchEvent({type: 'mousedown', clientX: 0, clientY: 0});
+    for (const [x, y] of [[100, -40], [200, 120], [-300, -200], [60, 30]]) {
+      window.dispatchEvent({type: 'mousemove', clientX: x, clientY: y});
+      assertExternalKey(svg, ['1 km', '2 km', '3 km']);
+    }
+    assert.notDeepEqual(positions(), before, 'drag must still rotate the real projection');
+    window.dispatchEvent({type: 'mouseup'});
+    const released = positions();
+    window.dispatchEvent({type: 'mousemove', clientX: 900, clientY: 900});
+    assert.deepEqual(positions(), released, 'mouseup must stop rotation');
+    svg.rect = {width: 300, height: 200}; window.dispatchEvent({type: 'resize'});
+    assert.equal(svg.getAttribute('viewBox'), '0 0 300 200');
+    assert.notDeepEqual(positions(), released);
+    assert.equal(WM.el('fm-dirty').textContent, '', 'rotation and resize are not document edits');
+    rename('Rotated'); click('fm-save'); assertSave(saves[0], A, 'Rotated');
+  } else assert.fail('Unknown preview scenario: ' + scenario);
+  if (scenario !== 'preview-rotation') assert.equal(saves.length, 0);
+}
 async function main() {
   await open();
-  if (scenario.startsWith('delete-')) await deleteScenario();
+  if (scenario.startsWith('preview-')) await previewScenario();
+  else if (scenario.startsWith('delete-')) await deleteScenario();
   else if (scenario.startsWith('paste-')) await pasteScenario();
   else if (scenario.startsWith('copy-')) await copyScenario();
   else if (scenario === 'account-context') {

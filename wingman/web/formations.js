@@ -489,7 +489,7 @@
     importReview = null;
     WM.el('fm-import-text').value = '';
     WM.el('fm-import-list').textContent = '';
-    WM.el('fm-import-preview').textContent = '';
+    renderImportPreview();
     WM.el('fm-import-work').hidden = true;
     WM.el('fm-import-commit').hidden = true;
     WM.el('fm-editor-work').hidden = false;
@@ -916,7 +916,7 @@
 
   // The viewBox is set to the element's own CSS pixel size on every draw,
   // rather than being a fixed square the browser then scales. One user
-  // unit is one CSS pixel, so a stroke of 1 is a hairline and the ring
+  // unit is one CSS pixel, so a stroke of 1 is a hairline and the probe
   // labels can take --fs-label from the stylesheet and mean it. A fixed
   // viewBox scaled 9px type down to about 5px at the 840x625 floor, which
   // is the whole reason this is computed rather than declared.
@@ -930,8 +930,11 @@
     var rect = svg.getBoundingClientRect();
     var w = Math.round(rect.width), h = Math.round(rect.height);
     var cx = w / 2, cy = h / 2;
-    var extent = 1, scale, step, i, r, a, pts, p, c, items, label;
+    var extent = 1, scale, step, i, r, a, pts, p, c, items;
+    var key = svg.parentNode.querySelector('.fm-ring-key');
     svg.textContent = '';
+    key.textContent = '';
+    key.hidden = true;
     // Off-route (or mid-layout) the element has no box, and every
     // coordinate below would be NaN.
     if (!f || w < 2 || h < 2) { return; }
@@ -952,6 +955,10 @@
     // rounds up, so three rings can reach half again as far as the widest
     // probe and the outer one would be drawn outside the box.
     scale = Math.max(10, Math.min(w, h) / 2 - MARGIN) / Math.max(extent, step * 3);
+    // Keep distance annotations outside the SVG: even staggered labels can
+    // collide with probes as the view rotates, especially at the 150px floor.
+    key.hidden = false;
+    key.appendChild(WM.make('div', 'fm-ring-key-title', 'Rings, inner to outer'));
     for (i = 1; i <= 3; i++) {
       r = step * i;
       pts = [];
@@ -962,14 +969,10 @@
                  + (cy + p.sy * scale).toFixed(1));
       }
       svg.appendChild(el('polygon', { points: pts.join(' '), 'class': 'fm-ring' }));
-      // At the ring's widest point, end-anchored so the text lands INSIDE
-      // the ring it names, and stepped down by a line each so the three do
-      // not pile up: the rings flatten with pitch, and at a shallow one
-      // three labels on one horizontal line overlap each other.
-      label = el('text', { x: cx + r * scale - 4, y: cy + (i - 2) * 13,
-                           'class': 'fm-ring-label' });
-      label.textContent = formatKm(r);
-      svg.appendChild(label);
+      // niceStep can produce half-km distances below 10 km. Whole-km
+      // rounding made an origin-only probe show two different rings as 1 km.
+      key.appendChild(WM.make('div', 'fm-ring-label',
+        r < 10 ? r.toLocaleString() + ' km' : formatKm(r)));
     }
     // Painted back to front, so a probe in front of another overlaps it
     // rather than the draw order deciding at random.
@@ -1211,6 +1214,14 @@
     });
 
     [svg, WM.el('fm-import-preview')].forEach(function (preview) {
+      var box = WM.make('div', 'fm-preview-box');
+      var key = WM.make('div', 'fm-ring-key');
+      key.id = preview.id + '-key';
+      key.hidden = true;
+      preview.setAttribute('aria-describedby', key.id);
+      preview.parentNode.insertBefore(box, preview);
+      box.appendChild(preview);
+      box.appendChild(key);
       preview.addEventListener('mousedown', function (e) {
         e.preventDefault();
         dragging = true;

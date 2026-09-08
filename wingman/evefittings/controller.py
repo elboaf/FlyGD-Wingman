@@ -871,7 +871,9 @@ class FittingsController:
         write_count = counts["ready"]
         if write_count > contracts.MAX_COPY_WRITES:
             return self._preflight_error(
-                "Split this copy into batches of 20 fittings or fewer.", pairs
+                f"Limit each copy to {contracts.MAX_COPY_WRITES} additions across all "
+                "targets. Select fewer fittings or targets, then review again.",
+                pairs,
             )
         requires_resolution = any(
             pair.status == "conflict" and not pair.skipped for pair in pairs
@@ -1029,9 +1031,9 @@ class FittingsController:
         now: datetime,
     ) -> str:
         if entry.deployment_template is None:
-            return "This fitting has no safe deployment template."
+            return "This fitting cannot be copied safely. Choose a different fitting."
         if capability_status != "enabled":
-            return "Enable Fittings for this character first."
+            return "Use Authenticate character… in Settings \u203a Characters first."
         snapshot = self._snapshot_locked(character_id)
         if snapshot is None or snapshot.fetched_utc is None:
             return "Refresh this character before copying fittings."
@@ -1614,6 +1616,7 @@ class FittingsController:
             "total": total,
             "page": page,
             "page_size": contracts.PAGE_SIZE,
+            "max_copy_writes": contracts.MAX_COPY_WRITES,
             "filters": {
                 "collection_id": collection_id,
                 "search": search,

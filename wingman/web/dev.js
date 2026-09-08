@@ -853,6 +853,7 @@
       total: filtered.length,
       page: page,
       page_size: FIT_PAGE_SIZE,
+      max_copy_writes: fittings.max_copy_writes,
       filters: { collection_id: collectionId, search: filters.search || '',
                  ship_type_id: filters.ship_type_id || null },
       refreshing: fittings.refreshing
@@ -972,6 +973,7 @@
   // every pair for the second fit is unattempted.
   var DEV_FITTINGS_SCREENSHOT_FIXTURE = {
     "kind": "fittings-screenshot-v1",
+    "max_copy_writes": 20,
     "copy_roles": {
       "unknown_character_id": 90000015,
       "throttle_character_id": 90000016
@@ -1047,7 +1049,7 @@
       "counts": {"ready": 0, "present": 1, "conflict": 1, "unavailable": 1}, "requires_resolution": true, "error": "",
       "pairs": [
         {"entry_id": "fit-conflict-existing", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "present", "error": "", "skipped": false},
-        {"entry_id": "fit-gen-0", "character_id": 90000014, "fitting_name": "Generated Fit 001", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 001", "status": "unavailable", "error": "This fitting has no safe deployment template.", "skipped": false},
+        {"entry_id": "fit-gen-0", "character_id": 90000014, "fitting_name": "Generated Fit 001", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 001", "status": "unavailable", "error": "This fitting cannot be copied safely. Choose a different fitting.", "skipped": false},
         {"entry_id": "fit-conflict-source", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "conflict", "error": "", "skipped": false}
       ]
     },
@@ -1064,6 +1066,7 @@
     }
   };
 
+  fittings.max_copy_writes = DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes;
   var fitCopyTickets = {};
   var fitCopyTicketIndex = 0;
   var fitCopyCancelled = false;
@@ -1091,8 +1094,8 @@
     if (!entry.deployable || character.status !== 'enabled' || character.stale
         || !character.fetched_utc) {
       base.status = 'unavailable';
-      base.error = !entry.deployable ? 'This fitting has no safe deployment template.'
-                                     : 'Refresh or enable this character first.';
+      base.error = !entry.deployable ? 'This fitting cannot be copied safely. Choose a different fitting.'
+                                     : 'Use Authenticate character\u2026 in Settings \u203a Characters if needed, then Refresh characters.';
       return base;
     }
     if (entry.presences.some(function (p) {
@@ -1178,7 +1181,7 @@
     });
     var counts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
     pairs.forEach(function (pair) { counts[pair.status] += 1; });
-    var overLimit = counts.ready > 20;
+    var overLimit = counts.ready > DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes;
     var accepted = !choiceError && !overLimit;
     var requires = accepted && pairs.some(function (pair) {
       return pair.status === 'conflict' && !pair.skipped;
@@ -1193,7 +1196,8 @@
       write_count: accepted ? counts.ready : 0,
       counts: counts, requires_resolution: requires, pairs: pairs,
       error: choiceError || (overLimit
-        ? 'Split this copy into batches of 20 fittings or fewer.' : '')
+        ? 'Limit each copy to ' + DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes
+          + ' additions across all targets. Select fewer fittings or targets, then review again.' : '')
     });
   };
 
