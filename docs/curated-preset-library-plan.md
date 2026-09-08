@@ -47,9 +47,9 @@ New:
 Existing:
 - `wingman/paths.py`, `pyproject.toml`, `packaging/uploader.spec` and `.github/actions/build-installer/action.yml` — asset resolution/collection and actual output verification.
 - `wingman/evesettings/controller.py`, `wingman/ui/api.py` — read-only wrappers and thin facades.
-- `wingman/web/uisetup.js`, `index.html`, `style.css`, `dev.js` — contextual picker; no new route/module/controller.
+- `wingman/web/uisetup.js`, `index.html`, `style.css`, `dev.js` — contextual picker; no new route/module/controller. `panel.js` received the narrowly required shared focus-fallback correction exposed by queued replacement.
 - `tests/test_ui_setup_controller.py`, `test_ui_setup_page.py`, `fixtures/ui_setup_page.cjs`, `test_ui_setup_integration.py` — exact existing flow, delayed-response and publication regressions.
-- `tests/test_bridge_contract.py`, `test_packaging_completeness.py`, `test_dev_harness.py`, `test_page_conventions.py` — extend established conventions only as needed.
+- `tests/test_bridge_contract.py`, `test_profiles_controller_contract.py`, `test_packaging_completeness.py`, `test_dev_harness.py`, `test_page_conventions.py` — extend established conventions only as needed.
 - `README.md`, `docs/smoke-checklist.md`, `THIRD-PARTY-NOTICES.md` — shipped behavior, content acceptance and notices.
 
 ## Preparation — isolated baseline
@@ -114,12 +114,14 @@ Task 1 completed in `55f2153` and `e61c8b5`: 839 broader focused passes before t
 
 ## Task 2 — catalog to existing import draft, without new authority
 
+**Status:** complete through `f9636ef`, including independently reviewed queued-dialog visibility/focus corrections, safe diagnostics and the strict Profiles facade inventory. Final Linux: 8,910 passed / 11 Windows-only skips. Windows focused: 2,162 passed / 25 POSIX-only skips / seven symlink-privilege failures. Browser dev scenarios passed at both required viewport sizes. See the verification record; these results do not complete content admission or packaging.
+
 **Files:** controller/API facades; `uisetup.js`, `index.html`, `style.css`, `dev.js`; controller/page/bridge/dev/convention tests.
 
 **Interfaces:** `eve_settings_setup_catalog()` -> `{ok,entries,error}` and `eve_settings_setup_catalog_entry(preset_id,revision,sha256)` -> `{ok,entry,text,summary,error}` as described in the spec. JS owns selection, request identity and provenance display. No new push handlers or persisted state.
 
-- [ ] Add controller tests proving reads do not call setup review/create, require EVE to be closed, acquire a mutation lock, save settings or publish events. Success/errors project as documented. Invalid bridge arguments refuse through the module boundary.
-- [ ] Extend the actual `ui_setup_page.cjs` harness and pytest case list. Required scenarios: list empty/error/retry; exact selected identity sent; literal markup metadata; browse/close preserves existing reviewed input; failed load preserves review; Use requires explicit selection; confirmed replacement clears review/label choice but retains local pair/name; cancelled replacement preserves them; manual text edit clears bundled attribution; read or confirmation delivered after text/name/base/pair change, Close, route exit/re-entry or Create is ignored; pending Paste/File replies after accepted catalog replacement and pending catalog replies after successful Paste/File replacement cannot overwrite text or restore attribution; selection A → B → A cannot readmit A's first response; no automatic Review/Create; detached creation outcomes retain the existing owner.
+- [x] Add controller tests proving reads do not call setup review/create, require EVE to be closed, acquire a mutation lock, save settings or publish events. Success/errors project as documented. Invalid bridge arguments refuse through the module boundary.
+- [x] Extend the actual `ui_setup_page.cjs` harness and pytest case list. Required scenarios: list empty/error/retry; exact selected identity sent; literal markup metadata; browse/close preserves existing reviewed input; failed load preserves review; Use requires explicit selection; confirmed replacement clears review/label choice but retains local pair/name; cancelled replacement preserves them; manual text edit clears bundled attribution; read or confirmation delivered after text/name/base/pair change, Close, route exit/re-entry or Create is ignored; pending Paste/File replies after accepted catalog replacement and pending catalog replies after successful Paste/File replacement cannot overwrite text or restore attribution; selection A → B → A cannot readmit A's first response; no automatic Review/Create; detached creation outcomes retain the existing owner.
 
 Representative production-harness assertions (use the fixture's real `click`, `WM` and deferred bridge machinery, adding narrowly scoped catalog reply seams):
 
@@ -136,19 +138,23 @@ assert.equal(WM.el('setup-create').disabled, false);
 
 Use stable IDs `setup-catalog-open`, `setup-catalog-close`, `setup-catalog-select`, `setup-catalog-use`, `setup-catalog-details`, `setup-catalog-status`, and `setup-catalog-origin` consistently. The containing region has an explicit `[hidden]` override if its style sets display.
 
-- [ ] Run focused new cases and record RED. Implement thin wrappers, inline selector/details/actions and source loading under existing generation/version ownership. Do not reuse `readImport` unchanged: it invalidates review at read start, whereas catalog browsing/failure must not. Invoke `importChanged(true)` only when replacement is accepted and still current.
-- [ ] Add invented catalog replies only to `dev.js`, inert outside dev mode. Exercise both ordinary and failure/long-data states with the real production module.
-- [ ] Run `test_ui_setup_controller.py`, `test_ui_setup_page.py`, `test_profiles_page.py`, `test_bridge_contract.py`, `test_page_conventions.py`, `test_dev_harness.py`, and `node scripts/js_smoke.js`; run Ruff and syntax checks on changed JS.
-- [ ] Independent task review focuses on read-versus-review authority, stale confirmations/replies, input attribution, existing completion ownership and accessibility. Fix/test findings and commit.
+- [x] Run focused new cases and record RED. Implement thin wrappers, inline selector/details/actions and source loading under existing generation/version ownership. Do not reuse `readImport` unchanged: it invalidates review at read start, whereas catalog browsing/failure must not. Invoke `importChanged(true)` only when replacement is accepted and still current.
+- [x] Add invented catalog replies only to `dev.js`, inert outside dev mode. Exercise both ordinary and failure/long-data states with the real production module.
+- [x] Run `test_ui_setup_controller.py`, `test_ui_setup_page.py`, `test_profiles_page.py`, `test_bridge_contract.py`, `test_page_conventions.py`, `test_dev_harness.py`, and `node scripts/js_smoke.js`; run Ruff and syntax checks on changed JS.
+- [x] Independent task review focuses on read-versus-review authority, stale confirmations/replies, input attribution, existing completion ownership and accessibility. Fix/test findings and commit.
+
+Discoveries required narrowly extending `panel.js`'s existing focus fallback and `test_profiles_controller_contract.py`'s exact facade inventory. No new dialog API, queue semantics, public bridge attributes or completion owner were introduced.
 
 ## Task 3 — real full setups, provenance, packaging and application evidence
+
+**Status:** content admission is blocked on author-confirmed EVE resolution/UI scale, public layout credit and the Z-S source/version. Privacy text review and public filter comparisons are recorded, but are not substitutes for those facts or redistribution evidence. Do not add fake metadata, an empty production catalog or copied private snapshots to make packaging appear complete.
 
 **Files:** production assets, content reference, notices, package configuration/build assertions, catalog/packaging/integration tests, README and smoke checklist.
 
 **Consumes:** deliberately selected author exports and confirmed source/display/permission facts. This is a content dependency, not permission to search private evidence. Tasks 1–2 can use synthetic test data while exports arrive; feature acceptance cannot bypass this task.
 
 - [ ] Inspect designated full export bytes with existing parser/summary, and record their hashes. Inspect tab/label text for privacy and validate source/redistribution statements. Confirm the advertised window arrangement and intended display context with its author. Do not rewrite, normalize or silently repair the exported bytes. The user nominated Iridium, Signal Cartel, Kisover and Z-S GitLab; the spec records primary-source findings. Prefer Iridium's explicitly licensed current release for the initial derivative. The full upstream v3.11.1 has thirteen tabs; the user's preserved arranged candidate has nine. Do not cut either to eight: the twenty-tab prerequisite accommodates them. Signal Cartel/Kisover need a recorded permission grant; do not treat a public channel as permission. Distinguish Z-S's old GitLab snapshot from current in-game maintenance.
-- [ ] Write the exact admission evidence to `docs/reference/curated-preset-content.md`; add approved artifacts, catalog metadata, source notices/license text. Obtain at least two approved, distinct complete arrangements, initially targeting scanning and fleet roles. Do not fabricate a second candidate if only one is approved: report that the content dependency remains open. Candidate role/name is not evidence of suitability.
+- [ ] Write the exact admission evidence to `docs/reference/curated-preset-content.md`; add approved artifacts, catalog metadata, source notices/license text. Obtain at least two approved, distinct complete arrangements, initially using the user's nominated Iridium and Z-S defaults rather than inventing specialised gameplay roles. Do not fabricate a second candidate if only one is approved: report that the content dependency remains open. Candidate role/name is not evidence of suitability.
 - [ ] Add failing inventory tests which validate every shipped entry, exact hash and full-artifact type; require at least two genuine, distinct complete setups; reject orphaned artifact files. Bind evidence/metadata to the content hash. Guard against production assets importing synthetic fixture names/content. Synthetic negative cases stay temporary.
 - [ ] Add end-to-end tests that obtain text through the catalog facade and then call the real existing `eve_settings_setup_review` and `eve_settings_setup_create` paths with distinct invented recipient data and the bundled release codec. Assert unchanged base/unselected settings/local display-file bytes, intended groups/ordered labels/layout, single-use publication and refusal paths. Use independent expected content facts; a summary alone is not an application oracle. Existing importer regression suites remain authoritative for their wider cases.
 - [ ] Test geometry equivalence between the selected artifact and the applied supported records, plus label order/multiplicity. Assert catalog metadata never becomes artifact payload or recipient settings. No formation save or new YAML application path is involved.
@@ -159,6 +165,8 @@ Use stable IDs `setup-catalog-open`, `setup-catalog-close`, `setup-catalog-selec
 **Actual content acceptance:** the author/operator uses the complete feature with an independently initialized disposable recipient and checks the saved arrangement, groups/labels and local display preservation. Record actual platform/build/content hashes. Do not use a clone already containing the sender's arrangement as proof of importing it. Further EVE/launcher operations require applicable authorization; engineering results cannot substitute for them.
 
 ## Task 4 — polish, independent review and fresh verification
+
+Tasks 1–2 have received scoped polish, independent correction reviews, full Linux/focused Windows gates and rendered browser checks. Repeat the whole-feature checks below after Task 3; the overall plan remains incomplete.
 
 - [ ] Render the actual dev module at 840x625 and 839x621: selection/details, long provenance, empty/error, failed reads, replacement confirmation, keyboard/focus, scrolling and pending-read cancellation. Keep isolated browser data; do not access real clipboard or private profiles. Record browser versus Windows evidence separately.
 - [ ] Run `polish-core --fix` scoped to the feature base. Inspect all edits; do not fix unrelated inherited code. Re-run affected tests after every correction.
