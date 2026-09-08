@@ -968,8 +968,9 @@
   function paintSetupTool() {
     // setup_context owns codec/confirmed-pair availability, not ordinary copy
     // mode or its target checkboxes. Let the tool explain missing links.
-    WM.setEnabled('es-setup-share', !!(state && state.profile && !busy
-      && !state.identification_active));
+    var available = !!(state && state.profile && !busy && !state.identification_active);
+    WM.setEnabled('es-setup-share', available);
+    WM.setEnabled('es-setup-import', available);
   }
 
   function button(text, handler, extra) {
@@ -1457,6 +1458,12 @@
     WM.el('es-setup-share').addEventListener('click', function () {
       if (!state || !WM.openUiSetup) return;
       WM.openUiSetup({mode: 'export', context: state,
+        preferred_character: kind() === 'characters' ? WM.el('es-source').value : ''});
+    });
+
+    WM.el('es-setup-import').addEventListener('click', function () {
+      if (!state || !WM.openUiSetup) return;
+      WM.openUiSetup({mode: 'import', context: state,
         preferred_character: kind() === 'characters' ? WM.el('es-source').value : ''});
     });
 

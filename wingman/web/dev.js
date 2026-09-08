@@ -3134,14 +3134,34 @@
   api.eve_settings_setup_limits = function () {
     return Promise.resolve(JSON.parse(JSON.stringify(DEV_SETUP_LIMITS)));
   };
+  function devSetupContext(profile) {
+    var first = profile === eve.profiles[0].path;
+    // Not just a different token on the same flat roster: the second local
+    // base owns distinct files, identities and confirmed associations.
+    var accounts = first ? eve.accounts : [
+      {path: profile + '/core_user_901.dat', id: '901', name: 'Reserve account', character_ids: ['902']}];
+    var characters = first ? eve.characters : [
+      {path: profile + '/core_char_902.dat', id: '902', name: 'Reserve pilot é <literal>'}];
+    if (devSearch.get('setup') === 'max') {
+      accounts = accounts.map(function (row) {
+        var copy = JSON.parse(JSON.stringify(row)); copy.name = new Array(181).join('A') + ' <account>'; return copy;
+      });
+      characters = characters.map(function (row) {
+        var copy = JSON.parse(JSON.stringify(row)); copy.name = new Array(181).join('é') + ' <pilot>'; return copy;
+      });
+    }
+    var valid = eve.profiles.some(function (row) { return row.path === profile; });
+    return {ok: valid, error: valid ? '' : 'Choose an available local base.', root: eve.root, server: eve.server,
+      profile: profile, profiles: eve.profiles, accounts: valid ? accounts : [],
+      characters: valid ? characters : [], account_identity_available: true, setup_available: true};
+  }
   api.eve_settings_setup_context = function (profile) {
-    return Promise.resolve({ok: true, error: '', root: eve.root, server: eve.server,
-      profile: profile, profiles: eve.profiles, accounts: eve.accounts,
-      characters: eve.characters, account_identity_available: true, setup_available: true});
+    return Promise.resolve(JSON.parse(JSON.stringify(devSetupContext(profile))));
   };
   api.eve_settings_setup_export = function (profile, accountPath, characterPath) {
-    var account = eve.accounts.filter(function (row) { return row.path === accountPath; })[0];
-    var character = eve.characters.filter(function (row) { return row.path === characterPath; })[0];
+    var local = devSetupContext(profile);
+    var account = local.accounts.filter(function (row) { return row.path === accountPath; })[0];
+    var character = local.characters.filter(function (row) { return row.path === characterPath; })[0];
     if (!account || !character || account.character_ids.indexOf(character.id) === -1) {
       return Promise.resolve({ok: false, error: 'Choose a confirmed local pair.', text: '', summary: {}, warnings: []});
     }
@@ -3157,6 +3177,126 @@
   };
   api.eve_settings_setup_save_file = function (text) {
     return Promise.resolve({ok: true, cancelled: false, error: '', path: 'Dev preview only, no file written'});
+  };
+
+  var setupScenario = devSearch.get('setup') || 'wingman';
+  var devSetupOffer = null, devSetupSerial = 0, devSetupCreating = false;
+  var DEV_SETUP_NATIVE_TEXT = 'presets:\n- [Fleet, [[groups, [25]], [filteredStates, []], [alwaysShownStates, []]]]\n'
+    + 'tabSetup:\n- [0, [[name, Fleet], [overview, Fleet], [bracket, null], [color, null]]]\n'
+    + 'shipLabelOrder: [null, null]\nshipLabels:\n'
+    + '- [null, [[type, null], [pre, "<b>Fleet</b>"], [post, ""], [state, 1]]]\n'
+    + '- [null, [[type, null], [pre, " / "], [post, ""], [state, 1]]]\n';
+  var DEV_SETUP_MAX = JSON.parse(JSON.stringify(DEV_SETUP_ARTIFACT));
+  DEV_SETUP_MAX.overview.presets = [];
+  for (var setupIndex = 0; setupIndex < DEV_SETUP_LIMITS.max_presets; setupIndex++) {
+    DEV_SETUP_MAX.overview.presets.push({name: 'Filter ' + setupIndex, groups: [25], filteredStates: [], alwaysShownStates: []});
+  }
+  DEV_SETUP_MAX.overview.presets[DEV_SETUP_MAX.overview.presets.length - 1].name = new Array(DEV_SETUP_LIMITS.max_name_codepoints + 1).join('é');
+  DEV_SETUP_MAX.overview.tabs = [];
+  DEV_SETUP_MAX.overview.windowGroups = [];
+  for (var setupTab = 0; setupTab < DEV_SETUP_LIMITS.max_tabs; setupTab++) {
+    var setupRow = JSON.parse(JSON.stringify(DEV_SETUP_ARTIFACT.overview.tabs[0]));
+    setupRow.id = setupTab;
+    setupRow.name = new Array(501).join('N') + ' <tab ' + setupTab + '>';
+    setupRow.overview = 'Filter ' + setupTab;
+    DEV_SETUP_MAX.overview.tabs.push(setupRow);
+    DEV_SETUP_MAX.overview.windowGroups.push([setupTab]);
+    if (setupTab) DEV_SETUP_MAX.layout.windows.push({key: 'overview_' + setupTab,
+      geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}});
+  }
+  DEV_SETUP_MAX.overview.shipLabels = [];
+  for (var setupLabel = 0; setupLabel < DEV_SETUP_LIMITS.max_ship_labels; setupLabel++) {
+    DEV_SETUP_MAX.overview.shipLabels.push({type: null, pre: new Array(DEV_SETUP_LIMITS.max_label_codepoints + 1).join('é'), post: '', state: 1});
+  }
+  function devSetupSummary(artifact, native) {
+    var overview = artifact.overview;
+    var warnings = native ? ['Absent native options retain recipient values; supplied aggregates replace them.',
+      'Supplied native tabs become one primary overview group, without imported geometry.'] : [];
+    return {counts: {presets: overview.presets.length, tabs: overview.tabs.length,
+      windowGroups: overview.windowGroups.length, shipLabels: overview.shipLabels.length,
+      layoutWindows: native ? 0 : artifact.layout.windows.length},
+      windowLabels: native ? [] : artifact.layout.windows.map(function (row) {
+        return DEV_SETUP_WINDOWS[row.key] || 'Overview ' + (Number(row.key.split('_')[1]) + 1);
+      }), limitations: ['Only unstacked supported windows can be shared.'].concat(native ? [
+        'Overview configuration only — no window layout.',
+        'Choose Keep my ship labels explicitly; the input cannot reproduce the ordered label sequence.'
+      ].concat(warnings) : ['Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.'])};
+  }
+  api.eve_settings_setup_read_file = function () {
+    // A fixture picker, never an OS dialog or filesystem read.
+    return Promise.resolve({ok: true, cancelled: false, error: '', text: setupScenario === 'native'
+      ? DEV_SETUP_NATIVE_TEXT : JSON.stringify(setupScenario === 'max' ? DEV_SETUP_MAX : DEV_SETUP_ARTIFACT)});
+  };
+  api.eve_settings_setup_review = function (text, profile, accountPath, characterPath, name, keep) {
+    var reply = {ok: false, error: '', error_code: '', review_id: '', summary: {}, warnings: [], needs_label_choice: false};
+    if (devSetupCreating) {
+      reply.error = 'Another Profiles operation is running.';
+      reply.error_code = 'busy';
+      return Promise.resolve(reply);
+    }
+    devSetupOffer = null;
+    var local = devSetupContext(profile);
+    var account = local.accounts.filter(function (row) { return row.path === accountPath; })[0];
+    var character = local.characters.filter(function (row) { return row.path === characterPath; })[0];
+    if (!local.ok || !account || !character || account.character_ids.indexOf(character.id) === -1) {
+      reply.error = 'Choose a confirmed local pair.';
+    } else if (!name.trim() || eve.profiles.some(function (row) { return row.name.toLowerCase() === name.trim().toLowerCase(); })) {
+      reply.error = 'Choose a new profile name.';
+    } else if (setupScenario === 'eve-unknown') {
+      reply.error = 'Cannot confirm that EVE is closed. Close EVE and Review again.';
+      reply.error_code = 'eve_not_closed';
+    } else {
+      // Deliberately NOT a second parser. Only named synthetic fixtures can
+      // succeed; arbitrary/malformed text must never acquire dev authority.
+      var native = text === DEV_SETUP_NATIVE_TEXT;
+      var artifact = text === JSON.stringify(DEV_SETUP_MAX) ? DEV_SETUP_MAX
+        : text === JSON.stringify(DEV_SETUP_ARTIFACT) ? DEV_SETUP_ARTIFACT : null;
+      if (!native && !artifact) reply.error = 'Dev preview accepts only its synthetic fixtures. Choose file to load one.';
+      else {
+        if (native) artifact = {overview: {presets: [{}], tabs: [{}], windowGroups: [[0]], shipLabels: [{}, {}]}};
+        reply.summary = devSetupSummary(artifact, native);
+        reply.warnings = native ? reply.summary.limitations.slice(3) : [];
+        if (native && !keep) {
+          reply.needs_label_choice = true;
+          reply.error = 'Choose Keep my ship labels explicitly for this YAML.';
+          reply.error_code = 'label_choice_required';
+        } else {
+          reply.ok = true;
+          reply.review_id = 'dev-setup-' + (++devSetupSerial);
+          devSetupOffer = {id: reply.review_id, name: name.trim()};
+        }
+      }
+    }
+    return Promise.resolve(reply);
+  };
+  api.eve_settings_setup_discard = function (id) {
+    if (!devSetupOffer || devSetupOffer.id !== id || devSetupCreating) return Promise.resolve(false);
+    devSetupOffer = null;
+    return Promise.resolve(true);
+  };
+  api.eve_settings_setup_create = function (reviewId, requestId) {
+    if (!devSetupOffer || devSetupOffer.id !== reviewId || !requestId || devSetupCreating) {
+      return Promise.resolve({accepted: false, error: 'Review the setup again.'});
+    }
+    if (setupScenario === 'refused') return Promise.resolve({accepted: false, error: 'Another Profiles operation is running.'});
+    var offer = devSetupOffer;
+    devSetupOffer = null;
+    devSetupCreating = true;
+    if (setupScenario !== 'busy') setTimeout(function () {
+      devSetupCreating = false;
+      var createdPath = 'dev/settings_' + offer.name;
+      var published = setupScenario !== 'stale';
+      if (published) {
+        eve.profiles.push({path: createdPath, name: offer.name, file_count: 4});
+        if (setupScenario !== 'warning') eve.profile = createdPath;
+      }
+      window.onEveSettingsDone({ok: published, operation: 'ui_setup_create', request_id: requestId,
+        review_id: reviewId, published: published, path: published ? createdPath : '',
+        selection_persisted: published && setupScenario !== 'warning', error_code: published ? '' : 'stale_review',
+        error: published ? '' : 'The base files changed. Review again.',
+        warning: setupScenario === 'warning' ? 'Profile created, but Wingman could not remember the selection.' : ''});
+    }, 1200);
+    return Promise.resolve({accepted: true, error: ''});
   };
 
   // Every mutation returns "a worker started" and then pushes, because the

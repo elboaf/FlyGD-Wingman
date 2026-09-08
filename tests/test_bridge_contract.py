@@ -339,6 +339,18 @@ def test_eve_authority_change_handler_is_allowlisted_and_fanned_out_literally():
     assert "_skills._push_state(force=True)" not in api_source
 
 
+def test_setup_completion_cannot_settle_an_ordinary_profiles_mutation():
+    source = (WEB / "evesettings.js").read_text(encoding="utf-8")
+    done = source.split("WM.handle('onEveSettingsDone', function (payload) {", 1)[1]
+    handoff, ordinary = done.split("var completedMutation = pendingMutation;", 1)
+    assert "if (payload.operation === 'ui_setup_create')" in handoff
+    assert "if (WM.uiSetupDone) WM.uiSetupDone(payload);" in handoff
+    assert "return;" in handoff
+    assert "pendingMutation =" not in handoff
+    assert "setBusy(" not in handoff
+    assert "WM.formationsDone(payload)" in ordinary
+
+
 def test_obsolete_character_auth_bridge_methods_are_gone():
     from wingman.ui.api import Api
 

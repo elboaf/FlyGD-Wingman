@@ -4344,7 +4344,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    check that test first, because it brace-matches every max-width:720px
    block in the file. */
 
-/* Focused setup tool: one scrolling work area, with the exit and export
+/* Focused setup tool: one scrolling work area, with the exit and commit
    actions outside it. Match the measured 840/839 CSS-pixel floors. */
 #route-uisetup { padding: 16px; }
 .us-shell {
@@ -4354,19 +4354,27 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #route-uisetup .row { margin-bottom: 0; flex-wrap: wrap; }
 .us-heading { flex: none; }
 .us-heading h1 { margin: 0; }
-#us-work { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
-#us-work p { max-width: 75ch; margin: 6px 0 12px; overflow-wrap: anywhere; }
-#us-work h2 { margin: 12px 0 6px; font-size: var(--fs-body); font-weight: 600; }
+#us-work, #setup-work { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+#us-work p, #setup-work p { max-width: 75ch; margin: 6px 0 12px; overflow-wrap: anywhere; }
+#us-work h2, #setup-work h2 { margin: 12px 0 6px; font-size: var(--fs-body); font-weight: 600; }
 #us-work h3 { margin: 10px 0 4px; font-size: var(--fs-body); font-weight: 400; color: var(--text-dim); }
 .us-pickers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .us-pickers .lab { display: block; color: var(--text-dim); margin-bottom: 4px; }
 .us-pickers .field { width: 100%; min-width: 0; }
 .us-pickers .field:disabled { color: var(--text-faint); opacity: .5; }
-#us-warnings { color: var(--warn); }
-#us-actions { flex: none; border-top: 1px solid var(--panel-border); padding-top: 10px; }
-#us-display-notice { margin: 0 0 10px; max-width: 75ch; }
-#us-status { margin: 6px 0 0; min-height: 18px; max-height: 72px; overflow-y: auto; overflow-wrap: anywhere; }
-#us-summary[hidden] { display: none; }
+#us-warnings, #setup-warnings { color: var(--warn); }
+#us-actions, #setup-actions { flex: none; border-top: 1px solid var(--panel-border); padding-top: 10px; }
+#us-display-notice, #setup-display-notice { margin: 0 0 10px; max-width: 75ch; }
+#us-status, #setup-status { margin: 6px 0 0; min-height: 18px; max-height: 72px; overflow-y: auto; overflow-wrap: anywhere; }
+.us-shell[hidden] { display: none; }
+#us-summary[hidden], #us-export[hidden], #setup-import[hidden],
+#setup-summary[hidden], #setup-label-choice[hidden], #setup-native[hidden] { display: none; }
+#setup-work > .lab { display: block; color: var(--text-dim); margin: 10px 0 4px; }
+#setup-text, #setup-name { display: block; width: 100%; margin-bottom: 10px; }
+#setup-text { resize: vertical; min-height: 72px; max-height: 180px; }
+#setup-work > .us-pickers { margin-top: 12px; }
+#setup-import .field:disabled { color: var(--text-faint); opacity: .5; }
+#setup-summary:focus, #setup-status:focus { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
 /* ================== probe formation editor ==========================
    A sub-screen of Profiles on its own route id (index.html, app.js).

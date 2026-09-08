@@ -29,7 +29,6 @@ SCENARIOS = [
     "context-failure",
     "late-errors",
     "save-late-success",
-    "import-unavailable",
     "singular-counts",
     "copy-throws",
     "copy-late-denial",
@@ -38,11 +37,60 @@ SCENARIOS = [
     "unavailable-pairs",
 ]
 
+IMPORT_SCENARIOS = [
+    "context-does-not-select",
+    "base-rosters-differ",
+    "review-invalidated-by-text",
+    "review-invalidated-by-name",
+    "review-invalidated-by-pair",
+    "review-invalidated-by-base",
+    "old-review-after-new",
+    "cancel-during-review",
+    "cancel-reviewed",
+    "yaml-label-choice",
+    "yaml-no-layout",
+    "stale-manifest",
+    "eve-unknown",
+    "double-create",
+    "start-refused",
+    "done-before-accepted",
+    "done-before-refused",
+    "published-with-warning",
+    "route-exit-during-create",
+    "old-discard-after-new-review",
+    "labels-render-as-text",
+    "missing-review-id",
+    "review-rejected",
+    "file-replaced",
+    "file-cancel",
+    "file-failure",
+    "file-late",
+    "paste-denied",
+    "paste-late",
+    "completion-correlation",
+    "create-rejected",
+    "edit-during-context",
+    "review-blank",
+    "keep-invalidates",
+    "import-unavailable-pairs",
+    "import-unicode",
+    "malformed-text",
+    "missing-summary",
+    "failed-create",
+    "late-review-error",
+    "pending-pair",
+    "pending-base",
+    "forwarded-completion",
+    "import-context-failure",
+    "import-late-context",
+    "import-limits-failure",
+]
+
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize("scenario", SCENARIOS)
-def test_setup_export_runtime(tmp_path, monkeypatch, scenario):
-    if scenario == "unicode-locale":
+@pytest.mark.parametrize("scenario", SCENARIOS + IMPORT_SCENARIOS)
+def test_setup_page_runtime(tmp_path, monkeypatch, scenario):
+    if scenario in ("unicode-locale", "import-unicode"):
         monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
     page = PageTree()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
@@ -56,6 +104,7 @@ def test_setup_export_runtime(tmp_path, monkeypatch, scenario):
             scenario,
             str(WEB / "uisetup.js"),
             sys.executable,
+            "import" if scenario in IMPORT_SCENARIOS else "export",
         ],
         capture_output=True,
         text=True,
