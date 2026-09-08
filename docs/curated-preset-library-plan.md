@@ -85,8 +85,8 @@ Record exact baseline and skips. Missing codec/Node is not acceptable coverage. 
 
 **Interfaces:** Implement the exact metadata schema and budget rules in the spec. Expose `list_entries()`, `read_entry(preset_id, revision, sha256)`, `SetupCatalogError`, and `paths.setup_presets_dir()`. `read_entry` returns `{entry,text,summary}`. It requires `parsed.source_kind == "wingman"` and `parsed.layout is not None` after the unchanged `parse_text`.
 
-- [ ] Write pytest fixtures which copy `tests/fixtures/ui_setup/wingman-preset.json` into a temporary catalog, calculate its SHA-256, write bounded invented metadata/license text and redirect only `paths.setup_presets_dir()` to that directory. Define this fixture in the new test module; it returns `(entry, original_text, directory)`. Use short test IDs and explicit UTF-8.
-- [ ] Add failing tests for metadata success, exact bytes, derived summaries, no write side effects, duplicate keys/IDs, unknown fields, UTF-8/control/budget bounds, boolean revisions, invalid IDs, absent/link/directory assets, hash/revision mismatch, invalid native-only/probe artifacts and unavailable licenses. Test source and simulated frozen resolver paths. Missing/bad entries cannot fall back to arbitrary local paths.
+- [x] Write pytest fixtures which copy `tests/fixtures/ui_setup/wingman-preset.json` into a temporary catalog, calculate its SHA-256, write bounded invented metadata/license text and redirect only `paths.setup_presets_dir()` to that directory. Define this fixture in the new test module; it returns `(entry, original_text, directory)`. Use short test IDs and explicit UTF-8.
+- [x] Add failing tests for metadata success, exact bytes, derived summaries, no write side effects, duplicate keys/IDs, unknown fields, UTF-8/control/budget bounds, boolean revisions, invalid IDs, absent/link/directory assets, hash/revision mismatch, invalid native-only/probe artifacts and unavailable licenses. Test source and simulated frozen resolver paths. Missing/bad entries cannot fall back to arbitrary local paths.
 
 Example expected public contract (using the fixture described above):
 
@@ -105,10 +105,12 @@ def test_read_returns_exact_full_artifact(catalog_fixture):
     assert {p.name: p.read_bytes() for p in directory.iterdir()} == before
 ```
 
-- [ ] Run `python -m pytest tests/test_setup_catalog.py -q` through the checkout environment; record behavioral RED before implementation.
-- [ ] Implement bounded file reads, shallow manifest validation and strict same-entry/hash loading. Use finite explicit branching, not a registry. Listing reads metadata only; selection parses the artifact. Preserve useful failure context without exposing private filesystem data.
-- [ ] Run the new tests plus `test_ui_setup_sharing.py`, `test_ui_setup_model.py` and `test_ui_setup_yaml.py`; inspect diff.
-- [ ] Obtain independent task review, address scoped findings with tests, rerun affected gates, and commit the tested task normally. Never use `--no-verify`.
+- [x] Run `python -m pytest tests/test_setup_catalog.py -q` through the checkout environment; record behavioral RED before implementation.
+- [x] Implement bounded file reads, shallow manifest validation and strict same-entry/hash loading. Use finite explicit branching, not a registry. Listing reads metadata only; selection parses the artifact. Preserve useful failure context without exposing private filesystem data.
+- [x] Run the new tests plus `test_ui_setup_sharing.py`, `test_ui_setup_model.py` and `test_ui_setup_yaml.py`; inspect diff.
+- [x] Obtain independent task review, address scoped findings with tests, rerun affected gates, and commit the tested task normally. Never use `--no-verify`.
+
+Task 1 completed in `55f2153` and `e61c8b5`: 839 broader focused passes before the hardlink clarification, 140 catalog/path passes after it, independent SpecCompliance/TaskQuality PASS with an additional 19-case check. No real assets or content-admission claim yet.
 
 ## Task 2 — catalog to existing import draft, without new authority
 

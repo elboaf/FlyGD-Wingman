@@ -137,7 +137,7 @@ Proposed manifest v1: exactly `{format: "wingman-setup-catalog", version: 1, ent
 - `verification`: 1–2,048 code points describing only recorded checks, with an evidence reference to the content record. No automatic "verified" badge based on parser success.
 - All text must be valid UTF-8 and free of control characters. Reject unknown fields and duplicate JSON object keys.
 
-Manifest budget: 128 KiB UTF-8 before decode, at most 64 entries. Catch decoding/recursion errors; validate the shallow structure before projection. Do not eagerly load every artifact when browsing. Read the selected regular, nonlinked file with the existing setup text byte ceiling (2 MiB), check hash, then run `parse_text` and require a full Wingman setup, not merely accepted native input. Summary comes from `summarize`, not catalog claims. Source/frozen asset-directory and license-file containment are tested; no caller-supplied path or URL reaches file I/O.
+Manifest budget: 128 KiB UTF-8 before decode, at most 64 entries. Catch decoding/recursion errors; validate the shallow structure before projection. Do not eagerly load every artifact when browsing. Read the selected regular file, refusing symlink/reparse aliases, with the existing setup text byte ceiling (2 MiB), check hash, then run `parse_text` and require a full Wingman setup, not merely accepted native input. Do not reject a read-only resource merely for having multiple hard links: package installers may legitimately use them, and the artifact's exact hash still binds its contents. Summary comes from `summarize`, not catalog claims. Source/frozen asset-directory and license-file containment are tested; no caller-supplied path or URL reaches file I/O.
 
 Proposed pure/read-only interfaces:
 
