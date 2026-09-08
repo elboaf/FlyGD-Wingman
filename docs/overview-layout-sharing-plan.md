@@ -4,7 +4,7 @@
 
 **Goal:** Export a faithful Wingman overview/in-space-layout preset and apply it to a new recipient profile, preserving recipient-local display preferences and existing profiles.
 
-**Execution checkpoint:** Tasks 1–3 are implemented and task-reviewed at `904d1a8`. Task 4a's pure recipient-document application is implemented and reviewed at `c282dd5`; see its [verification](ui-setup-application-verification.md). Under the [case-based gate reassessment](overview-layout-sharing-reassessment.md), unresolved Task 4b export classification, differing-name replacement, selector invalidation and surplus retirement remain required cases, not completed functionality. See [verification and decisions](overview-layout-sharing-verification.md). This is not a completed feature or release sign-off.
+**Execution checkpoint:** Tasks 1–10 are implemented and independently task-approved through `2b53cd22758bd0ee0a82e113e226a838478bce16`. Task 11 engineering corrections are implemented at `9b74f32bb227fe45df1784951bcb69145f90338e`, with fresh Linux native/Node tests and isolated browser evidence in [verification and decisions](overview-layout-sharing-verification.md). Independent whole-branch review/final verification, hosted CI, frozen Windows/WebView2 and actual fresh/distinct-recipient EVE/launcher acceptance remain OPEN. No release sign-off. The task checklists below retain the execution specification, not a current unchecked implementation inventory. The [Task 4a checkpoint](ui-setup-application-verification.md) and [gate reassessment](overview-layout-sharing-reassessment.md) retain their earlier observations; current-client Task 4b rules supersede those temporary implementation limits.
 
 **Architecture:** Pure validation and decoded-document adapters feed a recipient-local staged profile constructor. `ProfilesController` owns context, review authorization and mutation lifecycle; `Api` remains a thin facade with named file-dialog ports. One focused Profiles subroute owns transient UI state and receives completion through the existing event owner.
 
@@ -51,7 +51,8 @@ Rejected alternatives: wholesale sender cloning leaks unrelated state; YAML-as-f
 
 ## File map and responsibility
 
-Proposed files are new work, not missing existing modules.
+The planned responsibilities below are now implemented. Historical task steps
+still describe their introduction; use the execution checkpoint for current status.
 
 | File | Responsibility |
 | --- | --- |
@@ -70,7 +71,7 @@ Proposed files are new work, not missing existing modules.
 | `docs/ui-setup-field-map.md` | Proven field ownership, representations and cache/default rules |
 | `docs/overview-layout-sharing-verification.md` | Actual test/manual results and unresolved release gates |
 
-All production modules stay inside an existing package; no new setuptools subpackage is required. PyYAML still needs dependency, license and packaged-runtime verification.
+All production modules stay inside an existing package; no new setuptools subpackage is required. PyYAML is locked and its licence is shipped; frozen contents checks are wired, but packaged Windows runtime verification remains OPEN.
 
 ## Shared contracts to implement
 
@@ -227,8 +228,8 @@ Failure emits the same fields with empty path unless publication occurred. Error
 New route: `uisetup`, markup `route-uisetup`, module `uisetup.js`.
 
 - `WM.openUiSetup({mode: 'export'|'import', context: payload, preferred_character: path})` copies only needed context fields, initializes a new view generation and routes to the tool.
-- `WM.uiSetupDone(payload)` accepts only matching operation/request/review IDs and the active view generation.
-- Existing `evesettings.js` remains the sole `onEveSettingsDone` owner and forwards to this function.
+- `WM.uiSetupDone(payload)` accepts only owned operation/request/review receipts, independently of disposable draft state. Only the matching active view may change the tool or receive focus. Back does not drop a sent receipt; multiple undelivered receipts can coexist.
+- Existing `evesettings.js` remains the sole `onEveSettingsDone` owner. A true ownership result triggers authoritative Profiles refresh without settling ordinary `pendingMutation`, selecting the payload path or forcing navigation. Outcomes remain beside the setup tools in Profiles.
 - Add `uisetup` to route mapping, Profiles highlighting, `CHROMELESS_ROUTES`, and `EVE_ROUTES`, not to peer `last_destination` choices.
 - Add Share/Import controls to existing Profile tools. `#es-source` may prefill a character; copy-target checkboxes never become setup recipient mapping.
 
@@ -591,6 +592,12 @@ Use an explicit compatible workflow shell for multiline script bodies on both ru
 
 ## Task 11: Polish, then prove the actual fresh-recipient workflow
 
+**Current boundary:** engineering corrections and local verification are recorded
+in the current checkpoint. Whole-branch independent review/final verification
+follow separately. Every Windows/EVE/launcher/manual item below remains OPEN;
+this is an acceptance contract, not a request for operator actions in this session.
+Preserve the linked worktree and recovery evidence while acceptance is open.
+
 **Files:** Only reviewed corrective source/tests if needed; update `docs/overview-layout-sharing-verification.md` and smoke results.
 **Consumes:** Task 10's candidate. **Produces:** reviewer-facing completion evidence, or explicit blocked acceptance.
 
@@ -621,7 +628,11 @@ new test counts are observed results, not numbers to invent in advance.
 | 10 | `uv run --no-sync python -m pytest tests/test_ui_setup_integration.py -q -rs` followed by all gates below |
 | 11 | All gates below, plus actual recorded manual acceptance |
 
-Full gates after integration and again after polish corrections:
+Full gates after integration and again after polish corrections. First install
+Node and the worktree-local release codec using the mandatory
+[local prerequisites](overview-layout-sharing-verification.md#local-verification-prerequisites).
+Cargo tests alone do not install the executable for Python. Inspect `-rs`; no
+missing-codec or Node skips count as coverage.
 
 ```bash
 uv sync --locked --extra dev
@@ -662,7 +673,8 @@ read-only frontend inventory identified the nonpersisting-context requirement an
 manual route/handler integration points. The plan's new files/interfaces are
 proposals; no importer code or new test profile was created while planning.
 
-The user approved subagent-driven execution. Tasks 1–3 and their actual results
-are recorded in the [verification checkpoint](overview-layout-sharing-verification.md).
-The remaining writer/GUI/acceptance tasks have not run; parser results do not
-clear their persisted-data proof gates.
+The user approved subagent-driven execution. At the early Tasks 1–3
+[parser checkpoint](overview-layout-sharing-verification.md#historical-tasks-13-parser-checkpoint),
+the writer/GUI/acceptance tasks had not run; those parser results did not clear
+persisted-data proof gates. The current execution checkpoint above records the
+subsequent implementation and separates it from still-open live acceptance.

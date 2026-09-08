@@ -1,6 +1,196 @@
 # Overview/layout sharing: verification record
 
-## Current Task 10 checkpoint
+## Current Task 11 engineering checkpoint
+
+**Verified source commit:** `9b74f32bb227fe45df1784951bcb69145f90338e`
+(`fix: retain setup creation outcomes after leaving the tool`). Tasks 1–10 are
+implemented and independently task-approved through
+`2b53cd22758bd0ee0a82e113e226a838478bce16`. This checkpoint completes Task 11's
+scoped engineering corrections and local evidence, **not manual acceptance or
+release validation**. Independent whole-branch review and final fresh verification
+follow this checkpoint; hosted CI, frozen Windows/WebView2 and live EVE/launcher
+acceptance remain OPEN. No operator actions were requested or performed.
+
+### Corrections and ownership
+
+- Create receipts outlive Back separately from private import drafts. A receipt
+  holds only view/request/review correlation and completion state, never input
+  text, local rosters or review authorization. Earlier receipts survive a later
+  operation starting before their completion push is delivered.
+- Owned outcomes appear in a Profiles-local live region beside the setup tools,
+  not the upload-owned global strip. The sole completion owner requests fresh
+  `eve_settings_state`, including after failure or publication warning. It does
+  not settle ordinary `pendingMutation`, navigate, select the completion path,
+  resurrect review, steal detached focus or alter a newer setup draft.
+- Matching active drafts still receive their own result. Completion and explicit
+  starter refusal retire receipts; duplicates/late starter replies are ignored.
+  A lost/null/rejected starter is uncertain, keeps its receipt and cannot unlock
+  editing as though no worker started. Private inputs and rosters still clear
+  on route exit.
+- Native parser warnings also occur in summary limitations. Their single owner
+  is now the emphasized warning paragraph, preserving distinct limitations and
+  additional warnings. The permanent display warning remains pinned. The shell's
+  focused-route comment no longer hand-keeps a route count.
+
+The new regressions execute **app.js, evesettings.js and uisetup.js**, including
+real shell routing, Profiles opener/Back wiring and the sole completion owner.
+They settle the first Back-triggered state read before delivering success,
+failure or publication warning. They cover a newer review, two outstanding
+Creates, an ordinary copy, another route, exact correlation, duplicates, early
+completion, refusal and lost starter replies. An authoritative selection
+intentionally differs from `payload.path`. Real parser summaries supply native
+warning/limitation overlap; a distinct extra warning stays visible once.
+
+### Fresh verification actually performed
+
+All commands ran in the linked worktree on Linux. The source/test contents
+committed at the SHA above were unchanged after these final runs.
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv sync --locked --extra dev
+# Passed: resolved 56 packages; checked 39 packages.
+node --version
+# v26.5.0
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_page.py tests/test_profiles_page.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_dev_harness.py tests/test_ui_setup_integration.py -q -rs --basetemp=/tmp/wingman-task11-focused-final
+# 556 passed in 173.96s; no skips.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task11-full --junitxml=/tmp/wingman-task11-full.xml
+# 8,246 passed, 11 skipped in 321.47s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff check .
+# All checks passed.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff format --check .
+# 316 files already formatted.
+node --check wingman/web/uisetup.js
+node --check wingman/web/evesettings.js
+node --check wingman/web/app.js
+node --check wingman/web/dev.js
+node --check tests/fixtures/formations_page.cjs
+node --check tests/fixtures/ui_setup_page.cjs
+# All six commands passed.
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+# 1 passed, 0 failed/ignored.
+git diff --check
+# Passed; staged diff check also passed before the normal scoped commit.
+```
+
+Actual `paths.codec_exe()` lookup was asserted to resolve this worktree's
+`packaging/bin/wingman-settings-codec`, and `codec_available()` was true. The
+Task 10 **release** binary was reused, not a debug test seam or PATH fallback.
+Source release and installed SHA-256 were rechecked and both remained
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+Cargo's independent regression builds a debug test executable; that does not
+replace the installed release codec used by Python.
+
+After reconciling current docs, the local release build/install recipe below was
+also exercised: release build passed in 3.89s, install/availability passed and both
+hashes stayed identical. Documentation/packaging consumers and native integration
+were rerun without any production/test source changes:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_integration.py tests/test_packaging_completeness.py tests/test_ui_setup_yaml.py tests/test_page_conventions.py tests/test_bridge_contract.py -q -rs --basetemp=/tmp/wingman-task11-docguards
+# 451 passed in 27.77s; no skips.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff check .
+# All checks passed.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff format --check .
+# 316 files already formatted.
+git diff --check
+# Passed.
+```
+
+All 11 skips were inspected in `-rs` and JUnit: three ordinary profile-copy
+Windows junction tests, two setup DAT/preference-shaped junction cases, DPAPI,
+WinDLL, one real message pump/window-station test and three user32/gdi32/dwmapi
+binding tests. **No native-codec or Node coverage skipped.** JUnit contains
+81 setup-page runtime cases, 116 dev-harness cases and all 11 integration cases
+(six lossless, five actual native), all passed.
+
+TDD initially produced 15 failures in the selected receipt/warning cases:
+missing detached refresh/ownership, missing Profiles outcome surface and the
+native sentence rendered twice. Explicit surface assertions replaced two
+incidental null dereferences before implementation. Runtime GREEN was 81 passed.
+The first broader run was 555 passed/one failed: an old lexical guard required
+the obsolete forwarding spelling. Its assertion was reconciled without removing
+the no-ordinary-state-settlement checks; the final focused/full runs above passed.
+
+### Focused browser evidence
+
+```bash
+node .superpowers/sdd/overview-layout-sharing-plan/task11-browser.cjs
+# ok=true; 10 measurements, 10 screenshots, errors=[]; no console/resource errors.
+```
+
+Linux x86-64 `HeadlessChrome/152.0.0.0`, deviceScaleFactor=1. The driver owns an
+ephemeral 127.0.0.1 server and a **new** page, installs clipboard stubs before
+scripts, blocks non-local requests, runs the actual dev bridge/modules and defers
+only semantic completion delivery. Back's initial state read settles before the
+held result is delivered; a new authoritative read follows exactly once.
+Only its page/server close; the shared browser is disconnected, not stopped.
+No existing tabs, user browser profile, cookies, real clipboard, native dialogs,
+private captures/profiles, EVE or launcher were accessed.
+
+At **840x625 and 839x621**, both the native review and scrolled warning region
+were checked, plus detached success/failure/publication-warning on Profiles.
+DOM measurements and representative screenshots were inspected. Page and control
+client/scroll widths agree; native actions remain at y=444–556 / 440–552, with the
+permanent display notice inside the viewport. Profiles outcomes are at y=302–338
+(success/warning) or 302–320 (failure), widths 774/773. Close ends at x=834/833.
+Warnings retain their distinct emphasized colour and each sentence appears once.
+Native Keep uses Space, review receives focus, Escape/Back restore the Import
+opener, detached completion preserves that focus, and markup remains literal text.
+The test server initially returned 404 for Chromium's automatic `/favicon.ico`;
+a traced, harness-only 204 response removed that unrelated console failure. The
+final run above has no filtered-out console errors.
+
+Ignored evidence directory: `.superpowers/sdd/overview-layout-sharing-plan/`:
+`task11-browser.cjs`, `task11-browser-report.json` and
+`task11-{840,839}-{native-review,native-warnings,detached-success,detached-failure,detached-warning}.png`.
+Task 8/9 historical browser artifacts were preserved, not overwritten or relabelled.
+
+### Current gate matrix
+
+| Gate | Status |
+| --- | --- |
+| Tasks 1–10 independent task review | APPROVED (parent ruling) |
+| Three authorized whole-feature polish findings | FIXED with scoped TDD/source self-review |
+| Local full Linux native/Node, Ruff, syntax, Cargo | PASS at the source SHA above |
+| Scoped real-browser native/detached lifecycle and floors | PASS, browser-only |
+| Independent whole-branch code review and final verification | OPEN, parent continuation |
+| Hosted Ubuntu/Windows CI | OPEN, not dispatched |
+| Frozen Windows archive/licence check and runtime imports | WIRED/source-tested; actual artifact OPEN |
+| Windows/WebView2 DPI, dialogs, OS clipboard and assistive technology | OPEN |
+| Fresh and distinct initialized recipient, control, live EVE reload/fidelity/display | OPEN |
+| Launcher restart/discovery/explicit recipient selection | OPEN |
+
+The [manual checklist](smoke-checklist.md#overview-and-layout-sharing-profiles--share-setup--import-setup)
+remains an acceptance contract, not a new operator request. Preserve the worktree
+and recovery data; no push, merge or release is authorized by these results.
+
+## Local verification prerequisites
+
+For a full local suite, **Node and the native settings codec are mandatory**, just
+as in CI. Install Node and Rust/Cargo, then run from the intended linked checkout:
+
+```bash
+uv sync --locked --extra dev
+node --version
+cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target
+uv run --no-sync python -c "import os, pathlib, shutil; from wingman.evesettings import codec; name = 'wingman-settings-codec' + ('.exe' if os.name == 'nt' else ''); source = pathlib.Path('packaging/settings-codec/target/release') / name; target = pathlib.Path('packaging/bin') / name; target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target); assert codec.codec_available(), 'Native integration tests require the built codec'"
+uv run --no-sync python -m pytest tests/ -q -rs
+```
+
+This is the cross-platform local equivalent of the workflow's release build/copy
+step. Task 11 exercised this recipe after its full run, reproducing the same Linux
+release hash. Outputs stay ignored and local to the checkout.
+`cargo test` alone does not install the runtime binary. A missing codec now fails
+native setup integration rather than silently skipping it; inspect skip reasons
+so missing Node cannot conceal runtime page coverage either. On Linux use `/tmp`
+for a venv/basetemp if needed, as in the actual commands above. No live profile or
+clipboard is needed by these tests.
+
+## Historical Task 10 checkpoint
+
+**The Task 10 evidence below is retained as recorded. Its then-open task-review
+and polish statements are superseded by the current checkpoint, not rewritten as
+if those later checks had already run.**
 
 Tasks 1–9 of the [implementation plan](overview-layout-sharing-plan.md) are
 implemented and task-reviewed. Task 10 adds focused facade-to-publication tests,

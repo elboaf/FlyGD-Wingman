@@ -10,14 +10,19 @@ here that a regex cannot see is the reason this file exists as well.
 
 The stack is plain HTML, CSS and ES5-flavoured JavaScript in a WebView2
 window (pywebview), Windows only, dark only. No framework, no build step,
-no bundler. Nothing in the test suite executes any of it.
+no bundler. Focused Node harnesses now execute selected production modules against
+DOM/bridge doubles, including setup sharing's owner and route wiring. They do not
+render CSS or exercise Windows/WebView2.
 
 
 ## The one rule that explains most of the others
 
-**Nothing renders this page except a real Windows machine.** There is no
-JS test harness, no snapshot, no headless run. `pytest` proves the Python
-side and reads the page's *source*; it never sees the result.
+**A rendered browser check is not Windows/WebView2 acceptance.** The original
+rule here predated the focused Node harnesses and isolated Chromium checks.
+`pytest` proves Python and selected JavaScript lifecycle behavior, with most web
+conventions still checked lexically; it does not see CSS layout. Browser geometry
+and interaction checks must be recorded separately from installed Windows smoke
+results. The historical floor measurements below retain that distinction.
 
 The failure mode that follows is specific and quiet. Handlers register at
 the top of each module's IIFE, so one bad name throws mid-module and every

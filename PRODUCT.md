@@ -234,5 +234,6 @@ ever leave the machine, and the feature remains display-only and
 does not automate gameplay. No account except the user's own Google
 account for their own uploads, and their own Discord webhook.
 
-No framework, no build step. Nothing in the repository executes the page,
-so every UI change needs a hand pass against `docs/smoke-checklist.md`.
+No framework, no build step. Focused Node lifecycle tests and isolated browser
+checks do not establish Windows/WebView2 behavior, so every UI change still needs
+a hand pass against `docs/smoke-checklist.md`.

@@ -30,9 +30,16 @@ source directory), the legacy `AppId` uninstall key in
 
 ## Commands
 
+Full-suite prerequisites now include **Node on PATH and the built release settings
+codec installed in this checkout's `packaging/bin`**. Follow the
+[local prerequisite commands](docs/overview-layout-sharing-verification.md#local-verification-prerequisites)
+before pytest. Native setup integration deliberately fails if the codec is absent;
+Node/native skips are not acceptable full-suite coverage. CI installs both before
+pytest and also runs the independent Cargo regression.
+
 ```bash
 uv sync --locked --extra dev              # what CI installs
-uv run --no-sync python -m pytest tests/  # full suite
+uv run --no-sync python -m pytest tests/ -rs  # full suite; inspect skips
 uv run --extra dev ruff check .
 uv run --extra dev ruff format --check .  # CI gates on this; run it locally
 python -m wingman            # run the app (Windows only)
@@ -124,15 +131,16 @@ browser via `?dev=1` — the only file that fabricates data, inert in the app.
 
 ## Working on the UI
 
-**Nothing in the test suite renders the page.** pytest reads web source
-lexically; it never executes it. Handlers register at the top of each module's
-IIFE, so one bad name throws mid-module and every registration below it silently
+**Nothing in the pytest suite renders the page.** Most web guards are lexical;
+focused Node harnesses execute production modules against DOM/bridge doubles
+(including setup's real route/owner wiring), not CSS or WebView2. Handlers register
+at the top of each module's IIFE, so one bad name throws mid-module and every registration below it silently
 never runs — the screen loads as an inert, empty copy of itself with no error
 anywhere. Assume a new screen is broken until opened by hand, and treat
 `docs/smoke-checklist.md` as part of the change.
 
-The lexical guards that stand in for a JS harness — keep them green and extend
-them when you add a convention:
+The lexical guards still cover conventions beyond the focused runtime harnesses;
+keep them green and extend them when you add a convention:
 - `test_bridge_contract.py` — every `_push("name")` in `ui/api.py` exists in
   `WM.HANDLERS`.
 - `test_page_conventions.py` — the mechanical half of `DESIGN.md`.

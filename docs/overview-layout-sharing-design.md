@@ -1,7 +1,7 @@
 # Wingman overview and in-space layout presets
 
 Date: 2026-09-07
-Status: approved design; pure model/parsers, current-client export/application (Task 4b) and hidden recipient staging (Task 5) implemented. No controller/UI publication integration yet. See the [implementation plan](overview-layout-sharing-plan.md), [parser checkpoint](overview-layout-sharing-verification.md) and [application checkpoint](ui-setup-application-verification.md).
+Status: approved design; Tasks 1–10 implemented and independently task-approved, including controller/UI publication integration. Task 11 engineering corrections and fresh Linux native/Node/browser evidence are recorded at `9b74f32bb227fe45df1784951bcb69145f90338e` in the [current checkpoint](overview-layout-sharing-verification.md). Independent whole-branch review/final verification, hosted CI, frozen Windows/WebView2 and actual fresh-recipient EVE/launcher acceptance remain OPEN. This is not release validation. See the [implementation plan](overview-layout-sharing-plan.md); the [Task 4a application checkpoint](ui-setup-application-verification.md) is historical.
 Base: `a38c7a0` plus the discovery record committed in `ed6aa16`.
 Evidence: [overview/layout discovery](overview-layout-sharing-discovery.md).
 
@@ -322,6 +322,17 @@ changes, new pasted text, cancellation and route exit invalidate earlier results
 Use distinct request identity and view generation; stale replies must not select
 a profile, enable an old Apply action or show a clipboard success for a new view.
 Only the existing owner routes Profiles completion events to the tool.
+
+A sent Create retains minimal request/review receipt ownership independently of
+the disposable private draft. Back clears input, rosters and review state, but
+cannot cancel creation or discard its outcome. Keep earlier outstanding receipts
+when another operation starts before push delivery. Matched outcomes appear beside
+Profiles' setup tools and trigger an authoritative state read; they never settle
+ordinary copy/backup mutation state, select the payload path, force navigation,
+restore old review authority or alter a newer setup tool. Only the matching active
+draft also receives local completion/focus. Completion or explicit starter refusal
+retires the receipt; duplicates and late starter replies have no authority. A lost
+starter reply is not proof of refusal and must still accept an eventual completion.
 
 Malformed data, unavailable codec, unsupported layout dependencies, uncertain EVE
 state, stale files, missing local preferences, destination collisions and staging

@@ -1,5 +1,23 @@
 # Overview/layout implementation gate reassessment
 
+## Current implementation status
+
+This is the retained **Task 4a-era gate decision**, not today's implementation
+inventory. [V24.01 client evidence](ui-setup-client-evidence.md) subsequently
+established the bounded Task 4b classification, ordering, selector/cache and
+retirement rules recorded in the [field map](ui-setup-field-map.md). Tasks 1–10,
+including export, application, staging, controller and UI publication, are now
+implemented and independently task-approved. Task 11 engineering corrections and
+fresh local evidence at `9b74f32bb227fe45df1784951bcb69145f90338e` are in the
+[current checkpoint](overview-layout-sharing-verification.md).
+
+The matrix and development sequence below record what was authorized **then**;
+their temporary refusals are not a claim that Task 4b remains unimplemented.
+Their affected-case refusal principle still applies outside the proved subset.
+Independent whole-branch review/final verification, hosted CI, frozen Windows and
+actual fresh/distinct-recipient EVE/launcher acceptance remain OPEN. No new live
+observation or request to the operator is made by this status reconciliation.
+
 ## Correction
 
 The binding design says **unproven dependencies block the affected case**. The

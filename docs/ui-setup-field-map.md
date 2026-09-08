@@ -1,11 +1,17 @@
 # UI setup field map and synthetic fidelity contracts
 
-Status: **implemented pure projection/application and synthetic contracts**.
+Status: **implemented projection/application and integrated synthetic contracts**.
+Tasks 1–10 are independently task-approved. Task 11's corrected UI receipt
+lifecycle and fresh native/Node/browser evidence at `9b74f32bb227fe45df1784951bcb69145f90338e`
+are in the [current verification record](overview-layout-sharing-verification.md).
+This map preserves the original field evidence, not a new live observation.
 The [approved design](overview-layout-sharing-design.md) owns product behavior;
 [discovery](overview-layout-sharing-discovery.md) owns the original experiment's
 limitations. [V24.01 client evidence](ui-setup-client-evidence.md) supersedes the
 preparatory assumptions about definitions, ordering, selectors and retirement.
-Controller/UI publication and live EVE/Windows acceptance remain separate gates.
+Controller/UI publication is implemented and exercised on synthetic data;
+independent whole-branch review, hosted CI, frozen Windows and live EVE/launcher
+acceptance remain separate OPEN gates.
 
 ## Evidence boundary
 
@@ -54,8 +60,8 @@ An individual section setting is normally:
 
 The shown stamp is invented: `formations.filetime(0)`, Windows 100 ns ticks since
 1601. Fixtures also use `formations.filetime(1)`. Stamps and CRC/envelope metadata
-never enter a portable artifact. Future writes stamp modified setting entries,
-not every nested map record; do not reconstruct unrelated settings.
+never enter a portable artifact. The adapter stamps modified setting entries,
+not every nested map record; it does not reconstruct unrelated settings.
 
 All observed relevant section/setting aliases are `bytes:`. `utf8:` aliases occur
 in label **field keys**, named definitions, text values and window-map keys.
@@ -205,7 +211,7 @@ stamped. The approved fixed window set is `selecteditemview`,
 `probeScannerWindow`, `directionalScannerWindow`, `droneview`, `fleetwindow`,
 `watchlistpanel`, `standaloneBookmarkWnd`, `solar_system_map_panel`,
 `primary_map_panel`, plus overview ordinals derived from active account groups.
-The future source allowlist must be authoritative; this table/fixture is not a
+`setup_model.FIXED_WINDOWS` is the source allowlist; this table/fixture is not a
 second runtime registry or permission to accept arbitrary alphabetic keys.
 
 | Storage location | Inner shape | Wire mapping |
@@ -365,6 +371,8 @@ check fresh copies. Codec-boundary tests use all four documents, verify exact
 readback and input nonmutation, and can run with the existing native-codec seam.
 A native binary's success proves **transport fidelity only**, not EVE recognition,
 default classification, cache invalidation, window layout or publication safety.
-The codec checks prove transport fidelity only. Pure adapter and hidden staging
-regressions now exercise replacement/retirement, but not live EVE recognition or
-controller/UI publication authority.
+Pure adapter and hidden staging regressions exercise replacement/retirement.
+`test_ui_setup_integration.py` additionally exercises facade/controller authority
+and new-only publication with the actual worktree release codec; Node tests
+exercise UI ownership. Neither establishes live EVE recognition. Current commands,
+prerequisites and remaining gates are in the verification record above.

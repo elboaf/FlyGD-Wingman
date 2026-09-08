@@ -4001,6 +4001,12 @@ with real `settings_*` folders can still prove.
 
 ## Overview and layout sharing (Profiles → Share setup… / Import setup…)
 
+**Current Task 11 engineering evidence:** Linux native/Node tests and an isolated
+Chromium rerun cover the corrected native warnings and detached Create outcomes
+at 840x625 and 839x621. See the [current checkpoint](overview-layout-sharing-verification.md).
+All actual Windows/EVE/launcher checks below remain OPEN; no new operator actions
+were requested or performed for that engineering pass.
+
 **Operator-authorized manual gates, not automated test results.** Use disposable
 profiles and dedicated test pairs; obtain separate account-owner
 permission before any live EVE or launcher action. Do not use a sender clone as
@@ -4086,6 +4092,13 @@ gates. Wingman must never move or resize a running EVE client.
       failure in a test build: no partial profile, context remains useful, and a
       fresh Review works. A publication with failed selection persistence still
       reports the created path and warning, not a retryable failed publication.
+- [ ] **Create then Back.** Leave while creation is pending; after the initial
+      Profiles read completes, its eventual success, failure or publication warning
+      must appear beside the setup tools. Profiles refreshes authoritative state;
+      it must not blindly select the completion path or force a return from another
+      screen. Reopening Import must start with empty private input. An older setup
+      completion cannot change a newer review/Create or settle an ordinary copy.
+      Native review messages appear once, with warning emphasis retained.
 - [ ] **Windows/WebView2 and frozen app.** Use the installed artifact, not source
       Python. Import both Wingman JSON and native YAML through Paste and Choose
       file; export through Copy and Save. Confirm PyYAML loads without a missing

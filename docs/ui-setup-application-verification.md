@@ -1,5 +1,13 @@
 # Pure setup application checkpoint — Task 4a
 
+**Historical checkpoint.** The observations and commands below remain as recorded.
+Task 4b and subsequent staging/controller/UI integration are now implemented;
+Tasks 1–10 are independently task-approved. See the [current Task 11 engineering
+checkpoint](overview-layout-sharing-verification.md) for code SHA, actual release-codec/
+Node/browser evidence and remaining OPEN whole-branch review, hosted CI, frozen
+Windows and live EVE/launcher gates. The old debug transport seam below is not the
+current full-suite prerequisite, and this record is not fresh live acceptance.
+
 **Verified code: `c282dd5`. Task 4a is complete and independently reviewed; the
 whole of Task 4 and the user-facing feature are not complete.** This follows the
 [case-based reassessment](overview-layout-sharing-reassessment.md), not a new
