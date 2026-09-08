@@ -6396,6 +6396,9 @@ class Api:
     def eve_settings_setup_discard(self, review_id: str) -> bool:
         return self._profiles.setup_discard(review_id)
 
+    def eve_settings_setup_create(self, review_id: str, request_id: str) -> dict:
+        return self._profiles.setup_create(review_id, request_id)
+
     def eve_settings_pick_root(self) -> str:
         return self._profiles.pick_root()
 

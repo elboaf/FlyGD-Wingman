@@ -1062,6 +1062,229 @@ class ProfilesController:
             self._setup_review = None
             return True
 
+    def _setup_require_offer(self, offer: _SetupReview) -> None:
+        """Revalidate selection authority separately from the browsed sibling base."""
+        try:
+            self._setup_require_context(offer.selection_context, offer.generation)
+            if self._eve_identification is not None:
+                raise ValueError("Finish or cancel account identification first.")
+            found, _ = self._setup_found(str(offer.plan.source))
+            account, character = self._setup_pair(
+                found,
+                str(offer.plan.source / offer.account_filename),
+                str(offer.plan.source / offer.character_filename),
+            )
+            if (account.file_id, character.file_id) != (
+                offer.account_id,
+                offer.character_id,
+            ) or not {offer.account_filename, offer.character_filename} <= {
+                row.name for row in offer.manifest.files
+            }:
+                raise ValueError("The reviewed account/character pair changed.")
+        except (OSError, ValueError) as error:
+            raise setup_model.SetupError("stale_review", str(error)) from error
+        for name in ("core_public__.yaml", "prefs.ini"):
+            if not (offer.plan.source / name).exists():
+                raise setup_model.SetupError(
+                    "missing_local_preferences",
+                    f"The base profile is missing required local preferences: {name}.",
+                )
+        # Discovery supplies the case-insensitive collision rule on Linux too;
+        # lexists also refuses files and dangling links not offered as profiles.
+        if os.path.lexists(offer.plan.destination) or any(
+            row.path.name.casefold() == offer.plan.destination.name.casefold()
+            for row in found.profiles
+        ):
+            raise setup_model.SetupError(
+                "destination_exists", f"{offer.plan.destination_name!r} already exists."
+            )
+
+    def setup_create(self, review_id: str, request_id: str) -> dict:
+        """Consume one reviewed offer, never queue or change selection at admission."""
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
+            return {
+                "accepted": False,
+                "error": "A create request needs a request ID of 1 to 128 characters.",
+            }
+        if self._eve_identification is not None:
+            return {
+                "accepted": False,
+                "error": "Finish or cancel account identification first.",
+            }
+        if not self._eve_mutation.acquire(blocking=False):
+            return {
+                "accepted": False,
+                "error": "Another Profiles operation is running.",
+            }
+        offer = self._setup_review
+        consumed = False
+        worker_entered = False
+        handed_off = False
+
+        def worker():
+            nonlocal worker_entered
+            # A port may finish inline before start() returns (or raises). Once
+            # entered, only the worker owns release/completion; never restore it.
+            worker_entered = True
+            self._eve_setup_create_worker(offer, request_id)
+
+        try:
+            if (
+                offer is None
+                or not isinstance(review_id, str)
+                or offer.review_id != review_id
+            ):
+                raise setup_model.SetupError(
+                    "stale_review",
+                    "That review is no longer available. Review the setup again.",
+                )
+            self._setup_require_closed()
+            self._setup_require_offer(offer)
+            setup_profile.require_manifest(offer.plan, offer.manifest)
+            self._setup_require_offer(offer)
+            with self._eve_identification_lock:
+                if (
+                    self._setup_review is not offer
+                    or offer.generation != self._eve_identification_generation
+                ):
+                    raise setup_model.SetupError(
+                        "stale_review",
+                        "Identification changed. Review the setup again.",
+                    )
+                self._setup_review = None
+                consumed = True
+            self._ports.spawn(target=worker, args=(), daemon=True).start()
+            handed_off = True
+        except Exception as error:
+            if worker_entered:
+                logger.exception("Setup worker entered before its start handle failed")
+                return {"accepted": True, "error": None}
+            logger.warning("Setup creation not started: %s", error)
+            return {
+                "accepted": False,
+                "error": str(error) or "Setup creation could not be started.",
+            }
+        finally:
+            if not handed_off and not worker_entered:
+                try:
+                    if consumed and self._setup_review is None:
+                        # Still holding mutation authority: another review cannot
+                        # race restoration. Cancellation can, so compare generation
+                        # again under its own lock after all external checks.
+                        self._setup_require_closed()
+                        self._setup_require_offer(offer)
+                        setup_profile.require_manifest(offer.plan, offer.manifest)
+                        self._setup_require_offer(offer)
+                        with self._eve_identification_lock:
+                            if (
+                                self._setup_review is None
+                                and offer.generation
+                                == self._eve_identification_generation
+                            ):
+                                self._setup_review = offer
+                except Exception:
+                    # A failed start is retryable only while the same review is
+                    # still valid. Leave stale authority consumed, not resurrected.
+                    logger.info(
+                        "Setup review expired during worker start", exc_info=True
+                    )
+                finally:
+                    self._eve_mutation.release()
+        return {"accepted": True, "error": None}
+
+    def _eve_setup_create_worker(self, offer: _SetupReview, request_id: str) -> None:
+        published = False
+        created = None
+        selection_persisted = False
+        error_code = "create_failed"
+        error_message = "Setup creation was interrupted."
+        warning = ""
+        try:
+            parsed = setup_sharing.parse_text(offer.text)
+            if parsed.ambiguous_labels and not offer.keep_ship_labels:
+                raise setup_model.SetupError(
+                    "unsupported_setup",
+                    "Review the setup and choose Keep my ship labels.",
+                )
+            self._setup_require_offer(offer)
+            try:
+                setup_profile.require_manifest(offer.plan, offer.manifest)
+            except ValueError as error:
+                raise setup_model.SetupError("stale_review", str(error)) from error
+            self._setup_require_closed()
+            with setup_profile.stage_setup(
+                offer.plan,
+                offer.manifest,
+                offer.account_filename,
+                offer.character_filename,
+                parsed,
+                keep_ship_labels=offer.keep_ship_labels,
+                now=time.time(),
+            ) as staged:
+                self._setup_require_offer(offer)
+                try:
+                    setup_profile.require_manifest(offer.plan, offer.manifest)
+                except ValueError as error:
+                    raise setup_model.SetupError("stale_review", str(error)) from error
+                self._setup_require_closed()
+                # The process probe can be slow. Its CLOSED answer cannot make
+                # context or filesystem observations from before it fresh again.
+                self._setup_require_offer(offer)
+                try:
+                    setup_profile.require_manifest(offer.plan, offer.manifest)
+                except ValueError as error:
+                    raise setup_model.SetupError("stale_review", str(error)) from error
+                # Hashing may outlive cancellation or a learned deletion. Neither
+                # needs the mutation hold to invalidate this offer's authority.
+                self._setup_require_offer(offer)
+                created = evesettings_profilecopy.publish_new(staged)
+                # This is the irreversible outcome, before cleanup, persistence,
+                # or page status. None of those may invite a duplicate retry.
+                published = True
+                error_code = ""
+                error_message = ""
+            selection_persisted = self._eve_select_created_profile(offer.plan, created)
+            if not selection_persisted:
+                warning = (
+                    f"Created {offer.plan.destination_name}, but Wingman could not remember "
+                    "the selection. Select it from Profile."
+                )
+            self._ports.status(f"Created {offer.plan.destination_name}.")
+        except Exception as error:
+            if published:
+                logger.exception("Setup profile created, but a follow-up effect failed")
+                warning = " ".join(
+                    filter(
+                        None,
+                        [warning, f"Profile created, but a follow-up failed: {error}"],
+                    )
+                )
+            else:
+                logger.exception("Setup profile creation failed")
+                error_message = str(error) or "Setup creation could not be completed."
+                if isinstance(error, setup_model.SetupError):
+                    error_code = error.code
+                elif isinstance(error, evesettings_codec.ContentChangedError):
+                    error_code = "stale_review"
+                elif isinstance(error, FileExistsError):
+                    error_code = "destination_exists"
+                else:
+                    error_code = "create_failed"
+        finally:
+            self._eve_mutation.release()
+            self._eve_done(
+                published,
+                operation="ui_setup_create",
+                request_id=request_id,
+                review_id=offer.review_id,
+                published=published,
+                path=str(created) if published else "",
+                selection_persisted=selection_persisted,
+                error_code=error_code,
+                error=error_message,
+                warning=warning,
+            )
+
     def _eve_refresh_running(self) -> None:
         """Re-probe for a running client, off the bridge thread.
 

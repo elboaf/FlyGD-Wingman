@@ -22,6 +22,7 @@ PROFILE_METHODS = (
     "eve_settings_setup_save_file",
     "eve_settings_setup_review",
     "eve_settings_setup_discard",
+    "eve_settings_setup_create",
     "eve_settings_pick_root",
     "eve_settings_detect_root",
     "eve_settings_select",
@@ -54,6 +55,7 @@ PROFILE_SIGNATURES = {
     "eve_settings_setup_save_file": "(self, text: str) -> dict",
     "eve_settings_setup_review": "(self, text: str, expected_profile: str, account_path: str, character_path: str, destination_name: str, keep_ship_labels: bool = False) -> dict",
     "eve_settings_setup_discard": "(self, review_id: str) -> bool",
+    "eve_settings_setup_create": "(self, review_id: str, request_id: str) -> dict",
     "eve_settings_pick_root": "(self) -> str",
     "eve_settings_detect_root": "(self) -> str",
     "eve_settings_select": "(self, server: str, profile: str) -> bool",
@@ -97,6 +99,7 @@ PROFILE_DELEGATES = {
     "eve_settings_setup_save_file": "setup_save_file",
     "eve_settings_setup_review": "setup_review",
     "eve_settings_setup_discard": "setup_discard",
+    "eve_settings_setup_create": "setup_create",
     "eve_settings_pick_root": "pick_root",
     "eve_settings_detect_root": "detect_root",
     "eve_settings_select": "select",
@@ -245,6 +248,9 @@ class _ProfilesSpy:
 
     def setup_discard(self, review_id):
         return self._record("setup_discard", review_id)
+
+    def setup_create(self, review_id, request_id):
+        return self._record("setup_create", review_id, request_id)
 
     def pick_root(self):
         return self._record("pick_root")
@@ -501,6 +507,7 @@ def test_profiles_controller_construction_has_no_effects_and_factory_runs_last(
             ("text", "base", "account", "character", "New", True),
         ),
         ("eve_settings_setup_discard", "setup_discard", ("review-id",)),
+        ("eve_settings_setup_create", "setup_create", ("review-id", "request-id")),
         ("eve_settings_pick_root", "pick_root", ()),
         ("eve_settings_detect_root", "detect_root", ()),
         ("eve_settings_select", "select", ("tranquility", "settings_Default")),

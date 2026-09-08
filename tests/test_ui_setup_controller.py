@@ -1,5 +1,6 @@
-"""Read-only setup boundaries on distinct synthetic source and recipient profiles."""
+"""Setup review and creation on distinct synthetic source and recipient profiles."""
 
+import contextlib
 import copy
 import io
 import json
@@ -12,11 +13,12 @@ import pytest
 from tests import fakes
 from tests.setup_fixtures import install_lossless_codec, seed_profile, wire
 from tests.test_evesettings_codec import CODEC
-from tests.test_evesettings_controller import build_controller
+from tests.test_evesettings_controller import QueuedThreads, build_controller
 from tests.test_ui_setup_documents import value
 from wingman import atomicio
 from wingman.evesettings import (
     codec,
+    profilecopy,
     setup_documents,
     setup_model,
     setup_profile,
@@ -35,6 +37,7 @@ def setup(tmp_path, monkeypatch):
         root=str(source.root),
         server=str(source.server),
         profile=str(source.profile),
+        account_names={"10": "Synthetic source", "20": "Synthetic recipient"},
         account_characters={"10": ["11"], "20": ["30", "31"]},
     )
     return controller, source, base
@@ -774,6 +777,7 @@ def test_native_transport_review_and_real_staging_on_distinct_synthetic_base(
         root=str(source.root),
         server=str(source.server),
         profile=str(source.profile),
+        account_names={"10": "Synthetic source", "20": "Synthetic recipient"},
         account_characters={"10": ["11"], "20": ["30"]},
     )
     exported = export(controller, source)
@@ -828,6 +832,869 @@ def test_native_transport_review_and_real_staging_on_distinct_synthetic_base(
     assert not offer.plan.destination.exists()
     assert controller.setup_discard(offer.review_id) is True
     assert {p: p.read_bytes() for p in base.root.rglob("*") if p.is_file()} == before
+
+
+def files_under(root):
+    return {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def queue_create(controller, base):
+    reply = review(controller, base)
+    assert reply["ok"], reply
+    offer = controller._setup_review
+    queued = QueuedThreads()
+    controller._ports = replace(controller._ports, spawn=queued.spawn)
+    assert controller.setup_create(offer.review_id, "create-1") == {
+        "accepted": True,
+        "error": None,
+    }
+    assert controller._setup_review is None
+    assert controller._eve_mutation.locked()
+    assert controller._done_pushes == []
+    return offer, queued
+
+
+def assert_create_done(controller, offer, code="", *, published=False):
+    assert len(controller._done_pushes) == 1
+    done = controller._done_pushes[0]
+    assert set(done) == {
+        "ok",
+        "operation",
+        "request_id",
+        "review_id",
+        "published",
+        "path",
+        "selection_persisted",
+        "error_code",
+        "error",
+        "warning",
+    }
+    assert done["operation"] == "ui_setup_create"
+    assert done["review_id"] == offer.review_id
+    assert done["request_id"] == "create-1"
+    assert done["ok"] is done["published"] is published
+    assert done["path"] == (str(offer.plan.destination) if published else "")
+    assert done["error_code"] == code
+    assert bool(done["error"]) is bool(code)
+    if not published:
+        assert done["selection_persisted"] is False
+        assert done["warning"] == ""
+    assert controller._eve_mutation.acquire(blocking=False)
+    controller._eve_mutation.release()
+    assert not list(offer.plan.server.glob(".wingman-profile-copy-*"))
+    return done
+
+
+@pytest.mark.parametrize("request_id", [None, True, 12, {}, "", "x" * 129])
+def test_create_invalid_request_does_not_consume_offer(setup, request_id):
+    controller, _, base = setup
+    assert review(controller, base)["ok"]
+    offer = controller._setup_review
+    before = copy.deepcopy(controller._settings)
+    result = controller.setup_create(offer.review_id, request_id)
+    assert set(result) == {"accepted", "error"}
+    assert not result["accepted"] and result["error"]
+    assert controller._setup_review is offer
+    assert controller._done_pushes == []
+    assert controller._settings == before
+    assert not controller._eve_mutation.locked()
+
+
+@pytest.mark.parametrize(
+    "state", ["absent", "wrong", "nontext", "discarded", "superseded", "invalid-review"]
+)
+def test_create_needs_matching_current_unconsumed_offer(setup, state):
+    controller, _, base = setup
+    first = review(controller, base)
+    rid = first["review_id"]
+    if state == "absent":
+        controller._setup_review = None
+    elif state == "wrong":
+        rid = "unknown"
+    elif state == "nontext":
+        rid = []
+    elif state == "discarded":
+        assert controller.setup_discard(rid)
+    elif state == "superseded":
+        assert review(controller, base)["ok"]
+    else:
+        assert not review(controller, base, "bad")["ok"]
+    current = controller._setup_review
+    result = controller.setup_create(rid, "create-1")
+    assert not result["accepted"] and result["error"]
+    assert controller._setup_review is current
+    assert controller._done_pushes == []
+    assert not controller._eve_mutation.locked()
+
+
+@pytest.mark.parametrize("state", ["busy", "identification"])
+def test_create_never_queues_behind_mutation_or_identification(setup, state):
+    controller, _, base = setup
+    assert review(controller, base)["ok"]
+    offer = controller._setup_review
+    if state == "busy":
+        controller._eve_mutation.acquire()
+    else:
+        controller._eve_identification = object()
+    try:
+        result = controller.setup_create(offer.review_id, "create-1")
+        assert not result["accepted"] and result["error"]
+        assert controller._setup_review is offer
+        assert controller._done_pushes == controller._alerts == []
+    finally:
+        if state == "busy":
+            controller._eve_mutation.release()
+        controller._eve_identification = None
+    assert controller.setup_create(offer.review_id, "create-1")["accepted"]
+    assert_create_done(controller, offer, published=True)
+
+
+def change_authority(controller, base, change):
+    section = controller._settings["eve_settings"]
+    if change == "selection":
+        section["profile"] = str(base.profile)
+    elif change == "unknown-context":
+        section["server"] = str(base.root / "unknown")
+    elif change == "missing-selection":
+        section["profile"] = str(base.server / "settings_Gone")
+    elif change == "generation":
+        controller.identification_cancel()
+    elif change == "association":
+        section["account_characters"].pop("20")
+    elif change == "ambiguous":
+        section["account_characters"]["99"] = ["30"]
+    elif change == "deleted":
+        controller._eve_deleted.add(("tranquility", 30))
+    elif change in ("account", "character", "unselected", "prefs", "yaml"):
+        path = {
+            "account": base.account_path,
+            "character": base.character_path,
+            "unselected": base.profile / "core_char_99.dat",
+            "prefs": base.profile / "prefs.ini",
+            "yaml": base.profile / "core_public__.yaml",
+        }[change]
+        path.write_bytes(b"external-change")
+    elif change == "remove-unselected":
+        (base.profile / "core_char_99.dat").unlink()
+    elif change == "destination-file":
+        (base.server / "settings_Imported").write_bytes(b"external destination")
+    elif change == "remove-account":
+        base.account_path.unlink()
+    elif change == "remove-character":
+        base.character_path.unlink()
+    elif change in ("remove-prefs", "remove-yaml"):
+        (
+            base.profile
+            / ("prefs.ini" if change == "remove-prefs" else "core_public__.yaml")
+        ).unlink()
+    elif change in ("collision", "case-collision"):
+        dest = base.server / (
+            "settings_Imported" if change == "collision" else "settings_IMPORTED"
+        )
+        dest.mkdir()
+        (dest / "keep.txt").write_bytes(b"external")
+    else:
+        raise AssertionError(change)
+
+
+CREATE_CHANGES = [
+    ("selection", "stale_review"),
+    ("unknown-context", "stale_review"),
+    ("missing-selection", "stale_review"),
+    ("generation", "stale_review"),
+    ("association", "stale_review"),
+    ("ambiguous", "stale_review"),
+    ("deleted", "stale_review"),
+    ("account", "stale_review"),
+    ("character", "stale_review"),
+    ("unselected", "stale_review"),
+    ("remove-unselected", "stale_review"),
+    ("destination-file", "destination_exists"),
+    ("prefs", "stale_review"),
+    ("yaml", "stale_review"),
+    ("remove-account", "stale_review"),
+    ("remove-character", "stale_review"),
+    ("remove-prefs", "missing_local_preferences"),
+    ("remove-yaml", "missing_local_preferences"),
+    ("collision", "destination_exists"),
+    ("case-collision", "destination_exists"),
+]
+
+
+@pytest.mark.parametrize("change,code", CREATE_CHANGES)
+@pytest.mark.parametrize("when", ["admission", "worker", "publication"])
+def test_create_revalidates_authority_and_complete_base(
+    setup, monkeypatch, change, code, when
+):
+    controller, _, base = setup
+    if change == "remove-unselected":
+        (base.profile / "core_char_99.dat").write_bytes(b"unselected recipient")
+    if when == "admission":
+        assert review(controller, base)["ok"]
+        offer = controller._setup_review
+        change_authority(controller, base, change)
+        before = files_under(base.root)
+        result = controller.setup_create(offer.review_id, "create-1")
+        assert not result["accepted"] and result["error"]
+        assert controller._done_pushes == []
+        assert not controller._eve_mutation.locked()
+    else:
+        offer, queued = queue_create(controller, base)
+        if when == "worker":
+            change_authority(controller, base, change)
+            before = files_under(base.root)
+        else:
+            real_stage = setup_profile.stage_setup
+            before = None
+
+            @contextlib.contextmanager
+            def stage(*args, **kwargs):
+                nonlocal before
+                with real_stage(*args, **kwargs) as staged:
+                    change_authority(controller, base, change)
+                    before = {
+                        p: data
+                        for p, data in files_under(base.root).items()
+                        if staged.path not in p.parents
+                    }
+                    yield staged
+
+            monkeypatch.setattr(setup_profile, "stage_setup", stage)
+        queued.run_next()
+        assert_create_done(controller, offer, code)
+        assert not controller.setup_create(offer.review_id, "replay")["accepted"]
+    assert files_under(base.root) == before
+
+
+@pytest.mark.parametrize("when", ["admission", "worker", "publication"])
+@pytest.mark.parametrize(
+    "refusal", ["EVE is running.", "Could not verify EVE is closed.", "exception", ""]
+)
+def test_create_requires_positive_closed_at_every_boundary(
+    setup, monkeypatch, when, refusal
+):
+    controller, _, base = setup
+
+    def probe():
+        if refusal == "exception":
+            raise OSError("probe unavailable")
+        return refusal
+
+    if when == "admission":
+        assert review(controller, base)["ok"]
+        controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+        assert not controller.setup_create(
+            controller._setup_review.review_id, "create-1"
+        )["accepted"]
+        assert controller._done_pushes == []
+        assert not controller._eve_mutation.locked()
+        return
+    offer, queued = queue_create(controller, base)
+    before = files_under(base.root)
+    if when == "worker":
+        controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+    else:
+        real_stage = setup_profile.stage_setup
+
+        @contextlib.contextmanager
+        def stage(*args, **kwargs):
+            with real_stage(*args, **kwargs) as staged:
+                controller._ports = replace(
+                    controller._ports, profile_copy_refusal=probe
+                )
+                yield staged
+
+        monkeypatch.setattr(setup_profile, "stage_setup", stage)
+    queued.run_next()
+    assert_create_done(controller, offer, "eve_not_closed")
+    assert files_under(base.root) == before
+
+
+def test_create_is_new_only_correlated_and_single_use_even_before_start_reply(
+    setup, monkeypatch
+):
+    controller, source, base = setup
+    (base.profile / "core_user_99.dat").write_bytes(b"untouched account")
+    (base.profile / "core_char_99.dat").write_bytes(b"untouched character")
+    (base.profile / "cache.txt").write_bytes(b"not copied")
+    before = files_under(base.root)
+    settings_before = copy.deepcopy(controller._settings)
+    offer, queued = queue_create(controller, base)
+    assert offer.selection_context.profile == str(source.profile)
+    assert offer.plan.source == base.profile
+    assert controller._settings == settings_before
+    assert not controller.setup_create(offer.review_id, "double")["accepted"]
+    assert not controller.setup_discard(offer.review_id)
+    assert not review(controller, base)["ok"]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("new-only setup must not back up, prune or confirm")
+
+    controller._ports = replace(
+        controller._ports, backup_root=forbidden, confirm=forbidden
+    )
+    monkeypatch.setattr(controller, "_eve_prune", forbidden)
+    parsed_values = []
+    real_parse = setup_sharing.parse_text
+
+    def parse(text):
+        assert text == offer.text
+        parsed = real_parse(text)
+        parsed_values.append(parsed)
+        return parsed
+
+    monkeypatch.setattr(setup_sharing, "parse_text", parse)
+    real_publish = profilecopy.publish_new
+
+    def publish(staged):
+        assert controller._settings == settings_before
+        return real_publish(staged)
+
+    monkeypatch.setattr(profilecopy, "publish_new", publish)
+    queued.run_next()
+    done = assert_create_done(controller, offer, published=True)
+    assert done["selection_persisted"] and not done["warning"]
+    assert len(parsed_values) == 1
+    assert controller._settings["eve_settings"]["profile"] == str(
+        offer.plan.destination
+    )
+    assert {p: p.read_bytes() for p in before} == before
+    dest = offer.plan.destination
+    assert {p.name for p in dest.iterdir()} == {
+        "core_user_20.dat",
+        "core_char_30.dat",
+        "core_user_99.dat",
+        "core_char_99.dat",
+        "prefs.ini",
+        "core_public__.yaml",
+    }
+    for path in base.profile.iterdir():
+        if path.name == "cache.txt":
+            continue
+        copied = dest / path.name
+        assert (copied.read_bytes() != path.read_bytes()) is (
+            path in (base.account_path, base.character_path)
+        )
+    assert not controller.setup_create(offer.review_id, "replay")["accepted"]
+    assert len(controller._done_pushes) == 1
+    assert review(controller, base, destination_name="Next")["ok"]
+
+
+@pytest.mark.parametrize("phase", ["spawn", "start"])
+@pytest.mark.parametrize(
+    "change", [None, "generation", "selection", "association", "prefs", "collision"]
+)
+def test_create_start_failure_restores_only_still_valid_offer(setup, phase, change):
+    controller, _, base = setup
+    assert review(controller, base)["ok"]
+    offer = controller._setup_review
+    original_spawn = controller._ports.spawn
+
+    def fail():
+        if change:
+            change_authority(controller, base, change)
+        raise RuntimeError("start failed")
+
+    class Handle:
+        def start(self):
+            fail()
+
+    def spawn(**kwargs):
+        assert controller._setup_review is None
+        if phase == "spawn":
+            fail()
+        return Handle()
+
+    controller._ports = replace(controller._ports, spawn=spawn)
+    result = controller.setup_create(offer.review_id, "create-1")
+    assert not result["accepted"] and result["error"]
+    assert (controller._setup_review is offer) is (change is None)
+    assert controller._done_pushes == []
+    assert not controller._eve_mutation.locked()
+    if change is None:
+        controller._ports = replace(controller._ports, spawn=original_spawn)
+        assert controller.setup_create(offer.review_id, "create-1")["accepted"]
+        assert_create_done(controller, offer, published=True)
+
+
+@pytest.mark.parametrize("raise_after", [False, True])
+def test_create_inline_completion_cannot_restore_or_double_release(setup, raise_after):
+    controller, _, base = setup
+    assert review(controller, base)["ok"]
+    offer = controller._setup_review
+    done_port = controller._ports.publish_done
+
+    def completed(payload):
+        done_port(payload)
+        assert not controller._eve_mutation.locked()
+        assert review(controller, base, destination_name="Next")["ok"]
+
+    def spawn(*, target, args, daemon):
+        class Handle:
+            def start(self):
+                target(*args)
+                assert controller._done_pushes[0]["published"]
+                if raise_after:
+                    raise RuntimeError("handle failed after inline completion")
+
+        return Handle()
+
+    controller._ports = replace(controller._ports, spawn=spawn, publish_done=completed)
+    assert controller.setup_create(offer.review_id, "create-1")["accepted"]
+    assert_create_done(controller, offer, published=True)
+    assert controller._setup_review.review_id != offer.review_id
+    assert controller._setup_review.plan.destination_name == "Next"
+
+
+@pytest.mark.parametrize("filename", ["core_user_20.dat", "core_char_30.dat"])
+@pytest.mark.parametrize("phase", ["read", "write"])
+def test_create_codec_failure_never_publishes_partial_profile(
+    setup, monkeypatch, filename, phase
+):
+    controller, _, base = setup
+    offer, queued = queue_create(controller, base)
+    before = files_under(base.root)
+    method = "read_snapshot" if phase == "read" else "write_document"
+    original = getattr(codec, method)
+
+    def fail(path, *args, **kwargs):
+        if Path(path).name == filename:
+            raise codec.CodecError(f"{filename} {phase} failed")
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(codec, method, fail)
+        queued.run_next()
+    done = assert_create_done(controller, offer, "create_failed")
+    assert filename in done["error"]
+    assert files_under(base.root) == before
+    assert review(controller, base)["ok"]
+
+
+@pytest.mark.parametrize("filename", ["core_user_20.dat", "core_char_30.dat"])
+def test_create_rejects_selected_files_absent_from_manifest_before_codec_reads(
+    setup, monkeypatch, filename
+):
+    controller, _, base = setup
+    offer, _queued = queue_create(controller, base)
+    malformed = replace(
+        offer,
+        manifest=replace(
+            offer.manifest,
+            files=tuple(row for row in offer.manifest.files if row.name != filename),
+        ),
+    )
+    # Exercise the private worker's own check, independently of admission.
+    monkeypatch.setattr(
+        codec,
+        "read_snapshot",
+        lambda *a, **kw: pytest.fail("missing membership before read"),
+    )
+    controller._eve_setup_create_worker(malformed, "create-1")
+    assert_create_done(controller, offer, "stale_review")
+
+
+@pytest.mark.parametrize(
+    "effect",
+    ["selection-false", "selection-raise", "selection-io", "status", "cleanup"],
+)
+def test_create_publication_survives_housekeeping_failures(setup, monkeypatch, effect):
+    controller, _, base = setup
+    offer, queued = queue_create(controller, base)
+    before = files_under(base.root)
+
+    def fail(*args, **kwargs):
+        raise OSError(f"{effect} failed")
+
+    if effect == "selection-false":
+        monkeypatch.setattr(controller, "_eve_select_created_profile", lambda *a: False)
+    elif effect == "selection-raise":
+        monkeypatch.setattr(controller, "_eve_select_created_profile", fail)
+    elif effect == "selection-io":
+        controller._ports = replace(controller._ports, update_settings=fail)
+    elif effect == "status":
+        controller._ports = replace(controller._ports, status=fail)
+    else:
+        real_stage = setup_profile.stage_setup
+
+        @contextlib.contextmanager
+        def stage(*args, **kwargs):
+            with real_stage(*args, **kwargs) as staged:
+                yield staged
+            fail()
+
+        monkeypatch.setattr(setup_profile, "stage_setup", stage)
+    queued.run_next()
+    done = assert_create_done(controller, offer, published=True)
+    assert done["warning"]
+    assert done["selection_persisted"] is (effect == "status")
+    assert {p: p.read_bytes() for p in before} == before
+    assert offer.plan.destination.is_dir()
+    assert not controller.setup_create(offer.review_id, "replay")["accepted"]
+    assert review(controller, base, destination_name="Next")["ok"]
+
+
+@pytest.mark.parametrize("when", ["admission", "publication", "restoration"])
+@pytest.mark.parametrize(
+    "change,code",
+    [
+        ("selection", "stale_review"),
+        ("association", "stale_review"),
+        ("generation", "stale_review"),
+        ("prefs", "stale_review"),
+        ("collision", "destination_exists"),
+    ],
+)
+def test_create_does_not_trust_authority_from_before_slow_closed_probe(
+    setup, monkeypatch, when, change, code
+):
+    controller, _, base = setup
+    if when == "publication":
+        offer, queued = queue_create(controller, base)
+        real_stage = setup_profile.stage_setup
+
+        @contextlib.contextmanager
+        def stage(*args, **kwargs):
+            with real_stage(*args, **kwargs) as staged:
+                controller._ports = replace(
+                    controller._ports, profile_copy_refusal=probe
+                )
+                yield staged
+
+        monkeypatch.setattr(setup_profile, "stage_setup", stage)
+    else:
+        assert review(controller, base)["ok"]
+        offer = controller._setup_review
+
+    def probe():
+        change_authority(controller, base, change)
+
+    if when == "publication":
+        queued.run_next()
+        assert_create_done(controller, offer, code)
+    else:
+        if when == "admission":
+            controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+        else:
+
+            def spawn(**kwargs):
+                controller._ports = replace(
+                    controller._ports, profile_copy_refusal=probe
+                )
+                raise RuntimeError("start failed")
+
+            controller._ports = replace(controller._ports, spawn=spawn)
+        result = controller.setup_create(offer.review_id, "create-1")
+        assert not result["accepted"]
+        assert not controller._eve_mutation.locked()
+        assert controller._done_pushes == []
+        if when == "restoration":
+            assert controller._setup_review is None
+
+
+@pytest.mark.parametrize("change", ["generation", "deleted"])
+def test_create_rechecks_authority_after_final_manifest_hashing(
+    setup, monkeypatch, change
+):
+    controller, _, base = setup
+    offer, queued = queue_create(controller, base)
+    real_stage = setup_profile.stage_setup
+    real_manifest = setup_profile.require_manifest
+    final_probe_done = False
+
+    def probe():
+        nonlocal final_probe_done
+        final_probe_done = True
+
+    @contextlib.contextmanager
+    def stage(*args, **kwargs):
+        with real_stage(*args, **kwargs) as staged:
+            controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+            yield staged
+
+    def manifest(*args):
+        real_manifest(*args)
+        if final_probe_done:
+            change_authority(controller, base, change)
+
+    monkeypatch.setattr(setup_profile, "stage_setup", stage)
+    monkeypatch.setattr(setup_profile, "require_manifest", manifest)
+    queued.run_next()
+    assert_create_done(controller, offer, "stale_review")
+    assert not offer.plan.destination.exists()
+
+
+@pytest.mark.parametrize("when", ["admission", "restoration"])
+def test_create_late_deletion_during_manifest_cannot_consume_or_restore_offer(
+    setup, monkeypatch, when
+):
+    controller, _, base = setup
+    assert review(controller, base)["ok"]
+    offer = controller._setup_review
+    real_manifest = setup_profile.require_manifest
+
+    def manifest(*args):
+        real_manifest(*args)
+        change_authority(controller, base, "deleted")
+
+    if when == "admission":
+        monkeypatch.setattr(setup_profile, "require_manifest", manifest)
+    else:
+
+        def spawn(**kwargs):
+            monkeypatch.setattr(setup_profile, "require_manifest", manifest)
+            raise RuntimeError("start failed")
+
+        controller._ports = replace(controller._ports, spawn=spawn)
+    result = controller.setup_create(offer.review_id, "create-1")
+    assert not result["accepted"]
+    assert controller._done_pushes == []
+    assert not controller._eve_mutation.locked()
+    if when == "restoration":
+        assert controller._setup_review is None
+
+
+@pytest.mark.parametrize(
+    "failure,code",
+    [
+        (codec.ContentChangedError("revision changed"), "stale_review"),
+        (codec.CodecError("codec failed"), "create_failed"),
+        (OSError("copy failed"), "create_failed"),
+        (FileExistsError("destination raced"), "destination_exists"),
+        (setup_model.SetupError("affected_stack", "stack appeared"), "affected_stack"),
+    ],
+)
+def test_create_preserves_boundary_error_codes_and_failure_context(
+    setup, monkeypatch, failure, code
+):
+    controller, _, base = setup
+    offer, queued = queue_create(controller, base)
+    before = files_under(base.root)
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    with monkeypatch.context() as patch:
+        patch.setattr(setup_profile, "stage_setup", fail)
+        queued.run_next()
+    done = assert_create_done(controller, offer, code)
+    assert str(failure) in done["error"]
+    assert files_under(base.root) == before
+    assert review(controller, base)["ok"]
+
+
+@pytest.mark.parametrize("phase", ["encode", "publish"])
+def test_create_external_writer_during_staging_or_final_publish_is_not_overwritten(
+    setup, monkeypatch, phase
+):
+    controller, _, base = setup
+    offer, queued = queue_create(controller, base)
+    if phase == "encode":
+        original = codec.write_document
+
+        def write(*args, **kwargs):
+            result = original(*args, **kwargs)
+            (base.profile / "prefs.ini").write_bytes(b"external preference")
+            return result
+
+        monkeypatch.setattr(codec, "write_document", write)
+    else:
+        original = profilecopy.publish_new
+
+        def publish(staged):
+            offer.plan.destination.mkdir()
+            (offer.plan.destination / "keep.txt").write_bytes(b"external destination")
+            return original(staged)
+
+        monkeypatch.setattr(profilecopy, "publish_new", publish)
+    queued.run_next()
+    assert_create_done(
+        controller,
+        offer,
+        "create_failed" if phase == "encode" else "destination_exists",
+    )
+    if phase == "encode":
+        assert (base.profile / "prefs.ini").read_bytes() == b"external preference"
+        assert not offer.plan.destination.exists()
+    else:
+        assert {p.name: p.read_bytes() for p in offer.plan.destination.iterdir()} == {
+            "keep.txt": b"external destination"
+        }
+
+
+@pytest.mark.parametrize("when", ["admission", "worker"])
+def test_create_missing_codec_is_a_setup_refusal(setup, monkeypatch, when):
+    controller, _, base = setup
+    if when == "admission":
+        assert review(controller, base)["ok"]
+        offer = controller._setup_review
+    else:
+        offer, queued = queue_create(controller, base)
+    monkeypatch.setattr(codec, "codec_available", lambda: False)
+    if when == "admission":
+        assert not controller.setup_create(offer.review_id, "create-1")["accepted"]
+        assert controller._setup_review is offer
+        assert not controller._eve_mutation.locked()
+    else:
+        queued.run_next()
+        assert_create_done(controller, offer, "unsupported_setup")
+
+
+@pytest.mark.parametrize("terminal", ["start-abort", "worker-abort", "done-port"])
+def test_create_terminal_exits_release_mutation_without_replay(
+    setup, monkeypatch, terminal
+):
+    controller, _, base = setup
+    assert review(controller, base)["ok"]
+    offer = controller._setup_review
+
+    def abort(*args, **kwargs):
+        raise KeyboardInterrupt()
+
+    if terminal == "start-abort":
+        controller._ports = replace(controller._ports, spawn=abort)
+        with pytest.raises(KeyboardInterrupt):
+            controller.setup_create(offer.review_id, "create-1")
+        assert controller._setup_review is offer
+        assert controller._done_pushes == []
+    else:
+        queued = QueuedThreads()
+        controller._ports = replace(controller._ports, spawn=queued.spawn)
+        assert controller.setup_create(offer.review_id, "create-1")["accepted"]
+        if terminal == "worker-abort":
+            monkeypatch.setattr(setup_profile, "stage_setup", abort)
+            with pytest.raises(KeyboardInterrupt):
+                queued.run_next()
+        else:
+
+            def done(payload):
+                controller._done_pushes.append(payload)
+                raise RuntimeError("completion transport unavailable")
+
+            controller._ports = replace(controller._ports, publish_done=done)
+            with pytest.raises(RuntimeError, match="completion transport"):
+                queued.run_next()
+        assert len(controller._done_pushes) == 1
+        if terminal == "worker-abort":
+            assert controller._done_pushes[0]["error_code"] == "create_failed"
+            assert controller._done_pushes[0]["error"]
+        assert not controller.setup_create(offer.review_id, "replay")["accepted"]
+    assert controller._eve_mutation.acquire(blocking=False)
+    controller._eve_mutation.release()
+
+
+@pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
+@pytest.mark.parametrize("native", [False, True], ids=["classic", "native-keep"])
+def test_create_real_native_transport_profile_from_distinct_synthetic_pair(
+    tmp_path, monkeypatch, native
+):
+    original_run = codec._run
+
+    def transport(mode, payload, **kwargs):
+        return original_run(
+            mode, payload, runner=kwargs["runner"], exe=lambda: str(CODEC)
+        )
+
+    monkeypatch.setattr(codec, "_run", transport)
+    monkeypatch.setattr(codec, "codec_available", lambda: True)
+    source = seed_profile(tmp_path, case="source", name="Source")
+    base = seed_profile(tmp_path)
+    controller = build_controller(tmp_path)
+    controller._settings["eve_settings"].update(
+        root=str(source.root),
+        server=str(source.server),
+        profile=str(source.profile),
+        account_names={"10": "Synthetic source", "20": "Synthetic recipient"},
+        account_characters={"10": ["11"], "20": ["30"]},
+    )
+    text = (
+        (Path(__file__).parent / "fixtures/ui_setup/native-complete.yaml").read_text(
+            encoding="utf-8"
+        )
+        if native
+        else export(controller, source)["text"]
+    )
+    before = files_under(base.root)
+    if native:
+        refused = review(controller, base, text)
+        assert not refused["ok"] and refused["needs_label_choice"]
+    assert review(controller, base, text, keep_ship_labels=native)["ok"]
+    offer = controller._setup_review
+    assert controller.setup_create(offer.review_id, "create-1")["accepted"]
+    done = assert_create_done(controller, offer, published=True)
+    assert done["selection_persisted"] and not done["warning"]
+    created = offer.plan.destination
+    assert {p: p.read_bytes() for p in before} == before
+    assert {p.name for p in created.iterdir()} == {
+        "core_user_20.dat",
+        "core_char_30.dat",
+        "core_public__.yaml",
+        "prefs.ini",
+    }
+    account = codec.read_document(created / base.account_path.name)
+    character = codec.read_document(created / base.character_path.name)
+    original_account = codec.read_document(base.account_path)
+    original_character = codec.read_document(base.character_path)
+    assert account != original_account
+    if native:
+        assert value(account, "overview", "tabsByWindowInstanceID") == [list(range(8))]
+        assert value(character, "windows", "windowSizesAndPositions_1") == value(
+            original_character, "windows", "windowSizesAndPositions_1"
+        )
+        assert (
+            account.doc["bytes:overview"]["bytes:shipLabels"]
+            == original_account.doc["bytes:overview"]["bytes:shipLabels"]
+        )
+    else:
+        assert value(account, "overview", "tabsByWindowInstanceID") == [
+            [0, 1, 2],
+            [3, 4, 5],
+            [6, 7],
+        ]
+        assert value(character, "windows", "windowSizesAndPositions_1")[
+            "bytes:overview_1"
+        ] == {"tuple": [-20, 200, 320, 420, 1600, 900]}
+    for name in ("prefs.ini", "core_public__.yaml"):
+        assert (created / name).read_bytes() == before[base.profile / name]
+
+
+@pytest.mark.parametrize("request_id", ["1", "x" * 128])
+def test_create_api_completion_uses_client_correlation_and_existing_handler(
+    setup, tmp_path, request_id
+):
+    original, _, base = setup
+    api, _window = fakes.build_api(tmp_path, settings=original._settings)
+    api._spawn = original._ports.spawn
+    api._eve_profile_copy_refusal = lambda: None
+    sent = fakes.record_pushes(api)
+    reviewed = api.eve_settings_setup_review(
+        setup_sharing.export_text(wire()),
+        str(base.profile),
+        str(base.account_path),
+        str(base.character_path),
+        "Imported",
+    )
+    assert reviewed["ok"], reviewed
+    result = api.eve_settings_setup_create(reviewed["review_id"], request_id)
+    assert result == {"accepted": True, "error": None}
+    assert fakes.payloads(sent, "onEveSettingsDone") == [
+        {
+            "ok": True,
+            "operation": "ui_setup_create",
+            "request_id": request_id,
+            "review_id": reviewed["review_id"],
+            "published": True,
+            "path": str(base.server / "settings_Imported"),
+            "selection_persisted": True,
+            "error_code": "",
+            "error": "",
+            "warning": "",
+        }
+    ]
+    assert not api.eve_settings_setup_create(reviewed["review_id"], request_id)[
+        "accepted"
+    ]
+    assert len(fakes.payloads(sent, "onEveSettingsDone")) == 1
 
 
 def test_file_save_rejects_non_json_destination_without_writing(tmp_path):

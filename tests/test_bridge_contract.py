@@ -255,6 +255,7 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
             ],
         ),
         "eve_settings_setup_discard": ("setup_discard", ["review_id"]),
+        "eve_settings_setup_create": ("setup_create", ["review_id", "request_id"]),
         "eve_settings_pick_root": ("pick_root", []),
         "eve_settings_detect_root": ("detect_root", []),
         "eve_settings_select": ("select", ["server", "profile"]),
