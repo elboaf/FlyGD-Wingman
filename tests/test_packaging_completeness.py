@@ -18,6 +18,7 @@ import sys
 import tomllib
 
 import pytest
+import yaml
 
 from wingman.eveauth import application as eveauth_application
 
@@ -302,6 +303,132 @@ def test_pyinstaller_build_action_uses_the_lock_not_an_ad_hoc_install():
     )
     for explanation in ("6.x", "one-folder layout", "load-bearing", "installer.iss"):
         assert explanation in comments
+
+
+def _workflow_steps(path, job=None):
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return workflow["jobs"][job]["steps"] if job else workflow["runs"]["steps"]
+
+
+def _python_body(step):
+    assert step["shell"] == "bash", "Python heredocs need bash on both runners"
+    return re.search(r"python - <<'(\w+)'\n([\s\S]+)\n\1", step["run"])[2]
+
+
+def test_ci_setup_prerequisites_precede_pytest_without_optional_gates():
+    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    names = [step.get("name") for step in steps]
+    required = [
+        "Check Node",
+        "Build the settings codec for tests",
+        "Install the settings codec for tests",
+    ]
+    for name in required:
+        step = steps[names.index(name)]
+        assert names.index("Install") < names.index(name) < names.index("Test")
+        assert not step.get("continue-on-error") and "if" not in step
+        assert step["shell"] == "bash"
+    assert steps[names.index("Check Node")]["run"] == "node --version"
+    assert steps[names.index(required[1])]["run"] == (
+        "cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml "
+        "--target-dir packaging/settings-codec/target"
+    )
+    assert names.index(required[1]) < names.index(required[2])
+    assert "-rs" in steps[names.index("Test")]["run"]
+    assert steps[names.index("Test settings codec")]["run"] == (
+        "cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml"
+    )
+
+
+def test_ci_codec_install_fails_missing_build_then_copies_to_runtime_location(
+    tmp_path, monkeypatch
+):
+    from wingman import paths
+    from wingman.evesettings import codec
+
+    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    step = next(
+        s for s in steps if s.get("name") == "Install the settings codec for tests"
+    )
+    assert step["run"].startswith("uv run --no-sync python")
+    body = _python_body(step)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
+    with pytest.raises(FileNotFoundError):
+        exec(compile(body, "ci-codec-install", "exec"), {})
+    source = tmp_path / "packaging/settings-codec/target/release" / CODEC.name
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"synthetic release artifact")
+    exec(compile(body, "ci-codec-install", "exec"), {})
+    target = tmp_path / "packaging/bin" / CODEC.name
+    assert target.read_bytes() == b"synthetic release artifact"
+    assert paths.codec_exe() == str(target) and codec.codec_available()
+    monkeypatch.setattr(codec, "codec_available", lambda: False)
+    with pytest.raises(
+        AssertionError, match="Native integration tests require the built codec"
+    ):
+        exec(compile(body, "ci-codec-install", "exec"), {})
+
+
+@pytest.mark.parametrize("has_junit", [False, True])
+def test_ci_failure_annotations_preserve_prerequisite_failure_without_junit(
+    tmp_path, has_junit
+):
+    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    step = next(s for s in steps if s.get("name") == "Surface failures")
+    assert step["if"] == "failure()"
+    body = _python_body(step)
+    if has_junit:
+        (tmp_path / "pytest-result.xml").write_text(
+            '<testsuites><testsuite><testcase classname="tests.synthetic" name="broken">'
+            '<failure message="failure"/></testcase></testsuite></testsuites>',
+            encoding="utf-8",
+        )
+    result = subprocess.run(
+        [sys.executable, "-c", body], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert (
+        "::error::tests.synthetic.broken"
+        if has_junit
+        else "::notice::pytest-result.xml is absent; inspect the failed prerequisite step"
+    ) in result.stdout
+
+
+def test_windows_build_checks_frozen_yaml_not_only_development_imports():
+    steps = _workflow_steps(ROOT / ".github/actions/build-installer/action.yml")
+    names = [step.get("name") for step in steps]
+    name = "Verify setup YAML is bundled"
+    assert (
+        names.index("Build executable")
+        < names.index(name)
+        < names.index("Build installer")
+    )
+    step = steps[names.index(name)]
+    assert not step.get("continue-on-error") and "if" not in step
+    body = _python_body(step)
+    compile(body, "verify-frozen-yaml", "exec")
+    for token in (
+        'CArchiveReader("dist/Wingman/Wingman.exe")',
+        'open_embedded_archive("PYZ.pyz")',
+        '"wingman.evesettings.overview_yaml"',
+        '"yaml"',
+        '"yaml.loader"',
+        '"yaml.events"',
+        '"yaml.constructor"',
+        '"yaml.cyaml"',
+        "import yaml._yaml",
+        'Path("dist/Wingman/_internal/yaml")',
+        "Path(yaml._yaml.__file__).name",
+        "extension.is_file()",
+        '"THIRD-PARTY-NOTICES.md"',
+        '"## PyYAML\\n"',
+        'f"Version: {yaml.__version__}"',
+        'distribution("PyYAML")',
+        "license_text in section",
+    ):
+        assert token in body, token
 
 
 def test_every_subpackage_is_declared():

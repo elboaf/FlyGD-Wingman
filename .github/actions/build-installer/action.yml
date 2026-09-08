@@ -307,6 +307,42 @@ runs:
       shell: pwsh
       run: uv run python -m PyInstaller packaging/uploader.spec --noconfirm
 
+    - name: Verify setup YAML is bundled
+      # overview_yaml imports yaml statically; yaml.cyaml imports yaml._yaml
+      # statically too. Neither needs a speculative hiddenimport. Check the
+      # actual frozen archive and wheel extension, not just the build venv.
+      # SafeLoader itself is pure Python. Keeping the wheel's optional C
+      # extension still prevents a silent packaging regression. This is a
+      # contents check, NOT proof of execution in the installed Windows app.
+      shell: bash
+      run: |
+        uv run --no-sync python - <<'PY'
+        from importlib.metadata import distribution
+        from pathlib import Path
+        import yaml
+        import yaml._yaml
+        from PyInstaller.archive.readers import CArchiveReader
+
+        archive = CArchiveReader("dist/Wingman/Wingman.exe")
+        modules = archive.open_embedded_archive("PYZ.pyz").toc
+        required = {
+            "wingman.evesettings.overview_yaml", "yaml", "yaml.loader",
+            "yaml.events", "yaml.constructor", "yaml.cyaml",
+        }
+        missing = required - modules.keys()
+        assert not missing, f"Setup YAML modules missing from frozen archive: {sorted(missing)}"
+        extension = Path("dist/Wingman/_internal/yaml") / Path(yaml._yaml.__file__).name
+        assert extension.is_file(), f"PyYAML extension missing from bundle: {extension}"
+        notices = (Path("dist/Wingman/_internal") / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8")
+        section = notices.split("## PyYAML\n", 1)[1].split("\n## ", 1)[0]
+        assert f"Version: {yaml.__version__}" in section, "Bundled PyYAML notice version differs"
+        package = distribution("PyYAML")
+        license_file = next(file for file in package.files if str(file).endswith("/licenses/LICENSE"))
+        license_text = package.locate_file(license_file).read_text(encoding="utf-8").strip()
+        assert license_text in section, "Bundled PyYAML MIT licence text is incomplete"
+        print("Setup YAML modules, extension and licence are bundled (runtime smoke still required)")
+        PY
+
     - name: Show what PyInstaller produced
       # The layout is the thing that cannot be verified off-Windows.
       # Confirmed on 2026-08-20 against PyInstaller 6.x: the executable sits

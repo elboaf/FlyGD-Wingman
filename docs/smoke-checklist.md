@@ -3999,6 +3999,104 @@ with real `settings_*` folders can still prove.
 - [ ] Check the packaged build: Profiles and Backups open, and the folder picker
       opens.
 
+## Overview and layout sharing (Profiles → Share setup… / Import setup…)
+
+**Operator-authorized manual gates, not automated test results.** Use disposable
+profiles and dedicated test pairs; obtain separate account-owner
+permission before any live EVE or launcher action. Do not use a sender clone as
+an independent recipient. Do not edit original profiles, private captures or
+hardware files to make a test pass. Record platform, build/codec hashes, actual
+results and any refusal in the
+[overview/layout verification record](overview-layout-sharing-verification.md).
+Linux codec tests and developer-browser evidence do not close these Windows/EVE
+gates. Wingman must never move or resize a running EVE client.
+
+- [ ] **Fresh independent base.** With operator approval, normally initialize a
+      disposable recipient through EVE, then close every client. Confirm the
+      base has its own account/character DATs, `core_public__.yaml` and `prefs.ini`,
+      and a confirmed account–character association in Wingman. Keep an untouched
+      baseline and perform a no-change launch/close control before testing import.
+      Record distinctly different sender/recipient filters, labels, local display
+      preferences and unrelated settings. A missing display file must refuse
+      Review; neither the artifact nor a sender copy may supply it.
+- [ ] **Closed means positively confirmed.** Share, Review and Create refuse when
+      EVE is running or the process check is UNKNOWN/unavailable. Begin a review
+      with EVE closed, then start a disposable client before Create: creation must
+      refuse without changing existing profiles. Close the client and re-review.
+- [ ] **Export is a snapshot.** Select one local source pair with a confirmed
+      association. Share includes effective unsaved filter overrides without
+      modifying source DATs. Inspect a synthetic exported JSON: no DAT envelope,
+      paths, account/character IDs, CRC, revisions, local timestamps/history or
+      hardware preferences. User-authored names/markup are text, not anonymized;
+      do not distribute a personal export under an anonymity assumption.
+- [ ] **Alternate recipient is independent.** While Profiles selects the source,
+      browse a different initialized base in Import. Choose its own character and
+      confirmed account, not the source pair. Browsing/Review must not persist the
+      ordinary Profiles selection or create a directory. Review identifies that
+      base/pair, new name, account-wide effects, imported scope and retained local
+      display settings. Editing any input invalidates Create until a new Review.
+- [ ] **New-only publication.** An existing name, including a case-only spelling,
+      is refused; no replacement or merge is offered. Create publishes a new
+      complete sibling profile, reports its actual path and consumes the review
+      once. Repeated Create must not publish twice. Source/base files stay byte
+      identical. Unselected recognized DATs copy unchanged; unrelated cache files
+      do not become settings files. No partial visible profile survives a failure.
+- [ ] **Display preservation before launch.** Compare the new profile's
+      `core_public__.yaml` and `prefs.ini` byte-for-byte with the recipient baseline
+      before launching EVE. Never take these files from the sender. After the
+      authorized recipient launch, verify local resolution, display mode, monitor
+      choice and UI scaling remain recipient-local; record any EVE rewrite
+      separately from Wingman's pre-launch byte preservation.
+- [ ] **Launcher discovery and activation.** Only after successful publication,
+      the operator restarts the launcher and explicitly selects the newly named
+      profile for the recipient. Wingman's success/selection is not launcher
+      activation. Record whether the launcher discovers the new profile and
+      confirm the launched pair is the recipient before judging visual results.
+- [ ] **Supported saved layout, not auto-fit.** Compare supported unstacked windows
+      against the reviewed snapshot: active overview groups, Selected item, Probe
+      scanner, Directional scanner, Drones, Fleet, Watch list, Standalone bookmarks,
+      Solar-system map and Primary map where supported. Check each supplied open,
+      minimized, collapsed, compact, locked, overlay and light-background override,
+      target origin/lock and HUD offset. Saved geometry/reference sizes are copied
+      as-is, including negative positions; a different recipient display is not
+      silently fitted or resized. Unsupported shapes must refuse, not be clamped.
+- [ ] **Groups, filters and labels.** Exercise the synthetic eight-tab/three-group
+      setup and all nine ordered label records, including repeated null types,
+      markup, disabled entries and optional formatting. Check actual EVE label
+      appearance/order after reload, group membership and effective filter bodies.
+      Recipient-local filters/overrides not imported remain; imported stale
+      overrides must not shadow the new bodies. Check tab selection reset and
+      retirement of surplus overview instances without deleting unrelated windows.
+- [ ] **Affected stacks refuse.** Test stacked sender/recipient supported windows,
+      including a surplus recipient overview that import would retire. Refuse with
+      actionable context and unchanged files. An unrelated private chat stack is
+      retained; do not unstack or delete caches automatically to bypass a refusal.
+- [ ] **Native YAML is configuration-only.** Import the synthetic native YAML.
+      Ambiguous labels must require an explicit, initially unchecked **Keep my
+      ship labels**, then another Review. Use a recipient label sequence with
+      different order, multiplicity and text from both the sender and YAML; check
+      it survives intact. Supplied tabs form one primary group; surplus instances
+      close but saved recipient geometry/HUD/target origin do not import from YAML.
+      Omitted options retain local values; supplied aggregates replace. Do not
+      describe this as an exact reproduction of EVE's native import/reset logic.
+- [ ] **Errors and recovery.** On disposable test data, change an unselected DAT
+      or preference file after Review (include a same-size edit), or create the
+      destination externally. Create must refuse stale authority/collision without
+      overwriting the external change. Exercise a controlled copy/encode/publication
+      failure in a test build: no partial profile, context remains useful, and a
+      fresh Review works. A publication with failed selection persistence still
+      reports the created path and warning, not a retryable failed publication.
+- [ ] **Windows/WebView2 and frozen app.** Use the installed artifact, not source
+      Python. Import both Wingman JSON and native YAML through Paste and Choose
+      file; export through Copy and Save. Confirm PyYAML loads without a missing
+      module/extension error and the codec runs without console flashes. Exercise
+      UTF-8/non-ASCII file paths, clipboard denial, dialog cancellation, Tab/Space/
+      Enter/Escape, text-only markup, pending creation/Back and return focus. At
+      100%, 125%, 150% and 200% scaling, verify the 840x625 logical floor: no
+      horizontal overflow, readable scrolling review and visible pinned actions.
+      Inspect the packaged PyYAML MIT notice. The build's archive/extension check
+      is necessary but does not substitute for this runtime exercise.
+
 ## Probe formations (Profiles → Edit formations…)
 
 Needs a real install for the write lines; the editor itself states the

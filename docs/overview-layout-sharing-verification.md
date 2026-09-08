@@ -1,4 +1,156 @@
-# Overview/layout sharing: parser checkpoint
+# Overview/layout sharing: verification record
+
+## Current Task 10 checkpoint
+
+Tasks 1–9 of the [implementation plan](overview-layout-sharing-plan.md) are
+implemented and task-reviewed. Task 10 adds focused facade-to-publication tests,
+mandatory CI native/Node prerequisites and a post-freeze YAML contents check.
+This checkpoint is based on `db13bc1d59a1e79c8d6d5495f7f27586f02f7131`; Task 10's
+independent review and Task 11's whole-branch polish/review/fresh verification
+remain separate. **This is not a release sign-off or live-EVE acceptance.**
+
+The earlier parser checkpoint is retained below under
+[Historical Tasks 1–3 parser checkpoint](#historical-tasks-13-parser-checkpoint).
+Its statements about unimplemented tasks and the universal Task 4 stop describe
+that past checkpoint, not the current branch or current work authorization.
+The [reassessment](overview-layout-sharing-reassessment.md) and
+[client evidence](ui-setup-client-evidence.md) record the intervening support
+rulings. No private captures or real profiles were used in Task 10.
+
+### Automated evidence and implementation scope
+
+`tests/test_ui_setup_integration.py` calls the real Api facade, controller,
+document adapter, manifest checks, hidden staging, codec verification and final
+new-profile publication. Expected imported data is hand-checked literal data,
+not the output of the adapter used as its own oracle. Source and recipient have
+distinct identities, CRC presence, unrelated settings, filters, labels, local
+preferences and geometry. The tests verify:
+
+- Exact recipient IDs/non-owned sections and unselected DAT bytes; exact local
+  YAML/INI bytes; unchanged original profiles and exclusion of non-settings cache.
+- Effective source filter overrides and clearing imported recipient overrides
+  without losing unrelated local definitions; eight tabs in three groups; all
+  nine ordered labels with multiplicity and optional formatting; exact geometry
+  and target/HUD values, without auto-fitting.
+- Native YAML's explicit Keep refusal and successful configuration-only import:
+  the recipient's deliberately different two-record label sequence and original
+  label timestamp survive intact, supplied tabs become one primary group, surplus
+  instances close, geometry stays local, supplied aggregates replace and omitted
+  options remain local.
+- Same-size unselected-DAT manifest changes, OS copy/publication failures, cleanup,
+  correlation, one-shot creation and fresh-review recovery. Encode failure after
+  the first staged document succeeds uses only the lossless transport seam.
+  Native success/copy/publication/staleness cases use the real subprocess and
+  bundled-path resolver without a debug-binary fallback or availability skip.
+
+The broader controller/native suites are retained, not copied into another
+controller or duplicate permutation suite. CI now checks Node, builds the locked
+release codec, copies the platform-correct executable and asserts availability
+**before** pytest on both unchanged Ubuntu/Windows matrix runners. Explicit bash
+makes the multiline Python body valid on both. Existing action pins and the
+independent Cargo regression step remain. Missing JUnit after a prerequisite
+failure emits a notice rather than a second traceback. Pytest includes `-rs`.
+
+Packaging inspection used the actual spec, shared Windows build action, locked
+PyInstaller 6.22.2/hooks-contrib 2026.7 and PyYAML 6.0.3 sources. PyYAML is locked
+at 6.0.3 (`pyproject.toml` declares `>=6.0.3`); no dependency or version changed.
+`overview_yaml` imports `yaml` statically, and `yaml.cyaml` statically imports
+`yaml._yaml`; SafeLoader itself is pure Python. No YAML hook or speculative
+hiddenimport was needed. The shared build action now inspects the actual
+`Wingman.exe` PYZ for the parser/YAML modules, verifies the wheel's optional C
+extension under `_internal/yaml`, and checks the bundled versioned full MIT
+licence. That check is wired and source-tested, **not run against a Windows
+artifact in this session**. It does not prove frozen runtime imports.
+
+### Commands actually run (Linux)
+
+All commands used the linked worktree and Linux `/tmp` state. Dependency setup:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv sync --locked --extra dev --group build
+# Passed; build group installed only for packaging source inspection.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv sync --locked --extra dev
+# Passed; final test environment, build-only packages removed.
+node --version
+# v26.5.0
+cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target
+# Passed, release profile [optimized].
+```
+
+The exact CI Python install body was executed through `uv run --no-sync python`
+from the parsed workflow, copying only into this worktree's ignored
+`packaging/bin`. Source and installed executable SHA-256 both were:
+
+```text
+4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4
+```
+
+This is an ELF x86-64 Linux release executable built with Cargo/rustc 1.91.0,
+not a Windows PE or packaged-app test. Fresh final checks after scoped polish:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_integration.py -v -rs --basetemp=/tmp/wingman-task10-integration
+# 11 passed in 4.97s (six lossless, five native; no skips).
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_integration.py tests/test_ui_setup_controller.py tests/test_ui_setup_profile.py tests/test_evesettings_codec.py tests/test_packaging_completeness.py -q -rs --basetemp=/tmp/wingman-task10-focused
+# 480 passed, 2 skipped in 29.27s (Windows-only junction cases).
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task10-full --junitxml=/tmp/wingman-task10-full.xml
+# 8,233 passed, 11 skipped in 310.26s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff check .
+# All checks passed.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff format --check .
+# 316 files already formatted.
+node --check wingman/web/uisetup.js
+node --check wingman/web/evesettings.js
+node --check wingman/web/dev.js
+node --check tests/fixtures/formations_page.cjs
+node --check tests/fixtures/ui_setup_page.cjs
+# All passed.
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+# 1 passed, 0 failed/ignored.
+git diff --check
+# Passed.
+```
+
+All 11 skips were inspected; **none is missing-codec or Node coverage**:
+
+| Test locations | Count | Actual skip reason / remaining evidence |
+| --- | ---: | --- |
+| `test_evesettings_profilecopy.py:279,318,650` | 3 | Real Windows junction creation/cleanup |
+| `test_eveskills_dpapi.py:45,52` | 2 | Real DPAPI / WinDLL bindings |
+| `test_preview_host.py:1361` | 1 | Real Windows message pump/window station |
+| `test_preview_win32.py:147,162,186` | 3 | user32/gdi32/dwmapi bindings |
+| `test_ui_setup_profile.py:458` | 2 | DAT/preference-shaped Windows junction refusal |
+
+The initial prerequisite RED failed for missing CI Node/native/frozen checks and
+missing-JUnit handling; native integration explicitly failed before the codec
+was built. A later added test assertion incorrectly expected physical integer
+zero for `useSmallText`; the existing adapter deliberately normalizes that legacy
+option to semantic False. Both focused/full runs exposed it. The test was
+corrected to assert `is False` after inspecting that contract; no production
+behavior was changed. The final passing commands above were rerun afterward.
+
+### Evidence and open-gate matrix
+
+| Gate | Status | Evidence / next required exercise |
+| --- | --- | --- |
+| Synthetic facade → controller → adapter → manifest → stage → publish | PASS on Linux | Final lossless and worktree release-native tests above |
+| Existing native codec and Node runtime suites | PASS on Linux | Full suite, no codec/Node skips; syntax checks above |
+| CI prerequisites and failure reporting | LOCAL PASS; hosted runs OPEN | Workflow body tests exercise missing build, copy/resolver, failed availability and absent/present JUnit; Ubuntu/Windows jobs not dispatched here |
+| Developer browser rendering/lifecycle | PRIOR Task 8/9 evidence | Ignored per-task reports record Linux browser checks, including Task 9's 24 measurements/screenshots; not rerun for Task 10's test/CI-only change |
+| Frozen YAML modules/extension/licence | WIRED; Windows artifact OPEN | New post-build contents assertion needs a Windows installer build; not a runtime import pass |
+| Windows/WebView2 native UI and DPI | OPEN | Installed artifact, dialogs/clipboard, 100/125/150/200% scaling and logical viewport floor |
+| Fresh independent recipient / no-change control / EVE reload | OPEN | Authorized operator initializes a disposable base, preserves a control and drives EVE; synthetic files do not establish EVE interpretation |
+| Live groups/labels/windows/stacks/display preservation | OPEN | Authorized as-saved visual and byte checks from the smoke checklist, including different recipient labels and refusal paths |
+| Launcher restart/discovery/explicit selection | OPEN | Operator action after publication, never inferred from Wingman selection |
+| Task 10 independent review / Task 11 whole-branch reconciliation | OPEN | Parent review, then whole-branch polish/review and fresh checks; deferred Task 9 duplicate-warning Minor belongs there |
+
+Use the [overview/layout smoke checklist](smoke-checklist.md#overview-and-layout-sharing-profiles--share-setup--import-setup)
+for the remaining manual gates. No EVE, launcher, clipboard, live-profile mutation,
+Windows binary execution, push, merge or release was performed in Task 10.
+
+## Historical Tasks 1–3 parser checkpoint
+
+**The remainder is the retained earlier record, not a current completion claim.**
 
 ## Status and scope
 
