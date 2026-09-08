@@ -3204,6 +3204,23 @@ def test_the_formation_editor_is_a_route_the_title_bar_never_shows():
     )
 
 
+def test_setup_is_a_scoped_profiles_route_not_a_peer():
+    app = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    assert 'id="route-uisetup"' in HTML
+    assert 'src="uisetup.js"' in HTML
+    assert "uisetup: 'route-uisetup'" in app
+    assert 'data-route="uisetup"' not in HTML
+    for table in ("CHROMELESS_ROUTES", "EVE_ROUTES"):
+        routes = re.search(r"WM\." + table + r" = \[([^\]]*)\]", app)
+        assert routes and "'uisetup'" in routes[1]
+    lit = app[app.index("var lit =") : app.index("var chromeless =")]
+    assert "name === 'uisetup'" in lit
+    peers = app[
+        app.index("if (name === 'main'") : app.index("WM.last_destination = name;")
+    ]
+    assert "'uisetup'" not in peers
+
+
 def test_every_bridge_handler_has_exactly_one_owner():
     """WM.handle assigns window[name]; a second registration silently wins.
 
@@ -3226,6 +3243,7 @@ def test_every_bridge_handler_has_exactly_one_owner():
         "formations.js must not register it"
     )
     js = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))
+    assert "WM.uiSetupDone(payload)" in js
     assert "WM.formationsDone" in js, (
         "Profiles must forward onEveSettingsDone to the editor, which has "
         "no handler of its own"

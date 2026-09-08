@@ -48,7 +48,9 @@ class Screen:
 # editor and put it in the set as if that were the screen. Give Screen a
 # setup hook before adding it.
 #
-EXCLUDED_ROUTES = frozenset({"firstrun", "formations"})
+# Setup sharing likewise requires its opener and an explicit confirmed local
+# pair. Do not choose private source files automatically just to fill a capture.
+EXCLUDED_ROUTES = frozenset({"firstrun", "formations", "uisetup"})
 
 # `gated` mirrors app.js's WM.EVE_ROUTES + WM.EVE_SECTIONS. Not retyped
 # from memory: test_shoot_screens.py asserts this column against app.js.

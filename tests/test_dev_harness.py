@@ -22,7 +22,13 @@ from pathlib import Path
 import pytest
 
 from wingman import bookmarks
-from wingman.evesettings import formation_sharing, identity, selective
+from wingman.evesettings import (
+    formation_sharing,
+    identity,
+    selective,
+    setup_model,
+    setup_sharing,
+)
 
 WEB = Path(__file__).resolve().parents[1] / "wingman" / "web"
 DEV_JS = (WEB / "dev.js").read_text(encoding="utf-8")
@@ -73,6 +79,46 @@ def _fixture_body(marker: str) -> str:
     block = DEV_JS[DEV_JS.index(marker) :]
     block = block[: block.index("\n  };")]
     return re.sub(r"(?m)^\s*//.*$", "", block)
+
+
+def test_setup_export_bridge_has_read_only_dev_doubles():
+    assert {
+        "eve_settings_setup_context",
+        "eve_settings_setup_limits",
+        "eve_settings_setup_export",
+        "eve_settings_setup_save_file",
+    } <= _stubbed()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_setup_dev_fixture_matches_real_limits_and_summary():
+    script = r"""
+const fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const api = {}, eve = {root: 'root', server: 'tq', profile: 'base',
+  profiles: [{path: 'base', name: 'Base', file_count: 4}],
+  accounts: [{path: 'a', id: '1', name: 'Account', character_ids: ['2']}],
+  characters: [{path: 'c', id: '2', name: 'Pilot'}]};
+vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='),
+  source.indexOf('  function eveMutation(')), {api, eve, Promise});
+Promise.all([api.eve_settings_setup_limits(), api.eve_settings_setup_context('base'),
+  api.eve_settings_setup_export('base', 'a', 'c')]).then(result => console.log(JSON.stringify(result)));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(WEB / "dev.js")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    limits, context, exported = json.loads(result.stdout)
+    assert limits == setup_model.limits_payload()
+    assert context["profile"] == "base"
+    assert context["accounts"][0]["character_ids"] == ["2"]
+    parsed = setup_sharing.parse_text(exported["text"])
+    assert exported["summary"] == setup_model.summarize(parsed)
 
 
 def test_the_scan_found_both_sides():

@@ -3101,6 +3101,64 @@
     return Promise.resolve({ accepted: true, value: wanted, error: null });
   };
 
+  // Setup export fixtures are read-only: no real clipboard, file dialog or
+  // EVE file is accessed by these bridge doubles. Counts follow their artifact.
+  var DEV_SETUP_LIMITS = {max_bytes: 2097152, max_depth: 16, max_nodes: 100000,
+    max_presets: 256, max_tabs: 8, max_window_groups: 8, max_ship_labels: 64,
+    max_layout_windows: 32, max_membership_ids: 8192, max_id: 2147483647,
+    max_name_codepoints: 512, max_label_codepoints: 4096, min_coordinate: -32768,
+    max_coordinate: 32768, min_size: 1, max_size: 32768, min_target_origin: 0,
+    max_target_origin: 1, min_hud_offset: -32768, max_hud_offset: 32768,
+    min_color: 0, max_color: 1};
+  var DEV_SETUP_WINDOWS = {overview: 'Overview', selecteditemview: 'Selected item',
+    probeScannerWindow: 'Probe scanner', directionalScannerWindow: 'Directional scanner',
+    droneview: 'Drones', fleetwindow: 'Fleet', watchlistpanel: 'Watch list',
+    standaloneBookmarkWnd: 'Standalone bookmarks', solar_system_map_panel: 'Solar-system map',
+    primary_map_panel: 'Primary map'};
+  var DEV_SETUP_ARTIFACT = {format: 'wingman-preset', version: 1, type: 'ui-setup',
+    overview: {
+      presets: [{name: 'Fleet é', groups: [25, 27], filteredStates: [9], alwaysShownStates: []}],
+      tabs: [{id: 0, name: 'Fleet', overview: 'Fleet é', bracket: null, color: null,
+        showAll: false, showNone: false, showSpecials: false,
+        tabColumns: ['ICON', 'NAME', 'DISTANCE'], tabColumnOrder: ['ICON', 'NAME', 'DISTANCE']}],
+      windowGroups: [[0]],
+      shipLabels: [{type: null, pre: '<b>Fleet</b> ', post: '', state: 1},
+        {type: 'pilot name', pre: '', post: '', state: 1},
+        {type: null, pre: ' · ', post: '', state: 1}],
+      settings: {}
+    },
+    layout: {windows: Object.keys(DEV_SETUP_WINDOWS).map(function (key) {
+      return {key: key, geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}};
+    }), targetOrigin: [0.25, 0.75], targetOriginLocked: false, hudOffset: -160}
+  };
+  api.eve_settings_setup_limits = function () {
+    return Promise.resolve(JSON.parse(JSON.stringify(DEV_SETUP_LIMITS)));
+  };
+  api.eve_settings_setup_context = function (profile) {
+    return Promise.resolve({ok: true, error: '', root: eve.root, server: eve.server,
+      profile: profile, profiles: eve.profiles, accounts: eve.accounts,
+      characters: eve.characters, account_identity_available: true, setup_available: true});
+  };
+  api.eve_settings_setup_export = function (profile, accountPath, characterPath) {
+    var account = eve.accounts.filter(function (row) { return row.path === accountPath; })[0];
+    var character = eve.characters.filter(function (row) { return row.path === characterPath; })[0];
+    if (!account || !character || account.character_ids.indexOf(character.id) === -1) {
+      return Promise.resolve({ok: false, error: 'Choose a confirmed local pair.', text: '', summary: {}, warnings: []});
+    }
+    var overview = DEV_SETUP_ARTIFACT.overview;
+    return Promise.resolve({ok: true, error: '', text: JSON.stringify(DEV_SETUP_ARTIFACT),
+      summary: {counts: {presets: overview.presets.length, tabs: overview.tabs.length,
+        windowGroups: overview.windowGroups.length, shipLabels: overview.shipLabels.length,
+        layoutWindows: DEV_SETUP_ARTIFACT.layout.windows.length},
+        windowLabels: Object.keys(DEV_SETUP_WINDOWS).map(function (key) { return DEV_SETUP_WINDOWS[key]; }),
+        limitations: ['Only unstacked supported windows can be shared.',
+          'Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.']},
+      warnings: ['1 effective unsaved filter definition overrides its saved definition in this snapshot.']});
+  };
+  api.eve_settings_setup_save_file = function (text) {
+    return Promise.resolve({ok: true, cancelled: false, error: '', path: 'Dev preview only, no file written'});
+  };
+
   // Every mutation returns "a worker started" and then pushes, because the
   // page's `if (!accepted) setBusy(false)` branch exists for the case where
   // one did NOT -- a stub that answered synchronously would leave the busy

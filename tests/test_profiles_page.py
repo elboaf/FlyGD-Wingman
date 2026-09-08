@@ -967,6 +967,21 @@ def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
     assert "card" not in attrs.split()
 
 
+def test_setup_tools_use_character_prefill_not_copy_targets():
+    assert 'id="es-setup-share"' in BODY
+    assert re.search(r'<button[^>]+id="es-setup-import"[^>]+disabled', BODY)
+    click = re.search(
+        r"WM\.el\('es-setup-share'\)\.addEventListener\('click'.*?\n    \}\);",
+        CODE,
+        re.DOTALL,
+    )
+    assert click
+    assert "WM.openUiSetup" in click[0]
+    assert "kind() === 'characters'" in click[0]
+    assert "preferred_character:" in click[0]
+    assert "selected" not in click[0] and "targets" not in click[0]
+
+
 def test_profile_tools_label_reads_as_subordinate_not_as_a_second_heading():
     """.card > h2 is the one heading treatment on the screen; the tools
     label sits outside any card and must not borrow it wholesale, or a
