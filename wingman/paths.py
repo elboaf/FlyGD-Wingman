@@ -252,6 +252,13 @@ def _package_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def setup_presets_dir() -> Path:
+    """Read-only full setups; missing frozen assets never fall back to source."""
+    if hasattr(sys, "_MEIPASS"):
+        return bundle_dir() / "assets" / "setup-presets"
+    return _package_dir() / "assets" / "setup-presets"
+
+
 def engine_script() -> Path | None:
     """Locate the vendored .ahk, or None if it is not present.
 
