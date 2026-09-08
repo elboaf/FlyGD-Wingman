@@ -1237,6 +1237,13 @@ class ProfilesController:
                 # Hashing may outlive cancellation or a learned deletion. Neither
                 # needs the mutation hold to invalidate this offer's authority.
                 self._setup_require_offer(offer)
+                # The offer helper also discovers files after checking generation;
+                # cancellation during that work must still invalidate publication.
+                if offer.generation != self._eve_generation():
+                    raise setup_model.SetupError(
+                        "stale_review",
+                        "Identification changed. Review the setup again.",
+                    )
                 created = evesettings_profilecopy.publish_new(staged)
                 # This is the irreversible outcome, before cleanup, persistence,
                 # or page status. None of those may invite a duplicate retry.

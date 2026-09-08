@@ -1392,7 +1392,7 @@ def test_create_does_not_trust_authority_from_before_slow_closed_probe(
             assert controller._setup_review is None
 
 
-@pytest.mark.parametrize("change", ["generation", "deleted"])
+@pytest.mark.parametrize("change", ["generation", "deleted", "discovery-generation"])
 def test_create_rechecks_authority_after_final_manifest_hashing(
     setup, monkeypatch, change
 ):
@@ -1400,7 +1400,9 @@ def test_create_rechecks_authority_after_final_manifest_hashing(
     offer, queued = queue_create(controller, base)
     real_stage = setup_profile.stage_setup
     real_manifest = setup_profile.require_manifest
+    real_found = controller._setup_found
     final_probe_done = False
+    cancel_during_discovery = False
 
     def probe():
         nonlocal final_probe_done
@@ -1413,15 +1415,33 @@ def test_create_rechecks_authority_after_final_manifest_hashing(
             yield staged
 
     def manifest(*args):
+        nonlocal cancel_during_discovery
         real_manifest(*args)
         if final_probe_done:
-            change_authority(controller, base, change)
+            if change == "discovery-generation":
+                cancel_during_discovery = True
+            else:
+                change_authority(controller, base, change)
 
-    monkeypatch.setattr(setup_profile, "stage_setup", stage)
-    monkeypatch.setattr(setup_profile, "require_manifest", manifest)
-    queued.run_next()
+    def found(*args):
+        nonlocal cancel_during_discovery
+        result = real_found(*args)
+        if cancel_during_discovery:
+            cancel_during_discovery = False
+            controller.identification_cancel()
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(setup_profile, "stage_setup", stage)
+        patch.setattr(setup_profile, "require_manifest", manifest)
+        patch.setattr(controller, "_setup_found", found)
+        queued.run_next()
     assert_create_done(controller, offer, "stale_review")
     assert not offer.plan.destination.exists()
+    assert controller._setup_review is None
+    if change == "discovery-generation":
+        assert not cancel_during_discovery
+        assert review(controller, base)["ok"]
 
 
 @pytest.mark.parametrize("when", ["admission", "restoration"])
