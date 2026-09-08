@@ -1,5 +1,84 @@
 # Overview/layout sharing: verification record
 
+## Final-review fix candidate
+
+**Source candidate:** `fdc04b32b1195cef10c3fe906920b734dd70cf4e`
+(`fix: admit Profiles refresh responses in request order`), over review-fix base
+`b4b8fe7ffa155d2131bee9f2e1295bb01d3cdf9c`. The whole-branch review found one
+Important race: Back read A can finish after the owned Create completion's read B
+and undo its new profile list/selection. This checkpoint fixes only that finding.
+**The parent's scoped rereview and independent fresh gates remain pending.**
+No final review approval, engineering-candidate completion, hosted CI, Windows
+runtime or manual acceptance is claimed here. Task 8–11 evidence below is retained
+as prior evidence, not relabelled as verification of this new candidate.
+
+Profiles now numbers refresh requests and renders a non-null response only if
+no later request has already rendered. A pending or null/failed newer read does
+not suppress useful older state. `refresh()` still returns its promise and each
+request's original payload, including a superseded payload or null. Root-change
+and account-roster `.then()` follow-ups still run; receipt handling, ordinary
+mutation ownership, backend interfaces and persisted data are unchanged.
+
+Eight new runtime cases execute the actual `app.js`, `evesettings.js` and
+`uisetup.js` with the existing DOM/bridge-delivery seams. Three leave Back read A
+pending, render B with a new profile first, then deliver old A. The new list and
+selection stay rendered, route/focus stay unchanged, a newer setup review remains
+authorized, and an ordinary copy keeps its busy/selection/follow-up ownership
+until its own completion. Further cases cover in-order overlapping reads,
+newer/older null results and both promise follow-ups. The unchanged production
+bridge maps missing methods/rejected calls to null; these tests inject that
+result, not a real pywebview transport failure.
+
+### Fresh local results for this candidate
+
+Commands ran in the linked worktree with the Task 10 venv. RED preceded the source
+change; GREEN and the affected suites preceded scoped polish. The full suite and
+all remaining gates below were run fresh **after** scoped `polish-core --fix`
+(no additional edits/findings, no nested agents).
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_page.py -k 'refresh' -q --tb=short --basetemp=/tmp/wingman-final-review-fix-red
+# RED: 5 failed, 3 passed, 81 deselected in 10.61s; stale-selection assertions.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_page.py -k 'refresh' -q --tb=short --basetemp=/tmp/wingman-final-review-fix-green
+# GREEN: 8 passed, 81 deselected in 10.54s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/test_ui_setup_page.py tests/test_profiles_page.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_dev_harness.py tests/test_ui_setup_integration.py -q -rs --basetemp=/tmp/wingman-final-review-fix-focused
+# 564 passed in 177.98s; no skips.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-final-review-fix-full --junitxml=/tmp/wingman-final-review-fix-full.xml
+# 8,254 passed, 11 skipped in 326.10s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff check .
+# All checks passed.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-task10-venv uv run --no-sync ruff format --check .
+# 316 files already formatted.
+node --check wingman/web/uisetup.js
+node --check wingman/web/evesettings.js
+node --check wingman/web/app.js
+node --check wingman/web/dev.js
+node --check tests/fixtures/formations_page.cjs
+node --check tests/fixtures/ui_setup_page.cjs
+# All six explicit commands passed; Node v26.5.0.
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+# 1 passed, 0 failed/ignored.
+git diff b4b8fe7ffa155d2131bee9f2e1295bb01d3cdf9c..HEAD --check
+git diff --check
+# Passed.
+```
+
+Actual `paths.codec_exe()` lookup and availability were asserted before testing.
+Release and installed worktree codec hashes were checked before and after the
+gates; both remain
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+No rebuild or replacement of the Task 10 release codec was needed. JUnit confirms
+89 setup-page, 116 dev-harness and 11 integration cases passed without skips.
+All 11 full-suite skips remain Windows-only: ordinary junctions (3), setup
+junctions (2), DPAPI (1), WinDLL (1), message pump/window station (1), Win32
+bindings (3). No native-codec or Node test skipped.
+
+No browser run was performed for this response-order-only fix; Task 8–11 browser
+artifacts were not modified. Hosted CI, frozen Windows/WebView2, native dialogs,
+OS clipboard, assistive technology and live recipient/EVE/launcher gates remain
+OPEN. This changes page response admission, not backend snapshot versioning or
+receipt recovery across process restarts.
+
 ## Current Task 11 engineering checkpoint
 
 **Verified source commit:** `9b74f32bb227fe45df1784951bcb69145f90338e`
