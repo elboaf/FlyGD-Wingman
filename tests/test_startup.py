@@ -192,6 +192,8 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
             api = startup.captured["api"]
             assert api._fleet_expected_generation is None
             assert api._fleetbar_quitting
+            assert api._fleetbar_page_id is None
+            assert not api._fleetbar_ready
             order.append("fleet_detach")
 
         return detach
@@ -224,6 +226,8 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
         api._fleetbar_window = SimpleNamespace(
             destroy=lambda: order.append("fleet_destroy")
         )
+        api._fleetbar_page_id = "a" * 64
+        api._fleetbar_ready = True
         api._request_shutdown()
 
     startup.captured["during_run"] = during_run
@@ -472,6 +476,43 @@ def test_shutdown_retries_only_the_sigbar_after_its_destroy_fails(startup, caplo
     assert startup.captured["api"]._sigbar_window is None
     assert "Sig bar window did not destroy cleanly" in caplog.text
     assert "sigbar destroy failed" in caplog.text
+
+
+def test_fleet_identity_shutdown_revokes_before_failed_destroy_retry(startup, caplog):
+    from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow, _page_call
+
+    attempts, admission, replies = [], [], []
+    bar = FleetWindow()
+
+    def destroy():
+        api = startup.captured["api"]
+        admission.append((api._fleetbar_page_id, api._fleetbar_ready))
+        attempts.append("fleet")
+        if len(attempts) == 1:
+            raise RuntimeError("fleet destroy failed")
+
+    bar.destroy = destroy
+
+    def during_run():
+        api = startup.captured["api"]
+        api._fleetbar_window = bar
+        api._fleetbar_page_id = PAGE_A
+        api._fleetbar_ready = True
+        api._request_shutdown()
+        assert api._fleetbar_window is bar  # retain only for cleanup retry
+        for method, args in PAGE_CALLBACKS:
+            replies.append(_page_call(api, method, PAGE_A, *args))
+        api._request_shutdown()
+
+    startup.captured["during_run"] = during_run
+    with caplog.at_level(logging.ERROR, logger=main_mod.__name__):
+        assert main_mod.main() == 0
+    assert admission == [(None, False), (None, False)]
+    assert replies == [None] * 5
+    assert attempts == ["fleet", "fleet"]
+    assert startup.captured["api"]._fleetbar_window is None
+    assert startup.captured["window"].destroyed == 1
+    assert "Fleet Bar window did not destroy cleanly" in caplog.text
 
 
 def test_shutdown_retries_only_main_after_its_destroy_fails(startup, caplog):

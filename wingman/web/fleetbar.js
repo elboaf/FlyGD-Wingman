@@ -2,6 +2,11 @@
 (function () {
   'use strict';
 
+  // Capture creation identity once — delayed continuations must not adopt a
+  // replacement window's token after a hash change.
+  var pageMatch = /^#fleet-page=([0-9a-f]{64})$/.exec(window.location.hash);
+  var pageId = pageMatch ? pageMatch[1] : null;
+
   var ready = new Promise(function (resolve) {
     if (window.pywebview && window.pywebview.api) { resolve(); return; }
     window.addEventListener('pywebviewready', function () { resolve(); },
@@ -10,7 +15,8 @@
   var lastRevision = -1;
 
   function send(method) {
-    var args = Array.prototype.slice.call(arguments, 1);
+    if (!pageId) return Promise.resolve(null);
+    var args = [pageId].concat(Array.prototype.slice.call(arguments, 1));
     return ready.then(function () {
       var api = window.pywebview && window.pywebview.api;
       var fn = api && api[method];

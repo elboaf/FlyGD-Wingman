@@ -26,6 +26,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -377,6 +378,7 @@ class Api:
         # Independent display-only Fleet window. Like the sig bar this must
         # stay private or pywebview recursively walks its WinForms native.
         self._fleetbar_window = None
+        self._fleetbar_page_id = None
         self._fleetbar_ready = False
         # LOCK ORDER: shutdown_lock -> _fleetbar_lifecycle_lock ->
         # _fleet_presentation_lock. The settings save lock and this lock are
@@ -2337,11 +2339,50 @@ class Api:
         # caller may still hold the native lifecycle lock here.
         self._queue_fleet_presentation(settings_changed=True)
 
-    def fleet_bar_snapshot(self) -> dict:
-        """Current complete display payload, also used by the bar at boot."""
+    def _publish_fleet_page_locked(self, bar, page_id: str) -> None:
+        """Lifecycle-owned publication after the attempt's native styling."""
         with self._fleet_presentation_lock:
-            _, display_payload = self._fleet_payloads_locked()
-        return display_payload
+            self._fleetbar_window = bar
+            self._fleetbar_page_id = page_id
+            self._fleetbar_ready = False
+
+    def _retire_fleet_page_locked(self, *, keep_window: bool = False):
+        """Revoke admission; shutdown retains its concrete target for destroy retry."""
+        with self._fleet_presentation_lock:
+            bar = self._fleetbar_window
+            self._fleetbar_page_id = None
+            self._fleetbar_ready = False
+            if not keep_window:
+                self._fleetbar_window = None
+        return bar
+
+    def _fleet_page_window_locked(self, page_id):
+        """Admit this creation, not today's activation or a replacement window.
+
+        The caller holds lifecycle through the work; the token correlates pages
+        but does not authenticate callers on the shared bridge. Same-window
+        reloads retain their creation identity.
+        """
+        from wingman.ui import fleetbar
+
+        if (
+            self._fleetbar_quitting
+            or not isinstance(page_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", page_id) is None
+            or page_id != self._fleetbar_page_id
+        ):
+            return None
+        bar = self._fleetbar_window
+        return bar if fleetbar.is_alive(bar) else None
+
+    def fleet_bar_snapshot(self, page_id: str | None = None) -> dict | None:
+        """Current display payload only for the admitted Fleet creation."""
+        with self._fleetbar_lifecycle_lock:
+            if self._fleet_page_window_locked(page_id) is None:
+                return None
+            with self._fleet_presentation_lock:
+                _, display_payload = self._fleet_payloads_locked()
+            return display_payload
 
     def _push_fleet_snapshot(self, payload: dict, delivery: FleetDelivery) -> None:
         # Never look up a new bar after an earlier stage waited in WebView.
@@ -2489,6 +2530,7 @@ class Api:
         """Close, detach, then join without holding native/presentation locks."""
         with self._fleetbar_lifecycle_lock:
             self._fleetbar_quitting = True
+            self._retire_fleet_page_locked(keep_window=True)
             self._close_fleet_presentation()
             unsubscribe = self._fleet_unsubscribe
             self._fleet_unsubscribe = None
@@ -2686,9 +2728,8 @@ class Api:
         try:
             if on:
                 if not fleetbar.is_alive(bar):
-                    # The page reveals itself through fleet_bar_ready only
-                    # after its first snapshot has rendered and fitted.
-                    self._fleetbar_ready = False
+                    # The page requests reveal through fleet_bar_ready after
+                    # its best-effort initial snapshot/render/fit chain.
                     bar = fleetbar.create(self, hidden=True)
                 elif self._fleetbar_ready:
                     fleetbar.reveal_bar(bar)
@@ -2698,9 +2739,7 @@ class Api:
         except Exception:
             logger.exception("Fleet Bar window toggle failed")
             if on:
-                failed = self._fleetbar_window
-                self._fleetbar_window = None
-                self._fleetbar_ready = False
+                failed = self._retire_fleet_page_locked()
                 if failed is not None:
                     try:
                         failed.destroy()
@@ -2731,18 +2770,18 @@ class Api:
         self._push_fleet_bar_state()
         return self._field_ok()
 
-    def fleet_bar_ready(self) -> None:
-        """Reveal the current enabled page after its first successful fit."""
+    def fleet_bar_ready(self, page_id: str | None = None) -> None:
+        """Reveal the enabled creation after the page's best-effort boot fit."""
         from wingman.ui import fleetbar
 
         with self._fleetbar_lifecycle_lock:
-            bar = self._fleetbar_window
-            if self._fleetbar_quitting or not fleetbar.is_alive(bar):
+            bar = self._fleet_page_window_locked(page_id)
+            if bar is None:
                 return
-            # Readiness belongs to this page instance, not to today's toggle
+            # Readiness belongs to this creation, not to today's toggle
             # state. If the user disabled it during boot, a later re-enable
-            # can show the already-fitted page without waiting for an event
-            # the page emits only once.
+            # can show the same page without waiting for a ready event the
+            # page emits only once; that event is not proof that fitting succeeded.
             self._fleetbar_ready = True
             if not self.fleet_bar_settings().get("enabled"):
                 return
@@ -2753,26 +2792,27 @@ class Api:
                 logger.exception("Fleet Bar window could not be revealed")
                 self._toggle_fleet_bar(False)
 
-    def save_fleet_bar_pos(self, x, y) -> None:
-        try:
-            x, y = int(x), int(y)
-        except (TypeError, ValueError):
-            return
-        settings_mod.update_section(self._state.settings, "fleet_bar", {"x": x, "y": y})
-
-    def move_fleet_bar(self, x, y) -> None:
-        """Keep dynamic growth inside the current browser-reported work area."""
-        try:
-            x, y = int(x), int(y)
-        except (TypeError, ValueError):
-            return
+    def save_fleet_bar_pos(self, page_id: str | None = None, x=None, y=None) -> None:
         with self._fleetbar_lifecycle_lock:
-            bar = self._fleetbar_window
-            if (
-                bar is None
-                or self._fleetbar_quitting
-                or not self.fleet_bar_settings().get("enabled")
-            ):
+            if self._fleet_page_window_locked(page_id) is None:
+                return
+            try:
+                x, y = int(x), int(y)
+            except (TypeError, ValueError):
+                return
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"x": x, "y": y}
+            )
+
+    def move_fleet_bar(self, page_id: str | None = None, x=None, y=None) -> None:
+        """Keep dynamic growth inside this creation's browser-reported work area."""
+        with self._fleetbar_lifecycle_lock:
+            bar = self._fleet_page_window_locked(page_id)
+            if bar is None or not self.fleet_bar_settings().get("enabled"):
+                return
+            try:
+                x, y = int(x), int(y)
+            except (TypeError, ValueError):
                 return
             try:
                 bar.move(x, y)
@@ -2783,22 +2823,25 @@ class Api:
                 self._state.settings, "fleet_bar", {"x": x, "y": y}
             )
 
-    def fit_fleet_bar(self, width, height) -> None:
-        """Resize to measured content without resurrecting a disabled bar."""
-        try:
-            width, height = int(width), int(height)
-        except (TypeError, ValueError):
-            return
-        if width <= 0 or height <= 0:
-            return
+    def fit_fleet_bar(
+        self, page_id: str | None = None, width=None, height=None
+    ) -> None:
+        """Best-effort fit of one creation; never retarget after a retry wait."""
+        with self._fleetbar_lifecycle_lock:
+            bar = self._fleet_page_window_locked(page_id)
+            if bar is None:
+                return
+            try:
+                width, height = int(width), int(height)
+            except (TypeError, ValueError):
+                return
+            if width <= 0 or height <= 0:
+                return
         for _ in range(12):
             with self._fleetbar_lifecycle_lock:
-                bar = self._fleetbar_window
-                if (
-                    bar is None
-                    or self._fleetbar_quitting
-                    or not self.fleet_bar_settings().get("enabled")
-                ):
+                if self._fleet_page_window_locked(
+                    page_id
+                ) is not bar or not self.fleet_bar_settings().get("enabled"):
                     return
                 try:
                     bar.resize(width, height)

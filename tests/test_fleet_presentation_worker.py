@@ -26,6 +26,7 @@ def test_blocked_presentation_does_not_stop_real_coordinator(
     api = make_api(tmp_path, telemetry=harness.coordinator)
     api._state.settings["fleet_bar"] = settings.validated_fleet_bar({"enabled": True})
     api._fleetbar_window = FleetWindow()
+    api._fleetbar_page_id = "a" * 64
     api._sigbar_window = FleetWindow()
     entered = threading.Event()
     release = threading.Event()
@@ -187,6 +188,8 @@ def test_shutdown_closes_detaches_then_times_out_without_reenable(
     release = threading.Event()
     detached = []
     old_bar = api._fleetbar_window
+    api._fleetbar_page_id = "a" * 64
+    api._fleetbar_ready = True
 
     def stall(_script):
         entered.set()
@@ -207,6 +210,9 @@ def test_shutdown_closes_detaches_then_times_out_without_reenable(
         assert entered.wait(5)
         assert api._stop_fleet_presentation(timeout=0) is False
         assert detached == [True]
+        assert api._fleetbar_page_id is None
+        assert not api._fleetbar_ready
+        assert api._fleetbar_window is old_bar
         replacement = FleetWindow()
         api._fleetbar_window = replacement
         assert api.toggle_fleet_bar(True)["applied"] is False
@@ -480,6 +486,7 @@ def test_coalesced_rosters_persist_intermediate_names_and_display_latest(
     api = make_api(tmp_path)
     api._state.settings["fleet_bar"] = settings.validated_fleet_bar({"enabled": True})
     api._fleetbar_window = FleetWindow()
+    api._fleetbar_page_id = "a" * 64
     entered = threading.Event()
     release = threading.Event()
     latest_displayed = threading.Event()
@@ -519,7 +526,10 @@ def test_coalesced_rosters_persist_intermediate_names_and_display_latest(
             "Seed",
         ]
         assert len(displayed) == 1  # no backlog of intermediate DPS frames
-        assert displayed[0]["revision"] == api.fleet_bar_snapshot()["revision"]
+        assert (
+            displayed[0]["revision"]
+            == api.fleet_bar_snapshot(api._fleetbar_page_id)["revision"]
+        )
     finally:
         release.set()
         assert api._stop_fleet_presentation(5)
@@ -545,6 +555,7 @@ def test_disable_reenable_with_same_generation_retires_blocked_delivery(
     api = make_api(tmp_path, telemetry=telemetry)
     api._state.settings["fleet_bar"] = settings.validated_fleet_bar({"enabled": True})
     api._fleetbar_window = FleetWindow()
+    api._fleetbar_page_id = "a" * 64
     api._fleetbar_ready = True
     entered = threading.Event()
     release = threading.Event()
@@ -582,6 +593,8 @@ def test_disable_reenable_with_same_generation_retires_blocked_delivery(
         assert toggled.wait(1), "WebView must not hold the native lifecycle lock"
         assert all(result["applied"] for result in toggle_results)
         assert api._fleetbar_window is bar
+        assert api._fleetbar_page_id == "a" * 64
+        assert api._fleetbar_ready
         assert not bar.hidden
         assert api._fleet_snapshot is None
         api._receive_fleet_snapshot(snapshot("Current"))
@@ -608,6 +621,7 @@ def test_save_ack_across_activation_and_window_replacement_keeps_new_admissions(
     )
     old_bar = FleetWindow()
     api._fleetbar_window = old_bar
+    api._fleetbar_page_id = "a" * 64
     first_entered = threading.Event()
     first_release = threading.Event()
     second_entered = threading.Event()
@@ -645,7 +659,8 @@ def test_save_ack_across_activation_and_window_replacement_keeps_new_admissions(
         api._install_fleet_generation(1)
         replacement = FleetWindow()
         replacement.evaluate_js = display
-        api._fleetbar_window = replacement
+        with api._fleetbar_lifecycle_lock:
+            api._publish_fleet_page_locked(replacement, "b" * 64)
         api._receive_fleet_snapshot(snapshot("Bravo", "Alice"))
         first_release.set()
         assert second_entered.wait(5)
