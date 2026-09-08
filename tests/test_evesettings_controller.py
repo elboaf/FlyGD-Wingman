@@ -476,6 +476,29 @@ def test_save_holds_and_releases_the_mutation_lock(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("unreadable", [False, True])
+def test_backup_folder_payload_uses_the_configured_store_even_without_backups(
+    tmp_path, monkeypatch, unreadable
+):
+    controller = build_controller(tmp_path)
+    store = tmp_path / "actual-backup-store"
+    controller._ports = dataclasses.replace(
+        controller._ports, backup_root=lambda: store
+    )
+
+    # Enumeration's filesystem seam is the only failure; the controller must
+    # keep reporting the real folder instead of deriving it from the first row.
+    def enumerate_backups(folder):
+        assert folder == store
+        return [], unreadable
+
+    monkeypatch.setattr(backup_mod, "enumerate_backups", enumerate_backups)
+    payload = controller.state()
+    assert payload["backups"] == []
+    assert payload["backups_unreadable"] is unreadable
+    assert payload["backups_folder"] == str(store)
+
+
 def test_state_reads_the_running_pill_from_cache_not_a_fresh_probe(
     tmp_path, monkeypatch
 ):
@@ -1555,6 +1578,7 @@ def test_a_failed_publication_rolls_back_from_the_backup_it_just_took(
     assert payload["ok"] is False and payload["published"] is False
     assert payload["selection_persisted"] is True
     assert "restored" in payload["error"]
+    assert "recovery_backup" not in payload
     assert controller._eve_mutation.acquire(blocking=False)
     controller._eve_mutation.release()
 
@@ -1592,6 +1616,7 @@ def test_a_failed_rollback_names_the_backup_and_prunes_nothing(tmp_path, monkeyp
     assert payload["ok"] is False and payload["published"] is False
     assert payload["selection_persisted"] is True
     assert archives[0].name in payload["error"]
+    assert payload["recovery_backup"] == str(archives[0])
     assert controller._eve_mutation.acquire(blocking=False)
     controller._eve_mutation.release()
 

@@ -754,7 +754,8 @@
       var eta = formatEta(ch.estimated_finish_utc);
       return (ch.queue_timing_unknown || !eta)
         ? queued + ' \u00b7 timing unknown'
-        : queued + ' \u00b7 ready in ' + eta;
+        : queued + ' \u00b7 ' + (eta === 'due'
+          ? 'finish time passed' : 'ready in ' + eta);
     }
     if (ch.readiness === 'Missing') {
       var unqueued = ch.missing_count + ' unqueued';
@@ -775,10 +776,12 @@
     if (!iso) return '';
     var finish = Date.parse(iso);
     if (isNaN(finish)) return '';
-    var mins = Math.round((finish - Date.now()) / 60000);
-    // A finish date already in the past means the queue completed since
-    // the snapshot was taken. "Due" is honest; a negative duration is not.
-    if (mins <= 0) return 'due';
+    var remaining = finish - Date.now();
+    // A past finish date is an elapsed estimate, not proof of readiness:
+    // the queue may have changed since this snapshot was fetched.
+    if (remaining <= 0) return 'due';
+    if (remaining < 60000) return '<1m';
+    var mins = Math.round(remaining / 60000);
     var days = Math.floor(mins / 1440);
     var hours = Math.floor((mins % 1440) / 60);
     if (days) return days + 'd ' + hours + 'h';

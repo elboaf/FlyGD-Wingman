@@ -92,7 +92,9 @@
           ? row.ewar.join(' \u00b7 ') : '\u2014');
       line.className = 'fleet-grid fleet-row';
       line.setAttribute('role', 'row');
-      line.appendChild(cell('fleet-character', row.character || '\u2014'));
+      var character = cell('fleet-character', row.character || '\u2014');
+      character.title = character.textContent;
+      line.appendChild(character);
       line.appendChild(cell('fleet-dps' + (hasDps ? ' live' : ''),
                             hasDps ? String(row.dps) + ' dps' : '\u2014'));
       line.appendChild(cell('fleet-ewar' +

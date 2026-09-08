@@ -2362,8 +2362,13 @@ def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
         r"#preview-binds \.bind-group:not\(:empty\) \{(.*?)\}", CSS, re.DOTALL
     )
     assert offline and re.search(
-        r"top:\s*var\(--preview-bind-head-height\)", offline.group(1)
-    ), "the Offline heading must stick below, not on top of, the column header"
+        r"top:\s*calc\(var\(--preview-jump-height\)\s*\+\s*var\(--preview-bind-head-height\)\)",
+        offline.group(1),
+    ), "the Offline heading must clear both quick navigation and the column header"
+    assert re.search(
+        r"#preview-binds \.bind-head > span\s*\{[^}]*?top:\s*var\(--preview-jump-height\)",
+        CSS,
+    ), "the column header must clear the quick-navigation row"
 
 
 def test_the_previews_headings_are_in_the_order_makeRow_builds():

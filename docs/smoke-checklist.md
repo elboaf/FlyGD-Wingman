@@ -5323,3 +5323,43 @@ Never move or resize a real EVE client window.
 captured-duration gap (coordinator follow-up E-F1) is not fixed by the same-row
 precedence check above. A green run here must not be reported as proving captured
 upload-job, replacement-row and persisted-duration agreement across snapshots.
+
+## Critique flow fixes — native follow-up
+
+These checks remain **unverified on Windows/WebView2**. Browser fixtures exercise
+page behavior and geometry, not native preview input or real remote writes. Use
+scripted transports and disposable profile trees for failure cases. Check both
+840×625 and the 839px floor observed at 200% scaling.
+
+- [ ] **Fitting drafts stay with their fitting.** Edit a name and description,
+      change a collection, collapse/reopen, filter away/back, and refresh.
+      Neither field is saved implicitly or lost. Save explicitly with a delayed
+      reply, type a newer draft, and confirm the acknowledgement preserves it.
+      A refused save retains both fields for retry. Discard requires confirmation.
+- [ ] **Copy outcomes remain reviewable.** Produce mixed success, present,
+      unknown and failed results. Counts match rows; Unknown explains checking
+      Personal Fittings in EVE and refreshing before a retry. Close and reopen
+      Last copy results without sending another preflight or write. Start a
+      second copy, leave during cancellation, and confirm its eventual result
+      replaces the previous result without opening a dialog off-route. Results
+      and unsaved metadata are session-only, not restart recovery.
+- [ ] **Recovery identifies the actual archive.** In a disposable profile tree,
+      fail replacement and rollback. View recovery backup opens Backups filtered
+      to the archive actually created. Clearing the filter restores the list.
+      A missing/unreadable archive falls back to the full list without invoking
+      Restore; its path remains visible. Filename and displayed-date searches
+      work. An unreadable store names its folder. Only a successful restore of
+      the indicated archive clears the recovery context.
+- [ ] **Previews can be revisited without a long scroll.** Each quick-navigation
+      button lands on its card. While scrolling character rows and opening
+      Configure, navigation, column headers and group headers do not cover each
+      other or the opened detail. The gesture guide agrees with actual preview
+      input: left-drag moves and right-drag resizes an unlocked preview. Dragging
+      an unlocked preview with both buttons resizes every preview, including
+      locked ones; locked previews ignore direct drag gestures. Never resize an
+      EVE client itself.
+- [ ] **Identities and estimates stay honest.** Formations shows the full loaded
+      account near Save and on the account picker's tooltip. A pending or failed
+      switch does not relabel the old document. Long Fleet bar names reveal their
+      full text on hover. An elapsed Skills estimate says finish time passed,
+      not ready in due or Ready; an estimate twenty seconds ahead says <1m.

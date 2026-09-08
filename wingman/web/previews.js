@@ -2562,6 +2562,14 @@
     requestRender();
   });
 
+  Array.prototype.forEach.call(
+    document.querySelectorAll('[data-preview-jump]'), function (button) {
+      button.addEventListener('click', function () {
+        endCapture();
+        WM.el(button.dataset.previewJump).scrollIntoView({block: 'start'});
+      });
+    });
+
   // Refreshed on route entry rather than polled, same reasoning as
   // bookmarks.js: the live/known character set changes when EVE clients
   // open and close, which is not something worth a timer. `wm:settings`

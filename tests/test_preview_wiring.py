@@ -3267,14 +3267,12 @@ def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
     )
 
 
-def test_preview_detail_reserves_both_sticky_header_heights_when_scrolled():
-    """An opened detail cannot be hidden under the table and group headers."""
+def test_preview_detail_clears_navigation_and_both_sticky_headers_when_scrolled():
+    """An opened detail clears navigation as well as table and group headers."""
     css = _web("style.css")
     detail = re.search(r"\.preview-character-detail\s*\{([^}]*)\}", css)
     assert detail, "the preview character detail has no CSS rule"
     assert (
-        "scroll-margin-top: calc(var(--preview-bind-head-height) * 2)"
+        "scroll-margin-top: calc(var(--preview-jump-height) + var(--preview-bind-head-height) * 2)"
         in detail.group(1)
-    ), (
-        "the detail needs clearance for both sticky preview headers when it is scrolled into view"
-    )
+    ), "the detail needs clearance for navigation and both sticky preview headers"

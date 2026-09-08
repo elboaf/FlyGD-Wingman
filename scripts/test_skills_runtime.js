@@ -59,7 +59,7 @@ async function flush() {
   await new Promise(resolve => setImmediate(resolve));
 }
 
-async function page() {
+async function page(now) {
   const nodes = new Map();
   const document = new EventTarget();
   // Use the page's actual IDs: typos must not silently create fake elements.
@@ -86,6 +86,7 @@ async function page() {
   window.pywebview = { api };
   const context = vm.createContext({
     window, document,
+    Date: now === undefined ? Date : class extends Date { static now() { return now; } },
     CustomEvent: class { constructor(type, options = {}) {
       this.type = type; this.detail = options.detail;
     } },
@@ -157,6 +158,41 @@ async function revisit(p, times = 3) {
     await p.route('skills');
   }
 }
+
+test('elapsed training estimate does not claim readiness or say ready in due', async () => {
+  const p = await page();
+  const payload = state('Training plan', 'Training');
+  payload.characters[0].queued_count = 2;
+  payload.characters[0].estimated_finish_utc = '2000-01-01T00:00:00Z';
+  await p.push(payload);
+  assert.match(p.el('skills-roster').textContent, /2 queued · finish time passed/);
+  assert.doesNotMatch(p.el('skills-roster').textContent, /ready in due/);
+});
+
+test('an estimate less than a minute away is not reported as already elapsed', async () => {
+  const now = Date.parse('2026-09-08T12:00:00Z');
+  const p = await page(now);
+  const payload = state('Training plan', 'Training');
+  payload.characters[0].estimated_finish_utc = '2026-09-08T12:00:20Z';
+  await p.push(payload);
+  assert.match(p.el('skills-roster').textContent, /ready in <1m/);
+  assert.doesNotMatch(p.el('skills-roster').textContent, /finish time passed/);
+  payload.characters[0].estimated_finish_utc = '2026-09-08T12:00:00Z';
+  await p.push(payload);
+  assert.match(p.el('skills-roster').textContent, /finish time passed/);
+});
+
+test('future training estimate retains ready-in wording and paused timing stays unknown', async () => {
+  const p = await page();
+  const payload = state('Training plan', 'Training');
+  payload.characters[0].estimated_finish_utc = '2099-01-01T00:00:00Z';
+  await p.push(payload);
+  assert.match(p.el('skills-roster').textContent, /ready in /);
+  payload.characters[0].queue_timing_unknown = true;
+  await p.push(payload);
+  assert.match(p.el('skills-roster').textContent, /timing unknown/);
+  assert.doesNotMatch(p.el('skills-roster').textContent, /ready in /);
+});
 
 test('initial reply abandoned while hidden can hydrate on re-entry', async () => {
   const p = await page();

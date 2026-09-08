@@ -1,8 +1,8 @@
-"""The Profiles route, checked lexically.
+"""Profiles source conventions and focused backup runtime regressions.
 
-Same approach and same reason as test_page_conventions.py: nothing in this
-suite renders index.html or executes web/*.js, so what this screen depends
-on is enforced by reading its source. These are the facts the UI critique's
+Most guards follow test_page_conventions.py and inspect source rather than
+rendering index.html. The backup tests also execute the real page module
+with a small DOM boundary, without claiming layout or WebView2 coverage. These are the facts the UI critique's
 and the walkthrough's Profiles findings turned into code, each of which
 would fail silently rather than loudly if it were undone.
 
@@ -11,8 +11,11 @@ question for docs/smoke-checklist.md; whether the pill still exists at all
 after someone edits the card is a question for here.
 """
 
+import json
 import pathlib
 import re
+import shutil
+import subprocess
 
 import pytest
 
@@ -2340,3 +2343,269 @@ def test_profiles_boundaries_use_the_defined_panel_border_token():
         "no rule on the page may reference the undefined --border custom "
         "property; every boundary must use --panel-border instead"
     )
+
+
+# Execute the real module's backup listeners and renderer with a small DOM
+# boundary. This is not a layout/WebView2 test; it catches lost archive identity
+# and recovery state that source-only assertions cannot observe.
+def _run_backup_page(scenario):
+    if shutil.which("node") is None:
+        pytest.skip("node is not on PATH")
+    harness = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const elements = {};
+const handlers = {};
+const routes = [];
+const calls = [];
+function element(tag) {
+  return {
+    tagName: tag, children: [], value: '', hidden: false, disabled: false,
+    textContent: '', title: '', listeners: {},
+    classList: {add() {}, remove() {}, toggle() {}},
+    appendChild(child) { this.children.push(child); return child; },
+    set innerHTML(value) { this.children = []; },
+    setAttribute(name, value) { this[name] = value; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    querySelectorAll() { return []; },
+    focus() {},
+    click() { this.listeners.click({target: this}); }
+  };
+}
+function el(id) {
+  assert.ok(pageIds.includes(id), 'Missing production markup: ' + id);
+  return elements[id] || (elements[id] = element('div'));
+}
+const document = {
+  readyState: 'loading', activeElement: null,
+  createElement: element, addEventListener() {},
+  querySelectorAll() { return []; }, querySelector() { return null; }
+};
+const WM = {
+  el, handle(name, fn) { handlers[name] = fn; },
+  make(tag, cls, text) {
+    const node = element(tag); node.className = cls;
+    node.textContent = text || ''; return node;
+  },
+  setEnabled(id, enabled) { el(id).disabled = !enabled; },
+  route(name) { routes.push(name); },
+  send(...args) { calls.push(args); return Promise.resolve(true); }
+};
+const backup = {
+  path: 'C:\\Wingman\\eve-settings-backups\\core_profile_20260824-140300.zip',
+  created: '20260824-140300', origin: 'auto', kind: 'profile', stem: 'Fleet',
+  display_name: 'Fleet profile', display_meta: 'Profile settings'
+};
+const other = {
+  ...backup, path: 'C:\\Wingman\\eve-settings-backups\\other.zip',
+  created: '20260825-160000', origin: 'manual', display_name: 'Default profile'
+};
+const initial = {
+  profile: 'source', profiles: [{path: 'source', name: 'Default'}],
+  backups_folder: 'C:\\Wingman\\eve-settings-backups',
+  backups: [backup, other], backups_unreadable: false,
+  auto_keep: 10, identification_active: false
+};
+function backupRows() {
+  return el('es-backups').children.filter(node => node.className.includes('es-backup-row'));
+}
+function text(node) { return node.textContent + node.children.map(text).join(' '); }
+const context = {WM, document, assert, el, handlers, routes, calls,
+                 initial, backup, other, backupRows, text};
+"""
+    # Inject only the test scenario into the closure; production declarations,
+    # listeners and completion handler are evaluated unchanged. Unrelated page
+    # painters and bridge refresh are isolated at their local boundary.
+    exercise = (
+        """
+  state = initial;
+  setBusy = function (value) { busy = value; };
+  renderProfileCopy = function () {};
+  refresh = function () { renderBackups(); return Promise.resolve(state); };
+  wire();
+  renderBackups();
+"""
+        + scenario
+    )
+    source = JS.removesuffix("}());\n") + exercise + "\n}());\n"
+    result = subprocess.run(
+        ["node", "-"],
+        input=(
+            "const pageIds = "
+            + json.dumps(re.findall(r'\bid="([^"]+)"', HTML))
+            + ";\n"
+            + harness
+            + "\nvm.runInNewContext("
+            + json.dumps(source)
+            + ", context);"
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "needle",
+    [
+        "core_profile_20260824-140300.zip",
+        "CORE_PROFILE_20260824-140300.ZIP",
+        "20260824-140300",
+        "2026-08-24 14:03",
+        "2026-08-24",
+        "Fleet",
+        "Automatic",
+    ],
+)
+def test_backup_search_finds_archive_identity_and_displayed_date(needle):
+    _run_backup_page(
+        """
+  el('es-backup-filter').listeners.input({target: {value: """
+        + json.dumps(needle)
+        + """}});
+  assert.equal(backupRows().length, 1);
+  assert.equal(backupRows()[0].children[1].children[0].textContent, 'Fleet profile');
+"""
+    )
+
+
+def test_backup_row_keeps_the_target_name_and_exposes_the_archive_basename():
+    _run_backup_page(r"""
+  const target = backupRows()[0].children[1];
+  assert.equal(target.children[0].textContent, 'Fleet profile');
+  assert.ok(target.title.includes('core_profile_20260824-140300.zip'));
+  assert.ok(target.title.includes('Profile settings'));
+  // POSIX paths from Linux controller tests/dev tooling retain the same identity.
+  state.backups = [{...backup, path: '/backups/20260824-140300-000-auto-profile-1234abcd-Fleet.zip'}];
+  el('es-backup-filter').listeners.input({target: {value: '20260824-140300-000-auto-profile-1234abcd-Fleet.zip'}});
+  assert.equal(backupRows().length, 1);
+""")
+
+
+@pytest.mark.parametrize("unreadable", [False, True])
+def test_backup_empty_and_unreadable_states_distinguish_missing_data(unreadable):
+    _run_backup_page(
+        """
+  state.backups = [];
+  state.backups_unreadable = """
+        + json.dumps(unreadable)
+        + """;
+  renderBackups();
+  assert.equal(el('es-backup-head').hidden, true);
+  assert.equal(el('es-backups-more').hidden, true);
+  assert.equal(backupRows().length, 0);
+  if (state.backups_unreadable) {
+    assert.ok(text(el('es-backups')).includes(state.backups_folder));
+    assert.ok(!text(el('es-backups')).includes('No backups yet'));
+  } else {
+    assert.ok(text(el('es-backups')).includes('Copies create backups automatically'));
+  }
+"""
+    )
+
+
+def test_structured_recovery_survives_source_changes_and_routes_to_the_archive():
+    _run_backup_page(r"""
+  pendingMutation = 'eve_settings_copy_profile';
+  handlers.onEveSettingsDone({ok: false, operation: 'profile_copy', published: false,
+    error: 'Rollback failed', recovery_backup: backup.path});
+  assert.equal(el('es-backup-recovery').hidden, false);
+  assert.ok(el('es-backup-recovery-path').textContent.includes(backup.path));
+  // Resetting the copy disclosure or changing the source must not erase the
+  // recovery target: the backup store is global, not the source profile's list.
+  resetProfileCopy();
+  state.profile = 'different';
+  state.profiles = [{path: 'different', name: 'Other source'}];
+  renderBackups();
+  el('es-backup-recovery-open').click();
+  renderBackups();
+  assert.equal(routes.at(-1), 'backups');
+  assert.equal(el('es-backup-filter').value, 'core_profile_20260824-140300.zip');
+  assert.equal(backupRows().length, 1);
+  assert.equal(backupRows()[0].children[1].children[0].textContent, 'Fleet profile');
+  assert.ok(el('es-backup-recovery-note').textContent.includes(backup.path));
+  // Navigating never sends a restore request; that still needs the row action.
+  assert.equal(calls.length, 0);
+  el('es-backup-filter-clear').click();
+  assert.equal(backupRows().length, 2);
+  // The actual row remains the only authority for a restore request.
+  backupRows()[0].children[3].children[0].click();
+  assert.equal(calls[0][0], 'eve_settings_restore');
+  assert.equal(calls[0][1], backup.path);
+  handlers.onEveSettingsDone({ok: true});
+  assert.equal(el('es-backup-recovery').hidden, true);
+""")
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_unlisted_or_unreadable_recovery_opens_all_backups_not_an_external_path(
+    missing,
+):
+    _run_backup_page(
+        """
+  pendingMutation = 'eve_settings_copy_profile';
+  handlers.onEveSettingsDone({ok: false, operation: 'profile_copy', published: false,
+    error: 'Rollback failed', recovery_backup: backup.path});
+  state.backups_unreadable = """
+        + json.dumps(not missing)
+        + """;
+  state.backups = [other];
+  el('es-backup-filter').listeners.input({target: {value: 'old filter'}});
+  el('es-backup-recovery-open').click();
+  renderBackups();
+  assert.equal(routes.at(-1), 'backups');
+  assert.equal(el('es-backup-filter').value, '');
+  assert.ok(el('es-backup-recovery-note').textContent.includes(backup.path));
+  assert.equal(calls.length, 0);
+  if (!state.backups_unreadable) assert.equal(backupRows().length, 1);
+"""
+    )
+
+
+def test_recovery_filter_falls_back_when_route_refresh_loses_the_archive():
+    _run_backup_page(r"""
+  handlers.onEveSettingsDone({ok: false, operation: 'profile_copy',
+    recovery_backup: backup.path});
+  el('es-backup-recovery-open').click();
+  // The route's fresh enumeration can differ from the cached Profiles state.
+  state.backups = [other];
+  renderBackups();
+  assert.equal(el('es-backup-filter').value, '');
+  assert.equal(backupRows().length, 1);
+  // After the user types, even an exact recovery filename is their filter.
+  el('es-backup-filter').value = 'core_profile_20260824-140300.zip';
+  el('es-backup-filter').listeners.input({target: el('es-backup-filter')});
+  assert.equal(backupRows().length, 0);
+  assert.equal(el('es-backup-filter').value, 'core_profile_20260824-140300.zip');
+""")
+
+
+def test_failed_or_unrelated_restore_keeps_the_recovery_context():
+    _run_backup_page(r"""
+  handlers.onEveSettingsDone({ok: false, operation: 'profile_copy',
+    recovery_backup: backup.path});
+  backupRows()[0].children[3].children[0].click();
+  handlers.onEveSettingsDone({ok: false});
+  assert.equal(el('es-backup-recovery').hidden, false);
+  backupRows()[1].children[3].children[0].click();
+  handlers.onEveSettingsDone({ok: true});
+  assert.equal(el('es-backup-recovery').hidden, false);
+  assert.ok(el('es-backup-recovery-path').textContent.includes(backup.path));
+""")
+
+
+def test_unstructured_errors_never_invent_a_recovery_path_and_normal_entry_clears_filter():
+    _run_backup_page(r"""
+  pendingMutation = 'eve_settings_copy_profile';
+  handlers.onEveSettingsDone({ok: false, operation: 'profile_copy', published: false,
+    error: 'Restore core_profile_20260824-140300.zip from Backups.'});
+  assert.equal(el('es-backup-recovery').hidden, true);
+  el('es-backup-filter').listeners.input({target: {value: 'old filter'}});
+  el('es-backups-open').click();
+  renderBackups();
+  assert.equal(el('es-backup-filter').value, '');
+  assert.equal(backupRows().length, 2);
+""")

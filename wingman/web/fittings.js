@@ -20,8 +20,8 @@
  *
  * Every mutation (collections, metadata, membership, supersession,
  * delete, refresh) notifies through one semantic push, `onFittingsChanged`
- * -- never a second, competing state shape -- and this file's only
- * reaction to it is to re-ask for whatever it is currently looking at.
+ * -- never a second, competing state shape -- and the page re-asks for
+ * whatever it is currently looking at. Deletion also retires that ID's draft.
  */
 (function () {
   'use strict';
@@ -34,6 +34,9 @@
   var detail = null;       // fittings_detail() payload for expandedId
   var detailSeq = 0;       // invalidates a superseded detail reply
   var selected = {};       // entry_id -> true, pruned to the rendered page
+  // Only edited IDs, never a second library: retained across page/filter changes,
+  // retired by acknowledgement, deliberate discard, or confirmed deletion.
+  var metadataDrafts = {};
   var progress = null;     // last refresh onFittingsProgress payload
   var copyOverlayOpen = false;
   var copyDialogGeneration = 0;
@@ -42,6 +45,10 @@
   var copyPhase = 'targets';
   var copyTargets = {};
   var copyPreflight = null;
+  var lastCopyResult = null; // session-only; reopening never reuses a copy ticket
+  // Unlike the visible dialog ticket, this survives route-leave cancellation
+  // until the latest submitted copy reports its terminal outcome.
+  var copyHistoryOperation = null;
   var alternateNames = {};
   var refreshInFlight = false; // optimistic, until the next full re-fetch confirms it
   var searchDebounce = null;
@@ -210,13 +217,17 @@
     renderShipFilterOptions();
     renderFilterBar();
     pruneSelection(payload.rows || []);
+    pruneMetadataDrafts(payload);
     renderList();
     renderPager();
     renderRailButtons();
     if (expandedId) requestDetail(expandedId);
   }
 
-  WM.handle('onFittingsChanged', function () {
+  WM.handle('onFittingsChanged', function (payload) {
+    // A page missing this ID may simply be filtered. Only an explicit deletion
+    // retires an off-page draft, including when this route is hidden.
+    if (payload && payload.reason === 'delete') delete metadataDrafts[payload.entry_id];
     // A semantic "something changed" signal, never a payload to render
     // directly -- see the design doc's "no whole-library pushes". The
     // page re-asks for whatever it is currently looking at.
@@ -413,8 +424,25 @@
     }
     if (progress && progress.error) lines.push(progress.error);
     (STATE.warnings || []).forEach(function (text) { lines.push(text); });
-    host.hidden = !lines.length;
+    host.hidden = !lines.length && !lastCopyResult;
     lines.forEach(function (text) { host.appendChild(WM.make('p', 'notice', text)); });
+    if (lastCopyResult) {
+      var reopen = WM.make('button', 'btn', 'Last copy results\u2026');
+      reopen.disabled = copyOverlayOpen || copyPhase === 'progress'
+        || !!(copyHistoryOperation && copyHistoryOperation.pending);
+      reopen.addEventListener('click', function () {
+        if (copyOverlayOpen || copyPhase === 'progress'
+            || (copyHistoryOperation && copyHistoryOperation.pending)) return;
+        copyDialogGeneration += 1;
+        copyInvoker = reopen;
+        copyOverlayOpen = true;
+        copyPhase = 'results';
+        WM.el('fittings-copy-overlay').hidden = false;
+        renderCopyResults(lastCopyResult);
+        renderNotices();
+      });
+      host.appendChild(reopen);
+    }
   }
 
   function renderShipFilterOptions() {
@@ -556,6 +584,7 @@
     if (row.collection_ids.length) meta.push(collectionNames(row.collection_ids));
     if (row.superseded_by) meta.push('Superseded');
     if (!row.deployable) meta.push('Not deployable');
+    if (metadataDrafts[row.id]) meta.push('Unsaved changes');
     toggle.appendChild(WM.make('span', 'fit-meta', meta.join(' \u00b7 ')));
     toggle.addEventListener('click', function () { toggleRow(row.id); });
     top.appendChild(toggle);
@@ -671,15 +700,31 @@
     return box;
   }
 
+  function pruneMetadataDrafts(payload) {
+    var scope = payload.filters;
+    // Recover a missed delete push only when this read proves the entire
+    // library is present. Paginated/filtered absence and transport failures
+    // say nothing about whether an off-page fitting still exists.
+    if (screenshotFixture || !payload.available || !scope || scope.collection_id !== 'all'
+        || scope.search || scope.ship_type_id
+        || payload.total !== (payload.rows || []).length) return;
+    var live = {};
+    (payload.rows || []).forEach(function (row) { live[row.id] = true; });
+    Object.keys(metadataDrafts).forEach(function (id) {
+      if (!live[id]) delete metadataDrafts[id];
+    });
+  }
+
   function metadataFieldsNode(current) {
     var box = WM.make('div', 'fit-metadata');
+    var draft = metadataDrafts[current.id];
 
     var nameRow = WM.make('div', 'skills-detail-row');
     var nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.className = 'field';
     nameInput.id = 'fit-name-' + current.id;
-    nameInput.value = current.name;
+    nameInput.value = draft ? draft.name : current.name;
     var nameLabel = WM.make('label', '', 'Name');
     nameLabel.setAttribute('for', nameInput.id);
     nameRow.appendChild(nameLabel);
@@ -690,7 +735,7 @@
     var descInput = document.createElement('textarea');
     descInput.className = 'field fit-description-field';
     descInput.id = 'fit-desc-' + current.id;
-    descInput.value = current.description;
+    descInput.value = draft ? draft.description : current.description;
     var descLabel = WM.make('label', '', 'Description');
     descLabel.setAttribute('for', descInput.id);
     descRow.appendChild(descLabel);
@@ -700,11 +745,82 @@
     // Free text commits on an explicit button, never on blur -- the same
     // rule Settings states for its own fields (DESIGN.md).
     var save = WM.make('button', 'btn', 'Save');
+    var status = WM.make('p', 'hint');
+    var discard = WM.make('button', 'btn danger', 'Discard changes');
+    function updateStatus() {
+      var value = metadataDrafts[current.id];
+      save.disabled = !!(value && value.pending);
+      discard.hidden = !value;
+      discard.disabled = !!(value && value.pending);
+      status.textContent = value ? 'Unsaved changes'
+        + (value.pending ? ' \u2014 saving\u2026' : value.error || '') : '';
+    }
+    function captureDraft() {
+      var value = metadataDrafts[current.id];
+      if (!value) {
+        value = { name: nameInput.value, description: descInput.value,
+                  revision: 0, pending: false, error: '' };
+        metadataDrafts[current.id] = value;
+      }
+      value.name = nameInput.value;
+      value.description = descInput.value;
+      value.revision += 1;
+      updateStatus();
+      return value;
+    }
+    nameInput.addEventListener('input', captureDraft);
+    descInput.addEventListener('input', captureDraft);
     save.addEventListener('click', function () {
-      WM.send('fittings_update_metadata', current.id, nameInput.value,
-              descInput.value).then(requeryIfRejected);
+      var value = metadataDrafts[current.id];
+      if (value && value.pending) return;
+      value = captureDraft();
+      var revision = value.revision;
+      var name = value.name;
+      var description = value.description;
+      value.pending = true;
+      value.error = '';
+      updateStatus();
+      WM.send('fittings_update_metadata', current.id, name, description)
+        .then(function (applied) {
+          if (metadataDrafts[current.id] !== value) return;
+          value.pending = false;
+          // WM.send converts a rejected bridge promise to null. A push or
+          // matching text alone is not an acknowledgement of this submission.
+          if (applied === true) {
+            if (value.revision === revision) delete metadataDrafts[current.id];
+            // Even a just-reopened row with no detail yet can have an older
+            // read pending. It must not resurrect pre-save metadata.
+            if (expandedId === current.id) detailSeq += 1;
+            if (detail && detail.id === current.id) {
+              detail.name = name;
+              detail.description = description;
+            }
+          } else {
+            value.error = ' \u2014 save not confirmed. Your draft is kept; try Save again.';
+          }
+          renderList();
+          requestState();
+        });
     });
-    box.appendChild(save);
+    discard.addEventListener('click', function () {
+      var value = metadataDrafts[current.id];
+      if (!value || value.pending) return;
+      var revision = value.revision;
+      WM.confirm('Discard changes', 'Discard the unsaved name and description for '
+        + '\u201c' + current.name + '\u201d?', { destructive: true })
+        .then(function (ok) {
+          if (!ok || metadataDrafts[current.id] !== value
+              || value.pending || value.revision !== revision) return;
+          delete metadataDrafts[current.id];
+          renderList();
+        });
+    });
+    var actions = WM.make('div', 'fit-metadata-actions');
+    actions.appendChild(save);
+    actions.appendChild(discard);
+    actions.appendChild(status);
+    box.appendChild(actions);
+    updateStatus();
     return box;
   }
 
@@ -789,6 +905,7 @@
               return;
             }
             delete selected[current.id];
+            delete metadataDrafts[current.id];
             renderSelectionCount();
             expandedId = '';
             detail = null;
@@ -878,6 +995,7 @@
     WM.el('fittings-copy-title').textContent = 'Copy fittings';
     WM.el('fittings-copy-status').textContent = '';
     renderCopyTargets();
+    renderNotices();
     WM.el('fittings-copy-close').focus();
   }
 
@@ -891,6 +1009,7 @@
     }
     copyOverlayOpen = false;
     copyPreflight = null;
+    renderNotices();
     var target = copyInvoker;
     copyInvoker = null;
     var overlay = WM.el('fittings-copy-overlay');
@@ -1122,6 +1241,9 @@
             || !copyPreflight || copyPreflight.ticket_id !== ticketId) return;
         copyPhase = 'progress';
         activeCopyTicket = ticketId;
+        // Record before sending: a worker may complete before its start reply.
+        var historyOperation = { ticket_id: ticketId, pending: true };
+        if (!screenshotFixture) copyHistoryOperation = historyOperation;
         WM.el('fittings-copy-title').textContent = 'Copying fittings';
         WM.el('fittings-copy-body').textContent = '';
         WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
@@ -1130,6 +1252,12 @@
         copyButtons(false, false, true);
         renderSelectionCount();
         WM.send('fittings_start_copy', ticketId).then(function (started) {
+          if (started === false && copyHistoryOperation === historyOperation) {
+            // A definite refusal releases the history control, but its failure
+            // push may still be in transit. Null is not proof no worker started.
+            historyOperation.pending = false;
+            if (WM.current_route === 'fittings') renderNotices();
+          }
           if (!started && copyOverlayOpen && copyPhase === 'progress'
               && generation === copyDialogGeneration
               && activeCopyTicket === ticketId) {
@@ -1149,8 +1277,17 @@
   });
 
   function onCopyProgress(payload) {
+    // Retain the outcome independently of the display guard: leaving cancels
+    // after the current request, whose final result may still be Unknown.
+    if (!screenshotFixture && payload.phase === 'complete'
+        && copyHistoryOperation
+        && payload.ticket_id === copyHistoryOperation.ticket_id) {
+      lastCopyResult = payload.result || { results: [], write_count: 0 };
+      copyHistoryOperation = null;
+      if (WM.current_route === 'fittings') renderNotices();
+    }
     // Only the bounded screenshot-state handler populates screenshotFixture;
-    // without that explicit fixture, app pushes remain phase- and ticket-gated.
+    // without that explicit fixture, display remains phase- and ticket-gated.
     if (!copyOverlayOpen
         || (!screenshotFixture && (copyPhase !== 'progress'
                                    || !activeCopyTicket
@@ -1167,7 +1304,9 @@
       copyPhase = 'results';
       selected = {};
       renderSelectionCount();
-      renderCopyResults(payload.result || { results: [], write_count: 0 });
+      var result = payload.result || { results: [], write_count: 0 };
+      renderCopyResults(result);
+      renderNotices();
     }
   }
 
@@ -1185,13 +1324,53 @@
     return labels[status] || status;
   }
 
+  function copyResultGuidance(status) {
+    var guidance = {
+      success: '',
+      present: '',
+      conflict_skipped: 'Choose an alternate name in a new copy review if you still want this fitting.',
+      failed: 'Check the error, refresh the target, then review a new copy if still needed.',
+      unknown: 'Check the target\u2019s Personal Fittings in EVE, then refresh characters before any retry. The fitting may already exist.',
+      unattempted_throttle: 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.',
+      cancelled: 'Not attempted. Review a new copy if this fitting is still needed.',
+      unavailable: 'Check the reason, enable Fittings in Settings \u203a Characters if needed, then refresh the target and review a new copy.',
+      invalid_ticket: 'Preflight expired. Close these results and review a new copy.',
+      needs_resolution: 'Close these results and resolve every name conflict in a new copy review.',
+      busy: 'Another fitting copy is running. Wait for it to finish before reviewing a new copy.',
+      shutting_down: 'Reopen Wingman, refresh characters, then review a new copy.',
+      persistence_failed: 'Check the errors and refresh characters to reconcile remote outcomes before reviewing a new copy.',
+      throttled: 'Wait for the ESI limit to clear, refresh characters, then review a new copy.'
+    };
+    return Object.prototype.hasOwnProperty.call(guidance, status) ? guidance[status]
+      : 'Check the target in EVE and refresh characters before reviewing a new copy.';
+  }
+
+  function copyOutcomeSummary(result) {
+    var counts = { success: 0, present: 0, unknown: 0, failed: 0, other: 0 };
+    (result.results || []).forEach(function (pair) {
+      if (['success', 'present', 'unknown', 'failed'].indexOf(pair.status) !== -1) {
+        counts[pair.status] += 1;
+      } else counts.other += 1;
+    });
+    return counts.success + ' copied \u00b7 ' + counts.present + ' already present'
+      + ' \u00b7 ' + counts.unknown + ' unknown \u00b7 ' + counts.failed + ' failed'
+      + ' \u00b7 ' + counts.other + ' not copied';
+  }
+
   function renderCopyResults(result) {
     var host = WM.el('fittings-copy-body');
     host.textContent = '';
     WM.el('fittings-copy-title').textContent = 'Copy results';
-    host.appendChild(WM.make('p', 'fit-copy-summary',
-      result.write_count + (result.write_count === 1 ? ' remote write attempted'
-                                                     : ' remote writes attempted')));
+    host.appendChild(WM.make('p', 'fit-copy-summary', copyOutcomeSummary(result)));
+    host.appendChild(WM.make('p', 'hint',
+      (result.write_count || 0) + (result.write_count === 1 ? ' remote write attempted'
+                                                         : ' remote writes attempted')
+      + '. Nothing is retried automatically.'));
+    if (!(result.results || []).length || result.status !== 'complete') {
+      host.appendChild(WM.make('p', 'notice', result.status === 'cancelled'
+        ? 'Copy cancelled. Completed copies are kept; review a new copy for any remaining fittings.'
+        : copyResultGuidance(result.status)));
+    }
     (result.results || []).forEach(function (pair) {
       var row = WM.make('div', 'fit-copy-pair');
       row.appendChild(WM.make('span', 'fit-copy-pair-name', pair.fitting_name));
@@ -1200,6 +1379,8 @@
                            copyResultLabel(pair.status));
       row.appendChild(status);
       if (pair.error) row.appendChild(WM.make('span', 'fit-copy-detail', pair.error));
+      var guidance = copyResultGuidance(pair.status);
+      if (guidance) row.appendChild(WM.make('span', 'fit-copy-detail fit-copy-guidance', guidance));
       host.appendChild(row);
     });
     WM.el('fittings-copy-status').textContent = result.operation_id
