@@ -73,6 +73,7 @@ def test_success_returns_the_exact_response_and_preserves_the_caller_etag(status
     assert result.authority_invalidated is False
     assert result.authority_reason == ""
     assert result.endpoint_denied is False
+    assert result.authority_error is False
     assert client.calls == [(PATH, FIRST_TOKEN, '"caller"')]
 
 
@@ -93,6 +94,7 @@ def test_one_401_refreshes_with_the_rejected_token_and_retries_once():
     )
 
     assert result.response is expected
+    assert result.authority_error is False
     assert authority.calls == [
         (95, CAPABILITY, None),
         (95, CAPABILITY, FIRST_TOKEN),
@@ -123,7 +125,30 @@ def test_endpoint_denial_does_not_claim_authority_invalidation(statuses):
     assert result.endpoint_denied is True
     assert result.authority_invalidated is False
     assert result.authority_reason == ""
+    assert result.authority_error is False
     assert len(client.calls) == len(statuses)
+
+
+def test_token_acquisition_failure_is_classified_as_an_authority_error():
+    authority = Authority(
+        token_result(None, "Re-authenticate through shared EVE authority.")
+    )
+    client = Client()
+
+    result = authenticated_get(
+        authority,
+        client,
+        character_id=95,
+        capability=CAPABILITY,
+        path=PATH,
+    )
+
+    assert result.response is None
+    assert result.error == "Re-authenticate through shared EVE authority."
+    assert result.authority_error is True
+    assert result.authority_invalidated is False
+    assert result.endpoint_denied is False
+    assert client.calls == []
 
 
 def test_authority_invalidation_after_401_remains_distinct_bounded_and_redacted():
@@ -152,6 +177,7 @@ def test_authority_invalidation_after_401_remains_distinct_bounded_and_redacted(
     assert result.authority_invalidated is True
     assert result.authority_reason == "owner_changed"
     assert result.endpoint_denied is False
+    assert result.authority_error is True
     assert len(client.calls) == 1
 
 
@@ -185,6 +211,21 @@ def test_expected_get_exceptions_are_bounded_and_redact_every_used_token(
         assert SECOND_TOKEN not in result.error
     assert result.authority_invalidated is False
     assert result.endpoint_denied is False
+    assert result.authority_error is False
+
+
+def test_empty_expected_exception_uses_its_class_name():
+    result = authenticated_get(
+        Authority(token_result(FIRST_TOKEN)),
+        Client(OSError()),
+        character_id=95,
+        capability=CAPABILITY,
+        path=PATH,
+    )
+
+    assert result.response is None
+    assert result.error == "OSError"
+    assert result.authority_error is False
 
 
 def test_type_error_from_get_escapes_instead_of_hiding_a_programmer_error():

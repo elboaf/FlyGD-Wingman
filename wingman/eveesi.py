@@ -172,13 +172,20 @@ class AuthenticatedGetResult:
     authority_invalidated: bool
     authority_reason: str
     endpoint_denied: bool
+    authority_error: bool
 
 
 _AUTHENTICATED_ERROR_MAX_CHARS = 4096
 
 
 def _authenticated_error(value: object, tokens: tuple[str, ...]) -> str:
-    text = str(value or "ESI request failed.")
+    text = str(value)
+    if not text:
+        text = (
+            value.__class__.__name__
+            if isinstance(value, BaseException)
+            else "ESI request failed."
+        )
     for token in tokens:
         if token:
             text = text.replace(token, "[redacted]")
@@ -205,11 +212,12 @@ def authenticated_get(
     token = token_result.token
     if token is None:
         return AuthenticatedGetResult(
-            None,
-            _authenticated_error(token_result.error, used_tokens),
-            token_result.grant_invalidated,
-            token_result.reason,
-            False,
+            response=None,
+            error=_authenticated_error(token_result.error, used_tokens),
+            authority_invalidated=token_result.grant_invalidated,
+            authority_reason=token_result.reason,
+            endpoint_denied=False,
+            authority_error=True,
         )
 
     used_tokens = (token,)
@@ -217,7 +225,12 @@ def authenticated_get(
         response = client.get(path, token=token, etag=etag)
     except (OSError, ValueError, RecursionError) as exc:
         return AuthenticatedGetResult(
-            None, _authenticated_error(exc, used_tokens), False, "", False
+            response=None,
+            error=_authenticated_error(exc, used_tokens),
+            authority_invalidated=False,
+            authority_reason="",
+            endpoint_denied=False,
+            authority_error=False,
         )
 
     if response.status == 401:
@@ -227,52 +240,68 @@ def authenticated_get(
         retry_token = token_result.token
         if retry_token is None:
             return AuthenticatedGetResult(
-                None,
-                _authenticated_error(token_result.error, used_tokens),
-                token_result.grant_invalidated,
-                token_result.reason,
-                False,
+                response=None,
+                error=_authenticated_error(token_result.error, used_tokens),
+                authority_invalidated=token_result.grant_invalidated,
+                authority_reason=token_result.reason,
+                endpoint_denied=False,
+                authority_error=True,
             )
         used_tokens = (*used_tokens, retry_token)
         try:
             response = client.get(path, token=retry_token, etag=etag)
         except (OSError, ValueError, RecursionError) as exc:
             return AuthenticatedGetResult(
-                None, _authenticated_error(exc, used_tokens), False, "", False
+                response=None,
+                error=_authenticated_error(exc, used_tokens),
+                authority_invalidated=False,
+                authority_reason="",
+                endpoint_denied=False,
+                authority_error=False,
             )
         if response.status == 401:
             return AuthenticatedGetResult(
-                None,
-                _authenticated_error(
+                response=None,
+                error=_authenticated_error(
                     f"ESI request failed (401): {response.error}", used_tokens
                 ),
-                False,
-                "",
-                True,
+                authority_invalidated=False,
+                authority_reason="",
+                endpoint_denied=True,
+                authority_error=False,
             )
 
     if response.status == 403:
         return AuthenticatedGetResult(
-            None,
-            _authenticated_error(
+            response=None,
+            error=_authenticated_error(
                 f"ESI request failed (403): {response.error}", used_tokens
             ),
-            False,
-            "",
-            True,
+            authority_invalidated=False,
+            authority_reason="",
+            endpoint_denied=True,
+            authority_error=False,
         )
     if response.status not in {200, 304}:
         return AuthenticatedGetResult(
-            None,
-            _authenticated_error(
+            response=None,
+            error=_authenticated_error(
                 f"ESI request failed ({response.status}): {response.error}",
                 used_tokens,
             ),
-            False,
-            "",
-            False,
+            authority_invalidated=False,
+            authority_reason="",
+            endpoint_denied=False,
+            authority_error=False,
         )
-    return AuthenticatedGetResult(response, "", False, "", False)
+    return AuthenticatedGetResult(
+        response=response,
+        error="",
+        authority_invalidated=False,
+        authority_reason="",
+        endpoint_denied=False,
+        authority_error=False,
+    )
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ for the state file, the id cache, and the plans folder.
 
 import io
 import json
+import logging
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -408,6 +409,65 @@ def test_owner_change_mapping_uses_reason_not_human_text(tmp_path):
     assert response is None
     assert invalidated is True
     assert error == "Character ownership changed. Re-authenticate this character."
+
+
+def test_authority_action_text_is_bounded_without_skills_prefix(tmp_path):
+    action = "Re-authenticate through shared EVE authority. " + ("x" * 5000)
+    authority = FakeAuthority(token_results=[AccessTokenResult(None, action, False)])
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        authority=authority,
+    )
+
+    response, error, invalidated = controller._authorised_get(
+        95, "/v4/characters/95/skills/", ""
+    )
+
+    assert response is None
+    assert invalidated is False
+    assert error == action[: controller_mod.MAX_ERROR_CHARS]
+    assert not error.startswith(f"{controller_mod.MSG_REFRESH_FAILED}:")
+
+
+def test_external_read_error_keeps_skills_wording_and_logs_safe_diagnostic(
+    tmp_path, caplog
+):
+    token = "access-1"
+    external_error = f"transport rejected {token}"
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        client=FakeEsi(skills=[OSError(external_error)]),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=controller_mod.__name__):
+        response, error, invalidated = controller._authorised_get(
+            95, "/v4/characters/95/skills/", ""
+        )
+
+    expected = f"{controller_mod.MSG_REFRESH_FAILED}: transport rejected [redacted]"
+    assert response is None
+    assert invalidated is False
+    assert error == expected
+    assert "Skills ESI read failed for 95: transport rejected [redacted]" in caplog.text
+    assert token not in caplog.text
+
+
+def test_empty_external_error_uses_exception_class_in_skills_wording(tmp_path):
+    controller, _, _ = build(
+        tmp_path,
+        characters=[state_mod.Character(character_id=95)],
+        client=FakeEsi(skills=[OSError()]),
+    )
+
+    response, error, invalidated = controller._authorised_get(
+        95, "/v4/characters/95/skills/", ""
+    )
+
+    assert response is None
+    assert invalidated is False
+    assert error == f"{controller_mod.MSG_REFRESH_FAILED}: OSError"
 
 
 def test_authority_persistence_warning_survives_a_skills_error(tmp_path):

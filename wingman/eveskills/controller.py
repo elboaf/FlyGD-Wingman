@@ -1311,6 +1311,9 @@ class SkillsController:
                 else MSG_REAUTH
             )
             return None, error, True
+        if result.authority_error:
+            return None, result.error[:MAX_ERROR_CHARS], False
+        logger.warning("Skills ESI read failed for %s: %s", character_id, result.error)
         return None, _bounded_error(result.error), False
 
     def _commit_success(
