@@ -1,6 +1,7 @@
 """Distribution metadata is independent of full setup parsing and local state."""
 
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -477,8 +478,8 @@ def test_selection_requires_a_bounded_full_wingman_setup(catalog_fixture, kind):
 @pytest.mark.parametrize(
     "asset", ["catalog.json", "synthetic-fleet-r1.json", "Test-License.txt"]
 )
-@pytest.mark.parametrize("kind", ["absent", "directory", "symlink", "hardlink"])
-def test_assets_must_be_regular_nonlinked_files(catalog_fixture, asset, kind):
+@pytest.mark.parametrize("kind", ["absent", "directory", "symlink"])
+def test_assets_must_be_regular_without_symlink_aliases(catalog_fixture, asset, kind):
     entry, _, directory = catalog_fixture
     file = directory / asset
     outside = directory.parent / "outside"
@@ -487,8 +488,6 @@ def test_assets_must_be_regular_nonlinked_files(catalog_fixture, asset, kind):
         file.mkdir()
     elif kind == "symlink":
         file.symlink_to(outside)
-    elif kind == "hardlink":
-        os.link(outside, file)
     with pytest.raises(setup_catalog.SetupCatalogError) as caught:
         if asset == "synthetic-fleet-r1.json":
             read_selected(entry)
@@ -498,6 +497,28 @@ def test_assets_must_be_regular_nonlinked_files(catalog_fixture, asset, kind):
     assert str(directory.parent) not in str(caught.value)
     if kind == "absent":
         assert isinstance(caught.value.__cause__, FileNotFoundError)
+
+
+@pytest.mark.parametrize(
+    "asset", ["catalog.json", "synthetic-fleet-r1.json", "Test-License.txt"]
+)
+def test_hardlinked_package_resources_are_readable(catalog_fixture, asset):
+    entry, text, directory = catalog_fixture
+    file = directory / asset
+    outside = directory.parent / "installer-copy"
+    try:
+        os.link(file, outside)
+    except OSError as error:
+        if error.errno not in (errno.EPERM, errno.EACCES, errno.ENOSYS, errno.ENOTSUP):
+            raise
+        pytest.skip(f"Filesystem cannot create test hardlinks: {error}")
+    before = outside.read_bytes()
+    assert setup_catalog.list_entries() == [entry]
+    result = read_selected(entry)
+    assert result["text"] == text
+    assert result["entry"] == entry
+    assert outside.read_bytes() == before
+    assert file.read_bytes() == before
 
 
 @pytest.mark.parametrize("kind", ["missing", "file", "symlink"])
@@ -528,7 +549,6 @@ def test_windows_reparse_aliases_are_refused(catalog_fixture, monkeypatch, asset
         if path == target:
             return SimpleNamespace(
                 st_mode=info.st_mode,
-                st_nlink=info.st_nlink,
                 st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
             )
         return info

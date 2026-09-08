@@ -57,8 +57,12 @@ def _directory() -> Path:
 
 
 def _regular(info: os.stat_result, name: str) -> None:
-    if _linked(info) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise SetupCatalogError(f"Bundled {name} is not a regular, nonlinked file.")
+    # Package installers may hardlink read-only resources; the selected artifact
+    # is still bound to its exact bytes by the catalog hash.
+    if _linked(info) or not stat.S_ISREG(info.st_mode):
+        raise SetupCatalogError(
+            f"Bundled {name} is not a regular file or is a symlink/reparse alias."
+        )
 
 
 def _read_file(directory: Path, name: str, maximum: int | None) -> bytes:
