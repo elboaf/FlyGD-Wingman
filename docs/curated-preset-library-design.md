@@ -1,6 +1,6 @@
 # Curated library of complete overview and layout setups
 
-Status: library implementation remains proposed. The user separately approved the compatibility prerequisite; its implementation and verification are recorded in [the checkpoint](curated-preset-library-verification.md).
+Status: the user approved library implementation on 2026-09-08, with continuous execution and independent reviews. The compatibility prerequisite is implemented and verified as recorded in [the checkpoint](curated-preset-library-verification.md). Content admission and external/operator acceptance remain separate requirements.
 Base: `75f3288e84c80018d6cee421ae2f32577ece53d3` (current main when the planning worktree was created).
 
 ## Outcome and decisions

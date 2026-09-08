@@ -10,7 +10,7 @@
 
 **Spec:** [curated-preset-library-design.md](curated-preset-library-design.md).
 
-**Status:** Catalog implementation remains proposed, pending overall approval. The separately approved compatibility prerequisite is implemented in `7783eaf` and `ec41d51`; [verification](curated-preset-library-verification.md) records its reviews, passing Linux suite, Windows coverage and remaining symlink-privilege failures. No complete library or phase-3 acceptance is claimed.
+**Status:** The user approved executing the remaining library plan on 2026-09-08, continuously with tests and independent reviews. The compatibility prerequisite is implemented in `7783eaf` and `ec41d51`; [verification](curated-preset-library-verification.md) records its reviews, passing Linux suite, Windows coverage and remaining symlink-privilege failures. Content metadata/admission, external actions and actual Windows/EVE acceptance retain their explicit boundaries. No complete library or phase-3 acceptance is claimed yet.
 
 ## Global constraints
 
