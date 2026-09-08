@@ -2465,7 +2465,9 @@ button.btn:disabled,
    of the pane would leave a stray line floating over the rows. Named
    groups stick; rules do not. */
 #preview-binds .bind-group:not(:empty) {
-  position: sticky; top: var(--preview-bind-head-height); z-index: 1;
+  position: sticky;
+  top: calc(var(--preview-jump-height) + var(--preview-bind-head-height));
+  z-index: 1;
   background: var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
@@ -2571,8 +2573,20 @@ button.btn:disabled,
    `#section-previews.active` is already in the watermark suppression list
    at the top of this sheet, so closing this section's gutter cannot
    strand the ship mark the way .settings' own margin note warns about. */
-#section-previews { max-width: none; }
-#section-previews > .card { max-width: 620px; }
+#section-previews { max-width: none; --preview-jump-height: 42px; }
+/* Navigation stays above the existing sticky table headings, so a long
+   character roster does not trap a return visit at the bottom of Settings. */
+.preview-jumps {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; align-items: flex-start; gap: 8px;
+  height: var(--preview-jump-height); flex: none;
+  background: var(--bg);
+}
+#section-previews > .card {
+  max-width: 620px;
+  scroll-margin-top: var(--preview-jump-height);
+}
+#preview-binds .bind-head > span { top: var(--preview-jump-height); }
 #section-previews > .card:has(> #preview-binds) {
   width: max-content; max-width: 100%; align-self: start;
 }
@@ -2648,10 +2662,9 @@ button.btn:disabled,
 .preview-character-detail {
   grid-column: 1 / -1;
   display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 16px;
-  /* One sticky table header plus one sticky group header can cover this
-     disclosure after Configure scrolls it into view. Their shared measured
-     height is defined by the table, so this clearance follows it. */
-  scroll-margin-top: calc(var(--preview-bind-head-height) * 2);
+  /* Configure scrolls this disclosure below quick navigation, the table
+     header and its group header. Keep all three sticky layers clear. */
+  scroll-margin-top: calc(var(--preview-jump-height) + var(--preview-bind-head-height) * 2);
   padding: 5px 0 7px;
   border-top: 1px solid var(--field-border);
 }
@@ -3414,6 +3427,9 @@ button.btn:disabled,
 .es-count { color: var(--text); font-size: var(--fs-body); }
 .es-count.none { color: var(--text-faint); }
 .es-copy-source { color: var(--text-dim); font-size: var(--fs-body); }
+#es-backup-recovery-path, #es-backup-recovery-note, #es-backups > .hint {
+  overflow-wrap: anywhere;
+}
 
 /* Right edge, so the hazard is the last thing before the eye leaves the
    row -- and so it lands in the same place whether or not the count wrapped.
@@ -4308,7 +4324,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 #update-progress::-webkit-progress-value {
   background: linear-gradient(90deg, var(--brand-deep), var(--brand));
-  border-radius: 3px; transition: width .12s linear;
+  border-radius: 3px;
 }
 /* A live region that is display:none when text lands may never announce it.
    Keep the relationship-level alert warning mounted, matching the two
@@ -4424,8 +4440,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   background: var(--panel); border: 1px solid var(--panel-border);
   border-radius: var(--radius); padding: 12px;
 }
-.fm-rail-head { flex: none; }
-.fm-rail-head > #fm-account { flex: 1; min-width: 0; }
+.fm-rail-head { flex: none; flex-wrap: wrap; }
+.fm-rail-head > #fm-account { flex: 1 0 100%; min-width: 0; }
+#fm-account-context { overflow-wrap: anywhere; }
 .fm-rail-add { flex: none; flex-wrap: wrap; row-gap: 6px; }
 .fm-rail-add > .btn { width: 100%; text-align: center; }
 .fm-list-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -5285,6 +5302,9 @@ button.btn.danger:disabled {
    but would stretch Save to the same full width too -- the only button
    in this pane, and every other button in the app sizes to its label. */
 .fit-metadata button.btn { align-self: flex-start; }
+.fit-metadata-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fit-metadata-actions > .hint { margin: 0; }
+.fit-metadata-actions > .hint:empty { display: none; }
 .fit-alias-row, .fit-presence-row {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
@@ -5334,6 +5354,7 @@ button.btn.danger:disabled {
   gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--row-line);
 }
 .fit-copy-pair:last-child { border-bottom: 0; }
+.fit-copy-guidance { grid-column: 1 / -1; }
 .fit-copy-pair-name, .fit-copy-result { color: var(--text); }
 .fit-copy-character, .fit-copy-detail {
   color: var(--text-faint); font-size: var(--fs-muted);

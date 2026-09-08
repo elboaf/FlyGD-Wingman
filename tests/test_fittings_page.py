@@ -332,12 +332,12 @@ def test_route_leave_force_closes_copy_and_resets_progress_phase():
     assert leave.index("fittings_cancel_copy") < leave.index("closeCopyOverlay(true)")
 
 
-def test_rejected_local_edits_immediately_requery_persisted_state():
-    """Controller alerts explain refusal; a fresh state/detail render reverts
-    controls that otherwise continue displaying values that were never saved."""
+def test_rejected_discrete_edits_immediately_requery_persisted_state():
+    """Discrete controls revert on refusal. Metadata text instead remains a draft;
+    its acknowledgement/failure ordering is covered by test_fittings_runtime.py.
+    """
     for bridge_name in (
         "fittings_rename_collection",
-        "fittings_update_metadata",
         "fittings_set_membership",
         "fittings_set_supersession",
     ):

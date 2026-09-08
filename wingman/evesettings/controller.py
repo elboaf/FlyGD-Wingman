@@ -598,6 +598,7 @@ class ProfilesController:
             # user the second when the first is true invites them to
             # overwrite settings they believe are unprotected.
             "backups_unreadable": backups_unreadable,
+            "backups_folder": str(store),
             # The prune depth, so the page can say how many backups are
             # kept without typing the number into itself. Four places once
             # carried the bookmark-keybind count and three of them drifted;
@@ -2467,6 +2468,7 @@ class ProfilesController:
         # its own save decides this.
         selection_persisted = plan.mode != "new"
         error_message = None
+        recovery_backup = None
         # Retention runs only once the destination has settled -- after a
         # successful publication, or after a rollback that put the old one
         # back. Pruning while the destination holds a mix of both profiles
@@ -2549,9 +2551,10 @@ class ProfilesController:
                                 "error", "Replacement failed", error_message
                             )
                         else:
-                            # The archive is named because it is now the only
-                            # way back, and Backups is where it is restored
-                            # from -- an instruction, not an error code.
+                            # Keep the actual archive separate from the prose:
+                            # the page can locate it without guessing a filename
+                            # or borrowing the currently selected source profile.
+                            recovery_backup = str(archive)
                             error_message = (
                                 f"{plan.destination_name} may now hold a mix of both "
                                 "profiles and Wingman could not put it back. Restore "
@@ -2613,6 +2616,7 @@ class ProfilesController:
                 published=published,
                 selection_persisted=selection_persisted,
                 error=error_message,
+                **({"recovery_backup": recovery_backup} if recovery_backup else {}),
             )
 
     def backup(self, path: str, kind: str) -> bool:

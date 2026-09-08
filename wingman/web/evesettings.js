@@ -33,6 +33,11 @@
   var identityExpanded = false;
   var backupFilter = '';
   var backupVisible = 20;
+  // A failed replacement's archive belongs to the backup store, not the
+  // selected source. Keep it when that source or its disclosure changes.
+  var recoveryBackup = '';
+  var recoveryFilter = false;
+  var pendingRestorePath = '';
   var identifyCandidate = null;
   var identityStep = 'idle';
   var identityMessage = '';
@@ -861,13 +866,50 @@
       + ' ' + stamp[4] + ':' + stamp[5];
   }
 
+  function backupBasename(path) {
+    return (path || '').split(/[\\/]/).pop();
+  }
+
   function backupMatches(item, needle) {
     var origin = item.origin === 'auto' ? 'Automatic' : 'Manual';
-    return [item.display_name, item.display_meta, item.kind, item.origin, origin]
+    return [item.display_name, item.display_meta, item.kind, item.origin, origin,
+      backupBasename(item.path), item.created, whenText(item.created)]
       .join(' ').toLowerCase().indexOf(needle) !== -1;
   }
 
+  function recoveryIsListed() {
+    return state && !state.backups_unreadable
+      && (state.backups || []).some(function (item) {
+        return item.path === recoveryBackup;
+      });
+  }
+
+  function renderBackupRecovery() {
+    WM.el('es-backup-recovery').hidden = !recoveryBackup;
+    WM.el('es-backup-recovery-path').textContent = recoveryBackup
+      ? 'Backup from the failed replacement: ' + recoveryBackup : '';
+    var recoveryNote = WM.el('es-backup-recovery-note');
+    recoveryNote.hidden = !recoveryBackup;
+    recoveryNote.textContent = recoveryBackup
+      ? 'Recovery backup: ' + recoveryBackup
+        + (recoveryIsListed() ? ''
+          : ' — not in the current list. Check the backups folder.')
+      : '';
+  }
+
+  function openRecoveryBackup() {
+    // The path is a display/filter hint, never permission to restore or
+    // open a file. An absent archive must not strand the user in an empty
+    // filter; only an exact match against the listed store earns a filter.
+    recoveryFilter = true;
+    backupFilter = recoveryIsListed() ? backupBasename(recoveryBackup) : '';
+    WM.el('es-backup-filter').value = backupFilter;
+    backupVisible = 20;
+    WM.route('backups');
+  }
+
   function openBackups() {
+    recoveryFilter = false;
     backupFilter = '';
     WM.el('es-backup-filter').value = '';
     backupVisible = 20;
@@ -875,6 +917,14 @@
   }
 
   function renderBackups() {
+    // A route refresh may lose the archive after the recovery button used
+    // cached state. Fall back only for our filter, never for the user's text.
+    if (recoveryFilter && !recoveryIsListed()) {
+      recoveryFilter = false;
+      backupFilter = '';
+      WM.el('es-backup-filter').value = '';
+    }
+    renderBackupRecovery();
     var host = WM.el('es-backups');
     var backups = state.backups || [];
     var needle = backupFilter.toLowerCase();
@@ -907,7 +957,9 @@
       var empty = document.createElement('p');
       empty.className = 'hint';
       empty.textContent = state.backups_unreadable
-        ? "Couldn't read the backups folder. Check it is still readable."
+        ? "Couldn't read the backups folder"
+          + (state.backups_folder ? ': ' + state.backups_folder : '')
+          + '. Check it still exists and is readable.'
         : (!backups.length ? 'No backups yet. Copies create backups automatically.'
           : 'No backups match this filter.');
       host.appendChild(empty);
@@ -916,7 +968,8 @@
       var line = WM.make('div', 'es-backup-grid es-backup-row');
       line.appendChild(WM.make('span', 'bk-when', whenText(item.created)));
       var target = WM.make('span', 'bk-what');
-      target.title = item.display_name + ' · ' + item.display_meta;
+      target.title = item.display_name + ' · ' + item.display_meta
+        + ' · ' + backupBasename(item.path);
       target.appendChild(WM.make('span', 'bk-name', item.display_name));
       target.appendChild(WM.make('span', 'bk-meta', item.display_meta));
       line.appendChild(target);
@@ -1116,6 +1169,7 @@
     var args = Array.prototype.slice.call(arguments);
     if (busy) return;
     pendingMutation = method;
+    pendingRestorePath = method === 'eve_settings_restore' ? args[1] : '';
     if (method === 'eve_settings_copy') clearCopyFollowup();
     setBusy(true);
     WM.send.apply(null, args).then(function (accepted) {
@@ -1273,6 +1327,7 @@
 
     WM.el('es-backups-open').addEventListener('click', openBackups);
     WM.el('es-copy-view-backups').addEventListener('click', openBackups);
+    WM.el('es-backup-recovery-open').addEventListener('click', openRecoveryBackup);
     WM.el('es-backups-back').addEventListener('click', function () {
       WM.route('evesettings');
     });
@@ -1512,11 +1567,13 @@
     });
 
     WM.el('es-backup-filter').addEventListener('input', function (event) {
+      recoveryFilter = false;
       backupFilter = event.target.value;
       backupVisible = 20;
       renderBackups();
     });
     WM.el('es-backup-filter-clear').addEventListener('click', function () {
+      recoveryFilter = false;
       backupFilter = '';
       WM.el('es-backup-filter').value = '';
       backupVisible = 20;
@@ -1631,6 +1688,13 @@
     }
     var completedMutation = pendingMutation;
     pendingMutation = '';
+    if (payload.operation === 'profile_copy' && payload.recovery_backup) {
+      recoveryBackup = payload.recovery_backup;
+    } else if (payload.ok && completedMutation === 'eve_settings_restore'
+        && pendingRestorePath === recoveryBackup) {
+      recoveryBackup = '';
+    }
+    pendingRestorePath = '';
     if (WM.formationsDone) WM.formationsDone(payload);
     if (completedMutation === 'eve_settings_copy_profile') {
       // published, not ok: a created profile that could not be saved as

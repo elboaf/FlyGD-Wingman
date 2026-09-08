@@ -2730,6 +2730,7 @@
         || selectedIdentityScenario.discovered.indexOf(character.id) !== -1;
     }),
     backups_unreadable: false,
+    backups_folder: 'C:\\Wingman\\eve-settings-backups',
     // True, so the harness shows the Probe formations tool. The real
     // answer is Api.eve_settings_state's codec_available(), which is false
     // on a checkout with no sidecar bundled -- and a harness that mirrored
@@ -2899,9 +2900,22 @@
         })[0];
         payload.ok = false;
         payload.published = false;
+        var archiveName = '20260824-140300-000-auto-profile-1234abcd-Fleet.zip';
+        payload.recovery_backup = eve.backups_folder + '\\' + archiveName;
+        // Keep explicit empty/unreadable checkpoints available for the
+        // recovery link's unlisted-archive fallback.
+        if (backupsScenario !== 'empty' && backupsScenario !== 'unreadable') {
+          eve.backups = eve.backups.filter(function (backup) {
+            return backup.path !== payload.recovery_backup;
+          });
+          eve.backups.unshift({
+            path: payload.recovery_backup, created: '20260824-140300', origin: 'auto',
+            kind: 'profile', stem: 'Fleet', display_name: 'Fleet', display_meta: 'Profile'
+          });
+        }
         payload.error = (target ? target.name : destination) + ' may now hold '
           + 'a mix of both profiles and Wingman could not put it back. '
-          + 'Restore core_profile_20260824-140300.zip from Backups.';
+          + 'Restore ' + archiveName + ' from Backups.';
       }
       window.onEveSettingsDone(payload);
     }, 250);

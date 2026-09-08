@@ -24,6 +24,7 @@ WEB = ROOT / "wingman" / "web"
         "second-save-retained-draft",
         "start-reply-after-completion",
         "failed-switch",
+        "account-context",
         "switch-edit",
         "stale-read-route",
         "stale-read-attempt",

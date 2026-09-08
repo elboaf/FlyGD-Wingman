@@ -623,6 +623,19 @@ async function main() {
   if (scenario.startsWith('delete-')) await deleteScenario();
   else if (scenario.startsWith('paste-')) await pasteScenario();
   else if (scenario.startsWith('copy-')) await copyScenario();
+  else if (scenario === 'account-context') {
+    const context = () => WM.el('fm-account-context').textContent;
+    assert.equal(context(), 'Account: Account A');
+    assert.equal(WM.el('fm-account').title, 'Account A');
+    switchTo('choice-B'); await tick();
+    assert.equal(context(), 'Account: Account A', 'pending switch still shows the loaded account');
+    reads.at(-1).resolve({ok: false, error: 'unreadable'}); await tick();
+    assert.equal(context(), 'Account: Account A', 'failed switch must not relabel the draft');
+    switchTo('choice-B'); await tick();
+    reads.at(-1).resolve(reply(C, 'Other', 'resolved-B')); await tick();
+    assert.equal(context(), 'Account: Account B');
+    assert.equal(WM.el('fm-account').title, 'Account B');
+  }
   else if (scenario === 'commit-keeps-newer-edit' || scenario === 'second-save-retained-draft') {
     rename('Submitted'); click('fm-save'); const first = saves[0];
     rename('Newer'); complete(first, {warning: 'Saved, but retention failed.'});

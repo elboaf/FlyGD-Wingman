@@ -202,6 +202,10 @@
       select.appendChild(option);
     });
     select.value = path;
+    var currentAccount = accountChoices.filter(function (account) {
+      return account.path === path;
+    })[0];
+    select.title = currentAccount ? currentAccount.name : '';
   }
 
   function accountPath(preferredPath) {
@@ -1014,6 +1018,13 @@
   }
 
   function paintCommit() {
+    // A pending or failed account switch still displays the old document.
+    // Name that document here, never the select's unacknowledged choice.
+    var account = accountChoices.filter(function (choice) {
+      return choice.path === selectedAccountPath;
+    })[0];
+    WM.el('fm-account-context').textContent = account && state.path
+      ? 'Account: ' + account.name : '';
     var why = state.busy ? '' : problem();
     WM.setEnabled('fm-save', !importReview && state.dirty && !state.busy && !!state.contentRevision && !why);
     WM.setEnabled('fm-reload', !!state.path && !state.busy);
