@@ -162,6 +162,21 @@ def test_shutdown_stops_shared_telemetry_once(tmp_path):
     assert telemetry.stopped == 1
 
 
+def test_shutdown_detaches_the_fleet_subscriber_before_telemetry_stops(tmp_path):
+    """Same rule __main__ applies to the sharing worker: a subscriber still
+    attached when the coordinator stops receives its last drained batch,
+    and this one routes into a fleet-bar window already torn down."""
+    telemetry = FakeTelemetry()
+    api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
+    stops_seen_at_detach = []
+    api._fleet_unsubscribe = lambda: stops_seen_at_detach.append(telemetry.stopped)
+
+    api.shutdown_previews()
+
+    assert stops_seen_at_detach == [0]
+    assert telemetry.stopped == 1
+
+
 def test_a_no_op_preview_toggle_does_not_reconcile_shared_telemetry(tmp_path):
     telemetry = FakeTelemetry()
     api = make_api(tmp_path, telemetry=telemetry)

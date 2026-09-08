@@ -1,5 +1,6 @@
 """The bridge is tested headless through FakeWindow (tests/fakes.py)."""
 
+import datetime
 import hashlib
 import json
 import os
@@ -1721,15 +1722,13 @@ def test_lowering_retention_confirms_exact_count_and_keeps_manual_backups(
             store,
             source,
             origin="auto",
-            now=api_mod.datetime.datetime(
-                2026, 1, 1, 0, 0, second, tzinfo=api_mod.datetime.UTC
-            ),
+            now=datetime.datetime(2026, 1, 1, 0, 0, second, tzinfo=datetime.UTC),
         )
     manual = ctrl_mod.evesettings_backup.create_file_backup(
         store,
         source,
         origin="manual",
-        now=api_mod.datetime.datetime(2026, 1, 1, 0, 1, tzinfo=api_mod.datetime.UTC),
+        now=datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
     )
     asked = []
     api._eve_confirm = lambda title, body, **kwargs: asked.append(body) or True
@@ -1766,9 +1765,7 @@ def test_declining_retention_deletion_changes_nothing(tmp_path, monkeypatch):
             store,
             source,
             origin="auto",
-            now=api_mod.datetime.datetime(
-                2026, 1, 1, 0, 0, second, tzinfo=api_mod.datetime.UTC
-            ),
+            now=datetime.datetime(2026, 1, 1, 0, 0, second, tzinfo=datetime.UTC),
         )
 
     api.eve_settings_set_auto_keep(1)

@@ -148,9 +148,19 @@ class FittingsController:
         self._lock = threading.RLock()
         self._refresh_gate = threading.Lock()
         self._copy_gate = threading.Lock()
-        self._copy_cancelled = threading.Event()
         self._tickets_lock = threading.Lock()
         self._tickets: OrderedDict[str, _PreflightTicket] = OrderedDict()
+        # Cancellation is keyed to the ticket, not a flag. The flag version
+        # (an Event that start_copy cleared after consuming its ticket) lost
+        # the page's route-leave cancel whenever that cancel reached the
+        # bridge before the worker reached clear() -- an ordinary outcome,
+        # since the page fires it right after confirm -- and the copy then
+        # ran to completion while the overlay said "Cancelling". Both live
+        # under _tickets_lock so an un-keyed cancel can resolve "whatever
+        # is pending or in flight" to concrete ids atomically with the
+        # take that moves a ticket from pending to active.
+        self._active_copy_ticket: str | None = None
+        self._cancelled_tickets: set[str] = set()
         self._ticket_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._operation_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._stopping = threading.Event()
@@ -1099,11 +1109,41 @@ class FittingsController:
                 self._tickets.popitem(last=False)
 
     def _take_ticket(self, ticket_id: object, now: datetime) -> _PreflightTicket | None:
+        """Pop the ticket and mark it the active copy in ONE critical section.
+
+        One section, not two: cancel_copy() resolves an un-keyed cancel to
+        the ids that are pending or active under this same lock, and a
+        ticket already popped but not yet active would be invisible to it
+        -- a second version of the gap the Event-based cancel fell into.
+        The caller (start_copy) releases the active mark in its finally.
+        """
         if not isinstance(ticket_id, str) or not ticket_id:
             return None
         with self._tickets_lock:
             self._expire_tickets_locked(now)
-            return self._tickets.pop(ticket_id, None)
+            ticket = self._tickets.pop(ticket_id, None)
+            if ticket is not None:
+                self._active_copy_ticket = ticket.ticket_id
+            return ticket
+
+    def _release_active_ticket(self) -> None:
+        """Forget the finished copy's ticket and any cancel aimed at it.
+
+        The only place a cancel entry is ever removed, and it runs after
+        the copy has returned -- so no cancel that targets a running copy
+        is cleared by anything. The gate serialises copies, so the active
+        id can only be this caller's.
+        """
+        with self._tickets_lock:
+            active, self._active_copy_ticket = self._active_copy_ticket, None
+            if active is not None:
+                self._cancelled_tickets.discard(active)
+
+    def _copy_cancelled(self, ticket_id: str) -> bool:
+        if self._stopping.is_set():
+            return True
+        with self._tickets_lock:
+            return ticket_id in self._cancelled_tickets
 
     def _expire_tickets_locked(self, now: datetime) -> None:
         cutoff = now - timedelta(seconds=contracts.PREFLIGHT_TICKET_SECONDS)
@@ -1114,6 +1154,12 @@ class FittingsController:
         ]
         for ticket_id in expired:
             self._tickets.pop(ticket_id, None)
+        # A cancel aimed at a ticket that expired or was evicted before it
+        # ever started has nothing left to stop; dropping it here is what
+        # keeps the set bounded by the ticket table plus the active copy.
+        self._cancelled_tickets.intersection_update(
+            set(self._tickets) | {self._active_copy_ticket}
+        )
 
     @staticmethod
     def _ticket_pair_payload(pair: _TicketPair) -> dict:
@@ -1143,7 +1189,9 @@ class FittingsController:
                 return self._copy_result("invalid_ticket", "", [])
             if ticket.requires_resolution:
                 return self._copy_result("needs_resolution", "", [])
-            self._copy_cancelled.clear()
+            # Deliberately NO reset of cancellation here. A cancel for this
+            # ticket that arrived before this line is the page's route-leave
+            # cancel beating the worker to it, and it must stand.
             operation_id = str(self._operation_id_factory())[: store.MAX_LOCAL_ID_CHARS]
             if not operation_id:
                 operation_id = uuid.uuid4().hex
@@ -1166,7 +1214,7 @@ class FittingsController:
                         "failed",
                         "Not attempted because the prior remote outcome could not be saved.",
                     )
-                elif self._copy_cancelled.is_set():
+                elif self._copy_cancelled(ticket.ticket_id):
                     stop_status = "cancelled"
                     row = self._copy_row(pair, "cancelled", "")
                 elif attempted_writes >= ticket.max_writes:
@@ -1211,6 +1259,7 @@ class FittingsController:
             self._notify_changed({"reason": "copy", "operation_id": operation_id})
             return result
         finally:
+            self._release_active_ticket()
             self._copy_gate.release()
 
     def _execute_copy_pair(
@@ -1469,8 +1518,32 @@ class FittingsController:
             "write_count": sum(1 for row in results if row["attempted"]),
         }
 
-    def cancel_copy(self) -> bool:
-        self._copy_cancelled.set()
+    def cancel_copy(self, ticket_id: object = None) -> bool:
+        """Cancel one ticket's copy, or everything pending or in flight.
+
+        Keyed so that no later step can erase it: the page sends this from
+        route-leave immediately after confirm, and the old Event was
+        cleared by start_copy after it consumed the ticket, so a cancel
+        that won the race to the bridge was wiped and the copy ran to the
+        end under a "Cancelling" overlay. An entry now outlives the copy it
+        targets and is dropped only by _release_active_ticket, after that
+        copy has returned.
+
+        Un-keyed (the pre-ticket bridge shape) resolves to the tickets that
+        exist right now -- pending and active -- rather than to a "cancel
+        the next copy" flag, which would have cancelled one the user starts
+        an hour later. A key for a ticket that is neither pending nor
+        active names a copy that cannot start, so it is ignored.
+        """
+        with self._tickets_lock:
+            if isinstance(ticket_id, str) and ticket_id:
+                targets = {ticket_id}
+            else:
+                targets = set(self._tickets)
+                if self._active_copy_ticket is not None:
+                    targets.add(self._active_copy_ticket)
+            live = set(self._tickets) | {self._active_copy_ticket}
+            self._cancelled_tickets.update(targets & live)
         return True
 
     # ----- workspace queries ----------------------------------------------
@@ -2127,7 +2200,10 @@ class FittingsController:
     def shutdown(self) -> None:
         """Cancel queued work and wait a bounded time for active requests."""
         self._stopping.set()
-        self._copy_cancelled.set()
+        # _copy_cancelled() reads _stopping first, so a running copy stops
+        # at its next pair without needing a ticket entry; this call covers
+        # the pending tickets for symmetry with the page's own cancel.
+        self.cancel_copy()
         deadline = time.monotonic() + SHUTDOWN_WAIT_SECONDS
         for gate in (self._copy_gate, self._refresh_gate):
             remaining = max(0.0, deadline - time.monotonic())

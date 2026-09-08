@@ -11,6 +11,7 @@ posting logs is now the second half of an upload, not an action of its own.
 
 from tests import fakes
 from wingman.ui import api as api_mod
+from wingman.upload import controller as upload_mod
 
 
 def api_with(tmp_path, names=("a.mkv", "b.mkv"), watcher=None, **kw):
@@ -30,7 +31,7 @@ def api_with(tmp_path, names=("a.mkv", "b.mkv"), watcher=None, **kw):
 
 
 def join_delete(api):
-    api._delete_thread.join(timeout=5)
+    api._uploader._delete_thread.join(timeout=5)
 
 
 def test_deleting_nothing_says_so(tmp_path):
@@ -101,7 +102,7 @@ def test_copy_returns_the_link_and_reports_it(tmp_path):
     YouTube link it earned, which is why both are inert before an upload."""
     api, _window, _rows = api_with(tmp_path)
     sent = fakes.record_pushes(api)
-    api._links["r0"] = "https://www.youtube.com/watch?v=abc"
+    api._uploader._links["r0"] = "https://www.youtube.com/watch?v=abc"
 
     assert api.copy_path("r0") == "https://www.youtube.com/watch?v=abc"
     assert fakes.payloads(sent, "onStatus") == [
@@ -119,8 +120,8 @@ def test_copy_on_a_row_with_no_link_returns_nothing_and_says_nothing(tmp_path):
 def test_open_launches_the_browser_for_a_linked_row(monkeypatch, tmp_path):
     opened = []
     api, _window, _rows = api_with(tmp_path)
-    api._links["r0"] = "https://www.youtube.com/watch?v=abc"
-    monkeypatch.setattr(api_mod.webbrowser, "open", opened.append)
+    api._uploader._links["r0"] = "https://www.youtube.com/watch?v=abc"
+    monkeypatch.setattr(upload_mod.webbrowser, "open", opened.append)
     api.open_path("r0")
     assert opened == ["https://www.youtube.com/watch?v=abc"]
 
@@ -130,7 +131,7 @@ def test_open_on_an_unknown_row_does_nothing(monkeypatch, tmp_path):
     id the backend no longer knows."""
     opened = []
     api, _window, _rows = api_with(tmp_path)
-    monkeypatch.setattr(api_mod.webbrowser, "open", opened.append)
+    monkeypatch.setattr(upload_mod.webbrowser, "open", opened.append)
     api.open_path("gone")
     assert opened == []
 

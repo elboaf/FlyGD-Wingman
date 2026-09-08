@@ -18,6 +18,7 @@ file's own test_esi_re_exports_the_shared_eveesi_symbols below, which
 guards that against silently forking back into a duplicate copy.
 """
 
+import http.client
 import io
 import json
 import urllib.error
@@ -460,6 +461,25 @@ def test_network_errors_retry_on_their_own_ladder():
     )
     assert client.get("/v6/characters/1/skills/").ok is True
     assert sleep.delays == [pytest.approx(0.5), pytest.approx(1.0)]
+
+
+class _TruncatedResponse(_Response):
+    """A response whose status and headers arrived but whose body did not:
+    http.client raises IncompleteRead from read() when the connection drops
+    mid-body, and it is an HTTPException, not an OSError."""
+
+    def read(self, size=-1):
+        raise http.client.IncompleteRead(b'{"ski')
+
+
+def test_an_incomplete_body_read_is_retried_like_a_dropped_connection():
+    """post_once already treats IncompleteRead as a lost body; the GET path
+    did not list it, so it escaped _request entirely and a Skills refresh
+    pass died on the one character whose body was cut short."""
+    sleep = FakeSleep()
+    client = _client([_TruncatedResponse(200), _Response(200, b"{}")], sleep)
+    assert client.get("/v6/characters/1/skills/").ok is True
+    assert sleep.delays == [pytest.approx(esi.NETWORK_BACKOFF_S)]
 
 
 def test_an_oserror_from_the_transport_is_retried_not_raised():

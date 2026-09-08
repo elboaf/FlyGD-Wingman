@@ -809,7 +809,7 @@ is a smaller change than explaining it.
 
 ### Still open, already deferred — `Notifications` has no third option
 
-Two radios, no way to have neither, exactly as `docs/ui-work-lanes.md`
+Two radios, no way to have neither, exactly as `docs/history/ui-work-lanes.md`
 recorded when it deferred this pending a product decision. Not re-reported
 as new; recorded because the decision is still unmade and
 `PRODUCT.md`'s "beside a game, often mid-fleet, on a second monitor"

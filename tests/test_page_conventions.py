@@ -1375,9 +1375,16 @@ def test_a_destructive_confirm_does_not_take_the_accent_button():
     #    overwrites 34 characters' settings, and the whole reason for this
     #    test -- was silently outside it. A call site is a call node.
     sources = [("api.py", api)]
-    controller_path = WEB.parent / "evesettings" / "controller.py"
-    if controller_path.exists():
-        sources.append(("controller.py", controller_path.read_text(encoding="utf-8")))
+    # Both extracted controllers confirm through `self._ports.confirm`, and
+    # each carries one of the four final dialogs (Confirm Delete moved out
+    # with the uploader, Confirm Copy with Profiles). Walked by name so the
+    # count below still means something after either extraction.
+    for label, controller_path in (
+        ("evesettings/controller.py", WEB.parent / "evesettings" / "controller.py"),
+        ("upload/controller.py", WEB.parent / "upload" / "controller.py"),
+    ):
+        if controller_path.exists():
+            sources.append((label, controller_path.read_text(encoding="utf-8")))
 
     def is_confirm_call(node):
         fn = node.func

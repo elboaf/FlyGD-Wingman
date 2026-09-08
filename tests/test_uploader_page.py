@@ -34,6 +34,9 @@ HTML = (WEB / "index.html").read_text(encoding="utf-8")
 LIST_JS = (WEB / "list.js").read_text(encoding="utf-8")
 PANEL_JS = (WEB / "panel.js").read_text(encoding="utf-8")
 API_PY = (UI / "api.py").read_text(encoding="utf-8")
+# The Uploader's runtime moved out of api.py into its own controller;
+# api.py keeps the bridge signatures, the controller keeps the bodies.
+UPLOAD_PY = (UI.parent / "upload" / "controller.py").read_text(encoding="utf-8")
 WINDOW_PY = (UI / "window.py").read_text(encoding="utf-8")
 
 # Comments carry example numbers and whole worked sums; a naive parse
@@ -607,19 +610,23 @@ def test_the_post_button_cannot_be_left_dead_by_a_lost_push():
     takes neither a click nor a keypress, so it cannot ask for its own
     repair; a rebuild -- a watcher announcement, a delete, a folder change
     -- is what arrives without the user's help."""
-    method = API_PY[API_PY.index("def post_recent_logs") :]
+    # The controller publishes through a named port; api.py's adapter is
+    # the one literal `_push("onLogPostRunning")`, which the bridge
+    # contract sweep pins. The structure asserted here is the controller's.
+    method = UPLOAD_PY[UPLOAD_PY.index("def post_recent_logs") :]
     method = method[: method.index("def _recent_logs_worker")]
     # Three refusals, the dispatch, and the worker that would not start.
-    assert method.count('_push("onLogPostRunning"') == 5
-    worker = API_PY[API_PY.index("def _recent_logs_worker") :]
+    assert method.count("_ports.publish_log_post_running(") == 5
+    worker = UPLOAD_PY[UPLOAD_PY.index("def _recent_logs_worker") :]
     # To the end of that method, whatever follows it: the combat-log
     # section's order has moved before and the slice must not depend on it.
     worker = worker[: re.search(r"\n    def ", worker[1:]).end()]
     assert "finally:" in worker
-    assert worker.index("finally:") < worker.index('_push("onLogPostRunning"')
-    rebuild = API_PY[API_PY.index("def list_rows") :]
+    assert worker.index("finally:") < worker.index("_ports.publish_log_post_running(")
+    rebuild = UPLOAD_PY[UPLOAD_PY.index("def list_rows") :]
     rebuild = rebuild[: rebuild.index("def panel_text")]
-    assert '_push("onLogPostRunning", {"running": self._logs_busy()})' in rebuild
+    assert '_ports.publish_log_post_running({"running": self.logs_busy()})' in rebuild
+    assert 'self._push("onLogPostRunning", payload)' in API_PY
 
 
 def test_the_row_menu_separates_the_file_from_the_video():

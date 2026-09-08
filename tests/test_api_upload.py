@@ -23,7 +23,7 @@ def api_with(tmp_path, ids=("r1", "r2"), **kw):
 
 
 def join(api):
-    thread = api._upload_thread
+    thread = api._uploader._upload_thread
     if thread is not None:
         thread.join(timeout=5)
         assert not thread.is_alive()
@@ -35,7 +35,7 @@ def test_uploading_nothing_says_so_rather_than_starting_an_empty_job(tmp_path):
     assert api._alert.raised == [
         ("warning", "No Selection", "Select at least one video to upload.")
     ]
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
 
 
 def test_stitching_one_recording_is_refused_with_its_own_message(tmp_path):
@@ -52,8 +52,8 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     gate = threading.Event()
     assert api._work_gate.claim_upload()
-    api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._upload_thread.start()
+    api._uploader._upload_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._upload_thread.start()
     try:
         api.start_upload("t", "d", False, ["r1"])
         assert api._alert.raised == [
@@ -61,7 +61,7 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
         ]
     finally:
         gate.set()
-        api._upload_thread.join(timeout=5)
+        api._uploader._upload_thread.join(timeout=5)
         api._work_gate.release_upload()
 
 
@@ -149,7 +149,7 @@ def test_each_finished_upload_is_persisted_as_it_lands(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
-    info = api._rows.resolve("r1")
+    info = api._uploader._rows.resolve("r1")
     stored = links_mod.load(store_file)
     assert links_mod.lookup(
         stored, info.path, info.size, info.mtime
@@ -276,7 +276,7 @@ def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
         "busy": False,
     } in fakes.payloads(sent, "onStatus")
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": False}
-    assert api._retry_state is None
+    assert api._uploader._retry_state is None
 
 
 def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_path):
@@ -294,7 +294,7 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
@@ -327,8 +327,8 @@ def test_a_retryable_failure_offers_retry_and_keeps_the_session(monkeypatch, tmp
     join(api)
 
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": True}
-    assert api._retry_state.request is session
-    assert api._retry_state.resume_index == 0
+    assert api._uploader._retry_state.request is session
+    assert api._uploader._retry_state.resume_index == 0
     assert api._alert.raised[-1][0] == "error"
 
 
@@ -350,7 +350,7 @@ def test_a_permanent_failure_offers_no_retry_and_drops_the_session(
     join(api)
 
     assert fakes.payloads(sent, "onRetryAvailable") == []
-    assert api._retry_state.request is None
+    assert api._uploader._retry_state.request is None
 
 
 def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_path):
@@ -369,13 +369,13 @@ def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_p
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
-    assert api._retry_state.request is None
-    assert api._retry_state.job.stitch is True
+    assert api._uploader._retry_state.request is None
+    assert api._uploader._retry_state.job.stitch is True
 
 
 def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path):
@@ -409,7 +409,7 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
         uploader.watch_url("vidB"),
     ]
     assert fakes.payloads(sent, "onRetryAvailable")[0] == {"available": False}
-    assert api._retry_state is None
+    assert api._uploader._retry_state is None
 
 
 def test_retry_with_nothing_to_retry_does_nothing(tmp_path):
@@ -417,7 +417,7 @@ def test_retry_with_nothing_to_retry_does_nothing(tmp_path):
     sent = fakes.record_pushes(api)
     api.retry()
     assert sent == []
-    assert api._upload_thread is None
+    assert api._uploader._upload_thread is None
 
 
 def test_the_stored_privacy_and_category_decide_the_upload(monkeypatch, tmp_path):
@@ -434,7 +434,9 @@ def test_the_stored_privacy_and_category_decide_the_upload(monkeypatch, tmp_path
         tmp_path, settings={"privacy": "private", "category": "27"}
     )
     jobs = []
-    monkeypatch.setattr(api, "_confirm_then_upload", lambda job: jobs.append(job))
+    monkeypatch.setattr(
+        api._uploader, "_confirm_then_upload", lambda job: jobs.append(job)
+    )
     api.start_upload("Fight", "d", False, ["r1"])
     join(api)
     assert (jobs[0].privacy, jobs[0].category) == ("private", "27")
@@ -794,7 +796,7 @@ def test_a_failed_video_posts_no_logs_and_leaves_them_to_retry(monkeypatch, tmp_
     assert posted == []
     assert fakes.payloads(sent, "onStatus")[-1]["kind"] == "ERROR"
     # The flag survives on the retained job, so Retry runs both halves.
-    assert api._retry_state.job.logs is True
+    assert api._uploader._retry_state.job.logs is True
 
 
 def test_a_retried_upload_still_posts_the_logs_it_promised(monkeypatch, tmp_path):
@@ -1057,7 +1059,7 @@ def test_a_stitch_is_busy_so_a_route_change_cannot_blank_it(monkeypatch, tmp_pat
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
@@ -1122,7 +1124,7 @@ def test_a_stitched_batch_is_one_video_and_takes_the_title_form(monkeypatch, tmp
     def fake_stitched(sources, ffmpeg_bin, tmp):
         yield tmp_path / "merged.mkv"
 
-    monkeypatch.setattr("wingman.ui.api.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
     api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
@@ -1149,16 +1151,16 @@ def test_an_unrelated_worker_cannot_settle_the_strip_mid_upload(monkeypatch, tmp
     sent = fakes.record_pushes(api)
     gate = threading.Event()
     assert api._work_gate.claim_upload()
-    api._upload_thread = threading.Thread(target=gate.wait, daemon=True)
-    api._upload_thread.start()
+    api._uploader._upload_thread = threading.Thread(target=gate.wait, daemon=True)
+    api._uploader._upload_thread.start()
     try:
         assert api._busy()
-        api._links["r1"] = "https://www.youtube.com/watch?v=abc"
+        api._uploader._links["r1"] = "https://www.youtube.com/watch?v=abc"
         api.copy_path("r1")
         assert fakes.payloads(sent, "onStatus")[-1]["busy"] is True
     finally:
         gate.set()
-        api._upload_thread.join(timeout=5)
+        api._uploader._upload_thread.join(timeout=5)
         api._work_gate.release_upload()
 
     # And with nothing running it settles, as it always did.
@@ -1250,7 +1252,7 @@ def test_a_stop_never_offers_retry(monkeypatch, tmp_path):
     api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
-    assert api._retry_state is None
+    assert api._uploader._retry_state is None
     assert {"available": True} not in fakes.payloads(sent, "onRetryAvailable")
 
 
@@ -1307,7 +1309,7 @@ def test_a_stop_left_over_from_one_job_cannot_abort_the_next(monkeypatch, tmp_pa
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     api.cancel_upload()
-    assert api._cancel.is_set()
+    assert api._uploader._cancel.is_set()
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
     api.start_upload("Fight", "d", False, ["r1"])

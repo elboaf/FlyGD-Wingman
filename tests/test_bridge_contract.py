@@ -21,8 +21,14 @@ whole EVE Settings route while every test still passed.
 
 Purely lexical, and only as good as the spellings it watches:
 
-- Only `self._push("literal", ...)` calls are found. A pushed name built at
-  runtime is invisible here.
+- Only `self._push("literal", ...)` calls in ui/api.py and
+  `self._push_cb("literal", ...)` calls in eveskills/controller.py are
+  found. A pushed name built at runtime is invisible here.
+- The call sweep sees `WM.send('literal'`, the bars' bare `send('literal'`,
+  and the two wrappers that take a method name as an argument
+  (`writeFlag(box, 'literal'` in alerts.js, `chooseRoot('literal'` in
+  evesettings.js). A method name reaching WM.send through any OTHER
+  variable is invisible here.
 - Only the `WM.HANDLERS = [...]` array literal is parsed. A name appended
   elsewhere at runtime is invisible here.
 - A handler in the allowlist that nothing registers is not an error: it may
@@ -48,10 +54,27 @@ def allowlist() -> list:
     return re.findall(r"'([^']+)'", match.group(1))
 
 
+SKILLS_CONTROLLER = (
+    Path(__file__).resolve().parent.parent / "wingman" / "eveskills" / "controller.py"
+)
+
+
 def pushed_names() -> list:
-    """Every handler name ui/api.py pushes as a string literal."""
-    source = API.read_text(encoding="utf-8")
-    return sorted(set(re.findall(r"_push\(\s*\"([A-Za-z0-9_]+)\"", source)))
+    """Every handler name pushed as a string literal, from ui/api.py's
+    `_push("name", ...)` and eveskills/controller.py's `_push_cb("name", ...)`.
+
+    The controller is the one module outside api.py that names a handler:
+    it is handed `_push_skills` as a callback and pushes `onSkills` and
+    `onSkillsProgress` through it, so api.py never spells those two.
+    Before this sweep read the controller, renaming either there would
+    have been a silent no-op on the page -- `window.<name> && ...` -- with
+    the allowlist and skills.js still agreeing with each other.
+    """
+    names = set()
+    for path in (API, SKILLS_CONTROLLER):
+        source = path.read_text(encoding="utf-8")
+        names.update(re.findall(r"_push(?:_cb)?\(\s*\"([A-Za-z0-9_]+)\"", source))
+    return sorted(names)
 
 
 def api_method_body(name: str) -> str:
@@ -320,6 +343,153 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
         assert call.keywords == [], method_name
 
 
+UPLOAD_CONTROLLER = API.parent.parent / "upload" / "controller.py"
+
+
+def uploader_publish_ports() -> list:
+    """Every `publish_*` field of UploaderPorts, derived from the dataclass."""
+    import dataclasses
+
+    from wingman.upload.controller import UploaderPorts
+
+    names = [
+        field.name
+        for field in dataclasses.fields(UploaderPorts)
+        if field.name.startswith("publish_")
+    ]
+    assert len(names) >= 9, names
+    return names
+
+
+def test_uploader_controller_factory_binds_named_semantic_ports():
+    source = API.read_text(encoding="utf-8")
+    factory = api_method_body("_build_uploader_controller")
+
+    assert "def _build_uploader_controller(" in source
+    assert "UploaderController(" in factory
+    assert "UploaderPorts(" in factory
+    # The gate is injected, never constructed here or in the controller:
+    # the updater and Quit claim against the same object from api.py.
+    assert "gate=self._work_gate" in factory
+    for port in uploader_publish_ports():
+        assert re.search(rf"\b{port}=self\._\w+", factory), port
+    for port, adapter in (
+        ("status", "_uploader_status"),
+        ("progress", "_uploader_progress"),
+        ("alert", "_uploader_alert"),
+        ("confirm", "_uploader_confirm"),
+        ("spawn", "_spawn_uploader_worker"),
+        ("watcher", "_uploader_watcher"),
+        ("update_preparing", "_uploader_update_preparing"),
+    ):
+        assert f"{port}=self.{adapter}" in factory, port
+    assert "self._uploader = self._build_uploader_controller(" in source
+
+
+def test_uploader_publish_ports_stay_literal_pushes_private_to_api():
+    """pushed_names() reads ui/api.py only. Every publish_* port must
+    therefore bind to an Api method whose body is one literal `_push("name")`
+    (or the existing `_push_auth`), so no handler name the uploader reaches
+    can sit outside that sweep. Derived from the ports dataclass so a port
+    added later is checked without anyone retyping the list here."""
+    factory = api_method_body("_build_uploader_controller")
+    allowed = set(allowlist())
+    for port in uploader_publish_ports():
+        bound = re.search(rf"\b{port}=self\.(_\w+)", factory)
+        assert bound, port
+        body = api_method_body(bound.group(1))
+        assert body, (port, bound.group(1))
+        pushes = re.findall(r'self\._push\(\s*"([A-Za-z0-9_]+)"', body)
+        if pushes:
+            assert len(pushes) == 1, (port, pushes)
+            assert pushes[0] in allowed, (port, pushes)
+        else:
+            assert "self._push_auth(" in body, port
+
+
+def test_uploader_controller_never_pushes_or_imports_the_bridge():
+    """The controller reaches the page only through its ports.
+
+    A `_push("...")` literal in wingman/upload would be a handler name
+    outside pushed_names()'s sweep -- the silent no-op CLAUDE.md warns
+    about, with no guard left to catch it -- and an import from `ui` would
+    put the window one attribute away from an upload worker.
+    """
+    # Walked with ast, not matched as substrings: the controller's own
+    # docstrings NAME `_push` and `evaluate_js` to explain the lost-push
+    # defence they implement, and a comment that must stay is not a call.
+    for path in (UPLOAD_CONTROLLER, UPLOAD_CONTROLLER.parent / "gate.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        reached = sorted(
+            {
+                node.attr
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Attribute)
+                and node.attr in ("_push", "evaluate_js", "_window")
+            }
+        )
+        assert reached == [], (path.name, reached)
+        imported = sorted(
+            node.module or ""
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and (
+                (node.level == 2 and (node.module or "").split(".")[0] == "ui")
+                or (node.module or "").startswith("wingman.ui")
+            )
+        )
+        assert imported == [], (path.name, imported)
+        assert not any(
+            alias.name.startswith("wingman.ui")
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        ), path.name
+
+
+def test_uploader_facade_methods_delegate_lexically_to_private_controller_methods():
+    source = API.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    assert "getattr(self._uploader" not in source
+    expected = {
+        "list_rows": ("list_rows", ["preselect"]),
+        "panel_text": ("panel_text", ["ids", "stitch"]),
+        "delete_selected": ("delete_selected", ["ids"]),
+        "copy_path": ("copy_path", ["row_id"]),
+        "open_path": ("open_path", ["row_id"]),
+        "play_recording": ("play_recording", ["row_id"]),
+        "rename_recording": ("rename_recording", ["row_id", "stem"]),
+        "open_recording_dir": ("open_recording_dir", []),
+        "start_upload": ("start_upload", ["title", "description", "stitch", "ids"]),
+        "cancel_upload": ("cancel_upload", []),
+        "retry": ("retry", []),
+        "post_recent_logs": ("post_recent_logs", []),
+        # Private, but __main__.poll_tick and _status/_progress read it, so
+        # it is a facade in every sense that matters here.
+        "_busy": ("busy", []),
+    }
+    methods = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    for method_name, (delegate_name, arg_names) in expected.items():
+        method = methods[method_name]
+        returns = [node for node in method.body if isinstance(node, ast.Return)]
+        assert returns, method_name
+        call = returns[-1].value
+        assert isinstance(call, ast.Call), method_name
+        assert isinstance(call.func, ast.Attribute), method_name
+        assert call.func.attr == delegate_name, method_name
+        owner = call.func.value
+        assert isinstance(owner, ast.Attribute), method_name
+        assert owner.attr == "_uploader", method_name
+        assert isinstance(owner.value, ast.Name) and owner.value.id == "self", (
+            method_name
+        )
+        assert [ast.unparse(arg) for arg in call.args] == arg_names, method_name
+        assert call.keywords == [], method_name
+
+
 def test_update_status_handler_is_allowlisted_and_registered_literally():
     source = (WEB / "app.js").read_text(encoding="utf-8")
 
@@ -449,6 +619,111 @@ def test_the_watch_url_is_written_exactly_once():
     )
 
 
+# The two floating bars do not load app.js (their header comments say
+# why), so they have a local `send(method)` with the same contract as
+# WM.send and no WM prefix. bookmarks.js and previews.js ALSO define a
+# local `send(next)`, whose argument is a section or a pending value,
+# never a method name -- so the bare form is read only from the files
+# listed here, and a bar added later has to be added by hand.
+STANDALONE_PAGES = ("fleetbar.js", "sigbar.js")
+
+# Wrappers that take a bridge method name as an argument and hand it to
+# WM.send inside their body. The sweep's `WM.send('literal'` regex saw
+# none of these: `WM.send(method, wanted)` is a variable, and the literal
+# sits at the wrapper's call site instead. Each entry is (file, regex with
+# one group for the name). A new wrapper of this shape joins the list or
+# its methods go unchecked, which is the failure this list prevents.
+CALL_WRAPPERS = (
+    ("alerts.js", r"writeFlag\(\s*\w+\s*,\s*'([a-z_]\w*)'"),
+    ("evesettings.js", r"chooseRoot\(\s*'([a-z_]\w*)'"),
+)
+
+
+def bridge_calls() -> dict:
+    """Every bridge method name the pages call, as {method: {files}}.
+
+    Three spellings, each for a stated reason: `WM.send('x'` everywhere
+    (dev.js excluded -- it fabricates the API rather than calling it), the
+    bars' bare `send('x'`, and the wrappers in CALL_WRAPPERS.
+    """
+    called = {}
+    for path_js in sorted(WEB.glob("*.js")):
+        if path_js.name == "dev.js":
+            continue
+        source = path_js.read_text(encoding="utf-8")
+        patterns = [r"WM\.send\(\s*'([a-z_]\w*)'"]
+        if path_js.name in STANDALONE_PAGES:
+            patterns.append(r"(?<![\w.])send\(\s*'([a-z_]\w*)'")
+        patterns.extend(rx for name, rx in CALL_WRAPPERS if name == path_js.name)
+        for pattern in patterns:
+            for method in set(re.findall(pattern, source)):
+                called.setdefault(method, set()).add(path_js.name)
+    return called
+
+
+def test_the_call_sweep_sees_the_bars_and_the_wrappers():
+    """The regex extensions above must be seen to match, or the sweep below
+    passes on the old WM.send-only set while claiming more. Each name here
+    is one that ONLY its extension can find: the bars have no WM, and the
+    wrapper call sites hold the only literal spelling of their methods."""
+    called = bridge_calls()
+    assert "fleetbar.js" in called.get("fleet_bar_snapshot", set())
+    assert "fleetbar.js" in called.get("fit_fleet_bar", set())
+    assert "sigbar.js" in called.get("fit_sig_bar", set())
+    assert "sigbar.js" in called.get("save_sig_bar_pos", set())
+    assert "alerts.js" in called.get("set_alert_enabled", set())
+    assert "alerts.js" in called.get("set_alert_pve_filter", set())
+    assert "evesettings.js" in called.get("eve_settings_pick_root", set())
+    assert "evesettings.js" in called.get("eve_settings_detect_root", set())
+
+
+def test_the_skills_controller_pushes_are_swept_and_allowlisted():
+    """Proves pushed_names() reads eveskills/controller.py: `onSkills` and
+    `onSkillsProgress` are spelled there and nowhere in api.py, so a sweep
+    that stopped at api.py would never see them and a rename in the
+    controller would be a silent no-op on the Skills page."""
+    api_source = API.read_text(encoding="utf-8")
+    assert '"onSkillsProgress"' not in api_source, (
+        "the controller push is now spelled in api.py too; this test's "
+        "premise moved, re-read it before changing it"
+    )
+    for name in ("onSkills", "onSkillsProgress"):
+        assert name in pushed_names(), name
+        assert name in allowlist(), name
+
+
+def test_the_sig_bar_registers_the_status_handler_it_is_pushed():
+    """sigbar.html loads sigbar.js alone -- no app.js, no WM.HANDLERS -- so
+    the allowlist tests above say nothing about it. `_push` broadcasts to
+    the sig bar window as well as the main one, and the bar renders only
+    if it assigned `window.onEveStatus` itself. Renaming either side
+    leaves a bar of em-dash placeholders that never updates, which is
+    indistinguishable from an engine that has not started."""
+    sigbar = (WEB / "sigbar.js").read_text(encoding="utf-8")
+    assert re.search(r"window\.onEveStatus\s*=\s*function", sigbar), (
+        "sigbar.js must assign window.onEveStatus as a plain global"
+    )
+    assert "onEveStatus" in pushed_names(), "api.py no longer pushes onEveStatus"
+
+
+def test_the_fleet_bar_handler_name_agrees_across_the_bridge():
+    """fleetbar.js is pushed to by `_push_fleet_snapshot`, which writes its
+    own `window.<name> && window.<name>(...)` script rather than going
+    through `_push` -- so neither the allowlist sweep nor pushed_names()
+    covers it, and the two spellings are held together only here. A rename
+    on one side makes the fleet bar sit on 'Waiting for EVE clients...'
+    forever, with the snapshot push landing as a silent no-op."""
+    body = api_method_body("_push_fleet_snapshot")
+    assert body, "_push_fleet_snapshot is gone from ui/api.py"
+    pushed = re.search(r"window\.(\w+) && window\.\1\(", body)
+    assert pushed, (
+        "the fleet snapshot script no longer has the window.x && window.x( shape"
+    )
+    fleetbar = (WEB / "fleetbar.js").read_text(encoding="utf-8")
+    assigned = re.findall(r"window\.(on\w+)\s*=", fleetbar)
+    assert assigned == [pushed.group(1)], (pushed.group(1), assigned)
+
+
 def test_every_bridge_method_the_page_calls_exists_on_the_api():
     """The other direction of the same silence.
 
@@ -470,13 +745,7 @@ def test_every_bridge_method_the_page_calls_exists_on_the_api():
     """
     from wingman.ui.api import Api
 
-    called = {}
-    for path_js in sorted(WEB.glob("*.js")):
-        if path_js.name == "dev.js":
-            continue
-        source = path_js.read_text(encoding="utf-8")
-        for method in set(re.findall(r"WM\.send\(\s*\'([a-z_][\w]*)\'", source)):
-            called.setdefault(method, set()).add(path_js.name)
+    called = bridge_calls()
 
     # A regex that matched nothing would make the assertion below pass while
     # checking air -- the trap this suite records falling into elsewhere.

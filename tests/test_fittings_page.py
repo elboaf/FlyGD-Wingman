@@ -1036,6 +1036,8 @@ async function runStateMachineScenario() {
     document.dispatchEvent({type: 'wm:route', detail: 'skills'});
     assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length,
       cancellations + 1, 'route leave cancels copy A');
+    assert.deepEqual(calls.filter(call => call[0] === 'fittings_cancel_copy').pop(),
+      ['fittings_cancel_copy', 'ticket-a'], 'the cancel names the ticket it stops');
 
     WM.current_route = 'fittings';
     el('route-skills').classList.remove('active');

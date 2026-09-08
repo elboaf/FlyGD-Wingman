@@ -71,6 +71,28 @@ jobs:
               sys.exit(1)
           print("WebView2 detection predicate agrees across installer.iss and preflight.py")
           PY
+      - name: Load every page module under node
+        # The page-wide EXECUTABLE gate complements focused Node harnesses;
+        # neither renders CSS or WebView2. Handlers register at each module's
+        # IIFE top level, so one bad name throws mid-module and every registration
+        # below it silently never runs -- the screen loads as an inert,
+        # empty copy of itself with no error anywhere a user or a test
+        # would look. `onEveSettingsRunning` did exactly that to the whole
+        # EVE Settings route once, with the suite green. The lexical guards
+        # in tests/test_bridge_contract.py catch the handler-NAME half; this
+        # runs app.js and every <script src> of index.html, fleetbar.html
+        # and sigbar.html for real under a DOM stub and fails on any throw,
+        # which also covers a misspelled identifier, a missing WM.* member
+        # and a wrong script order. It cannot catch a handler body failing
+        # on a real payload, a missing element id, or CSS -- the script's
+        # header says exactly where it stops.
+        #
+        # Keep this direct gate independent of pytest. Both test runners
+        # also require Node before running the suite, so its Node harnesses
+        # cannot silently skip. No setup-node: the runner supplies Node,
+        # and this stdlib-only script needs no npm install.
+        run: node scripts/js_smoke.js
+
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
         with:

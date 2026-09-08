@@ -54,6 +54,12 @@ logger = logging.getLogger(__name__)
 MAX_WARNINGS = 20
 MAX_DIAGNOSTICS_PER_ISSUE = 20
 SHUTDOWN_WAIT_SECONDS = 2.0
+# Cap on an exception message committed to a roster row. Same figure as
+# evefittings.store.MAX_ERROR_CHARS, for the same reason: the row is part
+# of the largest payload in the app and crosses the bridge on every push,
+# and an unbounded message (a JSON decode error quoting the body it could
+# not parse) would inflate every push until the next successful refresh.
+MAX_ERROR_CHARS = 4096
 
 # Exact user-facing text. These land in a roster row next to the data they
 # describe, so they say what the user must DO, not what the transport
@@ -61,6 +67,7 @@ SHUTDOWN_WAIT_SECONDS = 2.0
 MSG_REAUTH = "EVE rejected the stored authorisation. Re-authenticate this character."
 MSG_NO_TOKEN = "No stored authorisation. Re-authenticate this character."
 MSG_SAVE_FAILED = "Fresh data is in memory but was not saved for offline use."
+MSG_REFRESH_FAILED = "Skills refresh failed"
 MSG_OWNER_CHANGE_DETECTED = (
     "Character ownership changed. Re-authenticate this character."
 )
@@ -75,6 +82,17 @@ MSG_CLEANUP_SAVE_FAILED = "Could not save Skills cleanup."
 # what is missing rather than what to do, because there is nothing the user
 # can do: attributes come back on the next refresh or they do not.
 MSG_ATTRIBUTES_UNREADABLE = "EVE returned no usable character attributes."
+
+
+def _bounded_error(exc: BaseException) -> str:
+    """A roster-row message for an exception nothing else classified.
+
+    The exception text is kept because it is the only diagnostic the user
+    will see -- the log has the traceback, the row has this -- but it is
+    capped, since a decode error can quote the body it choked on.
+    """
+    text = str(exc) or exc.__class__.__name__
+    return f"{MSG_REFRESH_FAILED}: {text}"[:MAX_ERROR_CHARS]
 
 
 # How many missing requirement names a roster row carries (round 6, P1-2).
@@ -1209,7 +1227,24 @@ class SkillsController:
                 message = MSG_NO_TOKEN if status == "missing" else MSG_REAUTH
                 self._commit_failure(character_id, message)
                 return message
-            return self._refresh_one_leased(character_id)
+            try:
+                return self._refresh_one_leased(character_id)
+            except Exception as exc:
+                # One character's bad reply must not abort the pass for
+                # every character behind it. _authorised_get calls the
+                # client bare, and eveesi raises ValueError for an oversize
+                # or malformed body rather than returning an error
+                # response; before this clause that escaped to
+                # _refresh_worker's catch-all, which logged "refresh
+                # failed", left the remaining characters unrefreshed and
+                # showed nothing on the row that caused it. Mirrors
+                # evefittings.controller._refresh_one.
+                message = _bounded_error(exc)
+                logger.warning(
+                    "Skills refresh failed for %s", character_id, exc_info=True
+                )
+                self._commit_failure(character_id, message)
+                return message
 
     def _refresh_one_leased(self, character_id: int) -> str:
         """Fetch and commit while the authority lifecycle lease is held."""

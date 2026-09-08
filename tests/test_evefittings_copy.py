@@ -695,6 +695,73 @@ def test_cancellation_takes_effect_before_the_next_request(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("keyed", [False, True])
+def test_a_cancel_that_beats_the_worker_to_its_ticket_still_stands(tmp_path, keyed):
+    """The page sends cancel from route-leave right after confirm, so it
+    can reach the bridge before the worker thread has consumed the ticket.
+    The Event-based cancel was cleared by start_copy at that point, and
+    the copy ran to completion under a "Cancelling" overlay. Un-keyed is
+    the pre-ticket bridge shape and must behave the same."""
+    controller, _, client, _ = make_controller(
+        tmp_path,
+        ready_state(count=2),
+        replies=[mutation(201, {"fitting_id": 1}), mutation(201, {"fitting_id": 2})],
+    )
+    ticket_id = ready_ticket(controller, fit_ids=["fit-0", "fit-1"])
+
+    assert controller.cancel_copy(ticket_id if keyed else None) is True
+    result = controller.start_copy(ticket_id)
+
+    assert client.post_calls == []
+    assert result["status"] == "cancelled"
+    assert [row["status"] for row in result["results"]] == ["cancelled", "cancelled"]
+
+
+def test_a_keyed_cancel_stops_only_its_own_ticket(tmp_path):
+    controller, _, client, _ = make_controller(
+        tmp_path, ready_state(), replies=[mutation(201, {"fitting_id": 1})]
+    )
+    doomed = ready_ticket(controller)
+    wanted = ready_ticket(controller)
+
+    controller.cancel_copy(doomed)
+    result = controller.start_copy(wanted)
+
+    assert result["status"] == "complete"
+    assert len(client.post_calls) == 1
+
+
+def test_a_cancel_does_not_linger_into_the_next_copy(tmp_path):
+    """An un-keyed cancel resolves to the tickets that exist when it
+    arrives. A flag that stayed set until the next start would cancel a
+    copy the user starts an hour later."""
+    controller, _, client, _ = make_controller(
+        tmp_path,
+        ready_state(count=2),
+        replies=[mutation(201, {"fitting_id": 1}), mutation(201, {"fitting_id": 2})],
+    )
+    first = controller.start_copy(ready_ticket(controller, fit_ids=["fit-0"]))
+    assert first["status"] == "complete"
+
+    controller.cancel_copy()  # Route-leave after a copy already finished.
+    second = controller.start_copy(ready_ticket(controller, fit_ids=["fit-1"]))
+
+    assert second["status"] == "complete"
+    assert len(client.post_calls) == 2
+
+
+def test_a_cancel_for_a_finished_ticket_is_forgotten(tmp_path):
+    controller, _, _client, _ = make_controller(
+        tmp_path, ready_state(), replies=[mutation(201, {"fitting_id": 1})]
+    )
+    ticket_id = ready_ticket(controller)
+    controller.cancel_copy(ticket_id)
+    controller.start_copy(ticket_id)
+
+    assert controller._cancelled_tickets == set()
+    assert controller._active_copy_ticket is None
+
+
 def test_outcome_save_failure_stops_and_retains_in_flight_safety_key(tmp_path):
     saves = 0
 

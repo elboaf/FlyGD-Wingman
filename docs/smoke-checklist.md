@@ -8,8 +8,10 @@ The UI itself is likewise untested by `pytest`. `tests/test_api*.py` drive
 the bridge headlessly against a fake window and cover what the API *says*
 and accepts; nothing under `tests/` renders the page, sends it input, opens
 a native dialog, or touches the tray. There is deliberately no Playwright
-and no browser toolchain. **This checklist is the only verification any of
-that gets.**
+and no browser toolchain. `scripts/js_smoke.js` loads every page's modules
+under node and fails on anything an IIFE throws at top level — it proves a
+screen is not an inert copy of itself, and nothing more. **This checklist
+is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
 
@@ -4117,7 +4119,7 @@ close-EVE requirement beside Save. Use prepared copies/backups of two unrelated
 accounts, with every EVE client closed before each save or restore. Do not run
 against live profiles without the account owner's authorization. Record actual
 results and platform separately in
-[the sharing verification record](probe-formation-sharing-verification.md): a
+[the sharing verification record](history/probe-formation-sharing-verification.md): a
 Linux developer-browser pass is not a Windows/WebView2, OS clipboard, or live-EVE
 pass.
 

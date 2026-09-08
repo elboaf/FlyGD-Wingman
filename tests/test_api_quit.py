@@ -14,6 +14,7 @@ import pytest
 
 from tests.test_api import FakeWindow, make_api
 from wingman.ui import api as api_mod
+from wingman.upload import controller as upload_mod
 
 # Released by the autouse fixture below. The stand-in upload holds the same
 # claim as a real worker so Quit exercises the production synchronization
@@ -39,8 +40,8 @@ def busy_api(tmp_path, window=None, **kw):
         finally:
             api._work_gate.release_upload()
 
-    api._upload_thread = threading.Thread(target=hold_claim)
-    api._upload_thread.start()
+    api._uploader._upload_thread = threading.Thread(target=hold_claim)
+    api._uploader._upload_thread.start()
     return api
 
 
@@ -95,7 +96,7 @@ def test_confirming_a_busy_quit_returns_true(tmp_path):
             break
     assert result == {"ok": True}
     stop.set()
-    api._upload_thread.join(timeout=5)
+    api._uploader._upload_thread.join(timeout=5)
     assert not api._work_gate.claim_upload(), "confirmed Quit did not close the gate"
 
 
@@ -192,7 +193,7 @@ def test_forced_quit_refusal_keeps_handoff_reason_if_handoff_then_releases(tmp_p
 
     def approve_then_handoff(*args, **kwargs):
         stop.set()
-        api._upload_thread.join(timeout=5)
+        api._uploader._upload_thread.join(timeout=5)
         assert api._work_gate.claim_handoff("handing_off")
         return True
 
@@ -232,7 +233,7 @@ def test_handoff_winning_during_upload_confirmation_refuses_quit(tmp_path):
         worker.join(0.01)
 
     stop.set()
-    api._upload_thread.join(timeout=5)
+    api._uploader._upload_thread.join(timeout=5)
     assert api._work_gate.claim_handoff("handing_off")
     api.dialog_response("q-4", True)
     worker.join(timeout=5)
@@ -258,12 +259,12 @@ def test_the_dialog_cannot_carry_the_previous_uploads_percentage(tmp_path, monke
     )
     api = make_api(tmp_path)
     api._alert = lambda *a: None
-    api._last_pct = 90.0
+    api._uploader._last_pct = 90.0
 
     # The reset is before the try; the worker then fails on credentials and
     # reports it, which is the path an interrupted job takes for real.
-    api._upload_worker(
-        api_mod.UploadJob(
+    api._uploader._upload_worker(
+        upload_mod.UploadJob(
             items=[],
             ids=[],
             title="t",
@@ -275,4 +276,4 @@ def test_the_dialog_cannot_carry_the_previous_uploads_percentage(tmp_path, monke
         )
     )
 
-    assert api._last_pct == 0.0
+    assert api._uploader._last_pct == 0.0

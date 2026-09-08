@@ -5,17 +5,43 @@ is the design record — it states what was decided and why, and per
 `docs/history/README.md` it is not corrected after the fact. This file is where
 the record and the code have since diverged, and what is left to build.
 
-Status as of #65. Every claim below was checked against the tree, not carried
-forward from the record.
+Status as of #178 (`4848fbf`). Every claim below was checked against the tree,
+not carried forward from the previous revision of this file, which stopped at
+#65. The designs and plans for the work that shipped in between are records
+now: `docs/history/preview-config-{design,plan}.md` (#87, #88),
+`preview-sizing-plan.md` (#127), `preview-switch-performance-design.md` (#121,
+#141), `preview-direct-activation-design.md`, `preview-cycle-groups-{design,plan}.md`
+(#145), `previews-character-table-{design,plan}.md`,
+`preview-layout-continuity-copy-plan.md` and `preview-smoke-walk-findings.md`.
+`docs/preview-sizing-design.md` and the cropped-preview documents
+(`preview-evolution-crops-design.md`, `preview-crop-prototype-results.md`,
+`preview-crops-production-results.md`) stay in `docs/` because `ui/api.py` and
+the manual harness cite them.
 
-### Named cycle groups — shipped
+## Shipped since #65
 
-Character groups with named forward-only cycle keybinds and scope-aware
-history are complete. The All forward and All back rows remain the implicit
-cycle-all fallback and are backward-compatible with settings files that have
-no groups. Multiple group membership, backward group cycle keys, and group-specific
-preview geometry remain open. EVE-O/EVE-X profile import remains open (see item 13
-below); multiple named profiles remain open (see item 12 below).
+Listed once so the open items below can be read without the record.
+
+| Feature | Where |
+| --- | --- |
+| Labels on/off, opacity, per-character lock, minimize-inactive-on-switch | #87, #88 — `preview.show_labels`, `preview.opacity`, `preview.locked`, `preview.minimize_inactive_clients` in `settings._preview_defaults()` |
+| Ring moves on the switch, not the next sweep | #116 |
+| Minimize first, activate second, no window animation | #121 (`preview/switching.py` is the pure policy) |
+| Left click switches on the way down, right drag moves | #123 (`preview/gestures.py`) |
+| Uniform and manual sizing, aspect lock, ring colour, EVE-O button grammar, name overlay | #127 — `preview.width/height`, `preview.lock_aspect`, `preview.selection_color`; `geometry.lock_to_aspect` |
+| Responsive switching | #141 |
+| Named cycle groups | #145 — `preview.hotkeys.groups[]`, each `{id, name, cycle}` |
+| Never-minimize list, hide every preview on lost focus | `preview.never_minimize`, `preview.hide_on_lost_focus` (`preview/visibility.py` is the pure decision) |
+| Per-character placement continuity and geometry copy | `preview.layouts`, `copy_preview_layout` |
+| Cropped previews: prototype, then persistent per-character crops | #162, #174 — `preview.crops`, `preview/crops.py`, `cropstore.py`, `cropcontroller.py`, `cropwindow.py`, `croppicker.py` |
+| The alert render path | see below; `preview/alertframes.py`, `PreviewHost` `ALERT_MS = 80` |
+| The defaults-are-a-fixed-point test this file asked for | `tests/test_settings_preview.py::test_the_preview_defaults_are_a_fixed_point_of_their_own_validator` |
+
+Alert detection itself moved house: the modules this file used to name as
+`preview/alerts/{patterns,tailer,service,state}.py` are `wingman/alerts/`
+(`patterns`, `state`, `service`, `sound`) and the tailer became the shared
+gamelog stream in `wingman/telemetry/gamelogs.py`, feeding one coordinator
+that previews, the fleet bar and fleet sharing all subscribe to.
 
 ## Corrections to the record
 
@@ -26,10 +52,10 @@ than it should be. Six of its statements no longer hold:
 | --- | --- |
 | Second slice items 7 and 8 shipped (client window placement, the placing watcher) | **Removed in #31.** Only item 9, `settings.update()`, survived — and it is now the boundary every settings writer in the package uses |
 | `gestures.py` and `cycle.py` are *(deferred)* in the module table | Shipped in #26, which the same document states twelve lines later |
-| Item 9 (alert flashing) is "the largest remaining chunk" | **Shipped** — everything but the render path in #65, the render path since — see below |
+| Item 9 (alert flashing) is "the largest remaining chunk" | **Shipped** — detection and configuration in #65, the render path after it — see below |
 | `PreviewWindow.selected` is never set | `PreviewHost` tracks `_selected_key` from the foreground hook and calls `set_selected` (#65) |
 | "Every one of the thirteen client-window-layout items is also unwalked" | That checklist section was deleted with the feature in #31. Two of its three weighted items asked whether EVE accepts a forced rect — the question that destroyed three characters' settings. They are answered by deletion |
-| The rebind regression test covers `save_settings` only | `save_settings` and `set_recording_dir` no longer exist. `_write_setting` is the single writer and `ui/api.py` contains no rebind at all. `save_bookmarks` is the one writer still outside the test's reach |
+| The rebind regression test covers `save_settings` only | `save_settings` and `set_recording_dir` no longer exist. `_write_setting` is the single writer and `ui/api.py` contains no rebind at all. `save_bookmarks` no longer rebinds the settings object either; the re-aimed regression test in `tests/test_api_settings_fields.py` asserts the object survives a per-field write |
 
 Two counts in the record have drifted (it says "Sixteen items" where the
 checklist section holds fifteen). Counts are not repeated here — cite the
@@ -39,18 +65,17 @@ section of `docs/smoke-checklist.md`, not a number.
 
 ### The alert render path — the last mile of item 9
 
-**Built.** #65 delivered detection, parsing and configuration:
-`preview/alerts/{patterns,tailer,service,state}.py`, a validated
+**Built.** #65 delivered detection, parsing and configuration: a validated
 `preview.alerts` section with per-event colour, sound, duration and pulse
-count, PvE filtering, persist-until-selected, the Previews-tab card, and
+count, PvE filtering, persist-until-selected, the Alerts card, and
 `PreviewHost.raise_alert` with a bounded queue drained on the pump. What was
 missing was the drawing, and `PreviewHost._apply_alerts` was a no-op — a user
 could enable alerts, configure colours, and observe no difference whatsoever,
 which is worse than unshipped because everything reported success.
 
 `preview/alertframes.py` now pre-renders one DIB per pulse phase and the host
-pushes them on an 80ms timer that runs only while something is armed.
-**Nothing in the suite renders a pixel, so this is verified by
+pushes them on an 80ms timer (`ALERT_MS`) that runs only while something is
+armed. **Nothing in the suite renders a pixel, so this is verified by
 `docs/smoke-checklist.md`'s "The alert render path" section and not by CI.**
 
 Two constraints, both load-bearing:
@@ -65,16 +90,18 @@ Two constraints, both load-bearing:
   file used to offer — "pulse `SetLayeredWindowAttributes` alpha" — was probed
   on 2026-08-25 and does not work. See below.
 
-
-Not verifiable by the suite — no test renders a pixel. Needs hands-on testing
-against real clients.
+What is still open here is only verification: no test renders a pixel, and the
+checklist section has to be walked by hand against real clients after any
+change to `alertframes.py`, `chrome.py` or the window's inset handling.
 
 #### What the ring probe established
 
 Run on Windows against three layered preview-shaped windows with live DWM
 thumbnails, captured with `BitBlt(CAPTUREBLT)` and measured off the pixels
 rather than judged by eye. This answers the two questions
-`eve-preview-alerts-plan.md`'s Task 1 asked, and one it did not.
+`docs/history/eve-preview-alerts-plan.md`'s Task 1 asked, and one it did not.
+`preview/alertframes.py`, `chrome.py` and `window.py` cite this section for the
+numbers; keep the tables.
 
 **A ring wider than the thumbnail inset renders as corner brackets. Confirmed —
 the conditional inset is necessary.** Measured ring width, in pixels:
@@ -87,8 +114,9 @@ the conditional inset is necessary.** Measured ring width, in pixels:
 
 The thumbnail overpaints the ring everywhere it covers, so a 6 px ring inside a
 2 px inset survives only along the top edge and beside the label band — four
-corner blocks joined by 2 px edges, exactly as the design predicted. Task 10
-keeps its inset swap on arm and clear.
+corner blocks joined by 2 px edges, exactly as the design predicted.
+`PreviewWindow._inset` swaps between `BORDER` and `ALERT_BORDER` on arm and
+clear for this reason.
 
 **`SetLayeredWindowAttributes` cannot pulse the ring, and permanently breaks
 the window if called.** All four of the plan's observations, plus the recovery
@@ -109,11 +137,10 @@ path:
 
 ### 8. Label customisation
 
-**Partly done in #87:** labels can be switched off (`preview.show_labels`,
-and `PreviewWindow._label_h()` returns 0 when they are). Still open: text
-override, placement (top/bottom/centre), font size, colours. `chrome.render`
-already takes the label; everything else is new settings and UI. `window.py`
-passes `LABEL_H = 30` and `chrome.render`'s `font_size=17` default.
+**Partly done in #87:** labels can be switched off (`preview.show_labels`).
+Still open: text override, placement (top/bottom/centre), font size, colours.
+`chrome.render_label` already takes the label and a `font_size` that defaults
+to `chrome.LABEL_FONT = 17`; everything else is new settings and UI.
 
 Anything here that changes the band's HEIGHT has to invalidate the alert
 frame cache the way the on/off toggle already does — the frames bake the
@@ -123,30 +150,42 @@ staleness check).
 
 ### 10. Switching behaviour
 
-Minimize-inactive-on-switch (with a never-minimize list), hide-active-preview,
-hide-all-on-lost-focus, always-maximize-on-activate, middle-click to minimize a
-client. Nothing exists.
+**Mostly shipped.** Minimize-inactive-on-switch with a never-minimize list
+(#87, `preview.never_minimize`), hide-all-on-lost-focus
+(`preview.hide_on_lost_focus`), minimize-first activation without the window
+animation (#121) and responsive switching (#141) are in. Still open:
+hide-the-active-character's-own-preview, always-maximize-on-activate, and
+middle-click to minimize a client — no setting, gesture or policy exists for
+any of the three (`preview/gestures.py` knows left and right only).
 
 **Constraint that outranks the feature list:** Wingman must never move or resize
 a real EVE client window. Minimizing and activating are not resizing, but this
 slice is the one most likely to drift into it. See item 11 in the record for
 what happened the last time something wrote a rect to a game client.
 
+### Cycle groups — what #145 left open
+
+Groups carry one forward `cycle` chord each. Multiple group membership,
+backward group cycle keys, and group-specific preview geometry remain open.
+The All forward and All back rows stay the implicit cycle-all fallback and are
+backward-compatible with settings files that have no groups.
+
 ### 12. Multiple named profiles
 
-The settings schema was deliberately shaped so this needs no migration: today's
-values are a single implicit profile, and `preview.hotkeys` is already flat for
-the same reason.
+Still open. The settings schema was deliberately shaped so this needs no
+migration: today's values are a single implicit profile, and `preview.hotkeys`
+is already flat for the same reason. Note that "profiles" elsewhere in the app
+(#151, the Profiles route) means EVE settings folders, not preview layouts;
+the word is taken, so this feature needs another name in the UI.
 
 ### 13. EVE-O / EVE-X preview profile import
 
-Lowest priority, largest pure-parsing job.
+Lowest priority, largest pure-parsing job. Nothing exists.
 
 ## Smaller gaps
 
 - **`preview.opacity` is wired** (#87), through `Thumbnail.update`'s
-  `DWM_TNP_OPACITY` — `window.py` passes `self.opacity` at all three call
-  sites now.
+  `DWM_TNP_OPACITY`.
 
   This entry used to say opacity "must" go through
   `SetLayeredWindowAttributes`. **That would have broken previews outright**,
@@ -172,75 +211,70 @@ Lowest priority, largest pure-parsing job.
   | 1 | (126, 0, 128) — clean 50/50 over the backdrop | preview |
   | 0 | (127, 0, 128) | the window behind — click-through |
 
-  So `chrome.render` now punches the thumbnail's own rect down to
+  So `chrome.render` punches the thumbnail's own rect down to
   `THUMBNAIL_ALPHA = 1`: see-through where DWM draws, opaque everywhere the
   chrome is actually visible, and still hit-testable everywhere. The hole is
   derived from `geometry.thumbnail_rect`, so it cannot drift from the
   destination rect `window.py` hands DWM.
 
-  Opacity still never collided with the alert render path, which this file
-  once claimed it did. They touch different surfaces — thumbnail opacity
-  fades the game content, the ring frames repaint the chrome around it —
-  which is why they landed independently and in the opposite order to the
-  one this file warned about.
-
 - **A DWM thumbnail stretches to fill `rcDestination`; it does not preserve
   the source aspect ratio.** Measured with two solid-colour windows, a 2:1
   and a 4:1 source into a 1:1 destination, with a `fVisible=False` control:
-  the picture filled the destination in every case. So a preview whose
-  shape does not match its client has never letterboxed — it has been
-  showing the game **distorted**. This is the third claim about this API
-  to have read plausibly, gone unverified, and been followed; see the
-  `SetLayeredWindowAttributes` and thumbnail-alpha entries above.
+  the picture filled the destination in every case. **Addressed twice since:**
+  `preview.lock_aspect` with `geometry.lock_to_aspect` (#127) keeps the
+  window the client's shape, and cropped previews (#162, #174) let the user
+  choose which part of the client fills it instead. A preview with the lock
+  off and no crop still shows the game distorted, by choice.
 
 - **Lock previews has a UI** (#87): `previews.js` drives `set_preview_locked`
   per character.
-- **Border thickness and colour are constants.** `chrome.render` takes `border`
-  and `border_color`; `window.py` passes `BORDER = 2` and a literal
-  `(0, 200, 220, 255)`. The third member of this group, `selected`, is done.
+- **Ring colour is a setting** (`preview.selection_color`, #127);
+  `PreviewWindow._border_color()` falls back to `(0, 200, 220, 255)` when it
+  is unset. **Border thickness is still a constant**, `window.BORDER = 2`.
 
 ## Left behind by #26 (preview hotkeys)
 
 Small enough to fold into whichever slice next touches the file. The record
-lists these; these are the ones still live.
+lists these; these are the ones still live, and the ones since closed.
 
 - **`cycle.ordered()` sorts case-sensitively** — still `sorted(set(keys))`, so
   `"Bob"` precedes `"alice"`. Deterministic and stable, which is all the cycle
   logic needs. Item 8 is the slice that will care. Note it is a **user-visible
   ordering change**: anyone already using cycle chords gets a different "next
   client" the day it changes.
-- **The cycle anchor and the cycle order come from different places.**
-  `_on_hotkey` scans `_clients` for the foreground HWND; order comes from
-  `characters()`. Two sources for one decision; unify when item 10 touches
-  switching.
-- **`preview/host.py`'s "settings.save() is lock-serialised" comment is stale.**
-  Writers go through `settings.update()` now. The conclusion it draws — writing
-  from the preview thread is safe — still holds.
-- **`settings.update()`'s rollback has a one-bytecode hole.** A `BaseException`
-  landing between `data.clear()` and `data.update(before)` leaves the document
-  empty, while the docstring promises an unconditional restore. Worth a
-  docstring caveat, not a redesign.
-- **Planner-dropped duplicate chords never appear in registration status**, so
-  Python cannot say which of two identical bindings lost. The UI detects
-  duplicates client-side, so nothing is currently invisible to the user.
-- **Nothing pins that the defaults are fixed points of their own validators.**
-  `validated_preview(_preview_defaults()) == _preview_defaults()` and its
-  `eve_bookmarks`/`eve_settings` twins are the invariant that makes normalising
-  on every save safe from drift. It holds; it is untested — and #65 widened it
-  by adding the whole `preview.alerts` tree to what it must hold across.
+- **The cycle anchor and the cycle order come from different places.** The
+  anchor is found by scanning the live clients for the foreground HWND; order
+  comes from the character list. Two sources for one decision; unify when
+  item 10 next touches switching. (Unverified against HEAD beyond the
+  `cycle.step` "anchor has gone" handling in `host.py`.)
+- **`preview/host.py`'s "settings.save() is lock-serialised" comment** — gone;
+  the file no longer mentions `settings.save()`.
+- **`settings.update()`'s rollback has a one-bytecode hole.** Still there: a
+  `BaseException` landing between `data.clear()` and `data.update(before)`
+  leaves the document empty, while the docstring promises an unconditional
+  restore. Worth a docstring caveat, not a redesign. The docstring does not
+  carry the caveat yet.
+- **Planner-dropped duplicate chords.** The planner now drops a duplicate on
+  purpose and says so in place: Windows would refuse the second registration
+  anyway, and dropping it at plan time keeps the reported status honest about
+  which binding lost. The UI still detects duplicates client-side, so nothing
+  is invisible to the user.
+- **Nothing pins that the defaults are fixed points of their own validators** —
+  closed for previews by
+  `test_the_preview_defaults_are_a_fixed_point_of_their_own_validator`. The
+  `eve_bookmarks` / `eve_settings` twins this file asked for are unverified
+  against HEAD.
 
 ## Cheap and unblocked
 
-Three of the above need no verification and no design: the stale `host.py`
-comment, the `settings.update()` docstring caveat, and the fixed-point test.
-The test is the one with real value — it is pure, Linux-testable, and nothing
-currently catches a default that its own validator rewrites.
+One of the three remains: the `settings.update()` docstring caveat. The stale
+`host.py` comment is gone and the fixed-point test exists.
 
 ## Verification still outstanding
 
 The suite cannot tell you a preview appeared on screen, so most of this
-feature's assurance comes from `docs/smoke-checklist.md`. These have not been
-exercised by anyone:
+feature's assurance comes from `docs/smoke-checklist.md`. These remain
+unchecked there:
 
 - Closing one client mid-session — its preview disappears within ~1s while the
   others keep rendering and do not jump.
@@ -248,26 +282,34 @@ exercised by anyone:
 - Starting a client while Wingman runs — a preview appears, at its saved
   position if that character had one.
 - A never-previewed character logging in alongside placed ones — it should get a
-  free slot rather than landing on top of an existing preview.
+  free slot rather than landing on top of an existing preview (the checklist
+  now also covers the mixed-DPI variant of this).
 - The frozen build rendering labels in Inter. The font is a `datas` entry and
   PyInstaller exits 0 when one resolves to nothing; there is a post-build
   assertion, but nobody has looked at the packaged app.
 - The "EVE preview hotkeys" section, of which `WM_HOTKEY` reaching a
   message-only window is the one that matters: documented behaviour, not
-  measured, and if it fails the whole dispatch path moves to `hWnd=NULL`.
+  measured, and if it fails the whole dispatch path moves to `hWnd=NULL`. The
+  checklist marks it load-bearing and unwalked.
 
 **Mixed-DPI multi-monitor placement outlives the checklist section that was
 deleted with #31.** It passes on a single monitor whether or not the code is
 correct — which is how a virtual-desktop read taken outside the DPI scope
 survived ten reviews. Wingman still places windows across mixed-scale monitors;
-they are its own previews now.
+they are its own previews now. The preview thread is per-monitor-DPI-aware
+while the rest of the process is system-DPI-aware, and that split is an open
+question in its own right, not closed by the aspect-lock work.
 
 ## Still open from "Risks and open questions"
 
-- **`SetThreadDpiAwarenessContext` is Windows 10 1607+.** Confirm against
-  Wingman's supported floor.
-- **Thumbnail count is unmeasured.** Probes ran 2; users run 10–30. DWM cost per
-  thumbnail is unknown, and it bears on the sweep interval.
+- **`SetThreadDpiAwarenessContext` is Windows 10 1607+.** `host.py` calls it
+  on the pump thread; `packaging/installer.iss` declares no `MinVersion`, so
+  the supported floor is still undeclared. Confirm one and declare it.
+- **Thumbnail count is unmeasured.** Probes ran 2–3; users run 10–30. DWM cost
+  per thumbnail is unknown, and it bears on the sweep interval. Cropped
+  previews (#174) add a second DWM relationship per cropped character, which
+  makes the question more pressing, not less.
 - **Occlusion between topmost windows.** With TriffView also running, z-order
   among `WS_EX_TOPMOST` windows is arbitrary. Not a defect — it means running
-  both simultaneously is not a supported configuration.
+  both simultaneously is not a supported configuration. The checklist says the
+  same where it notes TriffView would hide the previews.
