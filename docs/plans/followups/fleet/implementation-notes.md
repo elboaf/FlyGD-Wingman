@@ -124,11 +124,82 @@ DPAPI/WinDLL (2), real Windows message pump/window station (1), user32/gdi32/dwm
 bindings (3). **No missing Node/codec skips.** No native app or global-hook test
 was launched; Linux skips the interactive Windows coverage.
 
-## Remaining work at this checkpoint
+## Committed-range polish and final handback
 
-Commit candidate locally with normal hooks, run committed-range polish-core --fix
-from the exact base, inspect any edits and rerun fresh gates. Final polish and
-verification results will be appended before coordinator handback.
+Source/test checkpoint: `915d42caebdf2c31177b3f518bfbebf10b46a4d1` —
+**Bind Fleet page callbacks to their native creation**, committed with normal hooks.
+This commit includes the approved spec, plan and checkpoint evidence. Final
+handback changes after it are documentation-only, recorded in a separate additive
+commit; no source/test correction or history rewrite followed review. Exact
+ordered history is `git log --reverse --oneline ab06a6efde9ade0f40791d812d922356e8e6c16f..HEAD`.
+
+Ran polish-core **fix mode** on the non-empty committed range
+`ab06a6efde9ade0f40791d812d922356e8e6c16f..915d42caebdf2c31177b3f518bfbebf10b46a4d1`.
+Python/JavaScript rules were read with repository ES5 conventions taking priority.
+Parent inspected the production diff and relevant source/tests, searched helper
+callers and all callback sites, and checked the approved inventory. There were
+**zero auto-fix edits and zero actionable review findings**. All four read-only
+role reviews completed; none was omitted as late:
+
+| Role | Agent | Result |
+| --- | --- | --- |
+| Independent code reviewer | `0a5bb313-ee5e-4ec` | No findings |
+| Silent failure hunter | `e306f85e-0a94-4d9` | No introduced failure-path findings; Node 35 passed |
+| Comment/contract analyzer | `48f765ce-546d-44e` | Claims match source/tests; Node 35 passed |
+| Interface/type analyzer | `059f7b01-65e5-40d` | No introduced interface findings; focused Python 305 and Node 35 passed |
+
+Agent policy denied read-only Git access; parent supplied the exact complete
+2,229-line diff and inventory as `/tmp/wingman-fleet-polish.diff` and
+`/tmp/wingman-fleet-polish-files.txt`. Every role finished its range review from
+that artifact. This is not an empty-range invocation or review of only a summary.
+
+### Fresh post-polish parent verification
+
+Same independent environment prefix as above; clean source/test checkpoint at
+start. No source/test edits followed these commands:
+
+- `python -m pytest tests/ -q -rs --junitxml=/tmp/wingman-fleet-identity-full-final.xml`
+  — **8,628 passed / 11 skipped**, **465.66s**. Full output:
+  `/tmp/wingman-fleet-identity-full-final.log`. Skip set is exactly the Windows-only
+  set above, with no Node/codec skips.
+- `python -m pytest tests/test_fleet_bar.py tests/test_fleet_presentation_worker.py tests/test_startup.py tests/test_bridge_contract.py tests/test_fleetbar_runtime.py tests/test_page_conventions.py tests/test_js_smoke.py -q -rs`
+  — **452 passed**, **21.85s**, no skips.
+- `ruff check .` and `ruff format --check .` — passed; **330 files formatted**.
+- `node --check wingman/web/fleetbar.js` and
+  `node --check scripts/test_fleetbar_runtime.js` — passed.
+- `node --test scripts/test_fleetbar_runtime.js` — **35 passed**, zero skips.
+- `node scripts/js_smoke.js` — all three pages passed.
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml`
+  — **1 passed**, zero failed/ignored.
+- `git diff ab06a6efde9ade0f40791d812d922356e8e6c16f..HEAD --check` — passed.
+
+### Changed-file inventory and decisions
+
+Four production files: `wingman/ui/api.py` (Fleet fields/helpers/endpoints/stop),
+`wingman/ui/fleetbar.py` (creation attempt ownership), `wingman/__main__.py`
+(successful Fleet destroy bookkeeping only), `wingman/web/fleetbar.js` (capture/send
+only). Six test files: `tests/test_fleet_bar.py`,
+`tests/test_fleet_presentation_worker.py`, `tests/test_startup.py`,
+`tests/test_bridge_contract.py`, new `scripts/test_fleetbar_runtime.js`, new
+`tests/test_fleetbar_runtime.py`. Three lane docs: approved `PROPOSAL.md`,
+`IMPLEMENTATION-PLAN.md`, this evidence/handback document. No other tracked file
+changed, and `fleetpresentation.py` remains untouched.
+
+No material deviation from U-01/F-01. The test-only signature adapter makes
+base-red evidence behavioral while the separate signature guard prevents it from
+masking removal of the new interface. Existing lexical comments overstating fit
+success were corrected, not converted into a stronger runtime acknowledgement.
+Source scope remains separate from main #185; its tooltip must survive eventual
+integration. There is no claim of integration, packaged URI, Windows or release
+readiness.
+
+### Knowledge check for reviewers
+
+1. Why does an off/on activation change retain the creation token while native replacement retires it?
+2. Which lock prevents a delayed fit retry from switching to a successor, and where is that lock released?
+3. Why does shutdown revoke admission but retain a window whose native destroy failed?
+4. Why can ready follow a null hydration or failed fit without granting a predecessor access to its replacement?
+5. Which document-reload and native-visibility guarantees are deliberately absent despite the passing headless suites?
 
 ## Accepted limitations and reviewer focus
 

@@ -56,9 +56,9 @@ Files: `wingman/web/fleetbar.js`, new `scripts/test_fleetbar_runtime.js`, new `t
 
 - [x] Establish independent lane environment (`UV_PROJECT_ENVIRONMENT=/tmp/wingman-fleet-identity-venv uv sync --locked --extra dev`). Build the locked release codec in this worktree and install into its ignored packaging/bin per AGENTS prerequisites; verify Node and codec availability.
 - [x] Run focused Fleet/startup/bridge/runtime/page guards, JS smoke/syntax, Ruff lint/format and full pytest `-rs` with skips inspected; run locked Cargo test independently. Any unsupported interactive Windows/native case is deferred, not launched.
-- [ ] Record red/green evidence and limitations in lane implementation-notes; commit the reviewed candidate locally with normal hooks. No amendments or out-of-lane edits.
-- [ ] Run polish-core `--fix ab06a6efde9ade0f40791d812d922356e8e6c16f` over the committed candidate, inspect all proposed safe edits/findings, add scoped corrections only, and rerun fresh verification. Do not treat an empty committed range as review.
-- [ ] Use change-explainer and return exact commits/diff inventory, test evidence, reload/fit/native limits and #185 overlap. Stop for coordinator acceptance.
+- [x] Record red/green evidence and limitations in lane implementation-notes; commit the reviewed candidate locally with normal hooks. No amendments or out-of-lane edits.
+- [x] Run polish-core `--fix ab06a6efde9ade0f40791d812d922356e8e6c16f` over the committed candidate, inspect all proposed safe edits/findings, add scoped corrections only, and rerun fresh verification. Do not treat an empty committed range as review.
+- [x] Use change-explainer and return exact commits/diff inventory, test evidence, reload/fit/native limits and #185 overlap. Stop for coordinator acceptance.
 
 ## Plan coverage check
 
