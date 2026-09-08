@@ -319,6 +319,11 @@ class UploaderController:
         self._generation = 0
         self._rename_revision = 0
         self._probe_run = None
+        # Current IDs only, never strong historical VideoInfos or path aliases.
+        # Publication owns this index/revision; installs replace it and renames
+        # rebuild it after the full weak-capture identity transition.
+        self._duration_row_ids: dict[Path, set[str]] = {}
+        self._duration_revision = 0
 
         # The claim exists before a worker handle and survives through its
         # target's finally. Thread liveness has a pre-start gap and therefore
@@ -427,7 +432,6 @@ class UploaderController:
         # once left the Length cells measuring forever on warm-cache starts:
         # cached recordings never receive a later onDuration to repair them.
         retained = self._retained_infos()
-        owners = {info.path: info for info in infos}
         pending = []
         cache_dirty = False
         for info in infos:
@@ -438,7 +442,7 @@ class UploaderController:
             # These are staged scan objects, not installed RowSnapshot objects.
             # An uncached upload winner must survive a replacement installation.
             info.duration, info.probed, info.answered = duration, True, True
-            cache_dirty |= self._cache_duration(info, duration, owners)
+            cache_dirty |= self._cache_duration(info, duration, [info])
         # Authoritative in both directions: a miss must clear the old path
         # link when a different recording reuses its name (size/mtime differ).
         with self._link_store_lock:
@@ -451,6 +455,9 @@ class UploaderController:
                 for info in infos
             }
         rebuilt = self._rows.install(infos, preselect=preselect, link_urls=restored)
+        self._index_duration_rows(
+            (row["id"], info) for row, info in zip(rebuilt, infos)
+        )
         if cache_dirty:
             durations.save(self._durations_file, self._cache)
         # rebuild() mints new ids, so every key already in _links is dead --
@@ -761,6 +768,13 @@ class UploaderController:
                 ):
                     captured.path = new_path
 
+        # A stale deleted destination can leave multiple current IDs sharing an
+        # identity. The weak transition above may repoint more than row_id;
+        # rebuild from actual resolved paths, not a historical path alias.
+        current_ids = {rid for ids in self._duration_row_ids.values() for rid in ids}
+        current_ids.add(row_id)
+        self._index_duration_rows((rid, self._rows.resolve(rid)) for rid in current_ids)
+
         # The watcher is the one that fails quietly: its seen-set is keyed
         # by path, so without this the next poll finds a settled, closed,
         # unknown file and announces it as a newly finished recording --
@@ -887,10 +901,11 @@ class UploaderController:
             return
         done = False
         cache_dirty = False
+        revision, retained = None, None
         try:
             while True:
                 try:
-                    _row_id, info, duration, definitive = run.results.get_nowait()
+                    row_id, info, duration, definitive = run.results.get_nowait()
                 except queue.Empty:
                     break
                 with self._publication_lock:
@@ -900,8 +915,11 @@ class UploaderController:
                     if info is None:
                         done = True
                         break
+                    if revision != self._duration_revision:
+                        retained = self._retained_infos()
+                        revision = self._duration_revision
                     dirty, updates = self._reconcile_duration(
-                        info, duration, definitive
+                        row_id, info, duration, definitive, retained
                     )
                     cache_dirty |= dirty
                     for payload in updates:
@@ -920,21 +938,28 @@ class UploaderController:
                 self._probe_run = None
         run.stop()
 
+    def _index_duration_rows(self, pairs):
+        current = {}
+        for row_id, info in pairs:
+            current.setdefault(info.path, set()).add(row_id)
+        self._duration_row_ids = current
+        self._duration_revision += 1
+
     def _retained_infos(self):
-        # Only a short-lived snapshot: uploads/probes, not this controller,
-        # decide how long old scan objects stay alive. Never hold store at push.
+        # Group once per accepted scan or producer batch, not once per result.
+        # The snapshot stays invocation-local and is replaced after a topology
+        # change. Keep objects, not verdict values: another producer can accept
+        # a definitive answer between results without changing the topology.
         with self._link_store_lock:
-            return list(self._listed_infos.values())
+            retained = {}
+            for info in self._listed_infos.values():
+                retained.setdefault(_recording_identity(info), []).append(info)
+        return retained
 
     def _duration_verdict(self, info, retained):
         """Find an exact-identity definitive winner, including an uncached None."""
-        identity = _recording_identity(info)
-        for candidate in [info, *retained]:
-            if (
-                candidate.probed
-                and candidate.answered
-                and _recording_identity(candidate) == identity
-            ):
+        for candidate in [info, *retained.get(_recording_identity(info), ())]:
+            if candidate.probed and candidate.answered:
                 return True, candidate.duration
         return durations.lookup(self._cache, info.path, info.size, info.mtime)
 
@@ -946,18 +971,17 @@ class UploaderController:
         Without an owner, a lookup miss does not authorize evicting another file.
         """
         hit, cached = durations.lookup(self._cache, info.path, info.size, info.mtime)
-        owner = owners.get(info.path)
-        if owner is not None:
-            if _recording_identity(owner) != _recording_identity(info):
-                return False
-        elif not hit and str(info.path) in self._cache:
+        identity = _recording_identity(info)
+        if any(_recording_identity(owner) != identity for owner in owners):
+            return False
+        if not owners and not hit and str(info.path) in self._cache:
             return False
         if hit and cached == duration:
             return False
         durations.remember(self._cache, info.path, info.size, info.mtime, duration)
         return True
 
-    def _reconcile_duration(self, info, duration, definitive):
+    def _reconcile_duration(self, row_id, info, duration, definitive, retained):
         """Resolve computation, cache and current rows under publication.
 
         Both producers arrive here AFTER admission, never with ffprobe running
@@ -966,20 +990,22 @@ class UploaderController:
         Return cache dirtiness separately from row payloads so callers can retain
         their batch saves even when no row changes or a publication raises.
         """
-        retained = self._retained_infos()
         hit, winner = self._duration_verdict(info, retained)
         if hit:
             duration, definitive = winner, True
-        current = [
-            (row["id"], self._rows.resolve(row["id"])) for row in self._rows.rows()
-        ]
+        # The supplied ID also supports an initially injected snapshot that has
+        # not been installed by this controller. Opaque stale IDs remain no-ops;
+        # an indexed replacement must still match the complete recording key.
+        row_ids = self._duration_row_ids.get(info.path, set()) | {row_id}
+        current = []
+        for current_id in row_ids:
+            candidate = self._rows.resolve(current_id)
+            if candidate is not None and candidate.path == info.path:
+                current.append((current_id, candidate))
         installed = {id(candidate) for _, candidate in current}
         identity = _recording_identity(info)
-        for candidate in [info, *retained]:
-            if (
-                id(candidate) not in installed
-                and _recording_identity(candidate) == identity
-            ):
+        for candidate in [info, *retained.get(identity, ())]:
+            if id(candidate) not in installed:
                 candidate.duration, candidate.probed, candidate.answered = (
                     duration,
                     True,
@@ -987,7 +1013,7 @@ class UploaderController:
                 )
 
         cache_dirty = definitive and self._cache_duration(
-            info, duration, {candidate.path: candidate for _, candidate in current}
+            info, duration, [candidate for _, candidate in current]
         )
         updates = []
         for row_id, candidate in current:
@@ -1877,15 +1903,19 @@ class UploaderController:
             return
         total = len(unprobed)
         cache_dirty = False
+        revision, retained = None, None
         try:
-            for index, (_row_id, info) in enumerate(unprobed, start=1):
+            for index, (row_id, info) in enumerate(unprobed, start=1):
                 self._ports.status(
                     f"Reading recording lengths… ({index}/{total})", busy=True
                 )
                 duration, definitive = library.probe(info.path, self._state.ffprobe_bin)
                 with self._publication_lock:
+                    if revision != self._duration_revision:
+                        retained = self._retained_infos()
+                        revision = self._duration_revision
                     dirty, updates = self._reconcile_duration(
-                        info, duration, definitive
+                        row_id, info, duration, definitive, retained
                     )
                     cache_dirty |= dirty
                     for payload in updates:
