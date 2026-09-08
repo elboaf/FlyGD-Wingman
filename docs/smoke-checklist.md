@@ -20,9 +20,19 @@ Run on Windows against a real install before each release.
 Check at 840×625 CSS pixels and at a wider window. Browser checks supplement,
 but do not replace, these Windows/WebView2 checks.
 
+- [ ] **Bookmark help names an action, not a background feature.** Format
+      Enforcer has its own explanation beside the binding. Its capture and Edit
+      controls expose that description to assistive technology after leaving and
+      reopening Bookmarks. The category field still accepts numeric IDs, and
+      General's examples are clearly not an exhaustive inventory of EVE tools.
+
 - [ ] **Editable offline names remain readable.** In Settings → Previews,
       scroll into the offline roster. The sticky Offline heading remains visible;
       names do not look disabled, and Configure still opens the correct row.
+- [ ] **The Fittings-detail capture shows the open fitting.** After the Alliance
+      capture, `fittings-detail` must bring the expanded Rifter row into view with
+      its module racks rendered. A collapsed, loading or incomplete detail must
+      be recorded as a failed shot rather than saved as a successful PNG.
 - [ ] **Copy status is not lost in metadata.** In Fittings, a non-deployable fit
       keeps its status readable with a long fitting name. Copy results clearly
       associate each status and recovery instruction with its target character.

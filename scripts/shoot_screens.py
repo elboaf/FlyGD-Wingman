@@ -814,7 +814,46 @@ def new_screen_cleanup_script(screen: Screen) -> str | None:
 
 
 def new_screen_verify_script(screen: Screen) -> str | None:
-    """Check settled production content, never infer success from a click."""
+    """Check and frame settled content, never infer success from a click."""
+    if screen.key == "fittings-detail":
+        # The fixture read resolves on a microtask and replaces the row DOM.
+        # Re-query after walk's existing settle wait; a click (or Loading…) is
+        # not evidence, and reinjecting/resetting after it collapses the row.
+        detail = load_dev_fittings_screenshot_fixture()["details"]["fit-rifter-solo"]
+        expected = {
+            "name": detail["name"],
+            "racks": len({item["location"] for item in detail["items"]}),
+            "items": [item["type_name"] for item in detail["items"]],
+            "aliases": [alias["name"] for alias in detail["aliases"]],
+            "presences": [
+                presence["character_name"] for presence in detail["presences"]
+            ],
+        }
+        return (
+            "(function () {\n"
+            f"  var expected = {json.dumps(expected)};\n"
+            "  var toggle = document.querySelector('#fittings-list .fit-row-toggle[aria-expanded=\"true\"]');\n"
+            "  var name = toggle && toggle.querySelector('.fit-name');\n"
+            "  var detail = toggle && toggle.closest('.fit-row').querySelector('.fit-detail');\n"
+            "  function matches(selector, values) {\n"
+            "    var nodes = detail.querySelectorAll(selector);\n"
+            "    return nodes.length === values.length && values.every(function (value, index) {\n"
+            "      return nodes[index].textContent === value;\n"
+            "    });\n"
+            "  }\n"
+            "  if (WM.current_route !== 'fittings' || !name || name.textContent !== expected.name\n"
+            "      || !detail || detail.hidden\n"
+            "      || detail.querySelectorAll('.fit-rack').length !== expected.racks\n"
+            "      || !matches('.fit-item-name', expected.items)\n"
+            "      || !matches('.fit-alias-row', expected.aliases)\n"
+            "      || !matches('.fit-presence-name', expected.presences)) {\n"
+            "    throw new Error('Screenshot content did not settle: fittings-detail');\n"
+            "  }\n"
+            # click() opens an off-screen row without bringing it into view.
+            # Frame the replacement DOM only after the detail has settled.
+            "  toggle.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
     if screen.key not in _TOOL_SCREEN_FIXTURES:
         return None
     fixture = load_dev_tool_screenshot_fixture()

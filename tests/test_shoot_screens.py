@@ -1573,6 +1573,36 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
             assert any("var openToggle" in expression for expression in stage)
 
 
+def test_walk_refuses_fittings_detail_capture_when_postcondition_fails(
+    tmp_path, monkeypatch
+):
+    screen = next(s for s in shoot.SCREENS if s.key == "fittings-detail")
+    monkeypatch.setattr(shoot, "SCREENS", (screen,))
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    verify = shoot.new_screen_verify_script(screen)
+    captures = []
+
+    class CDP:
+        def evaluate(self, expression):
+            if expression == "WM.eve_shown !== false":
+                return True
+            if verify and expression == verify:
+                raise shoot.TargetError(
+                    "Screenshot content did not settle: fittings-detail"
+                )
+            return None
+
+        def screenshot(self):
+            captures.append(True)
+            return b"png"
+
+    shots, _, _ = shoot.walk(CDP(), tmp_path, settle_ms=0)
+    assert captures == []
+    assert shots[0]["file"] is None
+    assert "Screenshot content did not settle: fittings-detail" in shots[0]["error"]
+    assert not list(tmp_path.glob("*.png"))
+
+
 def test_fittings_capture_staging_never_starts_a_remote_write():
     writers = (
         "fittings_start_copy",

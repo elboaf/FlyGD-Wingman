@@ -3771,6 +3771,7 @@ button.btn:disabled,
    both; this list is the only one left that stacks, which is why the
    argument lives here. */
 #eve-binds .row > .lab { margin-top: 8px; }
+#eve-binds .bind-help { grid-column: 1 / -1; margin-top: 0; }
 
 /* Settings 1's third case, kept in its grid form. Lane 0's
    `max-width: 720px` block collapses the shared label column above its
