@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 import pytest
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
@@ -31,6 +31,76 @@ def _load_fixture(name: str) -> dict:
 
 def _b64url_decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+INVALID_RECOVERY_SPKI_CASES = (
+    "empty",
+    "truncated_tag",
+    "truncated_envelope",
+    "truncated_key",
+    "outer_tag",
+    "outer_length",
+    "algorithm_tag",
+    "bitstring_length",
+    "unknown_algorithm",
+    "x25519",
+    "unsupported_curve",
+    "oversized",
+)
+
+
+def invalid_recovery_spki(case):
+    spki = base64.b64decode(
+        _load_fixture("fleet-recovery-v1.json")["public_key_spki_b64"]
+    )
+    # A real compressed P-256 generator point with an unknown named-curve OID.
+    # This 59-byte SPKI reaches cryptography's UnsupportedAlgorithm path within
+    # our 90-byte input bound (uncompressed EC SPKI is 91 bytes and cannot).
+    unsupported_curve = bytes.fromhex(
+        "3039301306072a8648ce3d020106082a8648ce3d03017f032200"
+        "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
+    )
+    return {
+        "empty": b"",
+        "truncated_tag": spki[:1],
+        "truncated_envelope": spki[:11],
+        "truncated_key": spki[:-1],
+        "outer_tag": b"\x31" + spki[1:],
+        "outer_length": spki[:1] + b"\x29" + spki[2:],
+        "algorithm_tag": spki[:2] + b"\x31" + spki[3:],
+        "bitstring_length": spki[:10] + b"\x20" + spki[11:],
+        "unknown_algorithm": spki[:8] + b"\xff" + spki[9:],
+        "x25519": spki[:8] + b"\x6e" + spki[9:],
+        "unsupported_curve": unsupported_curve,
+        "oversized": spki + b"\x00" * 47,
+    }[case]
+
+
+@pytest.mark.parametrize("case", INVALID_RECOVERY_SPKI_CASES)
+def test_recovery_normalizer_rejects_malformed_unsupported_and_oversized_der(case):
+    with pytest.raises(ValueError, match="Invalid fleet device public key"):
+        crypto.normalize_public_key_spki(invalid_recovery_spki(case))
+
+
+def test_recovery_normalizer_accepts_alias_at_exact_size_boundary_only():
+    canonical = base64.b64decode(
+        _load_fixture("fleet-recovery-v1.json")["public_key_spki_b64"]
+    )
+    alias = canonical + b"\x00" * 46
+    assert len(alias) == 90
+    assert crypto.normalize_public_key_spki(alias) == canonical
+    with pytest.raises(ValueError):
+        crypto.normalize_public_key_spki(alias + b"\x00")
+
+
+def test_real_decoder_unsupported_algorithm_is_redacted_at_normalizer_boundary():
+    der = invalid_recovery_spki("unsupported_curve")
+    with pytest.raises(UnsupportedAlgorithm):
+        load_der_public_key(der)
+    with pytest.raises(ValueError) as exc:
+        crypto.normalize_public_key_spki(der)
+    assert str(exc.value) == "Invalid fleet device public key."
+    assert exc.value.__suppress_context__ and exc.value.__cause__ is None
 
 
 class TestFleetSignatureFixture:
@@ -99,6 +169,83 @@ class TestFleetPairingFixture:
 
         with pytest.raises(InvalidSignature):
             public_key.verify(signature, wrong_preimage)
+
+
+class TestRecoveryFixture:
+    def test_completion_bytes_and_signature_match_authgd(self):
+        fixture = _load_fixture("fleet-recovery-v1.json")
+        spki = base64.b64decode(fixture["public_key_spki_b64"])
+        preimage = crypto.recovery_challenge_preimage(
+            fixture["canonical_origin"], fixture["challenge_id"], fixture["nonce"], spki
+        )
+        assert preimage == fixture["preimage_utf8"].encode()
+        load_der_public_key(spki).verify(
+            _b64url_decode(fixture["signature_b64url"]), preimage
+        )
+
+    @pytest.mark.parametrize(
+        "change", ["origin", "challenge", "nonce", "key", "purpose"]
+    )
+    def test_completion_proof_cannot_cross_bindings_or_purpose(self, change):
+        fixture = _load_fixture("fleet-recovery-v1.json")
+        spki = base64.b64decode(fixture["public_key_spki_b64"])
+        origin = (
+            "https://other.example"
+            if change == "origin"
+            else fixture["canonical_origin"]
+        )
+        challenge = (
+            "00000000-0000-0000-0000-000000000000"
+            if change == "challenge"
+            else fixture["challenge_id"]
+        )
+        nonce = "A" * 43 if change == "nonce" else fixture["nonce"]
+        key = (
+            crypto.public_key_spki(crypto.generate_private_key())
+            if change == "key"
+            else spki
+        )
+        if change == "purpose":
+            preimage = crypto.recovery_initiation_preimage(
+                origin, nonce, "2026-09-07T12:00:00.000Z", key
+            )
+        else:
+            preimage = crypto.recovery_challenge_preimage(origin, challenge, nonce, key)
+        with pytest.raises(InvalidSignature):
+            load_der_public_key(spki).verify(
+                _b64url_decode(fixture["signature_b64url"]), preimage
+            )
+
+    def test_initiation_uses_canonical_der_digest_and_distinct_five_line_label(self):
+        fixture = _load_fixture("fleet-recovery-v1.json")
+        spki = base64.b64decode(fixture["public_key_spki_b64"])
+        # Hand-established from the public completion key/digest, not from Python's builder.
+        want = (
+            "fleet-recovery-init-v1\nhttps://auth.example\n"
+            + "A" * 43
+            + "\n2026-09-07T12:00:00.000Z\n"
+            "ae34b1ac9afb3737c91055a0d7934bb2e625ab78bf002e8e2297394bfbdd90c9"
+        ).encode()
+        for der in (spki, spki + b"\x00"):
+            assert (
+                crypto.recovery_initiation_preimage(
+                    "https://AUTH.example:443/",
+                    "A" * 43,
+                    "2026-09-07T12:00:00.000Z",
+                    der,
+                )
+                == want
+            )
+
+    @pytest.mark.parametrize("bad", ["B" * 43, "A" * 42, "A" * 43 + "=", "../x"])
+    def test_initiation_rejects_noncanonical_request_tokens(self, bad):
+        with pytest.raises(ValueError):
+            crypto.recovery_initiation_preimage(
+                "https://auth.example",
+                bad,
+                "2026-09-07T12:00:00.000Z",
+                crypto.public_key_spki(crypto.generate_private_key()),
+            )
 
 
 class TestRuntimeGeneratedKeys:

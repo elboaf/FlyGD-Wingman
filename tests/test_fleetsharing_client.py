@@ -65,13 +65,17 @@ class FakeTransport:
         return Response()
 
 
-def error_transport(status: int):
+def error_transport(status: int, payload=None):
     """A transport that raises HTTPError, the way urllib does for a
     non-2xx response."""
 
     def transport(request, timeout=None):
         raise urllib.error.HTTPError(
-            request.full_url, status, "Error", {}, io.BytesIO(b"{}")
+            request.full_url,
+            status,
+            "Error",
+            {},
+            io.BytesIO(json.dumps(payload or {}).encode()),
         )
 
     return transport

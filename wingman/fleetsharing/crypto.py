@@ -21,14 +21,23 @@ both directly against this module.
 from __future__ import annotations
 
 import base64
+from hashlib import sha256
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
     PrivateFormat,
     PublicFormat,
+    load_der_public_key,
 )
+
+from . import protocol
+from .config import canonical_origin
 
 # The only protocol major this module speaks. authGD rejects any other
 # major with an explicit `update_required` response rather than guessing
@@ -148,6 +157,58 @@ def pairing_challenge_preimage(pairing_id: str) -> bytes:
     separate server-issued nonce.
     """
     return f"{PAIRING_PREIMAGE_LABEL}\n{pairing_id}".encode()
+
+
+def normalize_public_key_spki(spki: bytes) -> bytes:
+    """Hash canonical Ed25519 SPKI, never a DER alias or its base64 text.
+
+    V1's raw serializers remain unchanged. Recovery uses the same normalized
+    identity as authGD; DER trailing-byte aliases must not create a new digest.
+    """
+    if not isinstance(spki, bytes) or not 1 <= len(spki) <= 90:
+        raise ValueError("Invalid fleet device public key.")
+    # Node/OpenSSL accepts trailing bytes after an SPKI; cryptography's strict
+    # decoder does not. Strip only the canonical Ed25519 SPKI's known envelope,
+    # not arbitrary ASN.1 or guessed key offsets.
+    canonical_prefix = bytes.fromhex("302a300506032b6570032100")
+    der = spki[:44] if spki.startswith(canonical_prefix) else spki
+    try:
+        key = load_der_public_key(der)
+    except (ValueError, UnsupportedAlgorithm):
+        raise ValueError("Invalid fleet device public key.") from None
+    if not isinstance(key, Ed25519PublicKey):
+        raise ValueError("Invalid fleet device public key.")
+    return key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+
+
+def recovery_initiation_preimage(
+    origin: str, request_id: str, issued_at: str, public_key: bytes
+) -> bytes:
+    """Caller-owned, already-journaled request ID/time; never mint a retry here."""
+    return "\n".join(
+        (
+            "fleet-recovery-init-v1",
+            canonical_origin(origin),
+            protocol.token(request_id),
+            protocol.utc_date(issued_at),
+            sha256(normalize_public_key_spki(public_key)).hexdigest(),
+        )
+    ).encode("utf-8")
+
+
+def recovery_challenge_preimage(
+    origin: str, challenge_id: str, nonce: str, public_key: bytes
+) -> bytes:
+    """Purpose- and configured-origin-bound one-use challenge proof."""
+    return "\n".join(
+        (
+            "fleet-recovery-v1",
+            canonical_origin(origin),
+            protocol.uuid(challenge_id),
+            protocol.token(nonce),
+            sha256(normalize_public_key_spki(public_key)).hexdigest(),
+        )
+    ).encode("utf-8")
 
 
 def sign_pairing_completion(private_key: bytes, pairing_id: str) -> str:

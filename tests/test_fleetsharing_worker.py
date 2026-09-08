@@ -14,8 +14,11 @@ Two families of test here:
 
 from __future__ import annotations
 
+import http.client
 import threading
 import time
+import urllib.error
+from dataclasses import replace
 
 import pytest
 
@@ -162,6 +165,51 @@ class _InMemoryStateStore:
 # ---------------------------------------------------------------------------
 # Deterministic iterate_once() behaviour
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "close_type", [OSError, http.client.HTTPException, urllib.error.URLError]
+)
+@pytest.mark.parametrize("read_fails", [False, True])
+def test_http_error_cleanup_cannot_reach_worker_unexpected_traceback(
+    caplog, close_type, read_fails
+):
+    from test_fleetsharing_controls import ClosingErrorStream, closing_error_transport
+
+    from wingman.fleetsharing.client import FleetRelayClient
+
+    stream = ClosingErrorStream(close_type, OSError if read_fails else None)
+    relay = FleetRelayClient(
+        PAIRED_STATE.relay_origin, transport=closing_error_transport(stream)
+    )
+    worker = _worker(relay)
+    worker.submit(_snapshot(42))
+    worker.iterate_once()
+    assert worker.status() == SharingStatus(state="error", detail="server_error")
+    assert stream.close_attempts == 1 and stream.read_amounts == [65537]
+    assert stream.private_context not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_revision_persistence_preserves_v2_observations_and_pending_bindings():
+    from test_fleetsharing_state_v2 import journaled
+
+    original = journaled()
+    store = _InMemoryStateStore(original)
+    worker = FleetSharingWorker(
+        load_state=store.load,
+        save_state=store.save,
+        client_factory=lambda origin: FakeRelayClient(),
+        unwrap_private_key=_unwrap,
+        _thread_factory=_noop_thread_factory,
+        _clock=lambda: 1000.0,
+        _jitter=lambda: 0.0,
+    )
+    worker.submit(_snapshot(42))
+    worker.iterate_once()
+    # The real worker persists attempted revisions with dataclasses.replace;
+    # it must not reconstruct an old four-field state and erase the journal.
+    assert store.load() == replace(original, last_revision=9)
 
 
 class TestUnpaired:
