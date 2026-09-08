@@ -58,11 +58,39 @@ arrays retain their canonical order and repeated entries. Parent extraction
 computed SHA-256 in Python; an independent Node SHA-256 calculation using an
 explicit three-field object verified all 36 results.
 
+`ReorderPresets:279` calls `ReorderList:92`, which sorts without deduplication
+for `groups`, `filteredStates` and `alwaysShownStates`; the state getters also
+return lists directly. Wingman therefore relaxes uniqueness validation for all
+three preset membership lists and preserves their sequences and repeated entries.
+This is not removal of a deduplication step. The public default dataset has no
+repeated state values, so support for repeated states rests on client code, not
+fixture evidence. Unrelated logical-key and ID uniqueness guards remain intact.
+
 Check affected protected records only. Without reconstructable canonical bodies,
 missing/noncanonical source dependencies, noncanonical incoming protected bodies
 or noncanonical protected recipient collisions refuse specifically. Unused
 built-ins need not become a universal gate. Differing custom definitions may be
 replaced under the explicit configuration-replacement policy.
+
+### Native omitted built-in dependencies
+
+`GetPresetsInUse:883` passes the default-name exclusion list to
+`ShouldAddPreset:892`, intentionally omitting built-in bodies from native exports.
+Native-only normalization accepts external overview/bracket references in the
+exact Jotunn stored-name domain. This is not permission to borrow arbitrary
+recipient custom definitions or to infer bodies from fingerprints. Full Wingman
+artifacts still require all named bodies, apart from the exact bracket sentinel
+and null.
+
+Application revalidates native references, requires the supported Jotunn context,
+and resolves each external dependency only against an available saved body that
+matches the public canonical fingerprint. Missing/noncanonical saved bodies
+refuse, even if an unsaved override is canonical. Referenced external names count
+as imported names: validate affected override shapes and remove those names from
+both present unsaved generations, so effective-unsaved state cannot silently
+substitute another filter. Malformed affected overrides refuse; unrelated entries
+and map presence remain untouched. Canonical saved records retain their original
+encoding/body, and unchanged saved maps retain their timestamps.
 
 ## Unsaved overrides
 

@@ -78,10 +78,10 @@ Names are case-sensitive exact text. List order is retained.
 
 | Storage under `overview` | Observed representation | Portable field / policy |
 | --- | --- | --- |
-| `overviewProfilePresets` | Map of `bytes:`/`utf8:` names to dictionaries with `bytes:groups`, `bytes:filteredStates`, `bytes:alwaysShownStates`; each a list of integers, empty state lists occur | `overview.presets`: ordered `{name, groups, filteredStates, alwaysShownStates}` records. Export all supported custom definitions plus named tab dependencies, under the exact Jotunn classification and canonical-body checks below. Map encounter order alone is not an EVE semantic ordering claim. |
+| `overviewProfilePresets` | Map of `bytes:`/`utf8:` names to dictionaries with `bytes:groups`, `bytes:filteredStates`, `bytes:alwaysShownStates`; each a list of integers, empty state lists occur | `overview.presets`: ordered `{name, groups, filteredStates, alwaysShownStates}` records. Export all supported custom definitions plus named tab dependencies, under the exact Jotunn classification and canonical-body checks below. All three membership lists preserve repeated IDs; client-code support for repeated states is explained below. Map encounter order alone is not an EVE semantic ordering claim. |
 | `overviewProfilePresets_notSaved`, `overviewProfilePresets_notSaved2` | Same name/body shape; current references are ordinary encoded strings | `_GetUnsavedPresets:253` prefers a present second map, **even empty**, else the first. Effective bodies win for exported definitions; warn/count them. Do not export orphan cache records. Apply removes imported-name overrides from both present maps, preserving unrelated entries and absence. Unknown legacy tuple references refuse. |
 | `tabsettings_new` | `int:<tab index>` map; `bytes:name`, `overview`, optional `bracket`, `color`, `tabColumns`, `tabColumnOrder`, `showAll`, `showNone`, `showSpecials` | `overview.tabs` retains the exact fields (codec tags removed). Export sorts physical IDs, not map encounter order (`GetTabIDs:1193`, `OverviewWindow.ReconstructTabs:737`). Supported source slots are 0–19, with at most eight tabs. Apply allocates dense physical IDs in portable sequence order and remaps every group. |
-| Tab `name`, `overview`, `bracket` | Encoded strings; bracket may be null or absent | Exact names retain closure, except null and the exact `_BracketFilterShowAll` bracket sentinel (`LoadBracketPreset:483`, `GetTabBracketPreset:1317`). No blanket underscore exemption. Absent physical bracket is null. |
+| Tab `name`, `overview`, `bracket` | Encoded strings; bracket may be null or absent | Exact names retain closure, except native-only exact Jotunn external dependencies resolved against canonical saved recipient bodies (see below), null and the exact `_BracketFilterShowAll` bracket sentinel (`LoadBracketPreset:483`, `GetTabBracketPreset:1317`). No blanket underscore exemption. Absent physical bracket is null. |
 | Tab `color` | Null or **three-float list** (RGB), not tuple/RGBA | Preserve as null or three-number array under explicit validation. No CSS colour-name conversion and no fabricated alpha. |
 | Tab `tabColumns`, `tabColumnOrder` | Optional lists of `bytes:` enum strings | `GetTabVisibleColumnIDs:1325` falls back from absent visible columns to account `overviewColumns`, then ICON,DISTANCE,NAME,TYPE,VELOCITY. `GetTabColumnOrder:1339` falls back directly to `ALL_COLUMNS`, **not** account `overviewColumnOrder`. Full export materializes both. Native omission retains the destination physical slot's override/presence; new or absent slots remain absent. |
 | Tab `showAll`, `showNone`, `showSpecials` | Optional booleans, known false defaults | Preserve all three independently; show-all has precedence over show-none in the client. Missing flags normalize false. `overviewSettingsConst:56–67`, `OverviewWindow.LoadTab:424`. |
@@ -275,7 +275,13 @@ implementation. Jotunn YAML SHA-256:
 The normative fingerprint is compact UTF-8 JSON with alphabetically ordered
 alwaysShownStates, filteredStates, groups keys. Arrays retain order/duplicates;
 canonical groups were sorted by PresetData and state lists retain supplied order.
-The table/domain is derived/asserted, not a second manually kept count.
+`ReorderPresets:279` calls `ReorderList:92`, which sorts `groups`, `filteredStates`
+and `alwaysShownStates` without deduplication; state getters return lists directly.
+This supports relaxing uniqueness validation for all three preset membership
+lists, not removing a deduplication step. The public default dataset has no repeated
+state values: repeated-state support is client-code-proved, not fixture-proved.
+Unrelated logical-key/ID uniqueness guards remain. The table/domain is
+derived/asserted, not a second manually kept count.
 
 Check exported/affected built-ins only. A protected source dependency needs its
 saved canonical body and canonical effective override, if any. Incoming protected
@@ -285,6 +291,17 @@ built-ins (`Initialize:202`, `AddDefaultPresetsToAllPresets:226`). A canonical i
 body may supply a previously absent recipient record. No missing source body is
 reconstructed from a hash. Unused built-ins remain opaque; custom differing bodies
 can be replaced, with unrelated definitions preserved.
+
+Native `GetPresetsInUse:883` / `ShouldAddPreset:892` intentionally omit built-in
+bodies. Only native input may carry exact Jotunn external overview/bracket
+references. Application revalidates them in supported context and requires an
+available canonical **saved** recipient body verified by the public fingerprint.
+Missing/noncanonical saved bodies refuse even when an unsaved body is canonical;
+no body reconstruction or arbitrary custom fallback. Referenced external defaults
+count as imported names for shape-validated cleanup in **both present** unsaved
+maps. Remove only those names (and supplied definition names), preserving unrelated
+entries, presence and canonical saved records. Malformed affected overrides refuse.
+Full Wingman named-definition closure is unchanged.
 
 Legacy names, prefix lookalikes and case variants outside the exact active domain
 are custom. `DefaultPreset_SyntheticBuiltin` is explicitly one such invented

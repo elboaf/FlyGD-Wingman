@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import Literal
 
+from .setup_compat import JOTUNN_FINGERPRINTS
+
 FORMAT = "wingman-preset"
 VERSION = 1
 TYPE = "ui-setup"
@@ -324,8 +326,9 @@ def _presets(value):
                 "name": _text(
                     item["name"], MAX_NAME_CODEPOINTS, "Preset name", name=True
                 ),
-                # Native exports contain repeated group IDs. Preserve their
-                # exact sequence; each entry still consumes the same budgets.
+                # ReorderPresets:279 -> ReorderList:92 sorts all three lists
+                # without deduplication; state getters return lists too. Relax
+                # uniqueness validation only here, retaining sequence/budgets.
                 "groups": _ids(item["groups"], "Preset groups", unique=False),
                 "filteredStates": _ids(
                     item["filteredStates"], "Preset filtered states", unique=False
@@ -479,10 +482,11 @@ def _settings(value, *, partial):
 def validate_overview(value: object, *, partial: bool) -> dict:
     """Normalize full clear intent or preserve partial/native omissions.
 
-    Supplied partial tabs must already have groups and self-contained named
-    dependencies. A native parser owns its explicit one-group policy; this
-    model never binds a missing reference to a recipient; only the exact known
-    bracket sentinel and null may bypass named-definition closure.
+    Supplied partial tabs must already have groups. Native exports omit exact
+    Jotunn built-in bodies; partial validation permits those external references,
+    but the recipient adapter must verify saved canonical bodies before use.
+    All custom dependencies and full Wingman inputs remain self-contained, apart
+    from the exact bracket sentinel/null. The native parser owns grouping policy.
     """
     check_structure_budget(value)
     _fields(
@@ -498,6 +502,8 @@ def validate_overview(value: object, *, partial: bool) -> dict:
     if "tabs" in value:
         result["tabs"] = _tabs(value["tabs"], partial=partial)
         names = {item["name"] for item in result.get("presets", [])}
+        if partial:
+            names.update(JOTUNN_FINGERPRINTS)
         for tab in result["tabs"]:
             for field in ("overview", "bracket"):
                 if field == "bracket" and tab[field] in (None, BRACKET_SHOW_ALL):

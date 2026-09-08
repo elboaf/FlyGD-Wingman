@@ -201,6 +201,17 @@ Normalize into the same explicit overview model, never into a decoded DAT blob.
 Use native order arrays for their documented purpose; do not use dictionary
 construction where order or duplicate entries would be lost.
 
+EVE intentionally omits built-in filter bodies from native export
+(`GetPresetsInUse:883`, `ShouldAddPreset:892`). Native-only exact Jotunn
+external overview/bracket references are allowed; apply revalidates them and
+requires supported context plus available saved recipient bodies verified by the
+public canonical fingerprints. Missing/noncanonical saved bodies refuse; never
+reconstruct bodies from hashes or fall back to arbitrary recipient customs.
+Referenced external names count as imported names for narrow cleanup in both
+present unsaved maps: validate affected override shapes, remove only imported
+names, and preserve unrelated entries/presence and canonical saved records.
+Malformed affected overrides refuse. Full Wingman closure remains strict.
+
 A YAML file with ambiguous repeated ship-label types cannot reproduce the original
 label sequence. Require the user to explicitly choose **Keep my ship labels** to
 import its other supported configuration; otherwise block Apply and recommend a
@@ -235,8 +246,13 @@ tabs and eight nonempty overview groups, 64 label records and 32 layout records.
 Reject rather than truncate larger setups; these are Wingman support limits, not
 a claim about EVE's maximum capabilities. Require unique logical keys and valid
 reference closure. Group/state IDs must be nonnegative signed-32-bit integers,
-not booleans; each membership list is capped at 8,192 IDs. Names are capped at 512
-Unicode code points and individual label text fields at 4,096.
+not booleans; each membership list is capped at 8,192 IDs. Preset `groups`,
+`filteredStates` and `alwaysShownStates` retain repeated IDs: client
+`ReorderPresets:279` / `ReorderList:92` sorts without deduplication and state getters
+return lists. This relaxes only preset membership uniqueness validation, not other
+logical-key/ID uniqueness guards; public defaults have no repeated state values.
+Names are capped at 512 Unicode code points and individual label text fields
+at 4,096.
 
 Geometry's first two saved coordinates must be within -32,768 to 32,768; its four
 size/reference-size entries must be positive and at most 32,768. The target-origin

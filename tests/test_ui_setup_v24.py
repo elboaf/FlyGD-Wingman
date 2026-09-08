@@ -166,6 +166,287 @@ def native_definition(name, body):
     )
 
 
+def external_native(*, field="overview", name=PUBLIC_NAME):
+    """Bypass parsing to exercise apply's own validation boundary independently."""
+    tab = {"id": 0, "name": "General", "overview": name, "bracket": None, "color": None}
+    if field == "bracket":
+        tab.update(overview="Custom", bracket=name)
+    return model.ParsedSetup(
+        "native-yaml",
+        {
+            "presets": [{"name": "Custom", **copy.deepcopy(PUBLIC_BODY)}],
+            "tabs": [tab],
+            "windowGroups": [[0]],
+        },
+        None,
+    )
+
+
+@pytest.mark.parametrize("field", ["overview", "bracket"])
+@pytest.mark.parametrize(
+    "name", [PUBLIC_NAME, "DefaultPreset_639452"], ids=["public", "reported"]
+)
+def test_native_parser_accepts_exact_external_defaults_without_fabricating_bodies(
+    field, name
+):
+    tab = f"[name, General], [overview, {name}], [bracket, null], [color, null]"
+    if field == "bracket":
+        tab = f"[name, General], [overview, {name}], [bracket, {name}], [color, null]"
+    parsed = parse_text(f"tabSetup: [[0, [{tab}]]]")
+    assert parsed.source_kind == "native-yaml"
+    assert "presets" not in parsed.overview
+    assert parsed.overview["tabs"][0][field] == name
+    assert parsed.overview["windowGroups"] == [[0]]
+
+
+@pytest.mark.parametrize("field", ["overview", "bracket"])
+def test_native_mixed_custom_and_external_default_resolves_saved_canonical_body(field):
+    account, character = documents("recipient")
+    overview = account.doc["bytes:overview"]
+    saved = value(account, "overview", "overviewProfilePresets")
+    saved[f"bytes:{PUBLIC_NAME}"] = physical(PUBLIC_BODY)
+    saved["bytes:DefaultPreset_639432"] = {"future": "unused protected body"}
+    parsed = external_native(field=field)
+    before = copy.deepcopy((account, character, parsed))
+    out_a, out_c = apply(account, character, parsed)
+    output_saved = value(out_a, "overview", "overviewProfilePresets")
+    assert output_saved == {**saved, "utf8:Custom": physical(PUBLIC_BODY)}
+    assert output_saved[f"bytes:{PUBLIC_NAME}"] == physical(PUBLIC_BODY)
+    assert (
+        value(out_a, "overview", "tabsettings_new")["int:0"][f"bytes:{field}"]
+        == f"utf8:{PUBLIC_NAME}"
+    )
+    assert value(out_a, "overview", "tabsByWindowInstanceID") == [[0]]
+    for key in ("overviewProfilePresets_notSaved", "overviewProfilePresets_notSaved2"):
+        assert out_a.doc["bytes:overview"].get(f"bytes:{key}") == overview.get(
+            f"bytes:{key}"
+        )
+    assert out_a.doc["bytes:defaultoverview"] == account.doc["bytes:defaultoverview"]
+    assert value(out_c, "windows", "windowSizesAndPositions_1") == value(
+        character, "windows", "windowSizesAndPositions_1"
+    )
+    assert (account, character, parsed) == before
+
+
+@pytest.mark.parametrize("encoding", ["bytes", "utf8"])
+def test_native_external_only_preserves_saved_map_stamp_encoding_and_active_reference(
+    encoding,
+):
+    account, character = documents("recipient")
+    overview = account.doc["bytes:overview"]
+    value(account, "overview", "overviewProfilePresets")[
+        f"{encoding}:{PUBLIC_NAME}"
+    ] = physical(PUBLIC_BODY)
+    overview["bytes:activeOverviewPreset"] = stamp(f"{encoding}:{PUBLIC_NAME}")
+    overview["bytes:overviewProfilePresets_notSaved2"] = stamp(
+        {f"utf8:{PUBLIC_NAME}": physical({**PUBLIC_BODY, "groups": [1]})}
+    )
+    parsed = parse_text(
+        f"tabSetup: [[0, [[name, General], [overview, {PUBLIC_NAME}], [bracket, {PUBLIC_NAME}], [color, null]]]]"
+    )
+    before = copy.deepcopy((account, character, parsed))
+    out_a, _ = apply(account, character, parsed)
+    for key in ("overviewProfilePresets", "activeOverviewPreset"):
+        assert out_a.doc["bytes:overview"][f"bytes:{key}"] == overview[f"bytes:{key}"]
+    assert value(out_a, "overview", "overviewProfilePresets_notSaved2") == {}
+    assert "presets" not in parsed.overview
+    assert (account, character, parsed) == before
+
+
+@pytest.mark.parametrize("generation", ["first", "second", "both", "empty-second"])
+def test_native_external_defaults_cleanup_only_imported_names_from_present_overrides(
+    generation,
+):
+    account, character = documents("recipient")
+    overview = account.doc["bytes:overview"]
+    value(account, "overview", "overviewProfilePresets")[f"utf8:{PUBLIC_NAME}"] = (
+        physical(PUBLIC_BODY)
+    )
+    keys = ("overviewProfilePresets_notSaved", "overviewProfilePresets_notSaved2")
+    changed = {**PUBLIC_BODY, "groups": [1]}
+    for i, key in enumerate(keys):
+        overview.pop(f"bytes:{key}", None)
+        if (generation == "first" and i == 1) or (generation == "second" and i == 0):
+            continue
+        overview[f"bytes:{key}"] = stamp(
+            {}
+            if generation == "empty-second" and i == 1
+            else {
+                f"{('bytes', 'utf8')[i]}:{PUBLIC_NAME}": physical(changed),
+                "utf8:Custom": physical(changed),
+                "bytes:Unrelated": {"future": [1]},
+                "bytes:DefaultPreset_639432": {"future": "unreferenced"},
+            }
+        )
+    before = copy.deepcopy((account, character))
+    out_a, _ = apply(account, character, external_native())
+    for key in keys:
+        old = overview.get(f"bytes:{key}")
+        current = out_a.doc["bytes:overview"].get(f"bytes:{key}")
+        if old is None or not old["tuple"][1]:
+            assert current == old
+        else:
+            assert current["tuple"][1] == {
+                "bytes:Unrelated": {"future": [1]},
+                "bytes:DefaultPreset_639432": {"future": "unreferenced"},
+            }
+    assert value(out_a, "overview", "overviewProfilePresets")[
+        f"utf8:{PUBLIC_NAME}"
+    ] == physical(PUBLIC_BODY)
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize("field", ["overview", "bracket"])
+@pytest.mark.parametrize(
+    "bad", ["missing", "wrong", "malformed", "unknown-context", "missing-context"]
+)
+def test_native_external_defaults_refuse_without_supported_canonical_saved_body(
+    field, bad
+):
+    account, character = documents("recipient")
+    saved = value(account, "overview", "overviewProfilePresets")
+    if bad != "missing":
+        saved[f"bytes:{PUBLIC_NAME}"] = (
+            {"future": [1]}
+            if bad == "malformed"
+            else physical(
+                {**PUBLIC_BODY, "groups": [1]} if bad == "wrong" else PUBLIC_BODY
+            )
+        )
+    # Even a canonical effective override cannot substitute for a saved body.
+    account.doc["bytes:overview"]["bytes:overviewProfilePresets_notSaved2"] = stamp(
+        {f"bytes:{PUBLIC_NAME}": physical(PUBLIC_BODY)}
+    )
+    if bad == "unknown-context":
+        account.doc["bytes:defaultoverview"]["bytes:defaultOverviewID"] = stamp(
+            "bytes:unknown"
+        )
+    elif bad == "missing-context":
+        del account.doc["bytes:defaultoverview"]["bytes:defaultOverviewID"]
+    before = copy.deepcopy((account, character))
+    with pytest.raises(model.SetupError) as caught:
+        apply(account, character, external_native(field=field))
+    assert caught.value.code == (
+        "default_context"
+        if bad.endswith("context")
+        else "recipient_shape"
+        if bad == "malformed"
+        else "protected_definition"
+    )
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["overviewProfilePresets_notSaved", "overviewProfilePresets_notSaved2"],
+    ids=["first", "second"],
+)
+@pytest.mark.parametrize("bad", ["body", "map", "stamp", "alias"])
+def test_native_external_defaults_refuse_malformed_affected_overrides(key, bad):
+    account, character = documents("recipient")
+    overview = account.doc["bytes:overview"]
+    value(account, "overview", "overviewProfilePresets")[f"bytes:{PUBLIC_NAME}"] = (
+        physical(PUBLIC_BODY)
+    )
+    overview["bytes:overviewProfilePresets_notSaved2"] = stamp({})
+    body = {f"bytes:{PUBLIC_NAME}": physical(PUBLIC_BODY)}
+    if bad == "body":
+        body[f"bytes:{PUBLIC_NAME}"] = {"future": [1]}
+    elif bad == "alias":
+        body[f"utf8:{PUBLIC_NAME}"] = physical(PUBLIC_BODY)
+    overview[f"bytes:{key}"] = stamp([] if bad == "map" else body)
+    if bad == "stamp":
+        overview[f"bytes:{key}"]["tuple"][0] = "not a timestamp"
+    before = copy.deepcopy((account, character))
+    with pytest.raises(model.SetupError) as caught:
+        apply(account, character, external_native())
+    assert caught.value.code == "recipient_shape"
+    assert (account, character) == before
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Recipient Only",
+        "defaultpreset_639431",
+        "DefaultPreset_639431x",
+        "DefaultPreset_639430",
+    ],
+    ids=["custom", "case", "suffix", "outside"],
+)
+@pytest.mark.parametrize("field", ["overview", "bracket"])
+def test_native_missing_custom_or_lookalike_body_never_borrows_recipient_definition(
+    name, field
+):
+    account, character = documents("recipient")
+    value(account, "overview", "overviewProfilePresets")[f"utf8:{name}"] = physical(
+        PUBLIC_BODY
+    )
+    parsed = external_native(field=field, name=name)
+    with pytest.raises(model.SetupError) as caught:
+        apply(account, character, parsed)
+    assert caught.value.code == "dangling_reference"
+    tab = f"[name, General], [overview, {name}], [bracket, {name}], [color, null]"
+    with pytest.raises(model.SetupError) as caught:
+        parse_text(f"tabSetup: [[0, [{tab}]]]")
+    assert caught.value.code == "dangling_reference"
+
+
+@pytest.mark.parametrize("field", ["overview", "bracket"])
+def test_full_wingman_still_requires_bodies_for_external_default_names(field):
+    data = wire()
+    data["overview"]["tabs"][0][field] = PUBLIC_NAME
+    with pytest.raises(model.SetupError) as caught:
+        model.validate_wingman(data)
+    assert caught.value.code == "dangling_reference"
+    account, character = documents("recipient")
+    value(account, "overview", "overviewProfilePresets")[f"bytes:{PUBLIC_NAME}"] = (
+        physical(PUBLIC_BODY)
+    )
+    parsed = model.ParsedSetup("wingman", data["overview"], data["layout"])
+    with pytest.raises(model.SetupError) as caught:
+        apply(account, character, parsed)
+    assert caught.value.code == "dangling_reference"
+
+
+@pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
+@pytest.mark.parametrize("crc", [False, True], ids=["plain", "crc"])
+def test_native_external_default_application_survives_native_codec(tmp_path, crc):
+    account, character = documents("recipient")
+    value(account, "overview", "overviewProfilePresets")[f"bytes:{PUBLIC_NAME}"] = (
+        physical(PUBLIC_BODY)
+    )
+    account.doc["bytes:overview"]["bytes:overviewProfilePresets_notSaved2"] = stamp(
+        {f"bytes:{PUBLIC_NAME}": physical({**PUBLIC_BODY, "groups": [1]})}
+    )
+    parsed = parse_text(
+        "presets: [[Custom, [[groups, [9]], [filteredStates, [12, 9, 12]], [alwaysShownStates, [1, 1]]]]]\n"
+        f"tabSetup: [[0, [[name, General], [overview, Custom], [bracket, {PUBLIC_NAME}], [color, null]]]]"
+    )
+    out = apply(
+        codec.Document(account.doc, crc), codec.Document(character.doc, crc), parsed
+    )
+    readback = []
+    for i, document in enumerate(out):
+        path = tmp_path / f"ext-{i}.dat"
+        codec.write_document(
+            path, document, backup=lambda path: None, exe=lambda: str(CODEC)
+        )
+        readback.append(codec.read_document(path, exe=lambda: str(CODEC)))
+    assert tuple(readback) == out
+    overview = readback[0].doc["bytes:overview"]
+    assert overview["bytes:overviewProfilePresets_notSaved2"]["tuple"][1] == {}
+    saved = value(readback[0], "overview", "overviewProfilePresets")
+    assert saved[f"bytes:{PUBLIC_NAME}"] == physical(PUBLIC_BODY)
+    assert saved["utf8:Custom"] == physical(
+        {"groups": [9], "filteredStates": [12, 9, 12], "alwaysShownStates": [1, 1]}
+    )
+    assert (
+        value(readback[0], "overview", "tabsettings_new")["int:0"]["bytes:bracket"]
+        == f"utf8:{PUBLIC_NAME}"
+    )
+
+
 def test_exact_jotunn_catalogue_does_not_protect_case_prefix_or_old_pack_names():
     account, _ = documents()
     assert callable(getattr(adapter, "protected_definition_names", None))

@@ -223,8 +223,23 @@ def _effective_unsaved(overview):
 def _apply_definitions(overview, incoming, protected, stamp):
     saved = _map_setting(overview, "overviewProfilePresets", required=True)
     names = _names(saved, "overviewProfilePresets")
+    definitions = incoming.get("presets", [])
+    imported_names = {definition["name"] for definition in definitions}
+    external_names = _tab_dependencies(incoming.get("tabs", [])).keys() - imported_names
+    # Full validation requires closure; only native exact Jotunn dependencies
+    # can reach here without bodies. Hashes verify saved data, never reconstruct it.
+    for name in sorted(external_names):
+        if name not in names:
+            raise SetupError(
+                "protected_definition",
+                f"Missing saved canonical protected dependency {name!r}.",
+            )
+        _canonical(
+            _definition(saved[names[name]], name, f"overviewProfilePresets {name}")
+        )
+    imported_names.update(external_names)
     new_saved = dict(saved)
-    for definition in incoming:
+    for definition in definitions:
         name = definition["name"]
         if name in protected:
             _canonical(definition)
@@ -244,8 +259,9 @@ def _apply_definitions(overview, incoming, protected, stamp):
         unsaved = _map_setting(overview, key)
         unsaved_names = _names(unsaved, key)
         result = dict(unsaved)
-        for definition in incoming:
-            name = definition["name"]
+        # Native external defaults count as imported too: a retained effective
+        # override would silently replace the canonical body the tab requested.
+        for name in sorted(imported_names):
             if name in unsaved_names:
                 _definition(unsaved[unsaved_names[name]], name, f"{key} {name}")
                 del result[unsaved_names[name]]
@@ -750,7 +766,7 @@ def apply_setup(
         _apply_window_map(
             windows, "openWindows", {window: False for window in surplus}, stamp
         )
-    _apply_definitions(overview, incoming.get("presets", []), protected, stamp)
+    _apply_definitions(overview, incoming, protected, stamp)
     _repair_active(overview, incoming, stamp)
     if "tabs" in incoming:
         _put(overview, "tabsettings_new", _tab_records(incoming["tabs"]), stamp)

@@ -316,8 +316,9 @@ def normalize(value: object) -> ParsedSetup:
         settings.update(_record(value["userSettings"], "User settings", _USER_SETTINGS))
     if settings or "userSettings" in value:
         overview["settings"] = settings
-    # Only the exact bracket sentinel/null bypass named closure. Never borrow
-    # an omitted definition from the recipient.
+    # GetPresetsInUse:883 / ShouldAddPreset:892 omit built-in bodies. Partial
+    # validation admits exact Jotunn dependencies; apply verifies saved canonical
+    # recipient bodies and cleans their unsaved overrides, never custom fallback.
     overview = model.validate_overview(overview, partial=True)
     warnings = (
         "Absent native options retain recipient values; supplied aggregates replace them.",
