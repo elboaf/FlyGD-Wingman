@@ -247,8 +247,8 @@ if (RootModeActive) {
 } else {
     TipText := "root: not set"
 }
-ToolTip, %TipText%
-SetTimer, RemoveTooltip, -2500
+;ToolTip, %TipText%
+;SetTimer, RemoveTooltip, -2500
 Return
 
 RemoveTooltip:
@@ -568,8 +568,8 @@ Send ^c
 Sleep 100
 ClipWait, 2
 if (ErrorLevel) {
-    ToolTip, Grab Sig failed - nothing was copied
-    SetTimer, RemoveTooltip, -1500
+    ;ToolTip, Grab Sig failed - nothing was copied
+    ;SetTimer, RemoveTooltip, -1500
     Return
 }
 ClipSaved := Clipboard
@@ -694,8 +694,8 @@ ClipWait, 2
 if (ErrorLevel) {
     Clipboard := ClipSaved
     ClipSaved := ""
-    ToolTip, Failed to copy clipboard content
-    SetTimer, RemoveTooltip, -1500
+    ;ToolTip, Failed to copy clipboard content
+    ;SetTimer, RemoveTooltip, -1500
     Return
 }
 
@@ -755,15 +755,15 @@ Loop, Parse, InputText, `n, `r
 OutputLines := RegExReplace(OutputLines, "`n$")
 
 if (OutputLines = "") {
-    ToolTip, No EvE-Scout bookmarks found in clipboard
-    SetTimer, RemoveTooltip, -1500
+    ;ToolTip, No EvE-Scout bookmarks found in clipboard
+    ;SetTimer, RemoveTooltip, -1500
     Return
 }
 
 ; Replace clipboard with converted content
 Clipboard := OutputLines
-ToolTip, Converted %ConvertedCount% EvE-Scout bookmarks to probe format
-SetTimer, RemoveTooltip, -2000
+;ToolTip, Converted %ConvertedCount% EvE-Scout bookmarks to probe format
+;SetTimer, RemoveTooltip, -2000
 Return
 
 DoE:
