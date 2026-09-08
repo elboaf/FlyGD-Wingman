@@ -1,5 +1,6 @@
 """Lane E: real rows/controller, with only scanning and worker timing controlled."""
 
+import os
 import queue
 import threading
 from contextlib import contextmanager
@@ -486,3 +487,318 @@ def test_row_installations_keep_mappings_coherent_during_concurrent_reads(rig):
             resolved = rows.resolve_many([row["id"] for row in rendered])
             assert all(info.path == folder / "old.mkv" for info in resolved)
     assert len(seen) == 200
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_completed_link_is_durable_before_unrelated_publication_unblocks(rig, stale):
+    api, controller, rows, _folder, loops, workers, sent = rig
+    api.list_rows()
+    workers[-1].target()
+    loops[-1].callback()  # Warm cache: the blocked refresh needs no probe worker.
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    gate = ObservedGate()
+    controller._publication_lock = gate
+    entered, release = threading.Event(), threading.Event()
+    publish = controller._ports.publish_rows
+
+    def blocked(payload):
+        entered.set()
+        assert release.wait(5)
+        publish(payload)
+
+    controller._ports = replace(controller._ports, publish_rows=blocked)
+    with running(api.list_rows):
+        assert entered.wait(5)
+        if not stale:
+            rid = rows.rows()[0]["id"]
+            captured = rows.resolve(rid)
+        with running(lambda: controller._link(rid, "uploaded", captured)):
+            try:
+                assert gate.contended.wait(5)
+                assert links.lookup(
+                    links.load(controller._links_file),
+                    captured.path,
+                    captured.size,
+                    captured.mtime,
+                ) == uploader.watch_url("uploaded")
+                assert not fakes.payloads(sent, "onLink")
+            finally:
+                release.set()
+    assert bool(fakes.payloads(sent, "onLink")) is not stale
+    assert links.lookup(
+        links.load(controller._links_file), captured.path, captured.size, captured.mtime
+    ) == uploader.watch_url("uploaded")
+
+
+@pytest.mark.parametrize(
+    "names", [("renamed",), ("renamed", "final"), ("renamed", "old")]
+)
+def test_late_link_follows_renames_of_a_replacement_snapshot(rig, names):
+    api, controller, rows, folder, _loops, _workers, sent = rig
+    api.list_rows()
+    stale_id = rows.rows()[0]["id"]
+    captured = rows.resolve(stale_id)
+    api.list_rows()
+    current_id = rows.rows()[0]["id"]
+    for name in names:
+        assert api.rename_recording(current_id, name)["ok"]
+    controller._link(stale_id, "uploaded", captured)
+    destination = folder / (names[-1] + ".mkv")
+    stored = links.load(controller._links_file)
+    assert links.lookup(
+        stored, destination, captured.size, captured.mtime
+    ) == uploader.watch_url("uploaded")
+    assert set(stored) == {str(destination)}
+    assert not fakes.payloads(sent, "onLink"), (
+        "a stale ID must not repaint a replacement"
+    )
+    api.list_rows()
+    assert rows.rows()[0]["link"] == uploader.watch_url("uploaded")
+
+
+def test_rename_tracking_distinguishes_recordings_reusing_the_source_path(rig):
+    api, controller, rows, folder, _loops, _workers, _sent = rig
+    api.list_rows()
+    first_id = rows.rows()[0]["id"]
+    first = rows.resolve(first_id)
+    api.list_rows()
+    assert api.rename_recording(rows.rows()[0]["id"], "first")["ok"]
+    (folder / "old.mkv").write_bytes(b"a different recording at the reused path")
+    api.list_rows()
+    second_id = next(row["id"] for row in rows.rows() if row["name"] == "old.mkv")
+    second = rows.resolve(second_id)
+    api.list_rows()
+    current_id = next(row["id"] for row in rows.rows() if row["name"] == "old.mkv")
+    assert api.rename_recording(current_id, "second")["ok"]
+    controller._link(first_id, "first-video", first)
+    controller._link(second_id, "second-video", second)
+    stored = links.load(controller._links_file)
+    assert set(stored) == {str(folder / "first.mkv"), str(folder / "second.mkv")}
+    assert links.lookup(
+        stored, folder / "first.mkv", first.size, first.mtime
+    ) == uploader.watch_url("first-video")
+    assert links.lookup(
+        stored, folder / "second.mkv", second.size, second.mtime
+    ) == uploader.watch_url("second-video")
+
+
+def test_rename_destination_reuse_keeps_equal_metadata_captures_distinct(rig):
+    api, controller, rows, folder, _loops, _workers, _sent = rig
+    old_path, second_path = folder / "old.mkv", folder / "second.mkv"
+    second_path.write_bytes(old_path.read_bytes())
+    for path in (old_path, second_path):
+        os.utime(path, (1700000000, 1700000000))
+    api.list_rows()
+    ids = {row["name"]: row["id"] for row in rows.rows()}
+    first, second = rows.resolve(ids["old.mkv"]), rows.resolve(ids["second.mkv"])
+    assert (first.size, first.mtime) == (second.size, second.mtime)
+    api.list_rows()
+    current = {row["name"]: row["id"] for row in rows.rows()}
+    assert api.rename_recording(current["old.mkv"], "renamed")["ok"]
+    assert api.rename_recording(current["second.mkv"], "old")["ok"]
+    controller._link(ids["old.mkv"], "first", first)
+    controller._link(ids["second.mkv"], "second", second)
+    stored = links.load(controller._links_file)
+    assert set(stored) == {str(folder / "renamed.mkv"), str(old_path)}
+    assert links.lookup(
+        stored, folder / "renamed.mkv", first.size, first.mtime
+    ) == uploader.watch_url("first")
+    assert links.lookup(
+        stored, old_path, second.size, second.mtime
+    ) == uploader.watch_url("second")
+
+
+def test_new_capture_at_a_reused_name_does_not_inherit_its_former_identity(rig):
+    api, controller, rows, folder, _loops, _workers, _sent = rig
+    old_path = folder / "old.mkv"
+    os.utime(old_path, (1700000000, 1700000000))
+    api.list_rows()
+    old_id = rows.rows()[0]["id"]
+    old_capture = rows.resolve(old_id)
+    api.list_rows()
+    assert api.rename_recording(rows.rows()[0]["id"], "renamed")["ok"]
+    old_path.write_bytes((folder / "renamed.mkv").read_bytes())
+    os.utime(old_path, (1700000000, 1700000000))
+    api.list_rows()
+    new_id = next(row["id"] for row in rows.rows() if row["name"] == "old.mkv")
+    new_capture = rows.resolve(new_id)
+    assert (old_capture.size, old_capture.mtime) == (
+        new_capture.size,
+        new_capture.mtime,
+    )
+    controller._link(old_id, "original", old_capture)
+    controller._link(new_id, "new", new_capture)
+    stored = links.load(controller._links_file)
+    assert links.lookup(
+        stored, folder / "renamed.mkv", old_capture.size, old_capture.mtime
+    ) == uploader.watch_url("original")
+    assert links.lookup(
+        stored, old_path, new_capture.size, new_capture.mtime
+    ) == uploader.watch_url("new")
+    assert api.copy_path(new_id) == uploader.watch_url("new")
+
+
+@pytest.mark.parametrize("stale", [False, True])
+@pytest.mark.parametrize("pause_at", ["filesystem", "store_save", "row_repoint"])
+def test_rename_identity_transition_excludes_link_but_its_publication_does_not(
+    rig, monkeypatch, stale, pause_at
+):
+    api, controller, rows, folder, _loops, _workers, sent = rig
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    if stale:
+        api.list_rows()
+    current_id = rows.rows()[0]["id"]
+    old_path, new_path = folder / "old.mkv", folder / "renamed.mkv"
+    store_gate, publication_gate = ObservedGate(), ObservedGate()
+    controller._link_store_lock = store_gate
+    controller._publication_lock = publication_gate
+    transition, finish_transition = threading.Event(), threading.Event()
+    publishing, finish_publication = threading.Event(), threading.Event()
+
+    def paused(original, *args, **kwargs):
+        result = original(*args, **kwargs)
+        if not transition.is_set():
+            transition.set()
+            assert finish_transition.wait(5)
+        return result
+
+    if pause_at == "filesystem":
+        original = type(old_path).rename
+        monkeypatch.setattr(
+            type(old_path), "rename", lambda *a, **k: paused(original, *a, **k)
+        )
+    elif pause_at == "store_save":
+        original = links.save
+        monkeypatch.setattr(links, "save", lambda *a, **k: paused(original, *a, **k))
+    else:
+        original = rows.rename
+
+        def before_repoint(*args):
+            transition.set()
+            assert finish_transition.wait(5)
+            original(*args)
+
+        monkeypatch.setattr(rows, "rename", before_repoint)
+    publish = controller._ports.publish_row_renamed
+
+    def blocked_publication(payload):
+        publishing.set()
+        assert finish_publication.wait(5)
+        publish(payload)
+
+    controller._ports = replace(
+        controller._ports, publish_row_renamed=blocked_publication
+    )
+    with running(lambda: api.rename_recording(current_id, "renamed")):
+        assert transition.wait(5)
+        with running(lambda: controller._link(rid, "uploaded", captured)):
+            try:
+                assert store_gate.contended.wait(5)
+                finish_transition.set()
+                assert publishing.wait(5)
+                assert publication_gate.contended.wait(5)
+                # The entire rename has committed, but its WebView call has
+                # NOT returned. Link evidence must already use the new key.
+                stored = links.load(controller._links_file)
+                assert set(stored) == {str(new_path)}
+                assert links.lookup(
+                    stored, new_path, captured.size, captured.mtime
+                ) == uploader.watch_url("uploaded")
+            finally:
+                finish_transition.set()
+                finish_publication.set()
+    assert bool(fakes.payloads(sent, "onLink")) is not stale
+
+
+@pytest.mark.parametrize("next_operation", ["upload", "scan"])
+def test_link_store_save_is_serialized_with_writers_and_scan_reads(
+    rig, monkeypatch, next_operation
+):
+    api, controller, rows, folder, _loops, _workers, _sent = rig
+    (folder / "second.mkv").write_bytes(b"second recording")
+    api.list_rows()
+    ids = {row["name"]: row["id"] for row in rows.rows()}
+    first, second = rows.resolve(ids["old.mkv"]), rows.resolve(ids["second.mkv"])
+    gate = ObservedGate()
+    controller._link_store_lock = gate
+    entered, release = threading.Event(), threading.Event()
+    save = links.save
+    first_save = True
+
+    def delayed_save(path, store):
+        nonlocal first_save
+        snapshot = dict(store)
+        if first_save:
+            first_save = False
+            entered.set()
+            assert release.wait(5)
+        save(path, snapshot)
+
+    monkeypatch.setattr(links, "save", delayed_save)
+    with running(lambda: controller._link(ids["old.mkv"], "first", first)):
+        assert entered.wait(5)
+        action = (
+            api.list_rows
+            if next_operation == "scan"
+            else lambda: controller._link(ids["second.mkv"], "second", second)
+        )
+        with running(action):
+            try:
+                assert gate.contended.wait(5)
+            finally:
+                release.set()
+    stored = links.load(controller._links_file)
+    assert links.lookup(
+        stored, first.path, first.size, first.mtime
+    ) == uploader.watch_url("first")
+    if next_operation == "upload":
+        assert links.lookup(
+            stored, second.path, second.size, second.mtime
+        ) == uploader.watch_url("second")
+    else:
+        row = next(row for row in rows.rows() if row["name"] == "old.mkv")
+        assert row["link"] == uploader.watch_url("first")
+
+
+def test_delayed_link_presentation_cannot_regress_a_newer_durable_url(rig):
+    api, controller, rows, _folder, _loops, _workers, sent = rig
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    info = rows.resolve(rid)
+    entered, release = threading.Event(), threading.Event()
+
+    class PauseFirstGate:
+        def __init__(self):
+            self.first = True
+            self.lock = threading.Lock()
+
+        def __enter__(self):
+            if self.first:
+                self.first = False
+                entered.set()
+                assert release.wait(5)
+            self.lock.acquire()
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    controller._publication_lock = PauseFirstGate()
+    with running(lambda: controller._link(rid, "earlier", info)):
+        assert entered.wait(5)
+        try:
+            assert links.lookup(
+                links.load(controller._links_file), info.path, info.size, info.mtime
+            ) == uploader.watch_url("earlier")
+            controller._link(rid, "later", info)
+        finally:
+            release.set()
+    assert links.lookup(
+        links.load(controller._links_file), info.path, info.size, info.mtime
+    ) == uploader.watch_url("later")
+    assert rows.rows()[0]["link"] == uploader.watch_url("later")
+    assert fakes.payloads(sent, "onLink") == [
+        {"id": rid, "url": uploader.watch_url("later")}
+    ]

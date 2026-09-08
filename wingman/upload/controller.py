@@ -18,6 +18,7 @@ import os
 import queue
 import sys
 import threading
+import weakref
 import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -289,14 +290,26 @@ class UploaderController:
         self._cache = durations.load(self._durations_file)
         self._links_file = links_file or paths.links_file()
         self._link_store = links.load(self._links_file)
+        self._link_store_lock = threading.Lock()
+        # A late upload may hold a VideoInfo from before a refresh AND rename.
+        # Track accepted objects weakly so rename can repoint those captures
+        # without retaining old scans. Historical path aliases are unsafe:
+        # different files can later reuse a name with identical size/mtime.
+        self._listed_infos: weakref.WeakValueDictionary[int, library.VideoInfo] = (
+            weakref.WeakValueDictionary()
+        )
         self._drain_interval_s = drain_interval_s
         self._probe = probe
         self._timer = timer
-        # Order: publication -> brief state/RowSnapshot/cache operations.
-        # NEVER acquire publication while holding state or a row/cache lock.
+        # Order: publication -> link store -> brief state/RowSnapshot operations;
+        # cache operations also sit beneath publication. Never acquire
+        # publication while holding any of those locks. _link persists under
+        # store alone, RELEASES it, then enters publication. Store never spans
+        # WebView; rename holds it across filesystem/key/VideoInfo identity moves.
         # Publication covers acceptance + mutation + delivery, not just the
-        # final push. WebView may block this gate, but never state/row reads
-        # or filesystem scans. Workers/probes start outside both gates.
+        # final push. WebView may block this gate, but never state/row reads,
+        # filesystem scans or successful-upload persistence. Workers/probes
+        # start outside both controller gates.
         self._publication_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._generation = 0
@@ -412,10 +425,15 @@ class UploaderController:
         pending = durations.resolve(self._cache, infos)
         # Authoritative in both directions: a miss must clear the old path
         # link when a different recording reuses its name (size/mtime differ).
-        restored = {
-            info.path: links.lookup(self._link_store, info.path, info.size, info.mtime)
-            for info in infos
-        }
+        with self._link_store_lock:
+            for info in infos:
+                self._listed_infos[id(info)] = info
+            restored = {
+                info.path: links.lookup(
+                    self._link_store, info.path, info.size, info.mtime
+                )
+                for info in infos
+            }
         rebuilt = self._rows.install(infos, preselect=preselect, link_urls=restored)
         # rebuild() mints new ids, so every key already in _links is dead --
         # rows.py's whole contract is that a stale id resolves to nothing.
@@ -690,41 +708,53 @@ class UploaderController:
         if not same_file and new_path.exists():
             return {"ok": False, "error": f"{new_path.name} is already in that folder."}
 
-        try:
-            # Path.rename, NEVER os.replace. os.replace is MoveFileExW with
-            # MOVEFILE_REPLACE_EXISTING, which silently destroys the file at
-            # the destination -- another recording. The check above exists
-            # only to produce a better sentence than the exception would;
-            # this call is what actually protects the data.
-            old_path.rename(new_path)
-        except OSError as exc:
-            logger.warning("Could not rename %s", old_path, exc_info=True)
-            return {"ok": False, "error": f"That file could not be renamed: {exc}"}
+        # _link does not need publication to persist. Exclude it from the
+        # WHOLE identity transition, not just rename+save: otherwise it could
+        # re-add the old key after it moved but before info.path changed.
+        with self._link_store_lock:
+            try:
+                # Path.rename, NEVER os.replace. os.replace is MoveFileExW with
+                # MOVEFILE_REPLACE_EXISTING, which silently destroys the file at
+                # the destination -- another recording. The check above exists
+                # only to produce a better sentence than the exception would;
+                # this call is what actually protects the data.
+                old_path.rename(new_path)
+            except OSError as exc:
+                logger.warning("Could not rename %s", old_path, exc_info=True)
+                return {"ok": False, "error": f"That file could not be renamed: {exc}"}
 
-        with self._state_lock:
-            self._rename_revision += 1
+            with self._state_lock:
+                self._rename_revision += 1
+            # Only after the filesystem rename succeeded. Links cannot be
+            # recomputed, so key movement and the captured/current path update
+            # must be indivisible to a late successful-upload transaction.
+            links.rename(self._link_store, old_path, new_path)
+            links.save(self._links_file, self._link_store)
+            self._rows.rename(row_id, new_path)
+            # The current row moved under its own lock. Repoint older accepted
+            # objects still held by uploads/probes as part of this same store
+            # transaction. A new recording later discovered at old_path is a
+            # new object and cannot inherit this move, even with equal metadata.
+            for captured in list(self._listed_infos.values()):
+                if (
+                    captured.path == old_path
+                    and captured.size == info.size
+                    and captured.mtime == info.mtime
+                ):
+                    captured.path = new_path
 
-        # ONLY after the rename succeeded. Four stores are keyed by path,
-        # and moving keys first would leave every one of them describing a
-        # file that does not exist. A rename changes neither size nor mtime,
-        # so each is a key move with the entry intact.
-        #
         # The watcher is the one that fails quietly: its seen-set is keyed
         # by path, so without this the next poll finds a settled, closed,
         # unknown file and announces it as a newly finished recording --
-        # preselected, ready to upload, for the second time.
+        # preselected, ready to upload, for the second time. No store lock is
+        # needed by the watcher or the duration cache; publication still orders
+        # this tail against scan installation and incremental row updates.
         watcher = self._ports.watcher()
         if watcher is not None:
             watcher.rename(old_path, new_path)
-        # links cannot be rebuilt by anything (links.py's docstring), so
-        # losing this key loses the Link column's answer permanently.
-        links.rename(self._link_store, old_path, new_path)
-        links.save(self._links_file, self._link_store)
         # Cheap rather than critical: a lost duration costs one ffprobe.
         durations.rename(self._cache, old_path, new_path)
         durations.save(self._durations_file, self._cache)
-        # The fourth store, and the one the CELL renders from.
-        self._rows.rename(row_id, new_path)
 
         # A targeted repaint, not list_rows(). A rebuild re-mints every id
         # and the page's selection, focus ring and sort position go with
@@ -1086,12 +1116,25 @@ class UploaderController:
         inside the app afterwards.
         """
         url = uploader.watch_url(video_id)
-        with self._publication_lock:
-            # Evidence belongs to the upload, not the lifetime of its row.
+        # Evidence belongs to the upload, not its row or a responsive page.
+        # Never wait for publication while holding this persistence lock.
+        with self._link_store_lock:
             links.remember(self._link_store, info.path, info.size, info.mtime, url)
             links.save(self._links_file, self._link_store)
-            if self._rows.resolve(row_id) is None:
+        with self._publication_lock:
+            current = self._rows.resolve(row_id)
+            if current is None:
                 return
+            with self._link_store_lock:
+                if (
+                    links.lookup(
+                        self._link_store, current.path, current.size, current.mtime
+                    )
+                    != url
+                ):
+                    # Another completion saved/published while this one waited.
+                    # Do not regress its row to an older successful upload URL.
+                    return
             with self._state_lock:
                 self._links[row_id] = url
             self._rows.set_link(row_id, url)
