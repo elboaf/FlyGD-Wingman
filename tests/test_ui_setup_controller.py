@@ -699,7 +699,11 @@ def test_file_read_accepts_utf8_and_strips_only_bom(tmp_path, raw):
     }
 
 
-@pytest.mark.parametrize("raw", [b"\xff", b"a" * (2 * 1024 * 1024 + 1)])
+@pytest.mark.parametrize(
+    "raw",
+    [b"\xff", b"a" * (2 * 1024 * 1024 + 1)],
+    ids=["legacy-encoding", "oversize-by-one"],
+)
 def test_file_read_refuses_legacy_encoding_or_oversize(tmp_path, raw):
     controller = build_controller(tmp_path)
     file = tmp_path / "input.yaml"
