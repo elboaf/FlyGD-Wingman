@@ -1,3 +1,5 @@
+import http.client
+import io
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,42 @@ PATH = "/v4/characters/95/skills/"
 CAPABILITY = "skills"
 FIRST_TOKEN = "first-secret-token"
 SECOND_TOKEN = "second-secret-token"
+
+HTTP_PARSER_FAILURES = (
+    pytest.param(b"not-an-http-status\r\n", http.client.BadStatusLine, id="bad_status"),
+    pytest.param(
+        b"HTTP/1.1 200 " + (b"x" * 65536) + b"\r\n\r\n",
+        http.client.LineTooLong,
+        id="line_too_long",
+    ),
+    pytest.param(
+        b"HTTP/9.9 200 OK\r\n\r\n",
+        http.client.UnknownProtocol,
+        id="unknown_protocol",
+    ),
+    pytest.param(
+        b"HTTP/1.1 200 OK\r\n" + (b"X-Test: x\r\n" * 101) + b"\r\n",
+        http.client.HTTPException,
+        id="too_many_headers",
+    ),
+)
+
+
+class MemorySocket:
+    def __init__(self, raw):
+        self._raw = raw
+
+    def makefile(self, _mode):
+        return io.BytesIO(self._raw)
+
+
+def parsed_http_exception(raw):
+    response = http.client.HTTPResponse(MemorySocket(raw))
+    try:
+        response.begin()
+    except http.client.HTTPException as exc:
+        return exc
+    raise AssertionError("raw response did not produce an HTTP parser failure")
 
 
 def response(status: int, *, etag: str = "", error: str = "") -> eveesi.EsiResponse:
@@ -211,6 +249,93 @@ def test_expected_get_exceptions_are_bounded_and_redact_every_used_token(
     assert result.authority_invalidated is False
     assert result.endpoint_denied is False
     assert result.authority_error is False
+
+
+@pytest.mark.parametrize("phase", ["initial", "retry"])
+@pytest.mark.parametrize(("raw", "exception_type"), HTTP_PARSER_FAILURES)
+def test_real_http_parser_failures_are_bounded_on_both_get_attempts(
+    phase, raw, exception_type
+):
+    parser_error = parsed_http_exception(raw)
+    assert type(parser_error) is exception_type
+    authority_results = [token_result(FIRST_TOKEN)]
+    outcomes = []
+    if phase == "retry":
+        authority_results.append(token_result(SECOND_TOKEN))
+        outcomes.append(response(401, error="expired"))
+    outcomes.append(parser_error)
+    authority = Authority(*authority_results)
+    client = Client(*outcomes)
+
+    result = eveesi.authenticated_get(
+        authority,
+        client,
+        character_id=95,
+        capability=CAPABILITY,
+        path=PATH,
+    )
+
+    assert result.response is None
+    assert 0 < len(result.error) <= 4096
+    assert result.authority_invalidated is False
+    assert result.endpoint_denied is False
+    assert result.authority_error is False
+    assert len(client.calls) == (2 if phase == "retry" else 1)
+    assert authority.calls == (
+        [(95, CAPABILITY, None), (95, CAPABILITY, FIRST_TOKEN)]
+        if phase == "retry"
+        else [(95, CAPABILITY, None)]
+    )
+
+
+@pytest.mark.parametrize("phase", ["initial", "retry"])
+def test_exact_http_parser_failure_is_bounded_and_redacts_every_used_token(phase):
+    authority_results = [token_result(FIRST_TOKEN)]
+    outcomes = []
+    if phase == "retry":
+        authority_results.append(token_result(SECOND_TOKEN))
+        outcomes.append(response(401, error="expired"))
+    outcomes.append(
+        http.client.HTTPException(
+            f"parser exposed {FIRST_TOKEN} and {SECOND_TOKEN}: " + ("x" * 5000)
+        )
+    )
+
+    result = eveesi.authenticated_get(
+        Authority(*authority_results),
+        Client(*outcomes),
+        character_id=95,
+        capability=CAPABILITY,
+        path=PATH,
+    )
+
+    assert result.response is None
+    assert 0 < len(result.error) <= 4096
+    assert FIRST_TOKEN not in result.error
+    if phase == "retry":
+        assert SECOND_TOKEN not in result.error
+
+
+@pytest.mark.parametrize("phase", ["initial", "retry"])
+@pytest.mark.parametrize(
+    "exception_type", [http.client.CannotSendRequest, http.client.ResponseNotReady]
+)
+def test_http_client_state_errors_escape_on_both_get_attempts(phase, exception_type):
+    authority_results = [token_result(FIRST_TOKEN)]
+    outcomes = []
+    if phase == "retry":
+        authority_results.append(token_result(SECOND_TOKEN))
+        outcomes.append(response(401, error="expired"))
+    outcomes.append(exception_type("broken client state"))
+
+    with pytest.raises(exception_type, match="broken client state"):
+        eveesi.authenticated_get(
+            Authority(*authority_results),
+            Client(*outcomes),
+            character_id=95,
+            capability=CAPABILITY,
+            path=PATH,
+        )
 
 
 def test_empty_expected_exception_uses_its_class_name():

@@ -5,6 +5,7 @@ sockets, no browser, no real threads unless the test says so, and `tmp_path`
 for the state file, the id cache, and the plans folder.
 """
 
+import http.client
 import io
 import json
 import logging
@@ -1490,6 +1491,34 @@ class RawEsiTransport:
         return RawEsiResponse(self._payloads.pop(0))
 
 
+class RawHttpSocket:
+    def __init__(self, response):
+        self._response = response
+
+    def makefile(self, _mode):
+        return io.BytesIO(self._response)
+
+
+class RawHttpTransport:
+    def __init__(self, responses):
+        self._responses = list(responses)
+
+    def __call__(self, _request, timeout=None):
+        response = http.client.HTTPResponse(RawHttpSocket(self._responses.pop(0)))
+        response.begin()
+        return response
+
+
+def raw_http_ok(data):
+    body = json.dumps(data).encode("utf-8")
+    return (
+        b"HTTP/1.1 200 OK\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode("ascii")
+        + b"\r\n"
+        + body
+    )
+
+
 @pytest.mark.parametrize(
     ("attributes_payload", "expected_error"),
     [
@@ -1532,6 +1561,61 @@ def test_real_esi_attribute_decode_failures_commit_core_only(
     persisted_ch = persisted.find(95)
     assert persisted_ch.error == ""
     assert persisted_ch.attributes_error == ch.attributes_error
+    progress = [p for handler, p in pushed if handler == "onSkillsProgress"]
+    assert [p["error"] for p in progress] == [""]
+
+
+@pytest.mark.parametrize(
+    ("attributes_response", "expected_error"),
+    [
+        pytest.param(b"not-an-http-status\r\n", "not-an-http-status", id="bad_status"),
+        pytest.param(
+            b"HTTP/1.1 200 " + (b"x" * 65536) + b"\r\n\r\n",
+            "65536 bytes",
+            id="line_too_long",
+        ),
+        pytest.param(b"HTTP/9.9 200 OK\r\n\r\n", "HTTP/9.9", id="unknown_protocol"),
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\n" + (b"X-Test: x\r\n" * 101) + b"\r\n",
+            "100 headers",
+            id="too_many_headers",
+        ),
+    ],
+)
+def test_real_http_parser_attribute_failures_commit_core_only(
+    tmp_path, attributes_response, expected_error
+):
+    """Malformed response framing is supplemental failure, just like a bad body."""
+    clock = Clock()
+    clock.advance(3600)
+    client = esi_mod.EsiClient(
+        user_agent="TestAgent/1.0",
+        transport=RawHttpTransport(
+            [
+                raw_http_ok(SKILLS_BODY),
+                raw_http_ok(QUEUE_BODY),
+                attributes_response,
+            ]
+        ),
+        sleep=lambda _seconds: None,
+    )
+
+    controller, pushed, _ = run_refresh(tmp_path, client, clock=clock)
+
+    ch = controller._state.find(95)
+    assert ch.active_levels == {3327: 4}
+    assert ch.skill_points == {3327: 200000}
+    assert ch.queue and ch.fetched_utc == clock.value
+    assert ch.error == ""
+    assert expected_error in ch.attributes_error
+    assert ch.attributes == ATTRIBUTES_BODY
+    assert ch.attributes_fetched_utc == T0
+    persisted, _ = state_mod.load(tmp_path / "eve_skills.json")
+    persisted_ch = persisted.find(95)
+    assert persisted_ch.error == ""
+    assert expected_error in persisted_ch.attributes_error
+    assert persisted_ch.attributes == ATTRIBUTES_BODY
+    assert persisted_ch.attributes_fetched_utc == T0
     progress = [p for handler, p in pushed if handler == "onSkillsProgress"]
     assert [p["error"] for p in progress] == [""]
 

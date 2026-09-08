@@ -176,6 +176,23 @@ class AuthenticatedGetResult:
 
 
 _AUTHENTICATED_ERROR_MAX_CHARS = 4096
+_HTTP_PARSER_FAILURES = (
+    http.client.BadStatusLine,
+    http.client.LineTooLong,
+    http.client.UnknownProtocol,
+)
+
+
+def _is_expected_get_failure(exc: BaseException) -> bool:
+    """Whether *exc* describes an external response rather than client misuse.
+
+    The header-count limit raises the exact HTTPException base class. Other
+    subclasses can instead report invalid connection state caused by caller
+    sequencing, so they remain visible unless they are known parser failures.
+    """
+    return type(exc) is http.client.HTTPException or isinstance(
+        exc, (OSError, ValueError, RecursionError, *_HTTP_PARSER_FAILURES)
+    )
 
 
 def _authenticated_error(value: object, tokens: tuple[str, ...]) -> str:
@@ -223,7 +240,9 @@ def authenticated_get(
     used_tokens = (token,)
     try:
         response = client.get(path, token=token, etag=etag)
-    except (OSError, ValueError, RecursionError) as exc:
+    except (OSError, ValueError, RecursionError, http.client.HTTPException) as exc:
+        if not _is_expected_get_failure(exc):
+            raise
         return AuthenticatedGetResult(
             response=None,
             error=_authenticated_error(exc, used_tokens),
@@ -254,7 +273,9 @@ def authenticated_get(
         used_tokens = (*used_tokens, retry_token)
         try:
             response = client.get(path, token=retry_token, etag=etag)
-        except (OSError, ValueError, RecursionError) as exc:
+        except (OSError, ValueError, RecursionError, http.client.HTTPException) as exc:
+            if not _is_expected_get_failure(exc):
+                raise
             return AuthenticatedGetResult(
                 response=None,
                 error=_authenticated_error(exc, used_tokens),
