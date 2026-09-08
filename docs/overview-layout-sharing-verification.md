@@ -3,8 +3,11 @@
 ## Status and scope
 
 **Tasks 1–3 of the [implementation plan](overview-layout-sharing-plan.md) are
-implemented and independently reviewed. Task 4 is blocked on persisted-data
-proof.** This is not a finished setup-sharing feature or a release sign-off.
+implemented and independently reviewed. Task 4 is incomplete.** Its universal
+development stop has been superseded by the
+[case-based reassessment](overview-layout-sharing-reassessment.md): pure adapter
+work may proceed while unproved mutations refuse locally. This is not a finished
+setup-sharing feature or a release sign-off.
 
 Implementation base: `4ecab11`. Verified code checkpoint: `904d1a8`.
 
@@ -147,7 +150,15 @@ No browser, real clipboard, Windows/WebView2, frozen-build or live EVE acceptanc
 was run for this parser checkpoint. No GUI exists for this phase yet. The earlier
 sender-clone experiment is never a fresh-recipient baseline.
 
-## Why Task 4 is stopped
+## Original reasons for stopping Task 4
+
+The concerns below remain relevant, but treating them as a universal prerequisite
+for all adapter development was too broad. The
+[reassessment](overview-layout-sharing-reassessment.md) records newer controlled
+evidence, corrects the domain explanation and defines supported versus refused
+cases. It supersedes the blanket manual-test/development-stop instruction below;
+that instruction is retained here as the historical checkpoint, not a new user
+request.
 
 The retained corpus does not establish safe behavior for:
 

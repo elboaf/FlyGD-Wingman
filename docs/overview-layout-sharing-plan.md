@@ -4,7 +4,7 @@
 
 **Goal:** Export a faithful Wingman overview/in-space-layout preset and apply it to a new recipient profile, preserving recipient-local display preferences and existing profiles.
 
-**Execution checkpoint:** Tasks 1–3 are implemented and task-reviewed at `904d1a8`; Task 4 is blocked on protected/default, selection/cache and surplus-window retirement evidence. See [verification and decisions](overview-layout-sharing-verification.md). This is not a completed feature or release sign-off.
+**Execution checkpoint:** Tasks 1–3 are implemented and task-reviewed at `904d1a8`. Task 4 resumes in bounded pure-adapter slices under the [case-based gate reassessment](overview-layout-sharing-reassessment.md); unresolved export classification, differing-name replacement, selector invalidation and surplus retirement remain required cases, not completed functionality. See [verification and decisions](overview-layout-sharing-verification.md). This is not a completed feature or release sign-off.
 
 **Architecture:** Pure validation and decoded-document adapters feed a recipient-local staged profile constructor. `ProfilesController` owns context, review authorization and mutation lifecycle; `Api` remains a thin facade with named file-dialog ports. One focused Profiles subroute owns transient UI state and receives completion through the existing event owner.
 
@@ -343,6 +343,16 @@ def test_native_input_does_not_fabricate_layout_or_drop_labels():
 - [ ] Commit: `git add wingman/evesettings/overview_yaml.py wingman/evesettings/setup_sharing.py tests/test_ui_setup_yaml.py tests/fixtures/ui_setup/native-complete.yaml pyproject.toml uv.lock THIRD-PARTY-NOTICES.md && git commit -m "feat: parse limited native overview YAML"`.
 
 ## Task 4: Project and apply only the proved decoded-document fields
+
+Execution subdivision: Task 4a first implements recipient-preserving `apply_setup`
+and its strict field readers/constructors, with explicit unsupported-case refusals
+from the [reassessment](overview-layout-sharing-reassessment.md). It does not
+implement an incomplete exporter or invent a protected-definition classifier.
+Task 4b must still deliver the complete export/classification and remaining
+required application cases; Task 4 as a whole stays incomplete until those
+requirements are met. Keep the original rich recipient fixture as refusal
+coverage where its surplus topology is unsupported, not as a reason to weaken
+retirement checks.
 
 **Files:** Create `wingman/evesettings/setup_documents.py`, `tests/test_ui_setup_documents.py`; update the field map only with newly verified evidence.
 **Consumes:** validated model, Task 1 field map. **Produces:** `export_setup`, `apply_setup`, `protected_definition_names`.
