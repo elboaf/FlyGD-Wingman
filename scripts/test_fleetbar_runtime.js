@@ -116,10 +116,6 @@ function page() {
   };
 }
 
-function damageChildByPrefix(damage, prefix) {
-  return damage.children.find((child) => child.className.indexOf(prefix) === 0);
-}
-
 function fillOf(half) {
   const track = half.children.find((child) => child.className === 'fleet-damage-track');
   assert.ok(track, half.className + ' has no track');
