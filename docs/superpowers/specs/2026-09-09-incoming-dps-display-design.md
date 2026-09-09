@@ -46,7 +46,7 @@ The header changes from `CHARACTER | DPS | INCOMING` to `CHARACTER | DAMAGE | EW
 
 The exact values use the existing 12px tabular monospace treatment. The unit is established by the `DAMAGE` heading and Wingman's existing Fleet Bar context, so the narrow cell shows bare whole numbers rather than repeating `dps` twice per row.
 
-The 420px grid allocates 160px to Damage and 148px to EWAR, leaving 92px for Character after the existing 20px horizontal row padding. A 160px Damage track accommodates two values through `10,000,000`, the protocol's existing maximum, plus the center axis and gaps at the existing monospace size. Values from `0` through `10,000,000` render in full. A defensive value above that supported visual bound renders as `>10m`, while its full exact value remains in the cell's accessible description and `title`; the page must not widen, overlap EWAR, or silently ellipsize a number. Geometry verification uses simultaneous `10,000,000` values, `SCRAM · POINT · NEUT`, and a long character name.
+The 420px grid allocates 160px to Damage and 148px to EWAR, leaving 92px for Character after the existing 20px horizontal row padding. A 160px Damage track accommodates two values through `10,000,000`, the protocol's existing maximum, plus the center axis and gaps at the existing monospace size. Values from `0` through `10,000,000` render in full. A defensive value above that supported visual bound renders as `>10m` and is announced as `more than 10 million DPS`; the page must not widen, overlap EWAR, silently ellipsize a number, or imply precision it cannot safely preserve through JavaScript's number representation. Geometry verification uses simultaneous `10,000,000` values, `SCRAM · POINT · NEUT`, and a long character name.
 
 The center axis and directional fills make the relationship spatial:
 
@@ -203,7 +203,7 @@ Cover:
 - `NO LOG` rendered once across Damage;
 - OUT-left and IN-right DOM order;
 - EWAR header copy;
-- simultaneous `10,000,000` values, full EWAR text, defensive `>10m`, and long-name geometry;
+- simultaneous `10,000,000` values, full EWAR text, defensive `>10m` text and announcement, and long-name geometry;
 - immediate rail updates with no transition.
 
 Because existing Fleet Bar tests are mostly lexical and top-level JavaScript smoke does not execute handler bodies, add a focused Node DOM harness that renders representative payloads and asserts labels, text, ratios, classes, and unavailable states.
@@ -232,7 +232,7 @@ The completed implementation may move this design to `docs/history/` only accord
 2. Every unbound row reports both directions as unavailable and renders one `NO LOG` state, never fabricated zeros.
 3. The 420px Fleet Bar renders Character, one split Damage region, and EWAR without a fourth column or row reordering.
 4. OUT is always left of the center axis; IN is always right and adjacent to EWAR.
-5. Each rail independently normalizes against the highest numeric value among the page's visible rows; values through `10,000,000` remain fully visible, while larger defensive values use `>10m` visually and preserve the exact value accessibly.
+5. Each rail independently normalizes against the highest numeric value among the page's visible rows; values through `10,000,000` remain fully visible, while larger defensive values use `>10m` visually and announce `more than 10 million DPS`.
 6. Labels, geometry, and accessible text communicate direction without relying on color.
 7. Incoming damage does not refresh EWAR lifetime or change Alert behavior.
 8. Source/session resets and fact-ordering guards apply equally to both directional metrics.
