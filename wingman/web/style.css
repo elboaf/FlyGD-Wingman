@@ -4409,6 +4409,15 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #setup-text, #setup-name { display: block; width: 100%; margin-bottom: 10px; }
 #setup-text { resize: vertical; min-height: 72px; max-height: 180px; }
 #setup-work > .us-pickers { margin-top: 12px; }
+/* Inline source picker, not a second review surface. Keep its actions above
+   long provenance so Close never requires scrolling through metadata. */
+#setup-catalog { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; min-width: 0; }
+#setup-catalog[hidden], #setup-catalog-origin[hidden] { display: none; }
+#setup-catalog > .lab { color: var(--text-dim); }
+#setup-catalog-select { width: 100%; min-width: 0; }
+#setup-work #setup-catalog-status { margin: 0; min-height: 18px; }
+#setup-work #setup-catalog-details { margin: 0; white-space: pre-line; }
+#setup-work #setup-catalog-origin { margin: 0 0 10px; }
 #setup-import .field:disabled { color: var(--text-faint); opacity: .5; }
 #setup-summary:focus, #setup-status:focus { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 

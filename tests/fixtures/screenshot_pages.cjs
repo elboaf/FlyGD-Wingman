@@ -307,6 +307,13 @@ async function fittingsDetailRegression() {
       document.querySelector('[data-preview-detail-control="crop-select"]').click();
     } else if (moduleName === 'uisetup') {
       for (const id of ['us-copy', 'us-save', 'setup-create', 'setup-paste', 'setup-file']) WM.el(id).click();
+      // The merged catalog source must obey the same read-only seam. Dispatch
+      // directly too: hiding/disabling a button is not a bridge safety boundary.
+      for (const id of ['setup-catalog-open', 'setup-catalog-retry', 'setup-catalog-use']) {
+        WM.el(id).dispatchEvent({type: 'click'});
+      }
+      assert.equal(WM.el('setup-catalog').hidden, true);
+      assert.equal(WM.el('setup-catalog-origin').textContent, '');
     } else {
       WM.el('fm-save').click(); WM.el('fm-copy').click();
     }
@@ -333,8 +340,14 @@ async function fittingsDetailRegression() {
   }
   staging = false;
   if (moduleName === 'formations') WM.openFormations([{path: 'live-account', name: 'Live'}], 'live-account');
-  else if (moduleName === 'uisetup') WM.openUiSetup({mode: 'export', context: {root: 'live', server: 'tq', profile: 'live-base'}});
-  else WM.section('previews');
+  else if (moduleName === 'uisetup') {
+    WM.openUiSetup({mode: 'export', context: {root: 'live', server: 'tq', profile: 'live-base'}});
+    assert.ok(calls.length, 'ordinary export reads resume after cleanup');
+    WM.openUiSetup({mode: 'import', context: {root: 'live', server: 'tq', profile: 'live-base'}});
+    const beforeCatalogRead = calls.length;
+    WM.el('setup-catalog-open').click();
+    assert.ok(calls.slice(beforeCatalogRead).some(call => call[0] === 'eve_settings_setup_catalog'), 'ordinary catalog reads resume after cleanup');
+  } else WM.section('previews');
   assert.ok(calls.length, 'ordinary reads resume after cleanup');
   console.log('PASS screenshot ' + data.key);
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -13,6 +13,7 @@ rendered three cards, their headings, their prose and a Reset button with
 zero keybind rows, and five sessions verified through it.
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -26,6 +27,7 @@ from wingman.evesettings import (
     formation_sharing,
     identity,
     selective,
+    setup_catalog,
     setup_model,
     setup_sharing,
 )
@@ -85,6 +87,8 @@ def test_setup_bridge_has_dev_doubles():
     assert {
         "eve_settings_setup_context",
         "eve_settings_setup_limits",
+        "eve_settings_setup_catalog",
+        "eve_settings_setup_catalog_entry",
         "eve_settings_setup_export",
         "eve_settings_setup_save_file",
         "eve_settings_setup_read_file",
@@ -149,11 +153,88 @@ vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='),
     if kind == "max":
         assert outcomes["good"]["summary"]["counts"] == {
             "presets": 256,
-            "tabs": 8,
+            "tabs": 20,
             "windowGroups": 8,
             "shipLabels": 64,
             "layoutWindows": 17,
         }
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "kind", ["ordinary", "long", "empty", "error", "entry-error", "slow", "slow-file"]
+)
+def test_catalog_dev_replies_match_reader_and_artifact(kind, tmp_path, monkeypatch):
+    from wingman import paths
+
+    script = r"""
+const fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8'), api = {}, delays = [];
+vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='),
+  source.indexOf('  function eveMutation(')), {api, eve: {}, Promise,
+    devSearch: new URLSearchParams('catalog=' + process.argv[2]),
+    setTimeout: (callback, ms) => { delays.push(ms); callback(); }, window: {}});
+(async () => {
+  const first = await api.eve_settings_setup_catalog();
+  const retry = await api.eve_settings_setup_catalog();
+  const loaded = await Promise.all(retry.entries.map(entry => api.eve_settings_setup_catalog_entry(entry.id, entry.revision, entry.sha256)));
+  const bad = await api.eve_settings_setup_catalog_entry('missing', 1, 'a'.repeat(64));
+  const file = await api.eve_settings_setup_read_file();
+  console.log(JSON.stringify({first, retry, loaded, bad, file, delays}));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(WEB / "dev.js"), kind],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(result.stdout)
+    assert data["first"]["ok"] is (kind != "error")
+    assert data["retry"]["ok"]
+    assert not data["bad"]["ok"] and data["bad"]["error"]
+    assert data["file"]["ok"]
+    expected_delays = (
+        [2000, 2000, 2000] if kind == "slow" else [3000] if kind == "slow-file" else []
+    )
+    assert data["delays"] == expected_delays
+    entries = data["retry"]["entries"]
+    assert len(entries) == (0 if kind == "empty" else 2)
+    if kind == "long":
+        assert len(entries[1]["description"]) > 1000
+        assert "<literal>" in entries[1]["title"]
+    monkeypatch.setattr(paths, "setup_presets_dir", lambda: tmp_path)
+    (tmp_path / "catalog.json").write_text(
+        json.dumps(
+            {
+                "format": "wingman-setup-catalog",
+                "version": 1,
+                "entries": entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+    for entry in entries:
+        for source in entry["overview_sources"]:
+            (tmp_path / source["license_file"]).write_text(
+                "Dev-only invented permission", encoding="utf-8"
+            )
+    assert setup_catalog.list_entries() == entries
+    for entry, reply in zip(entries, data["loaded"], strict=True):
+        assert set(reply) == {"ok", "entry", "text", "summary", "error"}
+        if kind == "entry-error":
+            assert not reply["ok"] and reply["error"]
+            continue
+        assert reply["entry"] == entry and reply["ok"]
+        assert (
+            hashlib.sha256(reply["text"].encode("utf-8")).hexdigest() == entry["sha256"]
+        )
+        parsed = setup_sharing.parse_text(reply["text"])
+        assert parsed.source_kind == "wingman" and parsed.layout is not None
+        assert reply["summary"] == setup_model.summarize(parsed)
 
 
 def test_tool_screenshot_fixtures_match_real_models_and_have_browser_drivers():

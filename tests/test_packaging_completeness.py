@@ -13,6 +13,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -20,7 +21,12 @@ import tomllib
 import pytest
 import yaml
 
+from tests import test_setup_catalog
+from wingman import paths
 from wingman.eveauth import application as eveauth_application
+
+# Reuse the temporary synthetic catalog, never mutate shipped assets for faults.
+catalog_fixture = test_setup_catalog.catalog_fixture
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANUAL_UPDATE_FIXTURE = ROOT / "tests" / "manual" / "update_fixture.iss"
@@ -463,6 +469,97 @@ def test_windows_build_checks_frozen_yaml_not_only_development_imports():
         "license_text in section",
     ):
         assert token in body, token
+
+
+def test_setup_presets_are_explicit_package_data_and_frozen_assets():
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        config = tomllib.load(handle)["tool"]["setuptools"]
+    patterns = config.get("package-data", {}).get("wingman", [])
+    assert "assets/setup-presets/*.json" in patterns
+    assert "assets/setup-presets/*.txt" in patterns
+    source = ROOT / "wingman/assets/setup-presets"
+    expected = {path for path in source.iterdir() if path.is_file()}
+    collected = {
+        path for pattern in patterns for path in (ROOT / "wingman").glob(pattern)
+    }
+    assert expected and expected <= collected
+    spec = (ROOT / "packaging/uploader.spec").read_text(encoding="utf-8")
+    assert (
+        '(str(ROOT / "wingman" / "assets" / "setup-presets"), "assets/setup-presets")'
+        in spec
+    )
+
+
+def test_setup_presets_disable_checkout_newline_conversion():
+    assets = sorted((ROOT / "wingman/assets/setup-presets").iterdir())
+    names = [path.relative_to(ROOT).as_posix() for path in assets]
+    result = subprocess.run(
+        ["git", "check-attr", "-z", "text", "--stdin"],
+        input="\0".join(names) + "\0",
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    records = result.stdout.rstrip("\0").split("\0")
+    assert records[::3] == names
+    assert records[2::3] == ["unset"] * len(names), (
+        "Hash-bound setup and exact licence bytes must not depend on core.autocrlf"
+    )
+
+
+def test_setup_presets_inventory_gate_runs_after_freeze_before_installer():
+    steps = _workflow_steps(ROOT / ".github/actions/build-installer/action.yml")
+    names = [step.get("name") for step in steps]
+    name = "Verify setup presets are bundled"
+    assert name in names
+    assert (
+        names.index("Build executable")
+        < names.index(name)
+        < names.index("Build installer")
+    )
+    step = steps[names.index(name)]
+    assert not step.get("continue-on-error") and "if" not in step
+    assert step["run"].startswith("uv run --no-sync python")
+
+
+@pytest.mark.parametrize("fault", ["none", "missing", "changed", "extra"])
+@pytest.mark.parametrize("asset", ["manifest", "artifact", "license"])
+def test_frozen_setup_inventory_executes_on_actual_bundle_bytes(
+    catalog_fixture, tmp_path, monkeypatch, fault, asset
+):
+    entry, _text, directory = catalog_fixture
+    steps = _workflow_steps(ROOT / ".github/actions/build-installer/action.yml")
+    step = next(
+        (s for s in steps if s.get("name") == "Verify setup presets are bundled"), None
+    )
+    assert step is not None, "Frozen preset inventory must be an executable build gate"
+    body = compile(_python_body(step), "verify-frozen-setup-presets", "exec")
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "wingman/assets/setup-presets"
+    shutil.copytree(directory, source)
+    monkeypatch.setattr(paths, "setup_presets_dir", lambda: source)
+    frozen = tmp_path / "dist/Wingman/_internal/assets/setup-presets"
+    shutil.copytree(source, frozen)
+    filename = {
+        "manifest": "catalog.json",
+        "artifact": f"{entry['id']}-r{entry['revision']}.json",
+        "license": entry["overview_sources"][0]["license_file"],
+    }[asset]
+    if fault == "missing":
+        (frozen / filename).unlink()
+    elif fault == "changed":
+        with (frozen / filename).open("ab") as handle:
+            handle.write(b" ")
+    elif fault == "extra":
+        (frozen / "orphan-r1.json").write_bytes(b"invented unlisted content")
+    if fault == "none":
+        exec(body, {})
+    else:
+        with pytest.raises(
+            AssertionError, match=r"[Ii]nventory|[Bb]ytes|[Mm]issing|[Dd]iffer"
+        ):
+            exec(body, {})
 
 
 def test_every_subpackage_is_declared():

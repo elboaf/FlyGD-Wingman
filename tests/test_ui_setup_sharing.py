@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tests.setup_fixtures import wire
+from tests.setup_fixtures import wire, wire_with_tabs
 from wingman.evesettings import setup_model as model
 from wingman.evesettings import setup_sharing as sharing
 
@@ -17,6 +17,29 @@ def test_json_roundtrip_preserves_order_and_geometry():
     assert parsed.overview["windowGroups"] == original["overview"]["windowGroups"]
     assert parsed.layout == original["layout"]
     assert parsed.source_kind == "wingman"
+
+
+@pytest.mark.parametrize("count,group_count", [(9, 1), (20, 1), (20, 8)])
+def test_json_twenty_tab_budget_roundtrip_is_complete(count, group_count):
+    source = wire_with_tabs(count, group_count=group_count)
+    text = sharing.export_text(source)
+    assert json.loads(text) == source
+    assert json.loads(text)["version"] == 1
+    parsed = sharing.parse_text(text)
+    assert parsed.overview == source["overview"]
+    assert parsed.layout == source["layout"]
+
+
+@pytest.mark.parametrize("operation", ["parse", "export"])
+def test_json_twenty_one_tabs_refuse_without_truncation(operation):
+    source = wire_with_tabs(21)
+    with pytest.raises(model.SetupError, match="Tabs") as caught:
+        if operation == "parse":
+            sharing.parse_text(json.dumps(source))
+        else:
+            sharing.export_text(source)
+    assert caught.value.code == "collection_limit"
+    assert len(source["overview"]["tabs"]) == 21
 
 
 def test_json_parse_and_export_preserve_repeated_preset_groups_exactly():

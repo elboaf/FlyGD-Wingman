@@ -1,0 +1,4 @@
+# Exact admitted bytes and upstream notices must survive Windows checkouts.
+wingman/assets/setup-presets/*.json -text
+# Licence notices retain upstream CRLF and Markdown trailing spaces verbatim.
+wingman/assets/setup-presets/*.txt -text -whitespace

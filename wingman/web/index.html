@@ -2004,10 +2004,23 @@
       <div id="setup-work">
         <p class="hint">Create a new profile from a local base. Your existing profiles stay unchanged. Close every EVE client before Review and Create.</p>
         <label class="lab" for="setup-text">Wingman preset or native overview YAML</label>
-        <textarea class="field" id="setup-text" rows="3" spellcheck="false"></textarea>
+        <textarea class="field" id="setup-text" rows="3" spellcheck="false" aria-describedby="setup-catalog-origin"></textarea>
+        <p class="hint" id="setup-catalog-origin" hidden></p>
         <div class="row">
           <button class="btn" id="setup-paste" type="button">Paste</button>
           <button class="btn" id="setup-file" type="button">Choose file…</button>
+          <button class="btn" id="setup-catalog-open" type="button" aria-controls="setup-catalog" aria-expanded="false">Browse bundled setups…</button>
+        </div>
+        <div id="setup-catalog" hidden>
+          <label class="lab" for="setup-catalog-select">Bundled complete setup</label>
+          <select class="field" id="setup-catalog-select" aria-describedby="setup-catalog-details setup-catalog-status" disabled></select>
+          <div class="row">
+            <button class="btn" id="setup-catalog-use" type="button" disabled>Use preset</button>
+            <button class="btn" id="setup-catalog-close" type="button">Close</button>
+            <button class="btn" id="setup-catalog-retry" type="button" hidden>Retry catalog</button>
+          </div>
+          <p class="hint" id="setup-catalog-status" role="status" aria-live="polite"></p>
+          <p id="setup-catalog-details"></p>
         </div>
         <div class="us-pickers">
           <div>

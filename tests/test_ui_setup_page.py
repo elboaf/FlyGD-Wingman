@@ -13,6 +13,7 @@ from tests.html_tree import PageTree
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman/web"
 SCENARIOS = [
+    "twenty-tab-help",
     "export-source-change",
     "export-route-exit",
     "export-reopen",
@@ -36,9 +37,76 @@ SCENARIOS = [
     "save-rejected",
     "late-context",
     "unavailable-pairs",
+    "setup-dialog-export-preview",
+    "setup-dialog-export-copy",
+    "setup-dialog-export-save",
 ]
 
+CATALOG_SCENARIOS = (
+    [
+        "catalog-browse-close",
+        "catalog-empty-retry",
+        "catalog-error-retry",
+        "catalog-dialog-escape",
+        "catalog-dialog-cancel",
+        "catalog-dialog-accept",
+        "catalog-dialog-queued-cancel",
+        "catalog-dialog-queued-accept",
+        "catalog-dialog-queued-ordinary-accept",
+        "catalog-dialog-hidden-target",
+        "catalog-dialog-invisible-target",
+        "catalog-selection-status",
+        "catalog-selection-scroll",
+        "catalog-list-after-create",
+        "catalog-list-rejected",
+        "catalog-list-close-reopen",
+        "catalog-literal-selection",
+        "catalog-failed-entry",
+        "catalog-rejected-entry",
+        "catalog-use-empty",
+        "catalog-replacement",
+        "catalog-cancel-replacement",
+        "catalog-origin",
+        "catalog-selection-aba",
+        "catalog-confirm-selection-aba",
+    ]
+    + [
+        f"catalog-{stage}-after-{change}"
+        for stage in ("read", "confirm")
+        for change in (
+            "text",
+            "name",
+            "base",
+            "pair",
+            "labels",
+            "close",
+            "reopen",
+            "route",
+            "create",
+        )
+    ]
+    + [
+        f"catalog-{direction}-{source}"
+        for direction in ("supersedes", "superseded-by", "origin-cleared-by")
+        for source in ("paste", "file")
+    ]
+    + [
+        f"catalog-dialog-pending-{source}-{answer}"
+        for source in ("paste", "file", "review", "labels")
+        for answer in ("accept", "cancel", "queued-accept", "queued-cancel")
+    ]
+    + ["catalog-stale-manual-busy"]
+    + [
+        "catalog-dev-ordinary",
+        "catalog-dev-long",
+        "catalog-dev-empty",
+        "catalog-dev-error",
+        "catalog-dev-entry-error",
+    ]
+)
+
 IMPORT_SCENARIOS = [
+    *CATALOG_SCENARIOS,
     "context-does-not-select",
     "base-rosters-differ",
     "review-invalidated-by-text",
@@ -78,6 +146,8 @@ IMPORT_SCENARIOS = [
     "malformed-text",
     "missing-summary",
     "failed-create",
+    "setup-dialog-completion-success",
+    "setup-dialog-completion-failure",
     "late-review-error",
     "pending-pair",
     "pending-base",

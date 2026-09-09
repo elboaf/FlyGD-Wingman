@@ -174,7 +174,12 @@ def _names(records, label):
 
 
 def _definition(record, name, label):
-    fields = _fields(record, _PRESET_FIELDS, label)
+    fields = _fields(
+        record, ("groups", "filteredStates"), label, optional=("alwaysShownStates",)
+    )
+    # GetAlwaysShownStates defaults only omission, not invalid present values.
+    # Keep this DAT-only; evidence: docs/reference/setup-preset-compatibility.md.
+    fields.setdefault("alwaysShownStates", [])
     return _validated({"presets": [{"name": name, **fields}]}, label)["presets"][0]
 
 
@@ -522,6 +527,16 @@ def _labels(value):
         for field in ("type", "pre", "post"):
             if fields[field] is not None:
                 fields[field] = _text(fields[field], f"shipLabels.{field}")
+        # Client formatting proves these exact integer flags, not arbitrary
+        # truthiness. Preserve existing bold/italic 1 and optional absence.
+        # Evidence: docs/reference/setup-preset-compatibility.md.
+        for field in model.LABEL_BOOLEAN_FIELDS:
+            item = fields.get(field)
+            if type(item) is int:
+                if item == 0:
+                    fields[field] = False
+                elif field == "underline" and item == 1:
+                    fields[field] = True
         labels.append(fields)
     return _validated({"shipLabels": labels}, "shipLabels")["shipLabels"]
 

@@ -16,6 +16,8 @@ from wingman.ui.api import Api
 PROFILE_METHODS = (
     "eve_settings_state",
     "eve_settings_setup_limits",
+    "eve_settings_setup_catalog",
+    "eve_settings_setup_catalog_entry",
     "eve_settings_setup_context",
     "eve_settings_setup_export",
     "eve_settings_setup_read_file",
@@ -49,6 +51,8 @@ PROFILE_METHODS = (
 PROFILE_SIGNATURES = {
     "eve_settings_state": "(self) -> dict",
     "eve_settings_setup_limits": "(self) -> dict",
+    "eve_settings_setup_catalog": "(self) -> dict",
+    "eve_settings_setup_catalog_entry": "(self, preset_id: str, revision: int, sha256: str) -> dict",
     "eve_settings_setup_context": "(self, profile: str) -> dict",
     "eve_settings_setup_export": "(self, expected_profile: str, account_path: str, character_path: str) -> dict",
     "eve_settings_setup_read_file": "(self) -> dict",
@@ -93,6 +97,8 @@ PROFILE_SIGNATURES = {
 PROFILE_DELEGATES = {
     "eve_settings_state": "state",
     "eve_settings_setup_limits": "setup_limits",
+    "eve_settings_setup_catalog": "setup_catalog",
+    "eve_settings_setup_catalog_entry": "setup_catalog_entry",
     "eve_settings_setup_context": "setup_context",
     "eve_settings_setup_export": "setup_export",
     "eve_settings_setup_read_file": "setup_read_file",
@@ -212,6 +218,12 @@ class _ProfilesSpy:
 
     def setup_limits(self):
         return self._record("setup_limits")
+
+    def setup_catalog(self):
+        return self._record("setup_catalog")
+
+    def setup_catalog_entry(self, preset_id, revision, sha256):
+        return self._record("setup_catalog_entry", preset_id, revision, sha256)
 
     def setup_context(self, profile):
         return self._record("setup_context", profile)
@@ -497,6 +509,12 @@ def test_profiles_controller_construction_has_no_effects_and_factory_runs_last(
     [
         ("eve_settings_state", "state", ()),
         ("eve_settings_setup_limits", "setup_limits", ()),
+        ("eve_settings_setup_catalog", "setup_catalog", ()),
+        (
+            "eve_settings_setup_catalog_entry",
+            "setup_catalog_entry",
+            ("synthetic-fleet", 3, "a" * 64),
+        ),
         ("eve_settings_setup_context", "setup_context", ("sibling",)),
         ("eve_settings_setup_export", "setup_export", ("base", "account", "character")),
         ("eve_settings_setup_read_file", "setup_read_file", ()),

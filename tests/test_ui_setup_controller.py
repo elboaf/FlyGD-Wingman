@@ -2,15 +2,17 @@
 
 import contextlib
 import copy
+import errno
 import io
 import json
+import logging
 from dataclasses import fields, replace
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 
-from tests import fakes
+from tests import fakes, test_setup_catalog
 from tests.setup_fixtures import install_lossless_codec, seed_profile, wire
 from tests.test_evesettings_codec import CODEC
 from tests.test_evesettings_controller import QueuedThreads, build_controller
@@ -19,12 +21,15 @@ from wingman import atomicio
 from wingman.evesettings import (
     codec,
     profilecopy,
+    setup_catalog,
     setup_documents,
     setup_model,
     setup_profile,
     setup_sharing,
 )
 from wingman.ui import api as api_mod
+
+catalog_fixture = test_setup_catalog.catalog_fixture
 
 
 @pytest.fixture
@@ -58,6 +63,199 @@ def export(controller, source):
     return controller.setup_export(
         str(source.profile), str(source.account_path), str(source.character_path)
     )
+
+
+@pytest.mark.parametrize("failure", ["none", "manifest", "artifact"])
+def test_catalog_reads_are_read_only_and_project_errors(
+    setup, catalog_fixture, monkeypatch, failure
+):
+    controller, _, base = setup
+    entry, text, directory = catalog_fixture
+    # A catalog read must not touch even an existing authorized offer.
+    offered = review(controller, base)
+    assert offered["ok"], offered
+    previous_offer = controller._setup_review
+    before = copy.deepcopy(controller._settings)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("catalog browsing invoked review/mutation/port authority")
+
+    for name in ("setup_review", "setup_create", "_eve_identity_hold"):
+        monkeypatch.setattr(controller, name, forbidden)
+    controller._ports = replace(
+        controller._ports,
+        **{field.name: forbidden for field in fields(controller._ports)},
+    )
+
+    class NoLock:
+        def acquire(self, *args, **kwargs):
+            forbidden()
+
+        def __enter__(self):
+            forbidden()
+
+    monkeypatch.setattr(controller, "_eve_mutation", NoLock())
+    if failure == "manifest":
+        (directory / "catalog.json").unlink()
+    elif failure == "artifact":
+        (directory / "synthetic-fleet-r1.json").unlink()
+    api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = controller
+    listing = api.eve_settings_setup_catalog()
+    loaded = api.eve_settings_setup_catalog_entry(
+        entry["id"], entry["revision"], entry["sha256"]
+    )
+    assert set(listing) == {"ok", "entries", "error"}
+    assert set(loaded) == {"ok", "entry", "text", "summary", "error"}
+    if failure == "manifest":
+        assert listing == {"ok": False, "entries": [], "error": listing["error"]}
+        assert "catalog.json" in listing["error"]
+    else:
+        assert listing == {"ok": True, "entries": [entry], "error": ""}
+    if failure == "none":
+        assert loaded["ok"] and loaded["error"] == ""
+        assert loaded["entry"] == entry and loaded["text"] == text
+        assert loaded["summary"]["counts"]["tabs"] == 8
+    else:
+        assert loaded == {
+            "ok": False,
+            "entry": {},
+            "text": "",
+            "summary": {},
+            "error": loaded["error"],
+        }
+        assert (
+            "catalog.json" in loaded["error"]
+            if failure == "manifest"
+            else "synthetic-fleet-r1.json" in loaded["error"]
+        )
+    assert controller._setup_review is previous_offer
+    assert controller._settings == before
+
+
+@pytest.mark.parametrize(
+    "facade,adapter,args,empty",
+    [
+        ("setup_catalog", "list_entries", (), {"entries": []}),
+        (
+            "setup_catalog_entry",
+            "read_entry",
+            ("synthetic-fleet", 1, "a" * 64),
+            {"entry": {}, "text": "", "summary": {}},
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "cause_type,code,winerror,diagnostic",
+    [
+        (FileNotFoundError, errno.ENOENT, None, "I/O failure: FileNotFoundError"),
+        (PermissionError, errno.EACCES, None, "I/O failure: PermissionError"),
+        (PermissionError, errno.EACCES, 32, "I/O failure: PermissionError"),
+        (OSError, None, None, "I/O failure: OSError"),
+        (None, None, None, "refused (cause=none)"),
+        (ValueError, None, None, "refused (cause=ValueError)"),
+    ],
+    ids=["missing", "permission", "sharing", "no-codes", "no-cause", "decoder"],
+)
+def test_catalog_diagnostics_are_safe_and_read_only(
+    setup,
+    monkeypatch,
+    caplog,
+    facade,
+    adapter,
+    args,
+    empty,
+    cause_type,
+    code,
+    winerror,
+    diagnostic,
+):
+    controller, _, _ = setup
+    before = copy.deepcopy(controller._settings)
+    previous_offer = controller._setup_review
+    private_path = r"C:\invented-private\pilot\notice.txt"
+    private_body = "Invented private notice and setup body"
+    cause = None
+    if cause_type is not None:
+        cause = (
+            cause_type(code, private_body, private_path)
+            if issubclass(cause_type, OSError)
+            else cause_type(private_body + private_path)
+        )
+        if winerror is not None:
+            # Linux does not populate the Windows-only field itself.
+            cause.winerror = winerror
+    safe_text = (
+        "Cannot read bundled catalog.json. Check the Wingman installation."
+        if isinstance(cause, OSError)
+        else "Catalog entry has missing or unknown fields."
+    )
+    failure = setup_catalog.SetupCatalogError(safe_text)
+
+    def refuse(*_args):
+        raise failure from cause
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("catalog diagnostics invoked authority ports")
+
+    monkeypatch.setattr(setup_catalog, adapter, refuse)
+    controller._ports = replace(
+        controller._ports,
+        **{field.name: forbidden for field in fields(controller._ports)},
+    )
+    api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = controller
+    with caplog.at_level(logging.WARNING, logger="wingman.evesettings.controller"):
+        result = getattr(api, "eve_settings_" + facade)(*args)
+
+    assert result == {"ok": False, **empty, "error": safe_text}
+    assert failure.__cause__ is cause
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert facade in record.getMessage()
+    assert diagnostic in record.getMessage()
+    if isinstance(cause, OSError):
+        assert f"errno={code}" in record.getMessage()
+        assert f"winerror={winerror}" in record.getMessage()
+    else:
+        assert "I/O" not in record.getMessage()
+        assert "errno=" not in record.getMessage()
+        assert "winerror=" not in record.getMessage()
+    assert record.exc_info is None and record.stack_info is None
+    assert private_path not in caplog.text
+    assert private_body not in caplog.text
+    assert "notice.txt" not in caplog.text
+    assert controller._setup_review is previous_offer
+    assert controller._settings == before
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (None, 1, "a" * 64),
+        ("../outside", 1, "a" * 64),
+        ("synthetic-fleet", True, "a" * 64),
+        ("synthetic-fleet", 1, None),
+    ],
+)
+def test_catalog_bridge_arguments_refuse_at_reader_boundary(setup, monkeypatch, args):
+    from wingman import paths
+
+    controller, _, _ = setup
+    monkeypatch.setattr(
+        paths, "setup_presets_dir", lambda: pytest.fail("invalid identity reached I/O")
+    )
+    api = api_mod.Api.__new__(api_mod.Api)
+    api._profiles = controller
+    result = api.eve_settings_setup_catalog_entry(*args)
+    assert result == {
+        "ok": False,
+        "entry": {},
+        "text": "",
+        "summary": {},
+        "error": result["error"],
+    }
+    assert result["error"]
 
 
 def test_context_browsing_does_not_persist_selection(setup, monkeypatch):

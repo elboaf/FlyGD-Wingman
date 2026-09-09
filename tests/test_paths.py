@@ -177,6 +177,24 @@ def test_codec_exe_finds_the_source_checkout_copy(tmp_path, monkeypatch):
     assert paths.codec_exe() == str(tmp_path / "packaging" / "bin" / _codec_name())
 
 
+def test_setup_presets_resolves_package_assets_without_creation(tmp_path, monkeypatch):
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(paths, "__file__", str(tmp_path / "wingman" / "paths.py"))
+    expected = tmp_path / "wingman" / "assets" / "setup-presets"
+    assert paths.setup_presets_dir() == expected
+    assert not expected.exists()
+
+
+def test_setup_presets_frozen_location_never_falls_back(tmp_path, monkeypatch):
+    package = tmp_path / "wingman"
+    (package / "assets" / "setup-presets").mkdir(parents=True)
+    monkeypatch.setattr(paths, "__file__", str(package / "paths.py"))
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "frozen"), raising=False)
+    expected = tmp_path / "frozen" / "assets" / "setup-presets"
+    assert paths.setup_presets_dir() == expected
+    assert not expected.exists()
+
+
 def test_codec_exe_never_falls_back_to_path(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "bundle_dir", lambda: tmp_path)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)

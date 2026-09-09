@@ -3245,8 +3245,27 @@ def test_setup_import_has_explicit_choice_and_scoped_controls():
         "setup-create",
         "setup-status",
         "setup-back",
+        "setup-catalog-open",
+        "setup-catalog-close",
+        "setup-catalog-select",
+        "setup-catalog-use",
+        "setup-catalog-status",
+        "setup-catalog-details",
+        "setup-catalog-origin",
     ):
         assert f'id="{ident}"' in HTML
+    assert '<label class="lab" for="setup-catalog-select">' in HTML
+    assert re.search(
+        r'id="setup-catalog-status"[^>]*role="status"[^>]*aria-live="polite"', HTML
+    )
+    assert re.search(
+        r'id="setup-catalog-open"[^>]*aria-controls="setup-catalog"[^>]*aria-expanded="false"',
+        HTML,
+    )
+    assert re.search(
+        r'id="setup-catalog-select"[^>]*aria-describedby="setup-catalog-details setup-catalog-status"',
+        HTML,
+    )
     assert re.search(
         r'<label class="check"><input id="setup-keep-labels"[^>]*>\s*<span class="box">',
         HTML,
@@ -3258,6 +3277,8 @@ def test_setup_import_has_explicit_choice_and_scoped_controls():
         "setup-summary",
         "setup-label-choice",
         "setup-native",
+        "setup-catalog",
+        "setup-catalog-origin",
     ):
         assert re.search(r"#" + ident + r"\[hidden\][^{]*\{\s*display:\s*none;", CSS)
     profiles = _strip_js_comments((WEB / "evesettings.js").read_text(encoding="utf-8"))

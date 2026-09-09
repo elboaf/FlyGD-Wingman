@@ -487,17 +487,28 @@
     show(item);
   }
 
+  function focusPageControl(target) {
+    if (!target || !document.contains(target) || target.disabled || !target.focus
+        || !target.getClientRects().length
+        || window.getComputedStyle(target).visibility !== 'visible') return false;
+    target.focus();
+    return document.activeElement === target;
+  }
+
   function restorePageFocus(target) {
-    if (target && document.contains(target) && !target.disabled && target.focus) {
-      target.focus();
-      return;
-    }
-    var route = target && target.closest ? target.closest('.route') : null;
-    if (!route) { route = document.querySelector('.route.active'); }
-    var fallback = route && route.querySelector(
+    if (focusPageControl(target)) return;
+    // A queued answer can hide the invoker's subview. :not([hidden]) only
+    // checks the control itself, so try rendered controls on the current route
+    // and verify focus landed rather than stopping at a hidden sibling view.
+    var route = document.querySelector('.route.active');
+    if (!route) return;
+    var fallback = route.querySelectorAll(
       'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
-      + 'select:not([hidden]):not(:disabled), [tabindex="0"]');
-    if (fallback) { fallback.focus(); }
+      + 'select:not([hidden]):not(:disabled), textarea:not([hidden]):not(:disabled), '
+      + '[tabindex="0"]');
+    for (var i = 0; i < fallback.length; i += 1) {
+      if (focusPageControl(fallback[i])) return;
+    }
   }
 
   function next() {
