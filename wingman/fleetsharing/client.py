@@ -133,6 +133,11 @@ def _known_errors(path: str, method: str, status: int) -> tuple[str, ...]:
         if method == "PUT" and path == SOURCES_PATH and status == 403:
             codes += ("fleet_read_required",)
         return codes
+    if path == SNAPSHOT_PATH and method == "GET":
+        if status == 503:
+            return ("feature_disabled",)
+        if status == 400:
+            return ("update_required",)
     # Existing publication/catalogue callers keep their coarse classifications.
     # Only explicit update guidance is new on the legacy request-body endpoints.
     if (
@@ -440,9 +445,9 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
-    ) -> tuple[protocol.RemoteRow, ...]:
+    ) -> tuple[protocol.ObservedRemoteRow, ...]:
         return _parse(
-            protocol.parse_snapshot,
+            protocol.parse_observed_snapshot,
             self._send_signed(
                 SNAPSHOT_PATH, "GET", b"", session_id, private_key, revision, now
             ),
@@ -547,10 +552,20 @@ class FleetRelayClient:
             "X-Fleet-Body-SHA256": body_sha256,
             "X-Fleet-Signature": crypto.sign_request(private_key, canonical),
         }
-        return self._send(path, method, body, headers=headers)
+        binding = None
+        if path == SNAPSHOT_PATH and method == "GET":
+            headers["X-Fleet-Snapshot-Format"] = "publication-v1"
+            binding = crypto.snapshot_request_binding(canonical)
+        return self._send(path, method, body, headers=headers, snapshot_binding=binding)
 
     def _send(
-        self, path: str, method: str, body: bytes, *, headers: dict | None
+        self,
+        path: str,
+        method: str,
+        body: bytes,
+        *,
+        headers: dict | None,
+        snapshot_binding: str | None = None,
     ) -> dict:
         request = urllib.request.Request(
             self._origin + path,
@@ -566,6 +581,8 @@ class FleetRelayClient:
         try:
             with self._transport(request, timeout=TIMEOUT_S) as response:
                 status = getattr(response, "status", 200)
+                if status == 200 and snapshot_binding is not None:
+                    _validate_snapshot_headers(response.headers, snapshot_binding)
                 raw = response.read(
                     (bound if status == 200 else MAX_RESPONSE_BYTES) + 1
                 )
@@ -615,6 +632,28 @@ class FleetRelayClient:
                 "Fleet relay response used an unsupported protocol.",
             )
         return parsed
+
+
+def _validate_snapshot_headers(headers, expected_binding: str) -> None:
+    # HTTPMessage.get_all sees repeated raw lines; get() alone silently accepts
+    # the first one. Exact values also reject comma-joined duplicates/whitespace.
+    if headers.get_all("X-Fleet-Snapshot-Format", []) != ["publication-v1"]:
+        raise FleetRelayError(
+            200,
+            "protocol_mismatch",
+            "Fleet relay response used an unsupported snapshot format.",
+        )
+    bindings = headers.get_all("X-Fleet-Request-Binding", [])
+    if (
+        len(bindings) != 1
+        or not re.fullmatch(r"[0-9a-f]{64}", bindings[0])
+        or bindings[0] != expected_binding
+    ):
+        raise FleetRelayError(
+            200,
+            "malformed_response",
+            "Fleet relay response did not match this request.",
+        )
 
 
 def _opaque_session(value: object) -> str:

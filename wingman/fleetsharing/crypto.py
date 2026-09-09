@@ -137,6 +137,15 @@ def canonical_fleet_request(
     return "\n".join(lines).encode("utf-8")
 
 
+def snapshot_request_binding(canonical: bytes) -> str:
+    """Correlate a publication-v1 response with the exact bytes we signed.
+
+    This is not a relay signature: HTTPS and the relay remain trusted. A stale
+    journal restored with its old session must recover/invalidate that session.
+    """
+    return sha256(b"fleet-snapshot-publication-v1\n" + canonical).hexdigest()
+
+
 def sign_request(private_key: bytes, canonical: bytes) -> str:
     """Sign *canonical* and return an unpadded base64url Ed25519 signature.
 

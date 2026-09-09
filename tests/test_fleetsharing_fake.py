@@ -82,8 +82,7 @@ def test_fake_operation_authority_is_not_backfilled(missing, operation):
             signed(client, operation, **arguments(operation))
         assert caught.value.code == (
             "forbidden"
-            if missing == "feature_enabled"
-            and operation in ("publish_snapshot", "read_snapshot")
+            if missing == "feature_enabled" and operation == "publish_snapshot"
             else "feature_disabled"
             if missing == "feature_enabled"
             else "forbidden"

@@ -290,6 +290,13 @@ class RemoteRow:
     age_ms: int
 
 
+@dataclass(frozen=True)
+class ObservedRemoteRow(RemoteRow):
+    """A publication identity is required, never inferred from receipt time."""
+
+    publication_id: str
+
+
 def parse_participation(value: object) -> Participation:
     d = exact_object(value, "enabled generation")
     return Participation(boolean(d["enabled"]), integer(d["generation"]))
@@ -487,6 +494,28 @@ def parse_snapshot(value: object) -> tuple[RemoteRow, ...]:
     return _unique(
         tuple(_remote_row(v) for v in array(d["rows"], MAX_REMOTE_ROWS)), "character_id"
     )
+
+
+def _observed_remote_row(value: object) -> ObservedRemoteRow:
+    d = exact_object(
+        value, "character_id character_name dps ewar state age_ms publication_id"
+    )
+    publication_id = d["publication_id"]
+    if not isinstance(publication_id, str) or not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        publication_id,
+    ):
+        raise _invalid()
+    row = _remote_row({k: v for k, v in d.items() if k != "publication_id"})
+    return ObservedRemoteRow(**asdict(row), publication_id=publication_id)
+
+
+def parse_observed_snapshot(value: object) -> tuple[ObservedRemoteRow, ...]:
+    d = envelope(value, "rows")
+    rows = tuple(_observed_remote_row(v) for v in array(d["rows"], MAX_REMOTE_ROWS))
+    # The relay generates independent IDs per row, not one ID per batch. Reuse
+    # across characters is malformed, not a grouping signal to retain/display.
+    return _unique(_unique(rows, "character_id"), "publication_id")
 
 
 def parse_catalogue(value: object, *, nested: bool = False) -> FleetCatalogue:

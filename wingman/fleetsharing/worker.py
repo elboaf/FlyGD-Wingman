@@ -118,7 +118,7 @@ class SharingStatus:
 
 @dataclass(frozen=True)
 class RemoteEvent:
-    rows: tuple[p.RemoteRow, ...]
+    rows: tuple[p.ObservedRemoteRow, ...]
     receipt_monotonic: float
     request_elapsed: float
     lifecycle_epoch: int

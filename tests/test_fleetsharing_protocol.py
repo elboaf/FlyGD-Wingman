@@ -259,11 +259,14 @@ def test_eligibility_and_snapshot_allow_real_boundaries():
         ("source_id", UUID),
     ],
 )
-def test_remote_row_rejects_hostile_or_inconsistent_data(key, value):
+@pytest.mark.parametrize("observed", [False, True])
+def test_remote_row_rejects_hostile_or_inconsistent_data(key, value, observed):
     from wingman.fleetsharing import protocol as p
 
     with pytest.raises(ValueError):
-        p.parse_snapshot({"protocol": 1, "rows": [{**ROW, key: value}]})
+        parse = p.parse_observed_snapshot if observed else p.parse_snapshot
+        row = {**ROW, "publication_id": UUID} if observed else ROW
+        parse({"protocol": 1, "rows": [{**row, key: value}]})
 
 
 @pytest.mark.parametrize(

@@ -7,6 +7,7 @@ import io
 import json
 import traceback
 import urllib.error
+from uuid import UUID as UUIDValue
 
 import pytest
 from cryptography.exceptions import InvalidSignature
@@ -94,16 +95,16 @@ def signed():
             "read_snapshot",
             "GET",
             "snapshot",
-            {"protocol": 1, "rows": [ROW]},
+            {"protocol": 1, "rows": [{**ROW, "publication_id": UUID}]},
             {},
-            (p.RemoteRow(42, "Alice", 0, (), "live", 0),),
+            (p.ObservedRemoteRow(42, "Alice", 0, (), "live", 0, UUID),),
         ),
     ],
 )
 def test_control_methods_sign_exact_request_and_return_dto(
     name, method, path, payload, kwargs, expected
 ):
-    transport = FakeTransport(payload)
+    transport = FakeTransport(payload, publication=name == "read_snapshot")
     relay = FleetRelayClient(ORIGIN, transport=transport)
     auth = signed()
     assert getattr(relay, name)(**auth, **kwargs) == expected
@@ -535,7 +536,18 @@ def test_nonraising_error_transport_is_still_classified_not_parsed_as_success():
 
 def test_snapshot_has_explicit_larger_byte_bound_and_never_truncates():
     transport = FakeTransport(
-        {"protocol": 1, "rows": [{**ROW, "character_id": i + 1} for i in range(700)]}
+        {
+            "protocol": 1,
+            "rows": [
+                {
+                    **ROW,
+                    "character_id": i + 1,
+                    "publication_id": str(UUIDValue(int=i, version=4)),
+                }
+                for i in range(700)
+            ],
+        },
+        publication=True,
     )
     assert len(transport.body) > 65536
     relay = FleetRelayClient(ORIGIN, transport=transport)
@@ -544,6 +556,7 @@ def test_snapshot_has_explicit_larger_byte_bound_and_never_truncates():
     with pytest.raises(FleetRelayError) as exc:
         relay.read_snapshot(**signed())
     assert exc.value.code == "malformed_response"
+    transport.publication = False
     transport.body = json.dumps(DEVICE).encode() + b" " * 65536
     with pytest.raises(FleetRelayError):
         relay.fetch_device(**signed())

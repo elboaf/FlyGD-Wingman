@@ -115,7 +115,7 @@ class FakeRelayClient:
         self.controls = []
         self.participation_calls = []
         self.source_views = {}
-        self.remote = (p.RemoteRow(2, "Bob", 20, (), "live", 400),)
+        self.remote = (p.ObservedRemoteRow(2, "Bob", 20, (), "live", 400, UUID),)
         self.withdrawal_completed = False
         self.challenge = None
         self.recovery_result = "reconnected"
@@ -208,7 +208,7 @@ class FakeRelayClient:
             # has no legacy own-fleet evidence; only empty withdrawal can succeed.
             if operation == "publish_snapshot" and not args["rows"]:
                 return
-            legacy = operation in ("publish_snapshot", "read_snapshot")
+            legacy = operation == "publish_snapshot"
             raise FleetRelayError(
                 403 if legacy else 503,
                 "forbidden" if legacy else "feature_disabled",
