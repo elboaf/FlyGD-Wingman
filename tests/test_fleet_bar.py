@@ -107,6 +107,7 @@ def api(tmp_path):
         "hidden": [],
     }
     built._fleetbar_window = FleetWindow()
+    built._fleetbar_page_id = "a" * 64
     built._fleetbar_ready = True
     return built
 
@@ -252,6 +253,7 @@ def test_toggle_persists_reconciles_and_creates_the_window(tmp_path, monkeypatch
     def fake_create(inner, hidden=True):
         created.append(hidden)
         inner._fleetbar_window = FleetWindow()
+        inner._fleetbar_page_id = PAGE_A
         inner._fleetbar_window.hidden = hidden
         return inner._fleetbar_window
 
@@ -264,7 +266,7 @@ def test_toggle_persists_reconciles_and_creates_the_window(tmp_path, monkeypatch
     assert telemetry.reconciled == 1
     assert created == [True]
     assert api._fleetbar_window.hidden is True
-    api.fleet_bar_ready()
+    api.fleet_bar_ready(api._fleetbar_page_id)
     assert api._fleetbar_window.hidden is False
 
 
@@ -281,6 +283,7 @@ def test_concurrent_enable_requests_create_only_one_window(tmp_path, monkeypatch
         entered.set()
         assert release.wait(5)
         inner._fleetbar_window = FleetWindow()
+        inner._fleetbar_page_id = PAGE_A
         return inner._fleetbar_window
 
     monkeypatch.setattr(fleetbar, "create", blocking_create)
@@ -448,7 +451,7 @@ def test_page_readiness_survives_disable_during_boot(api):
     api._fleetbar_window.hidden = True
     api._fleetbar_ready = False
 
-    api.fleet_bar_ready()
+    api.fleet_bar_ready(api._fleetbar_page_id)
     assert api._fleetbar_ready is True
     assert api._fleetbar_window.hidden is True
 
@@ -519,7 +522,7 @@ def test_fleet_page_source_rejects_stale_revision_and_all_hidden_copy():
 
 
 def test_fleet_page_rejects_invalid_hydration_without_erasing_newer_state():
-    """No DOM harness exists, so pin the guard before any DOM mutation."""
+    """Keep the lexical guard alongside the executable Fleet runtime harness."""
     from wingman.ui import window as window_mod
 
     js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
@@ -775,7 +778,10 @@ def test_hide_filters_only_fleet_payload(api):
     result = api.set_fleet_bar_character_visible("Alice", False)
 
     assert result["applied"] is True
-    assert "Alice" not in [row["character"] for row in api.fleet_bar_snapshot()["rows"]]
+    assert "Alice" not in [
+        row["character"]
+        for row in api.fleet_bar_snapshot(api._fleetbar_page_id)["rows"]
+    ]
     assert api._state.settings["preview"].get("excluded", []) == []
 
 
@@ -899,9 +905,9 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
     )
 
     api.set_fleet_bar_character_visible("Alice", False)
-    hidden = api.fleet_bar_snapshot()
+    hidden = api.fleet_bar_snapshot(api._fleetbar_page_id)
     api.set_fleet_bar_character_visible("Alice", True)
-    restored = api.fleet_bar_snapshot()
+    restored = api.fleet_bar_snapshot(api._fleetbar_page_id)
 
     assert hidden["rows"] == []
     assert hidden["running_count"] == 1
@@ -920,11 +926,11 @@ def test_fleet_payload_revision_increases_after_lifecycle_transition(api):
             activation_generation=1,
         )
     )
-    older = api.fleet_bar_snapshot()
+    older = api.fleet_bar_snapshot(api._fleetbar_page_id)
     older_settings = api.fleet_bar_settings()
 
     api._install_fleet_generation(2)
-    newer = api.fleet_bar_snapshot()
+    newer = api.fleet_bar_snapshot(api._fleetbar_page_id)
     newer_settings = api.fleet_bar_settings()
 
     assert older["revision"] < newer["revision"]
@@ -982,6 +988,7 @@ def test_restore_creates_once_and_page_ready_reveals(api, monkeypatch):
     def fake_create(inner, hidden=True):
         created.append(hidden)
         inner._fleetbar_window = FleetWindow()
+        inner._fleetbar_page_id = PAGE_A
         inner._fleetbar_window.hidden = hidden
         return inner._fleetbar_window
 
@@ -989,7 +996,7 @@ def test_restore_creates_once_and_page_ready_reveals(api, monkeypatch):
 
     fleetbar.restore(api)
     fleetbar.restore(api)
-    api.fleet_bar_ready()
+    api.fleet_bar_ready(api._fleetbar_page_id)
 
     assert created == [True]
     assert api._fleetbar_window.hidden is False
@@ -998,20 +1005,20 @@ def test_restore_creates_once_and_page_ready_reveals(api, monkeypatch):
 def test_fit_does_not_resurrect_a_disabled_window(api):
     api._state.settings.setdefault("fleet_bar", {})["enabled"] = False
 
-    api.fit_fleet_bar(380, 112)
+    api.fit_fleet_bar(api._fleetbar_page_id, 380, 112)
 
     assert api._fleetbar_window.resized == []
 
 
 def test_save_position_and_fit_ignore_invalid_values(api):
-    api.save_fleet_bar_pos(25, -40)
+    api.save_fleet_bar_pos(api._fleetbar_page_id, 25, -40)
     assert api._state.settings["fleet_bar"]["x"] == 25
     assert api._state.settings["fleet_bar"]["y"] == -40
 
     api._state.settings["fleet_bar"]["enabled"] = True
-    api.fit_fleet_bar(380, 112)
-    api.fit_fleet_bar(0, "bad")
-    api.move_fleet_bar(30, 45)
+    api.fit_fleet_bar(api._fleetbar_page_id, 380, 112)
+    api.fit_fleet_bar(api._fleetbar_page_id, 0, "bad")
+    api.move_fleet_bar(api._fleetbar_page_id, 30, 45)
     assert api._fleetbar_window.resized == [(380, 112)]
     assert api._fleetbar_window.moved == [(30, 45)]
     assert api._state.settings["fleet_bar"]["x"] == 30
@@ -1046,7 +1053,10 @@ def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monke
     assert kwargs["focus"] is False
     assert kwargs["hidden"] is True
     assert kwargs["min_size"] == (1, 1)
-    assert calls["url"].endswith("fleetbar.html")
+    page, fragment = calls["url"].split("#")
+    assert page.endswith("fleetbar.html")
+    assert fragment == "fleet-page=" + api._fleetbar_page_id
+    assert re.fullmatch(r"[0-9a-f]{64}", api._fleetbar_page_id)
     assert styled == [api._fleetbar_window]
 
 
@@ -1133,7 +1143,437 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     assert "Waiting for EVE clients" in html
     assert "flex: none" in html  # overrides title-bar drag-region geometry
     assert "shell.offsetHeight" in js  # content can shrink with the roster
-    assert "fleet_bar_ready" in js  # hidden until initial render and fit complete
+    assert "fleet_bar_ready" in js  # best-effort render/fit precedes explicit reveal
     assert "screen.availLeft" in js and "move_fleet_bar" in js
     assert "unavailable ? row.log_status" in js  # NO LOG belongs under EWAR
     assert "SCRAM" not in js  # rendered from telemetry, never guessed here
+
+
+PAGE_A = "a" * 64
+PAGE_B = "b" * 64
+PAGE_CALLBACKS = [
+    ("fleet_bar_snapshot", ()),
+    ("fit_fleet_bar", (380, 112)),
+    ("move_fleet_bar", (30, 45)),
+    ("save_fleet_bar_pos", (25, -40)),
+    ("fleet_bar_ready", ()),
+]
+
+
+def _page_call(api, method, page_id, *args):
+    """Replay the same behavior on the pre-protocol base, not an arity failure.
+
+    The separate bridge signature guard requires the new interface. Only this
+    test adapter may omit identity when replaying against the old implementation.
+    """
+    call = getattr(api, method)
+    if "page_id" in inspect.signature(call).parameters:
+        return call(page_id, *args)
+    return call(*args)
+
+
+@pytest.mark.parametrize("method,args", PAGE_CALLBACKS)
+@pytest.mark.parametrize(
+    "identity",
+    [
+        None,
+        True,
+        12,
+        [],
+        {},
+        "",
+        "a" * 63,
+        "a" * 65,
+        "A" * 64,
+        "g" * 64,
+        PAGE_A + "\n",
+        " " + PAGE_A,
+        PAGE_B,
+    ],
+)
+def test_page_identity_rejects_invalid_or_stale_callbacks(
+    api, monkeypatch, method, args, identity
+):
+    """Removing admission lets predecessor reads/geometry/ready/save reach B."""
+    from wingman.ui import api as api_mod
+
+    api._state.settings["fleet_bar"]["enabled"] = True
+    api._fleetbar_ready = False
+    bar = api._fleetbar_window
+    bar.hidden = True
+    saves, queued = [], []
+    monkeypatch.setattr(
+        api_mod.settings_mod, "update_section", lambda *a: saves.append(a)
+    )
+    monkeypatch.setattr(
+        api, "_queue_fleet_presentation", lambda **kw: queued.append(kw)
+    )
+
+    result = _page_call(api, method, identity, *args)
+
+    assert result is None
+    assert bar.resized == [] and bar.moved == [] and bar.hidden
+    assert not api._fleetbar_ready
+    assert saves == [] and queued == []
+
+
+@pytest.mark.parametrize("method,args", PAGE_CALLBACKS)
+def test_page_identity_rejects_omitted_token(api, method, args):
+    """Old no-token calls remain callable only to refuse, never as a fallback."""
+    before = dict(api._state.settings["fleet_bar"])
+    api._fleetbar_ready = False
+    result = getattr(api, method)(*args)
+    assert result is None
+    assert api._state.settings["fleet_bar"] == before
+    assert not api._fleetbar_ready
+    assert api._fleetbar_window.resized == api._fleetbar_window.moved == []
+
+
+@pytest.mark.parametrize("method,args", PAGE_CALLBACKS)
+@pytest.mark.parametrize("retired", ["dead", "absent", "quitting", "tokenless"])
+def test_page_identity_rejects_retired_window(api, method, args, retired):
+    before = dict(api._state.settings["fleet_bar"])
+    api._fleetbar_ready = False
+    bar = api._fleetbar_window
+    bar.hidden = True
+    if retired == "dead":
+        bar.alive = False
+    elif retired == "absent":
+        api._fleetbar_window = None
+    elif retired == "quitting":
+        api._fleetbar_quitting = True
+    else:
+        api._fleetbar_page_id = None
+    assert _page_call(api, method, PAGE_A, *args) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert not api._fleetbar_ready
+    assert bar.resized == bar.moved == [] and bar.hidden
+
+
+@pytest.mark.parametrize("interruption", ["replacement", "disable", "shutdown"])
+def test_page_identity_fit_never_retargets_after_retry(api, monkeypatch, interruption):
+    from wingman.ui import api as api_mod
+
+    api._state.settings["fleet_bar"]["enabled"] = True
+    bar = api._fleetbar_window
+    bar.resize = lambda w, h: bar.resized.append((w, h))  # size never sticks
+    replacement = FleetWindow()
+    sleeps = []
+
+    def pause(seconds):
+        # Another thread must be able to own lifecycle during the retry gap.
+        def interrupt():
+            with api._fleetbar_lifecycle_lock, api._fleet_presentation_lock:
+                if interruption == "replacement":
+                    api._fleetbar_window = replacement
+                    api._fleetbar_page_id = PAGE_B
+                elif interruption == "disable":
+                    api._state.settings["fleet_bar"]["enabled"] = False
+                else:
+                    api._fleetbar_quitting = True
+
+        thread = threading.Thread(target=interrupt)
+        thread.start()
+        thread.join(5)
+        assert not thread.is_alive(), "fit slept while holding lifecycle"
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(api_mod.time, "sleep", pause)
+    assert _page_call(api, "fit_fleet_bar", PAGE_A, 380, 112) is None
+    assert bar.resized == [(380, 112)]
+    assert replacement.resized == []
+    assert sleeps == [0.25]
+
+
+def test_page_identity_disabled_ready_and_reenable_reuse(api, monkeypatch):
+    from wingman.ui import fleetbar
+
+    bar = api._fleetbar_window
+    bar.hidden = True
+    api._fleetbar_ready = False
+    monkeypatch.setattr(fleetbar, "create", lambda *a, **kw: pytest.fail("must reuse"))
+    assert isinstance(_page_call(api, "fleet_bar_snapshot", PAGE_A), dict)
+    _page_call(api, "save_fleet_bar_pos", PAGE_A, 25, -40)
+    assert (
+        api._state.settings["fleet_bar"]["x"],
+        api._state.settings["fleet_bar"]["y"],
+    ) == (25, -40)
+    _page_call(api, "fit_fleet_bar", PAGE_A, 380, 112)
+    _page_call(api, "move_fleet_bar", PAGE_A, 30, 45)
+    assert bar.resized == bar.moved == []
+    _page_call(api, "fleet_bar_ready", PAGE_A)
+    assert api._fleetbar_ready and bar.hidden
+    assert api.toggle_fleet_bar(True)["applied"]
+    assert api._fleetbar_window is bar and api._fleetbar_page_id == PAGE_A
+    assert not bar.hidden and api._fleetbar_ready
+    assert api.toggle_fleet_bar(False)["applied"]
+    assert api._fleetbar_page_id == PAGE_A and api._fleetbar_ready
+
+
+@pytest.mark.parametrize("route", ["toggle", "restore"])
+def test_page_identity_creation_publishes_only_after_style(api, monkeypatch, route):
+    from wingman.ui import fleetbar
+
+    old = api._fleetbar_window
+    old.alive = False
+    api._state.settings["fleet_bar"]["enabled"] = route == "restore"
+    candidate = FleetWindow()
+    candidate.hidden = True
+    candidate.destroy = lambda: None
+    observations, early = [], []
+    token = []
+    callbacks = []
+    started = threading.Event()
+
+    def create_window(title, url, **kwargs):
+        token.append(url.partition("#fleet-page=")[2] or PAGE_B)
+        observations.append(
+            (api._fleetbar_window, api._fleetbar_page_id, api._fleetbar_ready)
+        )
+        return candidate
+
+    def style(bar):
+        assert bar is candidate
+        # The telemetry worker can still take its short lock during native work.
+        free = threading.Event()
+
+        def probe():
+            with api._fleet_presentation_lock:
+                free.set()
+
+        probe_thread = threading.Thread(target=probe)
+        probe_thread.start()
+        assert free.wait(5)
+        probe_thread.join(5)
+        observations.append(
+            (api._fleetbar_window, api._fleetbar_page_id, api._fleetbar_ready)
+        )
+        for method, args in PAGE_CALLBACKS:
+            early.append(_page_call(api, method, token[0], *args))
+
+        def callback():
+            started.set()
+            callbacks.append(_page_call(api, "fleet_bar_snapshot", token[0]))
+
+        thread = threading.Thread(target=callback)
+        thread.start()
+        assert started.wait(5)
+        threads.append(thread)
+
+    threads = []
+    monkeypatch.setitem(
+        sys.modules, "webview", SimpleNamespace(create_window=create_window)
+    )
+    monkeypatch.setattr(fleetbar.sys, "platform", "win32")
+    monkeypatch.setattr(fleetbar.sigbar_mod, "_apply_tool_style", style)
+    if route == "toggle":
+        assert api.toggle_fleet_bar(True)["applied"]
+    else:
+        fleetbar.restore(api)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+    assert observations == [(None, None, False), (None, None, False)]
+    assert early == [None] * 5
+    assert len(callbacks) == 1 and isinstance(callbacks[0], dict)
+    assert api._fleetbar_window is candidate
+    assert re.fullmatch(r"[0-9a-f]{64}", api._fleetbar_page_id)
+    assert api._fleetbar_page_id == token[0] != PAGE_A
+    assert not api._fleetbar_ready and candidate.hidden
+    assert candidate.resized == candidate.moved == []
+
+
+@pytest.mark.parametrize("route", ["toggle", "restore"])
+@pytest.mark.parametrize("failure", ["none", "style", "publication"])
+@pytest.mark.parametrize("cleanup_fails,rollback_fails", [(False, False), (True, True)])
+def test_page_identity_creation_failure_retires_before_cleanup(
+    api, monkeypatch, route, failure, cleanup_fails, rollback_fails
+):
+    from wingman.ui import api as api_mod
+    from wingman.ui import fleetbar
+
+    api._fleetbar_window.alive = False
+    api._state.settings["fleet_bar"]["enabled"] = route == "restore"
+    candidate = FleetWindow()
+    cleaned, created, early = [], [], []
+    queued, threads = [], []
+    attempt_failed = False
+    original_update = api_mod.settings_mod.update_section
+
+    def update(doc, section, values):
+        if rollback_fails and attempt_failed and values == {"enabled": False}:
+            raise OSError("rollback failed")
+        return original_update(doc, section, values)
+
+    def destroy():
+        cleaned.append(
+            (api._fleetbar_window, api._fleetbar_page_id, api._fleetbar_ready)
+        )
+        if cleanup_fails:
+            raise RuntimeError("cleanup failed")
+        candidate.alive = False
+
+    candidate.destroy = destroy
+
+    def create_window(title, url, **kwargs):
+        nonlocal attempt_failed
+        created.append(url.partition("#fleet-page=")[2] or PAGE_B)
+        started = threading.Event()
+
+        def callback():
+            started.set()
+            queued.append(_page_call(api, "fleet_bar_snapshot", created[0]))
+
+        thread = threading.Thread(target=callback)
+        threads.append(thread)
+        thread.start()
+        assert started.wait(5)
+        if failure == "none":
+            attempt_failed = True
+            return None
+        return candidate
+
+    def style(bar):
+        nonlocal attempt_failed
+        if failure == "style":
+            attempt_failed = True
+            raise RuntimeError("style failed")
+
+    def fail_publish(bar, page_id):
+        nonlocal attempt_failed
+        # Simulate a publication fault after an assignment; cleanup must revoke it.
+        api._fleetbar_window = bar
+        api._fleetbar_page_id = page_id
+        attempt_failed = True
+        raise RuntimeError("publication failed")
+
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", update)
+    monkeypatch.setitem(
+        sys.modules, "webview", SimpleNamespace(create_window=create_window)
+    )
+    monkeypatch.setattr(fleetbar.sys, "platform", "win32")
+    monkeypatch.setattr(fleetbar.sigbar_mod, "_apply_tool_style", style)
+    if failure == "publication":
+        monkeypatch.setattr(
+            api, "_publish_fleet_page_locked", fail_publish, raising=False
+        )
+    if route == "toggle":
+        result = api.toggle_fleet_bar(True)
+        assert not result["applied"]
+    else:
+        fleetbar.restore(api)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+    assert queued == [None]
+    for method, args in PAGE_CALLBACKS:
+        early.append(_page_call(api, method, created[0], *args))
+    assert api._fleetbar_window is None and api._fleetbar_page_id is None
+    assert not api._fleetbar_ready and early == [None] * 5
+    assert cleaned == ([] if failure == "none" else [(None, None, False)])
+    assert api._state.settings["fleet_bar"]["enabled"] is rollback_fails
+
+
+@pytest.mark.parametrize("method,args", PAGE_CALLBACKS)
+def test_page_identity_real_replacement_rejects_predecessor(
+    api, monkeypatch, method, args
+):
+    from wingman.ui import fleetbar
+
+    api._fleetbar_window.alive = False
+    first, second = FleetWindow(), FleetWindow()
+    first.hidden = second.hidden = True
+    windows = iter([first, second])
+    urls = []
+
+    def create_window(title, url, **kwargs):
+        urls.append(url)
+        return next(windows)
+
+    monkeypatch.setitem(
+        sys.modules, "webview", SimpleNamespace(create_window=create_window)
+    )
+    monkeypatch.setattr(fleetbar.sigbar_mod, "_apply_tool_style", lambda bar: None)
+    assert api.toggle_fleet_bar(True)["applied"]
+    first_token = urls[0].partition("#fleet-page=")[2] or PAGE_A
+    first.alive = False
+    assert api.toggle_fleet_bar(True)["applied"]
+    second_token = urls[1].partition("#fleet-page=")[2] or PAGE_B
+    before = dict(api._state.settings["fleet_bar"])
+
+    assert _page_call(api, method, first_token, *args) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert first.resized == first.moved == second.resized == second.moved == []
+    assert second.hidden and not api._fleetbar_ready
+    assert first_token != second_token == api._fleetbar_page_id
+    # The successor still owns the same endpoint; rejection did not strand boot.
+    result = _page_call(api, method, second_token, *args)
+    if method == "fleet_bar_snapshot":
+        assert isinstance(result, dict)
+    elif method == "fit_fleet_bar":
+        assert second.resized == [(380, 112)]
+    elif method == "move_fleet_bar":
+        assert second.moved == [(30, 45)]
+    elif method == "save_fleet_bar_pos":
+        assert api._state.settings["fleet_bar"]["x"] == 25
+    else:
+        assert not second.hidden and api._fleetbar_ready
+
+
+def test_page_identity_entered_move_and_save_finish_before_retirement(api, monkeypatch):
+    from wingman.ui import api as api_mod
+
+    api._state.settings["fleet_bar"]["enabled"] = True
+    entered, release, stopping, stopped = (threading.Event() for _ in range(4))
+    order, errors = [], []
+    original_update = api_mod.settings_mod.update_section
+
+    def move(x, y):
+        entered.set()
+        assert release.wait(5)
+        order.append("move")
+
+    api._fleetbar_window.move = move
+
+    def update(*args, **kwargs):
+        result = original_update(*args, **kwargs)
+        assert api._fleetbar_page_id == PAGE_A
+        order.append("save")
+        return result
+
+    def detach():
+        assert api._fleetbar_page_id is None
+        assert (
+            api._state.settings["fleet_bar"]["x"],
+            api._state.settings["fleet_bar"]["y"],
+        ) == (30, 45)
+        order.append("detach")
+
+    api._fleet_unsubscribe = detach
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", update)
+
+    def moving():
+        try:
+            _page_call(api, "move_fleet_bar", PAGE_A, 30, 45)
+        except Exception as exc:  # noqa: BLE001 -- assert worker failures on the parent thread instead of losing them in a thread warning.
+            errors.append(exc)
+
+    def stop():
+        stopping.set()
+        api._stop_fleet_presentation()
+        stopped.set()
+
+    mover, stopper = threading.Thread(target=moving), threading.Thread(target=stop)
+    mover.start()
+    assert entered.wait(5)
+    stopper.start()
+    assert stopping.wait(5)
+    try:
+        assert api._fleetbar_page_id == PAGE_A and not stopped.is_set()
+    finally:
+        release.set()
+        mover.join(5)
+        stopper.join(5)
+    assert not mover.is_alive() and not stopper.is_alive() and not errors
+    assert order == ["move", "save", "detach"]
+    assert api._fleetbar_page_id is None

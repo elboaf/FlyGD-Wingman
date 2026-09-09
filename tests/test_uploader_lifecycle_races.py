@@ -1,16 +1,20 @@
 """Lane E: real rows/controller, with only scanning and worker timing controlled."""
 
+import datetime
+import json
 import os
 import queue
 import threading
+import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
 
 import pytest
 
 from tests import fakes
-from wingman import durations, library, links, uploader
+from wingman import combatlog, discord, durations, library, links, uploader
 from wingman.ui.rows import RowSnapshot
+from wingman.upload.controller import UploadJob
 
 
 class DeferredWorker:
@@ -460,6 +464,814 @@ def test_late_background_verdict_cannot_overwrite_definitive_cache(rig, monkeypa
     assert durations.load(controller._durations_file)[str(info.path)].duration == 90.0
     api.list_rows()
     assert rows.rows()[0]["duration"] == library.format_duration(90.0)
+
+
+def log_posts(rig, monkeypatch):
+    """Real log/archive pipeline, with only the final network effect replaced."""
+    api, _controller, _rows, folder, _loops, _workers, _sent = rig
+    end = datetime.datetime(2026, 9, 8, 12, 0, tzinfo=datetime.UTC)
+    os.utime(folder / "old.mkv", (end.timestamp(), end.timestamp()))
+    logs = folder.parent / "Gamelogs"
+    logs.mkdir()
+    log = logs / "20260908_115800_123.txt"
+    log.write_bytes(
+        b"  Gamelog\r\n  Listener: Pilot\r\n"
+        b"  Session Started: 2026.09.08 11:58:00\r\n"
+        b"[ 2026.09.08 11:59:55 ] (combat) hit\r\n"
+    )
+    os.utime(log, (end.timestamp(), end.timestamp()))
+    api._state.settings.update(
+        discord_webhook="https://discord.com/api/webhooks/123/test-token",
+        gamelogs_dir=str(logs),
+    )
+    posts = []
+
+    def post(hook, path, content):
+        # Observe the real archive at the network boundary, before success
+        # removes it. No log-selection or archive-building stubs hide failures.
+        with zipfile.ZipFile(path) as archive:
+            posts.append(json.loads(archive.read(combatlog.MANIFEST_NAME)))
+        return discord.PostResult(ok=True, message="Posted combat logs.")
+
+    monkeypatch.setattr(discord, "post_archive", post)
+    return end, posts
+
+
+@pytest.mark.parametrize(
+    "refresh,first,background,foreground,changed,want_capture,want_current,want_cell,want_start",
+    [
+        pytest.param(
+            False,
+            "background",
+            (12.5, True),
+            (90.0, True),
+            None,
+            12.5,
+            12.5,
+            "0:12",
+            "11:59:47.500000",
+            id="same-row-control",
+        ),
+        pytest.param(
+            True,
+            "background",
+            (12.5, True),
+            (90.0, True),
+            None,
+            12.5,
+            12.5,
+            "0:12",
+            "11:59:47.500000",
+            id="replacement-background-first",
+        ),
+        pytest.param(
+            True,
+            "foreground",
+            (12.5, True),
+            (90.0, True),
+            None,
+            90.0,
+            90.0,
+            "1:30",
+            "11:58:30",
+            id="replacement-foreground-first",
+        ),
+        pytest.param(
+            True,
+            "background",
+            (None, True),
+            (90.0, True),
+            None,
+            None,
+            None,
+            "?",
+            None,
+            id="replacement-definitive-none",
+        ),
+        pytest.param(
+            True,
+            "background",
+            (None, False),
+            (90.0, True),
+            None,
+            90.0,
+            90.0,
+            "1:30",
+            "11:58:30",
+            id="replacement-no-verdict",
+        ),
+        pytest.param(
+            True,
+            "background",
+            (12.5, True),
+            (None, False),
+            None,
+            12.5,
+            12.5,
+            "0:12",
+            "11:59:47.500000",
+            id="replacement-late-no-verdict",
+        ),
+        pytest.param(
+            True,
+            "background",
+            (12.5, True),
+            (90.0, True),
+            "size",
+            90.0,
+            12.5,
+            "0:12",
+            "11:58:30",
+            id="reused-path-changed-size",
+        ),
+        pytest.param(
+            True,
+            "background",
+            (12.5, True),
+            (90.0, True),
+            "mtime",
+            90.0,
+            12.5,
+            "0:12",
+            "11:58:30",
+            id="reused-path-changed-mtime",
+        ),
+    ],
+)
+def test_captured_log_duration_agrees_with_replacement_and_disk(
+    rig,
+    monkeypatch,
+    refresh,
+    first,
+    background,
+    foreground,
+    changed,
+    want_capture,
+    want_current,
+    want_cell,
+    want_start,
+):
+    """First definitive answer wins for the SAME recording, not a reused path."""
+    api, controller, rows, folder, loops, workers, sent = rig
+    end, posts = log_posts(rig, monkeypatch)
+    recording = folder / "old.mkv"
+    controller._probe = lambda *args: background
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    job = UploadJob(
+        items=[captured],
+        ids=[rid],
+        title="Fight",
+        description="",
+        stitch=False,
+        privacy="unlisted",
+        category="20",
+        logs=True,
+    )
+    entered, release = threading.Event(), threading.Event()
+
+    def foreground_probe(path, binary):
+        # Model a probe of the captured file whose completion is delayed,
+        # not a probe of the replacement bytes written below.
+        stat = path.stat()
+        assert (path, stat.st_size, stat.st_mtime) == (
+            captured.path,
+            captured.size,
+            captured.mtime,
+        )
+        entered.set()
+        assert release.wait(5)
+        return foreground
+
+    monkeypatch.setattr(library, "probe", foreground_probe)
+    with running(
+        lambda: controller._post_combat_logs(job, 'Uploaded "Fight" to YouTube')
+    ):
+        try:
+            assert entered.wait(5)
+            if changed == "size":
+                recording.write_bytes(b"replacement recording with a different size")
+                os.utime(recording, (end.timestamp(), end.timestamp()))
+            elif changed == "mtime":
+                os.utime(recording, (end.timestamp() + 60, end.timestamp() + 60))
+            if refresh:
+                api.list_rows()
+                assert rows.resolve(rid) is None
+                assert rows.resolve(rows.rows()[0]["id"]) is not captured
+            # Queue the background result before either order is accepted;
+            # the real drain decides whether it may supersede the foreground.
+            workers[-1].target()
+            if first == "background":
+                loops[-1].callback()
+        finally:
+            release.set()
+    if first == "foreground":
+        loops[-1].callback()
+
+    current_row = rows.rows()[0]
+    current = rows.resolve(current_row["id"])
+    stored = durations.load(controller._durations_file)
+    statuses = fakes.payloads(sent, "onStatus")
+    observed = {
+        "captured": (captured.duration, captured.probed, captured.answered),
+        "current": (current.duration, current.probed, current.answered),
+        "rendered": current_row["duration"],
+        "disk_captured": durations.lookup(
+            stored, captured.path, captured.size, captured.mtime
+        ),
+        "disk_current": durations.lookup(
+            stored, current.path, current.size, current.mtime
+        ),
+        "post_count": len(posts),
+        "post_windows": [(p["window_start"], p["window_end"]) for p in posts],
+        "posted_files": [p["files"] for p in posts],
+        "skipped": any("Combat logs skipped" in p["text"] for p in statuses),
+    }
+    expected = {
+        "captured": (want_capture, True, True),
+        "current": (want_current, True, True),
+        "rendered": want_cell,
+        # One cache slot per path: an old job may resolve itself, but must
+        # not evict the accepted verdict for a replacement file's identity.
+        "disk_captured": (False, None) if changed else (True, want_capture),
+        "disk_current": (True, want_current),
+        "post_count": 0 if want_start is None else 1,
+        "post_windows": []
+        if want_start is None
+        else [(f"2026-09-08T{want_start}+00:00", "2026-09-08T12:00:00+00:00")],
+        "posted_files": [] if want_start is None else [["20260908_115800_123.txt"]],
+        "skipped": want_start is None,
+    }
+    assert observed == expected, f"Joint duration outcome: {observed!r}"
+
+
+def pause_foreground(monkeypatch, verdict=(90.0, True)):
+    entered, release = threading.Event(), threading.Event()
+
+    def probe(path, binary):
+        entered.set()
+        assert release.wait(5)
+        return verdict
+
+    monkeypatch.setattr(library, "probe", probe)
+    return entered, release
+
+
+def duration_state(info):
+    return info.duration, info.probed, info.answered
+
+
+def disk_duration(controller, info):
+    return durations.lookup(
+        durations.load(controller._durations_file), info.path, info.size, info.mtime
+    )
+
+
+@pytest.mark.parametrize("changed", ["size", "mtime"])
+def test_old_duration_cannot_fill_unmeasured_replacement_slot(
+    rig, monkeypatch, changed
+):
+    api, controller, rows, folder, loops, workers, _sent = rig
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    entered, release = pause_foreground(monkeypatch)
+    with running(lambda: controller._probe_now([(rid, captured)])):
+        try:
+            assert entered.wait(5)
+            path = folder / "old.mkv"
+            if changed == "size":
+                path.write_bytes(b"replacement with a different size")
+                os.utime(path, (captured.mtime, captured.mtime))
+            else:
+                os.utime(path, (captured.mtime + 60, captured.mtime + 60))
+            api.list_rows()
+        finally:
+            release.set()
+    current = rows.resolve(rows.rows()[0]["id"])
+    before = (
+        duration_state(captured),
+        duration_state(current),
+        rows.rows()[0]["duration"],
+        disk_duration(controller, captured),
+        disk_duration(controller, current),
+    )
+    workers[-1].target()
+    loops[-1].callback()
+    after = (
+        duration_state(captured),
+        duration_state(current),
+        rows.rows()[0]["duration"],
+        disk_duration(controller, captured),
+        disk_duration(controller, current),
+    )
+    assert (before, after) == (
+        ((90.0, True, True), (None, False, True), "…", (False, None), (False, None)),
+        ((90.0, True, True), (12.5, True, True), "0:12", (False, None), (True, 12.5)),
+    )
+
+
+@pytest.mark.parametrize("first", ["background", "foreground"])
+def test_duration_follows_rename_without_inheriting_reused_path(
+    rig, monkeypatch, first
+):
+    api, controller, rows, folder, loops, workers, sent = rig
+    api.list_rows()
+    old_id = rows.rows()[0]["id"]
+    captured = rows.resolve(old_id)
+    entered, release = pause_foreground(monkeypatch)
+    with running(lambda: controller._probe_now([(old_id, captured)])):
+        try:
+            assert entered.wait(5)
+            api.list_rows()
+            assert api.rename_recording(rows.rows()[0]["id"], "renamed")["ok"]
+            # Identical metadata at the old name must not undo the real rename
+            # transition that has already repointed the retained capture.
+            reused = folder / "old.mkv"
+            reused.write_bytes(b"x" * captured.size)
+            os.utime(reused, (captured.mtime, captured.mtime))
+            controller._probe = lambda path, binary: (
+                30.0 if path == reused else 12.5,
+                True,
+            )
+            api.list_rows()
+            workers[-1].target()
+            if first == "background":
+                loops[-1].callback()
+        finally:
+            release.set()
+    if first == "foreground":
+        loops[-1].callback()
+    wanted = 12.5 if first == "background" else 90.0
+    cells = {row["name"]: row["duration"] for row in rows.rows()}
+    infos = {
+        info.path.name: info
+        for info in rows.resolve_many([r["id"] for r in rows.rows()])
+    }
+    assert {
+        "capture": (captured.path.name, duration_state(captured)),
+        "current": {name: duration_state(info) for name, info in infos.items()},
+        "cells": cells,
+        "disk": {name: disk_duration(controller, info) for name, info in infos.items()},
+        "stale_event": any(
+            p["id"] == old_id for p in fakes.payloads(sent, "onDuration")
+        ),
+    } == {
+        "capture": ("renamed.mkv", (wanted, True, True)),
+        "current": {"renamed.mkv": (wanted, True, True), "old.mkv": (30.0, True, True)},
+        "cells": {
+            "renamed.mkv": "0:12" if first == "background" else "1:30",
+            "old.mkv": "0:30",
+        },
+        "disk": {"renamed.mkv": (True, wanted), "old.mkv": (True, 30.0)},
+        "stale_event": False,
+    }
+
+
+@pytest.mark.parametrize("conflicting_slot", [False, True])
+@pytest.mark.parametrize("verdict", [(90.0, True), (None, True), (None, False)])
+def test_detached_duration_resolves_without_evicting_conflicting_slot(
+    rig, monkeypatch, tmp_path, conflicting_slot, verdict
+):
+    api, controller, rows, _folder, loops, workers, sent = rig
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    entered, release = pause_foreground(monkeypatch, verdict)
+    with running(lambda: controller._probe_now([(rid, captured)])):
+        try:
+            assert entered.wait(5)
+            if conflicting_slot:
+                captured.path.write_bytes(b"a different recording")
+                api.list_rows()
+                replacement = rows.resolve(rows.rows()[0]["id"])
+                workers[-1].target()
+                loops[-1].callback()
+            other = tmp_path / "other"
+            other.mkdir()
+            assert api.set_folder("recording", str(other))["applied"]
+            sent.clear()
+        finally:
+            release.set()
+    duration, definitive = verdict
+    assert {
+        "capture": duration_state(captured),
+        "rows": rows.rows(),
+        "disk_old": disk_duration(controller, captured),
+        "disk_replacement": disk_duration(controller, replacement)
+        if conflicting_slot
+        else None,
+        "events": fakes.payloads(sent, "onDuration"),
+    } == {
+        "capture": (duration, True, definitive),
+        "rows": [],
+        "disk_old": (True, duration)
+        if definitive and not conflicting_slot
+        else (False, None),
+        "disk_replacement": (True, 12.5) if conflicting_slot else None,
+        "events": [],
+    }
+
+
+@pytest.mark.parametrize("verdict,cell", [((90.0, True), "1:30"), ((None, True), "?")])
+def test_uncached_retained_duration_hydrates_new_scan(rig, monkeypatch, verdict, cell):
+    api, controller, rows, folder, loops, workers, _sent = rig
+    original = (folder / "old.mkv").read_bytes()
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    entered, release = pause_foreground(monkeypatch, verdict)
+    with running(lambda: controller._probe_now([(rid, captured)])):
+        try:
+            assert entered.wait(5)
+            captured.path.write_bytes(b"a different recording")
+            api.list_rows()
+            replacement = rows.resolve(rows.rows()[0]["id"])
+            workers[-1].target()
+            loops[-1].callback()
+        finally:
+            release.set()
+    before = (
+        duration_state(captured),
+        disk_duration(controller, captured),
+        disk_duration(controller, replacement),
+    )
+    # Restore the original version in the real temporary tree. Its still-held
+    # upload capture is the only place its refused-cache winner can survive.
+    captured.path.write_bytes(original)
+    os.utime(captured.path, (captured.mtime, captured.mtime))
+    worker_count = len(workers)
+    api.list_rows()
+    current = rows.resolve(rows.rows()[0]["id"])
+    after = (
+        duration_state(current),
+        rows.rows()[0]["duration"],
+        disk_duration(controller, current),
+        len(workers) - worker_count,
+        current is captured,
+    )
+    assert (before, after) == (
+        ((verdict[0], True, True), (False, None), (True, 12.5)),
+        ((verdict[0], True, True), cell, (True, verdict[0]), 0, False),
+    )
+
+
+def test_full_upload_refresh_keeps_duration_url_and_work_gate(rig, monkeypatch):
+    api, controller, rows, _folder, loops, workers, sent = rig
+    _end, posts = log_posts(rig, monkeypatch)
+    fakes.stub_auth(monkeypatch)
+    fakes.install_google(monkeypatch, fakes.FakeYouTube())
+    monkeypatch.setattr(uploader, "upload", lambda *args, **kwargs: "uploaded")
+    api._confirm = fakes.Answers(True)
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    entered, release = pause_foreground(monkeypatch)
+    api.start_upload("Fight", "", False, [rid])
+    try:
+        assert entered.wait(5)
+        during = (
+            controller.busy(),
+            links.lookup(
+                links.load(controller._links_file),
+                captured.path,
+                captured.size,
+                captured.mtime,
+            ),
+        )
+        api.list_rows()
+        workers[-1].target()
+        loops[-1].callback()
+    finally:
+        release.set()
+        controller._upload_thread.join(5)
+        assert not controller._upload_thread.is_alive()
+    current = rows.resolve(rows.rows()[0]["id"])
+    assert {
+        "during": during,
+        "busy_after": controller.busy(),
+        "capture": duration_state(captured),
+        "current": duration_state(current),
+        "cell": rows.rows()[0]["duration"],
+        "disk": disk_duration(controller, captured),
+        "url": links.lookup(
+            links.load(controller._links_file),
+            captured.path,
+            captured.size,
+            captured.mtime,
+        ),
+        "shown_url": rows.rows()[0]["link"],
+        "post_windows": [(p["window_start"], p["window_end"]) for p in posts],
+        "skipped": any(
+            "Combat logs skipped" in p["text"] for p in fakes.payloads(sent, "onStatus")
+        ),
+    } == {
+        "during": (True, uploader.watch_url("uploaded")),
+        "busy_after": False,
+        "capture": (12.5, True, True),
+        "current": (12.5, True, True),
+        "cell": "0:12",
+        "disk": (True, 12.5),
+        "url": uploader.watch_url("uploaded"),
+        "shown_url": uploader.watch_url("uploaded"),
+        "post_windows": [
+            ("2026-09-08T11:59:47.500000+00:00", "2026-09-08T12:00:00+00:00")
+        ],
+        "skipped": False,
+    }
+
+
+@pytest.mark.parametrize("producer", ["foreground", "background"])
+def test_duration_batch_reindexes_retained_captures_after_rename(
+    rig, monkeypatch, producer
+):
+    api, controller, rows, folder, loops, workers, _sent = rig
+    second_path = folder / "second.mkv"
+    second_path.write_bytes(b"second recording")
+    os.utime(folder / "old.mkv", (2000, 2000))
+    os.utime(second_path, (1000, 1000))
+    api.list_rows()
+    detached = rows.resolve(rows.rows()[1]["id"])
+    api.list_rows()
+    pairs = [(row["id"], rows.resolve(row["id"])) for row in rows.rows()]
+    second_id, second = pairs[1]
+    entered, release = threading.Event(), threading.Event()
+    if producer == "foreground":
+
+        def probe(path, binary):
+            if path == second_path:
+                entered.set()
+                assert release.wait(5)
+            return 12.5, True
+
+        monkeypatch.setattr(library, "probe", probe)
+
+        def invoke():
+            controller._probe_now(pairs)
+    else:
+        workers[-1].target()
+        get_nowait = queue.Queue.get_nowait
+
+        def get(q):
+            result = get_nowait(q)
+            if result[1] is second:
+                entered.set()
+                assert release.wait(5)
+            return result
+
+        monkeypatch.setattr(queue.Queue, "get_nowait", get)
+        invoke = loops[-1].callback
+    with running(invoke):
+        try:
+            assert entered.wait(5)
+            assert duration_state(pairs[0][1]) == (12.5, True, True)
+            assert api.rename_recording(second_id, "renamed")["ok"]
+        finally:
+            release.set()
+    assert (
+        detached.path,
+        duration_state(detached),
+        duration_state(second),
+        rows.rows()[1]["duration"],
+        disk_duration(controller, second),
+    ) == (
+        folder / "renamed.mkv",
+        (12.5, True, True),
+        (12.5, True, True),
+        "0:12",
+        (True, 12.5),
+    )
+
+
+def test_foreground_batch_reindexes_newly_retained_scan_objects(rig, monkeypatch):
+    api, controller, rows, folder, _loops, _workers, _sent = rig
+    second_path = folder / "second.mkv"
+    second_path.write_bytes(b"second recording")
+    os.utime(folder / "old.mkv", (2000, 2000))
+    os.utime(second_path, (1000, 1000))
+    api.list_rows()
+    pairs = [(row["id"], rows.resolve(row["id"])) for row in rows.rows()]
+    entered, release = threading.Event(), threading.Event()
+
+    def probe(path, binary):
+        if path == second_path:
+            entered.set()
+            assert release.wait(5)
+        return 12.5, True
+
+    monkeypatch.setattr(library, "probe", probe)
+    with running(lambda: controller._probe_now(pairs)):
+        try:
+            assert entered.wait(5)
+            api.list_rows()
+            middle = rows.resolve(rows.rows()[1]["id"])
+            api.list_rows()
+            latest = rows.resolve(rows.rows()[1]["id"])
+        finally:
+            release.set()
+    assert (
+        duration_state(pairs[1][1]),
+        duration_state(middle),
+        duration_state(latest),
+        rows.rows()[1]["duration"],
+        disk_duration(controller, latest),
+    ) == (
+        (12.5, True, True),
+        (12.5, True, True),
+        (12.5, True, True),
+        "0:12",
+        (True, 12.5),
+    )
+
+
+def test_duration_index_follows_all_current_objects_moved_by_rename(rig, monkeypatch):
+    api, controller, rows, folder, _loops, _workers, _sent = rig
+    original = folder / "old.mkv"
+    destination = folder / "destination.mkv"
+    destination.write_bytes(original.read_bytes())
+    os.utime(original, (1000, 1000))
+    os.utime(destination, (1000, 1000))
+    api.list_rows()
+    ids = {row["name"]: row["id"] for row in rows.rows()}
+    destination.unlink()
+    assert api.rename_recording(ids["old.mkv"], "destination")["ok"]
+    assert api.rename_recording(ids["old.mkv"], "renamed")["ok"]
+    # The pre-existing weak rename transition repoints both equal-identity
+    # VideoInfos on the second rename. Ownership must follow resolve(), even
+    # though changing that edge case's frozen filename is outside this repair.
+    infos = [rows.resolve(row_id) for row_id in ids.values()]
+    monkeypatch.setattr(library, "probe", lambda *args: (12.5, True))
+    controller._probe_now([(ids["old.mkv"], rows.resolve(ids["old.mkv"]))])
+    assert (
+        [info.path for info in infos],
+        [duration_state(info) for info in infos],
+        [row["duration"] for row in rows.rows()],
+    ) == ([folder / "renamed.mkv"] * 2, [(12.5, True, True)] * 2, ["0:12"] * 2)
+
+
+def count_recording_work(monkeypatch, rows):
+    """Count data examined, not private helper names or machine-dependent time."""
+    counts = {"identity_fields": 0, "serialized_rows": 0, "resolved_ids": 0}
+    get_attribute = library.VideoInfo.__getattribute__
+    render = rows.rows
+    resolve = rows.resolve
+
+    def get(info, name):
+        if name in ("path", "size", "mtime"):
+            counts["identity_fields"] += 1
+        return get_attribute(info, name)
+
+    def counted_rows():
+        payload = render()
+        counts["serialized_rows"] += len(payload)
+        return payload
+
+    def counted_resolve(row_id):
+        counts["resolved_ids"] += 1
+        return resolve(row_id)
+
+    monkeypatch.setattr(library.VideoInfo, "__getattribute__", get)
+    monkeypatch.setattr(rows, "rows", counted_rows)
+    monkeypatch.setattr(rows, "resolve", counted_resolve)
+    return counts
+
+
+def staged_recordings(folder, count, *, warm=False):
+    # Complete inputs for the real scan-install seam; no filesystem/probe I/O
+    # is needed to expose repeated ownership work under publication.
+    return [
+        library.VideoInfo(
+            path=folder / f"recording-{index}.mkv",
+            size=100,
+            mtime=1000.0,
+            duration=12.5 if warm else None,
+            probed=warm,
+            answered=True,
+        )
+        for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize("count", [1000, 2000])
+def test_warm_hydration_examines_recordings_linearly(rig, monkeypatch, count):
+    _api, controller, rows, folder, _loops, _workers, _sent = rig
+    controller._ports = replace(controller._ports, publish_rows=lambda payload: None)
+    with controller._publication_lock:
+        controller._install_scan(staged_recordings(folder, count, warm=True), None)
+    fresh = staged_recordings(folder, count)
+    counts = count_recording_work(monkeypatch, rows)
+    with controller._publication_lock:
+        pending = controller._install_scan(fresh, None)
+    observed = dict(counts)
+    assert not pending
+    assert all(duration_state(info) == (12.5, True, True) for info in fresh)
+    # Includes hydration, cache admission, links and the normal full row push.
+    # The generous linear bound permits different implementations, not N² work.
+    assert observed["identity_fields"] <= 50 * count, observed
+    assert observed["serialized_rows"] <= 3 * count, observed
+    assert observed["resolved_ids"] <= 3 * count, observed
+
+
+@pytest.mark.parametrize("count", [250, 1000])
+def test_queued_durations_do_not_rebuild_whole_list_per_result(rig, monkeypatch, count):
+    _api, controller, rows, folder, loops, workers, _sent = rig
+    controller._ports = replace(
+        controller._ports,
+        publish_rows=lambda payload: None,
+        publish_duration=lambda payload: None,
+    )
+    infos = staged_recordings(folder, count)
+    with controller._publication_lock:
+        work = controller._install_scan(infos, None)
+    controller._start_probe(work, controller._generation)
+    workers[-1].target()
+    counts = count_recording_work(monkeypatch, rows)
+    loops[-1].callback()
+    observed = dict(counts)
+    assert all(duration_state(info) == (12.5, True, True) for info in infos)
+    assert not loops[-1].running
+    assert observed["serialized_rows"] <= count, observed
+    assert observed["resolved_ids"] <= 4 * count, observed
+    assert observed["identity_fields"] <= 50 * count, observed
+
+
+@pytest.mark.parametrize("producer", ["foreground", "background"])
+def test_duration_publication_error_preserves_accepted_disk_verdict(
+    rig, monkeypatch, producer
+):
+    api, controller, rows, _folder, loops, workers, _sent = rig
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    info = rows.resolve(rid)
+    failure = RuntimeError("duration publication failed")
+
+    def fail(payload):
+        raise failure
+
+    controller._ports = replace(controller._ports, publish_duration=fail)
+    if producer == "foreground":
+        monkeypatch.setattr(library, "probe", lambda *args: (12.5, True))
+
+        def invoke():
+            controller._probe_now([(rid, info)])
+    else:
+        workers[-1].target()
+        invoke = loops[-1].callback
+    with pytest.raises(RuntimeError) as caught:
+        invoke()
+    assert (
+        caught.value is failure,
+        duration_state(info),
+        rows.rows()[0]["duration"],
+        disk_duration(controller, info),
+    ) == (True, (12.5, True, True), "0:12", (True, 12.5))
+
+
+def test_retained_hydration_persists_before_rows_publication_error(rig, monkeypatch):
+    api, controller, rows, folder, loops, workers, _sent = rig
+    original = (folder / "old.mkv").read_bytes()
+    api.list_rows()
+    rid = rows.rows()[0]["id"]
+    captured = rows.resolve(rid)
+    entered, release = pause_foreground(monkeypatch)
+    with running(lambda: controller._probe_now([(rid, captured)])):
+        try:
+            assert entered.wait(5)
+            captured.path.write_bytes(b"different recording occupying the slot")
+            api.list_rows()
+            workers[-1].target()
+            loops[-1].callback()
+        finally:
+            release.set()
+    before = (duration_state(captured), disk_duration(controller, captured))
+    captured.path.write_bytes(original)
+    os.utime(captured.path, (captured.mtime, captured.mtime))
+    failure = RuntimeError("rows publication failed")
+
+    def fail(payload):
+        raise failure
+
+    controller._ports = replace(controller._ports, publish_rows=fail)
+    with pytest.raises(RuntimeError) as caught:
+        api.list_rows()
+    current_row = rows.rows()[0]
+    current = rows.resolve(current_row["id"])
+    assert (
+        before,
+        caught.value is failure,
+        current is captured,
+        duration_state(current),
+        current_row["duration"],
+        disk_duration(controller, current),
+    ) == (
+        ((90.0, True, True), (False, None)),
+        True,
+        False,
+        (90.0, True, True),
+        "1:30",
+        (True, 90.0),
+    )
 
 
 def test_row_installations_keep_mappings_coherent_during_concurrent_reads(rig):

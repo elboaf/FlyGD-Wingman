@@ -7,6 +7,7 @@ than attaching Python window-event handlers that can deadlock WinForms.
 """
 
 import logging
+import secrets
 import sys
 
 from wingman.ui import sigbar as sigbar_mod
@@ -32,36 +33,52 @@ def create(api, hidden: bool = True):
     with api._fleetbar_lifecycle_lock:
         if api._fleetbar_quitting:
             return None
+        api._retire_fleet_page_locked()
         section = api._state.settings.get("fleet_bar") or {}
         x, y = section.get("x"), section.get("y")
         if x is None or y is None:
             x, y = _default_placement()
 
-        bar = webview.create_window(
-            "Wingman Fleet Bar",
-            str(window_mod._web_dir() / "fleetbar.html"),
-            js_api=api,
-            width=WIDTH,
-            height=HEIGHT,
-            x=x,
-            y=y,
-            frameless=True,
-            easy_drag=False,
-            on_top=True,
-            focus=False,
-            # NOT transparent=True, for the same field reason as the sig
-            # bar's: per-pixel window transparency mispaints the backing
-            # on resize and move. Opaque dark window.
-            background_color=window_mod.BACKGROUND,
-            min_size=MIN_SIZE,
-            # Tool-window styling must land before the first show or Windows
-            # can retain a taskbar button and Aero preview for the process.
-            hidden=True,
-        )
-        api._fleetbar_window = bar
-        if sys.platform == "win32":
-            sigbar_mod._apply_tool_style(bar)
-        return bar
+        bar = None
+        try:
+            page_id = secrets.token_hex(32)
+            bar = webview.create_window(
+                "Wingman Fleet Bar",
+                str(window_mod._web_dir() / "fleetbar.html") + "#fleet-page=" + page_id,
+                js_api=api,
+                width=WIDTH,
+                height=HEIGHT,
+                x=x,
+                y=y,
+                frameless=True,
+                easy_drag=False,
+                on_top=True,
+                focus=False,
+                # NOT transparent=True, for the same field reason as the sig
+                # bar's: per-pixel window transparency mispaints the backing
+                # on resize and move. Opaque dark window.
+                background_color=window_mod.BACKGROUND,
+                min_size=MIN_SIZE,
+                # Tool-window styling must land before the first show or Windows
+                # can retain a taskbar button and Aero preview for the process.
+                hidden=True,
+            )
+            if bar is None:
+                raise RuntimeError("Fleet Bar creation returned no window")
+            if sys.platform == "win32":
+                sigbar_mod._apply_tool_style(bar)
+            api._publish_fleet_page_locked(bar, page_id)
+            return bar
+        except Exception:
+            # Keep the candidate local until styled. Both restore and toggle
+            # must revoke admission before cleanup, even after partial publication.
+            api._retire_fleet_page_locked()
+            if bar is not None:
+                try:
+                    bar.destroy()
+                except Exception:
+                    logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
+            raise
 
 
 def is_alive(bar) -> bool:
@@ -96,7 +113,6 @@ def restore(api) -> None:
         ):
             return
         try:
-            api._fleetbar_ready = False
             create(api, hidden=True)
         except Exception:
             logger.exception("Fleet Bar window could not be created")
