@@ -3048,8 +3048,16 @@ independent of both preview thumbnails and alert preferences.
 
 - [ ] **Enable from Settings › Previews.** Tick `Show the floating Fleet DPS /
       EWAR bar`. Expected: a compact three-column window opens with
-      `CHARACTER`, `DPS`, and `INCOMING`; the Settings checkbox and status-strip
-      `DPS` button both show active.
+      `CHARACTER`, `DAMAGE` (with `OUT` and `IN` sublabels either side of a
+      center axis), and `EWAR`; the Settings checkbox and status-strip `DPS`
+      button both show active.
+- [ ] **OUT is always left, IN is always right, adjacent to EWAR.** With at
+      least two visible characters showing nonzero outgoing and incoming
+      values, confirm each row's Damage cell reads outgoing value, its rail
+      growing left from the center axis, then the axis, then incoming value
+      and rail growing right, immediately followed by the EWAR cell. Expected:
+      this OUT-left/IN-right order never changes between quiet and active
+      rows.
 - [ ] **The quick toggle is the same setting.** Turn the bar off and on from
       the status strip, then from Settings. Expected: both controls follow each
       change immediately, no second window appears, and the hidden window
@@ -3094,23 +3102,56 @@ independent of both preview thumbnails and alert preferences.
       Preview configuration, trigger an alert, and use Preview keybinds. Expected:
       each feature follows only its own setting; Fleet hiding neither suppresses
       previews/alerts/keybinds nor is changed by Preview exclusion.
-- [ ] **No log is not zero.** Point Gamelogs at a folder with no current log for
-      one running character. Expected: that row remains stable and says `NO LOG`
-      rather than `0`; restoring a current log changes it to a numeric DPS value
-      without reopening the bar.
+- [ ] **No log is not zero, for either direction.** Point Gamelogs at a folder
+      with no current log for one running character. Expected: that row's
+      Damage cell says `NO LOG` once, spanning both OUT and IN, rather than a
+      fabricated `0` on either side; restoring a current log changes it to
+      numeric outgoing and incoming values without reopening the bar. A
+      character genuinely dealing and receiving no damage instead shows `0` on
+      both sides with empty rails — `0` and `NO LOG` must never be confused.
 - [ ] **Outgoing direct and drone damage both count.** Produce weapon and drone
-      hits from one character. Expected: its DPS is total outgoing damage in the
-      trailing 10 seconds divided by 10, rounded to a whole number. Incoming
-      damage does not increase it.
-- [ ] **The DPS window decays on event time.** Stop dealing damage and watch the
-      row. Expected: the value falls as events leave the fixed 10-second window
-      and reaches `0` without another combat line arriving; it never divides by
-      only the active portion of the window.
+      hits from one character. Expected: its outgoing (`OUT`, left of the
+      center axis) value is total outgoing damage in the trailing 10 seconds
+      divided by 10, rounded to a whole number. Incoming damage does not
+      increase it.
+- [ ] **Incoming DPS is calculated independently, on the same fixed window.**
+      Have another ship damage a displayed character while it deals no damage
+      itself. Expected: its incoming (`IN`, right of the center axis, adjacent
+      to `EWAR`) value is total incoming damage in the trailing 10 seconds
+      divided by 10, rounded to a whole number, using the same fixed
+      ten-second denominator as outgoing; outgoing damage from that character
+      does not increase it.
+- [ ] **The DPS window decays on event time, for both directions.** Stop
+      dealing and receiving damage and watch the row. Expected: both OUT and
+      IN fall independently as events leave the fixed 10-second window and
+      each reaches `0` without another combat line arriving; neither ever
+      divides by only the active portion of the window.
+- [ ] **Each rail normalizes independently against only the visible rows.**
+      With at least three visible running characters producing different
+      outgoing and incoming values, confirm the longest OUT rail belongs to
+      the highest visible outgoing value and the longest IN rail belongs to
+      the highest visible incoming value, independently of each other. Hide
+      the character currently leading one direction. Expected: only that
+      direction's rails rescale to the new highest visible value; the other
+      direction's rails are unaffected, no row moves, and equal rail lengths
+      on opposite sides never imply equal DPS.
+- [ ] **A changing leader never moves a row.** Cause the highest outgoing or
+      incoming character to change (by damage change or by hiding/restoring
+      rows). Expected: rail lengths on the affected side rescale; row order
+      stays case-insensitively alphabetical and no row changes position.
+- [ ] **Maximum supported values render in full; larger values are explicit.**
+      Drive or simulate a value at exactly `10,000,000` on one side. Expected:
+      the full number renders without truncation, ellipsis, or overlap with
+      the center axis or `EWAR`. A value above that bound instead shows `>10m`
+      and its accessible description reads "more than 10 million DPS" for that
+      side, never a raw expanded number.
 - [ ] **Incoming EWAR remains distinct during combat activity.** Have another
       ship point, scram, and neut a displayed character. Expected: distinct
-      `POINT`, `SCRAM`, and `NEUT` labels appear under `INCOMING`, including in
-      combination. Another tracked EWAR event or outgoing damage from that
-      character refreshes the shared activity window. All labels clear after
+      `POINT`, `SCRAM`, and `NEUT` labels appear under `EWAR`, including in
+      combination, with the full `SCRAM · POINT · NEUT` text visible and
+      unclipped when all three are active. Another tracked EWAR event or
+      outgoing damage from that character refreshes the shared activity
+      window; incoming damage alone does not. All labels clear after
       30 seconds without that activity; relogging or replacing the active log
       source clears them immediately. Outgoing neuts and nos never appear.
 - [ ] **Reader degradation is explicit and non-destructive.** Temporarily make

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11, frozen dataclasses, pytest, plain ES5 JavaScript, HTML/CSS, Node `vm` runtime harness, pywebview 6.2.1.
 
-**Spec:** `docs/superpowers/specs/2026-09-09-incoming-dps-display-design.md`
+**Spec:** `docs/history/2026-09-09-incoming-dps-display-design.md`
 
 ## Global Constraints
 
