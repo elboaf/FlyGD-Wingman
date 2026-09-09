@@ -80,6 +80,12 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (request.scenario === 'malformed') {
+    process.stderr.write('synthetic malformed stderr\n');
+    process.stdout.write('{"id":\n');
+    return;
+  }
+
   reply(request, {
     ok: false,
     error: 'unknown scenario: ' + request.scenario,
@@ -173,3 +179,41 @@ def test_reply_ids_cannot_cross_requests_or_poison_the_next_restart(
     assert restarted["ok"] is True
     assert restarted["text"] == "fresh after mismatch"
     assert restarted["id"] == 3
+
+
+def test_startup_failure_names_the_calling_scenario(tmp_path: Path):
+    worker = NodeScenarioWorker([str(tmp_path / "missing-node-binary")], cwd=tmp_path)
+
+    with pytest.raises(NodeScenarioCrash, match="startup") as crashed:
+        worker.request("startup-failure")
+
+    assert crashed.value.scenario == "startup-failure"
+    assert worker._proc is None
+    worker.close()
+
+
+def test_malformed_reply_crashes_the_worker_and_the_next_request_restarts_cleanly(
+    node_worker: NodeScenarioWorker,
+):
+    first = node_worker.request("echo", {"text": "before malformed"})
+    malformed_proc = node_worker._proc
+
+    assert first["id"] == 1
+    assert first["text"] == "before malformed"
+
+    with pytest.raises(NodeScenarioCrash, match="malformed") as crashed:
+        node_worker.request("malformed")
+
+    assert crashed.value.scenario == "malformed"
+    assert "synthetic malformed stderr" in crashed.value.stderr
+    assert malformed_proc is not None
+    malformed_proc.wait(timeout=5)
+    assert malformed_proc.poll() is not None
+
+    restarted = node_worker.request("echo-after-restart", {"text": "after malformed"})
+
+    assert restarted["ok"] is True
+    assert restarted["text"] == "after malformed"
+    assert restarted["id"] == 3
+    assert node_worker._proc is not None
+    assert node_worker._proc.pid != malformed_proc.pid

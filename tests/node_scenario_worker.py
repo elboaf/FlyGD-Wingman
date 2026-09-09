@@ -113,7 +113,7 @@ class NodeScenarioWorker:
         with self._request_lock:
             request_id = self._next_id
             self._next_id += 1
-            state = self._ensure_started()
+            state = self._ensure_started(scenario)
             request = {"id": request_id, "scenario": scenario, "payload": payload}
             try:
                 state.proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
@@ -191,7 +191,7 @@ class NodeScenarioWorker:
         with self._request_lock:
             self._discard_process(reason="close requested")
 
-    def _ensure_started(self) -> _ProcessState:
+    def _ensure_started(self, scenario: str) -> _ProcessState:
         state = self._state
         if state is not None and state.proc.poll() is None:
             return state
@@ -216,7 +216,7 @@ class NodeScenarioWorker:
             )
         except OSError as error:
             raise NodeScenarioCrash(
-                "<startup>", f"worker crash on startup: {error}"
+                scenario, f"worker crash on startup: {error}"
             ) from error
         stdout_thread = threading.Thread(
             target=self._stdout_reader,
@@ -249,7 +249,7 @@ class NodeScenarioWorker:
                 self._proc = proc
                 stderr = self._discard_process(reason="reader startup timeout")
                 raise NodeScenarioCrash(
-                    "<startup>",
+                    scenario,
                     f"worker crash during startup timeout after {self._startup_timeout:.2f}s",
                     stderr=stderr,
                 )
