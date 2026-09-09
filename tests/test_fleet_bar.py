@@ -1135,7 +1135,11 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
 
     assert "pywebview-drag-region" in html
-    assert "CHARACTER" in html and "DPS" in html and "INCOMING" in html
+    assert "CHARACTER" in html
+    assert ">DAMAGE<" in html and ">OUT<" in html and ">IN<" in html
+    assert ">EWAR<" in html
+    assert ">DPS<" not in html  # split into the Damage column's OUT/IN halves
+    assert ">INCOMING<" not in html  # renamed EWAR; incoming DPS moved into Damage
     assert "<button" not in html and "<input" not in html
     assert "window.onFleetSnapshot" in js
     assert "Waiting for EVE clients" in html
@@ -1143,5 +1147,10 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     assert "shell.offsetHeight" in js  # content can shrink with the roster
     assert "fleet_bar_ready" in js  # hidden until initial render and fit complete
     assert "screen.availLeft" in js and "move_fleet_bar" in js
-    assert "unavailable ? row.log_status" in js  # NO LOG belongs under EWAR
+    assert "function damageCell(row, maxOutgoing, maxIncoming)" in js
+    assert "function readDps(row, key)" in js
+    assert "function maxDps(rows, key)" in js
+    assert "function fillRatio(value, maximum)" in js
+    assert "function displayDps(value)" in js
+    assert "row.log_status" in js  # NO LOG now lives in the Damage cell, not EWAR
     assert "SCRAM" not in js  # rendered from telemetry, never guessed here

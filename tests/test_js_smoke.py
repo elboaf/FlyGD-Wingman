@@ -168,6 +168,26 @@ def test_the_gate_keeps_reporting_past_the_first_throw(tmp_path):
     assert "WM is not defined" in result.stdout
 
 
+@needs_node
+def test_fleetbar_runtime_executes_split_damage_rendering():
+    """Runs the real fleetbar.js render path against representative rows --
+    proves handler-body behavior neither the lexical assertions above nor
+    the top-level-load gate can see. See scripts/test_fleetbar_runtime.js
+    for the payloads and the exact OUT/IN/NO LOG/aria-label assertions.
+    Independent of scripts/js_smoke.js, which stays the top-level module
+    gate for all three pages.
+    """
+    result = subprocess.run(
+        ["node", str(ROOT / "scripts" / "test_fleetbar_runtime.js")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_ci_runs_the_gate_directly():
     """CI's `checks` job calls the script directly, independently of pytest.
     Deleting that step must fail here rather than silently leaving page

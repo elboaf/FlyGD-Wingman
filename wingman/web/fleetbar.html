@@ -54,7 +54,7 @@
     .fleet-health.err { color: var(--err); }
     .fleet-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 70px 154px;
+      grid-template-columns: minmax(0, 1fr) 160px 148px;
       align-items: center;
     }
     .fleet-head {
@@ -68,7 +68,6 @@
       letter-spacing: .1em;
       text-transform: uppercase;
     }
-    .fleet-head span:nth-child(2),
     .fleet-head span:nth-child(3) { text-align: right; }
     .fleet-row {
       min-height: 30px;
@@ -85,7 +84,19 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .fleet-dps, .fleet-ewar {
+    .fleet-damage-head {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      height: 100%;
+    }
+    .fleet-damage-head-title { text-align: center; }
+    .fleet-damage-head-sub {
+      display: flex;
+      justify-content: space-between;
+    }
+    .fleet-ewar {
       overflow: hidden;
       color: var(--text-dim);
       font-family: var(--mono);
@@ -94,8 +105,79 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .fleet-dps.live { color: var(--text); }
     .fleet-ewar.active { color: var(--warn); }
+    /* The Damage cell: OUT half (value then a slim rail growing toward the
+       axis) | fixed center axis | IN half (rail then value, mirrored). Both
+       rails are anchored at the axis so a larger value visibly grows AWAY
+       from center rather than the whole bar sliding -- transform-origin is
+       the only thing that differs between the two halves. */
+    .fleet-damage {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      overflow: hidden;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: var(--fs-mono);
+    }
+    .fleet-damage.unavailable {
+      justify-content: flex-end;
+      color: var(--text-faint);
+    }
+    .fleet-damage-status {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fleet-damage-out, .fleet-damage-in {
+      display: flex;
+      align-items: center;
+      flex: 1 1 0;
+      min-width: 0;
+      gap: 5px;
+    }
+    .fleet-damage-out { justify-content: flex-start; }
+    .fleet-damage-in { justify-content: flex-end; }
+    .fleet-damage-value {
+      flex: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fleet-damage-track {
+      flex: 1 1 auto;
+      min-width: 10px;
+      height: 3px;
+      border-radius: 2px;
+      background: var(--track);
+      overflow: hidden;
+    }
+    .fleet-damage-fill {
+      display: block;
+      height: 100%;
+      width: 100%;
+      border-radius: 2px;
+      background: var(--text-dim);
+      transform: scaleX(0);
+    }
+    .fleet-damage-out .fleet-damage-fill { transform-origin: right center; }
+    .fleet-damage-in .fleet-damage-fill { transform-origin: left center; }
+    /* OUT never turns warm regardless of magnitude -- only positive IN and
+       active EWAR share --warn. A positive OUT gets the brighter neutral
+       --text instead, matching the pre-split ".fleet-dps.live" treatment. */
+    .fleet-damage-out.live .fleet-damage-value,
+    .fleet-damage-out.live .fleet-damage-fill { color: var(--text); }
+    .fleet-damage-out.live .fleet-damage-fill { background: var(--text); }
+    .fleet-damage-in.warn .fleet-damage-value,
+    .fleet-damage-in.warn .fleet-damage-fill { color: var(--warn); }
+    .fleet-damage-in.warn .fleet-damage-fill { background: var(--warn); }
+    .fleet-damage-axis {
+      flex: none;
+      width: 1px;
+      align-self: stretch;
+      margin: 5px 6px;
+      background: var(--row-line);
+    }
     .fleet-empty, .fleet-note {
       color: var(--text-faint);
       font-size: var(--fs-muted);
@@ -115,11 +197,17 @@
       <span>Fleet telemetry</span>
       <span class="fleet-health" id="fleet-health">WAITING</span>
     </header>
-    <div role="table" aria-label="Character DPS and incoming EWAR">
+    <div role="table" aria-label="Character damage and incoming EWAR">
       <div class="fleet-grid fleet-head" role="row">
         <span role="columnheader">CHARACTER</span>
-        <span role="columnheader">DPS</span>
-        <span role="columnheader">INCOMING</span>
+        <span class="fleet-damage-head" role="columnheader">
+          <span class="fleet-damage-head-title" role="presentation">DAMAGE</span>
+          <span class="fleet-damage-head-sub" role="presentation">
+            <span role="presentation">OUT</span>
+            <span role="presentation">IN</span>
+          </span>
+        </span>
+        <span role="columnheader">EWAR</span>
       </div>
       <div id="fleet-rows" role="rowgroup"></div>
     </div>
