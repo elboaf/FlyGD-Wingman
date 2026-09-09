@@ -894,7 +894,7 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
     api._fleet_expected_generation = 1
     api._receive_fleet_snapshot(
         FleetSnapshot(
-            rows=(FleetRow("Alice", 43, ("SCRAM",)),),
+            rows=(FleetRow("Alice", 43, ("SCRAM",), incoming_dps=0),),
             stream_health=StreamHealth(state="active"),
             activation_generation=1,
         )
@@ -912,7 +912,7 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
         {
             "character": "Alice",
             "outgoing_dps": 43,
-            "incoming_dps": None,
+            "incoming_dps": 0,
             "ewar": ["SCRAM"],
             "log_status": None,
         }

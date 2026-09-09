@@ -121,6 +121,15 @@
     return presentational(axis);
   }
 
+  function dpsAriaPart(prefix, value) {
+    // Missing is unavailable, never a measured zero: a merged NO LOG state
+    // is handled separately below, so a null here means this one direction
+    // could not be measured while the other could.
+    if (value === null) return prefix + ' unavailable';
+    var label = value > DPS_DISPLAY_BOUND ? 'more than 10 million' : String(value);
+    return prefix + ' ' + label + ' DPS';
+  }
+
   function damageCell(row, maxOutgoing, maxIncoming) {
     var node = document.createElement('span');
     node.className = 'fleet-damage';
@@ -140,19 +149,18 @@
       return node;
     }
 
-    var outValue = out === null ? 0 : out;
-    var inValue = incoming === null ? 0 : incoming;
-    var outLabel = outValue > DPS_DISPLAY_BOUND ? 'more than 10 million' : String(outValue);
-    var inLabel = inValue > DPS_DISPLAY_BOUND ? 'more than 10 million' : String(inValue);
+    // No log_status here: each direction stands on its own. A numeric value
+    // renders and fills normally; a null value is unavailable (em dash, no
+    // fill, no highlight) rather than a fabricated zero.
     node.setAttribute('aria-label',
-      'Outgoing ' + outLabel + ' DPS, incoming ' + inLabel + ' DPS');
+      dpsAriaPart('Outgoing', out) + ', ' + dpsAriaPart('incoming', incoming));
 
-    node.appendChild(damageHalf('out', outValue, fillRatio(outValue, maxOutgoing),
-      outValue > 0 ? 'live' : null));
+    node.appendChild(damageHalf('out', out, fillRatio(out, maxOutgoing),
+      (out !== null && out > 0) ? 'live' : null));
     node.appendChild(axisNode());
     // Positive IN shares --warn with active EWAR; OUT never does.
-    node.appendChild(damageHalf('in', inValue, fillRatio(inValue, maxIncoming),
-      inValue > 0 ? 'warn' : null));
+    node.appendChild(damageHalf('in', incoming, fillRatio(incoming, maxIncoming),
+      (incoming !== null && incoming > 0) ? 'warn' : null));
     return node;
   }
 

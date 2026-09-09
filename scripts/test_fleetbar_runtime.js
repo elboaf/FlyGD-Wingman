@@ -230,6 +230,62 @@ test('defensive payload: values beyond ten million collapse to >10m and the acce
   assert.equal(ewar.textContent, 'SCRAM \u00b7 POINT \u00b7 NEUT');
 });
 
+const MIXED_NULL_ROWS = [
+  { character: 'Charlie', outgoing_dps: 43, incoming_dps: null, ewar: [], log_status: null },
+];
+
+test('mixed-null payload without log_status: each direction renders independently', async () => {
+  const p = page();
+  await p.render({
+    revision: 1, rows: MIXED_NULL_ROWS, running_count: 1,
+    stream_health: { state: 'active' },
+  });
+  const rows = p.nodes['fleet-rows'].children;
+  const charlie = rows[0].children[1];
+  const [charlieOut, , charlieIn] = charlie.children;
+
+  // Numeric OUT renders and fills normally.
+  assert.equal(valueOf(charlieOut).textContent, '43');
+  assert.ok(charlieOut.classList.contains('live'));
+
+  // Missing IN is unavailable, not a measured zero: em dash, no fill, no warn.
+  assert.equal(valueOf(charlieIn).textContent, '\u2014');
+  assert.equal(fillOf(charlieIn).style.transform, 'scaleX(0)');
+  assert.ok(!charlieIn.classList.contains('warn'));
+
+  assert.equal(
+    charlie.getAttribute('aria-label'),
+    'Outgoing 43 DPS, incoming unavailable',
+  );
+});
+
+const ALL_ZERO_ROWS = [
+  { character: 'Dana', outgoing_dps: 0, incoming_dps: 0, ewar: [], log_status: null },
+];
+
+test('all-zero bound row: numeric zero in both directions, never unavailable', async () => {
+  const p = page();
+  await p.render({
+    revision: 1, rows: ALL_ZERO_ROWS, running_count: 1,
+    stream_health: { state: 'active' },
+  });
+  const rows = p.nodes['fleet-rows'].children;
+  const dana = rows[0].children[1];
+  const [danaOut, , danaIn] = dana.children;
+
+  assert.equal(valueOf(danaOut).textContent, '0');
+  assert.equal(valueOf(danaIn).textContent, '0');
+  assert.equal(fillOf(danaOut).style.transform, 'scaleX(0)');
+  assert.equal(fillOf(danaIn).style.transform, 'scaleX(0)');
+  assert.ok(!danaOut.classList.contains('live'));
+  assert.ok(!danaIn.classList.contains('warn'));
+
+  assert.equal(
+    dana.getAttribute('aria-label'),
+    'Outgoing 0 DPS, incoming 0 DPS',
+  );
+});
+
 (async function main() {
   let failures = 0;
   for (const { name, run } of tests) {
