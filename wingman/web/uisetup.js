@@ -537,7 +537,8 @@
         }
         WM.el('setup-text').value = file ? reply.text : reply;
         importChanged(true);
-        WM.el('setup-text').focus();
+        // A catalog replacement confirmation may have opened during this read.
+        if (WM.el('overlay').hidden) WM.el('setup-text').focus();
       }, failed);
     } catch (error) { failed(); }
   }
@@ -594,6 +595,8 @@
           importStatus('Review ready. Create profile makes a new copy; Cancel creates nothing.');
         }
         importControls();
+        // Keep the valid review, but let an open dialog own focus and scrolling.
+        if (!WM.el('overlay').hidden) return;
         if (result && result.needs_label_choice) {
           WM.el('setup-keep-labels').focus();
           // The wrapped checkbox's invisible input has absolute positioning;
@@ -703,7 +706,7 @@
       }
       importStatus(text, !payload.published);
       importControls();
-      WM.el('setup-status').focus();
+      if (WM.el('overlay').hidden) WM.el('setup-status').focus();
     }
     return true;
   };

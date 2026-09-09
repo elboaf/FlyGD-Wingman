@@ -36,6 +36,9 @@ SCENARIOS = [
     "save-rejected",
     "late-context",
     "unavailable-pairs",
+    "setup-dialog-export-preview",
+    "setup-dialog-export-copy",
+    "setup-dialog-export-save",
 ]
 
 CATALOG_SCENARIOS = (
@@ -85,6 +88,11 @@ CATALOG_SCENARIOS = (
         f"catalog-{direction}-{source}"
         for direction in ("supersedes", "superseded-by", "origin-cleared-by")
         for source in ("paste", "file")
+    ]
+    + [
+        f"catalog-dialog-pending-{source}-{answer}"
+        for source in ("paste", "file", "review", "labels")
+        for answer in ("accept", "cancel", "queued-accept", "queued-cancel")
     ]
     + ["catalog-stale-manual-busy"]
     + [
@@ -137,6 +145,8 @@ IMPORT_SCENARIOS = [
     "malformed-text",
     "missing-summary",
     "failed-create",
+    "setup-dialog-completion-success",
+    "setup-dialog-completion-failure",
     "late-review-error",
     "pending-pair",
     "pending-base",

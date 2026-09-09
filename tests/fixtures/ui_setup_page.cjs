@@ -192,7 +192,7 @@ if (scenario === 'forwarded-completion') {
   vm.runInNewContext(fs.readFileSync(owner, 'utf8'), {WM, document, window: {}, console, Promise});
   document.readyState = 'complete';
 }
-if (scenario.startsWith('catalog-dialog-')) {
+if (scenario.startsWith('catalog-dialog-') || scenario.startsWith('setup-dialog-')) {
   const panel = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
   vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {
     window: {WM, getComputedStyle: node => {
@@ -296,6 +296,29 @@ async function main() {
     click('us-back');
     await importOpen();
     assert.match(WM.el('setup-limits').textContent, /20 tabs, 8 overview groups/);
+  } else if (scenario.startsWith('setup-dialog-export-')) {
+    await open();
+    const action = scenario.slice('setup-dialog-export-'.length);
+    if (action !== 'preview') { await selectPair(); click('us-' + action); }
+    else change('us-account', 'account-A');
+    const pending = snapshots.at(-1);
+    const question = WM.confirm('Unrelated decision', 'Continue?', {destructive: true});
+    scrollCalls.length = 0;
+    pending.resolve(exported); await tick();
+    assert.equal(WM.el('us-summary').hidden, false, 'valid export still renders behind the modal');
+    if (action === 'copy') {
+      assert.equal(clipboardWrites.at(-1).args[0], exported.text);
+      clipboardWrites.at(-1).resolve(); await tick(); assert.match(status(), /copied/i);
+    } else if (action === 'save') {
+      assert.equal(saves.at(-1).args[0], exported.text);
+      saves.at(-1).resolve({ok: true, cancelled: false, error: '', path: 'setup.json'});
+      await tick(); assert.match(status(), /saved.*setup.json/i);
+    } else assert.match(status(), /Snapshot ready/);
+    assert.deepEqual([document.activeElement.id, plain(scrollCalls)], ['dlg-cancel', []],
+      'export replies must not move focus or scroll behind a dialog');
+    document.activeElement.click(); assert.equal(await question, false); await tick();
+    assert.equal(WM.el('overlay').hidden, true); assert.equal(document.activeElement.id, 'us-back');
+    assert.ok(document.activeElement.getClientRects().length > 0); assertRetry();
   } else if (scenario === 'context-failure') {
     WM.openUiSetup({mode: 'export', context: context(), preferred_character: ''});
     limits.at(-1).resolve(python('limits')); contexts.at(-1).reject(new Error('offline')); await tick();
@@ -474,8 +497,89 @@ async function useCatalog() {
   chooseCatalog(); click('setup-catalog-use'); catalogReads.at(-1).resolve(catalogReply()); await tick();
   if (confirmations.length) { confirmations.at(-1).resolve(true); await tick(); }
 }
+async function pendingCatalogDialog() {
+  const source = scenario.slice('catalog-dialog-pending-'.length).split('-')[0];
+  const manual = source === 'paste' || source === 'file';
+  const labels = source === 'labels';
+  const accepted = scenario.endsWith('-accept');
+  const queued = scenario.includes('-queued-');
+  const fixture = labels ? python('native') : exported;
+  input('setup-text', fixture.text);
+  if (manual) await reviewed('before-read');
+  click(manual ? 'setup-' + source : 'setup-review');
+  const pending = (manual ? (source === 'file' ? reads : clipboardReads) : reviews).at(-1);
+  const reviewCount = reviews.length;
+  const original = WM.el('setup-text').value;
+  const manualText = exported.text + '\n ';
+  await browse(); chooseCatalog(); WM.el('setup-catalog-use').focus(); click('setup-catalog-use');
+  catalogReads.at(-1).resolve(catalogReply()); await tick();
+  assert.equal(WM.el('overlay').hidden, false); assert.match(WM.el('dlg-title').textContent, /Replace setup input/);
+  assert.equal(document.activeElement.id, 'dlg-ok');
+  const nextDialog = queued ? WM.confirm('Queued question', 'Separate decision', {destructive: true}) : null;
+  // Keep both the default affirmative action and an explicitly focused Cancel
+  // intact when a previously started request resolves behind the real panel.
+  if (!accepted) WM.el('dlg-cancel').focus();
+  scrollCalls.length = 0;
+  if (manual) pending.resolve(source === 'file'
+    ? {ok: true, cancelled: false, error: '', text: manualText} : manualText);
+  else pending.resolve(labels
+    ? {...offer('', fixture), ok: false, needs_label_choice: true,
+      error: 'Choose Keep my ship labels explicitly for this YAML.', error_code: 'label_choice_required'}
+    : offer('pending-review'));
+  await tick();
+  assert.equal(WM.el('overlay').hidden, false);
+  assert.deepEqual([document.activeElement.id, plain(scrollCalls)], [accepted ? 'dlg-ok' : 'dlg-cancel', []],
+    source + ' must not steal dialog focus or scroll the background work pane');
+  assert.equal(WM.el('setup-text').value, manual ? manualText : original, 'valid response still updates its draft');
+  assert.equal(WM.el('setup-summary').hidden, manual);
+  assert.equal(WM.el('setup-create').disabled, manual || labels);
+  assert.equal(WM.el('setup-label-choice').hidden, !labels);
+  assert.equal(WM.el('setup-review').disabled, false, 'reply releases its pending state');
+  assert.equal(WM.el('setup-paste').disabled, false); assert.equal(WM.el('setup-file').disabled, false);
+  assert.equal(discards.some(item => item.args[0] === 'pending-review'), false, 'valid review is not discarded for modal ownership');
+  // Native Enter activates the focused button; the harness supplies that click.
+  document.activeElement.click(); await tick();
+  const replaced = !manual && accepted;
+  const text = manual ? manualText : replaced ? catalogReply().text : original;
+  const authorized = source === 'review' && !accepted;
+  assert.equal(WM.current_route, 'uisetup'); assert.equal(WM.el('setup-text').value, text);
+  assert.equal(WM.el('setup-create').disabled, !authorized);
+  assert.equal(WM.el('setup-summary').hidden, manual || replaced);
+  assert.equal(WM.el('setup-label-choice').hidden, !(labels && !accepted));
+  assert.equal(WM.el('setup-catalog').hidden, replaced);
+  assert.equal(WM.el('setup-catalog-origin').hidden, !replaced);
+  assert.equal(discards.some(item => item.args[0] === 'pending-review'), source === 'review' && accepted);
+  if (queued) {
+    assert.equal(WM.el('overlay').hidden, false); assert.equal(WM.el('dlg-title').textContent, 'Queued question');
+    assert.equal(document.activeElement.id, 'dlg-cancel', 'queue retains its safe default');
+    document.activeElement.click(); assert.equal(await nextDialog, false); await tick();
+  }
+  assert.equal(WM.el('overlay').hidden, true);
+  assert.equal(document.activeElement.id, replaced ? (queued ? 'setup-back' : 'setup-text') : 'setup-catalog-use',
+    'final drain restores a visible action; a superseded confirmation cannot refocus or replace input');
+  assert.equal(document.activeElement.disabled, false); assert.ok(document.activeElement.getClientRects().length > 0);
+  assert.equal(document.activeElement.closest('.route').id, 'route-uisetup');
+  assert.deepEqual(plain(scrollCalls), [], 'suppressed scrolling is not deferred until the dialog drains');
+  assert.equal(WM.el('setup-name').value, 'Imported'); assert.equal(WM.el('setup-base').value, 'profile-A');
+  assert.equal(WM.el('setup-account').value, 'account-A'); assert.equal(WM.el('setup-character').value, 'char-A');
+  assert.equal(reviews.length, reviewCount); assert.equal(creates.length, 0, 'no automatic Review/Create');
+  if (!authorized) {
+    if (labels && !accepted) {
+      WM.el('setup-keep-labels').checked = true; change('setup-keep-labels', '');
+    }
+    click('setup-review');
+    assert.equal(reviews.at(-1).args[0], text, 'Review uses the winning input, never a stale catalog response');
+    assert.equal(reviews.at(-1).args[5], labels && !accepted);
+    reviews.at(-1).resolve(offer('after-dialog', labels && !accepted ? fixture : exported)); await tick();
+    assert.equal(document.activeElement.id, 'setup-summary', 'foreground Review keeps its normal focus behavior');
+    assert.deepEqual(plain(scrollCalls), [{id: 'setup-summary', options: {block: 'start'}}]);
+  }
+  click('setup-create');
+  assert.equal(creates.at(-1).args[0], authorized ? 'pending-review' : 'after-dialog', 'only the current review authorizes Create');
+}
 async function catalogMain() {
   await importOpen();
+  if (scenario.startsWith('catalog-dialog-pending-')) { await pendingCatalogDialog(); return; }
   if (scenario === 'catalog-use-empty') input('setup-text', '');
   else await reviewed();
   const original = WM.el('setup-text').value, originalReviewCount = reviews.length;
@@ -747,7 +851,26 @@ async function importMain() {
   if (scenario.startsWith('profiles-refresh-')) { await profilesRefreshMain(); return; }
   if (coupled) { await detachedMain(); return; }
   await importOpen();
-  if (scenario === 'context-does-not-select') {
+  if (scenario.startsWith('setup-dialog-completion-')) {
+    await reviewed(); WM.el('setup-create').focus(); click('setup-create');
+    const pending = creates.at(-1); pending.resolve({accepted: true}); await tick();
+    const question = WM.confirm('Unrelated decision', 'Continue?', {destructive: true});
+    scrollCalls.length = 0;
+    const success = scenario.endsWith('-success');
+    assert.equal(WM.uiSetupDone(completion(pending.args, success ? {} : {
+      ok: false, published: false, path: '', error: 'Stage failed', error_code: 'create_failed'
+    })), true);
+    assert.match(importStatus(), success ? /created.*settings_Imported/i : /Stage failed.*Review.*again/i);
+    assert.equal(WM.el('setup-text').disabled, success); assert.equal(WM.el('setup-create').disabled, true);
+    assert.deepEqual([document.activeElement.id, plain(scrollCalls)], ['dlg-cancel', []],
+      'attached completion settles its receipt without stealing modal focus or scrolling');
+    document.activeElement.click(); assert.equal(await question, false); await tick();
+    assert.equal(WM.el('overlay').hidden, true); assert.equal(document.activeElement.id, 'setup-back');
+    assert.ok(document.activeElement.getClientRects().length > 0);
+    const before = importStatus(); assert.equal(WM.uiSetupDone(completion(pending.args)), false);
+    assert.equal(importStatus(), before, 'completion ownership is still retired exactly once');
+    document.activeElement.click(); assert.equal(WM.current_route, 'evesettings');
+  } else if (scenario === 'context-does-not-select') {
     assert.equal(WM.el('setup-base').value, 'profile-A'); click('setup-back');
     assert.equal(WM.current_route, 'evesettings'); assert.equal(document.activeElement.id, 'es-setup-import');
   } else if (scenario === 'base-rosters-differ' || scenario === 'edit-during-context') {
