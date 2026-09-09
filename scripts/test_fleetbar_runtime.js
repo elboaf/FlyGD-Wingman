@@ -1,5 +1,13 @@
-/* Executable Fleet creation-identity regressions. Real fleetbar.js with
- * controlled DOM measurements and bridge continuations — no native/CSS claims. */
+/* Executable Fleet regressions: real fleetbar.js with controlled DOM
+ * measurements, bridge continuations, and directional damage rendering --
+ * no native/CSS/WebView2 claims.
+ *
+ * Two families share this one node:test harness: creation-identity (token
+ * captured from `#fleet-page=<64 lowercase hex>`, every bridge call bound to
+ * it, stale/replaced pages rejected, delayed fit/move/ready continuations
+ * keeping identity) and split Damage rendering (independent OUT/IN rails,
+ * mixed-null unavailable, zero, >10m, EWAR, accessibility). Do not split
+ * this back into two frameworks in one file. */
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -35,14 +43,22 @@ class Element {
     this.attributes = {};
     this.className = '';
     this.hidden = false;
+    this.style = {};
+    this.title = '';
     this.text = '';
     this.classList = {
-      contains: name => this.className.split(/\s+/).includes(name),
+      contains: name => this.className.split(/\s+/).filter(Boolean).includes(name),
+      add: name => {
+        if (!this.classList.contains(name)) {
+          this.className = (this.className + ' ' + name).trim();
+        }
+      },
+      remove: name => {
+        this.className = this.className.split(/\s+/).filter(n => n && n !== name).join(' ');
+      },
       toggle: (name, force) => {
         const on = force === undefined ? !this.classList.contains(name) : force;
-        const names = this.className.split(/\s+/).filter(n => n && n !== name);
-        if (on) names.push(name);
-        this.className = names.join(' ');
+        if (on) this.classList.add(name); else this.classList.remove(name);
         return on;
       }
     };
@@ -136,23 +152,53 @@ async function page(options = {}) {
   };
 }
 
-function snapshot(revision = 1, character = 'Pilot') {
+function snapshot(revision = 1, character = 'Pilot', outgoing = 43, incoming = 20) {
   return {
     revision,
-    rows: [{ character, dps: 43, ewar: ['SCRAM', 'NEUT'], log_status: null }],
+    rows: [{
+      character, outgoing_dps: outgoing, incoming_dps: incoming,
+      ewar: ['SCRAM', 'NEUT'], log_status: null
+    }],
     running_count: 1,
     stream_health: { state: 'active', detail: null },
     metric_error: null
   };
 }
 
-function assertRendered(p, character = 'Pilot') {
+// The Damage cell's DOM contract: OUT half, axis, IN half, in that order,
+// inside one role=cell node. fillOf/valueOf read into a half's rail fill and
+// its number, respectively, mirroring fleetbar.js's damageHalf() structure.
+function fillOf(half) {
+  const track = half.children.find(child => child.className === 'fleet-damage-track');
+  assert.ok(track, half.className + ' has no track');
+  return track.children[0];
+}
+
+function valueOf(half) {
+  return half.children.find(child => child.className.indexOf('fleet-damage-value') === 0);
+}
+
+function assertRendered(p, character = 'Pilot', outgoing = 43, incoming = 20) {
   const rows = p.el('fleet-rows').children;
   assert.equal(rows.length, 1);
   assert.equal(rows[0].getAttribute('role'), 'row');
-  assert.deepEqual(rows[0].children.map(cell => cell.textContent),
-                   [character, '43 dps', 'SCRAM · NEUT']);
   assert.ok(rows[0].children.every(cell => cell.getAttribute('role') === 'cell'));
+  const [charCell, damage, ewarCell] = rows[0].children;
+  assert.equal(charCell.textContent, character);
+  assert.equal(ewarCell.textContent, 'SCRAM \u00b7 NEUT');
+
+  assert.equal(damage.children.length, 3);
+  const [out, axis, incomingHalf] = damage.children;
+  assert.equal(out.className.indexOf('fleet-damage-out'), 0);
+  assert.equal(axis.className, 'fleet-damage-axis');
+  assert.equal(incomingHalf.className.indexOf('fleet-damage-in'), 0);
+  assert.equal(valueOf(out).textContent, String(outgoing));
+  assert.equal(valueOf(incomingHalf).textContent, String(incoming));
+  assert.equal(
+    damage.getAttribute('aria-label'),
+    `Outgoing ${outgoing} DPS, incoming ${incoming} DPS`
+  );
+
   assert.equal(p.el('fleet-empty').hidden, true);
   assert.equal(p.el('fleet-health').textContent, 'LIVE');
   assert.equal(p.el('fleet-note').hidden, true);
@@ -429,4 +475,173 @@ test('same-URL reload shares creation identity: no document-epoch isolation is p
     await settle(p.calls('fleet_bar_ready')[0]);
     assert.deepEqual(p.errors, []);
   }
+});
+
+// -- Split Damage rendering: independent OUT/IN rails, mixed-null
+// unavailable, zero, >10m, EWAR, accessibility. --
+//
+// Two independent payloads, not one: a normal-range payload (Alice, Bravo,
+// No Log) owns the exact independent-ratio assertions, and a separate
+// defensive payload (Huge alone) owns the >10m / accessible-phrase
+// assertions. A single combined payload would make Huge's 10,000,001 the
+// normalization maximum and break the Alice/Bravo ratio expectations below.
+
+const NORMAL_ROWS = [
+  { character: 'Alice', outgoing_dps: 100, incoming_dps: 50, ewar: ['SCRAM'], log_status: null },
+  { character: 'Bravo', outgoing_dps: 25, incoming_dps: 200, ewar: [], log_status: null },
+  { character: 'No Log', outgoing_dps: null, incoming_dps: null, ewar: [], log_status: 'NO LOG' }
+];
+
+test('normal-range payload: OUT/IN DOM order, independent ratios, exact values', async () => {
+  const p = await page();
+  await p.push({
+    revision: 1, rows: NORMAL_ROWS, running_count: 3,
+    stream_health: { state: 'active' }
+  });
+  const rows = p.el('fleet-rows').children;
+  assert.equal(rows.length, 3);
+
+  const alice = rows[0].children[1];
+  const bravo = rows[1].children[1];
+  assert.equal(alice.getAttribute('role'), 'cell');
+
+  // DOM contract: OUT half, axis, IN half, in that order, inside one cell.
+  assert.equal(alice.children.length, 3);
+  const [aliceOut, aliceAxis, aliceIn] = alice.children;
+  assert.equal(aliceOut.className.indexOf('fleet-damage-out'), 0);
+  assert.equal(aliceAxis.className, 'fleet-damage-axis');
+  assert.equal(aliceIn.className.indexOf('fleet-damage-in'), 0);
+
+  const [bravoOut, , bravoIn] = bravo.children;
+
+  // Alice is the outgoing maximum (100 of max(100, 25)) -> ratio 1.
+  assert.equal(fillOf(aliceOut).style.transform, 'scaleX(1)');
+  assert.equal(valueOf(aliceOut).textContent, '100');
+  // Bravo's outgoing (25) is a quarter of the outgoing maximum (100).
+  assert.equal(fillOf(bravoOut).style.transform, 'scaleX(0.25)');
+  assert.equal(valueOf(bravoOut).textContent, '25');
+
+  // Alice's incoming (50) is a quarter of the incoming maximum (200).
+  assert.equal(fillOf(aliceIn).style.transform, 'scaleX(0.25)');
+  assert.equal(valueOf(aliceIn).textContent, '50');
+  // Bravo is the incoming maximum (200 of max(50, 200)) -> ratio 1.
+  assert.equal(fillOf(bravoIn).style.transform, 'scaleX(1)');
+  assert.equal(valueOf(bravoIn).textContent, '200');
+
+  // Positive IN shares --warn; OUT never does, regardless of magnitude.
+  assert.ok(aliceIn.classList.contains('warn'));
+  assert.ok(!aliceOut.classList.contains('warn'));
+  assert.ok(!bravoOut.classList.contains('warn'));
+
+  // Named accessible descriptions: exact numbers, no character name inside.
+  assert.equal(alice.getAttribute('aria-label'), 'Outgoing 100 DPS, incoming 50 DPS');
+  assert.equal(bravo.getAttribute('aria-label'), 'Outgoing 25 DPS, incoming 200 DPS');
+
+  // Bravo's empty EWAR list is the neutral "zero" case: a dash, not warm.
+  const bravoEwar = rows[1].children[2];
+  assert.equal(bravoEwar.getAttribute('role'), 'cell');
+  assert.equal(bravoEwar.textContent, '\u2014');
+  assert.ok(!bravoEwar.classList.contains('active'));
+  // Alice's EWAR remains the following cell, unaffected by the Damage split.
+  const aliceEwar = rows[0].children[2];
+  assert.equal(aliceEwar.textContent, 'SCRAM');
+  assert.ok(aliceEwar.classList.contains('active'));
+
+  // No Log: a single unavailable Damage cell, neutral, named by log_status.
+  const noLog = rows[2].children[1];
+  assert.equal(noLog.children.length, 1);
+  assert.ok(noLog.classList.contains('unavailable'));
+  assert.ok(!noLog.classList.contains('warn'));
+  assert.equal(noLog.getAttribute('aria-label'), 'NO LOG');
+  assert.equal(noLog.textContent, 'NO LOG');
+  const noLogEwar = rows[2].children[2];
+  assert.equal(noLogEwar.textContent, '\u2014');
+});
+
+const DEFENSIVE_ROWS = [
+  {
+    character: 'Huge', outgoing_dps: 10000001, incoming_dps: 10000001,
+    ewar: ['SCRAM', 'POINT', 'NEUT'], log_status: null
+  }
+];
+
+test('defensive payload: values beyond ten million collapse to >10m and the accessible phrase', async () => {
+  const p = await page();
+  await p.push({
+    revision: 1, rows: DEFENSIVE_ROWS, running_count: 1,
+    stream_health: { state: 'active' }
+  });
+  const rows = p.el('fleet-rows').children;
+  assert.equal(rows.length, 1);
+  const huge = rows[0].children[1];
+  const [hugeOut, , hugeIn] = huge.children;
+
+  assert.equal(valueOf(hugeOut).textContent, '>10m');
+  assert.equal(valueOf(hugeIn).textContent, '>10m');
+  // Sole row: it is its own maximum, so the rail still reaches full scale.
+  assert.equal(fillOf(hugeOut).style.transform, 'scaleX(1)');
+  assert.equal(fillOf(hugeIn).style.transform, 'scaleX(1)');
+  assert.equal(
+    huge.getAttribute('aria-label'),
+    'Outgoing more than 10 million DPS, incoming more than 10 million DPS'
+  );
+
+  const ewar = rows[0].children[2];
+  assert.equal(ewar.textContent, 'SCRAM \u00b7 POINT \u00b7 NEUT');
+});
+
+const MIXED_NULL_ROWS = [
+  { character: 'Charlie', outgoing_dps: 43, incoming_dps: null, ewar: [], log_status: null }
+];
+
+test('mixed-null payload without log_status: each direction renders independently', async () => {
+  const p = await page();
+  await p.push({
+    revision: 1, rows: MIXED_NULL_ROWS, running_count: 1,
+    stream_health: { state: 'active' }
+  });
+  const rows = p.el('fleet-rows').children;
+  const charlie = rows[0].children[1];
+  const [charlieOut, , charlieIn] = charlie.children;
+
+  // Numeric OUT renders and fills normally.
+  assert.equal(valueOf(charlieOut).textContent, '43');
+  assert.ok(charlieOut.classList.contains('live'));
+
+  // Missing IN is unavailable, not a measured zero: em dash, no fill, no warn.
+  assert.equal(valueOf(charlieIn).textContent, '\u2014');
+  assert.equal(fillOf(charlieIn).style.transform, 'scaleX(0)');
+  assert.ok(!charlieIn.classList.contains('warn'));
+
+  assert.equal(
+    charlie.getAttribute('aria-label'),
+    'Outgoing 43 DPS, incoming unavailable'
+  );
+});
+
+const ALL_ZERO_ROWS = [
+  { character: 'Dana', outgoing_dps: 0, incoming_dps: 0, ewar: [], log_status: null }
+];
+
+test('all-zero bound row: numeric zero in both directions, never unavailable', async () => {
+  const p = await page();
+  await p.push({
+    revision: 1, rows: ALL_ZERO_ROWS, running_count: 1,
+    stream_health: { state: 'active' }
+  });
+  const rows = p.el('fleet-rows').children;
+  const dana = rows[0].children[1];
+  const [danaOut, , danaIn] = dana.children;
+
+  assert.equal(valueOf(danaOut).textContent, '0');
+  assert.equal(valueOf(danaIn).textContent, '0');
+  assert.equal(fillOf(danaOut).style.transform, 'scaleX(0)');
+  assert.equal(fillOf(danaIn).style.transform, 'scaleX(0)');
+  assert.ok(!danaOut.classList.contains('live'));
+  assert.ok(!danaIn.classList.contains('warn'));
+
+  assert.equal(
+    dana.getAttribute('aria-label'),
+    'Outgoing 0 DPS, incoming 0 DPS'
+  );
 });

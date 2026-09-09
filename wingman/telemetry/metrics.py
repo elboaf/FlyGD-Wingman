@@ -89,13 +89,27 @@ sampled once per fact:
   ``FleetSnapshot.metric_error`` -- one-second log-timestamp precision and
   polling boundaries do not explain a two-second-plus skew. Up to two
   seconds is instead clamped to ``now``. The next accepted metric fact of
-  EITHER kind -- outgoing damage or incoming EWAR, any character --
-  clears the transient diagnostic, matching "a later accepted timestamp
-  clears that transient metric diagnostic".
+  ANY kind -- outgoing damage, incoming damage, or incoming EWAR, any
+  character -- clears the transient diagnostic, matching "a later accepted
+  timestamp clears that transient metric diagnostic".
 
 The deque is re-pruned to the window on every ``consume()`` damage
 ingestion AND on every ``snapshot()`` call, which is what produces one-second
 idle decay to zero without any new lines arriving.
+
+Incoming DPS
+------------
+``incoming_damage`` facts are aggregated exactly like outgoing damage --
+same fixed 10-second window, same half-up rounding, same two-second future
+clamp and ``metric_error`` policy, same per-fact timestamp/sequence guards
+-- but in a wholly separate deque (``_CharacterState.incoming_damage``),
+exposed as ``FleetRow.incoming_dps``. The one deliberate asymmetry: an
+accepted outgoing-damage fact refreshes the 30-second observed-EWAR
+activity deadline (see below); an accepted incoming-damage fact never does.
+Taking damage is not evidence that THIS character is still actively
+fighting the way dealing damage or effecting/being-effected by EWAR is, so
+an old-out-of-window incoming fact is simply rejected rather than kept
+alive for its activity side effect.
 
 Incoming EWAR activity
 ----------------------
@@ -161,17 +175,20 @@ _ROUND_UNIT = Decimal(1)
 _DPS_DIVISOR = Decimal(10)
 
 
-def _prune_damage(state: _CharacterState, now: datetime.datetime) -> None:
-    """Drop damage entries that have aged out of the fixed 10-second window.
+def _prune_damage(
+    damage: deque[tuple[datetime.datetime, int]], now: datetime.datetime
+) -> deque[tuple[datetime.datetime, int]]:
+    """A deque with entries aged out of the fixed 10-second window dropped.
 
     Called on every damage ingestion (bounds the deque proactively during a
     long quiet stretch, per the brief) and again at every ``snapshot()``
-    (produces the one-second idle decay to zero).
+    (produces the one-second idle decay to zero). Direction-agnostic: the
+    outgoing and incoming deques are pruned independently by the caller.
     """
     window_start = now - DPS_WINDOW
-    state.damage = deque(
+    return deque(
         (occurred_at, amount)
-        for occurred_at, amount in state.damage
+        for occurred_at, amount in damage
         if occurred_at > window_start
     )
 
@@ -203,7 +220,8 @@ class _CharacterState:
     # SAME still-current source cannot double-count damage or roll EWAR
     # activity backward.
     last_fact_sequence: int | None = None
-    damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
+    outgoing_damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
+    incoming_damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
     ewar: set[str] = field(default_factory=set)
     activity_deadline: float | None = None
 
@@ -309,7 +327,8 @@ class FleetMetrics:
             state.source_generation = None
             state.source_id = None
             state.last_fact_sequence = None
-            state.damage.clear()
+            state.outgoing_damage.clear()
+            state.incoming_damage.clear()
             state.ewar.clear()
             state.activity_deadline = None
             return
@@ -319,7 +338,8 @@ class FleetMetrics:
             or state.source_id != lifecycle.source_id
         )
         if changed:
-            state.damage.clear()
+            state.outgoing_damage.clear()
+            state.incoming_damage.clear()
             state.ewar.clear()
             state.activity_deadline = None
         state.source_generation = lifecycle.generation
@@ -353,7 +373,9 @@ class FleetMetrics:
 
         accepted = False
         if fact.kind == "outgoing_damage":
-            accepted = self._ingest_damage(state, fact)
+            accepted = self._ingest_damage(state, fact, incoming=False)
+        elif fact.kind == "incoming_damage":
+            accepted = self._ingest_damage(state, fact, incoming=True)
         elif fact.kind in _EWAR_TAGS:
             accepted = self._ingest_ewar(state, fact)
 
@@ -364,33 +386,53 @@ class FleetMetrics:
             # sharing that same sequence can still be accepted afterward.
             state.last_fact_sequence = sequence
 
-    def _ingest_damage(self, state: _CharacterState, fact: CombatFact) -> bool:
+    def _ingest_damage(
+        self, state: _CharacterState, fact: CombatFact, *, incoming: bool
+    ) -> bool:
         if fact.amount is None or fact.occurred_at is None:
             return False  # A malformed/missing timestamp suppresses only this fact.
 
         now = self._utc_now()
-        _prune_damage(state, now)
+        damage = _prune_damage(
+            state.incoming_damage if incoming else state.outgoing_damage, now
+        )
+        if incoming:
+            state.incoming_damage = damage
+        else:
+            state.outgoing_damage = damage
 
         occurred_at = fact.occurred_at
         if occurred_at > now:
             skew = occurred_at - now
             if skew > FUTURE_CLAMP:
+                direction = "incoming" if incoming else "outgoing"
                 self._metric_error = (
-                    f"future outgoing damage timestamp for {fact.character}"
+                    f"future {direction} damage timestamp for {fact.character}"
                 )
                 return False
             occurred_at = now  # Tolerate log/poll precision.
 
-        active = self._refresh_activity(state, occurred_at)
-        if occurred_at <= now - DPS_WINDOW:
-            # Too old for DPS can still be recent combat activity. Accepting
-            # it preserves the 30-second EWAR observation without replaying
-            # damage into the shorter ten-second calculation.
-            if active:
-                self._metric_error = None
-            return active
+        if incoming:
+            # Incoming damage never refreshes observed EWAR activity: the
+            # spec is explicit that incoming damage is not itself evidence
+            # of THIS character still actively fighting the way outgoing
+            # damage or an EWAR effect is. An old-out-of-window incoming
+            # fact has no activity side effect to preserve, so it is simply
+            # rejected.
+            if occurred_at <= now - DPS_WINDOW:
+                return False
+        else:
+            active = self._refresh_activity(state, occurred_at)
+            if occurred_at <= now - DPS_WINDOW:
+                # Too old for DPS can still be recent combat activity.
+                # Accepting it preserves the 30-second EWAR observation
+                # without replaying damage into the shorter ten-second
+                # calculation.
+                if active:
+                    self._metric_error = None
+                return active
 
-        state.damage.append((occurred_at, fact.amount))
+        damage.append((occurred_at, fact.amount))
         self._metric_error = None  # A later accepted timestamp clears it.
         return True
 
@@ -444,13 +486,22 @@ class FleetMetrics:
         for character, state in self._states.items():
             if not state.bound:
                 rows.append(
-                    FleetRow(character=character, dps=None, ewar=(), log_status=NO_LOG)
+                    FleetRow(
+                        character=character,
+                        dps=None,
+                        ewar=(),
+                        log_status=NO_LOG,
+                        incoming_dps=None,
+                    )
                 )
                 continue
 
-            _prune_damage(state, now)
-            total = sum(amount for _, amount in state.damage)
-            dps = _round_half_up(total)
+            state.outgoing_damage = _prune_damage(state.outgoing_damage, now)
+            state.incoming_damage = _prune_damage(state.incoming_damage, now)
+            dps = _round_half_up(sum(amount for _, amount in state.outgoing_damage))
+            incoming_dps = _round_half_up(
+                sum(amount for _, amount in state.incoming_damage)
+            )
 
             if state.activity_deadline is not None and mono >= state.activity_deadline:
                 state.ewar.clear()
@@ -458,7 +509,13 @@ class FleetMetrics:
             ewar = tuple(tag for tag in _EWAR_ORDER if tag in state.ewar)
 
             rows.append(
-                FleetRow(character=character, dps=dps, ewar=ewar, log_status=None)
+                FleetRow(
+                    character=character,
+                    dps=dps,
+                    ewar=ewar,
+                    log_status=None,
+                    incoming_dps=incoming_dps,
+                )
             )
 
         rows.sort(key=lambda row: row.character.casefold())

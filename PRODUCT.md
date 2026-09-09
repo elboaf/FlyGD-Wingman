@@ -167,8 +167,9 @@ is watching and which characters it can see, in one sentence, on purpose.
 ### The Fleet combat bar is observation, not automation
 
 The Fleet combat bar is a display-only companion to client previews: one
-stable row per running, logged-in client, with recent outgoing DPS and
-incoming scram, point, and energy neutralization read from EVE's gamelogs.
+stable row per running, logged-in client, with recent outgoing and incoming
+DPS, plus incoming scram, point, and energy neutralization read from EVE's
+gamelogs.
 In Settings, users can persistently hide individual known characters from the
 bar and restore them later, including when they are offline. That choice
 changes only the bar: collection continues, and Preview and Alert behavior

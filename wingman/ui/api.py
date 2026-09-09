@@ -2304,7 +2304,8 @@ class Api:
             "rows": [
                 {
                     "character": row.character,
-                    "dps": row.dps,
+                    "outgoing_dps": row.dps,
+                    "incoming_dps": row.incoming_dps,
                     "ewar": list(row.ewar),
                     "log_status": row.log_status,
                 }

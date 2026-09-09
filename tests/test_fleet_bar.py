@@ -473,7 +473,7 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
     api._fleet_expected_generation = 1
     snapshot = FleetSnapshot(
         rows=(
-            FleetRow("Alice", 43, ("SCRAM", "NEUT")),
+            FleetRow("Alice", 43, ("SCRAM", "NEUT"), incoming_dps=17),
             FleetRow("Bravo", None, (), "NO LOG"),
         ),
         stream_health=StreamHealth(state="stale", detail="3.2s since poll"),
@@ -490,13 +490,15 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
         "rows": [
             {
                 "character": "Alice",
-                "dps": 43,
+                "outgoing_dps": 43,
+                "incoming_dps": 17,
                 "ewar": ["SCRAM", "NEUT"],
                 "log_status": None,
             },
             {
                 "character": "Bravo",
-                "dps": None,
+                "outgoing_dps": None,
+                "incoming_dps": None,
                 "ewar": [],
                 "log_status": "NO LOG",
             },
@@ -898,7 +900,7 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
     api._fleet_expected_generation = 1
     api._receive_fleet_snapshot(
         FleetSnapshot(
-            rows=(FleetRow("Alice", 43, ("SCRAM",)),),
+            rows=(FleetRow("Alice", 43, ("SCRAM",), incoming_dps=0),),
             stream_health=StreamHealth(state="active"),
             activation_generation=1,
         )
@@ -913,7 +915,13 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
     assert hidden["running_count"] == 1
     assert hidden["revision"] < restored["revision"]
     assert restored["rows"] == [
-        {"character": "Alice", "dps": 43, "ewar": ["SCRAM"], "log_status": None}
+        {
+            "character": "Alice",
+            "outgoing_dps": 43,
+            "incoming_dps": 0,
+            "ewar": ["SCRAM"],
+            "log_status": None,
+        }
     ]
 
 
@@ -1137,7 +1145,11 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
 
     assert "pywebview-drag-region" in html
-    assert "CHARACTER" in html and "DPS" in html and "INCOMING" in html
+    assert "CHARACTER" in html
+    assert ">DAMAGE<" in html and ">OUT<" in html and ">IN<" in html
+    assert ">EWAR<" in html
+    assert ">DPS<" not in html  # split into the Damage column's OUT/IN halves
+    assert ">INCOMING<" not in html  # renamed EWAR; incoming DPS moved into Damage
     assert "<button" not in html and "<input" not in html
     assert "window.onFleetSnapshot" in js
     assert "Waiting for EVE clients" in html
@@ -1145,7 +1157,12 @@ def test_fleet_page_is_display_only_and_carries_stable_columns():
     assert "shell.offsetHeight" in js  # content can shrink with the roster
     assert "fleet_bar_ready" in js  # best-effort render/fit precedes explicit reveal
     assert "screen.availLeft" in js and "move_fleet_bar" in js
-    assert "unavailable ? row.log_status" in js  # NO LOG belongs under EWAR
+    assert "function damageCell(row, maxOutgoing, maxIncoming)" in js
+    assert "function readDps(row, key)" in js
+    assert "function maxDps(rows, key)" in js
+    assert "function fillRatio(value, maximum)" in js
+    assert "function displayDps(value)" in js
+    assert "row.log_status" in js  # NO LOG now lives in the Damage cell, not EWAR
     assert "SCRAM" not in js  # rendered from telemetry, never guessed here
 
 
