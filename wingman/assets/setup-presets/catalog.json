@@ -1,0 +1,46 @@
+{
+  "format": "wingman-setup-catalog",
+  "version": 1,
+  "entries": [
+    {
+      "id": "iridium-default",
+      "revision": 1,
+      "title": "Iridium — Wingman layout",
+      "description": "Iridium overview filters with the contributor's tab groups, ordered ship labels and saved supported window arrangement. Geometry is used as saved, not fitted to your display.",
+      "sha256": "6b212cdc34a8ed8b2a65b53a69e1f4b95d9d1f66abf1e504da18beace24be8a2",
+      "overview_sources": [
+        {
+          "name": "Iridium Overview",
+          "author": "IridiumOps",
+          "reference": "https://github.com/iridiumops/overview/tree/afb001962f5458dee1f21be00c20dc80121ecffb",
+          "version": "3.11.1 main — filter memberships verified; contributor tab arrangement",
+          "license": "MIT (elected from MIT OR BSD-3-Clause)",
+          "license_file": "Iridium-MIT.txt"
+        }
+      ],
+      "layout_author": "FlyGD Wingman",
+      "display": {"width": 3840, "height": 2160, "ui_scale_percent": 150},
+      "verification": "Contributor-confirmed arrangement and display context. Exact export passed strict parsing and real native-codec review/create on invented recipients. Packaged WebView2 and live EVE acceptance are not performed. Evidence: docs/reference/curated-preset-content.md."
+    },
+    {
+      "id": "zs-default",
+      "revision": 1,
+      "title": "Z-S — Wingman layout",
+      "description": "Z-S overview filters with the contributor's tab groups, ordered ship labels and saved supported window arrangement. Geometry is used as saved, not fitted to your display.",
+      "sha256": "4c894d18da520457d9622ac4474ae0e08eeaf40574dca1e6cde607b6505e1bb3",
+      "overview_sources": [
+        {
+          "name": "Z-S Overview Pack",
+          "author": "Zirio — YAML and original maintenance; Deuce Syundai — design and text; Kismeteer — current maintenance",
+          "reference": "https://gitlab.com/Arziel/Z-S-Overview-Pack",
+          "version": "10.07.29 — contributor-identified in-game release, not matched to historical git exports",
+          "license": "GPLv3 — published pack notice; in-game redistribution approval attested by contributor",
+          "license_file": "Z-S-GPL-3.txt"
+        }
+      ],
+      "layout_author": "FlyGD Wingman",
+      "display": {"width": 3840, "height": 2160, "ui_scale_percent": 150},
+      "verification": "Contributor-confirmed arrangement, release, display context and in-game redistribution approval. Exact export passed strict parsing and real native-codec review/create on invented recipients. Packaged WebView2 and live EVE acceptance are not performed. Evidence: docs/reference/curated-preset-content.md."
+    }
+  ]
+}

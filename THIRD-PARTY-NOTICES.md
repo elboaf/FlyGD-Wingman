@@ -6,7 +6,9 @@ under different GPL versions -- v3 for FFmpeg, v2-or-later for AutoHotkey --
 so each carries its own licence text rather than sharing one, and neither
 of them is the licence covering Wingman itself. The fonts and the alert
 sounds are not GPL at all; they are listed because redistributing them is
-what triggers their own attribution requirements.
+what triggers their own attribution requirements. The complete-setup library
+also includes separately licensed overview content, credited below independently
+of the contributor's window arrangements.
 
 ## FFmpeg
 
@@ -81,6 +83,46 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Bundled complete-setup overview content
+
+The editable full-setup JSON and accompanying notices are installed under
+`assets/setup-presets/` (under `_internal/` in the frozen build). These are
+contributor-arranged portable configurations, not upstream code or unmodified
+upstream YAML files. Layout credit: **FlyGD Wingman**, arranged at
+3840×2160 / 150% EVE UI scale; admitted 2026-09-08. Display metadata does not
+change recipient display preferences. Exact hashes, provenance scope and actual
+verification are recorded in
+[the content reference](docs/reference/curated-preset-content.md).
+
+### Iridium Overview
+
+Original author: IridiumOps.
+Version: 3.11.1 main filter memberships; contributor's nine-tab arrangement.
+Licence: MIT, elected from MIT OR BSD-3-Clause (v2.1.0 onward).
+Source: https://github.com/iridiumops/overview/tree/afb001962f5458dee1f21be00c20dc80121ecffb
+Licence text: `assets/setup-presets/Iridium-MIT.txt` — exact upstream copyright,
+permission, warranty and EVE copyright notices.
+Artifact: `assets/setup-presets/iridium-default-r1.json`.
+
+### Z-S Overview Pack
+
+Original credits: **Zirio — YAML Coding, Pack Maintenance & Long Term Updates**;
+**Deuce Syundai — Design & Text Formatting**. Current maintenance: **Kismeteer**.
+Version: **10.07.29**, identified by the contributor from the in-game release.
+Licence: published pack **GNU General Public License v3** notice; applicability
+of in-game redistribution approval is a **contributor attestation**, not an
+independently read in-game notice.
+Original source: https://gitlab.com/Arziel/Z-S-Overview-Pack
+Historical mirror: https://github.com/Arziel1992/Z-S-Overview-Pack/tree/9c7dd4564f6db633dad44d3078d862dcc4ee0708
+Licence text: `assets/setup-presets/Z-S-GPL-3.txt` — full upstream licence,
+published permission/origin/copyright notices and author credits.
+Artifact: `assets/setup-presets/zs-default-r1.json` — editable portable content
+supplied with its licence, with the contributor's arrangement.
+
+The historical git sources document the published licence and attribution, not
+an exact v10.07.29 export. No Z-S Overview Customizer AGPL code or data is bundled,
+and its v10.06.09 data is not substituted for the contributor's export.
 
 ## Fonts
 

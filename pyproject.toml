@@ -98,6 +98,10 @@ packages = [
     "wingman.upload",
 ]
 
+[tool.setuptools.package-data]
+# Bundled full setups and their notices must also survive wheel installation.
+wingman = ["assets/setup-presets/*.json", "assets/setup-presets/*.txt"]
+
 [tool.setuptools.dynamic]
 # attr=, so the build reads the literal without importing the package --
 # wingman/__init__.py must stay import-light for this to hold,

@@ -16,6 +16,104 @@ from wingman.evesettings import setup_catalog, setup_model, setup_sharing
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ui_setup"
 
+# Independent admission facts, recorded before bundling; never derive these
+# expectations from the manifest whose integrity this test is meant to check.
+ADMITTED_SETUPS = {
+    "iridium-default": {
+        "sha256": "6b212cdc34a8ed8b2a65b53a69e1f4b95d9d1f66abf1e504da18beace24be8a2",
+        "bytes": 43447,
+        "counts": (38, 9, 3, 7, 12),
+        "groups": [[0, 1, 2, 5, 6, 7], [3, 8], [4]],
+        "overview_geometry": [1994, 327, 566, 509, 2560, 1440],
+    },
+    "zs-default": {
+        "sha256": "4c894d18da520457d9622ac4474ae0e08eeaf40574dca1e6cde607b6505e1bb3",
+        "bytes": 62577,
+        "counts": (57, 6, 3, 7, 12),
+        "groups": [[0, 1, 3, 5], [2], [4]],
+        "overview_geometry": [1994, 266, 566, 570, 2560, 1440],
+    },
+}
+
+
+def test_shipped_catalog_contains_distinct_admitted_full_setups():
+    entries = setup_catalog.list_entries()
+    assert len(entries) >= 2
+    assert {entry["id"] for entry in entries} == ADMITTED_SETUPS.keys()
+    directory = paths.setup_presets_dir()
+    reference = (
+        Path(__file__).resolve().parents[1] / "docs/reference/curated-preset-content.md"
+    ).read_text(encoding="utf-8")
+    expected_files = {"catalog.json"}
+    setups = []
+    for entry in entries:
+        facts = ADMITTED_SETUPS[entry["id"]]
+        assert entry["revision"] == 1
+        assert entry["sha256"] == facts["sha256"]
+        assert entry["layout_author"] == "FlyGD Wingman"
+        assert entry["display"] == {
+            "width": 3840,
+            "height": 2160,
+            "ui_scale_percent": 150,
+        }
+        name = f"{entry['id']}-r{entry['revision']}.json"
+        raw = (directory / name).read_bytes()
+        assert len(raw) == facts["bytes"]
+        assert hashlib.sha256(raw).hexdigest() == facts["sha256"]
+        assert f"| `{name}` | `{facts['sha256']}` |" in reference
+        selected = read_selected(entry)
+        assert selected["text"].encode("utf-8") == raw
+        parsed = setup_sharing.parse_text(selected["text"])
+        assert parsed.source_kind == "wingman" and parsed.layout is not None
+        artifact = json.loads(selected["text"])
+        assert set(artifact) == {"format", "version", "type", "overview", "layout"}
+        assert (artifact["format"], artifact["version"], artifact["type"]) == (
+            "wingman-preset",
+            1,
+            "ui-setup",
+        )
+        assert (
+            tuple(
+                selected["summary"]["counts"][key]
+                for key in (
+                    "presets",
+                    "tabs",
+                    "windowGroups",
+                    "shipLabels",
+                    "layoutWindows",
+                )
+            )
+            == facts["counts"]
+        )
+        assert artifact["overview"]["windowGroups"] == facts["groups"]
+        assert (
+            artifact["layout"]["windows"][0]["geometry"] == facts["overview_geometry"]
+        )
+        for forbidden in (
+            "synthetic",
+            "example.invalid",
+            "fixture",
+            "accountID",
+            "characterID",
+            "LOCALAPPDATA",
+            "had_crc",
+            "content_revision",
+            "overview_sources",
+            "layout_author",
+            "license_file",
+            "ui_scale_percent",
+        ):
+            assert forbidden.casefold() not in selected["text"].casefold()
+        expected_files.add(name)
+        for source in entry["overview_sources"]:
+            expected_files.add(source["license_file"])
+            assert (directory / source["license_file"]).stat().st_size > 1000
+        setups.append(artifact)
+    assert setups[0]["overview"] != setups[1]["overview"]
+    assert setups[0]["layout"] != setups[1]["layout"]
+    # Reject orphaned artifacts AND stray receipts, DATs or personal files.
+    assert {path.name for path in directory.iterdir()} == expected_files
+
 
 def write_catalog(directory, entries):
     (directory / "catalog.json").write_text(

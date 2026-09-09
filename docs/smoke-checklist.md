@@ -4019,6 +4019,48 @@ results and any refusal in the
 Linux codec tests and developer-browser evidence do not close these Windows/EVE
 gates. Wingman must never move or resize a running EVE client.
 
+### Bundled complete-setup library
+
+Content admission for Iridium — Wingman layout and Z-S — Wingman layout is
+recorded in [the hash-bound content reference](reference/curated-preset-content.md).
+This is not a packaged WebView2 or live-EVE pass. The following remain open;
+content redistribution approval does not authorize installation or live-profile
+operations. Apply the operator-authorization boundaries above.
+
+- [ ] **Browse → Use → Review → Create.** In Profiles → Import setup…, choose
+      **Browse bundled setups…** and select each admitted full setup. Confirm source
+      authors are separate from the FlyGD Wingman layout credit, with readable version,
+      licence, 3840×2160/150% context and bounded verification text. **Use preset**
+      fills the draft without writing a profile; only Review then Create
+      can publish. Cancel/close browsing and failed entry loads preserve the
+      existing draft/review. Manual paste/file import still works.
+- [ ] **Actual complete arrangements.** Import each preset onto an independently
+      initialized disposable recipient, not a sender clone. Record the selected
+      ID/revision/SHA-256 and actual build/platform. Check the intended groups,
+      all ordered labels/formatting and supported saved windows against the
+      artifact, not just the summary. Check recipient preferences before launch
+      and after an authorized reload separately. Geometry references remain
+      2560×1440 as saved; catalog 4K/150% metadata must not rescale coordinates or
+      change local resolution/UI scale. Leave gameplay suitability unclaimed.
+- [ ] **Independent copies.** A subsequent library revision changes available
+      choices only; an already imported profile is not modified. Browsing needs
+      no catalog network request and no EVE-closed permission. Create still needs
+      a fresh review and confirmed closed EVE; stale recipients refuse.
+- [ ] **Frozen content and notices.** On an authorized packaged build, both
+      complete presets load through the picker. Compare actual
+      `_internal/assets/setup-presets/` manifest, derived artifact filenames and
+      licence files with the source byte inventory. Read the Iridium MIT and Z-S
+      GPLv3 notices, including contributor-attestation limitations. A successful
+      build inventory gate alone does not prove WebView2 loading or game reload.
+- [ ] **Community admission.** A proposed addition supplies a complete portable
+      export, approved arrangement/credit/display context, privacy review,
+      original-source attribution and redistribution evidence. Bind admission to
+      exact bytes/hash and test against a distinct recipient. Record whether
+      evidence was independently inspected or attested; do not invent permission,
+      gameplay validation, a second fixture preset, or a publishing UI.
+
+### Existing import/export safety and runtime gates
+
 - [ ] **Fresh independent base.** With operator approval, normally initialize a
       disposable recipient through EVE, then close every client. Confirm the
       base has its own account/character DATs, `core_public__.yaml` and `prefs.ini`,

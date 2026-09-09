@@ -86,6 +86,31 @@ The EVE tools are on by default. If you only want the uploader, turn them off in
 **Settings → General** and Profiles, Skills, Fittings, and the EVE Settings
 sections are hidden; the window drops to the Uploader alone.
 
+### Bundled overview and layout setups
+
+In **Profiles → Import setup…**, choose **Browse bundled setups…**, select a
+complete setup, then **Use preset → Review → Create profile**. Iridium — Wingman
+layout and Z-S — Wingman layout include overview filters, tabs/groups, ordered
+ship labels and the supported saved window arrangement. Browse shows the library;
+Use fills the import draft. Review checks your initialized base and recipient pair.
+Create requires EVE to be closed and publishes a **new** profile, never overwrites
+the base. You still choose and activate that profile in the launcher yourself.
+
+Both layouts were arranged by the contributor at **3840×2160 / 150% EVE UI scale**,
+credited as **FlyGD Wingman**. Geometry is copied **as saved**, not fitted or
+rescaled: the artifacts' 2560×1440 geometry references remain unchanged. Your
+recipient's local display preferences, including resolution and UI scale, remain
+local. Each imported profile is an independent copy; later library updates do
+not change it. Manual file/paste import remains available.
+
+Overview credits remain separate: **IridiumOps** for Iridium; **Zirio and Deuce
+Syundai**, with current maintenance by **Kismeteer**, for Z-S. See the
+[content admission, licences and exact hashes](docs/reference/curated-preset-content.md)
+and [third-party notices](THIRD-PARTY-NOTICES.md). Strict parser and native-codec
+tests on invented recipients are not packaged WebView2 or live-EVE acceptance;
+those manual checks remain open. Community additions go through content review,
+not an in-app publishing service.
+
 ### Character crops — unreleased, release gates blocked
 
 The production crop implementation on this branch is configured under

@@ -82,6 +82,10 @@ a = Analysis(
         # paths.bundle_dir() -- the same web/-style precedent as above, not
         # chrome.py's font lookup, which this destination does not match.
         (str(ROOT / "wingman" / "assets" / "sounds"), "assets/sounds"),
+        # Full UI setups and their licence texts are local data. The frozen
+        # resolver reads _internal/assets/setup-presets, never wingman/assets.
+        # The post-freeze inventory compares every collected byte to source.
+        (str(ROOT / "wingman" / "assets" / "setup-presets"), "assets/setup-presets"),
     ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
