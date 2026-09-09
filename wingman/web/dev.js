@@ -2497,7 +2497,7 @@
         "characters": [{"path": "screenshot/base/character", "id": "2", "name": "Aiga Otsolen"}],
         "account_identity_available": true, "setup_available": true},
       "limits": {"max_bytes": 2097152, "max_depth": 16, "max_nodes": 100000,
-        "max_presets": 256, "max_tabs": 8, "max_window_groups": 8, "max_ship_labels": 64,
+        "max_presets": 256, "max_tabs": 20, "max_window_groups": 8, "max_ship_labels": 64,
         "max_layout_windows": 32, "max_membership_ids": 8192, "max_id": 2147483647,
         "max_name_codepoints": 512, "max_label_codepoints": 4096, "min_coordinate": -32768,
         "max_coordinate": 32768, "min_size": 1, "max_size": 32768, "min_target_origin": 0,
@@ -3213,7 +3213,7 @@
   // Setup export fixtures are read-only: no real clipboard, file dialog or
   // EVE file is accessed by these bridge doubles. Counts follow their artifact.
   var DEV_SETUP_LIMITS = {max_bytes: 2097152, max_depth: 16, max_nodes: 100000,
-    max_presets: 256, max_tabs: 8, max_window_groups: 8, max_ship_labels: 64,
+    max_presets: 256, max_tabs: 20, max_window_groups: 8, max_ship_labels: 64,
     max_layout_windows: 32, max_membership_ids: 8192, max_id: 2147483647,
     max_name_codepoints: 512, max_label_codepoints: 4096, min_coordinate: -32768,
     max_coordinate: 32768, min_size: 1, max_size: 32768, min_target_origin: 0,
@@ -3309,9 +3309,13 @@
     setupRow.name = new Array(501).join('N') + ' <tab ' + setupTab + '>';
     setupRow.overview = 'Filter ' + setupTab;
     DEV_SETUP_MAX.overview.tabs.push(setupRow);
-    DEV_SETUP_MAX.overview.windowGroups.push([setupTab]);
-    if (setupTab) DEV_SETUP_MAX.layout.windows.push({key: 'overview_' + setupTab,
-      geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}});
+    // The tab budget is larger than the independent active-window budget.
+    if (setupTab < DEV_SETUP_LIMITS.max_window_groups) {
+      DEV_SETUP_MAX.overview.windowGroups.push([]);
+      if (setupTab) DEV_SETUP_MAX.layout.windows.push({key: 'overview_' + setupTab,
+        geometry: [20, 40, 300, 400, 1920, 1080], state: {open: true}});
+    }
+    DEV_SETUP_MAX.overview.windowGroups[setupTab % DEV_SETUP_LIMITS.max_window_groups].push(setupTab);
   }
   DEV_SETUP_MAX.overview.shipLabels = [];
   for (var setupLabel = 0; setupLabel < DEV_SETUP_LIMITS.max_ship_labels; setupLabel++) {
@@ -3331,10 +3335,65 @@
         'Choose Keep my ship labels explicitly; the input cannot reproduce the ordered label sequence.'
       ].concat(warnings) : ['Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.'])};
   }
+  // Invented catalog, never release content. The hashes bind these exact dev
+  // artifacts and are asserted with the real parser/reader in test_dev_harness.
+  var catalogScenario = devSearch.get('catalog') || 'ordinary';
+  var devCatalogFirst = true;
+  var DEV_CATALOG = [
+    {id: 'dev-fleet', revision: 1, title: 'Dev fleet setup',
+      description: 'Invented fleet arrangement for the browser preview, not an admitted library preset.',
+      sha256: '7cbabae621cb17b14d9dce141be1bac564f6fdf35e62117b6ed7a4ae2633b948'},
+    {id: 'dev-large', revision: 2, title: 'Dev large setup',
+      description: 'Invented maximum-size setup for checking dense metadata and import review.',
+      sha256: 'ae07d3762fbd2d1d27b66294b99d832374b13c83436bca3b5fc8733d93829dce'}
+  ].map(function (entry) {
+    entry.overview_sources = [{name: 'Dev overview <literal>', author: 'Invented author',
+      reference: 'https://example.invalid/dev-only', version: 'dev-1',
+      license: 'Invented permission for preview only', license_file: 'Dev-Only.txt'}];
+    entry.layout_author = 'Invented layout contributor';
+    entry.display = {width: 1920, height: 1080, ui_scale_percent: 100};
+    entry.verification = 'Synthetic browser fixture only. No live EVE checks or content admission. Evidence: tests/test_dev_harness.py.';
+    return entry;
+  });
+  if (catalogScenario === 'long') {
+    DEV_CATALOG[1].title = 'Dev ' + new Array(111).join('N') + ' <literal>';
+    DEV_CATALOG[1].description = new Array(101).join('Long purpose é <literal>. ');
+    DEV_CATALOG[1].description = DEV_CATALOG[1].description.slice(0, 2000);
+    DEV_CATALOG[1].verification = new Array(61).join('Invented check only; no EVE acceptance. ');
+    DEV_CATALOG[1].verification = DEV_CATALOG[1].verification.slice(0, 2000);
+    DEV_CATALOG[1].overview_sources[0].reference += '/' + new Array(450).join('r');
+  }
+  api.eve_settings_setup_catalog = function () {
+    var fail = catalogScenario === 'error' && devCatalogFirst;
+    devCatalogFirst = false;
+    return Promise.resolve({ok: !fail, entries: fail || catalogScenario === 'empty' ? []
+      : JSON.parse(JSON.stringify(DEV_CATALOG)), error: fail ? 'Dev catalog unavailable. Retry catalog to recover.' : ''});
+  };
+  api.eve_settings_setup_catalog_entry = function (id, revision, sha256) {
+    var entry = DEV_CATALOG.filter(function (item) {
+      return item.id === id && item.revision === revision && item.sha256 === sha256;
+    })[0];
+    var reply = {ok: false, entry: {}, text: '', summary: {}, error: ''};
+    if (!entry) reply.error = 'Preset no longer matches the dev catalog. Browse again.';
+    else if (catalogScenario === 'entry-error') reply.error = 'Dev artifact hash mismatch. Input unchanged.';
+    else {
+      var artifact = entry.id === 'dev-fleet' ? DEV_SETUP_ARTIFACT : DEV_SETUP_MAX;
+      reply = {ok: true, entry: JSON.parse(JSON.stringify(entry)), text: JSON.stringify(artifact),
+        summary: devSetupSummary(artifact, false), error: ''};
+    }
+    if (catalogScenario === 'slow') return new Promise(function (resolve) {
+      setTimeout(function () { resolve(reply); }, 2000);
+    });
+    return Promise.resolve(reply);
+  };
   api.eve_settings_setup_read_file = function () {
     // A fixture picker, never an OS dialog or filesystem read.
-    return Promise.resolve({ok: true, cancelled: false, error: '', text: setupScenario === 'native'
-      ? DEV_SETUP_NATIVE_TEXT : JSON.stringify(setupScenario === 'max' ? DEV_SETUP_MAX : DEV_SETUP_ARTIFACT)});
+    var reply = {ok: true, cancelled: false, error: '', text: setupScenario === 'native'
+      ? DEV_SETUP_NATIVE_TEXT : JSON.stringify(setupScenario === 'max' ? DEV_SETUP_MAX : DEV_SETUP_ARTIFACT)};
+    if (catalogScenario === 'slow-file') return new Promise(function (resolve) {
+      setTimeout(function () { resolve(reply); }, 3000);
+    });
+    return Promise.resolve(reply);
   };
   api.eve_settings_setup_review = function (text, profile, accountPath, characterPath, name, keep) {
     var reply = {ok: false, error: '', error_code: '', review_id: '', summary: {}, warnings: [], needs_label_choice: false};

@@ -5,6 +5,7 @@ const {spawnSync} = require('node:child_process');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const scenario = process.argv[3];
 const coupled = scenario.startsWith('detached-') || scenario.startsWith('profiles-refresh-');
+const scrollCalls = [];
 
 // PageTree supplies real production ancestry/attributes. Only DOM mechanics and
 // bridge/clipboard delivery are doubled; no setup page state lives in this DOM.
@@ -21,6 +22,11 @@ class Element {
   querySelectorAll(selector) {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
     if (selector === '*') return all;
+    if (selector === '.route.active') return all.filter(el =>
+      ['route', 'active'].every(name => el.className.split(/\s+/).includes(name)));
+    if (selector.includes(':not(')) return all.filter(el =>
+      !el.hidden && !el.disabled && (['BUTTON', 'INPUT', 'SELECT'].includes(el.tagName)
+        || (el.tagName === 'TEXTAREA' && selector.includes('textarea')) || el.attrs.tabindex === '0'));
     return all.filter(el => {
       const match = selector.match(/^([\w-]+)?(?:\.([\w-]+))?(?:\[([\w-]+)="([^"]*)"\])?(:checked)?$/);
       assert.ok(match, 'DOM double needs selector: ' + selector);
@@ -53,14 +59,27 @@ class Element {
   get textContent() { return (this.text || '') + this.children.map(x => x.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
-  addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
+  contains(target) { return target === this || this.children.some(child => child.contains(target)); }
+  closest(selector) {
+    if (selector === '.route' && this.className.split(/\s+/).includes('route')) return this;
+    return this.parentNode ? this.parentNode.closest(selector) : null;
+  }
+  addEventListener(name, callback, capture = false) { (this.listeners[name] ||= []).push({callback, capture}); }
   dispatchEvent(event) {
-    event.target ||= this; event.preventDefault ||= () => {};
-    (this.listeners[event.type] || []).forEach(callback => callback(event));
+    event.target ||= this; event.preventDefault ||= () => { event.defaultPrevented = true; };
+    const listeners = this.listeners[event.type] || [];
+    [...listeners.filter(item => item.capture), ...listeners.filter(item => !item.capture)].forEach(item => item.callback(event));
   }
   click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
+  getClientRects() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.hidden || node.style.display === 'none') return [];
+    }
+    return [{}];
+  }
   focus() { document.activeElement = this; }
-  scrollIntoView() {} // Geometry is checked by the isolated browser driver, not this DOM.
+  // Record the production request; rendered geometry still needs a browser.
+  scrollIntoView(options) { scrollCalls.push({id: this.id, options}); }
 }
 const ids = {};
 function build(node) {
@@ -76,9 +95,16 @@ document.createElement = tag => new Element(tag);
 document.getElementById = id => ids[id] || null;
 const contexts = [], limits = [], snapshots = [], saves = [], clipboardWrites = [], mutations = [];
 const reviews = [], discards = [], creates = [], reads = [], clipboardReads = [], profilesReads = [];
+const catalogs = [], catalogReads = [], confirmations = [];
 let handlers = {}; let formationsCompletions = 0;
 const ordinaryCopies = [], rootPicks = [], identityChecks = [], identityConfirms = [];
 let nameResolutions = 0;
+const devCatalog = scenario.startsWith('catalog-dev-') ? {} : null;
+if (devCatalog) {
+  const source = fs.readFileSync(require('node:path').dirname(process.argv[4]) + '/dev.js', 'utf8');
+  vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='), source.indexOf('  function eveMutation(')),
+    {api: devCatalog, eve: {}, Promise, devSearch: new URLSearchParams('catalog=' + scenario.slice('catalog-dev-'.length)), setTimeout, window: {}});
+}
 function deferred(args) {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -93,6 +119,9 @@ const navigator = {clipboard: {readText: () => {
 if (scenario === 'copy-unavailable') delete navigator.clipboard;
 let WM = {
   current_route: 'evesettings',
+  confirm: (...args) => {
+    const pending = deferred(args); confirmations.push(pending); return pending.promise;
+  },
   handle: (name, handler) => { assert.equal(handlers[name], undefined); handlers[name] = handler; },
   formationsDone: () => { formationsCompletions++; },
   el: id => { assert.ok(ids[id], 'Missing production markup: ' + id); return ids[id]; },
@@ -104,14 +133,17 @@ let WM = {
   setEnabled: (id, value) => { WM.el(id).disabled = !value; },
   route: name => {
     WM.current_route = name;
+    document.querySelectorAll('.route').forEach(route => route.classList.toggle('active', route.id === 'route-' + name));
     document.dispatchEvent({type: 'wm:route', detail: name});
   },
   send: (method, ...args) => {
+    if (devCatalog && ['eve_settings_setup_catalog', 'eve_settings_setup_catalog_entry'].includes(method)) return devCatalog[method](...args);
     const request = deferred(args);
     const destinations = {eve_settings_setup_context: contexts, eve_settings_setup_limits: limits,
       eve_settings_setup_export: snapshots, eve_settings_setup_save_file: saves,
       eve_settings_setup_review: reviews, eve_settings_setup_discard: discards,
       eve_settings_setup_create: creates, eve_settings_setup_read_file: reads,
+      eve_settings_setup_catalog: catalogs, eve_settings_setup_catalog_entry: catalogReads,
       eve_settings_state: profilesReads};
     if (coupled) {
       destinations.eve_settings_copy = ordinaryCopies;
@@ -160,6 +192,17 @@ if (scenario === 'forwarded-completion') {
   const owner = require('node:path').join(require('node:path').dirname(process.argv[4]), 'evesettings.js');
   vm.runInNewContext(fs.readFileSync(owner, 'utf8'), {WM, document, window: {}, console, Promise});
   document.readyState = 'complete';
+}
+if (scenario.startsWith('catalog-dialog-') || scenario.startsWith('setup-dialog-')) {
+  const panel = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
+  vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {
+    window: {WM, getComputedStyle: node => {
+      for (; node; node = node.parentNode) {
+        if (node.style.visibility) return {visibility: node.style.visibility};
+      }
+      return {visibility: 'visible'};
+    }}, document, console, Promise
+  });
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const click = id => WM.el(id).click();
@@ -258,7 +301,36 @@ async function main() {
   if (process.argv[6] === 'import') { await importMain(); console.log('PASS ' + scenario); return; }
   assert.equal(WM.el('us-copy').disabled, true);
   assert.equal(WM.el('us-save').disabled, true);
-  if (scenario === 'context-failure') {
+  if (scenario === 'twenty-tab-help') {
+    await open();
+    assert.match(WM.el('us-limits').textContent, /20 tabs, 8 overview groups/);
+    click('us-back');
+    await importOpen();
+    assert.match(WM.el('setup-limits').textContent, /20 tabs, 8 overview groups/);
+  } else if (scenario.startsWith('setup-dialog-export-')) {
+    await open();
+    const action = scenario.slice('setup-dialog-export-'.length);
+    if (action !== 'preview') { await selectPair(); click('us-' + action); }
+    else change('us-account', 'account-A');
+    const pending = snapshots.at(-1);
+    const question = WM.confirm('Unrelated decision', 'Continue?', {destructive: true});
+    scrollCalls.length = 0;
+    pending.resolve(exported); await tick();
+    assert.equal(WM.el('us-summary').hidden, false, 'valid export still renders behind the modal');
+    if (action === 'copy') {
+      assert.equal(clipboardWrites.at(-1).args[0], exported.text);
+      clipboardWrites.at(-1).resolve(); await tick(); assert.match(status(), /copied/i);
+    } else if (action === 'save') {
+      assert.equal(saves.at(-1).args[0], exported.text);
+      saves.at(-1).resolve({ok: true, cancelled: false, error: '', path: 'setup.json'});
+      await tick(); assert.match(status(), /saved.*setup.json/i);
+    } else assert.match(status(), /Snapshot ready/);
+    assert.deepEqual([document.activeElement.id, plain(scrollCalls)], ['dlg-cancel', []],
+      'export replies must not move focus or scroll behind a dialog');
+    document.activeElement.click(); assert.equal(await question, false); await tick();
+    assert.equal(WM.el('overlay').hidden, true); assert.equal(document.activeElement.id, 'us-back');
+    assert.ok(document.activeElement.getClientRects().length > 0); assertRetry();
+  } else if (scenario === 'context-failure') {
     WM.openUiSetup({mode: 'export', context: context(), preferred_character: ''});
     limits.at(-1).resolve(python('limits')); contexts.at(-1).reject(new Error('offline')); await tick();
     assert.match(status(), /context|profile/i); assert.equal(WM.el('us-copy').disabled, true);
@@ -422,11 +494,406 @@ function freshReviewRequired() {
   assert.equal(WM.el('setup-review').disabled, false);
   assert.match(importStatus(), /review.*again|fresh review/i);
 }
+// Invented metadata lives only in this test fixture. Its artifact and summary
+// come from the existing production parser/exporter above.
+const catalogEntries = ['a', 'b'].map((id, i) => ({
+  id: 'test-' + id, revision: i + 3, title: 'Setup ' + id + ' é <img>',
+  description: 'Purpose <script>literal</script>',
+  sha256: require('node:crypto').createHash('sha256').update(exported.text + ' '.repeat(i + 1)).digest('hex'),
+  overview_sources: [{name: 'Overview <b>', author: 'Author <img>', reference: 'https://example.invalid/<literal>',
+    version: 'v1', license: 'Test only', license_file: 'Test.txt'}],
+  layout_author: 'Layout <author>', display: {width: 1920, height: 1080, ui_scale_percent: 100},
+  verification: 'Invented checks only, not live EVE verification.'
+}));
+function catalogReply(index = 0) {
+  return {ok: true, error: '', entry: catalogEntries[index], text: exported.text + ' '.repeat(index + 1), summary: exported.summary};
+}
+const catalogStatus = () => WM.el('setup-catalog-status').textContent;
+async function browse() {
+  click('setup-catalog-open');
+  assert.deepEqual(plain(catalogs.at(-1).args), []);
+  catalogs.at(-1).resolve({ok: true, error: '', entries: catalogEntries}); await tick();
+  assert.equal(WM.el('setup-catalog-select').value, '');
+}
+function chooseCatalog(index = 0) { change('setup-catalog-select', catalogEntries[index].id); }
+async function useCatalog() {
+  chooseCatalog(); click('setup-catalog-use'); catalogReads.at(-1).resolve(catalogReply()); await tick();
+  if (confirmations.length) { confirmations.at(-1).resolve(true); await tick(); }
+}
+async function pendingCatalogDialog() {
+  const source = scenario.slice('catalog-dialog-pending-'.length).split('-')[0];
+  const manual = source === 'paste' || source === 'file';
+  const labels = source === 'labels';
+  const accepted = scenario.endsWith('-accept');
+  const queued = scenario.includes('-queued-');
+  const fixture = labels ? python('native') : exported;
+  input('setup-text', fixture.text);
+  if (manual) await reviewed('before-read');
+  click(manual ? 'setup-' + source : 'setup-review');
+  const pending = (manual ? (source === 'file' ? reads : clipboardReads) : reviews).at(-1);
+  const reviewCount = reviews.length;
+  const original = WM.el('setup-text').value;
+  const manualText = exported.text + '\n ';
+  await browse(); chooseCatalog(); WM.el('setup-catalog-use').focus(); click('setup-catalog-use');
+  catalogReads.at(-1).resolve(catalogReply()); await tick();
+  assert.equal(WM.el('overlay').hidden, false); assert.match(WM.el('dlg-title').textContent, /Replace setup input/);
+  assert.equal(document.activeElement.id, 'dlg-ok');
+  const nextDialog = queued ? WM.confirm('Queued question', 'Separate decision', {destructive: true}) : null;
+  // Keep both the default affirmative action and an explicitly focused Cancel
+  // intact when a previously started request resolves behind the real panel.
+  if (!accepted) WM.el('dlg-cancel').focus();
+  scrollCalls.length = 0;
+  if (manual) pending.resolve(source === 'file'
+    ? {ok: true, cancelled: false, error: '', text: manualText} : manualText);
+  else pending.resolve(labels
+    ? {...offer('', fixture), ok: false, needs_label_choice: true,
+      error: 'Choose Keep my ship labels explicitly for this YAML.', error_code: 'label_choice_required'}
+    : offer('pending-review'));
+  await tick();
+  assert.equal(WM.el('overlay').hidden, false);
+  assert.deepEqual([document.activeElement.id, plain(scrollCalls)], [accepted ? 'dlg-ok' : 'dlg-cancel', []],
+    source + ' must not steal dialog focus or scroll the background work pane');
+  assert.equal(WM.el('setup-text').value, manual ? manualText : original, 'valid response still updates its draft');
+  assert.equal(WM.el('setup-summary').hidden, manual);
+  assert.equal(WM.el('setup-create').disabled, manual || labels);
+  assert.equal(WM.el('setup-label-choice').hidden, !labels);
+  assert.equal(WM.el('setup-review').disabled, false, 'reply releases its pending state');
+  assert.equal(WM.el('setup-paste').disabled, false); assert.equal(WM.el('setup-file').disabled, false);
+  assert.equal(discards.some(item => item.args[0] === 'pending-review'), false, 'valid review is not discarded for modal ownership');
+  // Native Enter activates the focused button; the harness supplies that click.
+  document.activeElement.click(); await tick();
+  const replaced = !manual && accepted;
+  const text = manual ? manualText : replaced ? catalogReply().text : original;
+  const authorized = source === 'review' && !accepted;
+  assert.equal(WM.current_route, 'uisetup'); assert.equal(WM.el('setup-text').value, text);
+  assert.equal(WM.el('setup-create').disabled, !authorized);
+  assert.equal(WM.el('setup-summary').hidden, manual || replaced);
+  assert.equal(WM.el('setup-label-choice').hidden, !(labels && !accepted));
+  assert.equal(WM.el('setup-catalog').hidden, replaced);
+  assert.equal(WM.el('setup-catalog-origin').hidden, !replaced);
+  assert.equal(discards.some(item => item.args[0] === 'pending-review'), source === 'review' && accepted);
+  if (queued) {
+    assert.equal(WM.el('overlay').hidden, false); assert.equal(WM.el('dlg-title').textContent, 'Queued question');
+    assert.equal(document.activeElement.id, 'dlg-cancel', 'queue retains its safe default');
+    document.activeElement.click(); assert.equal(await nextDialog, false); await tick();
+  }
+  assert.equal(WM.el('overlay').hidden, true);
+  assert.equal(document.activeElement.id, replaced ? (queued ? 'setup-back' : 'setup-text') : 'setup-catalog-use',
+    'final drain restores a visible action; a superseded confirmation cannot refocus or replace input');
+  assert.equal(document.activeElement.disabled, false); assert.ok(document.activeElement.getClientRects().length > 0);
+  assert.equal(document.activeElement.closest('.route').id, 'route-uisetup');
+  assert.deepEqual(plain(scrollCalls), [], 'suppressed scrolling is not deferred until the dialog drains');
+  assert.equal(WM.el('setup-name').value, 'Imported'); assert.equal(WM.el('setup-base').value, 'profile-A');
+  assert.equal(WM.el('setup-account').value, 'account-A'); assert.equal(WM.el('setup-character').value, 'char-A');
+  assert.equal(reviews.length, reviewCount); assert.equal(creates.length, 0, 'no automatic Review/Create');
+  if (!authorized) {
+    if (labels && !accepted) {
+      WM.el('setup-keep-labels').checked = true; change('setup-keep-labels', '');
+    }
+    click('setup-review');
+    assert.equal(reviews.at(-1).args[0], text, 'Review uses the winning input, never a stale catalog response');
+    assert.equal(reviews.at(-1).args[5], labels && !accepted);
+    reviews.at(-1).resolve(offer('after-dialog', labels && !accepted ? fixture : exported)); await tick();
+    assert.equal(document.activeElement.id, 'setup-summary', 'foreground Review keeps its normal focus behavior');
+    assert.deepEqual(plain(scrollCalls), [{id: 'setup-summary', options: {block: 'start'}}]);
+  }
+  click('setup-create');
+  assert.equal(creates.at(-1).args[0], authorized ? 'pending-review' : 'after-dialog', 'only the current review authorizes Create');
+}
+async function catalogMain() {
+  await importOpen();
+  if (scenario.startsWith('catalog-dialog-pending-')) { await pendingCatalogDialog(); return; }
+  if (scenario === 'catalog-use-empty') input('setup-text', '');
+  else await reviewed();
+  const original = WM.el('setup-text').value, originalReviewCount = reviews.length;
+  if (scenario.startsWith('catalog-dev-')) {
+    click('setup-catalog-open'); await tick();
+    assert.equal(WM.el('setup-create').disabled, false);
+    if (scenario === 'catalog-dev-error') {
+      assert.match(catalogStatus(), /catalog/i); click('setup-catalog-retry'); await tick();
+    }
+    if (scenario === 'catalog-dev-empty') {
+      assert.match(catalogStatus(), /no complete/i); assert.equal(WM.el('setup-catalog-use').disabled, true); return;
+    }
+    const options = WM.el('setup-catalog-select').options;
+    assert.equal(options.length, 3); change('setup-catalog-select', options[scenario === 'catalog-dev-long' ? 2 : 1].value);
+    const details = WM.el('setup-catalog-details').textContent;
+    if (scenario === 'catalog-dev-long') { assert.ok(details.length > 2000); assert.match(details, /<literal>/); }
+    click('setup-catalog-use'); await tick();
+    if (scenario === 'catalog-dev-entry-error') {
+      assert.match(catalogStatus(), /mismatch|refus|could not/i); assert.equal(WM.el('setup-create').disabled, false); return;
+    }
+    assert.equal(WM.el('setup-text').value, original); confirmations.at(-1).resolve(true); await tick();
+    assert.notEqual(WM.el('setup-text').value, original); assert.match(WM.el('setup-catalog-origin').textContent, /Dev/);
+    assert.equal(WM.el('setup-create').disabled, true); assert.equal(reviews.length, originalReviewCount); return;
+  }
+  if (scenario === 'catalog-dialog-hidden-target' || scenario === 'catalog-dialog-invisible-target') {
+    // Shared-panel boundary: a still-enabled invoker becomes unavailable while
+    // the dialog is open. Synthetic DOM only — no invented catalog state.
+    const container = new Element('div'), invoker = new Element('button');
+    WM.el('setup-work').appendChild(container); container.appendChild(invoker);
+    invoker.focus();
+    const question = WM.confirm('Visibility boundary', 'Continue?');
+    if (scenario === 'catalog-dialog-hidden-target') container.hidden = true;
+    else container.style.visibility = 'hidden';
+    click('dlg-ok'); assert.equal(await question, true); await tick();
+    assert.equal(document.activeElement.id, 'setup-back', 'an unavailable invoker falls back past the hidden export subview');
+    assert.equal(invoker.disabled, false, 'visibility, not disabling, makes this invoker unavailable');
+    return;
+  }
+  if (scenario.startsWith('catalog-dialog-')) {
+    await browse(); chooseCatalog(); WM.el('setup-catalog-use').focus(); click('setup-catalog-use');
+    catalogReads.at(-1).resolve(catalogReply()); await tick();
+    assert.equal(WM.el('overlay').hidden, false); assert.match(WM.el('dlg-body').textContent, /Setup a/);
+    const queued = scenario.includes('-queued-');
+    const accepted = scenario.endsWith('-accept');
+    const ordinary = scenario.includes('-ordinary-');
+    const nextDialog = queued ? WM.confirm('Queued question', 'Unrelated decision', {destructive: !ordinary}) : null;
+    assert.match(WM.el('dlg-title').textContent, /Replace setup input/);
+    if (scenario === 'catalog-dialog-escape') document.dispatchEvent({type: 'keydown', key: 'Escape'});
+    else click(accepted ? 'dlg-ok' : 'dlg-cancel');
+    await tick();
+    assert.equal(WM.current_route, 'uisetup', 'dialog Escape cancels replacement, not the import tool');
+    assert.equal(WM.el('setup-text').value, accepted ? catalogReply().text : original);
+    assert.equal(WM.el('setup-create').disabled, accepted);
+    assert.equal(WM.el('setup-summary').hidden, accepted);
+    assert.equal(WM.el('setup-name').value, 'Imported'); assert.equal(WM.el('setup-base').value, 'profile-A');
+    assert.equal(WM.el('setup-character').value, 'char-A'); assert.equal(WM.el('setup-account').value, 'account-A');
+    assert.equal(reviews.length, originalReviewCount); assert.equal(creates.length, 0);
+    if (queued) {
+      assert.equal(WM.el('overlay').hidden, false);
+      assert.equal(WM.el('dlg-title').textContent, 'Queued question');
+      assert.equal(document.activeElement.id, ordinary ? 'dlg-ok' : 'dlg-cancel', 'replacement must not steal focus from the next queued dialog');
+      // Native Enter activates the focused button; this harness supplies that click.
+      document.activeElement.click(); assert.equal(await nextDialog, ordinary); await tick();
+      assert.equal(WM.el('overlay').hidden, true);
+      assert.equal(WM.el('setup-text').value, accepted ? catalogReply().text : original);
+      assert.equal(WM.el('setup-create').disabled, accepted);
+      assert.equal(WM.el('setup-catalog').hidden, accepted);
+      assert.equal(WM.el('setup-catalog-use').disabled, accepted);
+      assert.equal(document.activeElement.id, accepted ? 'setup-back' : 'setup-catalog-use',
+        'the final queue drain restores a visible enabled control, not hidden export/catalog controls');
+      assert.equal(document.activeElement.disabled, false);
+      assert.ok(document.activeElement.getClientRects().length > 0);
+      assert.equal(document.activeElement.closest('.route').id, 'route-uisetup');
+    } else {
+      assert.equal(WM.el('overlay').hidden, true);
+      assert.equal(document.activeElement.id, accepted ? 'setup-text' : 'setup-catalog-use',
+        'a single dialog returns focus to the input after acceptance or Use after cancel');
+    }
+    return;
+  }
+  if (scenario === 'catalog-selection-scroll') {
+    scrollCalls.length = 0;
+    click('setup-catalog-open'); WM.el('setup-name').focus();
+    catalogs.at(-1).resolve({ok: true, error: '', entries: catalogEntries}); await tick();
+    assert.equal(document.activeElement.id, 'setup-name', 'background list completion must not steal focus');
+    assert.deepEqual(scrollCalls, [], 'background list completion must not scroll');
+    WM.el('setup-catalog-select').focus(); chooseCatalog();
+    assert.deepEqual(plain(scrollCalls), [{id: 'setup-catalog', options: {block: 'start'}}],
+      'focused selection reveals the existing catalog region in the work scroller');
+    assert.equal(document.activeElement.id, 'setup-catalog-select', 'revealing details must preserve keyboard selection');
+    assert.ok(WM.el('setup-catalog-details').textContent.includes(catalogEntries[0].description));
+    scrollCalls.length = 0; WM.el('setup-name').focus(); chooseCatalog(1);
+    assert.deepEqual(scrollCalls, [], 'selection without user focus must not move the work scroller');
+    assert.equal(document.activeElement.id, 'setup-name');
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(WM.el('setup-summary').hidden, false); assert.equal(reviews.length, originalReviewCount);
+    assert.equal(catalogReads.length, 0); assert.equal(discards.length, 0); assert.equal(creates.length, 0); return;
+  }
+  if (scenario === 'catalog-selection-status') {
+    await browse(); const prompt = catalogStatus();
+    assert.match(prompt, /Choose a setup/);
+    chooseCatalog();
+    assert.equal(catalogStatus(), '', 'valid selection retires the obsolete Choose prompt');
+    assert.ok(WM.el('setup-catalog-details').textContent.includes(catalogEntries[0].description));
+    click('setup-catalog-use');
+    catalogReads.at(-1).resolve({ok: false, entry: {}, text: '', summary: {}, error: 'Hash mismatch'}); await tick();
+    assert.match(catalogStatus(), /Hash mismatch/);
+    chooseCatalog(1); assert.equal(catalogStatus(), '', 'a new choice retires the previous entry error');
+    assert.equal(WM.el('setup-catalog-status').className, 'hint');
+    change('setup-catalog-select', '');
+    assert.equal(catalogStatus(), prompt, 'clearing the choice restores the selection prompt');
+    assert.equal(WM.el('setup-catalog-details').textContent, ''); assert.equal(WM.el('setup-catalog-use').disabled, true);
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(WM.el('setup-summary').hidden, false); assert.equal(reviews.length, originalReviewCount);
+    assert.equal(discards.length, 0); assert.equal(creates.length, 0); return;
+  }
+  if (scenario === 'catalog-list-after-create') {
+    click('setup-catalog-open'); const old = catalogs.at(-1);
+    click('setup-create'); creates.at(-1).resolve({accepted: false, error: 'Busy'}); await tick();
+    old.resolve({ok: true, error: '', entries: catalogEntries}); await tick();
+    assert.equal(WM.el('setup-catalog').hidden, true, 'Create retires the picker, even if admission is refused');
+    await browse(); assert.equal(WM.el('setup-catalog-select').disabled, false); return;
+  }
+  if (['catalog-empty-retry', 'catalog-error-retry', 'catalog-list-rejected', 'catalog-list-close-reopen'].includes(scenario)) {
+    click('setup-catalog-open'); const old = catalogs.at(-1);
+    click('setup-catalog-open'); assert.equal(catalogs.length, 1, 'no duplicate list reads');
+    assert.equal(WM.el('setup-create').disabled, false, 'list read preserves review');
+    assert.equal(WM.el('setup-paste').disabled, false);
+    if (scenario === 'catalog-list-close-reopen') {
+      click('setup-catalog-close'); await browse();
+      const before = catalogStatus(); old.reject(new Error('old failure')); await tick();
+      assert.equal(catalogStatus(), before); assert.equal(WM.el('setup-catalog-select').options.length, 3);
+    } else {
+      if (scenario === 'catalog-empty-retry') old.resolve({ok: true, entries: [], error: ''});
+      else if (scenario === 'catalog-error-retry') old.resolve({ok: false, entries: [], error: 'Missing <catalog>'});
+      else old.reject(new Error('bridge disconnected'));
+      await tick(); assert.match(catalogStatus(), /no complete|missing|could not/i);
+      assert.equal(WM.el('setup-catalog-use').disabled, true);
+      assert.equal(WM.el('setup-create').disabled, false);
+      click('setup-catalog-retry'); catalogs.at(-1).resolve({ok: true, entries: catalogEntries, error: ''}); await tick();
+      assert.equal(WM.el('setup-catalog-select').disabled, false);
+    }
+    assert.equal(WM.el('setup-text').value, original); return;
+  }
+  await browse();
+  assert.equal(WM.el('setup-create').disabled, scenario === 'catalog-use-empty');
+  assert.equal(WM.el('setup-catalog-use').disabled, true, 'Use requires explicit selection');
+  click('setup-catalog-use'); assert.equal(catalogReads.length, 0);
+  if (scenario === 'catalog-browse-close') {
+    chooseCatalog(); click('setup-catalog-close');
+    assert.equal(WM.el('setup-catalog').hidden, true);
+    assert.equal(document.activeElement.id, 'setup-catalog-open');
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(reviews.length, originalReviewCount); assert.equal(creates.length, 0); return;
+  }
+  if (scenario.startsWith('catalog-origin-cleared-by-') || scenario === 'catalog-origin') {
+    await useCatalog();
+    assert.match(WM.el('setup-catalog-origin').textContent, /Setup a.*3/);
+    input('setup-name', 'Other local name'); change('setup-account', 'account-A');
+    assert.match(WM.el('setup-catalog-origin').textContent, /Setup a/);
+    if (scenario === 'catalog-origin') input('setup-text', WM.el('setup-text').value + 'edited');
+    else {
+      const file = scenario.endsWith('file'); click(file ? 'setup-file' : 'setup-paste');
+      assert.match(WM.el('setup-catalog-origin').textContent, /Setup a/, 'pending read is not a replacement');
+      (file ? reads : clipboardReads).at(-1).resolve(file ? {ok: true, cancelled: false, error: '', text: original} : original);
+      await tick();
+    }
+    assert.equal(WM.el('setup-catalog-origin').textContent, ''); return;
+  }
+  const manualFirst = scenario.startsWith('catalog-supersedes-') || scenario === 'catalog-stale-manual-busy';
+  const file = scenario.endsWith('file');
+  let manual;
+  if (manualFirst) {
+    click(file ? 'setup-file' : 'setup-paste'); manual = (file ? reads : clipboardReads).at(-1);
+  }
+  chooseCatalog();
+  if (scenario === 'catalog-literal-selection') {
+    const details = WM.el('setup-catalog-details').textContent;
+    for (const text of ['Purpose <script>literal</script>', 'Author <img>', 'Layout <author>', '1920', '1080', '100%', 'Invented checks', 'v1', 'Test only']) assert.ok(details.includes(text), text);
+    assert.equal(WM.el('setup-catalog-details').querySelectorAll('img').length, 0);
+    assert.equal(WM.el('setup-catalog-details').querySelectorAll('script').length, 0);
+    assert.equal(WM.el('setup-catalog-select').options[1].textContent, catalogEntries[0].title);
+  }
+  // A previously checked native-label choice must survive failure/cancel and
+  // clear only on an accepted replacement, not on selection or read start.
+  WM.el('setup-keep-labels').checked = true; WM.el('setup-label-choice').hidden = false;
+  click('setup-catalog-use'); const pending = catalogReads.at(-1);
+  assert.deepEqual(plain(pending.args), ['test-a', 3, catalogEntries[0].sha256]);
+  click('setup-catalog-use'); assert.equal(catalogReads.length, 1, 'duplicate Use disabled');
+  assert.equal(WM.el('setup-create').disabled, manualFirst || scenario === 'catalog-use-empty');
+  if (scenario === 'catalog-failed-entry' || scenario === 'catalog-rejected-entry') {
+    if (scenario === 'catalog-failed-entry') pending.resolve({ok: false, entry: {}, text: '', summary: {}, error: 'Hash <mismatch>'});
+    else pending.reject(new Error('transport'));
+    await tick(); assert.equal(WM.el('setup-text').value, original);
+    assert.equal(WM.el('setup-create').disabled, false); assert.equal(WM.el('setup-keep-labels').checked, true);
+    assert.equal(confirmations.length, 0); assert.match(catalogStatus(), /mismatch|could not/i);
+    assert.equal(WM.el('setup-catalog-use').disabled, false); return;
+  }
+  const delayedConfirm = scenario.startsWith('catalog-confirm-');
+  if (delayedConfirm) { pending.resolve(catalogReply()); await tick(); assert.equal(confirmations.length, 1); }
+  if (scenario.includes('-after-')) {
+    const action = scenario.split('-after-')[1];
+    if (action === 'text') input('setup-text', 'New text');
+    if (action === 'name') input('setup-name', 'New name');
+    if (action === 'base') change('setup-base', 'profile-B');
+    if (action === 'pair') change('setup-character', 'char-B');
+    if (action === 'labels') change('setup-keep-labels', '');
+    if (action === 'close' || action === 'reopen') {
+      click('setup-catalog-close'); if (action === 'reopen') await browse();
+    }
+    if (action === 'route') { WM.route('main'); await importOpen(); }
+    if (action === 'create') {
+      click('setup-create'); creates.at(-1).resolve({accepted: false, error: 'Busy'}); await tick();
+    }
+    const before = WM.el('setup-text').value, beforeStatus = importStatus(), beforeCatalog = catalogStatus();
+    if (delayedConfirm) confirmations.at(-1).resolve(true); else pending.resolve(catalogReply());
+    await tick(); assert.equal(WM.el('setup-text').value, before); assert.equal(importStatus(), beforeStatus);
+    assert.equal(catalogStatus(), beforeCatalog); assert.equal(WM.el('setup-catalog-origin').textContent, '');
+    assert.equal(confirmations.length, delayedConfirm ? 1 : 0); return;
+  }
+  if (scenario.endsWith('selection-aba')) {
+    chooseCatalog(1); chooseCatalog(0); click('setup-catalog-use'); const latest = catalogReads.at(-1);
+    assert.notEqual(latest, pending);
+    if (delayedConfirm) confirmations[0].resolve(true); else pending.resolve(catalogReply());
+    await tick(); assert.equal(WM.el('setup-text').value, original);
+    assert.equal(WM.el('setup-catalog-use').disabled, true, 'old callback cannot clear new busy state');
+    latest.resolve(catalogReply()); await tick(); confirmations.at(-1).resolve(true); await tick();
+    assert.equal(WM.el('setup-text').value, catalogReply().text); return;
+  }
+  if (scenario.startsWith('catalog-superseded-by-')) {
+    click(file ? 'setup-file' : 'setup-paste');
+    (file ? reads : clipboardReads).at(-1).resolve(file ? {ok: true, cancelled: false, error: '', text: 'Manual wins'} : 'Manual wins');
+    await tick(); pending.resolve(catalogReply()); await tick();
+    assert.equal(WM.el('setup-text').value, 'Manual wins'); assert.equal(confirmations.length, 0);
+    assert.equal(WM.el('setup-catalog-origin').textContent, ''); return;
+  }
+  pending.resolve(catalogReply()); await tick();
+  if (scenario === 'catalog-use-empty') assert.equal(confirmations.length, 0);
+  else {
+    assert.equal(WM.el('setup-text').value, original, 'read success alone cannot replace dirty source');
+    assert.match(confirmations.at(-1).args[1], /Setup a/);
+    confirmations.at(-1).resolve(scenario !== 'catalog-cancel-replacement'); await tick();
+  }
+  if (scenario === 'catalog-cancel-replacement') {
+    assert.equal(WM.el('setup-text').value, original); assert.equal(WM.el('setup-create').disabled, false);
+    assert.equal(WM.el('setup-keep-labels').checked, true); assert.equal(WM.el('setup-label-choice').hidden, false);
+    assert.equal(WM.el('setup-catalog-select').value, 'test-a'); return;
+  }
+  assert.equal(WM.el('setup-text').value, catalogReply().text);
+  assert.equal(WM.el('setup-create').disabled, true); assert.equal(WM.el('setup-review').disabled, false);
+  assert.equal(WM.el('setup-keep-labels').checked, false); assert.equal(WM.el('setup-label-choice').hidden, true);
+  assert.equal(WM.el('setup-name').value, 'Imported'); assert.equal(WM.el('setup-base').value, 'profile-A');
+  assert.equal(WM.el('setup-character').value, 'char-A'); assert.equal(WM.el('setup-account').value, 'account-A');
+  assert.equal(document.activeElement.id, 'setup-text'); assert.match(WM.el('setup-catalog-origin').textContent, /Setup a.*3/);
+  assert.equal(reviews.length, originalReviewCount); assert.equal(creates.length, 0, 'no automatic Review/Create');
+  if (manualFirst) {
+    assert.equal(WM.el('setup-paste').disabled, false, 'superseded read cannot leave busy flag stuck');
+    if (scenario === 'catalog-stale-manual-busy') click('setup-paste');
+    manual.resolve(file ? {ok: true, cancelled: false, error: '', text: 'Old manual'} : 'Old manual'); await tick();
+    assert.equal(WM.el('setup-text').value, catalogReply().text); assert.match(WM.el('setup-catalog-origin').textContent, /Setup a/);
+    if (scenario === 'catalog-stale-manual-busy') {
+      assert.equal(WM.el('setup-paste').disabled, true, 'stale reply cannot clear newer manual busy flag');
+      clipboardReads.at(-1).resolve('Newest'); await tick(); assert.equal(WM.el('setup-text').value, 'Newest');
+    }
+  }
+}
 async function importMain() {
+  if (scenario.startsWith('catalog-')) { await catalogMain(); return; }
   if (scenario.startsWith('profiles-refresh-')) { await profilesRefreshMain(); return; }
   if (coupled) { await detachedMain(); return; }
   await importOpen();
-  if (scenario === 'context-does-not-select') {
+  if (scenario.startsWith('setup-dialog-completion-')) {
+    await reviewed(); WM.el('setup-create').focus(); click('setup-create');
+    const pending = creates.at(-1); pending.resolve({accepted: true}); await tick();
+    const question = WM.confirm('Unrelated decision', 'Continue?', {destructive: true});
+    scrollCalls.length = 0;
+    const success = scenario.endsWith('-success');
+    assert.equal(WM.uiSetupDone(completion(pending.args, success ? {} : {
+      ok: false, published: false, path: '', error: 'Stage failed', error_code: 'create_failed'
+    })), true);
+    assert.match(importStatus(), success ? /created.*settings_Imported/i : /Stage failed.*Review.*again/i);
+    assert.equal(WM.el('setup-text').disabled, success); assert.equal(WM.el('setup-create').disabled, true);
+    assert.deepEqual([document.activeElement.id, plain(scrollCalls)], ['dlg-cancel', []],
+      'attached completion settles its receipt without stealing modal focus or scrolling');
+    document.activeElement.click(); assert.equal(await question, false); await tick();
+    assert.equal(WM.el('overlay').hidden, true); assert.equal(document.activeElement.id, 'setup-back');
+    assert.ok(document.activeElement.getClientRects().length > 0);
+    const before = importStatus(); assert.equal(WM.uiSetupDone(completion(pending.args)), false);
+    assert.equal(importStatus(), before, 'completion ownership is still retired exactly once');
+    document.activeElement.click(); assert.equal(WM.current_route, 'evesettings');
+  } else if (scenario === 'context-does-not-select') {
     assert.equal(WM.el('setup-base').value, 'profile-A'); click('setup-back');
     assert.equal(WM.current_route, 'evesettings'); assert.equal(document.activeElement.id, 'es-setup-import');
   } else if (scenario === 'base-rosters-differ' || scenario === 'edit-during-context') {

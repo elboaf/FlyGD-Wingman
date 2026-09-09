@@ -4843,6 +4843,14 @@ class Api:
     def eve_settings_setup_limits(self) -> dict:
         return self._profiles.setup_limits()
 
+    def eve_settings_setup_catalog(self) -> dict:
+        return self._profiles.setup_catalog()
+
+    def eve_settings_setup_catalog_entry(
+        self, preset_id: str, revision: int, sha256: str
+    ) -> dict:
+        return self._profiles.setup_catalog_entry(preset_id, revision, sha256)
+
     def eve_settings_setup_context(self, profile: str) -> dict:
         return self._profiles.setup_context(profile)
 

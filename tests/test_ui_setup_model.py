@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from tests.setup_fixtures import wire
+from tests.setup_fixtures import wire, wire_with_tabs
 from wingman.evesettings import setup_model as model
 
 
@@ -424,22 +424,52 @@ def test_filter_count_boundary():
     assert_error("collection_limit", model.validate_wingman, source)
 
 
-def test_full_tab_and_group_count_boundaries_and_active_geometry():
-    source = wire()
-    source["overview"]["windowGroups"] = [[i] for i in range(8)]
-    source["layout"]["windows"] += [
-        {"key": f"overview_{i}", "geometry": [0, 0, 1, 1, 1, 1], "state": {}}
-        for i in range(3, 8)
-    ]
-    assert len(model.validate_wingman(source).layout["windows"]) == 17
-    source["overview"]["tabs"].append({**source["overview"]["tabs"][0], "id": 8})
+@pytest.mark.parametrize("count,group_count", [(9, 1), (20, 1), (20, 8)])
+def test_full_twenty_tab_budget_preserves_complete_groups_and_geometry(
+    count, group_count
+):
+    source = wire_with_tabs(count, group_count=group_count)
+    # Logical IDs are not physical slots, even at the full collection budget.
+    source["overview"]["tabs"][-1]["id"] = 2147483647
+    group = source["overview"]["windowGroups"][(count - 1) % group_count]
+    group[-1] = 2147483647
+    parsed = model.validate_wingman(source)
+    assert parsed.overview == source["overview"]
+    assert parsed.layout == source["layout"]
+    assert len(parsed.overview["tabs"]) == count
+    assert len(parsed.layout["windows"]) == group_count + 9
+    assert model.summarize(parsed)["counts"]["tabs"] == count
+
+
+@pytest.mark.parametrize("count,group_count", [(0, 1), (21, 1), (20, 9)])
+def test_tab_and_group_budgets_refuse_without_truncation(count, group_count):
+    source = wire_with_tabs(count, group_count=group_count)
+    before = copy.deepcopy(source)
     assert_error("collection_limit", model.validate_wingman, source)
-    source["overview"]["tabs"].pop()
-    source["overview"]["windowGroups"].append([8])
-    assert_error("collection_limit", model.validate_wingman, source)
-    source["overview"]["tabs"] = []
-    source["overview"]["windowGroups"] = []
-    assert_error("collection_limit", model.validate_wingman, source)
+    assert source == before
+
+
+@pytest.mark.parametrize(
+    "fault,code",
+    [
+        ("missing", "invalid_groups"),
+        ("duplicate", "duplicate_id"),
+        ("order", "invalid_order"),
+        ("geometry", "invalid_type"),
+    ],
+)
+def test_twenty_tabs_do_not_relax_assignment_order_or_geometry(fault, code):
+    source = wire_with_tabs(20, group_count=8)
+    groups = source["overview"]["windowGroups"]
+    if fault == "missing":
+        groups[-1].pop()
+    elif fault == "duplicate":
+        groups[-1].append(groups[0][0])
+    elif fault == "order":
+        groups[0].reverse()
+    else:
+        source["layout"]["windows"][7]["geometry"] = None
+    assert_error(code, model.validate_wingman, source)
 
 
 def test_one_tab_group_is_supported_with_closed_dependencies():
@@ -921,7 +951,7 @@ def test_limits_payload_reports_fresh_complete_supported_budgets():
         "max_depth": 16,
         "max_nodes": 100000,
         "max_presets": 256,
-        "max_tabs": 8,
+        "max_tabs": 20,
         "max_window_groups": 8,
         "max_ship_labels": 64,
         "max_layout_windows": 32,

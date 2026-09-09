@@ -343,6 +343,39 @@ runs:
         print("Setup YAML modules, extension and licence are bundled (runtime smoke still required)")
         PY
 
+    - name: Verify setup presets are bundled
+      # Read the validated source catalog, then compare the actual frozen data
+      # tree byte-for-byte. Importing the source module alone cannot prove that
+      # PyInstaller collected any assets. No preset counts or filenames to drift.
+      shell: bash
+      run: |
+        uv run --no-sync python - <<'PY'
+        from pathlib import Path
+        from wingman import paths
+        from wingman.evesettings import setup_catalog
+
+        source = paths.setup_presets_dir()
+        frozen = Path("dist/Wingman/_internal/assets/setup-presets")
+        entries = setup_catalog.list_entries()
+        assert entries, "Setup preset inventory is empty"
+        names = {"catalog.json"}
+        for entry in entries:
+            # Hash and full-setup parser checks precede filename derivation.
+            setup_catalog.read_entry(entry["id"], entry["revision"], entry["sha256"])
+            names.add(f"{entry['id']}-r{entry['revision']}.json")
+            names.update(item["license_file"] for item in entry["overview_sources"])
+        for directory in (source, frozen):
+            assert directory.is_dir(), f"Missing setup preset inventory: {directory}"
+            actual = {path.name for path in directory.iterdir()}
+            assert actual == names, f"Setup preset inventory differs at {directory}: missing={sorted(names - actual)}, extra={sorted(actual - names)}"
+            for name in names:
+                path = directory / name
+                assert path.is_file() and not path.is_symlink(), f"Missing regular setup preset inventory file: {path}"
+        for name in sorted(names):
+            assert (source / name).read_bytes() == (frozen / name).read_bytes(), f"Setup preset bytes differ: {name}"
+        print(f"Setup preset inventory matches source: {len(entries)} setups, {len(names)} files (runtime smoke still required)")
+        PY
+
     - name: Show what PyInstaller produced
       # The layout is the thing that cannot be verified off-Windows.
       # Confirmed on 2026-08-20 against PyInstaller 6.x: the executable sits

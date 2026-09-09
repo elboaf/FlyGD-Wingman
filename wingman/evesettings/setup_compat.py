@@ -64,5 +64,5 @@ ALL_COLUMNS = (
     "TRANSVERSALVELOCITY",
     "ANGULARVELOCITY",
 )
-# overviewSettingsConst:83; independent of Wingman's eight-tab budget.
+# overviewSettingsConst:83; shared by physical slot checks and the portable budget.
 CLIENT_TAB_SLOTS = 20

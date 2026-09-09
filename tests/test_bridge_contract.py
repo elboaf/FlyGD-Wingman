@@ -259,6 +259,11 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
     expected = {
         "eve_settings_state": ("state", []),
         "eve_settings_setup_limits": ("setup_limits", []),
+        "eve_settings_setup_catalog": ("setup_catalog", []),
+        "eve_settings_setup_catalog_entry": (
+            "setup_catalog_entry",
+            ["preset_id", "revision", "sha256"],
+        ),
         "eve_settings_setup_context": ("setup_context", ["profile"]),
         "eve_settings_setup_export": (
             "setup_export",

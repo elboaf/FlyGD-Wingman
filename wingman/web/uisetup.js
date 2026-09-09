@@ -41,6 +41,7 @@
   var busy = false;
   var mode = '';
   var draft = null;
+  var catalog = null;
   var requestSerial = 0;
   // Leaving destroys the private draft, not ownership of a sent Create. The
   // worker releases its lock before pushing, so more than one receipt can wait.
@@ -280,6 +281,8 @@
   }
 
   function clearImport() {
+    clearCatalog();
+    catalogOrigin(null);
     if (draft) discard(draft.review);
     draft = null;
     ['setup-text', 'setup-name'].forEach(function (id) { WM.el(id).value = ''; });
@@ -308,16 +311,19 @@
       && !!draft.text.trim() && !!draft.name.trim());
     WM.setEnabled('setup-create', edit && !!draft.review);
     WM.el('setup-back').textContent = draft && (draft.creating || draft.published) ? 'Back to Profiles' : 'Cancel';
+    catalogControls();
   }
 
   function importChanged(replacedText) {
     if (!editable()) return;
     draft.version += 1;
+    cancelCatalogRead();
     draft.reviewing = false;
     draft.reading = false;
     discard(draft.review);
     draft.review = '';
     if (replacedText) {
+      catalogOrigin(null);
       WM.el('setup-keep-labels').checked = false;
       WM.el('setup-label-choice').hidden = true;
     }
@@ -327,6 +333,175 @@
     clearImportSummary();
     importStatus('Review the setup again before creating a profile.');
     importControls();
+  }
+
+  function catalogStatus(text, error) {
+    var node = WM.el('setup-catalog-status');
+    node.textContent = text || '';
+    node.className = error ? 'hint err' : 'hint';
+  }
+
+  function catalogOrigin(entry) {
+    var node = WM.el('setup-catalog-origin');
+    // This names the source, not a frontend verification of textarea bytes
+    // (the native textarea can normalize newlines). No installed registry.
+    node.textContent = entry ? 'Loaded from bundled setup: ' + entry.title
+      + ' · revision ' + entry.revision + ' · ' + entry.id + '.' : '';
+    node.hidden = !entry;
+  }
+
+  function catalogSelection() {
+    return catalog && catalog.entries.filter(function (entry) {
+      return entry.id === WM.el('setup-catalog-select').value;
+    })[0];
+  }
+
+  function catalogControls() {
+    var edit = editable();
+    WM.setEnabled('setup-catalog-open', edit && !catalog);
+    WM.setEnabled('setup-catalog-select', edit && !!catalog && !catalog.loading && !!catalog.entries.length);
+    WM.setEnabled('setup-catalog-use', edit && !!catalog && !catalog.loading && !catalog.reading && !!catalogSelection());
+    WM.setEnabled('setup-catalog-retry', edit && !!catalog && !catalog.loading && !catalog.reading);
+  }
+
+  function cancelCatalogRead() {
+    if (!catalog) return;
+    catalog.serial += 1;
+    if (catalog.reading) catalogStatus('');
+    catalog.reading = false;
+  }
+
+  function clearCatalog() {
+    catalog = null;
+    WM.el('setup-catalog').hidden = true;
+    WM.el('setup-catalog-open').setAttribute('aria-expanded', 'false');
+    WM.el('setup-catalog-select').textContent = '';
+    WM.el('setup-catalog-details').textContent = '';
+    catalogStatus('');
+  }
+
+  function catalogChanged() {
+    if (!editable() || !catalog) return;
+    // A -> B -> A must not re-admit the first A read or confirmation.
+    cancelCatalogRead();
+    var entry = catalogSelection();
+    var lines = [];
+    if (entry) {
+      lines = [entry.description, 'Content revision: ' + entry.revision,
+        'Layout author: ' + entry.layout_author,
+        'Intended display: ' + entry.display.width + ' × ' + entry.display.height
+          + ' · UI scale ' + entry.display.ui_scale_percent + '%'];
+      entry.overview_sources.forEach(function (source) {
+        lines.push('Overview: ' + source.name + ' · ' + source.author + ' · ' + source.version
+          + '\nSource: ' + source.reference + '\nLicense: ' + source.license);
+      });
+      lines.push('Validation notes: ' + entry.verification);
+    }
+    WM.el('setup-catalog-details').textContent = lines.join('\n');
+    catalogStatus(entry ? '' : 'Choose a setup to see its source and intended display.');
+    catalogControls();
+    // Reveal details in the existing work scroller, without moving keyboard
+    // focus or scrolling when a background update owns the selection.
+    if (entry && document.activeElement === WM.el('setup-catalog-select')) {
+      WM.el('setup-catalog').scrollIntoView({block: 'start'});
+    }
+  }
+
+  function browseCatalog() {
+    if (screenshotFixture) return;
+    if (!editable() || (catalog && (catalog.loading || catalog.reading))) return;
+    // A fresh object owns each list request, including Close/reopen. Metadata
+    // can load independently of recipient input; it confers no review authority.
+    var picker = {entries: [], loading: true, reading: false, serial: 0};
+    catalog = picker;
+    var view = generation;
+    WM.el('setup-catalog').hidden = false;
+    WM.el('setup-catalog-open').setAttribute('aria-expanded', 'true');
+    fill('setup-catalog-select', [], '', 'Choose a bundled setup');
+    WM.el('setup-catalog-details').textContent = '';
+    WM.el('setup-catalog-retry').hidden = true;
+    catalogStatus('Reading bundled setups…');
+    catalogControls();
+    WM.el('setup-catalog-close').focus();
+    function current() { return isCurrent(view) && editable() && catalog === picker; }
+    function failed(text) {
+      if (!current()) return;
+      picker.loading = false;
+      catalogStatus(text, true);
+      WM.el('setup-catalog-retry').hidden = false;
+      catalogControls();
+    }
+    WM.send('eve_settings_setup_catalog').then(function (reply) {
+      if (!current()) return;
+      if (!reply.ok) { failed(reply.error); return; }
+      picker.loading = false;
+      picker.entries = reply.entries;
+      fill('setup-catalog-select', picker.entries.map(function (entry) {
+        return {path: entry.id, name: entry.title};
+      }), '', 'Choose a bundled setup');
+      catalogStatus(picker.entries.length ? 'Choose a setup to see its source and intended display.'
+        : 'No complete setups are bundled in this build. Paste a setup or choose a file.');
+      WM.el('setup-catalog-retry').hidden = !!picker.entries.length;
+      catalogControls();
+      // Do not steal focus if the user continued editing during the read.
+      if (picker.entries.length && document.activeElement === WM.el('setup-catalog-close')) {
+        WM.el('setup-catalog-select').focus();
+      }
+    }).catch(function () {
+      failed('Could not read the bundled catalog. Retry catalog, paste a setup or choose a file.');
+    });
+  }
+
+  function useCatalog() {
+    if (screenshotFixture) return;
+    var entry = catalogSelection();
+    if (!editable() || !entry || catalog.loading || catalog.reading) return;
+    var picker = catalog, view = generation, version = draft.version, serial = ++picker.serial;
+    picker.reading = true;
+    catalogStatus('Reading ' + entry.title + '…');
+    catalogControls();
+    function current() {
+      return isCurrent(view) && editable() && draft.version === version
+        && catalog === picker && picker.serial === serial;
+    }
+    function finish(text, error) {
+      if (!current()) return;
+      picker.reading = false;
+      catalogStatus(text, error);
+      catalogControls();
+    }
+    function replace(reply) {
+      if (!current()) return;
+      WM.el('setup-text').value = reply.text;
+      // Only acceptance changes shared source authority. This also retires a
+      // pending Paste/File's busy flag; its version-guarded callback stays inert.
+      importChanged(true);
+      catalogOrigin(reply.entry);
+      clearCatalog();
+      importControls();
+      // panel.js may already have opened the next queued dialog.
+      if (WM.el('overlay').hidden) WM.el('setup-text').focus();
+    }
+    WM.send('eve_settings_setup_catalog_entry', entry.id, entry.revision, entry.sha256)
+      .then(function (reply) {
+        if (!current()) return;
+        if (!reply.ok) { finish(reply.error, true); return; }
+        if (!draft.text) { replace(reply); return; }
+        return WM.confirm('Replace setup input?', 'Replace the current input with “' + reply.entry.title
+          + '”? Your local base, recipient and new profile name stay unchanged. Review again before creating.')
+          .then(function (yes) {
+            if (!current()) return;
+            if (yes) replace(reply);
+            else {
+              finish('Input unchanged.');
+              // The dialog cannot restore a disabled Use button until this
+              // response releases it. Do not steal focus from a queued dialog.
+              if (WM.el('overlay').hidden) WM.el('setup-catalog-use').focus();
+            }
+          });
+      }).catch(function () {
+        finish('Could not load the bundled setup. Try Use preset again or choose another source.', true);
+      });
   }
 
   function loadImport(profile, character, account) {
@@ -402,7 +577,8 @@
         }
         WM.el('setup-text').value = file ? reply.text : reply;
         importChanged(true);
-        WM.el('setup-text').focus();
+        // A catalog replacement confirmation may have opened during this read.
+        if (WM.el('overlay').hidden) WM.el('setup-text').focus();
       }, failed);
     } catch (error) { failed(); }
   }
@@ -470,6 +646,8 @@
           importStatus('Review ready. Create profile makes a new copy; Cancel creates nothing.');
         }
         importControls();
+        // Keep the valid review, but let an open dialog own focus and scrolling.
+        if (!WM.el('overlay').hidden) return;
         if (result && result.needs_label_choice) {
           WM.el('setup-keep-labels').focus();
           // The wrapped checkbox's invisible input has absolute positioning;
@@ -490,6 +668,7 @@
   function createImport() {
     if (screenshotFixture) return;
     if (!editable() || !draft.review) return;
+    clearCatalog();
     requestSerial += 1;
     var pending = {view: generation, review: draft.review,
       request: 'setup-' + Date.now() + '-' + requestSerial, completed: false};
@@ -579,7 +758,7 @@
       }
       importStatus(text, !payload.published);
       importControls();
-      WM.el('setup-status').focus();
+      if (WM.el('overlay').hidden) WM.el('setup-status').focus();
     }
     return true;
   };
@@ -603,6 +782,15 @@
     });
     WM.el('setup-paste').addEventListener('click', function () { readImport(false); });
     WM.el('setup-file').addEventListener('click', function () { readImport(true); });
+    WM.el('setup-catalog-open').addEventListener('click', browseCatalog);
+    WM.el('setup-catalog-retry').addEventListener('click', browseCatalog);
+    WM.el('setup-catalog-select').addEventListener('change', catalogChanged);
+    WM.el('setup-catalog-use').addEventListener('click', useCatalog);
+    WM.el('setup-catalog-close').addEventListener('click', function () {
+      clearCatalog();
+      importControls();
+      WM.el('setup-catalog-open').focus();
+    });
     WM.el('setup-review').addEventListener('click', reviewImport);
     WM.el('setup-create').addEventListener('click', createImport);
     WM.el('us-back').addEventListener('click', back);
@@ -619,7 +807,8 @@
       WM.el(id).addEventListener('change', sourceChanged);
     });
     document.addEventListener('keydown', function (event) {
-      if (WM.current_route === 'uisetup' && event.key === 'Escape') {
+      // panel.js owns Escape while its page confirmation is open.
+      if (!event.defaultPrevented && WM.current_route === 'uisetup' && event.key === 'Escape') {
         event.preventDefault();
         back();
       }

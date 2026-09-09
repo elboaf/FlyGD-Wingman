@@ -8,9 +8,12 @@ case. The portable fixture is hand-authored independently of the DAT fixtures,
 not computed by a projection that could duplicate an adapter's mistakes.
 """
 
+import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from wingman.evesettings import codec
 
@@ -28,6 +31,65 @@ class ProfileFixture:
 
 def wire() -> dict:
     return json.loads((_FIXTURES / "wingman-preset.json").read_text(encoding="utf-8"))
+
+
+def wire_with_tabs(count, *, group_count=1) -> dict:
+    """Invented complete tabs, with interleaved groups and exact active geometry."""
+    data = wire()
+    templates = data["overview"]["tabs"]
+    data["overview"]["tabs"] = [
+        {
+            **copy.deepcopy(templates[i % len(templates)]),
+            "id": i,
+            "name": f"Synthetic tab {i}",
+        }
+        for i in range(count)
+    ]
+    data["overview"]["windowGroups"] = [
+        list(range(i, count, group_count)) for i in range(group_count)
+    ]
+    fixed = [
+        w for w in data["layout"]["windows"] if not w["key"].startswith("overview")
+    ]
+    data["layout"]["windows"] = [
+        {
+            "key": "overview" if i == 0 else f"overview_{i}",
+            "geometry": [100 * i, 40, 300, 400, 1920, 1080],
+            "state": {"open": True},
+        }
+        for i in range(group_count)
+    ] + fixed
+    return data
+
+
+def native_with_tabs(count) -> dict:
+    """Extend only invented tab records in the existing synthetic native fixture."""
+    data = yaml.safe_load(
+        (_FIXTURES / "native-complete.yaml").read_text(encoding="utf-8")
+    )
+    templates = data["tabSetup"]
+    data["tabSetup"] = []
+    for i in range(count):
+        fields = copy.deepcopy(templates[i % len(templates)][1])
+        next(pair for pair in fields if pair[0] == "name")[1] = f"Synthetic tab {i}"
+        data["tabSetup"].append([i, fields])
+    return data
+
+
+def source_with_tabs(count) -> tuple[codec.Document, codec.Document]:
+    """Physical source slots built without any production projection or writer."""
+    account, character = documents()
+    overview = account.doc["bytes:overview"]
+    templates = list(overview["bytes:tabsettings_new"]["tuple"][1].values())
+    overview["bytes:tabsettings_new"]["tuple"][1] = {
+        f"int:{i}": {
+            **copy.deepcopy(templates[i % len(templates)]),
+            "bytes:name": f"utf8:Synthetic tab {i}",
+        }
+        for i in range(count)
+    }
+    overview["bytes:tabsByWindowInstanceID"]["tuple"][1] = [list(range(count))]
+    return account, character
 
 
 def documents(case="source") -> tuple[codec.Document, codec.Document]:

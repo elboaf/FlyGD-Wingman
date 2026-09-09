@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.setup_fixtures import wire
+from tests.setup_fixtures import native_with_tabs, wire
 from wingman.evesettings import setup_model as model
 from wingman.evesettings import setup_sharing as sharing
 
@@ -641,10 +641,31 @@ def test_native_node_boundary_counts_pair_containers_and_mapping_keys(
     assert_error("node_limit", text)
 
 
+@pytest.mark.parametrize("style", ["yaml", "json"])
+@pytest.mark.parametrize("count", [9, 20])
+def test_native_twenty_tab_budget_remains_one_complete_group(style, count):
+    source = native_with_tabs(count)
+    parsed = parse(source, style=style)
+    assert parsed.source_kind == "native-yaml"
+    assert parsed.layout is None
+    assert [tab["id"] for tab in parsed.overview["tabs"]] == list(range(count))
+    assert [tab["name"] for tab in parsed.overview["tabs"]] == [
+        f"Synthetic tab {i}" for i in range(count)
+    ]
+    assert parsed.overview["windowGroups"] == [list(range(count))]
+    assert model.summarize(parsed)["counts"]["tabs"] == count
+
+
+@pytest.mark.parametrize("style", ["yaml", "json"])
+def test_native_twenty_one_tabs_refuse_without_truncation(style):
+    source = native_with_tabs(21)
+    with pytest.raises(model.SetupError, match="Tabs") as caught:
+        parse(source, style=style)
+    assert caught.value.code == "collection_limit"
+    assert len(source["tabSetup"]) == 21
+
+
 def test_native_model_collection_limits_remain_effective():
-    value = native()
-    value["tabSetup"].append([8, copy.deepcopy(value["tabSetup"][0][1])])
-    assert_error("collection_limit", yaml.safe_dump(value))
     value = {
         "presets": [
             [
