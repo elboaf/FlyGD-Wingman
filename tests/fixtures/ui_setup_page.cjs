@@ -261,7 +261,24 @@ function context(profile = 'profile-A') {
   return data;
 }
 // Common production replies are built once by pytest. Only boundary scenarios
-// spawn Python because they own temporary controller and filesystem behavior.
+// spawn Python for request-specific filesystem or process-environment behavior.
+function spawnPython(script, input) {
+  const env = {...process.env, ...((request.payload && request.payload.env) || {})};
+  const result = spawnSync(pythonExe, ['-c', script], {
+    input: JSON.stringify(input), encoding: 'utf8', env
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+function encodingRoundTrip(value) {
+  const script = [
+    'import json,os,sys',
+    'value=json.loads(sys.stdin.buffer.read().decode("utf-8"))',
+    'result={"value":value,"encoding":os.environ.get("PYTHONIOENCODING","")}',
+    'sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False).encode("utf-8"))'
+  ].join('\n');
+  return spawnPython(script, value);
+}
 function python(kind, text = 'Étiquette 𐐀 <b>literal</b>') {
   if (kind !== 'boundary') {
     const fixture = kind === 'export'
@@ -289,13 +306,16 @@ function python(kind, text = 'Étiquette 𐐀 <b>literal</b>') {
     ' else: assert not result["ok"]',
     'sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False).encode("utf-8"))'
   ].join('\n');
-  const env = {...process.env, ...((request.payload && request.payload.env) || {})};
-  const result = spawnSync(pythonExe, ['-c', script], {
-    input: JSON.stringify([kind, text]), encoding: 'utf8', env
-  });
-  assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
+  return spawnPython(script, [kind, text]);
 }
-const exported = python('export');
+let exported = python('export');
+let encodingBoundary = '';
+if (scenario === 'unicode-locale' || scenario === 'import-unicode') {
+  const roundTrip = encodingRoundTrip(exported);
+  assert.deepEqual(roundTrip.value, exported, 'explicit UTF-8 buffers preserve the fixture');
+  exported = roundTrip.value;
+  encodingBoundary = roundTrip.encoding;
+}
 async function open(data = context()) {
   const opener = {mode: 'export', context: data, preferred_character: 'char-A'};
   WM.openUiSetup(opener);
@@ -1502,7 +1522,7 @@ if (unhandledRejections.length) {
   const error = unhandledRejections[0];
   throw error instanceof Error ? error : new Error(String(error));
 }
-return {duration_ms: performance.now() - started, output};
+return {duration_ms: performance.now() - started, output, encoding_boundary: encodingBoundary};
 } finally {
   process.removeListener('unhandledRejection', onUnhandledRejection);
   for (const timer of requestTimers) clearTimeout(timer);
@@ -1525,7 +1545,8 @@ async function serve() {
         duration_ms: result.duration_ms,
         error: '',
         stack: '',
-        output: result.output
+        output: result.output,
+        encoding_boundary: result.encoding_boundary
       }) + '\n');
     } catch (error) {
       process.stdout.write(JSON.stringify({

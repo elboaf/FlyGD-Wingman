@@ -1,6 +1,7 @@
 """Execute the production setup module and PageTree markup, not layout evidence."""
 
 import json
+import os
 import random
 import shutil
 import sys
@@ -300,6 +301,36 @@ def test_setup_page_worker_protocol_reuses_process_and_correlates_unknown_scenar
     assert failure.value.reply["id"] == second["id"] + 1
     assert failure.value.reply["scenario"] == "not-a-setup-scenario"
     assert setup_page_worker._proc is process
+
+
+def test_setup_page_worker_consumes_encoding_overlay_without_mutating_parent(
+    setup_page_worker: NodeScenarioWorker,
+):
+    parent_encoding = os.environ.get("PYTHONIOENCODING")
+    ascii_reply = setup_page_worker.request(
+        "unicode-locale",
+        {"mode": "export", "env": {"PYTHONIOENCODING": "ascii"}},
+        timeout=60.0,
+    )
+    cp1252_export = setup_page_worker.request(
+        "unicode-locale",
+        {"mode": "export", "env": {"PYTHONIOENCODING": "cp1252"}},
+        timeout=60.0,
+    )
+    cp1252_import = setup_page_worker.request(
+        "import-unicode",
+        {"mode": "import", "env": {"PYTHONIOENCODING": "cp1252"}},
+        timeout=60.0,
+    )
+    inherited_reply = setup_page_worker.request(
+        "unicode-locale", {"mode": "export", "env": {}}, timeout=60.0
+    )
+
+    assert ascii_reply["encoding_boundary"] == "ascii"
+    assert cp1252_export["encoding_boundary"] == "cp1252"
+    assert cp1252_import["encoding_boundary"] == "cp1252"
+    assert inherited_reply["encoding_boundary"] == (parent_encoding or "")
+    assert os.environ.get("PYTHONIOENCODING") == parent_encoding
 
 
 def _setup_payload(scenario: str) -> dict:
