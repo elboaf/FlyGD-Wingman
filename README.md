@@ -131,9 +131,18 @@ Off immediately inhibits local transmission; pending server actions can take
 longer. A failed preference save is marked as session-only with a restart
 warning. Source controls remain usable with sharing, previews and Fleet Bar
 off; closing the card or window never Stops a source. Enable EVE tools in
-**Settings → General** if their setup sections are hidden. This change exposes
-setup and source controls, not a remote fleet-row display or an older-release
-compatibility promise.
+**Settings → General** if their setup sections are hidden.
+
+The Fleet Bar merges eligible remote rows with local clients, marking them
+**REMOTE** or **REMOTE · STALE**. Remote state becomes stale at three seconds
+and disappears at ten; failed reads never refresh it. Verified local clients
+win, even when hidden or missing a log. Remote rows are display-only, never
+saved in the local character list or republished. Fleet Bar Off hides the
+view without changing sharing. Long rosters scroll within the 420px widget;
+drag its header to move Wingman's window, never EVE.
+
+Shared mode remains disabled in production. Browser fixtures do not establish
+Windows/WebView2, live two-client relay acceptance or older-release compatibility.
 
 ### Character crops — unreleased, release gates blocked
 

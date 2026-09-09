@@ -124,6 +124,17 @@ class RemoteEvent:
     lifecycle_epoch: int
     identity_epoch: int
     kind: Literal["replace", "clear"]
+    order: int
+    binding: str | None
+
+
+@dataclass(frozen=True)
+class CatalogueEvent:
+    catalogue: FleetCatalogue | None
+    binding: str | None
+    lifecycle_epoch: int
+    identity_epoch: int
+    order: int
 
 
 @dataclass(frozen=True)
@@ -208,6 +219,9 @@ class FleetSharingWorker:
         self._pending = threading.Event()
         self._commands: dict[str, _Command] = {}
         self._sequence = 0
+        self._presentation_order = 0
+        self._remote_order = 0
+        self._catalogue_order = 0
         self._participation_generation = 0
         self._source_generations: dict[str, int] = {}
         self._identity_epoch = 0
@@ -226,6 +240,7 @@ class FleetSharingWorker:
         self._subscribers: dict[str, dict[object, Callable]] = {
             "status": {},
             "remote": {},
+            "catalogue": {},
         }
         self._worker = None
         self._running = False
@@ -312,6 +327,12 @@ class FleetSharingWorker:
                 self._sequence, kind, payload, self._identity_epoch, binding
             )
             self._commands[key] = command
+            clear = (
+                self._remote_event_locked((), self._clock(), 0, "clear")
+                if kind == "pairing"
+                or (kind == "participation" and not payload.enabled)
+                else None
+            )
             # Publish queue status before the owner can consume this command.
             # Callbacks are deliberately deferred until BOTH locks are released.
             with self._status_lock:
@@ -322,6 +343,8 @@ class FleetSharingWorker:
                     pending_sources=self._pending_sources_locked(),
                 )
         self._pending.set()
+        if clear is not None:
+            self._notify("remote", clear)
         self._notify("status", status)
         return command
 
@@ -343,13 +366,10 @@ class FleetSharingWorker:
                 p.uuid(action_id)
             except ValueError:
                 return False
-        accepted = (
+        return (
             self._queue("pairing", "pairing", (mode, configured_origin, action_id))
             is not None
         )
-        if accepted:
-            self._clear_remote()
-        return accepted
 
     def request_participation(self, enabled: bool) -> str | None:
         """Return an explicit intent UUID, not a durable or server acknowledgement."""
@@ -359,8 +379,6 @@ class FleetSharingWorker:
         # New On remains inhibited until its fresh observation/CAS is known.
         if self._queue("participation", "participation", intent) is None:
             return None
-        if not enabled:
-            self._clear_remote()
         return intent.intent_id
 
     def request_source_start(
@@ -491,6 +509,9 @@ class FleetSharingWorker:
     def subscribe_remote(self, callback: Callable[[RemoteEvent], None]):
         return self._subscribe("remote", callback)
 
+    def subscribe_catalogue(self, callback: Callable[[CatalogueEvent], None]):
+        return self._subscribe("catalogue", callback)
+
     def _subscribe(self, kind, callback):
         token = object()
         with self._status_lock:
@@ -508,11 +529,26 @@ class FleetSharingWorker:
         for callback in callbacks:
             if kind == "status" and self.status() != value:
                 break
-            if kind == "remote" and value.kind == "replace":
+            if kind in ("remote", "catalogue"):
                 with self._lock:
-                    obsolete = self._inhibit or (self._epoch, self._identity_epoch) != (
-                        value.lifecycle_epoch,
-                        value.identity_epoch,
+                    obsolete = (
+                        (
+                            self._epoch,
+                            self._identity_epoch,
+                            self._status.metadata.binding,
+                        )
+                        != (value.lifecycle_epoch, value.identity_epoch, value.binding)
+                        or value.order
+                        != (
+                            self._remote_order
+                            if kind == "remote"
+                            else self._catalogue_order
+                        )
+                        or (
+                            kind == "remote"
+                            and value.kind == "replace"
+                            and self._inhibit
+                        )
                     )
                 if obsolete:
                     break
@@ -542,12 +578,46 @@ class FleetSharingWorker:
         if changed:
             self._notify("status", status)
 
+    def _remote_event_locked(self, rows, receipt, elapsed, kind):
+        self._presentation_order += 1
+        self._remote_order = self._presentation_order
+        return RemoteEvent(
+            rows,
+            receipt,
+            elapsed,
+            self._epoch,
+            self._identity_epoch,
+            kind,
+            self._remote_order,
+            self._status.metadata.binding,
+        )
+
     def _clear_remote(self):
         with self._lock:
-            epoch, identity = self._epoch, self._identity_epoch
-        self._notify(
-            "remote", RemoteEvent((), self._clock(), 0, epoch, identity, "clear")
-        )
+            event = self._remote_event_locked((), self._clock(), 0, "clear")
+        self._notify("remote", event)
+
+    def _set_catalogue(self, catalogue, *, fence=None):
+        with self._lock:
+            if fence is not None:
+                current = self._fence_locked()
+                if (current.lifecycle, current.identity, current.session) != (
+                    fence.lifecycle,
+                    fence.identity,
+                    fence.session,
+                ):
+                    raise _Obsolete
+            self._catalogue = catalogue
+            self._presentation_order += 1
+            self._catalogue_order = self._presentation_order
+            event = CatalogueEvent(
+                catalogue,
+                self._status.metadata.binding,
+                self._epoch,
+                self._identity_epoch,
+                self._catalogue_order,
+            )
+        self._notify("catalogue", event)
 
     def start(self) -> bool:
         with self._lifecycle_lock:
@@ -582,7 +652,9 @@ class FleetSharingWorker:
             self._stop_event.set()
             with self._lock:
                 self._epoch += 1
+                clear = self._remote_event_locked((), self._clock(), 0, "clear")
             self._pending.set()
+        self._notify("remote", clear)
         if worker is None:
             return True
         worker.join(timeout)
@@ -730,7 +802,9 @@ class FleetSharingWorker:
         self._source_observe.update(
             c.source_id for c in self._state.pending_source_commands
         )
-        self._catalogue = self._eligibility = self._sources = None
+        self._eligibility = self._sources = None
+        self._clear_remote()
+        self._set_catalogue(None)
         self._expiry_binding = None
         self._last_published = ()
         self._due = dict.fromkeys(self._due, 0.0)
@@ -1203,13 +1277,11 @@ class FleetSharingWorker:
         if (
             self._eligibility.state != "ready"
             or self._eligibility.participation_generation
-            != self._state.observed_participation.generation
+            != getattr(self._state.observed_participation, "generation", None)
         ):
             eligible = set()
-        return tuple(
-            row
-            for row in projection.project_snapshot(latest[0], self._catalogue)
-            if row.character_id in eligible
+        return projection.project_snapshot(
+            latest[0], self._catalogue, eligible_character_ids=frozenset(eligible)
         )
 
     def _recovery_work(self):
@@ -1231,7 +1303,6 @@ class FleetSharingWorker:
 
     def _execute(self, work, fence):
         self._check(fence, work=work)
-        started = self._clock()
         sent = failed = False
         try:
             state = self._state
@@ -1324,9 +1395,11 @@ class FleetSharingWorker:
                 if inhibited or not self._enabled():
                     raise _Obsolete
             sent = True
+            started = self._clock()
             result = getattr(self._client, operation)(**args)
+            receipt = self._clock()
             self._check(fence, work=work)
-            self._accept(work, result, fence, started)
+            self._accept(work, result, fence, started, receipt)
         except FleetRelayError as exc:
             failed = True
             self._check(fence, work=work)
@@ -1343,7 +1416,7 @@ class FleetSharingWorker:
                 # historical UUID backoff, or resurrect it after reconciliation.
                 self._prune_source_work()
 
-    def _accept(self, work, result, fence, started):
+    def _accept(self, work, result, fence, started, receipt):
         operation = work.operation
         if operation in ("fetch_device", "acknowledge_capabilities"):
             self._accept_device(result, fence, work)
@@ -1353,7 +1426,7 @@ class FleetSharingWorker:
             )
             self._expiry_binding = None
         elif operation == "fetch_catalogue":
-            self._catalogue = result
+            self._set_catalogue(result, fence=fence)
             self._due["catalogue"] = self._clock() + CATALOGUE_REFRESH_INTERVAL_S
         elif operation == "fetch_eligibility":
             self._eligibility = result
@@ -1366,17 +1439,13 @@ class FleetSharingWorker:
                 self._withdraw_needed = False
         elif operation == "read_snapshot":
             self._due["read"] = self._clock() + 1.0
-            self._notify(
-                "remote",
-                RemoteEvent(
-                    result,
-                    self._clock(),
-                    max(0, self._clock() - started),
-                    fence.lifecycle,
-                    fence.identity,
-                    "replace",
-                ),
-            )
+            with self._lock:
+                if self._fence_locked() != fence:
+                    raise _Obsolete
+                event = self._remote_event_locked(
+                    result, receipt, max(0, receipt - started), "replace"
+                )
+            self._notify("remote", event)
         elif operation == "set_participation":
             self._persist(
                 replace(
@@ -1501,14 +1570,14 @@ class FleetSharingWorker:
         self._needs_fresh_intent = self._part_observe = False
         self._eligibility = None
         self._due["eligibility"] = 0
+        if not enabled:
+            self._clear_remote()
         self._update_status(
             participation="acknowledged",
             local_inhibited=not enabled,
             eligibility=None,
             observed_participation=self._state.observed_participation,
         )
-        if not enabled:
-            self._clear_remote()
 
     def _accept_sources(self, result, fence, work):
         commands = self._state.pending_source_commands
@@ -1554,6 +1623,8 @@ class FleetSharingWorker:
             clear |= bool(live - current)
         self._sources = result
         self._due["sources"] = self._clock() + 2.0
+        if clear:
+            self._clear_remote()
         self._update_status(
             fence=fence,
             sources=result,
@@ -1566,8 +1637,6 @@ class FleetSharingWorker:
             if expired
             else "acknowledged",
         )
-        if clear:
-            self._clear_remote()
 
     def _finish_source(self, command, view, fence, work):
         commands = tuple(
@@ -1594,9 +1663,9 @@ class FleetSharingWorker:
                     view,
                 ),
             )
-        self._update_status(source_control="acknowledged", sources=self._sources)
         if view.state == "ended":
             self._clear_remote()
+        self._update_status(source_control="acknowledged", sources=self._sources)
 
     def _accept_recovery(self, result, fence, work):
         if result.result == "reconnected":
@@ -1685,11 +1754,13 @@ class FleetSharingWorker:
             self._source_observe.add(work.payload.source_id)
         elif exc.code in ("forbidden", "capability_required", "feature_disabled"):
             self._needs_device = True
-            self._catalogue = self._eligibility = None
+            self._eligibility = None
+            self._set_catalogue(None)
             self._due["catalogue"] = self._due["eligibility"] = 0
 
 
 __all__ = [
+    "CatalogueEvent",
     "FleetSharingWorker",
     "PendingSourceStatus",
     "RemoteEvent",

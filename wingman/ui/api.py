@@ -55,6 +55,7 @@ from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
 from ..eveauth import application as eveauth_application
 from ..evesettings.controller import ProfilesController, ProfilesPorts
+from ..fleetsharing.projection import verified_character_ids
 from ..preview import crops as preview_crops
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
@@ -75,6 +76,7 @@ from .fleetpresentation import (
     RosterMemory,
     RosterWrite,
 )
+from .remotefleet import RemoteFleetStore
 from .rows import RowSnapshot
 from .scheduler import Scheduler
 
@@ -397,6 +399,18 @@ class Api:
         self._fleet_unsubscribe = None
         self._fleet_activation = 0
         self._fleet_settings_dirty = False
+        self._fleet_display_dirty = True
+        self._fleet_clock = time.monotonic
+        self._remote_fleet = RemoteFleetStore()
+        self._remote_display_signature = ()
+        self._remote_context = None
+        self._remote_context_order = -1
+        self._remote_order = -1
+        self._catalogue_order = -1
+        self._fleet_catalogue = None
+        self._remote_fleet_closed = False
+        self._remote_unsubscribe = None
+        self._catalogue_unsubscribe = None
         # Construction is inert. Main starts the owner before subscribing;
         # the dispatcher only folds state and sets its wakeup bit.
         self._fleet_worker = FleetPresentationWorker(self._present_fleet_snapshot)
@@ -554,6 +568,12 @@ class Api:
                 self._receive_fleet_sharing_status
             )
             self._sharing_status = self._fleet_sharing.status()
+            self._remote_unsubscribe = self._fleet_sharing.subscribe_remote(
+                self._receive_remote_fleet_snapshot
+            )
+            self._catalogue_unsubscribe = self._fleet_sharing.subscribe_catalogue(
+                self._receive_fleet_catalogue
+            )
 
     # ----- page -> Python -------------------------------------------------
 
@@ -2323,6 +2343,7 @@ class Api:
     # ----- floating Fleet DPS/EWAR bar ---------------------------------
 
     def _next_fleet_revision_locked(self) -> int:
+        self._fleet_display_dirty = True
         self._fleet_presentation_revision += 1
         return self._fleet_presentation_revision
 
@@ -2368,44 +2389,73 @@ class Api:
         return payload
 
     def _fleet_display_payload_locked(
-        self, snapshot, section: dict, revision: int
+        self, snapshot, section: dict, revision: int, remote_rows
     ) -> dict:
-        if snapshot is None:
-            return {
-                "rows": [],
-                "running_count": 0,
-                "revision": revision,
-                "stream_health": {"state": "stopped", "detail": None},
-                "metric_error": None,
-            }
+        local_rows = () if snapshot is None else snapshot.rows
+        ids = (
+            verified_character_ids(self._fleet_catalogue)
+            if self._fleet_catalogue
+            else {}
+        )
+        # Resolve ALL accepted locals before hiding. A hidden/quiet/NO LOG local
+        # is still authoritative; an unverified name is not an identity match.
+        local_ids = {ids.get(row.character.strip().casefold()) for row in local_rows}
         hidden = set(section.get("hidden") or ())
-        return {
-            "rows": [
+        rows = [
+            {
+                "character": row.character,
+                "outgoing_dps": row.dps,
+                "incoming_dps": row.incoming_dps,
+                "ewar": list(row.ewar),
+                "log_status": row.log_status,
+            }
+            for row in local_rows
+            if row.character not in hidden
+        ]
+        if section.get("enabled"):
+            # The relay's dps is outgoing only. Incoming is unknown, not a
+            # measured zero or a local NO LOG condition.
+            rows.extend(
                 {
-                    "character": row.character,
+                    "character": row.character_name,
                     "outgoing_dps": row.dps,
-                    "incoming_dps": row.incoming_dps,
+                    "incoming_dps": None,
                     "ewar": list(row.ewar),
-                    "log_status": row.log_status,
+                    "log_status": None,
+                    "remote": True,
+                    "state": row.state,
                 }
-                for row in snapshot.rows
-                if row.character not in hidden
-            ],
-            "running_count": len(snapshot.rows),
+                for row in remote_rows
+                if row.character_id not in local_ids
+            )
+        return {
+            "rows": rows,
+            "running_count": len(local_rows),
             "revision": revision,
             "stream_health": {
-                "state": snapshot.stream_health.state,
-                "detail": snapshot.stream_health.detail,
+                "state": snapshot.stream_health.state if snapshot else "stopped",
+                "detail": snapshot.stream_health.detail if snapshot else None,
             },
-            "metric_error": snapshot.metric_error,
+            "metric_error": snapshot.metric_error if snapshot else None,
         }
 
+    def _refresh_remote_fleet_locked(self, now=None):
+        rows = self._remote_fleet.current(self._fleet_clock() if now is None else now)
+        signature = tuple((row.character_id, row.state) for row in rows)
+        if signature != self._remote_display_signature:
+            self._remote_display_signature = signature
+            self._next_fleet_revision_locked()
+        return rows
+
     def _fleet_payloads_locked(self) -> tuple[dict, dict]:
+        remote_rows = self._refresh_remote_fleet_locked()
         section = dict(self._state.settings.get("fleet_bar") or {})
         revision = self._fleet_presentation_revision
         return (
             self._fleet_settings_payload_locked(section, revision),
-            self._fleet_display_payload_locked(self._fleet_snapshot, section, revision),
+            self._fleet_display_payload_locked(
+                self._fleet_snapshot, section, revision, remote_rows
+            ),
         )
 
     def fleet_bar_settings(self) -> dict:
@@ -2495,6 +2545,8 @@ class Api:
             return self._fleet_delivery_current_locked(delivery)
 
     def _fleet_delivery_current_locked(self, delivery: FleetDelivery) -> bool:
+        # Saving or another page may have blocked past a freshness boundary.
+        self._refresh_remote_fleet_locked()
         return (
             not self._fleetbar_quitting
             and delivery.activation == self._fleet_activation
@@ -2508,16 +2560,24 @@ class Api:
         with self._fleet_presentation_lock:
             if self._fleetbar_quitting:
                 return
+            self._fleet_display_dirty = True
             if settings_changed:
                 self._fleet_settings_dirty = True
                 self._next_fleet_revision_locked()
             self._fleet_worker.notify()
 
-    def _present_fleet_snapshot(self) -> None:
+    def _present_fleet_snapshot(self) -> float | None:
         """The worker alone performs persistence and all Fleet presentation I/O."""
         with self._fleet_presentation_lock:
             if self._fleetbar_quitting:
-                return
+                return None
+            now = self._fleet_clock()
+            self._refresh_remote_fleet_locked(now)
+            # Schedule from the SAME sample as the state/revision. A later
+            # sample could cross stale and incorrectly wait until expiry.
+            deadline = self._remote_fleet.next_transition(now)
+            if not self._fleet_display_dirty and not self._fleet_settings_dirty:
+                return deadline
             delivery = FleetDelivery(
                 self._fleet_activation,
                 self._fleet_presentation_revision,
@@ -2532,7 +2592,7 @@ class Api:
             # Target changes (notably sig-bar creation) need not publish any
             # telemetry. Preserve a wakeup even when this was the only job.
             self._queue_fleet_presentation()
-            return
+            return None
         with self._fleet_presentation_lock:
             settings_payload, display_payload = self._fleet_payloads_locked()
             settings_changed = self._fleet_settings_dirty
@@ -2542,8 +2602,10 @@ class Api:
         with self._fleet_presentation_lock:
             if self._fleet_delivery_current_locked(delivery):
                 self._fleet_settings_dirty = False
+                self._fleet_display_dirty = False
             elif not self._fleetbar_quitting:
                 self._fleet_worker.notify()
+            return deadline
 
     def _remember_fleet_roster(self, write: RosterWrite) -> None:
         """Persist a folded batch; acknowledge only its captured admissions."""
@@ -2575,6 +2637,56 @@ class Api:
             # repeat of a saved name) must survive this older acknowledgement.
             with self._fleet_presentation_lock:
                 self._fleet_roster.acknowledge(write, candidate)
+
+    def _admit_remote_event_locked(self, event, stream: str) -> bool:
+        if self._remote_fleet_closed or self._fleetbar_quitting:
+            return False
+        last = self._remote_order if stream == "remote" else self._catalogue_order
+        if event.order <= last:
+            return False
+        context = (event.lifecycle_epoch, event.identity_epoch, event.binding)
+        if context != self._remote_context:
+            if event.order <= self._remote_context_order:
+                return False
+            self._remote_context = context
+            self._remote_fleet.clear()
+            self._fleet_catalogue = None
+            self._next_fleet_revision_locked()
+        # Independent streams may invert in the same context. Only context
+        # adoption uses the overall high-water mark; clears use their own order.
+        self._remote_context_order = max(self._remote_context_order, event.order)
+        if stream == "remote":
+            self._remote_order = event.order
+        else:
+            self._catalogue_order = event.order
+        return True
+
+    def _receive_remote_fleet_snapshot(self, event) -> None:
+        """Immutable handoff only: no Settings, native, network or thread startup."""
+        with self._fleet_presentation_lock:
+            if not self._admit_remote_event_locked(event, "remote"):
+                return
+            now = self._fleet_clock()
+            before = self._remote_fleet.current(now)
+            if event.kind == "clear":
+                self._remote_fleet.clear()
+            else:
+                self._remote_fleet.replace(
+                    event.rows, event.receipt_monotonic, event.request_elapsed
+                )
+            if before != self._remote_fleet.current(now):
+                self._next_fleet_revision_locked()
+            # Equal metrics with a new publication still move the deadline.
+            self._fleet_worker.notify()
+
+    def _receive_fleet_catalogue(self, event) -> None:
+        with self._fleet_presentation_lock:
+            if not self._admit_remote_event_locked(event, "catalogue"):
+                return
+            if self._fleet_catalogue != event.catalogue:
+                self._fleet_catalogue = event.catalogue
+                self._next_fleet_revision_locked()
+            self._fleet_worker.notify()
 
     def _receive_fleet_snapshot(self, snapshot) -> None:
         """Dispatcher handoff: state only, never I/O, joins or thread startup."""
@@ -2619,6 +2731,7 @@ class Api:
                 unsubscribe()
             except Exception:
                 logger.exception("Fleet snapshot subscriber did not detach cleanly")
+        self._close_remote_fleet_ingress()
         stopped = self._fleet_worker.stop(timeout)
         if not stopped:
             logger.warning("Fleet presentation worker is still stopping")
@@ -3534,7 +3647,31 @@ class Api:
             "state": self.fleet_sharing_state(),
         }
 
+    def _close_remote_fleet_ingress(self) -> None:
+        # Main stops presentation before sharing; both exits must detach these
+        # callbacks and clear visible payloads before their first bounded join.
+        with self._fleet_presentation_lock:
+            if self._remote_fleet_closed:
+                return
+            self._remote_fleet_closed = True
+            self._remote_fleet.clear()
+            self._fleet_catalogue = None
+            self._next_fleet_revision_locked()
+            remote_unsubscribe, self._remote_unsubscribe = (
+                self._remote_unsubscribe,
+                None,
+            )
+            catalogue_unsubscribe, self._catalogue_unsubscribe = (
+                self._catalogue_unsubscribe,
+                None,
+            )
+            self._fleet_worker.notify()
+        for detach in (remote_unsubscribe, catalogue_unsubscribe):
+            if detach is not None:
+                detach()
+
     def shutdown_fleet_sharing(self) -> bool:
+        self._close_remote_fleet_ingress()
         with self._sharing_delivery_lock:
             self._sharing_closed = True
             self._sharing_watch = False
@@ -3689,6 +3826,8 @@ class Api:
     def _start_fleet_telemetry_if_enabled(self) -> None:
         """Reserve and sample Fleet only when its persisted mode is enabled."""
         if self.fleet_bar_settings().get("enabled"):
+            # Remote-only display still ages when optional telemetry cannot build.
+            self._start_fleet_presentation()
             self._reconcile_fleet_generation(transition=True)
         else:
             self._reconcile_eve_runtime()
@@ -3759,15 +3898,15 @@ class Api:
         it has left the tray.
         """
         self._close_eve_runtime()
+        # Match main's native-exit path: revoke page identity and detach local
+        # and remote presentation before either owner can block in a join.
+        self._stop_fleet_presentation()
         self.shutdown_fleet_sharing()
         if self._preview_host is not None:
             try:
                 self._preview_host.stop(final=True)
             except Exception:
                 logger.exception("Preview host did not stop cleanly")
-        # Also called by main before native destruction. Idempotence covers
-        # headless shutdown and retries after a blocked presentation owner.
-        self._stop_fleet_presentation()
         # A returning in-flight reconcile owes eventual stop only after both
         # subscriptions have detached, not merely because admission closed.
         with self._eve_runtime_lock:

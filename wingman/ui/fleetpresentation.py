@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -132,11 +133,14 @@ class FleetPresentationWorker:
 
     def __init__(
         self,
-        present: Callable[[], None],
+        present: Callable[[], float | None],
         *,
         thread_factory: Callable[..., threading.Thread] = threading.Thread,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._present = present
+        self._clock = clock
+        self._deadline: float | None = None
         self._thread_factory = thread_factory
         self._lock = threading.Lock()
         self._iteration_lock = threading.Lock()
@@ -192,18 +196,25 @@ class FleetPresentationWorker:
 
     def _run(self, stop: threading.Event) -> None:
         while True:
-            self._pending.wait()
+            self._pending.wait(
+                None
+                if self._deadline is None
+                else max(0, self._deadline - self._clock())
+            )
             if stop.is_set():
                 return
             with self._iteration_lock:
                 self._iterate()
 
     def _iterate(self) -> None:
-        if not self._pending.is_set():
+        if not self._pending.is_set() and (
+            self._deadline is None or self._clock() < self._deadline
+        ):
             return
         self._pending.clear()
+        self._deadline = None
         try:
-            self._present()
+            self._deadline = self._present()
         except Exception:
             logger.exception("Fleet presentation failed")
 

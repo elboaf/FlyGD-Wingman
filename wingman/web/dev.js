@@ -8,6 +8,52 @@
   if (window.pywebview) return;
   if (!/[?&]dev=1/.test(window.location.search)) return;
 
+  // The standalone Fleet Bar has no app.js/WM. Branch before main-page data
+  // construction and never fabricate an API without the explicit dev flag.
+  if (document.querySelector('.fleet-shell')) {
+    // The native creator supplies this fragment in production. Only the
+    // explicitly opted-in standalone harness fabricates one, before capture.
+    window.location.hash = '#fleet-page=' + new Array(65).join('d');
+    var fleetRevision = 0;
+    function fleetFixture(kind) {
+      var local = {character: 'Local pilot', outgoing_dps: 612, incoming_dps: 180, ewar: ['SCRAM', 'POINT', 'NEUT'], log_status: null};
+      var remote = {character: 'Remote pilot', outgoing_dps: 240, incoming_dps: null, ewar: ['SCRAM/POINT'], log_status: null, remote: true, state: 'live'};
+      var rows = kind === 'local' ? [local] : kind === 'mixed' ? [local, remote] : kind === 'empty' ? [] : [remote];
+      if (kind === 'stale') remote.state = 'stale';
+      if (kind === 'hidden') remote.character = 'Other remote';
+      if (kind === 'long') remote.character = new Array(11).join('Long character name ');
+      if (kind === 'max') remote.outgoing_dps = 10000000;
+      if (kind === 'zero' || kind === 'maxlocal' || kind === 'defensive') {
+        local.outgoing_dps = local.incoming_dps = kind === 'zero' ? 0 : kind === 'maxlocal' ? 10000000 : 10000001;
+        rows = [local];
+      }
+      if (kind === 'nolog') {
+        local.outgoing_dps = local.incoming_dps = null;
+        local.ewar = [];
+        local.log_status = 'NO LOG';
+        rows = [local];
+      }
+      if (kind === 'roster') {
+        rows = [];
+        for (var f = 0; f < 128; f += 1) {
+          rows.push({character: 'Remote pilot ' + (f + 1), outgoing_dps: f, incoming_dps: null, log_status: null, ewar: [], remote: true, state: 'live'});
+        }
+      }
+      return {revision: ++fleetRevision, rows: rows,
+        running_count: rows.indexOf(local) !== -1 || kind === 'hidden' ? 1 : 0,
+        stream_health: {state: rows.indexOf(local) !== -1 ? 'active' : 'stopped', detail: null}, metric_error: null};
+    }
+    window.pywebview = {api: {
+      fleet_bar_snapshot: function () { return Promise.resolve(fleetFixture('mixed')); },
+      fleet_bar_ready: function () { return Promise.resolve(null); },
+      fit_fleet_bar: function () { return Promise.resolve(null); },
+      move_fleet_bar: function () { return Promise.resolve(null); },
+      save_fleet_bar_pos: function () { return Promise.resolve(null); }
+    }};
+    window.DEV = {fleetBar: function (kind) { return window.onFleetSnapshot(fleetFixture(kind)); }};
+    return;
+  }
+
   var devSearch = new URLSearchParams(window.location.search);
 
   var log = function (name) {

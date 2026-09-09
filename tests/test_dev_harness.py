@@ -954,7 +954,7 @@ const timers = [], done = [];
 const api = {};
 const window = {onEveSettingsDone: payload => done.push(payload)};
 vm.runInNewContext(source.slice(source.indexOf('  function eveMutation('),
-  source.indexOf('  window.pywebview =')), {
+  source.indexOf('  window.pywebview =', source.indexOf('  function eveMutation('))), {
   api, window, console, Promise, copyScenario: '', formationsShareScenario: process.argv[3],
   eve: {accounts: [{path: 'A', name: 'Account A'}]},
   setTimeout: (callback, delay) => { timers.push({callback, delay}); }

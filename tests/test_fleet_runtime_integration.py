@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from tests.test_api_fleetsharing import setup
-from tests.test_fleet_bar import FakeTelemetry, FleetWindow
+from tests.test_fleet_bar import PAGE_A, FakeTelemetry, FleetWindow
 from tests.test_fleet_bar import (
     _headless_fleet_window_helpers as _headless_fleet_window_helpers,
 )
@@ -28,7 +28,8 @@ def _failed_fleet_startup(tmp_path):
     api._telemetry_factory = factory
     # Keep real admission/presentation and explicitly drain its existing seam.
     api._fleet_worker._thread_factory = _noop_thread_factory
-    api._fleetbar_window = FleetWindow()
+    with api._fleetbar_lifecycle_lock:
+        api._publish_fleet_page_locked(FleetWindow(), PAGE_A)
     harness.coordinator._fleet_enabled = lambda: api._state.settings["fleet_bar"][
         "enabled"
     ]
@@ -82,7 +83,10 @@ def test_non_fleet_recovery_admits_completed_frame_to_both_owners(
         assert worker._latest[0] is frame
         assert api._fleet_snapshot is frame
         api._fleet_worker.iterate_once()
-        assert api.fleet_bar_snapshot()["rows"][0]["character"] == "Alice"
+        payload = api.fleet_bar_snapshot(PAGE_A)
+        assert payload["rows"][0]["character"] == "Alice"
+        assert payload["rows"][0]["outgoing_dps"] == 10
+        assert payload["rows"][0]["incoming_dps"] is None
         assert any("onFleetSnapshot" in call for call in api._fleetbar_window.calls)
         assert settings.load()["fleet_bar"]["seen"] == ["Alice"]
         assert telemetry._subscribers == [api._receive_fleet_snapshot, worker.submit]

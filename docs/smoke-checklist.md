@@ -2374,6 +2374,40 @@ pytest — the engine is AutoHotkey.
 - [ ] `AutoHotkey-COPYING.txt` and `ffmpeg-COPYING.txt` are installed beside
       the application as **files**, not as directories containing a licence
 
+## Remote Fleet Bar (Task 9b, production shared mode still disabled)
+
+Use `fleetbar.html?dev=1` in a fresh owned browser profile and an isolated
+loopback server, not an existing authenticated browser. `DEV.fleetBar(kind)`
+provides local, remote, mixed, stale, empty, hidden, long, max, maxlocal, defensive,
+zero, nolog and roster fixtures. The dev-only branch supplies its creation fragment
+before the real page captures it; do not bypass production token admission.
+This exercises the actual standalone handler, not `app.js` or a second fake API.
+
+- [ ] At the actual 420px shell, verify full REMOTE / REMOTE · STALE meaning,
+      wrapping within the identity column rather than overlapping Damage. Check
+      subdued stale outgoing DPS/tackle, full long-name hover titles, readable
+      10000000 in both local Damage halves and truthful LOCAL health alongside
+      remote-only rows. Remote IN is an unavailable dash with no fill or warning,
+      never zero or NO LOG; local NO LOG occupies one Damage cell. Check zero,
+      independent OUT/IN scales and defensive >10m separately.
+- [ ] Scroll the long roster to its final row with mouse and keyboard. Column
+      headers stay aligned with data; only the header drags the widget. The
+      inset focus ring remains visible and focus survives live repaint. Check
+      fit, saved placement and monitor clamping on Wingman's own window.
+- [ ] With the real worker and synthetic relay, stop successful reads and local
+      telemetry: remote rows still stale at three seconds and expire at ten.
+      Repeated same-publication observations, Off/On and source clear never
+      rejuvenate old metrics. Empty successful reads withdraw immediately.
+- [ ] A hidden, quiet or NO LOG verified local suppresses its matching remote;
+      another remote remains. Unverified same-name characters remain separate.
+      No remote enters the local visibility list, seen settings or publication.
+- [ ] Fleet Bar Off hides display without changing sharing; shutdown detaches
+      remote/catalogue subscribers before bounded joins. No late row returns.
+- [ ] Repeat on installed Windows/WebView2, including native 420×90 startup and
+      real DPI/monitor behavior. Chrome evidence is not native acceptance.
+      Live two-client HTTPS/server proof belongs to Task 10; no production mode
+      enablement, OAuth or EVE interaction is authorized by this checklist.
+
 ## Fleet sharing setup and source controls
 
 The setup card lives in Settings > Previews, beside Fleet combat bar and outside
@@ -3128,7 +3162,7 @@ independent of both preview thumbnails and alert preferences.
 - [ ] **All-hidden state remains usable.** Hide every running character.
       Expected: the still-open bar says `All running characters are hidden.`,
       has no row/count/badge that exposes a hidden name, and can be dragged from
-      the empty message as well as its header. Restore one character and confirm
+      its header only, leaving the roster area scrollable. Restore one character and confirm
       its row returns immediately.
 - [ ] **Visibility never resets live metrics.** While one character has live
       outgoing DPS and/or an active `SCRAM/POINT`, hide it and restore it before

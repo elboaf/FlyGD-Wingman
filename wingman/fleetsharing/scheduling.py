@@ -8,6 +8,8 @@ ordinary controls at most may overtake the oldest overdue periodic class.
 from dataclasses import dataclass
 from types import MappingProxyType
 
+SIGNED_INTERVAL_S = 0.5
+
 OPERATIONS = MappingProxyType(
     {
         "publish_snapshot": "publication",
@@ -79,7 +81,9 @@ class Scheduler:
         self, work: Work, now: float, *, failed: bool = False, jitter: float = 0
     ):
         bucket = OPERATIONS[work.operation]
-        self.deadlines[bucket] = now + (1.0 if bucket == "bootstrap" else 0.5)
+        self.deadlines[bucket] = now + (
+            1.0 if bucket == "bootstrap" else SIGNED_INTERVAL_S
+        )
         if failed:
             count = min(6, self.failures.get(work.key, 0) + 1)
             self.failures[work.key] = count
@@ -87,7 +91,9 @@ class Scheduler:
             self.retry_at[work.key] = now + delay
             # 429 has no Retry-After. Isolate to this work/bucket, never stall
             # publication behind a source capacity refusal or read cadence.
-            self.deadlines[bucket] = max(self.deadlines[bucket], now + 0.5)
+            self.deadlines[bucket] = max(
+                self.deadlines[bucket], now + SIGNED_INTERVAL_S
+            )
         else:
             self.failures.pop(work.key, None)
             self.retry_at.pop(work.key, None)

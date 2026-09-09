@@ -193,8 +193,13 @@ selector is not an alt publication checklist and does not prove boss status.
 Local preference, saved intent and server observations are separate facts.
 Off inhibits transmission immediately even if saving fails; server Off/Stop
 may still be pending. Source controls work with sharing and local displays off,
-and closing the view never Stops a source. This setup surface does not add a
-remote-row display; shared display integration is separate work.
+and closing the view never Stops a source. The existing Fleet Bar also shows
+eligible remote rows, marked REMOTE and REMOTE · STALE, without adding a
+destination or an activation action. Remote metrics stale at three seconds and
+expire at ten, independently of local log health. Verified local clients take
+precedence even when hidden; remote names never enter local hidden/seen settings
+or publication. Fleet Bar Off gates the view, not sharing. Shared mode remains
+disabled in production pending separately authorized live acceptance.
 
 
 ## What it must not become

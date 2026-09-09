@@ -70,6 +70,7 @@ class Element {
   appendChild(child) { this.children.push(child); return child; }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }
+  removeAttribute(name) { delete this.attributes[name]; }
 }
 
 function deferred() {
@@ -98,7 +99,9 @@ async function page(options = {}) {
   const document = new EventTarget();
   document.getElementById = id => nodes.get(id) || null;
   document.createElement = () => new Element();
-  document.querySelector = selector => selector === '.fleet-shell' ? shell : null;
+  const table = new Element();
+  document.querySelector = selector => selector === '.fleet-shell' ? shell
+    : selector === '.fleet-table' ? table : null;
   const fonts = deferred();
   if (options.fonts !== false) document.fonts = { ready: fonts.promise };
   const calls = [];
@@ -131,7 +134,7 @@ async function page(options = {}) {
   vm.runInContext(source, context, { filename: 'fleetbar.js' });
   await flush();
   return {
-    window, document, shell, fonts, api, errors, timers,
+    window, document, shell, table, fonts, api, errors, timers,
     el: id => document.getElementById(id),
     calls: method => calls.filter(call => call.method === method),
     log: () => calls.map(({ method, args }) => [method, ...args]),
@@ -200,7 +203,7 @@ function assertRendered(p, character = 'Pilot', outgoing = 43, incoming = 20) {
   );
 
   assert.equal(p.el('fleet-empty').hidden, true);
-  assert.equal(p.el('fleet-health').textContent, 'LIVE');
+  assert.equal(p.el('fleet-health').textContent, 'LOCAL LIVE');
   assert.equal(p.el('fleet-note').hidden, true);
 }
 
@@ -617,6 +620,46 @@ test('mixed-null payload without log_status: each direction renders independentl
     charlie.getAttribute('aria-label'),
     'Outgoing 43 DPS, incoming unavailable'
   );
+});
+
+test('remote Damage keeps incoming unknown, independent maxima and stale emphasis', async () => {
+  const p = await page();
+  const remote = {
+    character: 'Remote pilot', outgoing_dps: 400, incoming_dps: null,
+    ewar: ['SCRAM/POINT'], log_status: null, remote: true, state: 'live'
+  };
+  await p.push({ revision: 1, rows: NORMAL_ROWS.concat([remote]), running_count: 3,
+                 stream_health: { state: 'stale' } });
+  let rows = p.el('fleet-rows').children;
+  assert.equal(p.el('fleet-health').textContent, 'LOCAL STALE');
+  assert.equal(fillOf(rows[0].children[1].children[0]).style.transform, 'scaleX(0.25)');
+  assert.equal(fillOf(rows[0].children[1].children[2]).style.transform, 'scaleX(0.25)');
+  const assertRemote = (line, stale) => {
+    const [identity, damage, ewar] = line.children;
+    assert.equal(identity.children[1].textContent, stale ? 'REMOTE · STALE' : 'REMOTE');
+    assert.equal(damage.getAttribute('aria-label'), 'Outgoing 400 DPS, incoming unavailable');
+    assert.equal(damage.classList.contains('unavailable'), false);
+    const [out, , incoming] = damage.children;
+    assert.equal(valueOf(out).textContent, '400');
+    assert.equal(fillOf(out).style.transform, 'scaleX(1)');
+    assert.equal(out.classList.contains('live'), !stale);
+    assert.equal(valueOf(incoming).textContent, '—');
+    assert.equal(fillOf(incoming).style.transform, 'scaleX(0)');
+    assert.equal(incoming.classList.contains('warn'), false);
+    assert.equal(ewar.classList.contains('active'), !stale);
+    assert.equal(ewar.title, 'SCRAM/POINT');
+  };
+  assertRemote(rows[3], false);
+  await p.push({ revision: 2, rows: [{ ...remote, state: 'stale' }], running_count: 0 });
+  assertRemote(p.el('fleet-rows').children[0], true);
+  assert.equal(p.table.style.maxHeight, '480px');
+  assert.deepEqual(p.errors, []);
+});
+
+test('exact ten million stays numeric in both Damage directions', async () => {
+  const p = await page();
+  await p.push(snapshot(1, 'Bound', 10000000, 10000000));
+  assertRendered(p, 'Bound', 10000000, 10000000);
 });
 
 const ALL_ZERO_ROWS = [
