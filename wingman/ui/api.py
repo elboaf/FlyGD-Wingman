@@ -2722,14 +2722,24 @@ class Api:
             # permission to reuse an older revision.
             self._next_fleet_revision_locked()
 
-    def _install_fleet_generation(self, generation: int | None) -> None:
-        """Open acceptance for one coordinator reservation, still on WAITING."""
+    def _install_fleet_generation(
+        self, generation: int | None, *, expected_activation: int | None = None
+    ) -> bool:
+        """Open a reservation; lazy recovery may only fill its captured vacancy."""
         with self._fleet_presentation_lock:
+            if expected_activation is not None and (
+                self._fleetbar_quitting
+                or self._fleet_activation != expected_activation
+                or self._fleet_expected_generation is not None
+                or not self._state.settings.get("fleet_bar", {}).get("enabled")
+            ):
+                return False
             self._fleet_activation += 1
             self._fleet_expected_generation = generation
             self._fleet_snapshot = None
             self._fleet_roster_signature = None
             self._next_fleet_revision_locked()
+            return True
 
     def _requested_fleet_generation(self) -> int | None:
         """Read the coordinator reservation without letting recovery re-close Fleet."""
@@ -2751,7 +2761,7 @@ class Api:
         failed = False
         generation = None
         try:
-            generation = self._reconcile_eve_runtime()
+            generation = self._reconcile_eve_runtime(recover_fleet=False)
         except Exception:
             # The setting is already durable. Preserve that choice, reserve
             # the coordinator's requested generation, and leave the bar in
@@ -3563,8 +3573,16 @@ class Api:
 
     # ---- EVE client previews ------------------------------------------
 
-    def _reconcile_eve_runtime(self) -> int | None:
-        """Reconcile shared telemetry without owning local Fleet presentation."""
+    def _reconcile_eve_runtime(self, *, recover_fleet: bool = True) -> int | None:
+        """Reconcile shared telemetry, recovering an unreserved local activation."""
+        with self._fleet_presentation_lock:
+            recovery_activation = (
+                self._fleet_activation
+                if recover_fleet
+                and self._fleet_expected_generation is None
+                and self._state.settings.get("fleet_bar", {}).get("enabled")
+                else None
+            )
         with self._eve_runtime_lock:
             if self._eve_runtime_closed:
                 return None
@@ -3601,7 +3619,18 @@ class Api:
         try:
             # The coordinator serializes its own effects. No API runtime lock
             # may cover start/stop/join or a callback into another consumer.
-            return telemetry.reconcile()
+            generation = telemetry.reconcile()
+            if recovery_activation is not None and generation is not None:
+                # A first completed frame can precede reconcile's return. Read
+                # it outside API locks; install/admit only if no Fleet transition
+                # or shutdown superseded this recovery while it was in flight.
+                snapshot = telemetry.snapshot()
+                with self._fleetbar_lifecycle_lock, self._eve_runtime_lock:
+                    if not self._eve_runtime_closed and self._install_fleet_generation(
+                        generation, expected_activation=recovery_activation
+                    ):
+                        self._receive_fleet_snapshot(snapshot)
+            return generation
         finally:
             with self._eve_runtime_lock:
                 self._eve_runtime_active -= 1
