@@ -962,8 +962,7 @@ def main() -> int:
                     except Exception:
                         logger.exception("Fleet Bar window did not destroy cleanly")
                     else:
-                        api._fleetbar_window = None
-                        api._fleetbar_ready = False
+                        api._retire_fleet_page_locked()
 
             with api._sigbar_lifecycle_lock:
                 # Close the lifecycle before inspecting the window. A creator

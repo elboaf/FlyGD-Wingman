@@ -682,6 +682,32 @@ def test_the_call_sweep_sees_the_bars_and_the_wrappers():
     assert "evesettings.js" in called.get("eve_settings_detect_root", set())
 
 
+def test_fleet_page_interfaces_are_token_first_and_standalone_only():
+    from inspect import signature
+
+    from wingman.ui.api import Api
+
+    calls = bridge_calls()
+    expected = {
+        "fleet_bar_snapshot": ("page_id",),
+        "fit_fleet_bar": ("page_id", "width", "height"),
+        "move_fleet_bar": ("page_id", "x", "y"),
+        "save_fleet_bar_pos": ("page_id", "x", "y"),
+        "fleet_bar_ready": ("page_id",),
+    }
+    for method, parameters in expected.items():
+        params = signature(getattr(Api, method)).parameters
+        assert tuple(params) == ("self", *parameters)
+        assert all(params[name].default is None for name in parameters)
+        assert calls[method] == {"fleetbar.js"}
+    for method in (
+        "fleet_bar_settings",
+        "toggle_fleet_bar",
+        "set_fleet_bar_character_visible",
+    ):
+        assert "page_id" not in signature(getattr(Api, method)).parameters
+
+
 def test_the_skills_controller_pushes_are_swept_and_allowlisted():
     """Proves pushed_names() reads eveskills/controller.py: `onSkills` and
     `onSkillsProgress` are spelled there and nowhere in api.py, so a sweep
