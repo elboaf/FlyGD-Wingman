@@ -27,8 +27,8 @@ PICKER_MAX = (1200, 800)
 # Windows 11-only dark-title attributes. Windows still owns border resizing.
 _STYLE = win32.WS_POPUP | win32.WS_THICKFRAME | win32.WS_CLIPCHILDREN
 _EX_STYLE = win32.WS_EX_TOOLWINDOW | win32.WS_EX_TOPMOST
-_USE, _CANCEL, _RESET, _STATUS, _TITLE = 1, 2, 100, 101, 102
-_BUTTONS = {_RESET: "&Reset", _USE: "&Use region", _CANCEL: "&Cancel"}
+_USE, _CANCEL, _FULL, _STATUS, _TITLE = 1, 2, 100, 101, 102
+_BUTTONS = {_FULL: "Use &full", _USE: "&Use region", _CANCEL: "&Cancel"}
 _CAPTION_HEIGHT = 32
 _TOOLBAR_HEIGHT = _CAPTION_HEIGHT + 80
 # Mirrored from web/style.css :root, asserted against it in picker tests (as
@@ -393,7 +393,7 @@ class CropPicker:
         use = self._controls[_USE]
         # Disabling the focused Use button must not strand keyboard focus.
         if not valid and self._libs.user32.GetFocus() == use:
-            self._libs.user32.SetFocus(self._controls[_RESET])
+            self._libs.user32.SetFocus(self._controls[_FULL])
         if not self._completed:
             self._libs.user32.EnableWindow(use, valid)
 
@@ -418,7 +418,7 @@ class CropPicker:
             area.x + (area.w - w) // 2, area.y + (area.h - h) // 2, w, h
         )
         button_w, button_h, gap = self._px(112), self._px(28), self._px(8)
-        for index, ident in enumerate((_RESET, _USE, _CANCEL)):
+        for index, ident in enumerate((_FULL, _USE, _CANCEL)):
             self._position(
                 self._controls[ident],
                 Rect(pad + index * (button_w + gap), caption + pad, button_w, button_h),
@@ -492,16 +492,24 @@ class CropPicker:
         )
         self._draw_selection()
 
-    def _confirm(self):
+    def _confirm(self, *, full=False):
         current_size = _client_size(self._libs, self.client.hwnd)
         if current_size != self._source_size:
             self._layout("Client size changed. Select the region again.")
             return
-        pixels = (
-            None
-            if self.selection is None
-            else map_selection(self.selection, self.destination, current_size)
-        )
+        if full:
+            pixels = (
+                Rect(0, 0, *current_size)
+                if all(
+                    current >= minimum
+                    for current, minimum in zip(current_size, MIN_SOURCE_SIZE)
+                )
+                else None
+            )
+        elif self.selection is None:
+            pixels = None
+        else:
+            pixels = map_selection(self.selection, self.destination, current_size)
         if pixels is None:
             self._set_status(_MINIMUM)
             return
@@ -741,7 +749,7 @@ class CropPicker:
         if msg == win32.DM_GETDEFID:
             return self._enter_button() | (0x534B << 16)  # DC_HASDEFID
         if msg == win32.DM_SETDEFID:
-            if wparam in (_USE, _RESET, _CANCEL) and wparam != self._default_button:
+            if wparam in (_USE, _FULL, _CANCEL) and wparam != self._default_button:
                 previous, self._default_button = self._default_button, wparam
                 # Keep BS_OWNERDRAW: BM_SETSTYLE would restore light stock
                 # rendering. The dialog's default ID and painted rim suffice.
@@ -768,11 +776,8 @@ class CropPicker:
                 self._confirm()
             elif ident == _CANCEL:
                 self.cancel()
-            elif ident == _RESET:
-                self._end_drag()
-                self.selection = None
-                self._set_status(_HINT)
-                self._draw_selection()
+            elif ident == _FULL:
+                self._confirm(full=True)
             else:
                 return None
             return 0

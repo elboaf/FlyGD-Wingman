@@ -1879,22 +1879,25 @@ Wingman automatically as part of the browser pass.
       ellipsize in the roster and remain readable in the Remove confirmation.
 - [ ] **Select, disable, reselect, remove.** With previews enabled and the
       source available, `Select region…` opens the native picker after keybind
-      capture disarms. Commit a region: the wrapped Enabled checkbox,
-      neutral `Reselect…`, and destructive Remove appear. Disable retains
-      selection/position; Remove confirms their loss and distinguishes itself
-      from Disable. Escape cancels without a write. Use Tab/Space and verify
-      visible focus throughout, including the native picker return.
+      capture disarms. Commit a drawn region with `Use region`, then reselect
+      with `Use full` and verify the secondary mirrors the entire client.
+      The wrapped Enabled checkbox, neutral `Reselect…`, and destructive Remove
+      appear. Disable retains selection/position; Remove confirms their loss
+      and distinguishes itself from Disable. Escape cancels without a write.
+      Use Tab/Space and verify visible focus throughout, including the native
+      picker return.
 - [ ] **Saved settings outlive runtime availability.** Offline/master-off:
       Enabled and Remove stay usable, while region selection explains the
       unavailable source. Test disabled, cap-suppressed, invalid-source,
       degraded, and stopping states. Counts use the delivered cap. Disable
       and Remove must remain ways out of a full cap or degraded crop.
-- [ ] **Crop-only owners and shared locks.** Untick primary Preview for a
-      character with an enabled saved crop. The shared Lock checkbox remains
-      usable even offline/master-off/cap-suppressed. Disabling/removing the
-      crop makes Lock inert again without enabling primary Size/Copy or
-      keybinds. A saved owner absent from all other rosters still has a row.
-      In `?dev=1`, also exercise `constructor`, `__proto__`, and `toString`.
+- [ ] **Crop-only owners do not inherit primary locks.** Untick primary
+      Preview for a character with an enabled saved crop. The Lock checkbox is
+      inert because there is no primary preview to lock. Whenever the secondary
+      is live it remains movable and resizable; offline, master-off, and
+      cap-suppressed definitions remain editable. A saved owner absent from all
+      other rosters still has a
+      row. In `?dev=1`, also exercise `constructor`, `__proto__`, and `toString`.
 - [ ] **Asynchronous saves tell the truth.** Pending shows Selecting/Saving,
       not a refusal, and preserves a requested checkbox value until terminal
       authority arrives. Failed saves restore committed definitions and show
@@ -1905,8 +1908,9 @@ Wingman automatically as part of the browser pass.
       group name or armed keybind while crop state changes; neither is lost.
 - [ ] **Native smoke, separately on Windows.** Repeat Configure keyboard
       paths in pinned WebView2 at 100/125/150/200% scaling. Exercise picker
-      cancel/use/resize/source loss, master-off during admission, independent
-      crop positioning and shared locks. Task 10's DWM/HWND resource, cap,
+      cancel/use-region/use-full/resize/source loss, master-off during
+      admission, independent crop positioning and lock independence. Task 10's
+      DWM/HWND resource, cap,
       stop-tail, client-window-safety and performance gates must also pass.
       No headless screenshot closes these gates.
 - [ ] **Production stages and temporary slot.** Follow the predeclared thresholds
@@ -2002,9 +2006,8 @@ browser fixtures only, not native behavior or release evidence.
       geometry actions alone are inert. The row's saved keybind stays
       legible on the inert button; it is not cleared. `Lock` and `Never minimize` are not in this row
       any more; check them in their own disclosures instead:
-      **the character's box in the Lock block must read inert unless an
-      enabled saved crop remains**. The lock is shared by both windows and
-      stays configurable for a crop even while offline or master-off.
+      **the character's box in the Lock block must read inert**. Secondary
+      previews never inherit the primary lock and remain movable and resizable.
       **Their box in the Never-minimize block must STAY LIVE**. Opting out
       of previews stops the primary preview, not `minimize_inactive_clients` — switching away from
       that character's real EVE window still minimizes it — so greying
@@ -2127,8 +2130,7 @@ browser fixtures only, not native behavior or release evidence.
         no re-click. Reload Settings: the chosen swatch is still checked.
       - The button grammar, with `Lock previews in place` off:
         a plain left click switches; a left drag moves; a right drag
-        resizes that preview (still works under the lock, like the
-        corner handle); left+right held together and dragged resizes
+        resizes that preview; left+right held together and dragged resizes
         EVERY open preview at once, each keeping its own position. Check
         the click switch survived the drag move: a left press that
         wanders a few pixels and releases still switches, and a left
@@ -2140,7 +2142,10 @@ browser fixtures only, not native behavior or release evidence.
         that character stays draggable and every other preview stops
         moving on a right drag — which is now the only move gesture, so a
         locked preview cannot be moved by mouse at all until it is
-        unlocked.
+        unlocked. Right-click the locked primary: an existing secondary
+        toggles off, then on, while a character with no configured secondary
+        is unchanged. Verify it is movable and resizable before the toggle off
+        and again after it returns.
         Untick it without touching anything else: the arrangement that
         preceded the tick comes back. Nothing is migrated and the roster
         is not rewritten — `preview.locked` keeps meaning "these differ
@@ -3381,10 +3386,10 @@ require the full `--i-understand-this-is-an-ephemeral-windows-probe` flag.
       keeps the aspect ratio of the SOURCE region that was selected (or,
       for a load-stage crop, the central region it derived) — the picture
       never stretches or letterboxes as the crop window is resized.
-- **Lock and hide-on-lost-focus inherited behavior** — *moved to the Phase 1
-  pre-release gates below.* The probe's CLI constructs the host with no
-  `locked`, `lock_default` or `hide_on_lost_focus` provider, so neither
-  behavior can be turned on from the harness; there is nothing to tick here.
+- **Primary-lock independence and hide-on-lost-focus behavior** — *moved to
+  the Phase 1 pre-release gates below.* The probe's CLI constructs the host
+  with no `locked`, `lock_default` or `hide_on_lost_focus` provider, so neither
+  behavior can be exercised from the harness; there is nothing to tick here.
 - [ ] **Logout to character select, exit, and same-character new-HWND
       rebinding.** With a crop open on a named character, log that character
       out to character select without closing the client. Expected: the crop
@@ -3464,14 +3469,11 @@ blocker is listed in `docs/preview-crop-prototype-results.md`.
 - Roster/master-switch (`preview.enabled`) suppression and reconciliation
   behavior for crops (the harness subclasses `PreviewHost` directly and has
   no Settings UI or master toggle of its own).
-- **Locked-crop inertness under `preview.locked`.** The design reuses the
-  primary preview's per-character lock roster — version 1 has no separate
-  crop-specific lock — but the probe's CLI passes no `locked` or
-  `lock_default` provider, so `_is_locked` is always false during a probe
-  run and no crop can be locked from the harness. The production gate: with
-  `preview.locked` applied to the crop's character, the crop is fully inert
-  to move/resize gestures and only activates on click, matching the primary
-  preview's locked truth table.
+- **Secondary lock independence and locked-primary toggle.** The probe's CLI
+  does not exercise production lock settings. The production gate: with
+  `preview.locked` applied to a character, its secondary remains movable and
+  resizable; right-clicking the locked primary toggles an existing secondary
+  off and on without changing the saved source or placement.
 - **Hide-on-lost-focus lockstep.** The CLI passes no `hide_on_lost_focus`
   provider either, so the probe's previews and crops never hide. The
   production gate: with the setting enabled, crops hide and reappear in

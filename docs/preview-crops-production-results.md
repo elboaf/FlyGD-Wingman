@@ -254,7 +254,7 @@ Historical probe numbers must not be copied into these rows.
 | Stage eight plus picker, then replacement/cancel/initial DWM failure/save failure | Peak thumbnail relationships ≤primary baseline+9; picker and candidate never overlap | NOT RUN |
 | Native resource inventory/teardown | Count DWM register/unregister separately from top-level/owned/child HWNDs; return all to baseline | NOT RUN |
 | Visible WebView2/picker | Keyboard, accessibility, dark paint, focus and 100/125/150/200% scaling | NOT RUN |
-| Native lifecycle and geometry | Close, source exit/logout/return, capture theft, lock/visibility, rescue, source/picker resize, negative coordinates, occlusion and primary alert pulses | NOT RUN |
+| Native lifecycle and geometry | Close, source exit/logout/return, capture theft, primary-lock independence and toggle, visibility, rescue, source/picker resize, negative coordinates, occlusion and primary alert pulses | NOT RUN |
 | Source minimize/restore | Record live/frozen/black/stale behavior and restoration, with no retry storm | NOT RUN |
 | Windows frozen distribution/installer | Collect, inspect and exercise the actual Windows build safely | NOT RUN |
 

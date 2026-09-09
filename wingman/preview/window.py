@@ -293,6 +293,7 @@ class PreviewWindow:
         lock_aspect=True,
         selection_color="#00c8dc",
         on_resize_all=None,
+        on_toggle_crop=None,
     ):
         self._libs = libs
         self.client = client
@@ -342,6 +343,9 @@ class PreviewWindow:
         # wndproc's thread), the only thread allowed to touch those
         # windows -- see the class docstring.
         self._on_resize_all = on_resize_all
+        # A locked primary has no right-drag gesture. The host can spend that
+        # click toggling an already-configured secondary preview instead.
+        self._on_toggle_crop = on_toggle_crop
         # Supplied by the host, which is the only thing that knows about
         # sibling previews. Without it snap() sees screen edges only and
         # preview-to-preview snapping silently does nothing.
@@ -389,6 +393,7 @@ class PreviewWindow:
         lock_aspect=True,
         selection_color="#00c8dc",
         on_resize_all=None,
+        on_toggle_crop=None,
     ):
         self = cls(
             libs,
@@ -405,6 +410,7 @@ class PreviewWindow:
             lock_aspect,
             selection_color,
             on_resize_all,
+            on_toggle_crop,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -896,8 +902,8 @@ class PreviewWindow:
         # classification delay the unlocked grammar needs.
         if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN):
             if self.locked:
-                # A locked left press is a switch and nothing else. A
-                # locked right press is nothing at all.
+                # A locked left press switches clients. With no resize
+                # gesture to protect, right toggles the configured secondary.
                 if msg == win32.WM_LBUTTONDOWN:
                     # Acknowledged BEFORE the handoff, and regardless of
                     # whether the switch that follows succeeds: Windows
@@ -907,6 +913,8 @@ class PreviewWindow:
                     # clicking it doing nothing.
                     self.acknowledge_alert()
                     self._on_activate(self.client)
+                elif self._on_toggle_crop is not None:
+                    self._on_toggle_crop(self.client)
                 return 0
             pt = _lparam_point(lparam)
             if self._mode is not None:

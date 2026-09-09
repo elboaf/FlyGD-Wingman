@@ -766,7 +766,8 @@ def test_a_crop_created_while_previews_are_hidden_is_born_hidden():
     assert crop_factory.created[0].hidden is True
 
 
-def test_a_crop_opens_and_restyles_with_the_characters_lock():
+def test_prototype_lock_seam_remains_testable_but_is_not_production_policy():
+    """The checkout-only Phase 0 host still records its original lock seam."""
     crop_factory = RecordingCropFactory()
     locked = ["Alice"]
     host = make_host(crop_factory=crop_factory, locked=lambda: list(locked))

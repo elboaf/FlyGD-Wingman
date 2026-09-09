@@ -387,7 +387,7 @@ def test_creation_uses_full_client_mirror_controls_and_focus_before_click(make):
     assert native.controls[1]["text"] == "&Use region"
     assert not native.controls[1]["enabled"]
     assert native.controls[2]["text"] == "&Cancel"
-    assert native.controls[100]["text"] == "&Reset"
+    assert native.controls[100]["text"] == "Use &full"
     assert native.focus == picker.hwnd
     assert ("foreground", picker.hwnd) in native.events
     overlay, image, x, y = native.layers[-1]
@@ -437,7 +437,29 @@ def test_cancel_paths_cleanup_once_before_callback(make, msg, key):
     assert [e[0] for e in native.events].count("release") == 1
 
 
-def test_reset_small_selection_and_enter_without_region_stay_open(make):
+def test_use_full_confirms_without_a_region(make):
+    confirmed = []
+    picker, native = make(on_confirm=lambda *args: confirmed.append(args))
+
+    picker._on_message(win32.WM_COMMAND, 100, 0)
+
+    assert confirmed == [(CLIENT, Rect(0, 0, 1280, 720), (1280, 720))]
+    native.assert_closed()
+
+
+def test_use_full_rejects_a_client_smaller_than_the_minimum(make):
+    confirmed = []
+    picker, native = make(on_confirm=lambda *args: confirmed.append(args))
+    native.source_size = (15, 15)
+    picker._on_message(win32.WM_COMMAND, 100, 0)
+
+    picker._on_message(win32.WM_COMMAND, 100, 0)
+
+    assert picker.hwnd and not confirmed
+    assert picker.status == "Select at least 16x16 source pixels."
+
+
+def test_small_selection_and_enter_without_region_stay_open(make):
     confirmed = []
     picker, native = make(on_confirm=lambda *args: confirmed.append(args))
     picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
@@ -446,10 +468,6 @@ def test_reset_small_selection_and_enter_without_region_stay_open(make):
     assert "16x16" in picker.status
     picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
     assert not confirmed and picker.hwnd
-    drag(picker)
-    picker._on_message(win32.WM_COMMAND, 100, 0)
-    assert picker.selection is None
-    assert not native.controls[1]["enabled"]
     drag(picker)
     picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
     assert len(confirmed) == 1
@@ -551,7 +569,7 @@ def test_dialog_message_seam_delegates_translation_once_and_is_inert_after_close
     [
         "read-size",
         "create-picker",
-        "create-&Reset",
+        "create-Use &full",
         "create-&Use region",
         "create-&Cancel",
         "create-",
@@ -620,7 +638,8 @@ def test_minimum_tracking_size_includes_chrome_without_overwriting_os_maximum(ma
 
 
 def test_dialog_default_button_changes_keep_owner_draw_style_and_enter_contract(make):
-    picker, native = make()
+    confirmed = []
+    picker, native = make(on_confirm=lambda *args: confirmed.append(args))
     assert picker._on_message(0x0401, 100, 0) == 1  # DM_SETDEFID
     assert picker._on_message(win32.DM_GETDEFID, 0, 0) == 100 | (0x534B << 16)
     # BM_SETSTYLE would turn BS_OWNERDRAW back into a light stock button.
@@ -631,7 +650,7 @@ def test_dialog_default_button_changes_keep_owner_draw_style_and_enter_contract(
     ]
     drag(picker)
     picker._on_message(win32.WM_KEYDOWN, win32.VK_RETURN, 0)
-    assert picker.selection is None  # Enter invokes Reset, the new default.
+    assert confirmed == [(CLIENT, Rect(0, 0, 1280, 720), (1280, 720))]
 
 
 @pytest.mark.parametrize(
@@ -895,7 +914,7 @@ def test_caption_replaces_light_stock_chrome_but_keeps_native_controls(make):
     assert native.controls[102]["text"] == native.created[0][2]
     for _, cls, text, style, _, _, ident in native.created[1:]:
         if ident in (1, 2, 100):
-            assert cls == "BUTTON" and text.startswith("&")
+            assert cls == "BUTTON" and "&" in text
             assert style & win32.WS_TABSTOP
             assert style & 0xF == 0xB  # BS_OWNERDRAW alone, not DEFPUSHBUTTON
         elif ident in (101, 102):
@@ -989,8 +1008,8 @@ def test_dialog_default_query_and_enter_follow_focused_owner_draw_button(make, i
     elif ident == 2:
         assert cancelled == ["cancelled"] and not confirmed
     else:
-        assert picker.hwnd and picker.selection is None
-        assert not confirmed and not cancelled
+        assert confirmed == [(CLIENT, Rect(0, 0, 1280, 720), (1280, 720))]
+        assert not cancelled
 
 
 @pytest.mark.parametrize(

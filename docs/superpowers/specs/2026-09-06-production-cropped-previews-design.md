@@ -30,7 +30,8 @@ record evidence, not a production-release approval.
 - Close on logout, anonymous character select or client exit; retain the
   definition and recreate when the named character returns.
 - Select, reselect, enable, disable and remove from Settings › Previews.
-- Inherit resolved character locking and hide-on-lost-focus behavior.
+- Inherit hide-on-lost-focus behavior. Secondary windows remain movable and
+  resizable regardless of the primary preview lock.
 - `preview.enabled` remains the runtime master. Off closes crops and picker
   without rewriting individual definitions or enabled states. Crop controls
   never start a separate host. Configuration remains visible while off.
@@ -171,8 +172,9 @@ its rollback guarantees for native setup or persistence failure.
 
 Use compact per-character controls in the existing Previews table:
 `Select region…` when unconfigured; enable/disable, `Reselect…` and Remove when
-configured. Provide understandable picker selection, reset, confirm and cancel
-states and a discoverable transactional crop-close/disable affordance.
+configured. The picker offers `Use region`, `Use full`, and Cancel; selecting a
+region is optional. Keep a discoverable transactional crop-close/disable
+affordance.
 
 Saved owners participate in row composition and roster-pruning protection.
 Offline, cap-suppressed and failed crops remain visible and removable. Explain
@@ -181,14 +183,11 @@ requires reselection, or failed to render/save. Do not misreport a refused
 operation as applied or erase a user's preference because runtime is unavailable.
 Use the existing per-field result contract and page-handler allowlist.
 
-The shared per-character lock preference must remain editable when an enabled
-saved crop uses it, even if its primary preview is excluded. Offline or
-master/cap suppression does not remove that configuration access. Update
-`previews.js`'s `renderLockBlock()` eligibility and the exclusion-based guard in
-`tests/test_page_conventions.py:2718–2729`; their current assumption that an
-excluded primary leaves nothing to lock no longer holds. Preserve existing
-eligibility for characters without an enabled crop, and keep the same resolved
-`lock_default`/character-exception policy rather than adding crop-specific locks.
+The per-character lock applies only to the primary preview. Secondary windows
+remain movable and resizable because repositioning is their normal use. When a
+primary is locked, its otherwise-unused right-click toggles an existing saved
+secondary off or on; with no saved secondary it does nothing. An excluded
+primary leaves its Lock control inert even when a saved secondary remains.
 
 Retain the parent's bounded DWM recovery policy: one recovery attempt per
 failure episode, then degraded status until a meaningful lifecycle event or
@@ -205,7 +204,7 @@ behavior in help; live minimized rendering is not a new promise.
 2. Build one complete production slice: select → create → persist → restart
    restore, including normalized validation and compact Settings controls.
 3. Complete lifecycle and failure handling: rebinding, reselection/rollback,
-   generation-safe geometry, cap/reservations, capture loss, lock/visibility,
+   generation-safe geometry, cap/reservations, capture loss, visibility,
    monitor rescue, recovery and shutdown.
 4. Exercise production Windows release gates and decide the measured active
    cap and temporary-slot policy. No partial runtime ships before this gate.
@@ -221,9 +220,9 @@ settings and bridge contracts, plus:
   session closes/rebinds the old crop, invalidates its picker and stale
   replacement completions, and permits degraded-crop recovery. An unchanged
   session must not recreate crops or reset recovery limits.
-- With the primary excluded and default locking enabled, an enabled crop still
-  has a usable per-character unlock control. Cover offline/master/cap-suppressed
-  definitions and preserve exclusion gating when no enabled crop exists.
+- With the primary locked, an enabled crop remains movable and resizable and a
+  primary right-click toggles that saved secondary. With the primary excluded,
+  its Lock control is inert even when an enabled crop remains.
 - Every supported probe stage remains accessible on representative monitors;
   timeout/incomplete stages stop rather than claiming readiness.
 - Probe diagnostics work under the documented invocation without reading or
