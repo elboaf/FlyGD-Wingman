@@ -4405,19 +4405,31 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #us-summary[hidden], #us-export[hidden], #setup-import[hidden],
 #setup-summary[hidden], #setup-label-choice[hidden], #setup-native[hidden],
 #setup-display-notice[hidden] { display: none; }
-#setup-work > .lab { display: block; color: var(--text-dim); margin: 10px 0 4px; }
-#setup-text, #setup-name { display: block; width: 100%; margin-bottom: 10px; }
-#setup-text { resize: vertical; min-height: 72px; max-height: 180px; }
-#setup-work > .us-pickers { margin-top: 12px; }
-/* Inline source picker, not a second review surface. Keep its actions above
-   long provenance so Close never requires scrolling through metadata. */
+#setup-work .setup-section { margin: 0 0 20px; }
+#setup-work .setup-section > h2 { margin: 0 0 8px; }
+#setup-work .setup-section .lab { display: block; color: var(--text-dim); margin-bottom: 4px; }
+#setup-text, #setup-name { display: block; width: 100%; }
+#setup-text { resize: vertical; min-height: 72px; max-height: 180px; margin-bottom: 8px; }
+#setup-editor, #setup-source-choices { margin-top: 8px; }
+#setup-editor[hidden], #setup-source-choices[hidden], #setup-source-summary[hidden],
+#setup-source-cancel[hidden] { display: none; }
+#setup-work #setup-source-name { margin: 0 0 4px; font-weight: 600; }
+/* Recipient/account get a wider second track than the old equal thirds.
+   A wrapping confirmation below also exposes a long selected account in full. */
+#setup-work .setup-pickers { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+.setup-base-row { display: flex; gap: 8px; }
+.setup-base-row > .field { flex: 1; min-width: 0; }
+.setup-base-row > .btn { flex: none; }
+#setup-work #setup-pair-status { min-height: 18px; margin: 8px 0 0; }
+/* Inline source picker, not a second review surface. Only the description
+   and display compatibility belong here; provenance stays in documentation. */
 #setup-catalog { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; min-width: 0; }
 #setup-catalog[hidden], #setup-catalog-origin[hidden] { display: none; }
 #setup-catalog > .lab { color: var(--text-dim); }
 #setup-catalog-select { width: 100%; min-width: 0; }
 #setup-work #setup-catalog-status { margin: 0; min-height: 18px; }
 #setup-work #setup-catalog-details { margin: 0; white-space: pre-line; }
-#setup-work #setup-catalog-origin { margin: 0 0 10px; }
+#setup-work #setup-catalog-origin { margin: 0 0 8px; }
 #setup-import .field:disabled { color: var(--text-faint); opacity: .5; }
 #setup-summary:focus, #setup-status:focus { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 

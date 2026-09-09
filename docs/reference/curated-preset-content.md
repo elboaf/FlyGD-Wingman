@@ -8,6 +8,13 @@ particular gameplay roles. The contributor personally arranged both layouts at
 **3840×2160 with 150% EVE UI scale** and chose **FlyGD Wingman** as the layout
 credit. That credit is separate from the original overview authors below.
 
+The Import setup page shows the setup description and intended display context,
+not the provenance record. Source URLs, author credits, revisions, licensing and
+validation evidence are maintained here and in `THIRD-PARTY-NOTICES.md`; the
+original notices and license files still travel with the bundled artifacts.
+Removing that material from the form does not change content admission or imply
+packaged WebView2/live-EVE acceptance.
+
 Only the two deliberately supplied portable exports were inspected and copied.
 Their bytes were not normalized, repaired, reformatted or replaced with an older
 public export. No raw DATs, account/character identities, local preference files,

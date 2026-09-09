@@ -2003,42 +2003,67 @@
       </div>
       <div id="setup-work">
         <p class="hint">Create a new profile from a local base. Your existing profiles stay unchanged. Close every EVE client before Review and Create.</p>
-        <label class="lab" for="setup-text">Wingman preset or native overview YAML</label>
-        <textarea class="field" id="setup-text" rows="3" spellcheck="false" aria-describedby="setup-catalog-origin"></textarea>
-        <p class="hint" id="setup-catalog-origin" hidden></p>
-        <div class="row">
-          <button class="btn" id="setup-paste" type="button">Paste</button>
-          <button class="btn" id="setup-file" type="button">Choose file…</button>
-          <button class="btn" id="setup-catalog-open" type="button" aria-controls="setup-catalog" aria-expanded="false">Browse bundled setups…</button>
-        </div>
-        <div id="setup-catalog" hidden>
-          <label class="lab" for="setup-catalog-select">Bundled complete setup</label>
-          <select class="field" id="setup-catalog-select" aria-describedby="setup-catalog-details setup-catalog-status" disabled></select>
-          <div class="row">
-            <button class="btn" id="setup-catalog-use" type="button" disabled>Use preset</button>
-            <button class="btn" id="setup-catalog-close" type="button">Close</button>
-            <button class="btn" id="setup-catalog-retry" type="button" hidden>Retry catalog</button>
+        <section class="setup-section" aria-labelledby="setup-source-heading">
+          <h2 id="setup-source-heading">Setup source</h2>
+          <div id="setup-source-summary" hidden>
+            <p id="setup-source-name"></p>
+            <p class="hint" id="setup-catalog-origin" hidden></p>
+            <div class="row">
+              <button class="btn" id="setup-source-change" type="button" aria-controls="setup-source-choices" aria-expanded="false">Change source</button>
+              <button class="btn" id="setup-source-edit" type="button" aria-controls="setup-editor" aria-expanded="false">Edit text</button>
+            </div>
           </div>
-          <p class="hint" id="setup-catalog-status" role="status" aria-live="polite"></p>
-          <p id="setup-catalog-details"></p>
-        </div>
-        <div class="us-pickers">
-          <div>
-            <label class="lab" for="setup-base">Local base profile</label>
-            <select class="field" id="setup-base" disabled></select>
+          <div id="setup-source-choices">
+            <div class="row">
+              <button class="btn" id="setup-catalog-open" type="button" aria-controls="setup-catalog" aria-expanded="false">Bundled setup…</button>
+              <button class="btn" id="setup-file" type="button">Choose file…</button>
+              <button class="btn" id="setup-paste" type="button">Paste</button>
+              <button class="linkbtn" id="setup-source-cancel" type="button" hidden>Keep current source</button>
+            </div>
+            <div id="setup-catalog" hidden>
+              <label class="lab" for="setup-catalog-select">Bundled setup</label>
+              <select class="field" id="setup-catalog-select" aria-describedby="setup-catalog-details setup-catalog-status" disabled></select>
+              <div class="row">
+                <button class="btn" id="setup-catalog-use" type="button" disabled>Use setup</button>
+                <button class="btn" id="setup-catalog-close" type="button">Close</button>
+                <button class="btn" id="setup-catalog-retry" type="button" hidden>Retry catalog</button>
+              </div>
+              <p class="hint" id="setup-catalog-status" role="status" aria-live="polite"></p>
+              <p id="setup-catalog-details"></p>
+            </div>
           </div>
-          <div>
-            <label class="lab" for="setup-character">Recipient character</label>
-            <select class="field" id="setup-character" disabled></select>
+          <div id="setup-editor" hidden>
+            <label class="lab" for="setup-text">Wingman preset or native overview YAML</label>
+            <textarea class="field" id="setup-text" rows="3" spellcheck="false"></textarea>
+            <button class="btn" id="setup-editor-close" type="button">Done editing</button>
           </div>
-          <div>
-            <label class="lab" for="setup-account">Confirmed account</label>
-            <select class="field" id="setup-account" disabled></select>
+        </section>
+        <section class="setup-section" aria-labelledby="setup-recipient-heading">
+          <h2 id="setup-recipient-heading">Local base and recipient</h2>
+          <p class="hint" id="setup-base-help">The base profile supplies your display preferences and settings not included in the setup.</p>
+          <div class="us-pickers setup-pickers">
+            <div>
+              <label class="lab" for="setup-base">Base profile</label>
+              <div class="setup-base-row">
+                <select class="field" id="setup-base" aria-describedby="setup-base-help" disabled></select>
+                <button class="btn" id="setup-refresh" type="button">Refresh base</button>
+              </div>
+            </div>
+            <div>
+              <label class="lab" for="setup-name">New profile name</label>
+              <input class="field" id="setup-name" type="text" autocomplete="off">
+            </div>
+            <div>
+              <label class="lab" for="setup-character">Recipient character</label>
+              <select class="field" id="setup-character" aria-describedby="setup-pair-status" disabled></select>
+            </div>
+            <div>
+              <label class="lab" for="setup-account">Confirmed account</label>
+              <select class="field" id="setup-account" aria-describedby="setup-pair-status" disabled></select>
+            </div>
           </div>
-        </div>
-        <p class="hint">Both local files and a confirmed account/character association are required. Missing a match? Return to Profiles, Accounts, Identify accounts.</p>
-        <label class="lab" for="setup-name">New profile name</label>
-        <input class="field" id="setup-name" type="text" autocomplete="off">
+          <p class="hint" id="setup-pair-status" role="status" aria-live="polite"></p>
+        </section>
         <div id="setup-label-choice" hidden>
           <p class="hint">This YAML cannot reproduce the ordered ship-label sequence. Use a Wingman preset for complete labels, or explicitly retain yours.</p>
           <label class="check"><input id="setup-keep-labels" type="checkbox"><span class="box"></span>Keep my ship labels</label>
@@ -2079,7 +2104,6 @@
         <div class="row">
           <button class="btn" id="setup-review" type="button" disabled>Review</button>
           <button class="btn" id="setup-create" type="button" disabled>Create profile</button>
-          <button class="btn" id="setup-refresh" type="button">Refresh base</button>
         </div>
         <p class="hint" id="setup-status" role="status" aria-live="polite" tabindex="-1"></p>
       </div>
