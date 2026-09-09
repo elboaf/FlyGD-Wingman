@@ -43,7 +43,9 @@ INERT_POLL_S = 15.0
 CATALOGUE_REFRESH_INTERVAL_S = 60.0
 SESSION_RENEWAL_INTERVAL_S = 600.0
 MAX_SNAPSHOT_AGE_S = 5.0
-HEARTBEAT_INTERVAL_S = 2.0
+# A 2s heartbeat plus a read that just misses it exhausts the 3s live budget,
+# even on healthy low-latency links. Leave room for read service and full RTT.
+HEARTBEAT_INTERVAL_S = 1.0
 CAPABILITIES = (p.SHARED_CAPABILITY,)
 # Only these classifications may reach status. Never render an exception body.
 ERROR_CODES = frozenset(
@@ -1044,7 +1046,11 @@ class FleetSharingWorker:
                 # Planning may durably replace our own expired session, but it
                 # must not adopt the generation of a newly queued user control.
                 self._execute(chosen, replace(fence, session=self._state.session_id))
-            return IDLE_POLL_S, True
+                # Re-plan in a new owner turn: another bucket may already be due.
+                # _work has durable side effects and the completed request may
+                # have replaced authority, so never re-use this turn's Work.
+                return 0.0, True
+            return min(IDLE_POLL_S, self._scheduler.delay(work, self._clock())), True
         except _Obsolete:
             # Persisted uncertainty is intentionally left for the next owner turn.
             return IDLE_POLL_S, True
@@ -1226,13 +1232,7 @@ class FleetSharingWorker:
                 )
             )
             rows = self._publication()
-            if rows is not None and (
-                rows != self._last_published
-                or (
-                    rows
-                    and self._clock() - self._last_publish_at >= HEARTBEAT_INTERVAL_S
-                )
-            ):
+            if rows is not None and (rows != self._last_published or rows):
                 work.append(
                     Work(
                         "publish_snapshot",

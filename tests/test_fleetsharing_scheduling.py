@@ -71,6 +71,29 @@ def test_scheduler_completion_buckets_and_bounded_control_fairness():
     assert scheduler.choose((stop, periodic), 14) == stop
 
 
+def test_preferred_snapshot_cannot_erase_control_budget_and_starve_metadata():
+    from wingman.fleetsharing.scheduling import Scheduler, Work
+
+    scheduler = Scheduler()
+    control = Work("control_source", "control")
+    metadata = Work("fetch_catalogue", "catalogue", due=0, periodic=True)
+    snapshot = Work("read_snapshot", "read", due=0, periodic=True)
+    assert scheduler.choose((control, metadata), 10) == control
+    scheduler.completed(control, 10)
+    # A sparse control stream leaves a snapshot slot between controls. Serving
+    # that preferred snapshot must not let each new control reset the budget.
+    assert scheduler.choose((metadata, snapshot), 10.5) == snapshot
+    scheduler.completed(snapshot, 10.5)
+    assert scheduler.choose((control, metadata), 11) == control
+    scheduler.completed(control, 11)
+    assert (
+        scheduler.choose((control, metadata, replace(snapshot, due=11.5)), 11.5)
+        == metadata
+    )
+    scheduler.completed(metadata, 11.5)
+    assert scheduler.choose((metadata, snapshot), 12) == snapshot
+
+
 def test_retiring_command_history_preserves_active_retry_service_and_bucket_deadlines():
     from wingman.fleetsharing.scheduling import Scheduler, Work
 

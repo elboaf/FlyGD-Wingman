@@ -74,8 +74,35 @@ class Scheduler:
         periodic = [w for w in ready if w.periodic]
         controls = [w for w in ready if not w.periodic]
         if periodic and (self._controls >= 2 or not controls):
+            # A metadata burst must not consume several read slots before the
+            # next snapshot. Between snapshot deadlines the oldest metadata
+            # still runs; the two-control budget always serves oldest first.
+            if self._controls < 2:
+                snapshot = next(
+                    (w for w in periodic if w.operation == "read_snapshot"), None
+                )
+                if snapshot is not None:
+                    return snapshot
             return min(periodic, key=lambda w: (w.due, self._served.get(w.key, 0)))
         return min(controls, key=lambda w: w.due)
+
+    def delay(self, work: tuple[Work, ...], now: float) -> float:
+        """Next admission, including completion buckets and per-work backoff."""
+        return max(
+            0.0,
+            min(
+                (
+                    max(
+                        w.due,
+                        self.deadlines[OPERATIONS[w.operation]],
+                        self.retry_at.get(w.key, 0),
+                    )
+                    for w in work
+                ),
+                default=float("inf"),
+            )
+            - now,
+        )
 
     def completed(
         self, work: Work, now: float, *, failed: bool = False, jitter: float = 0
@@ -104,6 +131,9 @@ class Scheduler:
         # burst starve overdue catalogue/eligibility/read classes.
         if bucket == "read":
             if work.periodic:
-                self._controls = 0
+                # Preferred snapshots must not keep resetting the budget and
+                # starve metadata behind an ordinary-control stream.
+                if work.operation != "read_snapshot":
+                    self._controls = 0
             elif work.priority >= 2:
                 self._controls += 1
