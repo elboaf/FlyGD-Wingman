@@ -299,6 +299,84 @@
       && WM.current_route === 'uisetup';
   }
 
+  function pairProblem() {
+    if (!roster) return '';
+    if (!roster.account_identity_available) return 'Account identification is not available for this profile.';
+    var identify = 'Return to Profiles, Accounts, Identify accounts.';
+    if (!roster.characters.length || !roster.accounts.length) return 'The base needs local character and account files. ' + identify;
+    var character = selected(roster.characters, WM.el('setup-character').value);
+    var account = selected(roster.accounts, WM.el('setup-account').value);
+    if (!character) return 'Choose a recipient character from the base profile.';
+    if (!roster.accounts.some(function (item) { return item.character_ids.indexOf(character.id) !== -1; })) {
+      return 'No account is confirmed for ' + character.name + '. ' + identify;
+    }
+    if (!account) return 'Choose an account confirmed for ' + character.name + '.';
+    if (account.character_ids.indexOf(character.id) === -1) {
+      return 'This account is not confirmed for ' + character.name + '. Choose a matching account.';
+    }
+    return '';
+  }
+
+  function importBlocker() {
+    if (!roster) return draft.contextError || 'Reading local base profile…';
+    if (!roster.setup_available) return 'The settings codec is not available in this install.';
+    if (!roster.account_identity_available) return 'Account identification is not available for this profile.';
+    if (!draft.text.trim()) return 'Choose a setup to import.';
+    if (!selected(roster.profiles, context.profile)) return 'Choose a local base profile.';
+    if (!pair()) return pairProblem();
+    if (!draft.name.trim()) return 'Enter a new profile name.';
+    return '';
+  }
+
+  function sourceControls() {
+    var hasText = !!draft && !!draft.text.trim();
+    var choosing = !hasText || !!draft.choosingSource;
+    var editing = !!draft && draft.editing;
+    WM.el('setup-source-summary').hidden = !hasText;
+    WM.el('setup-source-choices').hidden = !choosing;
+    WM.el('setup-source-cancel').hidden = !hasText;
+    WM.el('setup-editor').hidden = !editing;
+    WM.el('setup-source-name').textContent = hasText ? draft.sourceLabel || 'Setup text' : '';
+    WM.el('setup-source-change').setAttribute('aria-expanded', choosing ? 'true' : 'false');
+    WM.el('setup-source-edit').setAttribute('aria-expanded', editing ? 'true' : 'false');
+    ['source-change', 'source-edit', 'source-cancel', 'editor-close'].forEach(function (id) {
+      WM.setEnabled('setup-' + id, editable());
+    });
+  }
+
+  function acceptSource(label) {
+    draft.sourceLabel = label;
+    draft.editing = !draft.text.trim();
+    // A manual read may finish beneath an open catalog confirmation. Keep that
+    // picker visible; its version guard, not presentation, retires the old read.
+    draft.choosingSource = !!catalog;
+    importControls();
+    if (WM.el('overlay').hidden) WM.el(draft.editing ? 'setup-text' : 'setup-source-edit').focus();
+  }
+
+  function closeSourceChoices() {
+    if (!editable()) return;
+    if (draft.reading) importChanged(false);
+    clearCatalog();
+    draft.choosingSource = false;
+    draft.editing = false;
+    importControls();
+    WM.el('setup-source-change').focus();
+  }
+
+  function closeEditor() {
+    if (!editable()) return;
+    draft.editing = false;
+    importControls();
+    WM.el(draft.text.trim() ? 'setup-source-edit' : 'setup-paste').focus();
+  }
+
+  function closeCatalog() {
+    clearCatalog();
+    importControls();
+    WM.el('setup-catalog-open').focus();
+  }
+
   function importControls() {
     var edit = editable();
     ['text', 'name', 'keep-labels', 'refresh'].forEach(function (id) { WM.setEnabled('setup-' + id, edit); });
@@ -310,7 +388,18 @@
     WM.setEnabled('setup-review', edit && !draft.reviewing && !draft.reading && !!pair()
       && !!draft.text.trim() && !!draft.name.trim());
     WM.setEnabled('setup-create', edit && !!draft.review);
+    WM.el('setup-review').className = edit && !draft.review ? 'btn acc' : 'btn';
+    WM.el('setup-create').className = edit && draft.review ? 'btn acc' : 'btn';
     WM.el('setup-back').textContent = draft && (draft.creating || draft.published) ? 'Back to Profiles' : 'Cancel';
+    var problem = mode === 'import' ? pairProblem() : '';
+    var account = roster && selected(roster.accounts, WM.el('setup-account').value);
+    var invalid = !!account && !!problem;
+    WM.el('setup-account').setAttribute('aria-invalid', invalid ? 'true' : 'false');
+    // The select may elide a long identity. Keep its full, confirmed value
+    // readable and announce it without requiring hover or reopening the menu.
+    WM.el('setup-pair-status').textContent = problem || (mode === 'import' && account ? 'Confirmed: ' + account.name : '');
+    WM.el('setup-pair-status').className = invalid ? 'hint err' : 'hint';
+    sourceControls();
     catalogControls();
   }
 
@@ -323,6 +412,7 @@
     discard(draft.review);
     draft.review = '';
     if (replacedText) {
+      draft.sourceLabel = 'Setup text';
       catalogOrigin(null);
       WM.el('setup-keep-labels').checked = false;
       WM.el('setup-label-choice').hidden = true;
@@ -331,7 +421,7 @@
     draft.name = WM.el('setup-name').value;
     draft.keep = WM.el('setup-keep-labels').checked;
     clearImportSummary();
-    importStatus('Review the setup again before creating a profile.');
+    importStatus(importBlocker() || 'Review the setup again before creating a profile.', !!draft.contextError);
     importControls();
   }
 
@@ -343,10 +433,9 @@
 
   function catalogOrigin(entry) {
     var node = WM.el('setup-catalog-origin');
-    // This names the source, not a frontend verification of textarea bytes
-    // (the native textarea can normalize newlines). No installed registry.
-    node.textContent = entry ? 'Loaded from bundled setup: ' + entry.title
-      + ' · revision ' + entry.revision + ' · ' + entry.id + '.' : '';
+    // Display context belongs to the accepted source, not a frontend
+    // verification of textarea bytes. Editing the text retires this context.
+    node.textContent = entry ? catalogDisplay(entry) : '';
     node.hidden = !entry;
   }
 
@@ -380,6 +469,11 @@
     catalogStatus('');
   }
 
+  function catalogDisplay(entry) {
+    return 'Intended display: ' + entry.display.width + ' × ' + entry.display.height
+      + ' · UI scale ' + entry.display.ui_scale_percent + '%. Positions are copied as saved, not fitted to your display.';
+  }
+
   function catalogChanged() {
     if (!editable() || !catalog) return;
     // A -> B -> A must not re-admit the first A read or confirmation.
@@ -387,23 +481,17 @@
     var entry = catalogSelection();
     var lines = [];
     if (entry) {
-      lines = [entry.description, 'Content revision: ' + entry.revision,
-        'Layout author: ' + entry.layout_author,
-        'Intended display: ' + entry.display.width + ' × ' + entry.display.height
-          + ' · UI scale ' + entry.display.ui_scale_percent + '%'];
-      entry.overview_sources.forEach(function (source) {
-        lines.push('Overview: ' + source.name + ' · ' + source.author + ' · ' + source.version
-          + '\nSource: ' + source.reference + '\nLicense: ' + source.license);
-      });
-      lines.push('Validation notes: ' + entry.verification);
+      // Provenance and redistribution evidence live in the repository's
+      // curated-preset reference and shipped notices, not this task surface.
+      lines = [catalogDisplay(entry), entry.description];
     }
     WM.el('setup-catalog-details').textContent = lines.join('\n');
-    catalogStatus(entry ? '' : 'Choose a setup to see its source and intended display.');
+    catalogStatus(entry ? '' : 'Choose a setup to see its description and intended display.');
     catalogControls();
     // Reveal details in the existing work scroller, without moving keyboard
     // focus or scrolling when a background update owns the selection.
     if (entry && document.activeElement === WM.el('setup-catalog-select')) {
-      WM.el('setup-catalog').scrollIntoView({block: 'start'});
+      WM.el('setup-catalog').scrollIntoView({block: 'nearest'});
     }
   }
 
@@ -414,6 +502,8 @@
     // can load independently of recipient input; it confers no review authority.
     var picker = {entries: [], loading: true, reading: false, serial: 0};
     catalog = picker;
+    draft.choosingSource = true;
+    sourceControls();
     var view = generation;
     WM.el('setup-catalog').hidden = false;
     WM.el('setup-catalog-open').setAttribute('aria-expanded', 'true');
@@ -439,7 +529,7 @@
       fill('setup-catalog-select', picker.entries.map(function (entry) {
         return {path: entry.id, name: entry.title};
       }), '', 'Choose a bundled setup');
-      catalogStatus(picker.entries.length ? 'Choose a setup to see its source and intended display.'
+      catalogStatus(picker.entries.length ? 'Choose a setup to see its description and intended display.'
         : 'No complete setups are bundled in this build. Paste a setup or choose a file.');
       WM.el('setup-catalog-retry').hidden = !!picker.entries.length;
       catalogControls();
@@ -478,9 +568,7 @@
       importChanged(true);
       catalogOrigin(reply.entry);
       clearCatalog();
-      importControls();
-      // panel.js may already have opened the next queued dialog.
-      if (WM.el('overlay').hidden) WM.el('setup-text').focus();
+      acceptSource(reply.entry.title);
     }
     WM.send('eve_settings_setup_catalog_entry', entry.id, entry.revision, entry.sha256)
       .then(function (reply) {
@@ -500,12 +588,13 @@
             }
           });
       }).catch(function () {
-        finish('Could not load the bundled setup. Try Use preset again or choose another source.', true);
+        finish('Could not load the bundled setup. Try Use setup again or choose another source.', true);
       });
   }
 
   function loadImport(profile, character, account) {
     if (!editable()) return;
+    draft.contextError = '';
     importChanged(false);
     context.profile = profile;
     roster = null;
@@ -516,16 +605,23 @@
     // Typing a name/text while context is loading invalidates review, not this
     // independent read. A base change or leaving still invalidates the roster.
     var view = generation, read = ++draft.contextRead;
+    function failed(text) {
+      // A settled read failure is still a blocker after editing another field;
+      // only a new context request may replace it with a loading message.
+      draft.contextError = text;
+      importStatus(text, true);
+      importControls();
+    }
     Promise.all([setupContext(profile), setupLimits()])
       .then(function (results) {
         if (!isCurrent(view) || !draft || read !== draft.contextRead) return;
         var payload = results[0], limits = results[1];
         if (!payload || !payload.ok) {
-          importStatus(payload && payload.error || 'Could not read the base. Refresh base to retry.', true);
+          failed(payload && payload.error || 'Could not read the base. Refresh base to retry.');
           return;
         }
         if (payload.root !== context.root || payload.server !== context.server || payload.profile !== profile) {
-          importStatus('The Profiles context changed. Cancel and reopen Import setup.', true);
+          failed('The Profiles context changed. Cancel and reopen Import setup.');
           return;
         }
         roster = copyRoster(payload);
@@ -539,12 +635,11 @@
           + ' MiB UTF-8. Unsupported or larger inputs are refused, never truncated.';
         if (!roster.setup_available) importStatus('The settings codec is not available in this install.', true);
         else if (!roster.account_identity_available) importStatus('Account identification is not available for this profile.', true);
-        else importStatus('Choose a confirmed local pair and a new name, then Review.');
+        else importStatus(importBlocker() || 'Review the setup before creating a profile.');
         importControls();
       }).catch(function () {
         if (isCurrent(view) && draft && read === draft.contextRead) {
-          importStatus('Could not read the base. Refresh base to retry.', true);
-          importControls();
+          failed('Could not read the base. Refresh base to retry.');
         }
       });
   }
@@ -562,7 +657,9 @@
       if (!current()) return;
       draft.reading = false;
       importStatus(file ? 'Could not read the setup file. Try again.' : 'Could not read the clipboard. Paste into the text field or choose a file.', true);
+      if (!file) draft.editing = true;
       importControls();
+      if (!file && WM.el('overlay').hidden) WM.el('setup-text').focus();
     }
     try {
       var request = file ? WM.send('eve_settings_setup_read_file') : navigator.clipboard.readText();
@@ -577,8 +674,7 @@
         }
         WM.el('setup-text').value = file ? reply.text : reply;
         importChanged(true);
-        // A catalog replacement confirmation may have opened during this read.
-        if (WM.el('overlay').hidden) WM.el('setup-text').focus();
+        acceptSource(file ? 'Setup from file' : 'Pasted setup');
       }, failed);
     } catch (error) { failed(); }
   }
@@ -720,12 +816,13 @@
     WM.el('setup-import').hidden = mode !== 'import';
     // Only the active mode owns the accent; never two primaries on this route.
     WM.el('us-copy').className = mode === 'export' ? 'btn acc' : 'btn';
-    WM.el('setup-create').className = mode === 'import' ? 'btn acc' : 'btn';
+    WM.el('setup-create').className = 'btn';
     WM.route('uisetup');
     controls();
     if (mode === 'import') {
-      draft = {text: '', name: '', keep: false, version: 0, contextRead: 0,
-        review: '', reviewing: false, reading: false, creating: null, published: false};
+      draft = {text: '', name: '', keep: false, version: 0, contextRead: 0, contextError: '',
+        review: '', reviewing: false, reading: false, creating: null, published: false,
+        sourceLabel: '', choosingSource: false, editing: false};
       loadImport(context.profile, options.preferred_character || '', '');
       WM.el('setup-back').focus();
     } else {
@@ -771,7 +868,26 @@
 
   function wire() {
     WM.el('setup-back').addEventListener('click', back);
-    WM.el('setup-text').addEventListener('input', function () { importChanged(true); });
+    WM.el('setup-text').addEventListener('input', function () {
+      if (!editable()) return;
+      draft.editing = true;
+      importChanged(true);
+    });
+    WM.el('setup-source-change').addEventListener('click', function () {
+      if (!editable()) return;
+      draft.choosingSource = true;
+      draft.editing = false;
+      importControls();
+      WM.el('setup-catalog-open').focus();
+    });
+    WM.el('setup-source-edit').addEventListener('click', function () {
+      if (!editable()) return;
+      draft.editing = true;
+      importControls();
+      WM.el('setup-text').focus();
+    });
+    WM.el('setup-source-cancel').addEventListener('click', closeSourceChoices);
+    WM.el('setup-editor-close').addEventListener('click', closeEditor);
     WM.el('setup-name').addEventListener('input', function () { importChanged(false); });
     ['setup-character', 'setup-account', 'setup-keep-labels'].forEach(function (id) {
       WM.el(id).addEventListener('change', function () { importChanged(false); });
@@ -786,11 +902,7 @@
     WM.el('setup-catalog-retry').addEventListener('click', browseCatalog);
     WM.el('setup-catalog-select').addEventListener('change', catalogChanged);
     WM.el('setup-catalog-use').addEventListener('click', useCatalog);
-    WM.el('setup-catalog-close').addEventListener('click', function () {
-      clearCatalog();
-      importControls();
-      WM.el('setup-catalog-open').focus();
-    });
+    WM.el('setup-catalog-close').addEventListener('click', closeCatalog);
     WM.el('setup-review').addEventListener('click', reviewImport);
     WM.el('setup-create').addEventListener('click', createImport);
     WM.el('us-back').addEventListener('click', back);
@@ -810,7 +922,10 @@
       // panel.js owns Escape while its page confirmation is open.
       if (!event.defaultPrevented && WM.current_route === 'uisetup' && event.key === 'Escape') {
         event.preventDefault();
-        back();
+        if (catalog) closeCatalog();
+        else if (editable() && draft.editing) closeEditor();
+        else if (editable() && draft.choosingSource && draft.text.trim()) closeSourceChoices();
+        else back();
       }
     });
     document.addEventListener('wm:route', function (event) {

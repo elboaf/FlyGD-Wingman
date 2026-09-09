@@ -107,6 +107,18 @@ CATALOG_SCENARIOS = (
 
 IMPORT_SCENARIOS = [
     *CATALOG_SCENARIOS,
+    "ux-initial-source-choice",
+    "ux-prerequisite-feedback",
+    "ux-context-recovery",
+    "ux-pair-feedback",
+    "ux-catalog-escape",
+    "ux-source-change-cancel",
+    "ux-source-editor",
+    "ux-file-summary",
+    "ux-paste-fallback",
+    "ux-source-cancel-pending",
+    "ux-review-action",
+    "ux-catalog-content",
     "context-does-not-select",
     "base-rosters-differ",
     "review-invalidated-by-text",

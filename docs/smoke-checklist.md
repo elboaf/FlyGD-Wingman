@@ -4076,13 +4076,31 @@ This is not a packaged WebView2 or live-EVE pass. The following remain open;
 content redistribution approval does not authorize installation or live-profile
 operations. Apply the operator-authorization boundaries above.
 
-- [ ] **Browse → Use → Review → Create.** In Profiles → Import setup…, choose
-      **Browse bundled setups…** and select each admitted full setup. Confirm source
-      authors are separate from the FlyGD Wingman layout credit, with readable version,
-      licence, 3840×2160/150% context and bounded verification text. **Use preset**
-      fills the draft without writing a profile; only Review then Create
-      can publish. Cancel/close browsing and failed entry loads preserve the
-      existing draft/review. Manual paste/file import still works.
+- [ ] **Source → Recipient → Review → Create.** In Profiles → Import setup…,
+      choose **Bundled setup…** and select each admitted full setup. Confirm only
+      its description and 3840×2160/150% display context are shown, including that
+      positions are copied as saved, not fitted. Source URLs, revision, author,
+      licence and validation evidence belong in the repository reference and
+      shipped notices, not this page. **Use setup** fills the draft without writing
+      a profile; only Review then Create can publish. Cancel/close browsing and
+      failed entry loads preserve the existing draft/review.
+- [ ] **Source selection and text editing.** Entry shows three source choices,
+      not an empty textarea. Loading a file or bundled setup shows a compact
+      source summary; **Edit text** reveals its input, **Done editing** hides it.
+      **Change source** and **Keep current source** preserve the draft until a
+      replacement is accepted. Clipboard denial reveals a focused manual-paste
+      field. Cancelling a pending source choice prevents its late response from
+      replacing the current source. Check these paths with a populated name and
+      recipient as well as an empty draft.
+- [ ] **Blockers, identity and keyboard exits.** Missing source, name, account
+      and incompatible recipient/account each explain the actual blocker. The
+      account hint exposes the full confirmed identity when the select elides it.
+      Refresh base sits with the base selector. Review owns the accent during
+      preparation; Create owns it only after a valid review. With the bundled
+      picker open, Escape closes only that picker and restores focus to its
+      opener, preserving text, name, recipient and review. Escape in a replacement
+      confirmation still belongs to that confirmation. Check at 840×625 and
+      839×621 CSS pixels and a larger window, including long names and errors.
 - [ ] **Actual complete arrangements.** Import each preset onto an independently
       initialized disposable recipient, not a sender clone. Record the selected
       ID/revision/SHA-256 and actual build/platform. Check the intended groups,
