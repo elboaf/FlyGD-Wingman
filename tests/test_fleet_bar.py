@@ -467,10 +467,13 @@ def test_toggle_off_hides_existing_window_and_reconciles(api):
 
 
 def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
+    import dataclasses
+    from wingman.fleetsharing.model import PublishRow
+
     api._fleet_expected_generation = 1
     snapshot = FleetSnapshot(
         rows=(
-            FleetRow("Alice", 43, ("SCRAM", "NEUT")),
+            FleetRow("Alice", 43, ("SCRAM", "NEUT"), incoming_dps=17),
             FleetRow("Bravo", None, (), "NO LOG"),
         ),
         stream_health=StreamHealth(state="stale", detail="3.2s since poll"),
@@ -487,13 +490,15 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
         "rows": [
             {
                 "character": "Alice",
-                "dps": 43,
+                "outgoing_dps": 43,
+                "incoming_dps": 17,
                 "ewar": ["SCRAM", "NEUT"],
                 "log_status": None,
             },
             {
                 "character": "Bravo",
-                "dps": None,
+                "outgoing_dps": None,
+                "incoming_dps": None,
                 "ewar": [],
                 "log_status": "NO LOG",
             },
@@ -503,6 +508,9 @@ def test_snapshot_payload_preserves_rows_status_and_diagnostics(api):
         "stream_health": {"state": "stale", "detail": "3.2s since poll"},
         "metric_error": "clock skew",
     }
+    # PublishRow must not include display-only local fields
+    publish_fields = {f.name for f in dataclasses.fields(PublishRow)}
+    assert publish_fields == {"character_id", "dps", "ewar"}
 
 
 def test_fleet_page_source_rejects_stale_revision_and_all_hidden_copy():
@@ -907,7 +915,7 @@ def test_all_hidden_payload_keeps_running_count_and_restore_keeps_metrics(api):
     assert hidden["running_count"] == 1
     assert hidden["revision"] < restored["revision"]
     assert restored["rows"] == [
-        {"character": "Alice", "dps": 43, "ewar": ["SCRAM"], "log_status": None}
+        {"character": "Alice", "outgoing_dps": 43, "incoming_dps": None, "ewar": ["SCRAM"], "log_status": None}
     ]
 
 
