@@ -344,8 +344,9 @@ async function fittingsDetailRegression() {
     WM.openUiSetup({mode: 'export', context: {root: 'live', server: 'tq', profile: 'live-base'}});
     assert.ok(calls.length, 'ordinary export reads resume after cleanup');
     WM.openUiSetup({mode: 'import', context: {root: 'live', server: 'tq', profile: 'live-base'}});
+    const beforeCatalogRead = calls.length;
     WM.el('setup-catalog-open').click();
-    assert.ok(calls.some(call => call[0] === 'eve_settings_setup_catalog'), 'ordinary catalog reads resume after cleanup');
+    assert.ok(calls.slice(beforeCatalogRead).some(call => call[0] === 'eve_settings_setup_catalog'), 'ordinary catalog reads resume after cleanup');
   } else WM.section('previews');
   assert.ok(calls.length, 'ordinary reads resume after cleanup');
   console.log('PASS screenshot ' + data.key);

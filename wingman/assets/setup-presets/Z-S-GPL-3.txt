@@ -1,4 +1,7 @@
 Z-S Overview Pack
+The catalog links the original GitLab project: https://gitlab.com/Arziel/Z-S-Overview-Pack
+The GitHub URLs below pin its historical mirror for the published notices and
+licence text; neither host is represented as the exact in-game v10.07.29 export.
 Source notices: https://raw.githubusercontent.com/Arziel1992/Z-S-Overview-Pack/9c7dd4564f6db633dad44d3078d862dcc4ee0708/README.md
 Licence text: https://raw.githubusercontent.com/Arziel1992/Z-S-Overview-Pack/9c7dd4564f6db633dad44d3078d862dcc4ee0708/LICENSE.md
 

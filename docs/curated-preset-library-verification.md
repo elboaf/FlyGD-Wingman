@@ -122,7 +122,9 @@ A separate parent Windows exercise supplied each exact artifact through the exis
 
 The candidates and their capture/export receipts remain private under Windows TEMP's `wingman-curated-library-candidates` directory, outside version control. Convenient copies are named `iridium-default.wingman.json` and `zs-default.wingman.json`; their hashes match the table. Raw source snapshots retain all capture hashes. The replay scripts are local verification tools, not a new app entry point or public artifact format. The installed app was not upgraded by these source changes.
 
-## Remaining acceptance and boundaries
+## Prerequisite-checkpoint acceptance and boundaries (historical)
+
+The following records the state at `ec41d51`, before library implementation and content admission. The current-status and later task sections supersede the subsequently completed items.
 
 - Three Windows symlink-permission cases remain unresolved locally; no fully passing Windows suite is claimed.
 - No Windows/WebView2 rendering or actual EVE import/reload of these new candidate artifacts was performed. Earlier phase validation is not relabelled as candidate-specific acceptance.

@@ -1031,7 +1031,10 @@ def test_dat_compat_omitted_always_shown_exports_effective_body_without_mutation
     assert parse_text(json.dumps(envelope)).overview == envelope["overview"]
     fleet["alwaysShownStates"].append(1)
     fresh, _ = adapter.export_setup(account, character)
-    assert fresh["overview"]["presets"][0]["alwaysShownStates"] == []
+    fresh_fleet = next(
+        row for row in fresh["overview"]["presets"] if row["name"] == "Synthetic Fleet"
+    )
+    assert fresh_fleet["alwaysShownStates"] == []
     assert (account, character) == before
 
 

@@ -647,7 +647,8 @@ def test_shipped_catalog_facades_publish_exact_setup_on_independent_recipient(
         assert saved[name] == record
     for row in overview["presets"]:
         name = row["name"]
-        physical = next(key for key in saved if key.split(":", 1)[1] == name)
+        physical = f"utf8:{name}"
+        assert physical in saved, f"Imported preset missing its UTF-8 key: {name}"
         assert saved[physical] == {
             f"bytes:{key}": row[key]
             for key in ("groups", "filteredStates", "alwaysShownStates")
