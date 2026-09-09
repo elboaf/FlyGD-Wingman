@@ -1,10 +1,23 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const readline = require('node:readline');
 const vm = require('node:vm');
 const {spawnSync} = require('node:child_process');
-const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const scenario = process.argv[3];
+const {performance} = require('node:perf_hooks');
 
+const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const productionModule = process.argv[3];
+const pythonExe = process.argv[4];
+
+async function runScenario(request) {
+const scenario = request.scenario;
+const started = performance.now();
+const unhandledRejections = [];
+const onUnhandledRejection = error => unhandledRejections.push(error);
+const encodingBoundaries = [];
+process.on('unhandledRejection', onUnhandledRejection);
+
+try {
 // Only DOM/SVG mechanics and bridge delivery are simulated. No editor state,
 // conversions, load/save logic, or production source rewriting lives here.
 class Element {
@@ -99,9 +112,9 @@ const WM = {
     return request.promise;
   }
 };
-vm.runInNewContext(fs.readFileSync(process.argv[4], 'utf8'), {
+vm.runInNewContext(fs.readFileSync(productionModule, 'utf8'), {
   WM, document, window, navigator, console, Date, Math, TextEncoder
-}, {filename: process.argv[4]});
+}, {filename: productionModule});
 const A = 'a'.repeat(64), B = 'b'.repeat(64), C = 'c'.repeat(64);
 const accounts = [{path: 'choice-A', name: 'Account A'}, {path: 'choice-B', name: 'Account B'}];
 function reply(revision = A, name = 'Original', path = 'resolved-A') {
@@ -311,11 +324,21 @@ async function copyScenario() {
 // Python, not a JS approximation, answers actual production requests. Compose
 // the real facade/controller without account/session state for these pure endpoints.
 function pythonReply(method, args) {
-  const result = spawnSync(process.argv[5], ['-c',
-    'import json,sys; from wingman.ui.api import Api; from wingman.evesettings.controller import ProfilesController; api=Api.__new__(Api); api._profiles=ProfilesController.__new__(ProfilesController); method,args=json.loads(sys.stdin.buffer.read().decode("utf-8")); print(json.dumps(getattr(api, method)(*args)))'],
-    {input: JSON.stringify([method, args]), encoding: 'utf8'});
+  const env = {...process.env, ...((request.payload && request.payload.env) || {})};
+  const result = spawnSync(pythonExe, ['-c', [
+    'import json,os,sys',
+    'from wingman.ui.api import Api',
+    'from wingman.evesettings.controller import ProfilesController',
+    'api=Api.__new__(Api)',
+    'api._profiles=ProfilesController.__new__(ProfilesController)',
+    'method,args=json.loads(sys.stdin.buffer.read().decode("utf-8"))',
+    'reply={"result":getattr(api,method)(*args),"encoding":os.environ.get("PYTHONIOENCODING","")}',
+    'sys.stdout.buffer.write(json.dumps(reply,ensure_ascii=False).encode("utf-8"))'
+  ].join('\n')], {input: JSON.stringify([method, args]), encoding: 'utf8', env});
   assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout);
+  const reply = JSON.parse(result.stdout);
+  encodingBoundaries.push(reply.encoding);
+  return reply.result;
 }
 function deliverParse(request = parses.at(-1)) {
   request.resolve(pythonReply('eve_settings_parse_formations', request.args));
@@ -898,6 +921,52 @@ async function main() {
     click('fm-back'); confirms[1].resolve(true); await tick();
     assert.equal(WM.current_route, 'evesettings');
   } else assert.fail('Unknown scenario: ' + scenario);
-  console.log('PASS ' + scenario);
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+await main();
+await tick();
+if (unhandledRejections.length) {
+  const error = unhandledRejections[0];
+  throw error instanceof Error ? error : new Error(String(error));
+}
+const encodingBoundary = encodingBoundaries[0] || '';
+assert.ok(encodingBoundaries.every(value => value === encodingBoundary),
+  'all Python children must receive the same request environment');
+return {duration_ms: performance.now() - started, output: 'PASS ' + scenario,
+  encoding_boundary: encodingBoundary};
+} finally {
+  process.removeListener('unhandledRejection', onUnhandledRejection);
+}
+}
+
+async function serve() {
+  const input = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+  for await (const line of input) {
+    let request;
+    const requestStarted = performance.now();
+    try {
+      request = JSON.parse(line);
+      const result = await runScenario(request);
+      process.stdout.write(JSON.stringify({
+        id: request.id,
+        scenario: request.scenario,
+        ok: true,
+        duration_ms: result.duration_ms,
+        error: '',
+        stack: '',
+        output: result.output,
+        encoding_boundary: result.encoding_boundary
+      }) + '\n');
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        id: request && Number.isInteger(request.id) ? request.id : 0,
+        scenario: request && typeof request.scenario === 'string' ? request.scenario : '',
+        ok: false,
+        duration_ms: performance.now() - requestStarted,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack || '' : ''
+      }) + '\n');
+    }
+  }
+}
+
+serve().catch(error => { console.error(error); process.exitCode = 1; });
