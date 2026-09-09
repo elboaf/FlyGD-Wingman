@@ -1,6 +1,6 @@
 # Curated library of complete overview and layout setups
 
-Status: the user approved library implementation on 2026-09-08, with continuous execution and independent reviews. The compatibility prerequisite is implemented and verified as recorded in [the checkpoint](curated-preset-library-verification.md). Content admission and external/operator acceptance remain separate requirements.
+Status: implementation through `32cb2d5` (content commit `dc41947`) includes the read-only catalog, inline picker and two admitted complete setups, following the user's approval on 2026-09-08. [The verification record](curated-preset-library-verification.md) covers compatibility, content evidence, tests and reviews. Actual frozen/installed Windows and live-EVE operator acceptance remain separate open requirements; no release is implied.
 Base: `75f3288e84c80018d6cee421ae2f32577ece53d3` (current main when the planning worktree was created).
 
 ## Outcome and decisions
@@ -55,7 +55,7 @@ The user nominated these sources; investigation is source selection, not approva
 
 Iridium is the recommended first base, with Signal Cartel the exploration follow-up if permission is established. A candidate's overview source and its layout author are separate provenance. User-provided full layouts can enter alongside these derivatives once their own source/permission facts are established. Do not require four source families before shipping a small useful collection.
 
-Author confirmation on 2026-09-08: the user arranged both captured window layouts at **3840×2160 with 150% EVE UI scale** and chose **FlyGD Wingman** for the layout credit. This credit does not replace the overview-pack authors or their licence notices. The user identified the Z-S edition as **v10.07.29**; that attribution is author-reported pending verification of its upstream source/licence evidence, not an assertion that it equals the old v9 GitLab snapshot.
+Author confirmation on 2026-09-08: the user arranged both captured window layouts at **3840×2160 with 150% EVE UI scale** and chose **FlyGD Wingman** for the layout credit. This credit does not replace the overview-pack authors or their licence notices. The user identified the Z-S edition as **v10.07.29**; that version is author-reported, not an assertion that it equals the old v9 GitLab snapshot. The user subsequently confirmed that its in-game licence notice approves redistribution, answering the GPLv3 applicability question. Admit the selected capture on that contributor-confirmed evidence, retaining the published upstream GPLv3 notice. This does not claim independent inspection of the in-game notice or grant release/install authority.
 
 Earlier unsupplied candidates (including Iterami) are not launch commitments. No upstream code, installer scripts, personal captures or native YAML has been copied into the feature worktree. A native-parser refusal does not justify weakening it, and a recent repository activity date does not establish gameplay currency. Check the actual full exported artifact and its provenance before admission.
 

@@ -2,7 +2,7 @@
 
 ## Scope and current status
 
-**Current code checkpoint:** `f9636ef09d2ad5d6e1a183b8ca2c9128db37f492`. Library Tasks 1–2 are implemented, reviewed and verified. Task 3 author/display metadata has now been confirmed as recorded below; upstream evidence for Z-S v10.07.29 remains unresolved before content admission. No production catalog or real preset assets are in the repository. The complete-library acceptance floor is not met yet.
+**Current code/content checkpoint:** `32cb2d57bd74627f0e38056937e83f8f5d598fdc` (content bundled in `dc41947`). Library Tasks 1–3 are implemented with both admitted complete setups, source/frozen collection and regression tests. The content dependency is resolved using contributor-confirmed author/display/in-game redistribution evidence; the in-game licence notice has not been independently inspected. Engineering verification is recorded below. Actual frozen build, installed WebView2/live-EVE acceptance and the Windows privilege-blocked cases remain open; no release/operator acceptance is claimed.
 
 **Compatibility-prerequisite checkpoint:** `ec41d514ed3f61ffb2d898453490104be740408c`, after independent final review and scoped polish (no fixes needed). The first sections record the prerequisite needed to export the user's actual full setup candidates; subsequent library task evidence appears below. This does **not** claim that the complete library, bundled content admission, publication, or in-game acceptance is complete.
 
@@ -170,7 +170,7 @@ The original author's current [Customizer README](https://github.com/Arziel1992/
 
 That Customizer bundles a public **v10.06.09** YAML, not the author-reported v10.07.29 capture. A bounded read-only comparison of that YAML (SHA-256 `412541b10959c186dc7958a66fd4362484b72dabce0e3bf12728a57c1aa5f346`) found 39 matching filter memberships after ignoring name markup, 16 differences, and the two referenced canonical defaults absent from that source. This comparison does not change any captured bytes or establish exact edition identity.
 
-The original pack repository declares GPLv3, while the current Customizer declares AGPLv3 for its project. Neither has been substituted for confirmation of the current in-game capture's applicable terms. Its source/licence admission remains open; no maintainer was contacted, no public issue was opened and no assets were admitted. The user-owned layout credit/display facts are settled and must not be requested again.
+The original pack repository declares GPLv3, while the current Customizer declares AGPLv3 for its project. Neither has been substituted for confirmation of the current in-game capture's applicable terms. Subsequently, the user clarified that the in-game v10.07.29 release provides licence approval for redistribution, answering the GPLv3 applicability question. This resolves admission on **contributor-confirmed in-game notice evidence**, with the published upstream GPLv3 notice retained; it is not an independent inspection or verbatim quotation of the in-game notice. No maintainer was contacted or public issue opened. The layout/display/permission inputs are settled and must not be requested again.
 
 ## Library Task 2 — picker, corrections and scoped polish
 
@@ -233,7 +233,66 @@ The parent inspected both final JUnit documents. Each platform passed all **145 
 
 Tasks 1–2 are substantial because they add a distribution schema/public read interfaces and integrate asynchronous draft/dialog ownership. The highest-risk decisions are exact identity/byte binding without granting recipient authority, late-source cancellation, and shared focus ownership. The existing independent import/review/create path remains the commit boundary. Task-specific decisions are recorded here and in the SDD task reports/ledger; no unrelated implementation-notes document was used as evidence.
 
-The next work is Task 3, after the remaining upstream terms are confirmed (the user's layout/display facts are settled): admit at least two real full setups, include notices and exact source/display evidence, wire packaging/frozen inventory checks, and exercise the bundled entries through native profile creation. Then repeat whole-feature review and acceptance. No placeholder production catalog, fake display attribution, private snapshots, push, PR, build dispatch, installation or live-EVE operation substitutes for that gate.
+Task 3 is now implemented as recorded below: both complete setups, exact notices/provenance, source/frozen collection and native facade application coverage. Remaining acceptance requires a suitably authorized Windows build/install/operator pass, not more schema experiments or a placeholder catalog. No push, PR, build dispatch, installation, real-profile mutation or live-EVE operation has been performed.
+
+## Task 3 — admitted content and distribution
+
+`dc41947` adds the exact Iridium and Z-S artifacts under `wingman/assets/setup-presets`, catalog metadata, MIT/GPL notices, [content admission reference](reference/curated-preset-content.md), package-data/PyInstaller collection, post-freeze byte-inventory verification and user/smoke documentation. Original overview authors remain separate from FlyGD Wingman layout credit. No importer/schema/controller/UI source changed in this task.
+
+The actual build-action snippet derives manifest/artifact/licence inventory from validated catalog identities and compares source bytes with `_internal/assets/setup-presets`. Tests execute it with missing/changed/extra files. Scoped `.gitattributes` disables newline conversion on hash-bound assets; licence notices retain upstream whitespace verbatim. This safeguard was discovered during implementation and does not weaken validation or broad repository whitespace checks.
+
+TDD: **19 expected failures → 19 passes**; an additional checkout-attribute test failed before the safeguard and passed after it. Broader selected tests: **1,175 passed** (a prior timed-out attempt is not counted); fresh affected catalog/packaging/integration files after the attribute correction: **228 passed**. These are separate runs, not an invented aggregate.
+
+Independent Task 3 review returned **SpecCompliance PASS / TaskQuality PASS**, no actionable findings. It independently checked approved byte counts/hashes, committed resource equality, parser reads and GPL notice suffix. Scoped polish in fix mode found no safe fixes or remaining findings: failure analysis independently passed 40 focused cases and eight shell-exit scenarios; comment/evidence analysis passed 17 focused cases. No new types/interfaces required a separate type-design pass. Earlier prerequisite and Tasks 1–2 polish remains applicable; Task 3 added data, tests and packaging rather than changing those runtime contracts.
+
+## Fresh whole-library gates at dc41947
+
+The final Linux command used the existing environment:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-curated-library-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-library-final-linux --junitxml=/tmp/wingman-library-final-linux.xml
+```
+
+Result: **8,930 passed, 11 Windows-only skips in 573.23s**. Then Ruff check passed, Ruff format reported **333 files already formatted**, all three pages passed `node scripts/js_smoke.js`, explicit Node syntax checks passed for `uisetup.js`, `panel.js`, `dev.js` and `tests/fixtures/ui_setup_page.cjs`, and `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` passed **one test**, with none failed/ignored. Both branch and unstaged diff checks passed. No missing Node/native-codec coverage.
+
+With temporary Node v24.20.0 on CMD PATH, the Windows capture interpreter ran:
+
+```bat
+%TEMP%\wingman-curated-capture-venv\Scripts\python.exe -X utf8 -B -m pytest tests/test_setup_catalog.py tests/test_paths.py tests/test_packaging_completeness.py tests/test_profiles_controller_contract.py tests/test_ui_setup_controller.py tests/test_ui_setup_documents.py tests/test_ui_setup_integration.py tests/test_ui_setup_model.py tests/test_ui_setup_page.py tests/test_ui_setup_profile.py tests/test_ui_setup_schema.py tests/test_ui_setup_sharing.py tests/test_ui_setup_v24.py tests/test_ui_setup_yaml.py tests/test_dev_harness.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_evesettings_codec.py -q -rs --basetemp=%TEMP%\wingman-library-final-win --junitxml=%TEMP%\wingman-library-final-win.xml
+```
+
+Result: **2,249 passed, 26 skipped, seven failed in 275.89s**. The seven failures remain `WinError 1314` during test symlink creation, before application assertions: four catalog cases plus three existing controller cases. The 26 skips are 25 existing POSIX-only cases and one **pre-existing** manual-update-harness symlink-unavailable skip brought into this selection by the packaging test module. No new skip or privilege workaround was introduced. This remains a partially blocked Windows gate, not full-green Windows verification.
+
+The parent independently inspected both final JUnit files: **23 integration**, **145 setup-page**, **123 dev-harness** and **56 Profiles contract** cases all passed without skips on each platform. The matching catalog/inventory selection likewise had no failures/skips. Both real bundled presets passed native facade review/create and stale-recipient refusal on each OS.
+
+## Final rendered catalog checks
+
+A new isolated Chrome **152.0.7977.82** session, loopback-only web server, fresh browser profile and blocked outbound page requests repeated the 13-scenario dev driver at each default viewport (839×621 and 840×625); both runs passed. Final real-catalog checks took the exact production `setup_catalog` reader results and supplied them to the **fake dev bridge**, exercising both entries at both viewports: **four passes**. Assertions covered metadata rendering/no horizontal overflow, explicit Use, exact textarea SHA-256, origin attribution, visible input focus, and no automatic Review/Create. Screenshots were inspected after the final count-free descriptions landed.
+
+These real-content browser checks are not a Python/WebView2 bridge test: native facade tests provide the separate backend evidence. No real clipboard, file picker, private browser profile or EVE instance was used. Evidence remains at `/tmp/wingman-catalog-browser-2Drr4u`; drivers `/tmp/wingman-catalog-browser-check.mjs` and `/tmp/wingman-bundled-catalog-browser-check.mjs`. No page exceptions were recorded. The owned browser/server was stopped; existing browser sessions were untouched.
+
+The parent also compared every committed asset with its working-tree bytes and verified both original approved artifact hashes. Actual wheel/PyInstaller output, installed WebView2 and live-EVE rendering remain **unperformed**. The newly added build gate will verify actual frozen bytes when an authorized build is run; executing its tests does not substitute for that build.
+
+## Final whole-change review and modal correction
+
+The independent whole-branch review of `75f3288..dc41947` found one P2: a pending Paste/File or Review response could focus or scroll the background page while the catalog replacement confirmation was open. Stale-input/recipient authority guards held; this was keyboard/modal ownership, not an unauthorized-write finding. The parent reproduced Paste stealing focus in actual Chrome with a fake clipboard before the fix.
+
+`32cb2d5` guards those response focus/scroll actions and the analogous attached Create-completion focus. Valid response state and authorization processing still occur; no deferred focus retry or queue API was added. Only `uisetup.js` and its page tests/harness changed. **18 expected failures / three existing passes → 21 passing new real-panel cases**, then **956 broader focused passes**, no skips. Cases cover Paste/File, Review summary/label choice, successful/failed attached completion and final dialog-queue focus/action validity.
+
+Scoped independent rereview returned **ADDRESSED, SpecCompliance PASS / TaskQuality PASS**, carrying forward the whole-change review whose sole finding was this P2. It independently ran all **21** new cases successfully. There are no outstanding findings. Parent inspection found no further safe polish edits; the correction adds no types and preserves prior reviewed ownership contracts.
+
+### Corrected final gates — supersede the dc41947 counts above
+
+At `32cb2d5`, reran the same full Linux command and complete Windows module selection above, changing only output locations from `wingman-library-final-*` to `wingman-library-corrected-*`:
+
+- **Linux: 8,951 passed, 11 Windows-only skips in 635.34s.** JUnit `/tmp/wingman-library-corrected-linux.xml`.
+- **Windows focused: 2,270 passed, 26 skipped, seven failed in 284.78s.** JUnit `%TEMP%/wingman-library-corrected-win.xml`. Failures/skips have the same causes described above; no tests or OS privileges were changed to suppress them.
+- Ruff check passed; format check **333 files already formatted**. Three-page JS smoke and four explicit syntax checks passed. Cargo **one passed**, no failures/ignored tests. Branch/working diff checks passed.
+- Both JUnit files independently checked: **23 integration**, **166 setup-page**, **123 dev-harness**, **56 Profiles contract** cases all passed without skips on each platform. No absent Node/native coverage.
+
+The final isolated Chrome session at `/tmp/wingman-catalog-browser-fxu8Qz` passed all four newly reproduced delayed-response branches (Paste, File, Review summary, Review label choice): focus remained on Confirm and the background scroller stayed put; queue drain restored visible Use. It also passed both exact bundled entries at both viewports (**four real-content cases**) and reran the existing **13-scenario dev driver twice**, at default 839×621 and 840×625. No page exceptions were recorded. These remain fixture-bridge/browser checks, not WebView2/live-EVE acceptance. The owned browser/server was stopped afterward, preserving artifacts and unrelated sessions.
+
+No source or content changes followed these corrected final gates; only status/verification documentation was updated. Remaining work is an authorized actual Windows build/install/operator acceptance pass and suitable-runner coverage for the privilege-blocked tests. No source/capture rewrites, push/PR, publication, installation, upstream contact, launcher or real-profile action occurred.
 
 ### Reviewer knowledge check
 
