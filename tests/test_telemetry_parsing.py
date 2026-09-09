@@ -152,7 +152,9 @@ def test_outgoing_damage_fixtures_parse_amount_target_and_source(
     assert fact.source == source
 
 
-@pytest.mark.parametrize(("token", "expected"), [("1234", 1234), ("1,234", 1234), ("12,345", 12345)])
+@pytest.mark.parametrize(
+    ("token", "expected"), [("1234", 1234), ("1,234", 1234), ("12,345", 12345)]
+)
 def test_incoming_damage_accepts_metric_grade_amounts(token, expected):
     who, line = _incoming_with_amount(token)
     fact = parsing.parse_line(line, who).facts[0]

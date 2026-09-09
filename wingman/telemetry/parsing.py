@@ -287,7 +287,7 @@ def _parse_timestamp_detail(line: str) -> tuple[datetime.datetime | None, str | 
 
 def _parse_grouped_int(token: str) -> int | None:
     """Parse a grouped integer with optional metric-grade commas.
-    
+
     Valid forms: "1234", "1,234", "12,345"
     Invalid forms: "1,,299", "12,34", ",,,", ""
     """
