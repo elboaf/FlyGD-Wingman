@@ -1,4 +1,5 @@
 import datetime
+import re
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,13 @@ def _fixture_line(name: str, phrase: str) -> tuple[str, str]:
         if line.strip().startswith("Listener:")
     )
     return who, next(line for line in body if phrase in line)
+
+
+def _incoming_with_amount(token: str) -> tuple[str, str]:
+    """Derive an incoming damage line with a custom amount token."""
+    who, line = _fixture_line("player_damage_and_miss.txt", "from</font>")
+    line = re.sub(r"(<b>)[\d,]+(</b>)", rf"\g<1>{token}\g<2>", line, count=1)
+    return who, line
 
 
 def test_tackle_fixtures_preserve_scram_and_point():
@@ -142,3 +150,29 @@ def test_outgoing_damage_fixtures_parse_amount_target_and_source(
     assert fact.amount == amount
     assert fact.target == target
     assert fact.source == source
+
+
+@pytest.mark.parametrize(("token", "expected"), [("1234", 1234), ("1,234", 1234), ("12,345", 12345)])
+def test_incoming_damage_accepts_metric_grade_amounts(token, expected):
+    who, line = _incoming_with_amount(token)
+    fact = parsing.parse_line(line, who).facts[0]
+    assert fact.kind == "incoming_damage"
+    assert fact.amount == expected
+    assert fact.source
+
+
+@pytest.mark.parametrize("token", ["1,,299", "12,34", ",,,"])
+def test_incoming_damage_keeps_alert_fact_but_rejects_malformed_amount(token):
+    who, line = _incoming_with_amount(token)
+    fact = parsing.parse_line(line, who).facts[0]
+    assert fact.kind == "incoming_damage"
+    assert fact.amount is None
+    assert fact.source
+
+
+def test_incoming_damage_missing_amount_still_reports_attack_activity():
+    who, line = _incoming_with_amount("")
+    fact = parsing.parse_line(line, who).facts[0]
+    assert fact.kind == "incoming_damage"
+    assert fact.amount is None
+    assert fact.source

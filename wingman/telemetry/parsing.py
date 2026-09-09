@@ -79,6 +79,7 @@ _TIMESTAMP_RE = re.compile(
     r"\s+(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})\s*\]"
 )
 _TIMESTAMP_PREFIX_RE = re.compile(r"^\[\s*(?P<stamp>[^\]]+)\s*\]")
+_GROUPED_INT_RE = re.compile(r"(?:\d+|\d{1,3}(?:,\d{3})+)\Z", re.ASCII)
 _AMOUNT_RE = re.compile(
     r"\(combat\)\s*<color=[^>]+><b>(?P<amount>[\d,]+)</b>", re.IGNORECASE
 )
@@ -284,11 +285,22 @@ def _parse_timestamp_detail(line: str) -> tuple[datetime.datetime | None, str | 
     return None, None
 
 
+def _parse_grouped_int(token: str) -> int | None:
+    """Parse a grouped integer with optional metric-grade commas.
+    
+    Valid forms: "1234", "1,234", "12,345"
+    Invalid forms: "1,,299", "12,34", ",,,", ""
+    """
+    if _GROUPED_INT_RE.fullmatch(token) is None:
+        return None
+    return int(token.replace(",", ""))
+
+
 def _extract_amount(line: str) -> int | None:
     match = _AMOUNT_RE.search(line)
     if match is None:
         return None
-    return int(match.group("amount").replace(",", ""))
+    return _parse_grouped_int(match.group("amount"))
 
 
 def _extract_outgoing_damage(line: str) -> tuple[int | None, str, str] | None:
@@ -307,7 +319,7 @@ def _extract_outgoing_damage(line: str) -> tuple[int | None, str, str] | None:
     if amount is None:
         # Plain-text or tag-shape variants still carried the amount through
         # the markup-stripped expression that established this as outgoing.
-        amount = int(match.group("amount").replace(",", ""))
+        amount = _parse_grouped_int(match.group("amount"))
     return amount, target.strip(), source.strip()
 
 
