@@ -645,7 +645,9 @@ class _FakeLibs:
         self.user32 = User32()
 
 
-def _window_for_gestures(locked, on_activate=lambda c: None, on_resize_all=None):
+def _window_for_gestures(
+    locked, on_activate=lambda c: None, on_resize_all=None, on_toggle_crop=None
+):
     client = type(
         "C",
         (),
@@ -657,6 +659,9 @@ def _window_for_gestures(locked, on_activate=lambda c: None, on_resize_all=None)
         },
     )()
     libs = _FakeLibs()
+    options = {"on_resize_all": on_resize_all}
+    if on_toggle_crop is not None:
+        options["on_toggle_crop"] = on_toggle_crop
     w = window.PreviewWindow(
         libs,
         client,
@@ -666,7 +671,7 @@ def _window_for_gestures(locked, on_activate=lambda c: None, on_resize_all=None)
         list,
         lambda: Rect(0, 0, 1920, 1080),
         locked=locked,
-        on_resize_all=on_resize_all,
+        **options,
     )
     w.hwnd = 1
     w.redraw = lambda force=False: None
@@ -795,11 +800,9 @@ def test_a_locked_preview_refuses_the_left_drag(monkeypatch):
     assert activated == [w.client]
 
 
-def test_a_locked_preview_refuses_the_right_drag_resize():
-    """A lock stops SIZING too, not just movement: right-drag resize is
-    refused outright while locked. Unticking Lock is the way to resize."""
-    w, libs = _window_for_gestures(locked=True)
-    w.lock_aspect = False
+def test_a_locked_preview_right_click_toggles_its_secondary_without_a_drag():
+    toggled = []
+    w, libs = _window_for_gestures(locked=True, on_toggle_crop=toggled.append)
 
     libs.cursor = (200, 200)
     w._on_message(window.win32.WM_RBUTTONDOWN, 2, 0)
@@ -807,7 +810,9 @@ def test_a_locked_preview_refuses_the_right_drag_resize():
     w._on_message(window.win32.WM_MOUSEMOVE, 2, 0)
     w._on_message(window.win32.WM_RBUTTONUP, 2, 0)
 
+    assert toggled == [w.client]
     assert w.rect == Rect(100, 100, 320, 210)
+    assert w._mode is None
 
 
 def test_a_locked_preview_refuses_the_resize_all_chord(monkeypatch):

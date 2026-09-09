@@ -115,10 +115,11 @@ not an in-app publishing service.
 
 The production crop implementation on this branch is configured under
 **Settings → Previews → Configure → Crop**. Select one region per named
-character; its position and size are separate from the primary preview. An
-unlocked crop supports left-drag movement and right-drag aspect resizing; a
-stationary right-click offers **Disable crop**. The character's shared Lock
-setting applies to both windows.
+character, or choose the full client; its position and size are separate from
+the primary preview. A secondary always supports left-drag movement and
+right-drag aspect resizing; a stationary right-click offers **Disable crop**.
+Lock applies only to the primary preview. Right-clicking a locked primary
+toggles its configured secondary on or off.
 
 **Disable** retains the saved region and placement. **Remove** asks before
 deleting both. Turning the Preview master off retains every definition;

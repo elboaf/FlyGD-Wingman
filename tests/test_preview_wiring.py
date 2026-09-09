@@ -785,14 +785,12 @@ def test_set_never_minimize_adds_and_removes_by_name(tmp_path, monkeypatch):
     assert host.restyles == 2
 
 
-def test_crop_saved_owners_reach_shared_lock_without_native_runtime():
+def test_crop_saved_owners_do_not_keep_primary_lock_controls_live():
     js = _web("previews.js")
     rows = js.split("function rows(", 1)[1].split("\n  function ", 1)[0]
     assert "Object.keys(cropState.definitions" in rows
-    assert "makeLockCheck(name, isExcluded(name) && !hasEnabledCrop(name))" in js
-    enabled = js.split("function hasEnabledCrop(", 1)[1].split("\n  function ", 1)[0]
-    assert "definition.enabled" in enabled
-    assert "runtime_enabled" not in enabled
+    assert "makeLockCheck(name, isExcluded(name))" in js
+    assert "primary preview and crop" not in js
 
 
 def test_get_preview_hotkey_state_reports_locked_and_never_minimize(tmp_path):

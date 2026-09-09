@@ -449,12 +449,12 @@ before a production release, not merely before Phase 1 planning begins:
   capture loss returns both to a clean idle state, with no phantom
   move/resize following the pointer and no drag that has to be cleared by
   clicking again.
-- Settings-dependent inherited behavior the Phase 0 CLI never wired, so no
-  probe run could have exercised it: locked-crop inertness under
-  `preview.locked` (the probe passes no `locked`/`lock_default` provider) and
-  hide-on-lost-focus lockstep with the primary previews (it passes no
-  `hide_on_lost_focus` provider). Both are listed as pre-release gates in
-  `docs/smoke-checklist.md`.
+- Settings-dependent behavior the Phase 0 CLI never wired, so no probe run
+  could have exercised it: secondary-window lock independence and the locked
+  primary's right-click toggle (the probe passes no `locked`/`lock_default`
+  provider), plus hide-on-lost-focus lockstep with the primary previews (it
+  passes no `hide_on_lost_focus` provider). These are listed as pre-release
+  gates in `docs/smoke-checklist.md`.
 
 **The provisional 8-crop cap may be lowered, or the crop feature blocked
 entirely, if any of the above fail when exercised.** Phase 1 implementation

@@ -703,12 +703,14 @@ class PreviewHost:
                 return self._crop_refused("Previews are stopping")
             running = self._starting or self.is_running
             session = None
-            if action == "select" and not running:
+            if action in ("select", "toggle") and not running:
                 return self._crop_refused("Enable previews before selecting a crop")
             # A positive enable can follow an accepted disable still waiting on
             # native completion. Bind at ingress, not from tentative settings or
             # the later pump roster. None deliberately stays configuration-only.
-            if running and (action == "select" or (action == "enabled" and value)):
+            if running and (
+                action in ("select", "toggle") or (action == "enabled" and value)
+            ):
                 snapshot = self._crop_roster
                 session = (
                     next(
@@ -1486,7 +1488,6 @@ class PreviewHost:
             read_client_size=client_size,
             monitors=self._monitors,
             activate=lambda client: self._activate_crop(libs, client.character),
-            is_locked=self._is_locked,
             publish=self._publish_crop_state,
             post_complete=self._queue_crop_completion,
             next_geometry_sequence=lambda: next(self._crop_geometry_sequence),
@@ -1515,6 +1516,20 @@ class PreviewHost:
         current = self._crop_controller.sessions.get(name)
         if current is not None:
             self._activate_client(libs, _preview_client(current))
+
+    def _toggle_crop(self, _libs, client) -> None:
+        name = client.character
+        if not name:
+            return
+        try:
+            # Use the same lock-ordered ingress as Settings commands. A bridge
+            # request accepted concurrently then keeps its true before/after
+            # relationship with this click all the way to the pump.
+            self.request_crop("toggle", name)
+        except Exception:
+            # ctypes callbacks cannot propagate exceptions meaningfully in the
+            # console-free build. Keep the pump alive and retain diagnostics.
+            logger.exception("Could not toggle secondary preview for %s", name)
 
     def _publish_crop_state(self, state) -> None:
         with self._lock:
@@ -1768,6 +1783,7 @@ class PreviewHost:
                 # that is driving the drag, and the key is only known
                 # here, at creation.
                 on_resize_all=lambda rect, k=key: self._mirror_resize(k, rect),
+                on_toggle_crop=lambda client: self._toggle_crop(libs, client),
             )
             if win is not None:
                 self._windows[key] = win

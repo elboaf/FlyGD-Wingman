@@ -61,7 +61,6 @@ class CropController:
         read_client_size,
         monitors,
         activate,
-        is_locked,
         publish,
         post_complete,
         next_geometry_sequence,
@@ -71,7 +70,7 @@ class CropController:
         self._epoch = epoch
         self._create_crop, self._create_picker = create_crop, create_picker
         self._read_client_size, self._monitors = read_client_size, monitors
-        self._activate, self._is_locked = activate, is_locked
+        self._activate = activate
         self._publish, self._post_complete = publish, post_complete
         # Retained by PreviewHost, not reset when a new pump is constructed.
         self._next_geometry_sequence = next_geometry_sequence
@@ -254,7 +253,7 @@ class CropController:
             source,
             rect,
             hidden=hidden,
-            locked=self._is_locked(name),
+            locked=self._stopping,
             on_activate=lambda _client: self._activate_current(name),
             on_rect_changed=lambda rect: self._geometry(name, live, rect),
             on_disable=lambda: self._disable(name),
@@ -294,6 +293,24 @@ class CropController:
                 token = self._store.begin(name, epoch=0, session=None)
                 self.request("enabled", name, False, token)
 
+    def _toggle_value(self, name: str) -> bool | None:
+        definition = deserialize(self._store.snapshot()["definitions"]).get(name)
+        if definition is None:
+            return None
+        enabled = definition.enabled
+        pending = [self._active.get(name), *self._waiting.get(name, ())]
+        for operation in reversed(pending):
+            if operation is None:
+                continue
+            if operation.action == "remove":
+                return None
+            if operation.action == "select":
+                enabled = True
+            elif operation.action == "enabled":
+                enabled = bool(operation.value)
+            break
+        return not enabled
+
     def _runtime_authorized(self, client=None):
         return not self._stopping and (
             self._is_authorized is None or self._is_authorized(self._epoch, client)
@@ -317,6 +334,12 @@ class CropController:
             # request to replay against today's source or definition.
             self._emit()
             return self._receipt(token)
+        if action == "toggle":
+            value = self._toggle_value(name)
+            if value is None:
+                self._cancel_token(token, "No saved crop for this character")
+                return self._receipt(token)
+            action = "enabled"
         op = _Request(action, name, value, token)
         if self._stopping:
             self._cancel_token(token, "Previews are stopping")
@@ -725,11 +748,11 @@ class CropController:
         # A candidate is always hidden, independent of host visibility.
 
     def restyle(self) -> None:
-        for name, live in list(self.live.items()):
-            live.window.set_locked(self._stopping or self._is_locked(name))
+        for live in list(self.live.values()):
+            live.window.set_locked(self._stopping)
         op = self._temporary
         if op is not None and op.candidate is not None:
-            op.candidate.window.set_locked(self._stopping or self._is_locked(op.name))
+            op.candidate.window.set_locked(self._stopping)
 
     def begin_stop(self, epoch: int) -> Future[bool]:
         if self._stop_future is not None:

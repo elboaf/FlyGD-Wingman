@@ -2750,10 +2750,10 @@ def test_an_opted_out_character_row_disables_its_own_controls():
     assert re.search(r"makeGeometryActions\(characterName,[^)]*\boff\b", detail), (
         "makeCharacterDetail does not pass the opted-out state to geometry actions"
     )
-    # Shared locks also govern enabled saved crops, even while offline or
-    # master-off. Primary geometry above must retain its stricter gate.
-    assert "makeLockCheck(name, isExcluded(name) && !hasEnabledCrop(name))" in src
-    assert "inert(label, input, isExcluded(name) && !hasEnabledCrop(name))" in src
+    # A secondary stays movable regardless of the primary lock. An opted-out
+    # primary therefore leaves no geometry for this control to lock.
+    assert "makeLockCheck(name, isExcluded(name))" in src
+    assert "inert(label, input, isExcluded(name))" in src
 
 
 def test_never_minimize_stays_live_on_an_opted_out_row():

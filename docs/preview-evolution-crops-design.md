@@ -28,10 +28,10 @@ accounting, the full minimize/occlusion/alert/logout/rebinding lifecycle
 matrix, and mixed-DPI (125%/150%/200%) and explicit negative-monitor
 picker coverage remain unmeasured. So do three gates the Phase 0 harness
 could not reach at all: stuck-capture behavior after a lost mouse capture
-(neither prototype window handles `WM_CAPTURECHANGED`), locked-crop
-inertness under `preview.locked`, and hide-on-lost-focus lockstep — the
-probe's CLI wires no lock roster, no hide-on-lost-focus provider and no
-alert service. These are now mandatory **pre-release**
+(neither prototype window handles `WM_CAPTURECHANGED`), secondary-window
+lock independence, and hide-on-lost-focus lockstep — the probe's CLI wires
+no lock roster, no hide-on-lost-focus provider and no alert service. These
+are now mandatory **pre-release**
 blockers: the provisional 8-crop cap may be lowered, or the crop feature
 blocked entirely, if any of them fail when exercised. Phase 1 planning and
 implementation may proceed under this provisional cap.
@@ -168,8 +168,9 @@ The approved product decisions are:
   version.
 - Clicking a crop activates its owning client through the existing
   asynchronous activation path.
-- Crop movement, resizing, lock state, and hide-on-lost-focus behavior follow
-  the primary preview contract where applicable.
+- Crop movement, resizing, and hide-on-lost-focus behavior follow the primary
+  preview contract where applicable. Crops remain movable and resizable
+  regardless of the primary lock.
 - `preview.enabled` remains the sole runtime master. Turning it off closes the
   host and every crop while retaining each crop's individual enabled state;
   turning it on starts the host and reconciles enabled crops. Crops never start
@@ -255,7 +256,8 @@ Responsibilities:
 - Create, close, show, hide, move, and resize the crop.
 - Click to request activation of the owning EVE client.
 - Preserve the selected source region's aspect ratio by default.
-- Apply resolved lock state.
+- Accept a temporary stop lock for orderly teardown; never apply the primary
+  preview's persisted lock state.
 - Report destination geometry changes to the host.
 - Expose enough DWM update context for bounded health recovery.
 
@@ -284,10 +286,12 @@ Flow:
    character.
 2. The host creates the picker against that character's current HWND.
 3. The picker reads the current client-area dimensions.
-4. The user drags a rectangle over the displayed mirror.
-5. The picker maps the displayed selection into client-area pixels.
+4. The user either drags a rectangle over the displayed mirror or chooses the
+   full client area.
+5. For a drawn region, the picker maps the displayed selection into client-area
+   pixels; `Use full` needs no drawn selection.
 6. Cancel closes the picker and returns no proposal.
-7. Confirm returns a validated pixel proposal to the host.
+7. `Use region` or `Use full` returns a validated pixel proposal to the host.
 
 Coordinate mapping must account for:
 
@@ -300,7 +304,7 @@ Coordinate mapping must account for:
 - A client resize or disappearance while the picker is open.
 
 The prototype may use minimal native chrome and diagnostics. Production UI
-must provide clear select, reset, confirm, and cancel states without
+must provide clear `Use region`, `Use full`, and cancel states without
 `window.confirm`, `window.prompt`, or `window.alert`.
 
 ### `wingman/preview/host.py`
@@ -512,9 +516,9 @@ character's crop.
 - Moving and resizing affect only the crop HWND.
 - Crop resizing preserves source aspect by default. It does not modify the
   source rectangle.
-- The existing preview lock policy also locks crop destination geometry for
-  that character in version 1. A future crop-specific lock is unnecessary
-  until multiple crops make the distinction useful.
+- The existing preview lock policy applies only to the primary preview. A
+  secondary remains movable and resizable because repositioning is its normal
+  use; right-clicking a locked primary toggles an existing secondary.
 - Hide-on-lost-focus applies to crops through the same resolved foreground
   decision as primary previews.
 - A future global hide-all applies to both primary previews and crops.
@@ -640,7 +644,8 @@ or an explicitly reviewed exception for every applicable gate.
   persisted change on either failure.
 - Picker cancel and client-loss cancellation leave no live residue.
 - Crop shutdown leaves no orphan HWND or callback.
-- Lock and hide-on-lost-focus match their primary-preview truth tables.
+- A secondary remains movable and resizable under the primary lock;
+  hide-on-lost-focus matches the primary-preview truth table.
 - A wholly off-screen crop is rescued.
 
 ### DWM and compositor gates
@@ -740,7 +745,7 @@ Using injected clients, windows, and settings collaborators:
 - Aspect-preserving crop resize.
 - Click-versus-drag activation threshold.
 - Monitor rescue behavior.
-- Shared lock and visibility policy.
+- Primary-lock independence and shared visibility policy.
 
 ### Contracts
 
@@ -882,7 +887,7 @@ After one production crop is stable and measured:
 - Add names only when more than one crop exists.
 - Re-measure and revise the existing global cap before allowing more live
   relationships per character.
-- Decide whether lock, visibility, opacity, and hotkeys become per crop.
+- Decide whether visibility, opacity, and hotkeys become per crop.
 - Keep alerts on primary previews unless a separate product decision changes
   that attention model.
 

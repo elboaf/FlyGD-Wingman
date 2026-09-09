@@ -138,7 +138,6 @@ def rig(monkeypatch):
             read_client_size=lambda entry: native.sources.get(entry.hwnd),
             monitors=lambda: [MONITOR],
             activate=activated.append,
-            is_locked=lambda name: False,
             publish=states.append,
             post_complete=completions.put,
             next_geometry_sequence=lambda: next(sequence),
@@ -181,6 +180,12 @@ def request(r, action="select", name="Alice", value=None):
     return token, receipt
 
 
+def toggle(r, name="Alice"):
+    session = r.controller.sessions[name].session
+    token = r.store.begin(name, epoch=1, session=session)
+    return r.controller.request("toggle", name, None, token)
+
+
 def finish(r):
     r.store.drain().result(5)
     while not r.completions.empty():
@@ -196,6 +201,44 @@ def confirm(r):
         picker.destination.x + 20, picker.destination.y + 20, 100, 80
     )
     picker._confirm()
+
+
+def test_toggle_switches_an_existing_secondary_off_then_on(rig):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+
+    assert toggle(r)["pending"]
+    finish(r)
+    assert not deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+    assert "Alice" not in r.controller.live
+
+    assert toggle(r)["pending"]
+    finish(r)
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+    assert "Alice" in r.controller.live
+
+
+def test_toggle_without_a_saved_secondary_is_a_no_op(rig):
+    r = rig()
+    roster(r, 1, client())
+
+    assert not toggle(r)["pending"]
+    assert r.store.snapshot()["definitions"] == {}
+    assert r.completions.empty()
+
+
+def test_toggle_off_supersedes_a_newer_pending_reselection(rig):
+    disabled = replace(DEFINITION, enabled=False)
+    r = rig({"Alice": disabled})
+    roster(r, 1, client())
+    request(r)
+    assert r.controller.picker is not None
+
+    toggle(r)
+
+    assert r.controller.picker is None
+    finish(r)
+    assert not deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
 
 
 @pytest.mark.parametrize("failure", [None, "native", "save"])
@@ -473,6 +516,72 @@ def test_host_batch_continues_same_owner_after_picker_preparation_exception(
     assert outcomes[following.operation_id]["persisted"]
     assert not r.states[-1]["busy"] and r.controller.picker is None
     assert r.native.peak == 1
+
+
+def test_host_toggle_applies_older_settings_command_before_reversing_it(rig):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+    h._crop_epoch = 1
+    h._starting = True
+    h._post = lambda _message: None
+    h._crop_roster = RosterSnapshot(1, (client(),))
+    earlier = r.store.begin("Alice", epoch=1, session=None)
+    h._crop_commands = [("enabled", "Alice", False, earlier)]
+
+    h._toggle_crop(None, client())
+
+    assert [command[:3] for command in h._crop_commands] == [
+        ("enabled", "Alice", False),
+        ("toggle", "Alice", None),
+    ]
+    h._apply_crop_commands(None)
+    finish(r)
+    finish(r)
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+
+
+def test_host_toggle_reconciles_latest_session_before_enabling(rig, monkeypatch):
+    from wingman.preview.host import PreviewHost
+
+    disabled = replace(DEFINITION, enabled=False)
+    r = rig({"Alice": disabled})
+    roster(r, 1, client())
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+    h._crop_epoch = 1
+    h._starting = True
+    h._post = lambda _message: None
+    latest = RosterSnapshot(2, (client(serial=2),))
+    h.apply_roster(latest)
+    monkeypatch.setattr(h, "_reconcile_roster", lambda libs, snapshot: None)
+
+    h._toggle_crop(None, latest.clients[0])
+    h._apply_pending_roster(None)
+    h._apply_crop_commands(None)
+    finish(r)
+
+    assert deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+
+
+def test_host_toggle_contains_and_logs_controller_failure(rig, monkeypatch, caplog):
+    from wingman.preview.host import PreviewHost
+
+    r = rig({"Alice": DEFINITION})
+    h = PreviewHost(on_layout_changed=lambda *args: None, crop_store=r.store)
+    h._crop_controller = r.controller
+
+    def fail(*_args):
+        raise RuntimeError("toggle failed")
+
+    monkeypatch.setattr(h, "request_crop", fail)
+    with caplog.at_level("ERROR"):
+        h._toggle_crop(None, client())
+
+    assert "Could not toggle secondary preview for Alice" in caplog.text
 
 
 def test_host_command_exception_does_not_undo_admitted_write(rig, monkeypatch):
@@ -1359,6 +1468,43 @@ def test_host_crop_activation_bypasses_primary_exclusion_and_uses_current_sessio
     h._crop_controller.close_native()
 
 
+def test_host_routes_primary_secondary_toggle_to_crop_controller(rig, monkeypatch):
+    from wingman.preview import host
+
+    r = rig({"Alice": DEFINITION})
+    h = host.PreviewHost(
+        on_layout_changed=lambda *args: None,
+        crop_store=r.store,
+        locked=lambda: ["Alice"],
+    )
+    h._crop_epoch = 1
+    monkeypatch.setattr(h, "_monitors", lambda: [MONITOR])
+    monkeypatch.setattr(h, "_screen", lambda: MONITOR)
+    monkeypatch.setattr("wingman.preview.window._ensure_class", lambda libs: None)
+    h._init_crop_controller(r.native.lib)
+    h._starting = True
+    h._post = lambda _message: None
+    primary = None
+    try:
+        h.apply_roster(RosterSnapshot(1, (client(),)))
+        h._apply_pending_roster(r.native.lib)
+        primary = h._windows["Alice"]
+        assert primary.locked
+        assert not h._crop_controller.live["Alice"].window.locked
+
+        primary._on_toggle_crop(primary.client)
+
+        assert h._crop_commands[-1][:3] == ("toggle", "Alice", None)
+        h._apply_crop_commands(r.native.lib)
+        finish(r)
+        assert not deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+    finally:
+        h._crop_controller.begin_stop(h._crop_epoch).result(5)
+        h._crop_controller.close_native()
+        if primary is not None:
+            primary.close()
+
+
 def test_host_retains_geometry_sequence_across_pump_lifetimes(rig, monkeypatch):
     from wingman.preview.host import PreviewHost
 
@@ -1600,19 +1746,17 @@ def test_stop_submits_held_configuration_in_order_before_drain(rig):
     assert not r.controller.live
 
 
-def test_hide_and_lock_reach_new_live_windows_and_candidate_without_reveal(rig):
+def test_primary_lock_never_reaches_live_crop_or_reselection_candidate(rig):
     r = rig({"Alice": DEFINITION})
     r.controller.set_hidden(True)
-    r.controller._is_locked = lambda name: True
     roster(r, 1, client())
     live = r.controller.live["Alice"].window
-    assert live.hidden and live.locked
+    assert live.hidden and not live.locked
     request(r)
     r.transaction.release.clear()
     confirm(r)
     assert r.transaction.entered.wait(5)
     candidate = r.controller._temporary.candidate.window
-    r.controller._is_locked = lambda name: False
     r.controller.restyle()
     r.controller.set_hidden(False)
     assert not live.hidden and not live.locked

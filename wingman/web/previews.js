@@ -562,12 +562,12 @@
 
     // Whether this character is opted out of PRIMARY previews. Its geometry,
     // registration and place in the cycle go inert. A saved crop is independent
-    // and may still be enabled, so Configure and its shared lock stay reachable.
+    // and may still be enabled, so Configure stays reachable.
     //
     // `Never minimize` is the exception and stays live. It governs the
     // real EVE window, not the preview, and opting out does not stop it --
-    // see renderLockBlock (requires a primary preview OR an enabled saved crop)
-    // versus renderNeverMinimizeBlock (does not) for where that asymmetry is
+    // see renderLockBlock (requires a primary preview) versus
+    // renderNeverMinimizeBlock (does not) for where that asymmetry is
     // expressed now that both live in their own disclosures, not this row.
     //
     // The NAME is deliberately not dimmed either. `.dim` on a .lab means
@@ -1049,7 +1049,7 @@
     Array.prototype.forEach.call(list.querySelectorAll('[data-preview-lock]'), function (input) {
       var name = input.getAttribute('data-preview-lock');
       var label = input.parentNode;
-      inert(label, input, isExcluded(name) && !hasEnabledCrop(name));
+      inert(label, input, isExcluded(name));
     });
   }
 
@@ -1349,7 +1349,7 @@
     // failure WCAG 2.5.3 names. What the tick MEANS reaches the reader
     // through the group's aria-labelledby, once, not per row.
     var label = WM.make('label', 'check', name);
-    label.title = 'Locks this character’s primary preview and crop in place. '
+    label.title = 'Locks this character’s primary preview in place. '
                 + 'Clicking still switches to the client.';
     label.prepend(WM.make('span', 'box'));
     label.prepend(box);
@@ -1786,7 +1786,7 @@
     paintLockSummary();
     list.textContent = '';
     all.forEach(function (name) {
-      list.appendChild(makeLockCheck(name, isExcluded(name) && !hasEnabledCrop(name)));
+      list.appendChild(makeLockCheck(name, isExcluded(name)));
     });
     box.hidden = !all.length;
   }
@@ -1829,7 +1829,7 @@
     paintNeverMinimizeSummary();
     list.textContent = '';
     all.forEach(function (name) {
-      // NOT gated on isExcluded or a saved crop, unlike the Lock block above.
+      // NOT gated on isExcluded, unlike the Lock block above.
       // Opting a character out stops their primary preview; _activate_client still
       // consults this for the real EVE window, so a dimmed box here would
       // leave a setting in force with no control to change it.
