@@ -369,9 +369,25 @@ def test_workflow_setup_prerequisites_precede_pytest_without_optional_gates(
             assert "-rs" in step["run"].split()
 
 
-def test_ci_keeps_the_independent_codec_regression():
-    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
-    step = next(s for s in steps if s.get("name") == "Test settings codec")
+@pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)
+def test_every_full_test_workflow_keeps_the_independent_codec_regression(
+    workflow, job
+):
+    steps = _workflow_steps(workflow, job)
+    names = [step.get("name") for step in steps]
+    assert "Test settings codec" in names, (
+        f"{workflow.name}:{job} must run the codec's independent cargo regression"
+    )
+    codec_index = names.index("Test settings codec")
+    step = steps[codec_index]
+    pytest_indexes = [
+        index
+        for index, pytest_step in enumerate(steps)
+        if re.search(r"\bpytest(?:\s|$)", pytest_step.get("run", ""))
+    ]
+    assert pytest_indexes, f"{workflow.name}:{job} must run pytest"
+    assert codec_index > max(pytest_indexes)
+    assert not step.get("continue-on-error") and "if" not in step
     assert step["run"] == (
         "cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml"
     )
