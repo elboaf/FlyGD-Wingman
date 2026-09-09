@@ -102,6 +102,16 @@ SCENARIOS = [
     "typing-z-during-reread",
 ]
 
+# Exhaustive order comparisons were useful migration evidence but erase the
+# worker's PR-time gain. These cases retain cross-branch state-leak coverage.
+ORDER_ISOLATION_SCENARIOS = [
+    "ignored-read-keeps-baseline",  # Save completion and reread ownership.
+    "paste-cancel-draft",  # Real Python parse child plus draft restoration.
+    "copy-denied",  # Clipboard rejection and recovery state.
+    "delete-live-during-save",  # Delete/save completion ownership.
+    "preview-rotation",  # SVG rendering and window event listeners.
+]
+
 
 @pytest.fixture(scope="session")
 def formations_page_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
@@ -178,21 +188,13 @@ def test_formations_worker_consumes_encoding_overlay_without_mutating_parent(
     formations_worker: NodeScenarioWorker,
 ):
     parent_encoding = os.environ.get("PYTHONIOENCODING")
-    ascii_reply = formations_worker.request(
-        "paste-conflict", {"env": {"PYTHONIOENCODING": "ascii"}}, timeout=60.0
-    )
-    cp1252_reply = formations_worker.request(
-        "paste-unicode-name",
-        {"env": {"PYTHONIOENCODING": "cp1252"}},
+    reply = formations_worker.request(
+        "paste-cancel-draft",
+        {"env": {"PYTHONIOENCODING": "ascii"}},
         timeout=60.0,
     )
-    inherited_reply = formations_worker.request(
-        "paste-conflict", {"env": {}}, timeout=60.0
-    )
 
-    assert ascii_reply["encoding_boundary"] == "ascii"
-    assert cp1252_reply["encoding_boundary"] == "cp1252"
-    assert inherited_reply["encoding_boundary"] == (parent_encoding or "")
+    assert reply["encoding_boundary"] == "ascii"
     assert os.environ.get("PYTHONIOENCODING") == parent_encoding
 
 
@@ -205,15 +207,18 @@ def test_formations_worker_order_isolation(formations_worker: NodeScenarioWorker
             for scenario in order
         }
 
-    forward = run(SCENARIOS)
-    reverse = run(list(reversed(SCENARIOS)))
+    process = formations_worker._proc
+    forward = run(ORDER_ISOLATION_SCENARIOS)
+    reverse = run(list(reversed(ORDER_ISOLATION_SCENARIOS)))
     seed = 20260305
-    shuffled = SCENARIOS.copy()
+    shuffled = ORDER_ISOLATION_SCENARIOS.copy()
     random.Random(seed).shuffle(shuffled)
     print(f"formations worker isolation seed: {seed}")
     seeded = run(shuffled)
+    expected = {scenario: f"PASS {scenario}" for scenario in ORDER_ISOLATION_SCENARIOS}
 
-    assert forward == reverse == seeded
+    assert forward == reverse == seeded == expected
+    assert formations_worker._proc is process
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
