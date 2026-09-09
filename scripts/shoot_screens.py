@@ -39,18 +39,10 @@ class Screen:
 # shoots. It is named here rather than silently absent so the test can
 # assert it still EXISTS -- an exclusion nobody checks rots the day the
 # route is renamed.
-#
-# formations is excluded the same way and for a stronger reason. It is a
-# sub-screen of Profiles reached from that screen's tool row, and it draws
-# nothing until WM.openFormations has loaded a real account file:
-# this tool reaches a screen only through WM.route (see shoot()), and
-# Screen carries no setup hook, so a capture would photograph an empty
-# editor and put it in the set as if that were the screen. Give Screen a
-# setup hook before adding it.
-#
-# Setup sharing likewise requires its opener and an explicit confirmed local
-# pair. Do not choose private source files automatically just to fill a capture.
-EXCLUDED_ROUTES = frozenset({"firstrun", "formations", "uisetup"})
+# Formations and Setup require their real openers, not just a route change.
+# Their bounded fixture reads are installed before opening; no private source
+# file or confirmed local pair is ever chosen to fill these captures.
+EXCLUDED_ROUTES = frozenset({"firstrun"})
 
 # `gated` mirrors app.js's WM.EVE_ROUTES + WM.EVE_SECTIONS. Not retyped
 # from memory: test_shoot_screens.py asserts this column against app.js.
@@ -134,6 +126,14 @@ SCREENS = (
         True,
         True,
     ),
+    Screen(
+        "settings-previews-crop-narrow",
+        "Settings - Previews (saved crop 840x625)",
+        "settings",
+        "previews",
+        True,
+        True,
+    ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen(
         "settings-alerts-advanced",
@@ -151,6 +151,17 @@ SCREENS = (
         gated=True,
     ),
     Screen("profiles-backups", "Profiles - Backups", "backups", gated=True),
+    Screen("profiles-formations", "Profiles - Formations", "formations", gated=True),
+    Screen(
+        "profiles-formations-import",
+        "Profiles - Formation import",
+        "formations",
+        gated=True,
+    ),
+    Screen("profiles-setup-share", "Profiles - Share setup", "uisetup", gated=True),
+    Screen(
+        "profiles-setup-import", "Profiles - Import setup review", "uisetup", gated=True
+    ),
     Screen("skills", "Skills", "skills", gated=True),
     Screen("fittings", "Fittings", "fittings", gated=True),
     Screen("fittings-unfiled", "Fittings - Unfiled", "fittings", gated=True),
@@ -745,8 +756,196 @@ def _fittings_reset_script() -> str:
     return "(function () {\n" + _FIT_RESET_JS + "\n}())"
 
 
+_TOOL_SCREEN_FIXTURES = {
+    "profiles-formations": ("formations", "formationsScreenshot"),
+    "profiles-formations-import": ("formations", "formationsScreenshot"),
+    "profiles-setup-share": ("setup", "uiSetupScreenshot"),
+    "profiles-setup-import": ("setup", "uiSetupScreenshot"),
+    "settings-previews-crop-narrow": ("crop", "previewCropScreenshot"),
+}
+
+
+def load_dev_tool_screenshot_fixture(checkout: str | None = None) -> dict:
+    """Extract strict JSON without executing dev.js or its bridge doubles."""
+    root = (
+        pathlib.Path(checkout)
+        if checkout
+        else pathlib.Path(__file__).resolve().parent.parent
+    )
+    path = root / "wingman/web/dev.js"
+    source = path.read_text(encoding="utf-8")
+    marker = "var DEV_TOOL_SCREENSHOT_FIXTURE = "
+    if marker not in source:
+        raise ValueError(f"{marker} not found in {path}")
+    try:
+        # Unlike brace counting, the decoder handles braces inside JSON strings.
+        payload, _ = json.JSONDecoder().raw_decode(source.split(marker, 1)[1].lstrip())
+        return payload
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid screenshot fixture in {path}: {exc}") from exc
+
+
+def new_screen_prepare_script(screen: Screen) -> str | None:
+    """Install bounded local reads before any opener can reach private files."""
+    entry = _TOOL_SCREEN_FIXTURES.get(screen.key)
+    if not entry:
+        return None
+    family, method = entry
+    payload = load_dev_tool_screenshot_fixture()[family]
+    if family == "setup":
+        payload["mode"] = "import" if screen.key.endswith("import") else "export"
+    if family == "crop":
+        payload["preview"] = load_dev_preview_fixture()
+    return (
+        "(function () {\n"
+        f"  if (typeof WM.{method} !== 'function') throw new Error('Screenshot read seam is missing');\n"
+        f"  WM.{method}({json.dumps(payload)});\n"
+        "}())"
+    )
+
+
+def new_screen_cleanup_script(screen: Screen) -> str | None:
+    entry = _TOOL_SCREEN_FIXTURES.get(screen.key)
+    if not entry:
+        return None
+    family, method = entry
+    leave = "WM.route('main'); " if family != "crop" else ""
+    return leave + f"WM.{method}(null);"
+
+
+def new_screen_verify_script(screen: Screen) -> str | None:
+    """Check and frame settled content, never infer success from a click."""
+    if screen.key == "fittings-detail":
+        # The fixture read resolves on a microtask and replaces the row DOM.
+        # Re-query after walk's existing settle wait; a click (or Loading…) is
+        # not evidence, and reinjecting/resetting after it collapses the row.
+        detail = load_dev_fittings_screenshot_fixture()["details"]["fit-rifter-solo"]
+        expected = {
+            "name": detail["name"],
+            "racks": len({item["location"] for item in detail["items"]}),
+            "items": [item["type_name"] for item in detail["items"]],
+            "aliases": [alias["name"] for alias in detail["aliases"]],
+            "presences": [
+                presence["character_name"] for presence in detail["presences"]
+            ],
+        }
+        return (
+            "(function () {\n"
+            f"  var expected = {json.dumps(expected)};\n"
+            "  var toggle = document.querySelector('#fittings-list .fit-row-toggle[aria-expanded=\"true\"]');\n"
+            "  var name = toggle && toggle.querySelector('.fit-name');\n"
+            "  var detail = toggle && toggle.closest('.fit-row').querySelector('.fit-detail');\n"
+            "  function matches(selector, values) {\n"
+            "    var nodes = detail.querySelectorAll(selector);\n"
+            "    return nodes.length === values.length && values.every(function (value, index) {\n"
+            "      return nodes[index].textContent === value;\n"
+            "    });\n"
+            "  }\n"
+            "  if (WM.current_route !== 'fittings' || !name || name.textContent !== expected.name\n"
+            "      || !detail || detail.hidden\n"
+            "      || detail.querySelectorAll('.fit-rack').length !== expected.racks\n"
+            "      || !matches('.fit-item-name', expected.items)\n"
+            "      || !matches('.fit-alias-row', expected.aliases)\n"
+            "      || !matches('.fit-presence-name', expected.presences)) {\n"
+            "    throw new Error('Screenshot content did not settle: fittings-detail');\n"
+            "  }\n"
+            # click() opens an off-screen row without bringing it into view.
+            # Frame the replacement DOM only after the detail has settled.
+            "  toggle.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+            "}())"
+        )
+    if screen.key not in _TOOL_SCREEN_FIXTURES:
+        return None
+    fixture = load_dev_tool_screenshot_fixture()
+    if screen.key == "profiles-formations":
+        name = json.dumps(fixture["formations"]["snapshot"]["formations"][0]["name"])
+        condition = (
+            f"WM.el('fm-name').value !== {name} || !WM.el('fm-preview').children.length"
+        )
+    elif screen.key == "profiles-formations-import":
+        condition = (
+            "WM.el('fm-import-work').hidden || !WM.el('fm-import-list').children.length"
+            " || WM.el('fm-import-status').textContent.indexOf('Resolve the marked names') === -1"
+            " || !WM.el('fm-import-add').disabled"
+        )
+    elif screen.key == "profiles-setup-share":
+        condition = "WM.el('us-summary').hidden || WM.el('us-copy').disabled || !WM.el('us-counts').textContent"
+    elif screen.key == "profiles-setup-import":
+        condition = "WM.el('setup-summary').hidden || WM.el('setup-create').disabled || !WM.el('setup-target').textContent"
+    else:
+        owner = fixture["crop"]["owner"]
+        selector = json.dumps(
+            f'[data-preview-configure="{owner}"][aria-expanded="true"]'
+        )
+        condition = (
+            f"!document.querySelector({selector})"
+            " || !document.querySelector('[data-preview-detail-control=\"crop-select\"]')"
+            " || document.querySelector('[data-preview-detail-control=\"crop-select\"]').textContent !== 'Reselect…'"
+        )
+    return f"(function () {{ if ({condition}) throw new Error('Screenshot content did not settle: {screen.key}'); }}())"
+
+
+def _new_screen_setup_script(screen: Screen) -> str:
+    fixture = load_dev_tool_screenshot_fixture()
+    if screen.key == "profiles-formations":
+        body = "WM.el('fm-editor-work').scrollTop = 0;"
+    elif screen.key == "profiles-formations-import":
+        imported = fixture["formations"]["import_reply"]["formations"]
+        text = json.dumps(
+            {
+                "format": "wingman-preset",
+                "version": 1,
+                "type": "probe-formations",
+                "formations": [
+                    {"name": row["name"], "probes": row["probes"]} for row in imported
+                ],
+            }
+        )
+        body = (
+            "WM.el('fm-paste').click();\n"
+            "if (WM.el('fm-import-work').hidden) throw new Error('Formation import did not open');\n"
+            f"WM.el('fm-import-text').value = {json.dumps(text)};\n"
+            "WM.el('fm-import-text').dispatchEvent(new Event('input'));\n"
+            "WM.el('fm-import-review').click();\n"
+            "WM.el('fm-import-work').scrollTop = 0;"
+        )
+    elif screen.key.startswith("profiles-setup-"):
+        setup = fixture["setup"]
+        prefix = "setup-" if screen.key.endswith("import") else "us-"
+        body = (
+            f"WM.el('{prefix}work').scrollTop = 0;\n"
+            f"WM.el('{prefix}account').value = {json.dumps(setup['context']['accounts'][0]['path'])};\n"
+            f"WM.el('{prefix}account').dispatchEvent(new Event('change'));\n"
+        )
+        if screen.key.endswith("import"):
+            body += (
+                f"WM.el('setup-text').value = {json.dumps(json.dumps(setup['artifact']))};\n"
+                "WM.el('setup-text').dispatchEvent(new Event('input'));\n"
+                f"WM.el('setup-name').value = {json.dumps(setup['new_name'])};\n"
+                "WM.el('setup-name').dispatchEvent(new Event('input'));\n"
+                "if (WM.el('setup-review').disabled) throw new Error('Setup pair was not staged');\n"
+                "WM.el('setup-review').click();"
+            )
+    else:
+        owner = fixture["crop"]["owner"]
+        selector = json.dumps(f'[data-preview-configure="{owner}"]')
+        body = (
+            "var expanded = document.querySelectorAll('[data-preview-configure][aria-expanded=\"true\"]');\n"
+            "Array.prototype.forEach.call(expanded, function (button) { button.click(); });\n"
+            f"var button = document.querySelector({selector});\n"
+            "if (!button) throw new Error('Crop Configure is missing');\n"
+            "button.click();\n"
+            "var detail = document.getElementById(button.getAttribute('aria-controls'));\n"
+            "if (!detail) throw new Error('Crop detail did not open');\n"
+            "detail.scrollIntoView({block: 'center', behavior: 'instant'});"
+        )
+    return "(function () {\n" + body + "\n}())"
+
+
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
+    if screen.key in _TOOL_SCREEN_FIXTURES:
+        return _new_screen_setup_script(screen)
     if screen.key == "settings-characters":
         return _fixture_characters_setup(
             "partial",
@@ -1479,6 +1678,10 @@ def walk(
             if screen.at_floor:
                 cdp.set_device_metrics_override(width=840, height=625)
             try:
+                prepare = new_screen_prepare_script(screen)
+                if prepare:
+                    cdp.evaluate(prepare)
+                    time.sleep(0.25)
                 if screen.route == "fittings":
                     # Replace live read state through the bounded page-side
                     # screenshot handler before ANY stage action. This follows
@@ -1497,10 +1700,18 @@ def walk(
                 if setup:
                     cdp.evaluate(setup)
                     time.sleep(0.25)
+                verify = new_screen_verify_script(screen)
+                if verify:
+                    cdp.evaluate(verify)
                 (out_dir / name).write_bytes(cdp.screenshot())
             finally:
-                if screen.at_floor:
-                    cdp.clear_device_metrics_override()
+                try:
+                    cleanup = new_screen_cleanup_script(screen)
+                    if cleanup:
+                        cdp.evaluate(cleanup)
+                finally:
+                    if screen.at_floor:
+                        cdp.clear_device_metrics_override()
             if screen.key in {"dialog", "settings-previews-copy"}:
                 # Dismiss every staged overlay before the next screen. Cancel
                 # is side-effect free for both the Python-shaped confirm and
@@ -1512,6 +1723,8 @@ def walk(
             shots.append({"key": screen.key, "file": None, "error": str(exc)})
         else:
             shots.append({"key": screen.key, "file": name, "error": None})
+        if screen.key in _TOOL_SCREEN_FIXTURES:
+            shots[-1]["fixture"] = "wingman/web/dev.js:DEV_TOOL_SCREENSHOT_FIXTURE"
     return shots, skipped, eve_shown
 
 

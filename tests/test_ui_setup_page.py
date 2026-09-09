@@ -26,6 +26,7 @@ SCENARIOS = [
     "missing-pair",
     "unicode-locale",
     "export-success",
+    "export-review-hierarchy",
     "context-change",
     "context-failure",
     "late-errors",
@@ -155,6 +156,10 @@ IMPORT_SCENARIOS = [
     "import-late-context",
     "import-limits-failure",
     "yaml-warning-once",
+    "portable-review-hierarchy",
+    "portable-caveat-once",
+    "native-no-copied-layout-caveat",
+    "review-safety-outside-disclosures",
     "detached-success",
     "detached-failure",
     "detached-warning",
@@ -178,12 +183,20 @@ IMPORT_SCENARIOS = [
 ]
 
 
+class SetupPageTree(PageTree):
+    """Retain static copy too: a hidden native caveat cannot be a DOM-double fiction."""
+
+    def handle_data(self, data):
+        node = self.stack[-1]
+        node["text"] = node.get("text", "") + data
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 @pytest.mark.parametrize("scenario", SCENARIOS + IMPORT_SCENARIOS)
 def test_setup_page_runtime(tmp_path, monkeypatch, scenario):
     if scenario in ("unicode-locale", "import-unicode"):
         monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
-    page = PageTree()
+    page = SetupPageTree()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
     markup = tmp_path / "page.json"
     markup.write_text(json.dumps(page.root, ensure_ascii=False), encoding="utf-8")

@@ -107,7 +107,11 @@ class FakeAuthority:
     @property
     def characters(self):
         return tuple(
-            SimpleNamespace(character_id=value, character_name=f"Pilot {value}")
+            SimpleNamespace(
+                character_id=value,
+                character_name=f"Pilot {value}",
+                persistence_error="",
+            )
             for value in self.character_ids
         )
 
@@ -463,6 +467,63 @@ def test_local_terminal_evidence_tied_with_content_snapshot_still_blocks(
     assert result["write_count"] == 0
 
 
+def test_workspace_copy_limit_tracks_the_enforced_contract(tmp_path, monkeypatch):
+    controller, _, _, _ = make_controller(tmp_path, ready_state(count=2))
+    monkeypatch.setattr(contracts, "MAX_COPY_WRITES", 1)
+
+    workspace = controller.workspace()
+    result = controller.preflight_copy(["fit-0", "fit-1"], [42])
+
+    assert workspace.get("max_copy_writes") == 1
+    assert result["accepted"] is False
+    assert result["write_count"] == 0
+    assert result["counts"]["ready"] == 2
+    assert "1" in result["error"]
+    assert "across" in result["error"].lower()
+
+
+def test_preflight_accepts_over_twenty_selected_when_only_twenty_additions_remain(
+    tmp_path,
+):
+    state = ready_state(count=21, character_ids=(42, 43))
+    state = replace(
+        state,
+        presences=(
+            *(presence(42, index + 1, fit) for index, fit in enumerate(state.entries)),
+            presence(43, 1, state.entries[0]),
+        ),
+    )
+    controller, _, client, _ = make_controller(tmp_path, state)
+
+    result = controller.preflight_copy([fit.id for fit in state.entries], [42, 43])
+
+    assert result["accepted"] is True
+    assert result["ticket_id"]
+    assert result["write_count"] == 20
+    assert result["counts"] == {
+        "ready": 20,
+        "present": 22,
+        "conflict": 0,
+        "unavailable": 0,
+    }
+    assert not client.post_calls
+
+
+def test_preflight_missing_authority_points_to_the_existing_authentication_action(
+    tmp_path,
+):
+    controller, _, _, _ = make_controller(
+        tmp_path, ready_state(), authority=FakeAuthority((42,), enabled=())
+    )
+
+    result = controller.preflight_copy(["fit-0"], [42])
+
+    assert result["pairs"][0]["status"] == "unavailable"
+    guidance = result["pairs"][0]["error"]
+    assert "Authenticate character" in guidance
+    assert "Settings" in guidance and "Characters" in guidance
+
+
 def test_preflight_refuses_more_than_twenty_actual_creates(tmp_path):
     character_ids = tuple(range(100, 121))
     state = ready_state(character_ids=character_ids)
@@ -472,8 +533,12 @@ def test_preflight_refuses_more_than_twenty_actual_creates(tmp_path):
     result = controller.preflight_copy(["fit-0"], list(character_ids))
 
     assert result["accepted"] is False
-    assert result["error"] == "Split this copy into batches of 20 fittings or fewer."
+    assert "20" in result["error"]
+    assert "additions" in result["error"].lower()
+    assert "across" in result["error"].lower()
     assert result["ticket_id"] == ""
+    assert result["write_count"] == 0
+    assert result["counts"]["ready"] == 21
 
 
 def test_tickets_expire_after_fifteen_minutes_and_are_bounded_to_twenty(tmp_path):

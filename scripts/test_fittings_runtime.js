@@ -418,12 +418,12 @@ test('mixed copy results summarize outcomes and give status-specific safe next s
   const summary = body.querySelector('.fit-copy-summary').textContent;
   assert.match(summary, /1 copied/);
   assert.match(summary, /1 already present/);
-  assert.match(summary, /1 unknown/);
+  assert.match(summary, /1 needs verification/);
   assert.match(summary, /1 failed/);
   assert.match(summary, /4 not copied/);
   const pairs = body.querySelectorAll('.fit-copy-pair');
   const expectations = [
-    /Success/, /Already present/, /alternate name.*review/i,
+    /Copied/, /Already present/, /alternate name.*review/i,
     /error.*refresh.*review/i, /check.*target.*EVE.*refresh.*before.*retry/i,
     /wait.*refresh.*review/i, /not attempted.*review/i, /refresh.*review/i
   ];
@@ -446,7 +446,7 @@ test('last results reopen session-only, with no preflight/start and no stale tic
   reopen.click();
   assert.equal(p.el('fittings-copy-overlay').hidden, false);
   assert.equal(p.el('fittings-copy-title').textContent, 'Copy results');
-  assert.match(p.el('fittings-copy-body').textContent, /Unknown/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
   assert.equal(p.el('fittings-copy-start').hidden, true);
   assert.equal(p.el('fittings-copy-review').hidden, true);
   assert.equal(p.calls().length, before);
@@ -466,7 +466,7 @@ test('last results reopen session-only, with no preflight/start and no stale tic
   await settle(p.last('fittings_state'), state());
   button(p.el('fittings-notices'), 'Last copy results\u2026').click();
   assert.match(p.el('fittings-copy-body').textContent, /Already present/);
-  assert.doesNotMatch(p.el('fittings-copy-body').textContent, /Unknown/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 0);
   assert.equal(p.calls('fittings_cancel_copy').length, 0);
   const fresh = await page();
   await fresh.route('fittings');
@@ -507,7 +507,8 @@ for (const terminal of ['complete', 'cancelled']) {
     button(p.el('fittings-notices'), 'Last copy results\u2026').click();
     assert.equal(p.el('fittings-copy-overlay').hidden, false);
     assert.equal(p.el('fittings-copy-status').textContent, 'Operation operation-b');
-    assert.match(p.el('fittings-copy-body').textContent, /Unknown.*check.*target.*refresh/is);
+    assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
+    assert.match(p.el('fittings-copy-body').textContent, /check.*target.*refresh/is);
     assert.match(p.el('fittings-copy-body').textContent, /Cancelled/);
     assert.equal(p.calls().length, before, 'reopening must not issue another operation');
     assert.equal(p.calls('fittings_start_copy').length, 2);
@@ -532,7 +533,7 @@ test('return during cancellation keeps old history unavailable until the matchin
   await complete(p, result(['unknown']), 'ticket-b');
   assert.equal(p.el('fittings-copy-overlay').hidden, true);
   button(p.el('fittings-notices'), 'Last copy results\u2026').click();
-  assert.match(p.el('fittings-copy-body').textContent, /Unknown/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
   assert.equal(p.calls('fittings_cancel_copy').length, 1);
 });
 
@@ -558,7 +559,7 @@ test('late background completion cannot replace a newer started copy or its fina
   button(p.el('fittings-notices'), 'Last copy results\u2026').click();
   assert.equal(p.el('fittings-copy-status').textContent, 'Operation operation-b');
   assert.match(p.el('fittings-copy-body').textContent, /Already present/);
-  assert.doesNotMatch(p.el('fittings-copy-body').textContent, /Unknown/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 0);
 });
 
 test('a refused start releases history availability but its later failure push remains eligible', async () => {
@@ -597,7 +598,7 @@ test('an older start refusal cannot release the history guard of a newer pending
   assert.equal(button(p.el('fittings-notices'), 'Last copy results\u2026').disabled, true);
   await complete(p, result(['unknown']), 'ticket-c');
   button(p.el('fittings-notices'), 'Last copy results\u2026').click();
-  assert.match(p.el('fittings-copy-body').textContent, /Unknown/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
   assert.deepEqual(p.errors, []);
 });
 
@@ -618,7 +619,7 @@ for (const outcome of ['null', 'reject']) {
     assert.equal(button(p.el('fittings-notices'), 'Last copy results\u2026').disabled, true);
     await complete(p, result(['unknown']), 'ticket-b');
     button(p.el('fittings-notices'), 'Last copy results\u2026').click();
-    assert.match(p.el('fittings-copy-body').textContent, /Unknown/);
+    assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
     assert.equal(p.errors.length, outcome === 'reject' ? 1 : 0);
   });
 }
@@ -632,7 +633,7 @@ test('tooling-only screenshot results do not become real session history', async
   tick(p.el('fittings-list').querySelector('input'));
   p.el('fittings-copy-selected').click();
   await complete(p, result(['unknown']), 'screenshot-ticket');
-  assert.match(p.el('fittings-copy-body').textContent, /Unknown/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
   await p.route('main');
   await p.route('fittings');
   await settle(p.last('fittings_state'), state());
@@ -668,6 +669,110 @@ test('partial cancellation does not describe the whole operation as unattempted'
   const operationNotice = body.querySelector('.notice');
   assert.ok(!operationNotice || !/Not attempted/.test(operationNotice.textContent));
   assert.match(body.querySelectorAll('.fit-copy-pair')[1].textContent, /Not attempted/);
+});
+
+test('non-deployable status is separate from truncating row metadata', async () => {
+  const p = await page();
+  await p.route('fittings');
+  const payload = state(['fit-1', 'fit-2']);
+  payload.rows[0].deployable = false;
+  payload.rows[0].collection_ids = ['doctrine'];
+  payload.rows[0].ship_name = '';
+  payload.rows[0].name = 'A long doctrine name that must not hide deployment status';
+  await settle(p.last('fittings_state'), payload);
+  const rows = p.el('fittings-list').querySelectorAll('.fit-row');
+  const status = rows[0].querySelector('.fit-deployability');
+  assert.ok(status, 'deployment status needs its own visible element');
+  assert.match(status.textContent, /Not deployable/i);
+  assert.equal(status.hidden, false);
+  assert.equal(rows[0].querySelector('.fit-meta').contains(status), false);
+  assert.doesNotMatch(rows[0].querySelector('.fit-meta').textContent, /Not deployable/i);
+  assert.match(rows[0].querySelector('.fit-ship').textContent, /Type 22456/);
+  assert.equal(rows[1].querySelector('.fit-deployability'), null);
+  assert.deepEqual(p.errors, []);
+});
+
+for (const limit of [7, undefined]) {
+  test(`copy limit ${limit} is advisory before review, never a raw-selection gate`, async () => {
+    const p = await page();
+    await p.route('fittings');
+    const payload = state(Array.from({ length: 21 }, (_, index) => 'fit-' + index));
+    if (limit !== undefined) payload.max_copy_writes = limit;
+    payload.characters.push({ ...payload.characters[0], character_id: 43, character_name: 'Second pilot' });
+    await settle(p.last('fittings_state'), payload);
+    p.el('fittings-list').querySelectorAll('input').forEach(tick);
+    p.el('fittings-copy-selected').click();
+    const body = p.el('fittings-copy-body');
+    const advisory = body.querySelector('.fit-copy-limit');
+    if (limit !== undefined) {
+      assert.ok(advisory, 'show the controller limit before Review');
+      assert.match(advisory.textContent, /7.*additions.*across.*targets/i);
+      assert.match(advisory.textContent, /review.*new additions/i);
+    } else {
+      assert.equal(advisory, null, 'missing metadata must not invent a numeric limit');
+    }
+    assert.doesNotMatch(body.textContent, /undefined|NaN/);
+    assert.equal(p.el('fittings-copy-review').disabled, true);
+    const targets = body.querySelectorAll('input');
+    tick(targets[0]);
+    tick(targets[1]);
+    assert.equal(p.el('fittings-copy-review').disabled, false);
+    p.el('fittings-copy-review').click();
+    await flush();
+    assert.equal(p.last('fittings_preflight_copy').args[0].length, 21);
+    assert.deepEqual(Array.from(p.last('fittings_preflight_copy').args[1]), [42, 43]);
+    await settle(p.last('fittings_preflight_copy'), preflight());
+    assert.equal(p.el('fittings-copy-start').hidden, false);
+    assert.equal(p.calls('fittings_start_copy').length, 0);
+    assert.deepEqual(p.errors, []);
+  });
+}
+
+test('unavailable copy targets point to authentication or refresh without changing eligibility', async () => {
+  const p = await page();
+  await p.route('fittings');
+  const payload = state();
+  payload.characters = [
+    { ...payload.characters[0], status: 'enable' },
+    { ...payload.characters[0], character_id: 43, status: 'reauthenticate' },
+    { ...payload.characters[0], character_id: 44, fetched_utc: '' },
+    { ...payload.characters[0], character_id: 45, stale: true }
+  ];
+  await settle(p.last('fittings_state'), payload);
+  tick(p.el('fittings-list').querySelector('input'));
+  p.el('fittings-copy-selected').click();
+  const targets = p.el('fittings-copy-body').querySelectorAll('.fit-copy-target');
+  targets.forEach(target => assert.equal(target.querySelector('input').disabled, true));
+  for (const target of targets.slice(0, 2)) {
+    assert.match(target.textContent, /Authenticate character.*Settings.*Characters/i);
+    assert.doesNotMatch(target.textContent, /enable Fittings|Fittings not enabled/i);
+  }
+  for (const target of targets.slice(2)) assert.match(target.textContent, /Refresh characters/);
+  assert.equal(p.el('fittings-copy-review').disabled, true);
+  assert.equal(p.calls('fittings_preflight_copy').length, 0);
+});
+
+test('copy recovery labels keep semantic outcomes and point to real authentication', async () => {
+  const p = await editor();
+  await beginCopy(p);
+  const value = result(['success', 'unknown', 'unattempted_throttle', 'unavailable']);
+  value.results[1].error = 'The request timed out before a response arrived.';
+  const before = p.calls().length;
+  await complete(p, value);
+  const body = p.el('fittings-copy-body');
+  const labels = body.querySelectorAll('.fit-copy-result');
+  assert.equal(labels[0].textContent, 'Copied');
+  assert.equal(labels[1].textContent, 'Needs verification');
+  assert.equal(labels[1].classList.contains('unknown'), true);
+  assert.match(labels[2].textContent, /Not attempted.*rate limit/i);
+  assert.equal(labels[2].classList.contains('unattempted_throttle'), true);
+  assert.match(body.querySelector('.fit-copy-summary').textContent, /1 needs verification/);
+  const rows = body.querySelectorAll('.fit-copy-pair');
+  assert.match(rows[1].textContent, /request timed out/);
+  assert.match(rows[1].querySelector('.fit-copy-guidance').textContent, /Personal Fittings.*EVE.*refresh.*before.*retry/i);
+  assert.match(rows[3].querySelector('.fit-copy-guidance').textContent, /Authenticate character.*Settings.*Characters/);
+  assert.equal(p.calls().length, before);
+  assert.equal(body.querySelector('button'), null);
 });
 
 test('empty worker refusal is explained without claiming successful completion', async () => {

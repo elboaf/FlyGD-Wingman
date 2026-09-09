@@ -183,7 +183,11 @@ def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_check
 
     prompt = (ROOT / ".pi" / "prompts" / "screenshots.md").read_text(encoding="utf-8")
     flat_prompt = " ".join(prompt.split())
-    assert f"walks **{len(module.SCREENS)} screens**" in flat_prompt
+    assert (
+        "walks the screen inventory in that checkout's `scripts/shoot_screens.py`"
+        in flat_prompt
+    )
+    assert "walks **" not in flat_prompt
     for phrase in (
         "Settings — Characters",
         "Settings — Characters (waiting)",

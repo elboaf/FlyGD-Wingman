@@ -2,6 +2,39 @@
 (function () {
   'use strict';
 
+  var screenshotFixture = null;
+  // Like Fittings' screenshot read seam: bounded synthetic responses, never a
+  // replacement bridge. Save/Create/clipboard entry points refuse this state.
+  WM.uiSetupScreenshot = function (payload) {
+    if (!payload) {
+      if (!screenshotFixture) return;
+      clearImport();
+      invalidate();
+      context = null; roster = null; mode = '';
+      screenshotFixture = null;
+      return;
+    }
+    if (payload.kind !== 'ui-setup-screenshot-v1' || JSON.stringify(payload).length > 65536
+        || ['export', 'import'].indexOf(payload.mode) === -1 || !payload.context
+        || !payload.context.ok || !payload.context.accounts.length
+        || !payload.context.characters.length || !payload.limits || !payload.summary
+        || !payload.artifact || !payload.review_id) throw new Error('Invalid setup screenshot fixture');
+    WM.uiSetupScreenshot(null);
+    screenshotFixture = JSON.parse(JSON.stringify(payload));
+    WM.openUiSetup({mode: payload.mode, context: screenshotFixture.context,
+      preferred_character: screenshotFixture.context.characters[0].path});
+  };
+
+  function setupContext(profile) {
+    return screenshotFixture ? Promise.resolve(screenshotFixture.context)
+      : WM.send('eve_settings_setup_context', profile);
+  }
+
+  function setupLimits() {
+    return screenshotFixture ? Promise.resolve(screenshotFixture.limits)
+      : WM.send('eve_settings_setup_limits');
+  }
+
   var generation = 0;
   var context = null;
   var roster = null;
@@ -99,8 +132,7 @@
     status('Reading local profile context…');
     controls();
     var captured = generation;
-    Promise.all([WM.send('eve_settings_setup_context', profile),
-      WM.send('eve_settings_setup_limits')]).then(function (results) {
+    Promise.all([setupContext(profile), setupLimits()]).then(function (results) {
       if (!isCurrent(captured)) return;
       var payload = results[0], limits = results[1];
       if (!payload || !payload.ok) {
@@ -147,7 +179,7 @@
 
   function renderSummary(result, source) {
     var counts = result.summary.counts;
-    WM.el('us-source').textContent = 'Source: ' + source.label;
+    WM.el('us-source').textContent = source.label;
     WM.el('us-counts').textContent = [quantity(counts.presets, 'filter'),
       quantity(counts.tabs, 'tab'), quantity(counts.windowGroups, 'overview group'),
       quantity(counts.shipLabels, 'ship label'), quantity(counts.layoutWindows, 'layout window')].join(' · ');
@@ -164,6 +196,7 @@
   }
 
   function snapshot(action) {
+    if (screenshotFixture && action !== 'preview') return;
     var source = pair();
     if (mode !== 'export' || !source || busy || WM.current_route !== 'uisetup') return;
     // A result is never reused by Copy/Save: the source files may have changed
@@ -173,8 +206,11 @@
     clearSummary();
     status('Taking a fresh snapshot for ' + source.label + '…');
     controls();
-    WM.send('eve_settings_setup_export', source.profile, source.account, source.character)
-      .then(function (result) {
+    var pending = screenshotFixture ? Promise.resolve({ok: true,
+      text: JSON.stringify(screenshotFixture.artifact), summary: screenshotFixture.summary,
+      warnings: screenshotFixture.warnings})
+      : WM.send('eve_settings_setup_export', source.profile, source.account, source.character);
+    pending.then(function (result) {
         if (!isCurrent(captured)) return;
         if (!result || !result.ok) {
           finish(captured, result && result.error || 'Could not read the setup. Retry with EVE closed.', true);
@@ -182,7 +218,7 @@
         }
         renderSummary(result, source);
         if (action === 'preview') {
-          finish(captured, 'Snapshot ready. Copy and Save each read a fresh snapshot.');
+          finish(captured, 'Snapshot ready to share.');
         } else if (action === 'copy') {
           var failed = function () {
             finish(captured, 'Could not copy to the clipboard. Try again or use Save file.', true);
@@ -229,7 +265,7 @@
   }
 
   function discard(id) {
-    if (!id) return;
+    if (!id || screenshotFixture) return;
     // Best-effort cleanup has no page authority. In particular its delayed
     // response must never clear an offer issued by a newer review.
     WM.send('eve_settings_setup_discard', id).catch(function () {});
@@ -241,6 +277,7 @@
       WM.el('setup-' + id).textContent = '';
     });
     WM.el('setup-native').hidden = true;
+    WM.el('setup-display-notice').hidden = true;
   }
 
   function clearImport() {
@@ -371,6 +408,7 @@
   }
 
   function browseCatalog() {
+    if (screenshotFixture) return;
     if (!editable() || (catalog && (catalog.loading || catalog.reading))) return;
     // A fresh object owns each list request, including Close/reopen. Metadata
     // can load independently of recipient input; it confers no review authority.
@@ -415,6 +453,7 @@
   }
 
   function useCatalog() {
+    if (screenshotFixture) return;
     var entry = catalogSelection();
     if (!editable() || !entry || catalog.loading || catalog.reading) return;
     var picker = catalog, view = generation, version = draft.version, serial = ++picker.serial;
@@ -477,7 +516,7 @@
     // Typing a name/text while context is loading invalidates review, not this
     // independent read. A base change or leaving still invalidates the roster.
     var view = generation, read = ++draft.contextRead;
-    Promise.all([WM.send('eve_settings_setup_context', profile), WM.send('eve_settings_setup_limits')])
+    Promise.all([setupContext(profile), setupLimits()])
       .then(function (results) {
         if (!isCurrent(view) || !draft || read !== draft.contextRead) return;
         var payload = results[0], limits = results[1];
@@ -511,6 +550,7 @@
   }
 
   function readImport(file) {
+    if (screenshotFixture) return;
     if (!editable() || draft.reading) return;
     importChanged(false);
     var view = generation, version = draft.version;
@@ -548,22 +588,29 @@
     // The validated Wingman model always has overview geometry. Zero imported
     // layout windows is the native configuration-only case, not local geometry.
     var native = counts.layoutWindows === 0;
-    WM.el('setup-type').textContent = native ? 'Native overview YAML' : 'Wingman overview and in-space layout preset';
+    WM.el('setup-type').textContent = native
+      ? 'Replaces the active overview configuration from native YAML; no window layout is imported.'
+      : 'Replaces the active overview configuration and supported in-space layout from the Wingman preset.';
     WM.el('setup-counts').textContent = [quantity(counts.presets, 'filter'), quantity(counts.tabs, 'tab'),
       quantity(counts.windowGroups, 'overview group'), quantity(counts.shipLabels, 'ship label'),
       quantity(counts.layoutWindows, 'layout window')].join(' · ');
-    WM.el('setup-target').textContent = 'Recipient: ' + target.label;
-    WM.el('setup-destination').textContent = 'New profile: ' + name.trim() + '. Existing profiles will not be overwritten.';
-    WM.el('setup-retention').textContent = 'Retained from your local base: resolution, display mode, monitor preferences, UI scale, core_public__.yaml and prefs.ini, and unrelated settings.'
-      + (keep ? ' Your complete ship labels are retained.' : ' Imported overview configuration replaces the active setup; unrelated saved filters remain.');
+    WM.el('setup-target').textContent = target.label;
+    WM.el('setup-destination').textContent = name.trim() + '. Existing profiles will not be overwritten.';
+    WM.el('setup-retention').textContent = 'Resolution, display mode, monitor preferences, UI scale, unrelated settings and unrelated saved filters from your local base.'
+      + (keep ? ' Your complete ship labels are retained.' : '');
     WM.el('setup-native').textContent = native ? 'Overview configuration only; no window layout. Supplied tabs become one group in the primary overview window. Primary and non-overview geometry stay local; surplus overview instances are retired. Absent options, including omitted column settings, stay local.' : '';
     WM.el('setup-native').hidden = !native;
     WM.el('setup-windows').textContent = native ? 'No layout windows imported.' : 'Included layout windows: ' + result.summary.windowLabels.join(', ');
     var warnings = result.warnings.filter(function (text, index, items) { return items.indexOf(text) === index; });
+    // Give the copied-layout caveat one owner, only for a layout import. Exact
+    // equality preserves distinct backend context; the runtime test uses the
+    // real model's notice so these two existing copies cannot silently drift.
+    var display = WM.el('setup-display-notice');
+    display.hidden = native || warnings.indexOf(display.textContent) !== -1;
     // Native parser warnings also appear in limitations. Keep their emphasized
     // owner below without dropping distinct limitations or extra worker warnings.
     WM.el('setup-limitations').textContent = result.summary.limitations.filter(function (text, index, items) {
-      return warnings.indexOf(text) === -1 && items.indexOf(text) === index;
+      return text !== display.textContent && warnings.indexOf(text) === -1 && items.indexOf(text) === index;
     }).join(' ');
     WM.el('setup-warnings').textContent = warnings.join(' ');
     WM.el('setup-summary').hidden = false;
@@ -576,10 +623,14 @@
     draft.reviewing = true;
     importStatus('Reviewing the setup and local base with EVE closed…');
     importControls();
-    WM.send('eve_settings_setup_review', draft.text, target.profile, target.account, target.character, name, keep)
-      .then(function (result) {
+    var screenshot = screenshotFixture;
+    var pending = screenshot ? Promise.resolve({ok: true, summary: screenshot.summary,
+      warnings: screenshot.warnings, review_id: screenshot.review_id})
+      : WM.send('eve_settings_setup_review', draft.text, target.profile, target.account, target.character, name, keep);
+    pending.then(function (result) {
         if (!isCurrent(view) || !draft || version !== draft.version) {
-          discard(result && result.review_id);
+          // A synthetic response arriving after cleanup owns no backend offer.
+          if (!screenshot) discard(result && result.review_id);
           return;
         }
         draft.reviewing = false;
@@ -615,6 +666,7 @@
   }
 
   function createImport() {
+    if (screenshotFixture) return;
     if (!editable() || !draft.review) return;
     clearCatalog();
     requestSerial += 1;
@@ -763,6 +815,7 @@
     });
     document.addEventListener('wm:route', function (event) {
       if (event.detail === 'uisetup') return;
+      WM.uiSetupScreenshot(null);
       clearImport();
       invalidate();
       context = null;

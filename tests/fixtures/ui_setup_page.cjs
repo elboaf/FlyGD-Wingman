@@ -84,6 +84,7 @@ class Element {
 const ids = {};
 function build(node) {
   const element = new Element(node.tag, node.attrs);
+  element.text = node.text || '';
   if (element.id) ids[element.id] = element;
   node.children.forEach(child => element.appendChild(build(child)));
   return element;
@@ -208,6 +209,16 @@ const click = id => WM.el(id).click();
 function change(id, value) { WM.el(id).value = value; WM.el(id).dispatchEvent({type: 'change'}); }
 const status = () => WM.el('us-status').textContent;
 const plain = value => JSON.parse(JSON.stringify(value));
+function disclosureOf(node) {
+  for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+    if (parent.tagName === 'DETAILS') return parent;
+  }
+  return null;
+}
+function availableText(node) {
+  if (node.hidden) return '';
+  return (node.text || '') + node.children.map(availableText).join(' ');
+}
 function context(profile = 'profile-A') {
   const data = {ok: true, error: '', root: 'root', server: 'server', profile,
     profiles: [{path: 'profile-A', name: 'Base A', file_count: 4}, {path: 'profile-B', name: 'Base B', file_count: 4}],
@@ -372,6 +383,18 @@ async function main() {
       assert.equal(WM.el('us-source').children.length, 0, 'user names are text, not markup');
       assert.match(WM.el('us-limits').textContent, /256 filters/);
       assert.equal(WM.el('us-actions').parentNode, WM.el('us-work').parentNode, 'actions must be outside scrolling work');
+      if (scenario === 'export-review-hierarchy') {
+        const labels = WM.el('us-summary').querySelectorAll('dt').map(el => el.textContent.trim());
+        assert.deepEqual(labels, ['Source', 'Snapshot', 'Keeps']);
+        assert.equal(disclosureOf(WM.el('us-source')), null);
+        assert.equal(disclosureOf(WM.el('us-counts')), null);
+        assert.equal(disclosureOf(WM.el('us-warnings')), null, 'snapshot warnings are not hidden');
+        for (const id of ['us-windows', 'us-limits', 'us-display-notice']) {
+          assert.ok(disclosureOf(WM.el(id)), id + ' belongs in a native disclosure');
+        }
+        assert.equal(availableText(WM.el('us-export')).split('This layout is copied as saved;').length - 1, 1);
+        assert.doesNotMatch(WM.el('us-actions').textContent, /resolution|copied as saved/);
+      }
       assert.equal(WM.uiSetupDone({operation: 'ui_setup_create', request_id: 'old', review_id: 'old', ok: true}), false);
       const isSave = scenario.startsWith('save-');
       click(isSave ? 'us-save' : 'us-copy');
@@ -942,7 +965,7 @@ async function importMain() {
     if (scenario === 'cancel-during-review') { pending.resolve(offer()); await tick(); }
     assert.deepEqual(plain(discards.at(-1).args), ['r1']); assert.equal(creates.length, 0);
     assert.equal(WM.el('setup-text').value, '');
-  } else if (scenario === 'yaml-label-choice' || scenario === 'yaml-no-layout' || scenario === 'yaml-warning-once') {
+  } else if (['yaml-label-choice', 'yaml-no-layout', 'yaml-warning-once', 'native-no-copied-layout-caveat', 'review-safety-outside-disclosures'].includes(scenario)) {
     const native = python('native'); assert.equal(native.ambiguous, true);
     input('setup-text', native.text); click('setup-review');
     reviews.at(-1).resolve({...offer('', native), ok: false, needs_label_choice: true,
@@ -950,23 +973,37 @@ async function importMain() {
     assert.equal(WM.el('setup-create').disabled, true);
     assert.equal(WM.el('setup-label-choice').hidden, false); assert.equal(WM.el('setup-keep-labels').checked, false);
     assert.equal(WM.el('setup-keep-labels').parentNode.className, 'check');
+    if (scenario === 'review-safety-outside-disclosures') {
+      for (const id of ['setup-label-choice', 'setup-keep-labels', 'setup-target', 'setup-account-notice', 'setup-warnings']) {
+        assert.equal(disclosureOf(WM.el(id)), null, id + ' must remain visible without opening details');
+      }
+      assert.equal(WM.el('setup-target').parentNode, WM.el('setup-account-notice').parentNode, 'account consequence stays with recipient');
+      assert.match(WM.el('setup-account-notice').textContent, /other characters.*account.*new profile/);
+      assert.equal(document.activeElement.id, 'setup-keep-labels', 'required choice keeps focus ownership');
+    }
     assert.match(WM.el('setup-native').textContent, /configuration only.*no window layout/i);
     assert.match(WM.el('setup-native').textContent, /one.*primary overview/i);
     WM.el('setup-keep-labels').checked = true; change('setup-keep-labels', ''); click('setup-review');
     assert.equal(reviews.at(-1).args[5], true); reviews.at(-1).resolve(offer('native', native)); await tick();
     assert.match(WM.el('setup-counts').textContent, /42 filters.*8 tabs.*1 overview group.*0 layout windows/);
     assert.match(WM.el('setup-retention').textContent, /ship labels.*retained|keep.*ship labels/i);
+    if (scenario === 'native-no-copied-layout-caveat') {
+      assert.doesNotMatch(availableText(WM.el('setup-import')), /This layout is copied|manual adjustment in EVE/);
+      assert.match(WM.el('setup-type').textContent, /no window layout/i);
+      assert.equal(WM.el('setup-display-notice').hidden, true);
+      assert.equal(document.activeElement.id, 'setup-summary');
+    }
     if (scenario === 'yaml-warning-once') {
       // The real parser puts native warnings in both lists. Preserve distinct
       // messages and warning emphasis, but give each sentence one owner.
       const shared = native.warnings[0];
       assert.ok(native.summary.limitations.includes(shared));
-      const summaryText = WM.el('setup-summary').textContent;
+      const summaryText = availableText(WM.el('setup-work'));
       assert.equal(summaryText.split(shared).length - 1, 1, 'native warning rendered once');
       assert.ok(WM.el('setup-warnings').textContent.includes(shared));
       input('setup-name', 'Distinct warnings'); click('setup-review');
       reviews.at(-1).resolve({...offer('distinct', native), warnings: [...native.warnings, 'A distinct warning.', 'A distinct warning.']}); await tick();
-      assert.equal(WM.el('setup-summary').textContent.split('A distinct warning.').length - 1, 1);
+      assert.equal(availableText(WM.el('setup-work')).split('A distinct warning.').length - 1, 1);
       for (const limitation of native.summary.limitations.filter(text => !native.warnings.includes(text))) {
         assert.ok(WM.el('setup-limitations').textContent.includes(limitation));
       }
@@ -974,6 +1011,39 @@ async function importMain() {
     if (scenario === 'yaml-label-choice') {
       input('setup-text', exported.text); assert.equal(WM.el('setup-keep-labels').checked, false);
       assert.equal(WM.el('setup-label-choice').hidden, true); assert.equal(WM.el('setup-create').disabled, true);
+    }
+  } else if (scenario === 'portable-review-hierarchy' || scenario === 'portable-caveat-once') {
+    await reviewed();
+    if (scenario === 'portable-review-hierarchy') {
+      const labels = WM.el('setup-summary').querySelectorAll('dt').map(el => el.textContent.trim());
+      assert.deepEqual(labels, ['Create', 'For', 'Changes', 'Keeps']);
+      for (const id of ['setup-destination', 'setup-target', 'setup-type', 'setup-retention', 'setup-warnings']) {
+        assert.equal(disclosureOf(WM.el(id)), null, id + ' is part of the visible decision');
+      }
+      assert.match(WM.el('setup-type').textContent, /replaces.*overview.*layout/i);
+      for (const id of ['setup-counts', 'setup-native', 'setup-windows', 'setup-limitations', 'setup-limits', 'setup-display-notice']) {
+        assert.ok(disclosureOf(WM.el(id)), id + ' belongs in a native disclosure');
+      }
+      assert.equal(WM.el('setup-actions').parentNode, WM.el('setup-work').parentNode, 'commit controls stay outside scrolling work');
+      assert.equal(document.activeElement.id, 'setup-summary');
+    } else {
+      const notice = exported.summary.limitations.find(text => text.includes('This layout is copied as saved;'));
+      assert.ok(notice, 'real portable summary carries the layout caveat');
+      assert.equal(availableText(WM.el('setup-import')).split(notice).length - 1, 1, 'one caveat even after opening all disclosures');
+      assert.doesNotMatch(WM.el('setup-actions').textContent, /resolution|copied as saved/);
+      input('setup-name', 'Warnings also carry caveat'); click('setup-review');
+      reviews.at(-1).resolve({...offer('warnings'), warnings: [notice, 'A distinct warning.', notice, 'A distinct warning.'],
+        summary: {...exported.summary, limitations: [...exported.summary.limitations, 'A distinct limitation.', 'A distinct limitation.']}});
+      await tick();
+      const text = availableText(WM.el('setup-import'));
+      for (const message of [notice, 'A distinct warning.', 'A distinct limitation.']) {
+        assert.equal(text.split(message).length - 1, 1, 'preserve each distinct message once');
+      }
+      assert.ok(WM.el('setup-warnings').textContent.includes(notice), 'warnings retain their emphasized owner');
+      assert.ok(WM.el('setup-warnings').textContent.includes('A distinct warning.'));
+      assert.ok(WM.el('setup-limitations').textContent.includes('A distinct limitation.'));
+      input('setup-name', 'Invalidated');
+      assert.equal(WM.el('setup-display-notice').hidden, true, 'invalidating review retires its caveat too');
     }
   } else if (scenario === 'eve-unknown' || scenario === 'malformed-text') {
     const text = scenario === 'malformed-text' ? 'broken: [' : exported.text;

@@ -15,6 +15,47 @@ is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
 
+## Operational legibility and review clarity
+
+Check at 840×625 CSS pixels and at a wider window. Browser checks supplement,
+but do not replace, these Windows/WebView2 checks.
+
+- [ ] **Bookmark help names an action, not a background feature.** Format
+      Enforcer has its own explanation beside the binding. Its capture and Edit
+      controls expose that description to assistive technology after leaving and
+      reopening Bookmarks. The category field still accepts numeric IDs, and
+      General's examples are clearly not an exhaustive inventory of EVE tools.
+
+- [ ] **Editable offline names remain readable.** In Settings → Previews,
+      scroll into the offline roster. The sticky Offline heading remains visible;
+      names do not look disabled, and Configure still opens the correct row.
+- [ ] **The Fittings-detail capture shows the open fitting.** After the Alliance
+      capture, `fittings-detail` must bring the expanded Rifter row into view with
+      its module racks rendered. A collapsed, loading or incomplete detail must
+      be recorded as a failed shot rather than saved as a successful PNG.
+- [ ] **Copy status is not lost in metadata.** In Fittings, a non-deployable fit
+      keeps its status readable with a long fitting name. Copy results clearly
+      associate each status and recovery instruction with its target character.
+- [ ] **Removal outcomes identify the character.** With controlled failed,
+      incomplete-cleanup and lost-reply responses, confirm the notice names the
+      selected pilot even after a roster refresh. Only a confirmed removal says
+      the pilot was removed. Incomplete cleanup directs the user to restart
+      Wingman; it does not claim that refreshing the roster repairs saved state.
+- [ ] **The copy limit describes additions, not selected fittings.** Guidance is
+      visible before review. More than 20 selected fits can still be reviewed
+      when enough already exist on the targets; more than 20 actual additions
+      across targets remain refused. Nothing is retried automatically.
+- [ ] **Setup review keeps consequences visible.** Check portable setup and
+      native overview YAML imports. Recipient, new profile, changes, retained
+      settings, account consequences and any required ship-label choice remain
+      visible outside the detail disclosures. Open those disclosures by keyboard.
+      A layout caveat appears once for a layout import, never for overview-only
+      YAML. Review focus has breathing room, and commit controls remain reachable.
+- [ ] **Formation scale labels stay separate from probes.** Check an empty,
+      origin-only and multi-probe formation. Rotate the drawing: the scale key
+      remains readable and identifies ring order without overlapping probe labels.
+      Coordinates, range values and save behavior are unchanged.
+
 ## Install
 - [ ] Installer runs without an admin prompt
 - [ ] Installer wizard, Start Menu entry, and Add/Remove Programs all read
@@ -328,8 +369,16 @@ somewhere stale and nothing on that screen is worth reviewing.
       top, middle, bottom, open Configure detail, Copy picker, groups, and
       840x625 floor rather than presenting the top of a long nested scroller
       as the complete screen. The floor shot starts at the collapsed roster
-      heading; a detail left open by an earlier stage is a capture defect. A
-      blank screen in the set is a real defect, not a capture artifact -- one
+      heading; a detail left open by an earlier stage is a capture defect.
+      The separate saved-crop floor capture deliberately opens Configure and
+      shows **Reselect…**, saved-crop status and controls. Profiles also has
+      fixture-backed captures of the populated Formations editor, formation
+      import review with a name conflict, Share setup from a synthetic confirmed
+      pair, and Import setup review before Create. Check their manifest `fixture`
+      annotations and verify no Save/Create/clipboard action runs. These are
+      synthetic presentation checks, not acceptance of real EVE file operations
+      or native crop behavior; the dedicated interaction checks remain required.
+      A blank screen in the set is a real defect, not a capture artifact -- one
       bad handler name silently disables every registration below it.
 
 ### Window chrome

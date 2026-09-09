@@ -31,6 +31,32 @@
 (function () {
   'use strict';
 
+  // Explicit tooling-only read state. Never installed by startup or Python;
+  // the real opener/renderers still own the view, and route leave retires it.
+  var screenshotFixture = null, screenshotLastAccount = '';
+  WM.formationsScreenshot = function (payload) {
+    if (!payload) {
+      if (!screenshotFixture) return;
+      closeImportReview(false);
+      loadGeneration += 1;
+      state.path = ''; state.contentRevision = ''; state.formations = [];
+      state.dirty = false; state.busy = false;
+      accountChoices = []; selectedAccountPath = '';
+      lastSuccessfulPath = screenshotLastAccount;
+      screenshotFixture = null;
+      return;
+    }
+    if (payload.kind !== 'formations-screenshot-v1' || JSON.stringify(payload).length > 65536
+        || !payload.accounts || payload.accounts.length !== 1 || !payload.snapshot
+        || !payload.snapshot.ok || !payload.snapshot.formations.length || !payload.import_reply) {
+      throw new Error('Invalid formations screenshot fixture');
+    }
+    WM.formationsScreenshot(null);
+    screenshotLastAccount = lastSuccessfulPath;
+    screenshotFixture = JSON.parse(JSON.stringify(payload));
+    WM.openFormations(screenshotFixture.accounts, screenshotFixture.accounts[0].path);
+  };
+
   var KM = 1000;
   var AU = 149597870700;
   // The launcher holds eight. Kept in step with formations.MAX_PROBES by
@@ -238,7 +264,9 @@
     if (mode === 'switch') { loadGeneration += 1; }
     var generation = loadGeneration, attempt = ++readAttempt;
     state.busy = true; paintCommit();
-    return WM.send('eve_settings_formations', path).then(function (reply) {
+    var pending = screenshotFixture ? Promise.resolve(JSON.parse(JSON.stringify(screenshotFixture.snapshot)))
+      : WM.send('eve_settings_formations', path);
+    return pending.then(function (reply) {
       // Even failure belongs to the request that caused it. Check identity
       // before clearing busy, showing a dialog, or touching either baseline.
       if (WM.current_route !== 'formations' || generation !== loadGeneration
@@ -330,6 +358,7 @@
   }
 
   function save() {
+    if (screenshotFixture) return;
     if (importReview || state.busy || !state.path || !state.contentRevision) { return; }
     var request = {
       id: pageSession + ':' + loadGeneration + ':' + (++saveSequence),
@@ -373,6 +402,7 @@
   }
 
   function copySelected() {
+    if (screenshotFixture) return;
     if (state.busy || !copySelection.length) { return; }
     var attempt = ++copyAttempt, generation = loadGeneration;
     var items = state.formations.filter(function (f) {
@@ -459,7 +489,7 @@
     importReview = null;
     WM.el('fm-import-text').value = '';
     WM.el('fm-import-list').textContent = '';
-    WM.el('fm-import-preview').textContent = '';
+    renderImportPreview();
     WM.el('fm-import-work').hidden = true;
     WM.el('fm-import-commit').hidden = true;
     WM.el('fm-editor-work').hidden = false;
@@ -549,7 +579,9 @@
     review.request = request;
     review.pending = 'review'; review.candidates = []; review.conflicts = [];
     renderImportList(); paintImportButtons(); setImportStatus('Reviewing formations…', false);
-    WM.send('eve_settings_parse_formations', review.text, existingNames()).then(function (reply) {
+    var pending = screenshotFixture ? Promise.resolve(JSON.parse(JSON.stringify(screenshotFixture.import_reply)))
+      : WM.send('eve_settings_parse_formations', review.text, existingNames());
+    pending.then(function (reply) {
       if (!importReplyIsCurrent(review, request)) { return; }
       review.pending = '';
       if (!reply || !reply.ok) {
@@ -569,6 +601,7 @@
   }
 
   function addImport() {
+    if (screenshotFixture) return;
     var review = importReview;
     if (!review || review.pending || !review.candidates.length || review.conflicts.length) { return; }
     var request = { attempt: ++importAttempt, revision: revision };
@@ -883,7 +916,7 @@
 
   // The viewBox is set to the element's own CSS pixel size on every draw,
   // rather than being a fixed square the browser then scales. One user
-  // unit is one CSS pixel, so a stroke of 1 is a hairline and the ring
+  // unit is one CSS pixel, so a stroke of 1 is a hairline and the probe
   // labels can take --fs-label from the stylesheet and mean it. A fixed
   // viewBox scaled 9px type down to about 5px at the 840x625 floor, which
   // is the whole reason this is computed rather than declared.
@@ -897,8 +930,11 @@
     var rect = svg.getBoundingClientRect();
     var w = Math.round(rect.width), h = Math.round(rect.height);
     var cx = w / 2, cy = h / 2;
-    var extent = 1, scale, step, i, r, a, pts, p, c, items, label;
+    var extent = 1, scale, step, i, r, a, pts, p, c, items;
+    var key = svg.parentNode.querySelector('.fm-ring-key');
     svg.textContent = '';
+    key.textContent = '';
+    key.hidden = true;
     // Off-route (or mid-layout) the element has no box, and every
     // coordinate below would be NaN.
     if (!f || w < 2 || h < 2) { return; }
@@ -919,6 +955,10 @@
     // rounds up, so three rings can reach half again as far as the widest
     // probe and the outer one would be drawn outside the box.
     scale = Math.max(10, Math.min(w, h) / 2 - MARGIN) / Math.max(extent, step * 3);
+    // Keep distance annotations outside the SVG: even staggered labels can
+    // collide with probes as the view rotates, especially at the 150px floor.
+    key.hidden = false;
+    key.appendChild(WM.make('div', 'fm-ring-key-title', 'Rings, inner to outer'));
     for (i = 1; i <= 3; i++) {
       r = step * i;
       pts = [];
@@ -929,14 +969,10 @@
                  + (cy + p.sy * scale).toFixed(1));
       }
       svg.appendChild(el('polygon', { points: pts.join(' '), 'class': 'fm-ring' }));
-      // At the ring's widest point, end-anchored so the text lands INSIDE
-      // the ring it names, and stepped down by a line each so the three do
-      // not pile up: the rings flatten with pitch, and at a shallow one
-      // three labels on one horizontal line overlap each other.
-      label = el('text', { x: cx + r * scale - 4, y: cy + (i - 2) * 13,
-                           'class': 'fm-ring-label' });
-      label.textContent = formatKm(r);
-      svg.appendChild(label);
+      // niceStep can produce half-km distances below 10 km. Whole-km
+      // rounding made an origin-only probe show two different rings as 1 km.
+      key.appendChild(WM.make('div', 'fm-ring-label',
+        r < 10 ? r.toLocaleString() + ' km' : formatKm(r)));
     }
     // Painted back to front, so a probe in front of another overlaps it
     // rather than the draw order deciding at random.
@@ -1178,6 +1214,14 @@
     });
 
     [svg, WM.el('fm-import-preview')].forEach(function (preview) {
+      var box = WM.make('div', 'fm-preview-box');
+      var key = WM.make('div', 'fm-ring-key');
+      key.id = preview.id + '-key';
+      key.hidden = true;
+      preview.setAttribute('aria-describedby', key.id);
+      preview.parentNode.insertBefore(box, preview);
+      box.appendChild(preview);
+      box.appendChild(key);
       preview.addEventListener('mousedown', function (e) {
         e.preventDefault();
         dragging = true;
@@ -1207,6 +1251,7 @@
     // must not leave the preview spinning under the next screen.
     document.addEventListener('wm:route', function (event) {
       if (event.detail !== 'formations') {
+        WM.formationsScreenshot(null);
         closeImportReview(false);
         dragging = false;
         loadGeneration += 1;

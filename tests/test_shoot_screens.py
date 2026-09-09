@@ -121,6 +121,7 @@ def test_gated_column_matches_the_apps_own_gate():
 def test_floor_sized_screens_use_the_explicit_inventory_flag():
     assert {screen.key for screen in shoot.SCREENS if screen.at_floor} == {
         "settings-previews-narrow",
+        "settings-previews-crop-narrow",
         "settings-characters-narrow",
         "fittings-narrow",
     }
@@ -133,6 +134,7 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         if screen.key.startswith("settings-previews")
     }
     assert set(variants) == {
+        "settings-previews-crop-narrow",
         "settings-previews",
         "settings-previews-middle",
         "settings-previews-table",
@@ -1571,6 +1573,36 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
             assert any("var openToggle" in expression for expression in stage)
 
 
+def test_walk_refuses_fittings_detail_capture_when_postcondition_fails(
+    tmp_path, monkeypatch
+):
+    screen = next(s for s in shoot.SCREENS if s.key == "fittings-detail")
+    monkeypatch.setattr(shoot, "SCREENS", (screen,))
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    verify = shoot.new_screen_verify_script(screen)
+    captures = []
+
+    class CDP:
+        def evaluate(self, expression):
+            if expression == "WM.eve_shown !== false":
+                return True
+            if verify and expression == verify:
+                raise shoot.TargetError(
+                    "Screenshot content did not settle: fittings-detail"
+                )
+            return None
+
+        def screenshot(self):
+            captures.append(True)
+            return b"png"
+
+    shots, _, _ = shoot.walk(CDP(), tmp_path, settle_ms=0)
+    assert captures == []
+    assert shots[0]["file"] is None
+    assert "Screenshot content did not settle: fittings-detail" in shots[0]["error"]
+    assert not list(tmp_path.glob("*.png"))
+
+
 def test_fittings_capture_staging_never_starts_a_remote_write():
     writers = (
         "fittings_start_copy",
@@ -1625,6 +1657,17 @@ def test_every_preview_capture_uses_the_authoritative_read_only_fixture():
 
     for key, script in scripts.items():
         assert script is not None, f"{key} needs deterministic setup"
+        if key == "settings-previews-crop-narrow":
+            # Crop revisions need an isolated read domain; installation precedes
+            # the Configure click rather than sharing the old push-only seam.
+            screen = next(s for s in shoot.SCREENS if s.key == key)
+            prepare = shoot.new_screen_prepare_script(screen)
+            match = re.search(r"WM\.previewCropScreenshot\((\{.*\})\);", prepare)
+            assert match
+            assert json.loads(match.group(1))["preview"] == fixture
+            for writer in writers:
+                assert writer not in prepare + script
+            continue
         assert "typeof window.onPreviewHotkeys !== 'function'" in script, key
         assert "window.onPreviewHotkeys(payload);" in script, key
         assert "throw new Error" in script, key

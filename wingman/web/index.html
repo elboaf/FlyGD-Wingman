@@ -442,7 +442,7 @@
           </select>
         </div>
         <div class="row">
-          <label class="lab" for="f-category">YouTube category</label>
+          <label class="lab" for="f-category">YouTube category ID</label>
           <input class="field" id="f-category" type="text" inputmode="numeric"
                  spellcheck="false">
         </div>
@@ -1481,9 +1481,8 @@
           Show the EVE Online tools
         </label>
         <p class="hint">
-          Wingman's EVE features &mdash; Profiles, Skills, bookmark keybinds
-          and client previews. Turn this off and Wingman is just the
-          OBS&nbsp;&rarr;&nbsp;YouTube uploader.
+          EVE tools, including bookmark keybinds, client previews and Fittings.
+          Turn this off to use only the OBS&nbsp;&rarr;&nbsp;YouTube uploader.
         </p>
         <p class="field-msg" id="msg-general" hidden></p>
       </section>
@@ -1963,25 +1962,32 @@
         </div>
         <p class="hint">Choose both local files from a confirmed account/character association. Missing a match? Return to Profiles, Accounts, Identify accounts.</p>
         <section id="us-summary" aria-labelledby="us-summary-heading" hidden>
-          <h2 id="us-summary-heading">Snapshot contents</h2>
-          <p id="us-source"></p>
-          <p id="us-counts"></p>
+          <h2 id="us-summary-heading">Ready to share</h2>
+          <dl class="us-review">
+            <dt>Source</dt>
+            <dd><p id="us-source"></p></dd>
+            <dt>Snapshot</dt>
+            <dd><p id="us-counts"></p></dd>
+            <dt>Keeps</dt>
+            <dd>Your EVE settings unchanged. Copy and Save each read a fresh snapshot.</dd>
+          </dl>
           <p class="hint" id="us-warnings"></p>
-          <h3>Included layout windows</h3>
-          <p id="us-windows"></p>
         </section>
-        <section aria-labelledby="us-excluded-heading">
-          <h2 id="us-excluded-heading">Not included</h2>
+        <details class="us-details">
+          <summary id="us-excluded-heading">Included, excluded and limits</summary>
+          <h2>Included layout windows</h2>
+          <p id="us-windows"></p>
+          <h2>Not included</h2>
           <p class="hint">Chat windows and channel membership, inventory and item-specific windows, dialog history, Neocom, info panels and ship-specific module arrangements.</p>
           <p class="hint">Only unstacked supported windows can be shared. Unsupported stacks block export rather than silently losing part of the setup.</p>
           <p class="hint">Names and ship-label markup are shared as text, not anonymized. Account/character IDs, source paths, history and hardware preferences are not included.</p>
-        </section>
-        <p class="hint" id="us-limits"></p>
+          <p class="hint" id="us-display-notice">Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.</p>
+          <p class="hint" id="us-limits"></p>
+        </details>
       </div>
       <!-- Siblings of the scroller: long errors, rosters and window lists must
            not push the only exit or the export actions below the floor. -->
       <div id="us-actions">
-        <p class="hint" id="us-display-notice">Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.</p>
         <div class="row">
           <button class="btn acc" id="us-copy" type="button" disabled>Copy setup</button>
           <button class="btn" id="us-save" type="button" disabled>Save file…</button>
@@ -2039,27 +2045,37 @@
         </div>
         <section id="setup-summary" aria-labelledby="setup-summary-heading" tabindex="-1" hidden>
           <h2 id="setup-summary-heading">Review new profile</h2>
-          <p id="setup-type"></p>
-          <p id="setup-counts"></p>
-          <p id="setup-target"></p>
-          <p id="setup-destination"></p>
-          <p class="hint" id="setup-retention"></p>
-          <p class="hint">Account-level changes also affect other characters of this account if they later use the new profile.</p>
-          <p id="setup-native" class="hint" hidden></p>
-          <p id="setup-windows"></p>
-          <p class="hint" id="setup-limitations"></p>
+          <dl class="us-review">
+            <dt>Create</dt>
+            <dd><p id="setup-destination"></p></dd>
+            <dt>For</dt>
+            <dd>
+              <p id="setup-target"></p>
+              <p class="hint" id="setup-account-notice">Account-level changes also affect other characters of this account if they later use the new profile.</p>
+            </dd>
+            <dt>Changes</dt>
+            <dd><p id="setup-type"></p></dd>
+            <dt>Keeps</dt>
+            <dd><p id="setup-retention"></p></dd>
+          </dl>
           <p class="hint" id="setup-warnings"></p>
         </section>
-        <section aria-labelledby="setup-excluded-heading">
-          <h2 id="setup-excluded-heading">Not included</h2>
+        <details class="us-details">
+          <summary id="setup-excluded-heading">Included, excluded and limits</summary>
+          <p id="setup-counts"></p>
+          <p id="setup-native" class="hint" hidden></p>
+          <p id="setup-windows"></p>
+          <h2>Not included</h2>
           <p class="hint">Chat windows and channel membership, inventory and item-specific windows, dialog history, Neocom, info panels and ship-specific module arrangements.</p>
           <p class="hint">Affected supported windows must be unstacked, including surplus overview instances being retired. Unsupported stacks block creation.</p>
           <p class="hint">Names and ship-label markup are text, not anonymized. No sender account/character IDs, source paths or hardware preferences are imported.</p>
-        </section>
-        <p class="hint" id="setup-limits"></p>
+          <p class="hint">Your local base supplies core_public__.yaml and prefs.ini unchanged.</p>
+          <p class="hint" id="setup-limitations"></p>
+          <p class="hint" id="setup-display-notice" hidden>Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.</p>
+          <p class="hint" id="setup-limits"></p>
+        </details>
       </div>
       <div id="setup-actions">
-        <p class="hint" id="setup-display-notice">Your resolution and UI scale stay unchanged. This layout is copied as saved; a different display size or UI scale may need manual adjustment in EVE.</p>
         <div class="row">
           <button class="btn" id="setup-review" type="button" disabled>Review</button>
           <button class="btn" id="setup-create" type="button" disabled>Create profile</button>
