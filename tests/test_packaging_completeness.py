@@ -377,6 +377,47 @@ def test_ci_keeps_the_independent_codec_regression():
     )
 
 
+def test_ci_scopes_pushes_and_concurrency_group_per_pr_or_ref():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    assert workflow[True]["push"]["branches"] == ["main"]
+    assert workflow[True]["pull_request"] is None
+    assert workflow["concurrency"]["group"] == (
+        "ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    )
+
+
+def test_ci_publishes_pytest_junit_and_timing_artifacts_even_when_test_fails():
+    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    names = [step.get("name") for step in steps]
+
+    test_step = next(step for step in steps if step.get("name") == "Test")
+    assert "--durations=30" in test_step["run"].split()
+
+    summarize_step = steps[names.index("Test") + 1]
+    assert summarize_step["name"] == "Summarize test timing"
+    assert summarize_step["if"] == "always()"
+    assert summarize_step["run"] == (
+        "uv run --no-sync python scripts/summarize_pytest_junit.py "
+        "pytest-result.xml pytest-timing.json --if-present"
+    )
+
+    upload_step = steps[names.index("Test") + 2]
+    assert upload_step["name"] == "Upload pytest evidence"
+    assert upload_step["if"] == "always()"
+    assert (
+        upload_step["uses"]
+        == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    )
+    assert upload_step["with"]["if-no-files-found"] == "warn"
+    assert upload_step["with"]["name"] == "pytest-evidence-${{ matrix.os }}"
+    assert upload_step["with"]["path"].splitlines() == [
+        "pytest-result.xml",
+        "pytest-timing.json",
+    ]
+
+
 @pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)
 def test_workflow_codec_install_fails_missing_build_then_copies_to_runtime_location(
     workflow, job, tmp_path, monkeypatch
