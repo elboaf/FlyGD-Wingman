@@ -95,6 +95,7 @@ class FleetRow:
     dps: int | None
     ewar: tuple[str, ...] = ()
     log_status: str | None = None
+    incoming_dps: int | None = None
 
 
 @dataclass(frozen=True)

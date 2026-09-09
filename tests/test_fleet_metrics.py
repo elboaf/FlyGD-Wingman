@@ -60,13 +60,21 @@ def _lifecycle(character, *, generation=1, source_id=None, available=True, activ
     )
 
 
-def _damage(character, amount, occurred_at, *, source_generation=1, source_id=None):
+def _damage(
+    character,
+    amount,
+    occurred_at,
+    *,
+    source_generation=1,
+    source_id=None,
+    kind="outgoing_damage",
+):
     return CombatFact(
         character=character,
         source_generation=source_generation,
         source_id=source_id if source_id is not None else _source_id(),
         occurred_at=occurred_at,
-        kind="outgoing_damage",
+        kind=kind,
         amount=amount,
     )
 
@@ -198,34 +206,40 @@ class TestBinding:
         metrics.consume(_env(2, _lifecycle("Alice")))
         metrics.consume(_env(3, _damage("Alice", 100, NOW)))
         metrics.consume(_env(4, _tackle("Alice", NOW)))
-        snap = metrics.snapshot(5, HEALTH)
+        metrics.consume(_env(5, _damage("Alice", 250, NOW, kind="incoming_damage")))
+        snap = metrics.snapshot(6, HEALTH)
         row = _row(snap, "Alice")
         assert row.dps == 10
+        assert row.incoming_dps == 25
         assert row.ewar == (TACKLE_TAG,)
 
         # A relog: same character name, new session (different hwnd).
-        metrics.consume(_env(6, _roster(_session("Alice", hwnd=2))))
-        row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        metrics.consume(_env(7, _roster(_session("Alice", hwnd=2))))
+        row = _row(metrics.snapshot(8, HEALTH), "Alice")
         assert row.dps is None
+        assert row.incoming_dps is None
         assert row.log_status == NO_LOG
         assert row.ewar == ()
 
-        # The OLD source's fact, actually consumed AFTER the session already
-        # changed, must be rejected outright -- there is no bound source for
-        # the new session yet, so it cannot silently reappear once one
-        # binds.
-        metrics.consume(_env(8, _damage("Alice", 999, NOW)))
-        row = _row(metrics.snapshot(9, HEALTH), "Alice")
+        # The OLD source's facts, actually consumed AFTER the session
+        # already changed, must be rejected outright -- there is no bound
+        # source for the new session yet, so neither direction can
+        # silently reappear once one binds.
+        metrics.consume(_env(9, _damage("Alice", 999, NOW)))
+        metrics.consume(_env(10, _damage("Alice", 999, NOW, kind="incoming_damage")))
+        row = _row(metrics.snapshot(11, HEALTH), "Alice")
         assert row.dps is None
+        assert row.incoming_dps is None
         assert row.log_status == NO_LOG
 
         # Rebinding the new session must start from a clean deque/deadline:
         # a fact for the OLD source generation/identity must stay rejected,
-        # and the OLD fact consumed above must not have been queued for
+        # and the OLD facts consumed above must not have been queued for
         # later delivery once binding happens.
-        metrics.consume(_env(10, _lifecycle("Alice", generation=2)))
-        row = _row(metrics.snapshot(11, HEALTH), "Alice")
+        metrics.consume(_env(12, _lifecycle("Alice", generation=2)))
+        row = _row(metrics.snapshot(13, HEALTH), "Alice")
         assert row.dps == 0
+        assert row.incoming_dps == 0
         assert row.ewar == ()
 
     def test_changed_source_generation_clears_damage_and_tackle(self):
@@ -234,13 +248,17 @@ class TestBinding:
         metrics.consume(_env(2, _lifecycle("Alice", generation=1)))
         metrics.consume(_env(3, _damage("Alice", 100, NOW)))
         metrics.consume(_env(4, _tackle("Alice", NOW)))
-        assert _row(metrics.snapshot(5, HEALTH), "Alice").dps == 10
+        metrics.consume(_env(5, _damage("Alice", 250, NOW, kind="incoming_damage")))
+        row = _row(metrics.snapshot(6, HEALTH), "Alice")
+        assert row.dps == 10
+        assert row.incoming_dps == 25
 
         # Same character/session, but a NEW source generation (e.g. file
         # rotation/relog at the log level, roster session unchanged).
-        metrics.consume(_env(6, _lifecycle("Alice", generation=2)))
-        row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        metrics.consume(_env(7, _lifecycle("Alice", generation=2)))
+        row = _row(metrics.snapshot(8, HEALTH), "Alice")
         assert row.dps == 0
+        assert row.incoming_dps == 0
         assert row.ewar == ()
         assert row.log_status is None
 
@@ -251,19 +269,24 @@ class TestBinding:
         metrics.consume(_env(2, _lifecycle("Alice", generation=1, source_id=source_id)))
         metrics.consume(_env(3, _damage("Alice", 100, NOW)))
         metrics.consume(_env(4, _tackle("Alice", NOW)))
-        assert _row(metrics.snapshot(5, HEALTH), "Alice").dps == 10
-        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == (TACKLE_TAG,)
+        metrics.consume(_env(5, _damage("Alice", 250, NOW, kind="incoming_damage")))
+        snap = metrics.snapshot(6, HEALTH)
+        row = _row(snap, "Alice")
+        assert row.dps == 10
+        assert row.incoming_dps == 25
+        assert row.ewar == (TACKLE_TAG,)
 
         # The source retires (folder loss, character logged out of the
         # gamelog stream, etc.) -- same generation/source_id, just inactive.
         metrics.consume(
             _env(
-                6,
+                7,
                 _lifecycle("Alice", generation=1, source_id=source_id, active=False),
             )
         )
-        row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        row = _row(metrics.snapshot(8, HEALTH), "Alice")
         assert row.dps is None
+        assert row.incoming_dps is None
         assert row.log_status == NO_LOG
         assert row.ewar == ()
 
@@ -272,9 +295,10 @@ class TestBinding:
         # source_generation/source_id were cleared on retirement, the
         # "changed source" check still fires and the old damage/tackle
         # cannot leak through as if they belonged to this fresh bind.
-        metrics.consume(_env(8, _lifecycle("Alice", generation=1, source_id=source_id)))
-        row = _row(metrics.snapshot(9, HEALTH), "Alice")
+        metrics.consume(_env(9, _lifecycle("Alice", generation=1, source_id=source_id)))
+        row = _row(metrics.snapshot(10, HEALTH), "Alice")
         assert row.dps == 0
+        assert row.incoming_dps == 0
         assert row.ewar == ()
         assert row.log_status is None
 
@@ -413,6 +437,108 @@ class TestDps:
 
 
 # ---------------------------------------------------------------------------
+# Incoming DPS: independent accumulation/decay from outgoing
+# ---------------------------------------------------------------------------
+
+
+class TestIncomingDps:
+    def _bound(self, metrics_and_boxes):
+        metrics, utc_box, mono_box = metrics_and_boxes
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        return metrics, utc_box, mono_box
+
+    def test_directions_accumulate_and_decay_independently(self):
+        metrics, utc_box, _ = self._bound(_metrics())
+        metrics.consume(_env(3, _damage("Alice", 100, NOW, kind="outgoing_damage")))
+        metrics.consume(_env(4, _damage("Alice", 250, NOW, kind="incoming_damage")))
+        row = _row(metrics.snapshot(5, HEALTH), "Alice")
+        assert row.dps == 10
+        assert row.incoming_dps == 25
+        utc_box[0] = NOW + datetime.timedelta(seconds=10)
+        row = _row(metrics.snapshot(6, HEALTH), "Alice")
+        assert (row.dps, row.incoming_dps) == (0, 0)
+
+    def test_bound_zero_and_unbound_unavailable_cover_both_directions(self):
+        metrics, _, _ = self._bound(_metrics())
+        # Bound row: a real observed zero in both directions.
+        row = _row(metrics.snapshot(3, HEALTH), "Alice")
+        assert row.dps == 0
+        assert row.incoming_dps == 0
+
+        metrics2, _, _ = _metrics()
+        metrics2.consume(_env(1, _roster(_session("Bob"))))
+        # Never bound: unmeasured in both directions, not zero.
+        row = _row(metrics2.snapshot(2, HEALTH), "Bob")
+        assert row.dps is None
+        assert row.incoming_dps is None
+        assert row.log_status == NO_LOG
+
+    def test_incoming_half_up_rounding(self):
+        metrics, _, _ = self._bound(_metrics())
+        metrics.consume(_env(3, _damage("Alice", 105, NOW, kind="incoming_damage")))
+        row = _row(metrics.snapshot(4, HEALTH), "Alice")
+        assert row.incoming_dps == 11  # 105 / 10 = 10.5 -> half-up -> 11
+
+    def test_incoming_exact_ten_seconds_old_excluded(self):
+        metrics, utc_box, _ = self._bound(_metrics())
+        metrics.consume(_env(3, _damage("Alice", 100, NOW, kind="incoming_damage")))
+        utc_box[0] = NOW + datetime.timedelta(seconds=10)
+        row = _row(metrics.snapshot(4, HEALTH), "Alice")
+        assert row.incoming_dps == 0
+
+    def test_incoming_future_within_two_seconds_is_clamped(self):
+        metrics, _, _ = self._bound(_metrics())
+        future = NOW + datetime.timedelta(seconds=2)
+        metrics.consume(_env(3, _damage("Alice", 100, future, kind="incoming_damage")))
+        row = _row(metrics.snapshot(4, HEALTH), "Alice")
+        assert row.incoming_dps == 10
+        assert metrics.snapshot(5, HEALTH).metric_error is None
+
+    def test_incoming_future_more_than_two_seconds_is_rejected_with_direction_specific_error(
+        self,
+    ):
+        metrics, _, _ = self._bound(_metrics())
+        future = NOW + datetime.timedelta(seconds=2, microseconds=1)
+        metrics.consume(_env(3, _damage("Alice", 100, future, kind="incoming_damage")))
+        snap = metrics.snapshot(4, HEALTH)
+        row = _row(snap, "Alice")
+        assert row.incoming_dps == 0
+        assert snap.metric_error is not None
+        assert "incoming" in snap.metric_error
+
+        metrics2, _, _ = self._bound(_metrics())
+        metrics2.consume(_env(3, _damage("Alice", 100, future, kind="outgoing_damage")))
+        outgoing_error = metrics2.snapshot(4, HEALTH).metric_error
+        assert outgoing_error is not None
+        assert outgoing_error != snap.metric_error
+
+    def test_accepted_incoming_clears_metric_error_from_future_outgoing(self):
+        metrics, _, _ = self._bound(_metrics())
+        future = NOW + datetime.timedelta(seconds=5)
+        metrics.consume(_env(3, _damage("Alice", 100, future, kind="outgoing_damage")))
+        assert metrics.snapshot(4, HEALTH).metric_error is not None
+        metrics.consume(_env(5, _damage("Alice", 50, NOW, kind="incoming_damage")))
+        assert metrics.snapshot(6, HEALTH).metric_error is None
+
+    def test_accepted_outgoing_clears_metric_error_from_future_incoming(self):
+        metrics, _, _ = self._bound(_metrics())
+        future = NOW + datetime.timedelta(seconds=5)
+        metrics.consume(_env(3, _damage("Alice", 100, future, kind="incoming_damage")))
+        assert metrics.snapshot(4, HEALTH).metric_error is not None
+        metrics.consume(_env(5, _damage("Alice", 50, NOW, kind="outgoing_damage")))
+        assert metrics.snapshot(6, HEALTH).metric_error is None
+
+    def test_accepted_ewar_clears_metric_error_from_future_incoming(self):
+        metrics, _, _ = self._bound(_metrics())
+        future = NOW + datetime.timedelta(seconds=5)
+        metrics.consume(_env(3, _damage("Alice", 100, future, kind="incoming_damage")))
+        assert metrics.snapshot(4, HEALTH).metric_error is not None
+        metrics.consume(_env(5, _tackle("Alice", NOW)))
+        assert metrics.snapshot(6, HEALTH).metric_error is None
+
+
+# ---------------------------------------------------------------------------
 # Fact sequencing: staleness/duplication independent of lifecycle binding
 # ---------------------------------------------------------------------------
 
@@ -469,6 +595,25 @@ class TestFactSequencing:
         metrics.consume(_env(5, _damage("Alice", 100, NOW)))
         row = _row(metrics.snapshot(8, HEALTH), "Alice")
         assert row.dps == 10
+        assert metrics.snapshot(9, HEALTH).metric_error is None
+
+    def test_rejected_future_incoming_fact_does_not_consume_sequence(self):
+        metrics, _, _ = self._bound(_metrics())
+        # Rejected: more than two seconds in the future.
+        far_future = NOW + datetime.timedelta(seconds=3)
+        metrics.consume(
+            _env(5, _damage("Alice", 999, far_future, kind="incoming_damage"))
+        )
+        row = _row(metrics.snapshot(6, HEALTH), "Alice")
+        assert row.incoming_dps == 0
+        assert metrics.snapshot(7, HEALTH).metric_error is not None
+
+        # A corrected incoming fact reusing the SAME sequence number is
+        # still accepted: the rejected far-future fact never advanced
+        # last_fact_sequence.
+        metrics.consume(_env(5, _damage("Alice", 100, NOW, kind="incoming_damage")))
+        row = _row(metrics.snapshot(8, HEALTH), "Alice")
+        assert row.incoming_dps == 10
         assert metrics.snapshot(9, HEALTH).metric_error is None
 
 
@@ -597,6 +742,22 @@ class TestSpecificEwarAndActivity:
         assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ("SCRAM",)
         mono_box[0] = 150.0
         assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ()
+
+    def test_incoming_damage_does_not_refresh_observed_ewar(self):
+        metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
+        metrics.consume(_env(3, _ewar("Alice", "incoming_scram", NOW)))
+
+        utc_box[0] = NOW + datetime.timedelta(seconds=20)
+        mono_box[0] = 120.0
+        metrics.consume(
+            _env(4, _damage("Alice", 100, utc_box[0], kind="incoming_damage"))
+        )
+
+        mono_box[0] = 130.0
+        # Had incoming damage refreshed activity like outgoing does, the
+        # SCRAM tag observed at mono 100 would still be visible here (its
+        # deadline would have moved to 150). It must not.
+        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
 
     def test_delayed_ewar_uses_event_time_not_ingestion_time(self):
         metrics, _, mono_box = self._bound(_metrics(mono=100.0))
