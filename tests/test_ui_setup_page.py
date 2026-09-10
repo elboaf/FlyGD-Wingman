@@ -1,14 +1,16 @@
 """Execute the production setup module and PageTree markup, not layout evidence."""
 
 import json
+import os
+import random
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman/web"
@@ -203,30 +205,240 @@ class SetupPageTree(PageTree):
         node["text"] = node.get("text", "") + data
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize("scenario", SCENARIOS + IMPORT_SCENARIOS)
-def test_setup_page_runtime(tmp_path, monkeypatch, scenario):
-    if scenario in ("unicode-locale", "import-unicode"):
-        monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+@pytest.fixture(scope="session")
+def setup_page_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
     page = SetupPageTree()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
-    markup = tmp_path / "page.json"
-    markup.write_text(json.dumps(page.root, ensure_ascii=False), encoding="utf-8")
-    result = subprocess.run(
+    path = tmp_path_factory.mktemp("setup-page") / "page.json"
+    path.write_text(json.dumps(page.root, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(scope="session")
+def setup_page_static_fixtures(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    from tests.setup_fixtures import wire
+    from wingman.evesettings import setup_model, setup_sharing
+    from wingman.evesettings.controller import ProfilesController
+    from wingman.ui.api import Api
+
+    def export_reply(label: str) -> dict:
+        value = wire()
+        value["overview"]["shipLabels"][0]["pre"] = label
+        return {
+            "ok": True,
+            "error": "",
+            "text": setup_sharing.export_text(value),
+            "summary": setup_model.summarize(setup_model.validate_wingman(value)),
+            "warnings": [
+                "2 effective unsaved filter definitions override saved definitions "
+                "in this snapshot."
+            ],
+        }
+
+    api = Api.__new__(Api)
+    api._profiles = ProfilesController.__new__(ProfilesController)
+    native_path = ROOT / "tests/fixtures/ui_setup/native-complete.yaml"
+    native_text = native_path.read_text(encoding="utf-8")
+    native = setup_sharing.parse_text(native_text)
+    fixtures = {
+        "scenarios": SCENARIOS + IMPORT_SCENARIOS,
+        "limits": api.eve_settings_setup_limits(),
+        "exported": export_reply("Étiquette 𐐀 <b>literal</b>"),
+        "fresh_export": export_reply("Fresh é 𐐀 <script>"),
+        "native": {
+            "text": native_text,
+            "summary": setup_model.summarize(native),
+            "warnings": list(native.warnings),
+            "ambiguous": native.ambiguous_labels,
+        },
+    }
+    path = tmp_path_factory.mktemp("setup-page-fixtures") / "fixtures.json"
+    path.write_text(json.dumps(fixtures, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(scope="session")
+def setup_page_worker(setup_page_markup: Path, setup_page_static_fixtures: Path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    worker = NodeScenarioWorker(
         [
-            "node",
+            node,
             str(ROOT / "tests/fixtures/ui_setup_page.cjs"),
-            str(markup),
-            scenario,
+            str(setup_page_markup),
+            str(setup_page_static_fixtures),
             str(WEB / "uisetup.js"),
             sys.executable,
-            "import" if scenario in IMPORT_SCENARIOS else "export",
         ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=60,
-        check=False,
+        cwd=ROOT,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert f"PASS {scenario}" in result.stdout
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+def test_setup_page_worker_protocol_reuses_process_and_correlates_unknown_scenario(
+    setup_page_worker: NodeScenarioWorker,
+):
+    first = setup_page_worker.request(
+        "copy-unavailable", {"mode": "export", "env": {}}, timeout=60.0
+    )
+    process = setup_page_worker._proc
+    second = setup_page_worker.request(
+        "ux-initial-source-choice", {"mode": "import", "env": {}}, timeout=60.0
+    )
+
+    assert first["output"] == "PASS copy-unavailable"
+    assert second["output"] == "PASS ux-initial-source-choice"
+    assert setup_page_worker._proc is process
+    with pytest.raises(NodeScenarioFailure, match="unknown scenario") as failure:
+        setup_page_worker.request(
+            "not-a-setup-scenario", {"mode": "export", "env": {}}, timeout=60.0
+        )
+    assert failure.value.reply is not None
+    assert failure.value.reply["id"] == second["id"] + 1
+    assert failure.value.reply["scenario"] == "not-a-setup-scenario"
+    assert setup_page_worker._proc is process
+
+
+@pytest.mark.parametrize("failure_mode", ["throw", "reject"])
+def test_setup_page_worker_preserves_vm_error_stack(
+    setup_page_markup: Path,
+    setup_page_static_fixtures: Path,
+    tmp_path: Path,
+    failure_mode: str,
+):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    source = (WEB / "uisetup.js").read_text(encoding="utf-8")
+    module = tmp_path / "setup-vm-error.js"
+    trigger = (
+        "vmOriginFailure();"
+        if failure_mode == "throw"
+        else "Promise.resolve().then(vmOriginFailure);"
+    )
+    module.write_text(
+        source
+        + "\nfunction vmOriginFailure() { throw new Error('VM-only sentinel'); }\n"
+        + trigger,
+        encoding="utf-8",
+    )
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/ui_setup_page.cjs"),
+            str(setup_page_markup),
+            str(setup_page_static_fixtures),
+            str(module),
+            sys.executable,
+        ],
+        cwd=ROOT,
+    )
+    try:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            worker.request("copy-unavailable", {"mode": "export", "env": {}})
+        assert "vmOriginFailure" in failure.value.stack
+        assert "setup-vm-error.js:" in failure.value.stack
+        assert failure.value.reply["error"] == "VM-only sentinel"
+        process = worker._proc
+        module.write_text(source, encoding="utf-8")
+        assert (
+            worker.request("copy-unavailable", {"mode": "export", "env": {}})["ok"]
+            is True
+        )
+        assert worker._proc is process
+    finally:
+        worker.close()
+
+
+def test_setup_page_worker_consumes_encoding_overlay_without_mutating_parent(
+    setup_page_worker: NodeScenarioWorker,
+):
+    parent_encoding = os.environ.get("PYTHONIOENCODING")
+    ascii_reply = setup_page_worker.request(
+        "unicode-locale",
+        {"mode": "export", "env": {"PYTHONIOENCODING": "ascii"}},
+        timeout=60.0,
+    )
+    cp1252_export = setup_page_worker.request(
+        "unicode-locale",
+        {"mode": "export", "env": {"PYTHONIOENCODING": "cp1252"}},
+        timeout=60.0,
+    )
+    cp1252_import = setup_page_worker.request(
+        "import-unicode",
+        {"mode": "import", "env": {"PYTHONIOENCODING": "cp1252"}},
+        timeout=60.0,
+    )
+    inherited_reply = setup_page_worker.request(
+        "unicode-locale", {"mode": "export", "env": {}}, timeout=60.0
+    )
+
+    assert ascii_reply["encoding_boundary"] == "ascii"
+    assert cp1252_export["encoding_boundary"] == "cp1252"
+    assert cp1252_import["encoding_boundary"] == "cp1252"
+    assert inherited_reply["encoding_boundary"] == (parent_encoding or "")
+    assert os.environ.get("PYTHONIOENCODING") == parent_encoding
+
+
+def _setup_payload(scenario: str) -> dict:
+    return {
+        "mode": "import" if scenario in IMPORT_SCENARIOS else "export",
+        "env": (
+            {"PYTHONIOENCODING": "cp1252"}
+            if scenario in {"unicode-locale", "import-unicode"}
+            else {}
+        ),
+    }
+
+
+def test_setup_page_worker_isolation_sentinel(
+    setup_page_worker: NodeScenarioWorker,
+):
+    first_a = setup_page_worker.request(
+        "copy-unavailable", _setup_payload("copy-unavailable"), timeout=60.0
+    )
+    middle_b = setup_page_worker.request(
+        "ux-initial-source-choice",
+        _setup_payload("ux-initial-source-choice"),
+        timeout=60.0,
+    )
+    second_a = setup_page_worker.request(
+        "copy-unavailable", _setup_payload("copy-unavailable"), timeout=60.0
+    )
+
+    assert middle_b["output"] == "PASS ux-initial-source-choice"
+    assert first_a["output"] == second_a["output"] == "PASS copy-unavailable"
+    assert second_a["id"] == first_a["id"] + 2
+
+
+def test_setup_page_worker_order_isolation(setup_page_worker: NodeScenarioWorker):
+    scenarios = SCENARIOS + IMPORT_SCENARIOS
+
+    def run(order: list[str]) -> dict[str, str]:
+        return {
+            scenario: setup_page_worker.request(
+                scenario, _setup_payload(scenario), timeout=60.0
+            )["output"]
+            for scenario in order
+        }
+
+    forward = run(scenarios)
+    reverse = run(list(reversed(scenarios)))
+    seed = 20260304
+    shuffled = scenarios.copy()
+    random.Random(seed).shuffle(shuffled)
+    print(f"setup page worker isolation seed: {seed}")
+    seeded = run(shuffled)
+
+    assert forward == reverse == seeded
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("scenario", SCENARIOS + IMPORT_SCENARIOS)
+def test_setup_page_runtime(setup_page_worker: NodeScenarioWorker, scenario: str):
+    result = setup_page_worker.request(scenario, _setup_payload(scenario), timeout=60.0)
+    assert result["output"] == f"PASS {scenario}"

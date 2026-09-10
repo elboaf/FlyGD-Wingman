@@ -369,12 +369,67 @@ def test_workflow_setup_prerequisites_precede_pytest_without_optional_gates(
             assert "-rs" in step["run"].split()
 
 
-def test_ci_keeps_the_independent_codec_regression():
-    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
-    step = next(s for s in steps if s.get("name") == "Test settings codec")
+@pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)
+def test_every_full_test_workflow_keeps_the_independent_codec_regression(workflow, job):
+    steps = _workflow_steps(workflow, job)
+    names = [step.get("name") for step in steps]
+    assert "Test settings codec" in names, (
+        f"{workflow.name}:{job} must run the codec's independent cargo regression"
+    )
+    codec_index = names.index("Test settings codec")
+    step = steps[codec_index]
+    pytest_indexes = [
+        index
+        for index, pytest_step in enumerate(steps)
+        if re.search(r"\bpytest(?:\s|$)", pytest_step.get("run", ""))
+    ]
+    assert pytest_indexes, f"{workflow.name}:{job} must run pytest"
+    assert codec_index > max(pytest_indexes)
+    assert not step.get("continue-on-error") and "if" not in step
     assert step["run"] == (
         "cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml"
     )
+
+
+def test_ci_scopes_pushes_and_concurrency_group_per_pr_or_ref():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    assert workflow[True]["push"]["branches"] == ["main"]
+    assert workflow[True]["pull_request"] is None
+    assert workflow["concurrency"]["group"] == (
+        "ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    )
+
+
+def test_ci_publishes_pytest_junit_and_timing_artifacts_even_when_test_fails():
+    steps = _workflow_steps(ROOT / ".github/workflows/ci.yml", "test")
+    names = [step.get("name") for step in steps]
+
+    test_step = next(step for step in steps if step.get("name") == "Test")
+    assert "--durations=30" in test_step["run"].split()
+
+    summarize_step = steps[names.index("Test") + 1]
+    assert summarize_step["name"] == "Summarize test timing"
+    assert summarize_step["if"] == "always()"
+    assert summarize_step["run"] == (
+        "uv run --no-sync python scripts/summarize_pytest_junit.py "
+        "pytest-result.xml pytest-timing.json --if-present"
+    )
+
+    upload_step = steps[names.index("Test") + 2]
+    assert upload_step["name"] == "Upload pytest evidence"
+    assert upload_step["if"] == "always()"
+    assert (
+        upload_step["uses"]
+        == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    )
+    assert upload_step["with"]["if-no-files-found"] == "warn"
+    assert upload_step["with"]["name"] == "pytest-evidence-${{ matrix.os }}"
+    assert upload_step["with"]["path"].splitlines() == [
+        "pytest-result.xml",
+        "pytest-timing.json",
+    ]
 
 
 @pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)

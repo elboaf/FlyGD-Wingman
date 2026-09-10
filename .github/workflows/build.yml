@@ -62,6 +62,8 @@ jobs:
           PY
       - name: Test
         run: uv run --no-sync python -m pytest tests/ -v -rs
+      - name: Test settings codec
+        run: cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
 
   build:
     needs: test

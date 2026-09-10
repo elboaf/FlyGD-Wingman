@@ -1,12 +1,37 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const readline = require('node:readline');
 const vm = require('node:vm');
+const {isNativeError} = require('node:util').types;
 const {spawnSync} = require('node:child_process');
+const {performance} = require('node:perf_hooks');
+
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const scenario = process.argv[3];
+const staticFixtures = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const productionModule = process.argv[4];
+const pythonExe = process.argv[5];
+
+async function runScenario(request, staticFixtures) {
+const scenario = request.scenario;
+assert.ok(staticFixtures.scenarios.includes(scenario), 'unknown scenario: ' + scenario);
+assert.ok(request.payload && ['import', 'export'].includes(request.payload.mode), 'unknown setup mode');
+const started = performance.now();
 const coupled = scenario.startsWith('detached-') || scenario.startsWith('profiles-refresh-');
 const scrollCalls = [];
+const requestTimers = new Set();
+const unhandledRejections = [];
+const onUnhandledRejection = error => unhandledRejections.push(error);
+const requestSetTimeout = (callback, delay, ...args) => {
+  const timer = setTimeout(() => {
+    requestTimers.delete(timer);
+    callback(...args);
+  }, delay);
+  requestTimers.add(timer);
+  return timer;
+};
+process.on('unhandledRejection', onUnhandledRejection);
 
+try {
 // PageTree supplies real production ancestry/attributes. Only DOM mechanics and
 // bridge/clipboard delivery are doubled; no setup page state lives in this DOM.
 class Element {
@@ -101,9 +126,9 @@ const ordinaryCopies = [], rootPicks = [], identityChecks = [], identityConfirms
 let nameResolutions = 0;
 const devCatalog = scenario.startsWith('catalog-dev-') ? {} : null;
 if (devCatalog) {
-  const source = fs.readFileSync(require('node:path').dirname(process.argv[4]) + '/dev.js', 'utf8');
+  const source = fs.readFileSync(require('node:path').dirname(productionModule) + '/dev.js', 'utf8');
   vm.runInNewContext(source.slice(source.indexOf('  var DEV_SETUP_LIMITS ='), source.indexOf('  function eveMutation(')),
-    {api: devCatalog, eve: {}, Promise, devSearch: new URLSearchParams('catalog=' + scenario.slice('catalog-dev-'.length)), setTimeout, window: {}});
+    {api: devCatalog, eve: {}, Promise, devSearch: new URLSearchParams('catalog=' + scenario.slice('catalog-dev-'.length)), setTimeout: requestSetTimeout, window: {}});
 }
 function deferred(args) {
   let resolve, reject;
@@ -166,35 +191,35 @@ let WM = {
   }
 };
 assert.ok(ids['route-uisetup'], 'Missing production setup route');
-assert.ok(fs.existsSync(process.argv[4]), 'Missing production setup module');
+assert.ok(fs.existsSync(productionModule), 'Missing production setup module');
 if (coupled) {
   // Real shell route dispatch, sole completion owner, both modules' complete
   // DOM wiring and renderers. Only bridge delivery and DOM mechanics are seams.
   const bridge = WM.send, formationsDone = WM.formationsDone;
   const window = new Element('window');
-  const directory = require('node:path').dirname(process.argv[4]);
+  const directory = require('node:path').dirname(productionModule);
   const runtime = vm.createContext({window, document, navigator, console, Promise,
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }});
   vm.runInContext(fs.readFileSync(directory + '/app.js', 'utf8'), runtime);
   WM = runtime.WM = window.WM; WM.send = bridge; WM.formationsDone = formationsDone; handlers = window;
   vm.runInContext(fs.readFileSync(directory + '/evesettings.js', 'utf8'), runtime);
-  vm.runInContext(fs.readFileSync(process.argv[4], 'utf8'), runtime);
+  vm.runInContext(fs.readFileSync(productionModule, 'utf8'), runtime);
 } else {
-  vm.runInNewContext(fs.readFileSync(process.argv[4], 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(productionModule, 'utf8'), {
     WM, document, window: {}, navigator, console, Promise
-  }, {filename: process.argv[4]});
+  }, {filename: productionModule});
 }
 if (scenario === 'forwarded-completion') {
   // Execute the entire production owner. Only defer DOMContentLoaded wiring;
   // completion handlers register immediately, exactly as they do in the app.
   document.readyState = 'loading';
   document.querySelector = () => null;
-  const owner = require('node:path').join(require('node:path').dirname(process.argv[4]), 'evesettings.js');
+  const owner = require('node:path').join(require('node:path').dirname(productionModule), 'evesettings.js');
   vm.runInNewContext(fs.readFileSync(owner, 'utf8'), {WM, document, window: {}, console, Promise});
   document.readyState = 'complete';
 }
 if (scenario.startsWith('catalog-dialog-') || scenario.startsWith('setup-dialog-')) {
-  const panel = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
+  const panel = require('node:path').join(require('node:path').dirname(productionModule), 'panel.js');
   vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {
     window: {WM, getComputedStyle: node => {
       for (; node; node = node.parentNode) {
@@ -236,45 +261,62 @@ function context(profile = 'profile-A') {
   }
   return data;
 }
-// Use the real facade limits, parser/exporter and summary with synthetic fixture
-// data. Both directions explicitly use UTF-8 bytes, even under cp1252 stdio.
-function python(kind, text = 'Étiquette 𐐀 <b>literal</b>') {
+// Common production replies are built once by pytest. Only boundary scenarios
+// spawn Python for request-specific filesystem or process-environment behavior.
+function spawnPython(script, input) {
+  const env = {...process.env, ...((request.payload && request.payload.env) || {})};
+  const result = spawnSync(pythonExe, ['-c', script], {
+    input: JSON.stringify(input), encoding: 'utf8', env
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+function encodingRoundTrip(value) {
   const script = [
-    'import json,sys',
-    'from wingman.ui.api import Api',
-    'from wingman.evesettings.controller import ProfilesController',
-    'from wingman.evesettings import setup_model, setup_sharing',
-    'from tests.setup_fixtures import wire',
-    'kind,label=json.loads(sys.stdin.buffer.read().decode("utf-8"))',
-    'api=Api.__new__(Api); api._profiles=ProfilesController.__new__(ProfilesController)',
-    'value=wire(); value["overview"]["shipLabels"][0]["pre"]=label',
-    'result=api.eve_settings_setup_limits() if kind=="limits" else {"ok":True,"error":"","text":setup_sharing.export_text(value),"summary":setup_model.summarize(setup_model.validate_wingman(value)),"warnings":["2 effective unsaved filter definitions override saved definitions in this snapshot."]}',
-    'if kind=="native":',
-    ' from pathlib import Path',
-    ' text=Path("tests/fixtures/ui_setup/native-complete.yaml").read_text(encoding="utf-8"); parsed=setup_sharing.parse_text(text)',
-    ' result={"text":text,"summary":setup_model.summarize(parsed),"warnings":list(parsed.warnings),"ambiguous":parsed.ambiguous_labels}',
-    'if kind=="boundary":',
-    ' import tempfile,pytest',
-    ' from pathlib import Path',
-    ' from dataclasses import replace',
-    ' from tests.test_ui_setup_controller import setup,review',
-    ' with tempfile.TemporaryDirectory() as temp, pytest.MonkeyPatch.context() as patch:',
-    '  patch.setenv("LOCALAPPDATA",temp)',
-    '  ctl,_,base=setup.__wrapped__(Path(temp),patch)',
-    '  if label=="eve-unknown": ctl._ports=replace(ctl._ports,profile_copy_refusal=lambda:"Cannot confirm that EVE is closed.")',
-    '  result=review(ctl,base,text="broken: [" if label=="malformed-text" else None)',
-    '  if label=="stale-manifest":',
-    '   assert result["ok"],result',
-    '   (base.profile/"prefs.ini").write_bytes(b"changed after review")',
-    '   result=ctl.setup_create(result["review_id"],"ui-boundary")',
-    '   assert not result["accepted"] and not ctl._done_pushes',
-    '  else: assert not result["ok"]',
+    'import json,os,sys',
+    'value=json.loads(sys.stdin.buffer.read().decode("utf-8"))',
+    'result={"value":value,"encoding":os.environ.get("PYTHONIOENCODING","")}',
     'sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False).encode("utf-8"))'
   ].join('\n');
-  const result = spawnSync(process.argv[5], ['-c', script], {input: JSON.stringify([kind, text]), encoding: 'utf8'});
-  assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
+  return spawnPython(script, value);
 }
-const exported = python('export');
+function python(kind, text = 'Étiquette 𐐀 <b>literal</b>') {
+  if (kind !== 'boundary') {
+    const fixture = kind === 'export'
+      ? (text === 'Fresh é 𐐀 <script>' ? staticFixtures.fresh_export : staticFixtures.exported)
+      : staticFixtures[kind];
+    assert.ok(fixture, 'Missing static fixture: ' + kind);
+    return structuredClone(fixture);
+  }
+  const script = [
+    'import json,sys,tempfile,pytest',
+    'from pathlib import Path',
+    'from dataclasses import replace',
+    'from tests.test_ui_setup_controller import setup,review',
+    '_,label=json.loads(sys.stdin.buffer.read().decode("utf-8"))',
+    'with tempfile.TemporaryDirectory() as temp, pytest.MonkeyPatch.context() as patch:',
+    ' patch.setenv("LOCALAPPDATA",temp)',
+    ' ctl,_,base=setup.__wrapped__(Path(temp),patch)',
+    ' if label=="eve-unknown": ctl._ports=replace(ctl._ports,profile_copy_refusal=lambda:"Cannot confirm that EVE is closed.")',
+    ' result=review(ctl,base,text="broken: [" if label=="malformed-text" else None)',
+    ' if label=="stale-manifest":',
+    '  assert result["ok"],result',
+    '  (base.profile/"prefs.ini").write_bytes(b"changed after review")',
+    '  result=ctl.setup_create(result["review_id"],"ui-boundary")',
+    '  assert not result["accepted"] and not ctl._done_pushes',
+    ' else: assert not result["ok"]',
+    'sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False).encode("utf-8"))'
+  ].join('\n');
+  return spawnPython(script, [kind, text]);
+}
+let exported = python('export');
+let encodingBoundary = '';
+if (scenario === 'unicode-locale' || scenario === 'import-unicode') {
+  const roundTrip = encodingRoundTrip(exported);
+  assert.deepEqual(roundTrip.value, exported, 'explicit UTF-8 buffers preserve the fixture');
+  exported = roundTrip.value;
+  encodingBoundary = roundTrip.encoding;
+}
 async function open(data = context()) {
   const opener = {mode: 'export', context: data, preferred_character: 'char-A'};
   WM.openUiSetup(opener);
@@ -298,7 +340,7 @@ function assertRetry() {
   assert.equal(WM.el('us-back').disabled, false);
 }
 async function main() {
-  if (process.argv[6] === 'import') { await importMain(); console.log('PASS ' + scenario); return; }
+  if (request.payload.mode === 'import') { await importMain(); return 'PASS ' + scenario; }
   assert.equal(WM.el('us-copy').disabled, true);
   assert.equal(WM.el('us-save').disabled, true);
   if (scenario === 'twenty-tab-help') {
@@ -460,7 +502,7 @@ async function main() {
   }
   assert.equal(mutations.length, 0, 'export never mutates EVE settings');
   assert.equal(WM.el('us-back').disabled, false);
-  console.log('PASS ' + scenario);
+  return 'PASS ' + scenario;
 }
 const importStatus = () => WM.el('setup-status').textContent;
 const input = (id, value) => { WM.el(id).value = value; WM.el(id).dispatchEvent({type: 'input'}); };
@@ -1475,4 +1517,52 @@ async function profilesRefreshMain() {
     }
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+const output = await main();
+await tick();
+if (unhandledRejections.length) {
+  const error = unhandledRejections[0];
+  throw isNativeError(error) ? error : new Error(String(error));
+}
+return {duration_ms: performance.now() - started, output, encoding_boundary: encodingBoundary};
+} finally {
+  process.removeListener('unhandledRejection', onUnhandledRejection);
+  for (const timer of requestTimers) clearTimeout(timer);
+  requestTimers.clear();
+}
+}
+
+async function serve() {
+  const input = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+  for await (const line of input) {
+    let request;
+    const requestStarted = performance.now();
+    try {
+      request = JSON.parse(line);
+      const result = await runScenario(request, staticFixtures);
+      process.stdout.write(JSON.stringify({
+        id: request.id,
+        scenario: request.scenario,
+        ok: true,
+        duration_ms: result.duration_ms,
+        error: '',
+        stack: '',
+        output: result.output,
+        encoding_boundary: result.encoding_boundary
+      }) + '\n');
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        id: request && Number.isInteger(request.id) ? request.id : 0,
+        scenario: request && typeof request.scenario === 'string' ? request.scenario : '',
+        ok: false,
+        duration_ms: performance.now() - requestStarted,
+        error: isNativeError(error) ? error.message : String(error),
+        stack: isNativeError(error) ? error.stack || '' : ''
+      }) + '\n');
+    }
+  }
+}
+
+serve().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

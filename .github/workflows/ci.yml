@@ -2,13 +2,13 @@
 name: CI
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
-# A push to a busy branch cancels its own superseded runs. Scoped by ref
-# so unrelated branches never cancel each other.
+# A push to a busy branch cancels its own superseded runs. Pull requests
+# scope cancellation by PR number while everything else scopes by ref.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -218,7 +218,19 @@ jobs:
         # annotations, which are readable from the API without an
         # authenticated log fetch -- the only way to see which tests
         # failed when no human is signed in.
-        run: uv run --no-sync python -m pytest tests/ -v -rs --junitxml=pytest-result.xml
+        run: uv run --no-sync python -m pytest tests/ -v -rs --durations=30 --junitxml=pytest-result.xml
+      - name: Summarize test timing
+        if: always()
+        run: uv run --no-sync python scripts/summarize_pytest_junit.py pytest-result.xml pytest-timing.json --if-present
+      - name: Upload pytest evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          if-no-files-found: warn
+          name: pytest-evidence-${{ matrix.os }}
+          path: |
+            pytest-result.xml
+            pytest-timing.json
       - name: Test settings codec
         run: cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
       - name: Surface failures
