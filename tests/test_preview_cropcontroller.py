@@ -203,19 +203,59 @@ def confirm(r):
     picker._confirm()
 
 
-def test_toggle_switches_an_existing_secondary_off_then_on(rig):
+@pytest.mark.parametrize("publication", ["pending-save", "published-before-receipt"])
+def test_toggle_switches_an_existing_secondary_off_then_on(
+    rig, monkeypatch, publication
+):
     r = rig({"Alice": DEFINITION})
     roster(r, 1, client())
+    pending = publication == "pending-save"
+    if not pending:
+        original_receipt = r.controller._receipt
 
-    assert toggle(r)["pending"]
-    finish(r)
-    assert not deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
-    assert "Alice" not in r.controller.live
+        def receipt_after_publication(token):
+            # The writer may win the race — observe its real committed outcome.
+            assert r.store.drain().result(5)
+            return original_receipt(token)
 
-    assert toggle(r)["pending"]
-    finish(r)
-    assert deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
-    assert "Alice" in r.controller.live
+        monkeypatch.setattr(r.controller, "_receipt", receipt_after_publication)
+
+    for count, enabled in enumerate((False, True), start=1):
+        r.transaction.entered.clear()
+        if pending:
+            r.transaction.release.clear()
+        try:
+            receipt = toggle(r)
+            assert r.transaction.entered.wait(5), (
+                f"Toggle enabled={enabled} did not reach publication: {receipt}"
+            )
+            assert receipt["pending"] is pending
+            assert receipt["applied"] is (not pending)
+            assert receipt["persisted"] is (not pending)
+            assert receipt["error"] is None
+            if pending:
+                assert r.completions.empty()
+                assert len(r.transaction.writes) == count - 1
+                assert deserialize(r.store.snapshot()["definitions"])[
+                    "Alice"
+                ].enabled is (not enabled)
+        finally:
+            r.transaction.release.set()
+        finish(r)
+        state = r.store.snapshot()
+        outcome = state["operations"][receipt["operation_id"]]
+        assert outcome["pending"] is False
+        assert outcome["applied"] is True
+        assert outcome["persisted"] is True
+        assert outcome["error"] is None
+        expected = replace(DEFINITION, enabled=enabled)
+        assert deserialize(state["definitions"])["Alice"] == expected
+        assert ("Alice" in r.controller.live) is enabled
+        assert len(r.transaction.writes) == count
+        assert (
+            deserialize(r.transaction.writes[-1]["preview"]["crops"])["Alice"]
+            == expected
+        )
 
 
 def test_toggle_without_a_saved_secondary_is_a_no_op(rig):
