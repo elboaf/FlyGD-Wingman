@@ -4,9 +4,9 @@
 Builds on [Phase 1 results](ci-test-strategy-phase-1-results.md) and the
 [contract-consolidation rules](ci-test-strategy-design.md#case-consolidation-process).
 Discovery source: `9a5380057b01a19bb68b540c69c7f5db560f9543`.
-PR #196 is still open at drafting time. Keep this proposal separate from that PR;
-implementation should start from its merged result, or an explicitly approved
-stacked branch, with source identities and collected cases refreshed first.
+Phase 1 landed in PR #196 (`a2224241b4e4ac05a890b3949dd5c55c074305a6`).
+This separate proposal is based on that merged result. Refresh source identities
+and collected cases at the implementation baseline before starting work.
 
 ## Intended outcome and scope
 
