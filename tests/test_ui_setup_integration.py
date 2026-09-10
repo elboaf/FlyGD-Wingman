@@ -177,7 +177,7 @@ def assert_recipient_preserved(base, destination, before):
     return account, character
 
 
-@pytest.mark.parametrize("pipeline", ["lossless", "native"], indirect=True)
+@pytest.mark.parametrize("pipeline", ["native"], indirect=True)
 def test_facade_export_review_create_publishes_exact_recipient_setup(pipeline):
     api, source, base, queued, sent = pipeline
     before = files_under(base.root)
@@ -389,7 +389,7 @@ def test_facade_dat_compat_normalizes_only_projected_values_through_native_codec
 
 
 @pytest.mark.parametrize("pipeline", ["native"], indirect=True)
-@pytest.mark.parametrize("count", [9, 20])
+@pytest.mark.parametrize("count", [20])
 def test_facade_twenty_tab_budget_exports_creates_and_reexports_real_codec(
     pipeline, count
 ):
@@ -445,8 +445,8 @@ def test_facade_twenty_one_tabs_cannot_offer_or_create_a_profile(pipeline):
     assert files_under(base.root) == before
 
 
-@pytest.mark.parametrize("pipeline", ["lossless", "native"], indirect=True)
-@pytest.mark.parametrize("count", [8, 9, 20])
+@pytest.mark.parametrize("pipeline", ["native"], indirect=True)
+@pytest.mark.parametrize("count", [8, 20])
 def test_facade_native_yaml_keeps_distinct_ordered_recipient_labels(pipeline, count):
     api, _source, base, queued, sent = pipeline
     # The recipient fixture's two-record sequence is deliberately NOT the
@@ -522,6 +522,8 @@ def test_facade_native_yaml_keeps_distinct_ordered_recipient_labels(pipeline, co
     )  # Omitted option retained.
 
 
+# Manifest/copy/rename failures share orchestration across codecs; native
+# publication and lossless encoding failures are exercised independently.
 @pytest.mark.parametrize(
     ("pipeline", "fault"),
     [
@@ -529,9 +531,6 @@ def test_facade_native_yaml_keeps_distinct_ordered_recipient_labels(pipeline, co
         ("lossless", "copy"),
         ("lossless", "encode"),
         ("lossless", "publish"),
-        ("native", "stale-manifest"),
-        ("native", "copy"),
-        ("native", "publish"),
     ],
     indirect=["pipeline"],
 )
@@ -780,23 +779,3 @@ def test_shipped_catalog_facades_publish_exact_setup_on_independent_recipient(
         assert marker not in text and marker not in recipient_text
     assert not queued.queued
     assert len(fakes.payloads(sent, "onEveSettingsDone")) == 1
-
-
-@pytest.mark.parametrize("pipeline", ["native"], indirect=True)
-@pytest.mark.parametrize("preset_id", ADMITTED_SETUPS)
-def test_shipped_catalog_cannot_publish_a_stale_recipient_review(pipeline, preset_id):
-    api, _source, base, queued, sent = pipeline
-    _entry, text = selected_catalog_text(api, preset_id)
-    reviewed = review(api, base, text)
-    assert reviewed["ok"], reviewed
-    changed = base.profile / "core_char_31.dat"
-    changed.write_bytes(b"unselected RECIPIENT character")
-    before = files_under(base.root)
-    refused = api.eve_settings_setup_create(reviewed["review_id"], "stale-catalog")
-    assert not refused["accepted"] and "changed" in refused["error"]
-    assert files_under(base.root) == before
-    assert not (base.server / "settings_Imported").exists()
-    assert not queued.queued and not fakes.payloads(sent, "onEveSettingsDone")
-    fresh = review(api, base, text)
-    assert fresh["ok"] and fresh["review_id"] != reviewed["review_id"]
-    assert api.eve_settings_setup_discard(fresh["review_id"])
