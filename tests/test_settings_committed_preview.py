@@ -217,6 +217,11 @@ def test_publication_does_not_copy_or_validate_after_durable_save(
     def save(data, path=None):
         original_save(data, path)
         patch.setattr(settings, "_prepare_preview_snapshot", forbidden)
+        patch.setattr(settings, "_prepare_preview_publication", forbidden)
+        patch.setattr(settings.alert_custom, "prepare_alert_snapshot", forbidden)
+        patch.setattr(settings, "validated_preview", forbidden)
+        patch.setattr(settings, "validated_alerts", forbidden)
+        patch.setattr(settings, "validated_custom_rules", forbidden)
         patch.setattr(settings.copy, "deepcopy", forbidden)
         patch.setattr(settings, "_normalize", forbidden)
 
@@ -224,7 +229,11 @@ def test_publication_does_not_copy_or_validate_after_durable_save(
         patch.setattr(settings, "_save_locked", save)
         with settings.update(document, path) as live:
             live["preview"]["minimize_inactive_clients"] = True
+            live["preview"]["alerts"]["custom_rules"] = [
+                {"id": "r1", "search": "fleet invite", "enabled": True}
+            ]
     assert reader.get("minimize_inactive_clients") is True
+    assert reader.alerts_snapshot().custom_rules[0].rule.search == "fleet invite"
     assert json.loads(path.read_text()) == document
 
 
@@ -255,12 +264,17 @@ def test_host_callback_keeps_reader_and_document_alive_without_registry_leak(
     reader = settings.committed_preview(document)
     reader_ref = weakref.ref(reader)
     callback = _host_config(monkeypatch, document).minimize_inactive_clients
+    alert_callback = reader.alerts_snapshot
     del document, reader
     gc.collect()
     assert document_ref() is not None  # prevents reuse of the registry's id key
     assert reader_ref() is not None
     assert callback() is False
     del callback
+    gc.collect()
+    assert reader_ref() is not None
+    assert alert_callback().custom_rules == ()
+    del alert_callback
     gc.collect()
     assert reader_ref() is None
     assert document_ref() is None
@@ -308,16 +322,27 @@ def test_unrelated_update_publishes_normalized_preview_without_schema_change(tmp
 def test_direct_save_keeps_its_existing_persistence_only_semantics(tmp_path):
     document = settings.load()
     reader = settings.committed_preview(document)
+    alerts = reader.alerts_snapshot()
     document["preview"]["opacity"] = 100
+    document["preview"]["alerts"]["custom_rules"] = [
+        {"id": "r1", "search": "fleet invite", "enabled": True}
+    ]
     settings.save(document, tmp_path / "settings.json")
-    assert settings.load(tmp_path / "settings.json")["preview"]["opacity"] == 100
+    saved = settings.load(tmp_path / "settings.json")["preview"]
+    assert saved["opacity"] == 100
+    assert saved["alerts"]["custom_rules"][0]["id"] == "r1"
     assert reader.get("opacity") == 255
+    assert reader.alerts_snapshot() is alerts
 
 
 def test_layout_and_crop_writers_advance_the_registered_reader(tmp_path):
     document = settings.load()
     path = tmp_path / "settings.json"
+    document["preview"]["alerts"]["custom_rules"] = [
+        {"id": "r1", "search": "fleet invite", "enabled": True}
+    ]
     reader = settings.committed_preview(document)
+    alerts = reader.alerts_snapshot()
 
     def update():
         return settings.update(document, path)
@@ -332,6 +357,9 @@ def test_layout_and_crop_writers_advance_the_registered_reader(tmp_path):
         entry = layout.Entry(Rect(1, 2, 320, 210), False)
         assert layouts.replace("Alice", entry)
         assert reader.get("layouts")["Alice"]["x"] == 1
+        assert reader.alerts_snapshot() == alerts
+        assert reader.alerts_snapshot() is not alerts
+        alerts = reader.alerts_snapshot()
         definition = crops.CropDefinition(
             crops.source_from_pixels(Rect(0, 0, 320, 180), (1280, 720)),
             Rect(40, 50, 320, 180),
@@ -339,10 +367,159 @@ def test_layout_and_crop_writers_advance_the_registered_reader(tmp_path):
         token = store.begin("Alice", epoch=0, session=None)
         assert store.put(token, definition).result(timeout=5).persisted
         assert reader.get("crops")["Alice"]["window"]["x"] == 40
+        assert reader.alerts_snapshot() == alerts
+        assert reader.alerts_snapshot() is not alerts
+        alerts = reader.alerts_snapshot()
         token = store.begin("Alice", epoch=0, session=None)
         assert store.set_enabled(token, False).result(timeout=5).persisted
         assert reader.get("crops")["Alice"]["enabled"] is False
+        assert reader.alerts_snapshot() == alerts
+        assert reader.alerts_snapshot() is not alerts
         assert reader.get("layouts")["Alice"]["x"] == 1
         assert json.loads(path.read_text())["preview"] == reader.snapshot()
     finally:
         assert store.close().result(timeout=5)
+
+
+@pytest.mark.parametrize("save_fails", [False, True], ids=["commit", "rollback"])
+def test_alert_readers_share_one_composite_while_save_is_blocked(
+    monkeypatch, tmp_path, save_fails
+):
+    path = tmp_path / "settings.json"
+    document = settings.load(path)
+    document["preview"]["alerts"]["custom_rules"] = [
+        {"id": "r1", "search": "fleet invite", "enabled": True}
+    ]
+    with settings.update(document, path):
+        pass
+    original_file, original_doc = path.read_bytes(), copy.deepcopy(document)
+    reader = settings.committed_preview(document)
+    sibling = settings.committed_preview(document)
+    other = settings.committed_preview(settings.load())
+    old_other = other.alerts_snapshot()
+    old_composite, old_alerts = reader._snapshot, reader.alerts_snapshot()
+    entered, release = Event(), Event()
+    original_save = settings._save_locked
+
+    def save(data, path=None):
+        entered.set()
+        assert release.wait(5)
+        if save_fails:
+            raise OSError("read-only")
+        original_save(data, path)
+
+    def change():
+        with settings.update(document, path):
+            document["preview"]["enabled"] = True
+            alerts = document["preview"]["alerts"]
+            alerts.update(
+                enabled=True, pve_filter=False, persist_until_selected=False, volume=23
+            )
+            alerts["events"]["combat"].update(
+                color="#abcdef", cooldown_s=7, sound="obey"
+            )
+            alerts["custom_rules"][0]["search"] = "new fleet invite"
+
+    monkeypatch.setattr(settings, "_save_locked", save)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(change)
+        try:
+            assert entered.wait(5)
+            for current in (reader, sibling):
+                assert (
+                    pool.submit(current.alerts_snapshot).result(timeout=1) is old_alerts
+                )
+                assert current._snapshot is old_composite
+                assert (
+                    pool.submit(current.snapshot).result(timeout=1)
+                    == original_doc["preview"]
+                )
+                assert pool.submit(current.get, "enabled").result(timeout=1) is False
+            assert path.read_bytes() == original_file
+        finally:
+            release.set()
+        if save_fails:
+            with pytest.raises(OSError, match="read-only"):
+                writer.result(timeout=5)
+        else:
+            writer.result(timeout=5)
+
+    assert reader is sibling
+    assert other.alerts_snapshot() is old_other
+    assert json.loads(path.read_text()) == document
+    if save_fails:
+        assert document == original_doc
+        assert path.read_bytes() == original_file
+        assert reader._snapshot is old_composite
+        assert reader.alerts_snapshot() is old_alerts
+    else:
+        snapshot = reader.alerts_snapshot()
+        assert snapshot is sibling.alerts_snapshot()
+        assert reader._snapshot is not old_composite
+        assert reader.snapshot() == document["preview"]
+        assert snapshot.preview_enabled is snapshot.alerts_enabled is True
+        assert snapshot.pve_filter is snapshot.persist_until_selected is False
+        assert snapshot.volume == 23
+        combat = next(row for row in snapshot.builtins if row.event == "combat")
+        assert (combat.color, combat.cooldown_s, combat.sound) == ("#abcdef", 7, "obey")
+        assert snapshot.custom_rules[0].rule.search == "new fleet invite"
+        assert snapshot.custom_rules[0].generation == old_alerts.rules_revision + 1
+        assert snapshot.activation_epoch == old_alerts.activation_epoch + 1
+        assert len(snapshot.executable) == 1
+
+
+def test_alert_projection_failure_preserves_document_disk_and_tokens(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "settings.json"
+    document = settings.load(path)
+    settings.save(document, path)
+    reader = settings.committed_preview(document)
+    before, original_file = copy.deepcopy(document), path.read_bytes()
+    old_composite, old_alerts = reader._snapshot, reader.alerts_snapshot()
+
+    def fail(preview, previous=None):
+        assert settings._SAVE_LOCK.locked()
+        assert preview["alerts"]["custom_rules"][0]["color"] == "#ff8c42"
+        assert previous is old_alerts
+        raise MemoryError("cannot prepare alerts")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("projection must finish before saving")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(settings.alert_custom, "prepare_alert_snapshot", fail)
+        patch.setattr(settings, "_save_locked", forbidden)
+        with (
+            pytest.raises(MemoryError, match="cannot prepare"),
+            settings.update(document, path),
+        ):
+            document["preview"]["alerts"]["custom_rules"] = [
+                {"id": "r1", "search": "fleet invite", "color": "bad"}
+            ]
+    assert document == before
+    assert path.read_bytes() == original_file
+    assert reader._snapshot is old_composite
+    assert reader.alerts_snapshot() is old_alerts
+    with settings.update(document, path):
+        document["preview"]["alerts"]["custom_rules"] = [{"id": "r1"}]
+    assert reader.alerts_snapshot().rules_revision == old_alerts.rules_revision + 1
+
+
+def test_failed_initial_alert_projection_does_not_register(monkeypatch):
+    document = settings.load()
+    before = copy.deepcopy(document)
+
+    def fail(preview, previous=None):
+        assert settings._SAVE_LOCK.locked()
+        assert previous is None
+        raise MemoryError("cannot initialize alerts")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(settings.alert_custom, "prepare_alert_snapshot", fail)
+        with pytest.raises(MemoryError, match="cannot initialize"):
+            settings.committed_preview(document)
+    assert id(document) not in settings._COMMITTED_PREVIEWS
+    assert document == before
+    reader = settings.committed_preview(document)
+    assert reader.alerts_snapshot().rules_revision == 1

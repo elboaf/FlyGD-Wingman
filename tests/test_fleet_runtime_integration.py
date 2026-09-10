@@ -350,7 +350,8 @@ def test_sharing_live_apply_does_not_publish_or_block_committed_preview(
     runner.start()
     try:
         assert entered.wait(2)
-        assert reader.snapshot() == snapshot
+        assert reader.snapshot() == snapshot.section
+        assert reader.alerts_snapshot() is snapshot.alerts
         assert reader._snapshot is snapshot
     finally:
         release.set()
