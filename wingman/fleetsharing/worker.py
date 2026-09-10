@@ -220,6 +220,7 @@ class FleetSharingWorker:
         self._latest: tuple[FleetSnapshot, float] | None = None
         self._pending = threading.Event()
         self._commands: dict[str, _Command] = {}
+        self._deferred_commands: dict[str, _Command] = {}
         self._sequence = 0
         self._presentation_order = 0
         self._remote_order = 0
@@ -289,6 +290,15 @@ class FleetSharingWorker:
                 and key not in self._commands
                 and sum(c.kind == "source" for c in self._commands.values())
                 >= p.MAX_SOURCE_INTENTS
+                # Durable sources retain a Stop slot even behind a full batch
+                # of new admissions. Both sets are independently count-bounded.
+                and not (
+                    isinstance(payload, p.StopSource)
+                    and any(
+                        item.source_id.lower() == payload.source_id.lower()
+                        for item in self._durable_sources
+                    )
+                )
             ):
                 return None
             changes = {}
@@ -730,10 +740,22 @@ class FleetSharingWorker:
         if work is not None:
             with self._lock:
                 queued = tuple(self._commands.values())
+                deferred = tuple(self._deferred_commands.values())
             if any(
                 command.kind == "pairing"
                 or (
                     command.kind == "participation"
+                    # Only known deferred choices permit prerequisite reads or
+                    # empty withdrawal. They NEVER authorize an older CAS or
+                    # publication; a replacement still changes the fence.
+                    and not (
+                        command in deferred
+                        and (
+                            work.operation
+                            in ("fetch_device", "acknowledge_capabilities")
+                            or work.key == "withdraw"
+                        )
+                    )
                     and work.operation
                     in (
                         "fetch_device",
@@ -747,7 +769,13 @@ class FleetSharingWorker:
                 or (
                     command.kind == "source"
                     and (
-                        work.operation == "fetch_sources"
+                        (
+                            work.operation == "fetch_sources"
+                            # A known full-count Stop must let the owner observe
+                            # and drain older work. A replacement/new submission
+                            # is still fenced here AND by the source generation.
+                            and command not in deferred
+                        )
                         or (
                             work.operation == "control_source"
                             and command.payload.source_id == work.payload.source_id
@@ -785,6 +813,8 @@ class FleetSharingWorker:
         self._check(fence, work=work)
         try:
             self._save_state(candidate)
+        except s.CapacityError:
+            raise
         except Exception:  # noqa: BLE001 - no network may follow a failed atomic journal write
             raise _PersistenceFailed from None
         # This is the only assignment of a successfully saved candidate. Queue
@@ -835,7 +865,9 @@ class FleetSharingWorker:
             self._withdraw_needed = not pending.enabled
             with self._lock:
                 self._inhibit = True
-            self._update_status(participation="persisted", local_inhibited=True)
+                queued_participation = "participation" in self._commands
+            if not queued_participation:
+                self._update_status(participation="persisted", local_inhibited=True)
         # An attempted pairing completion may have registered the key even if no
         # session was saved. Reconnect by proof rather than replaying one-use work.
         if (
@@ -865,14 +897,20 @@ class FleetSharingWorker:
             self._check(fence)
             if command.kind == "pairing":
                 self._ingest_pairing(command, fence)
-            elif self._command_binding_current(command, self.status().metadata):
-                self._ingest_control(command, fence)
+            elif (
+                self._command_binding_current(command, self.status().metadata)
+                and self._ingest_control(command, fence) is False
+            ):
+                with self._lock:
+                    self._deferred_commands[key] = command
+                continue
             self._drop_command(key, command)
 
     def _drop_command(self, key, command):
         with self._lock:
             if self._commands.get(key) == command:
                 self._commands.pop(key)
+            self._deferred_commands.pop(key, None)
         self._update_status()
 
     def _ingest_pairing(self, command, fence):
@@ -942,6 +980,16 @@ class FleetSharingWorker:
                 pending_recovery=None,
                 auth_pause=None,
             )
+        try:
+            s.check_admission_capacity(candidate)
+        except s.CapacityError:
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="source_queue_full",
+                pairing="rejected",
+            )
+            return
         self._persist(candidate, fence)
         self._reset_session()
         self._pairing_action_id = action_id
@@ -953,13 +1001,24 @@ class FleetSharingWorker:
             approval_url=None,
         )
 
-    def _ingest_control(self, command, fence):
+    def _ingest_control(self, command, fence) -> bool:
+        """False retains a capacity-blocked control; I/O failure aborts the turn."""
         if self._state.identity is None:
             self._update_status(state="refused", detail="needs_pairing")
-            return
+            return True
         if command.kind == "participation":
             intent = command.payload
-            self._persist(replace(self._state, pending_participation=intent), fence)
+            try:
+                candidate = replace(self._state, pending_participation=intent)
+                s.check_control_capacity(candidate)
+                self._persist(candidate, fence)
+            except s.CapacityError:
+                # Keep the exact choice queued and inhibited; a Stop later in
+                # this ingest may release space. No false saved/acknowledged.
+                self._update_status(
+                    fence=fence, state="error", detail="source_queue_full"
+                )
+                return False
             self._fresh_on = intent.intent_id if intent.enabled else None
             self._needs_fresh_intent = False
             self._part_observe = self._needs_device = True
@@ -987,15 +1046,43 @@ class FleetSharingWorker:
                 ),
                 incoming,
             )
-            if len(candidate) > p.MAX_SOURCE_INTENTS:
-                self._update_status(state="error", detail="source_queue_full")
-                return
-            self._persist(
-                replace(self._state, pending_source_commands=candidate), fence
-            )
+            candidate = replace(self._state, pending_source_commands=candidate)
+            try:
+                if len(candidate.pending_source_commands) > p.MAX_SOURCE_INTENTS:
+                    raise s.CapacityError("Too many pending fleet source intents.")
+                if isinstance(incoming, p.StartSource) and old is None:
+                    s.check_admission_capacity(candidate)
+                elif old is None or isinstance(incoming, p.StartSource):
+                    # New critical growth must leave room for older pairing,
+                    # recovery and CAS responses. Existing Stops already own
+                    # their maximum generation width; Start -> Stop shrinks.
+                    s.check_control_capacity(candidate)
+                self._persist(candidate, fence)
+            except s.CapacityError:
+                self._check(fence)
+                if isinstance(incoming, p.StartSource) and old is None:
+                    # Only this unsaved admission is refused. Existing requests
+                    # and uncertainty remain intact; disk I/O failures never
+                    # take this path. Keep the UUID visible as an honest result.
+                    self._update_status(
+                        fence=fence,
+                        state="refused",
+                        detail="source_queue_full",
+                        source_control="rejected",
+                        source_results=(
+                            *self.status().source_results,
+                            self._source_summary(incoming, "rejected"),
+                        )[-p.MAX_SOURCE_INTENTS :],
+                    )
+                    return True
+                self._update_status(
+                    fence=fence, state="error", detail="source_queue_full"
+                )
+                return False
             if isinstance(incoming, p.StopSource) and incoming != old:
                 self._source_observe.add(incoming.source_id)
             self._update_status(fence=fence, source_control="persisted")
+        return True
 
     def _iterate(self):
         try:
@@ -1054,6 +1141,9 @@ class FleetSharingWorker:
         except _Obsolete:
             # Persisted uncertainty is intentionally left for the next owner turn.
             return IDLE_POLL_S, True
+        except s.CapacityError:
+            self._update_status(state="error", detail="source_queue_full")
+            return IDLE_POLL_S, False
         except _PersistenceFailed:
             self._local_retry_at = self._clock() + BASE_BACKOFF_S
             self._update_status(state="error", detail="persistence_failed")
@@ -1079,6 +1169,7 @@ class FleetSharingWorker:
             return ()
         with self._lock:
             watching, inhibited = self._watch, self._inhibit
+            queued_participation = "participation" in self._commands
         pending = (
             state.pending_participation
             or state.pending_source_commands
@@ -1157,7 +1248,10 @@ class FleetSharingWorker:
         if self._clock() >= self._renew_at:
             work.append(Work("renew_session", "renew", due=self._renew_at, priority=1))
         intent = state.pending_participation
-        if intent and not self._needs_fresh_intent:
+        # A capacity-deferred choice supersedes the old CAS without becoming
+        # durable itself. Do not repeatedly select fenced CAS work and starve
+        # source reconciliation that can release its needed space.
+        if intent and not self._needs_fresh_intent and not queued_participation:
             if self._part_observe:
                 work.append(
                     Work(
@@ -1515,9 +1609,13 @@ class FleetSharingWorker:
             acknowledged_capabilities=device.acknowledged_capabilities,
             observed_participation=device.participation,
         )
+        with self._lock:
+            queued_participation = "participation" in self._commands
         intent = candidate.pending_participation
         acknowledged = False
-        if intent is not None:
+        # Deferred controls allow this observation, not effects belonging to a
+        # superseded intent. Keep its uncertainty on disk and local inhibit on.
+        if intent is not None and not queued_participation:
             if (
                 intent.enabled
                 and intent.expected_generation is None
@@ -1542,11 +1640,14 @@ class FleetSharingWorker:
                     ),
                 )
         self._persist(candidate, fence, work=work)
-        self._needs_device = self._part_observe = False
+        self._needs_device = False
+        self._part_observe = queued_participation
         self._resume_metadata = False
         self._due["device"] = self._clock() + 60.0
         self._expiry()
-        if self._needs_fresh_intent:
+        if queued_participation:
+            pass  # Metadata only; queued/durable/CAS are distinct stages.
+        elif self._needs_fresh_intent:
             self._update_status(
                 state="refused",
                 detail="needs_fresh_intent",

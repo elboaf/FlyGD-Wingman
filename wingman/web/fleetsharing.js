@@ -20,6 +20,7 @@
   var sources = WM.el('sharing-sources');
   var pairingMode = 'initial';
   var changeOrigin = false;
+  var unavailableMessage = 'Fleet sharing is unavailable in this session.';
   var details = {
     needs_upgrade: 'This device needs sharing approval. Upgrade the connection in your browser.',
     needs_fresh_key: 'This device was revoked or its key conflicts. Fresh setup is available.',
@@ -136,7 +137,9 @@
       delete existing[id];
       var label = nameFor(observed ? observed.character_id : pending ? pending.character_id : result.character_id);
       if (label === 'Unknown character') label = 'Source ' + id.slice(0, 8);
-      var description = label + ' · ' + (observed ? observed.state : result && !pending ? 'Start expired. Start again explicitly.' : 'Not yet observed');
+      var description = label + ' · ' + (observed ? observed.state : result && !pending
+        ? result.stage === 'rejected' ? 'Start not saved. Too many pending source controls.' : 'Start expired. Start again explicitly.'
+        : 'Not yet observed');
       if (observed && observed.reason) description += ' — ' + observed.reason.replace(/_/g, ' ');
       if (pending) description += ' · ' + (pending.operation === 'stop' ? 'Stop' : 'Start')
         + (pending.stage === 'queued' ? ' queued locally' : ' saved, awaiting authGD');
@@ -154,6 +157,16 @@
       : !state.sources ? 'Source state unknown. Saved requests remain stoppable below.'
       : !Object.keys(rows).length ? 'No sources reported for this account.' : '');
   }
+  function unavailable() {
+    // A failed read is not a payload or a saved preference. Keep mutations
+    // disarmed without inventing connection data or promising worker recovery.
+    hydrated = false;
+    text('sharing-connection', unavailableMessage);
+    text('sharing-grant-status', '');
+    Array.prototype.forEach.call(WM.el('fleet-sharing').querySelectorAll('button, input, select'), function (control) {
+      control.disabled = true;
+    });
+  }
   function render(payload) {
     if (!payload || !visible()) return false;
     if (state && payload.presentation_order < state.presentation_order) return false;
@@ -168,7 +181,7 @@
     enabled.checked = preferencePending ? preferenceWanted : state.enabled;
     enabled.disabled = !state.available; // never disable Off behind queued On
     WM.el('sharing-refresh').disabled = !state.available;
-    var connection = !state.available ? 'Fleet sharing is unavailable in this session.'
+    var connection = !state.available ? unavailableMessage
       : !meta.loaded ? 'Reading saved connection…'
       : !meta.binding ? 'Not connected. Connect to ' + state.configured_origin + '.'
       : 'Paired with ' + meta.paired_origin + '.' + (meta.has_session ? '' : ' Reconnecting…');
@@ -190,6 +203,7 @@
     connect.hidden = !retryBrowser && !!(meta.binding && pairingMode === 'initial' && state.pairing !== 'needs_retry' && state.detail !== 'pairing_expired');
     connect.disabled = !state.available || !meta.loaded || (!retryBrowser && ['queued', 'persisted', 'awaiting_approval'].indexOf(state.pairing) !== -1);
     WM.el('sharing-confirm-on').hidden = !(state.enabled && (state.local_inhibited || state.participation === 'needs_confirmation'));
+    WM.el('sharing-confirm-on').disabled = !state.available;
     text('sharing-preference', state.preference_error);
     var observed = state.observed_participation;
     var consent = 'This PC: ' + (state.enabled ? 'On' : 'Off')
@@ -200,6 +214,7 @@
     text('sharing-consent', consent);
     paintCharacters();
     paintSources();
+    if (!state.available) unavailable();
     return true;
   }
   function action(method) {
@@ -265,7 +280,11 @@
     var open = visible();
     // Serialize enter/leave so a slow bridge enter cannot overtake its leave.
     watchChain = watchChain.then(function () { return WM.send('fleet_sharing_watch', open); }).then(function (result) {
-      if (current === watchGeneration && open && result && result.state) render(result.state);
+      if (current !== watchGeneration || !open || !visible()) return;
+      if (result && result.state) render(result.state);
+      // Failed initial hydration must finish. A later unversioned failure
+      // cannot replace known state or disable Off behind an in-flight On.
+      else if (!state) unavailable();
     });
   }
   WM.el('sharing-refresh').addEventListener('click', watch);

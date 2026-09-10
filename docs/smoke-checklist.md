@@ -2428,10 +2428,20 @@ for the synthetic render pass.
       paired origin's `/auth/eve/fleet-read?character=<owned-id>`. A different
       browser account asks for the correct account, never replacement keys.
       Grant completion alone neither Starts verification nor enables sharing.
+- [ ] **Unavailable setup must finish reading without enabling actions.** In an
+      isolated browser use `?dev=1&sharing-watch=missing-worker`, then `null` and
+      `error-no-state`, and open Settings > Previews. Expect “Fleet sharing is
+      unavailable in this session.”, disabled sharing/setup controls, and no
+      promise that Refresh rebuilds the worker. Leave and re-enter; no consent,
+      Start or browser action may run. Separately verify the missing-worker
+      path in Windows/WebView2; browser fixtures are not native acceptance.
 - [ ] Check empty, 256-character, unavailable, feature-disabled, paused, revoked,
       ended and unknown-source states. Eligible IDs are distinct from the boss
       selector. Unknown pending UUIDs remain stoppable; one source's response
       never acknowledges another. An expired unobserved Start names its UUID.
+      A capacity-refused Start (`DEV.fleetSharing('rejected')` in the isolated
+      harness) says “Start not saved”, not expired or saved; its UUID remains
+      visible and its Stop is disabled. Existing pending sources stay stoppable.
 - [ ] Tab/Space/Enter operate checkbox, boss selector, Start and keyed Stop.
       Watch refresh preserves selector selection and Stop focus. A queued On
       leaves Off reachable even while preference saving is held. A failed save

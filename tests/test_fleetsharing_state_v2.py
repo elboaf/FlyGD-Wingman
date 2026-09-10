@@ -10,6 +10,7 @@ from test_fleetsharing_config import BRACKETED_INVALID_ORIGINS
 from test_fleetsharing_crypto import INVALID_RECOVERY_SPKI_CASES, invalid_recovery_spki
 from test_fleetsharing_protocol import CHALLENGE, DATE, TOKEN, UUID
 
+from tests.fleetsharing_capacity_helpers import maximal_state
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
@@ -347,14 +348,9 @@ def test_save_refuses_overflow_and_invalid_commands_before_replace(tmp_path, kin
             pending_source_commands=(p.RemoteRow(42, "Alice", 1, (), "live", 1),),
         )
     else:
-        # 256 Start commands fit the count cap but exceed 64KiB including identity.
-        bad = replace(
-            original,
-            pending_source_commands=tuple(
-                p.StartSource(c.source_id, 9007199254740991, UUID, DATE)
-                for c in commands[:256]
-            ),
-        )
+        # Real byte overflow even without whitespace: maximum legal bound fields
+        # and 256 Starts. Compaction is not permission to relax the 64 KiB gate.
+        bad = maximal_state()
     with pytest.raises(ValueError):
         s.save(path, bad)
     assert path.read_bytes() == before and s.load(path) == original
