@@ -967,6 +967,13 @@ class TelemetryCoordinator:
                 self._custom_sources[payload.character] = payload
             else:
                 self._custom_sources.pop(payload.character, None)
+                if self._alert_policy is not None:
+                    try:
+                        self._alert_policy.forget_custom_character(payload.character)
+                    except Exception:
+                        logger.exception(
+                            "Alert policy raised while retiring a custom source"
+                        )
 
         if self._fleet_active:
             self._consume_metrics(envelope)

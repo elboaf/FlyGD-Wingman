@@ -3,6 +3,8 @@
 import logging
 from typing import NamedTuple
 
+import pytest
+
 from wingman.alerts.service import AlertPolicy
 
 PLAYER = "Bob Smith[BURN](Rifter)"
@@ -62,6 +64,41 @@ def _policy(config=None, sounds=None, alerts=None, focused=None):
         focused=focused or (lambda: None),
         on_alert=lambda *args: (alerts if alerts is not None else []).append(args),
     )
+
+
+def test_one_sound_winner_across_characters():
+    from wingman.telemetry.coordinator import AlertEvent
+
+    sounds, visuals = [], []
+    cfg = {
+        "events": {
+            "combat": {
+                "enabled": True,
+                "sound": "system-fault",
+                "color": "#ff4d4d",
+            },
+            "warp_scramble": {
+                "enabled": True,
+                "sound": "obey",
+                "color": "#ffd24d",
+            },
+        }
+    }
+    policy = AlertPolicy(
+        lambda: cfg,
+        lambda sid, vol: sounds.append((sid, vol)),
+        lambda: None,
+        lambda char, kind, spec: visuals.append((char, kind)),
+    )
+    policy.handle(
+        [
+            AlertEvent("Alice", "warp_scramble", "Player"),
+            AlertEvent("Bob", "combat", "Player"),
+        ],
+        10.0,
+    )
+    assert sounds == [("obey", 100)]
+    assert visuals == [("Alice", "warp_scramble"), ("Bob", "combat")]
 
 
 def test_player_attack_dispatches_with_sound_and_persistent_ring():
@@ -170,6 +207,49 @@ def test_other_character_still_sounds_while_alice_is_focused():
     policy.handle([Event("Bravo", "combat", PLAYER)], 0.0)
 
     assert sounds == [("system-fault", 100)]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_builtin_sound_ties_preserve_semantic_order(monkeypatch, reverse):
+    from wingman.alerts import patterns
+
+    # Equal severity normally means the same event and identical sounds.
+    # Make a tie audible to pin semantic order rather than event-name order.
+    monkeypatch.setitem(patterns.SEVERITY, "decloak", 2)
+    cfg = _config()
+    cfg["events"]["decloak"]["sound"] = "obey"
+    sounds, alerts = [], []
+    policy = _policy(cfg, sounds=sounds, alerts=alerts)
+    events = [Event("Alice", "combat", PLAYER), Event("Bob", "decloak", "")]
+    if reverse:
+        events.reverse()
+    policy.handle(events, 10.0)
+    assert sounds == [("obey" if reverse else "system-fault", 100)]
+    assert [(char, kind) for char, kind, _ in alerts] == [
+        (event.character, event.event) for event in events
+    ]
+
+
+def test_sound_winners_in_separate_batches_are_not_queued_or_suppressed():
+    sounds = []
+    policy = _policy(sounds=sounds)
+    policy.handle([Event("Alice", "warp_scramble", PLAYER)], 10.0)
+    policy.handle([Event("Bob", "combat", PLAYER)], 10.1)
+    assert sounds == [("obey", 100), ("system-fault", 100)]
+
+
+def test_legacy_config_and_focus_are_each_read_once_per_batch():
+    reads = []
+    policy = AlertPolicy(
+        lambda: reads.append("config") or _config(),
+        lambda *args: None,
+        lambda: reads.append("focus"),
+        lambda *args: None,
+    )
+    policy.handle(
+        [Event("Alice", "combat", PLAYER), Event("Bob", "combat", PLAYER)], 10.0
+    )
+    assert reads == ["config", "focus"]
 
 
 def test_focus_probe_failure_does_not_drop_alert(caplog):

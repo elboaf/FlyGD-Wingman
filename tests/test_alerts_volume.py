@@ -163,6 +163,24 @@ def test_a_cache_that_cannot_be_written_falls_back_to_the_original(
 # ---- play_sound ------------------------------------------------------------
 
 
+def test_muted_policy_still_delivers_visuals_without_calling_sound():
+    from wingman.alerts.service import AlertPolicy
+    from wingman.telemetry.coordinator import AlertEvent
+
+    visuals = []
+    policy = AlertPolicy(
+        lambda: {
+            "volume": 0,
+            "events": {"combat": {"enabled": True, "sound": "system-fault"}},
+        },
+        lambda *args: pytest.fail("muted policy called the sound sink"),
+        lambda: None,
+        lambda *args: visuals.append(args),
+    )
+    policy.handle([AlertEvent("Alice", "combat", "Player")], 10.0)
+    assert len(visuals) == 1
+
+
 def test_a_volume_of_zero_never_reaches_the_audio_api(monkeypatch):
     """Nothing is played rather than a silent buffer being played: the
     quiet path must cost nothing and must not hold the device."""
