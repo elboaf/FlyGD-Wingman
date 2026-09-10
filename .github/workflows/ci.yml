@@ -218,7 +218,7 @@ jobs:
         # annotations, which are readable from the API without an
         # authenticated log fetch -- the only way to see which tests
         # failed when no human is signed in.
-        run: uv run --no-sync python -m pytest tests/ -v -rs --durations=30 --junitxml=pytest-result.xml
+        run: uv run --with pytest-xdist --no-sync python -m pytest tests/ -n 2 --dist loadfile -q -rs --durations=30 --junitxml=pytest-result.xml
       - name: Summarize test timing
         if: always()
         run: uv run --no-sync python scripts/summarize_pytest_junit.py pytest-result.xml pytest-timing.json --if-present
