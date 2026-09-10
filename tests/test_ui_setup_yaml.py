@@ -2,6 +2,7 @@
 
 import copy
 import json
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,14 @@ from wingman.evesettings import setup_sharing as sharing
 FIXTURE = Path(__file__).parent / "fixtures" / "ui_setup" / "native-complete.yaml"
 
 
-def native():
+@cache
+def _native_backing_data():
     return yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
+
+
+def native():
+    # Cache only test input construction, never the production reader's work.
+    return copy.deepcopy(_native_backing_data())
 
 
 def parse(value, *, style="yaml"):
@@ -609,6 +616,84 @@ def test_native_depth_boundary_and_preconstruction_refusal(monkeypatch):
     assert caught.value.code == "depth_limit"
 
 
+def _node_boundary_yaml(value, *, flow=False):
+    """Only the boundary case's plain preset/field names and integer lists.
+
+    Avoid a second 100k-node representation tree in the test producer; the
+    production reader still parses every occurrence, including repeated IDs.
+    """
+    presets = []
+    for name, fields in value["presets"]:
+        if flow:
+            pairs = [
+                f"[{field}, [{', '.join(map(str, ids))}]]" for field, ids in fields
+            ]
+            presets.append(f"[{name}, [{', '.join(pairs)}]]")
+        else:
+            lines = [f"- - {name}"]
+            for index, (field, ids) in enumerate(fields):
+                prefix = "  - -" if index == 0 else "    -"
+                lines.append(f"{prefix} - {field}")
+                if ids:
+                    lines.append(f"      - - {ids[0]}")
+                    lines.extend(f"        - {item}" for item in ids[1:])
+                else:
+                    lines.append("      - []")
+            presets.append("\n".join(lines))
+    if flow:
+        return "{presets: [" + ", ".join(presets) + "]}\n"
+    return "presets:\n" + "\n".join(presets) + "\n"
+
+
+@pytest.mark.parametrize("flow", [False, True], ids=["block", "flow"])
+def test_node_boundary_yaml_builder_preserves_structure_without_yaml_dump(
+    monkeypatch, flow
+):
+    value = {
+        "presets": [
+            [
+                "Filter 0",
+                [
+                    ["groups", [73, 73]],
+                    ["filteredStates", [0, 1]],
+                    ["alwaysShownStates", []],
+                ],
+            ],
+            [
+                "Filter 1",
+                [["groups", [11]], ["filteredStates", []], ["alwaysShownStates", [42]]],
+            ],
+        ]
+    }
+    expected = json.dumps(value)
+
+    def must_not_dump(*args, **kwargs):
+        pytest.fail("Boundary input traversed the general-purpose YAML dumper")
+
+    monkeypatch.setattr(yaml.SafeDumper, "represent_data", must_not_dump)
+    text = _node_boundary_yaml(value, flow=flow)
+    assert json.dumps(yaml.safe_load(text)) == expected
+    assert json.dumps(value) == expected
+    # Both inputs must reach YAML, not succeed in the sharing reader's JSON probe.
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(text)
+    events = list(yaml.parse(text, Loader=yaml.SafeLoader))
+    nodes = [
+        event
+        for event in events
+        if isinstance(
+            event, (yaml.events.CollectionStartEvent, yaml.events.ScalarEvent)
+        )
+    ]
+    # Root/key/list + two 12-node preset skeletons + six integer occurrences.
+    assert len(nodes) == 33
+    for index, event in enumerate(events):
+        if isinstance(event, yaml.events.CollectionStartEvent):
+            # Empty block lists still need [] — just as safe_dump emits them.
+            empty = isinstance(events[index + 1], yaml.events.CollectionEndEvent)
+            assert bool(event.flow_style) is (flow or empty)
+
+
 @pytest.mark.parametrize("style", ["yaml", "json"])
 def test_native_node_boundary_counts_pair_containers_and_mapping_keys(
     monkeypatch, style
@@ -626,12 +711,11 @@ def test_native_node_boundary_counts_pair_containers_and_mapping_keys(
             remaining -= count
         value["presets"].append([f"Filter {i}", fields])
     assert remaining == 0
-    assert len(parse(value, style=style).overview["presets"]) == 5
+    text = json.dumps(value) if style == "json" else _node_boundary_yaml(value)
+    assert len(sharing.parse_text(text).overview["presets"]) == 5
     value["presets"][-1][1][-1][1].append(42)
     text = (
-        json.dumps(value)
-        if style == "json"
-        else yaml.safe_dump(value, default_flow_style=True)
+        json.dumps(value) if style == "json" else _node_boundary_yaml(value, flow=True)
     )
 
     def must_not_construct(*args, **kwargs):
@@ -730,3 +814,23 @@ def test_pyyaml_notice_includes_installed_license_and_locked_version():
     assert "Licence: MIT" in section
     assert f"Version: {package.version}" in section
     assert license_text in section
+
+
+def test_native_fixture_copies_preserve_data_without_reloading(monkeypatch):
+    # The hand-authored fixture, not the production adapter, is the oracle.
+    expected = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
+    first = native()
+    assert json.dumps(first) == json.dumps(expected)
+
+    def must_not_reload(*args, **kwargs):
+        pytest.fail("Warm native fixture factory reconstructed YAML")
+
+    monkeypatch.setattr(yaml.SafeLoader, "construct_document", must_not_reload)
+    second = native()
+    first["presets"][0][1][0][1].append(999)
+    first["tabSetup"][0][1].reverse()
+    first["shipLabels"][0][1].clear()
+    first["shipLabelOrder"].pop()
+    del first["userSettings"]
+    assert json.dumps(second) == json.dumps(expected)
+    assert json.dumps(native()) == json.dumps(expected)
