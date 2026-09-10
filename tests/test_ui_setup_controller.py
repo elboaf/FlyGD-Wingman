@@ -48,6 +48,23 @@ def setup(tmp_path, monkeypatch):
     return controller, source, base
 
 
+@pytest.fixture
+def catalog_controller(tmp_path):
+    controller = build_controller(tmp_path)
+    root = tmp_path / "EVE"
+    server = root / "c_eve_sharedcache_tq_tranquility"
+    # Keep non-default mutation sentinels without seeding profiles — catalog
+    # diagnostics and identity refusals must not consult local settings files.
+    controller._settings["eve_settings"].update(
+        root=str(root),
+        server=str(server),
+        profile=str(server / "settings_Source"),
+        account_names={"10": "Synthetic source", "20": "Synthetic recipient"},
+        account_characters={"10": ["11"], "20": ["30", "31"]},
+    )
+    return controller
+
+
 def review(controller, base, text=None, **kwargs):
     return controller.setup_review(
         setup_sharing.export_text(wire()) if text is None else text,
@@ -158,7 +175,7 @@ def test_catalog_reads_are_read_only_and_project_errors(
     ids=["missing", "permission", "sharing", "no-codes", "no-cause", "decoder"],
 )
 def test_catalog_diagnostics_are_safe_and_read_only(
-    setup,
+    catalog_controller,
     monkeypatch,
     caplog,
     facade,
@@ -170,7 +187,7 @@ def test_catalog_diagnostics_are_safe_and_read_only(
     winerror,
     diagnostic,
 ):
-    controller, _, _ = setup
+    controller = catalog_controller
     before = copy.deepcopy(controller._settings)
     previous_offer = controller._setup_review
     private_path = r"C:\invented-private\pilot\notice.txt"
@@ -238,10 +255,12 @@ def test_catalog_diagnostics_are_safe_and_read_only(
         ("synthetic-fleet", 1, None),
     ],
 )
-def test_catalog_bridge_arguments_refuse_at_reader_boundary(setup, monkeypatch, args):
+def test_catalog_bridge_arguments_refuse_at_reader_boundary(
+    catalog_controller, monkeypatch, args
+):
     from wingman import paths
 
-    controller, _, _ = setup
+    controller = catalog_controller
     monkeypatch.setattr(
         paths, "setup_presets_dir", lambda: pytest.fail("invalid identity reached I/O")
     )
