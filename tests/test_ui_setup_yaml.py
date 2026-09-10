@@ -377,21 +377,26 @@ def test_state_key_syntax_is_explicit_and_bounded(key):
         parse({"stateBlinks": [[key, True]]})
 
 
+# Keyed pairs share the native normalizer; root duplicates use separate loaders.
 @pytest.mark.parametrize(
-    "case",
+    "style,case",
     [
-        "root",
-        "preset",
-        "preset-field",
-        "tab",
-        "tab-field",
-        "label-field",
-        "setting",
-        "color",
-        "blink",
+        pytest.param(style, case, id=f"{style}-{case}")
+        for style in ("yaml", "json")
+        for case in (
+            "root",
+            "preset",
+            "preset-field",
+            "tab",
+            "tab-field",
+            "label-field",
+            "setting",
+            "color",
+            "blink",
+        )
+        if style == "json" or case == "root"
     ],
 )
-@pytest.mark.parametrize("style", ["yaml", "json"])
 def test_duplicate_mapping_and_keyed_pairs_refuse_before_last_wins(style, case):
     value = native()
     if case == "root":
@@ -432,26 +437,31 @@ def test_mapping_keys_are_never_silently_collapsed_or_unhashable_errors(text):
         sharing.parse_text(text)
 
 
+# Decoded shapes share normalize(); YAML root/layout also pin envelope refusal.
 @pytest.mark.parametrize(
-    "case",
+    "style,case",
     [
-        "root",
-        "preset-map",
-        "preset-fields-map",
-        "tab-map",
-        "label-map",
-        "setting-map",
-        "short-pair",
-        "long-pair",
-        "bool-id",
-        "unknown-preset",
-        "unknown-tab",
-        "unknown-label",
-        "unknown-setting",
-        "layout",
+        pytest.param(style, case, id=f"{style}-{case}")
+        for style in ("yaml", "json")
+        for case in (
+            "root",
+            "preset-map",
+            "preset-fields-map",
+            "tab-map",
+            "label-map",
+            "setting-map",
+            "short-pair",
+            "long-pair",
+            "bool-id",
+            "unknown-preset",
+            "unknown-tab",
+            "unknown-label",
+            "unknown-setting",
+            "layout",
+        )
+        if style == "json" or case in ("root", "layout")
     ],
 )
-@pytest.mark.parametrize("style", ["yaml", "json"])
 def test_native_shape_and_field_allowlists_are_not_generic_dat_passthrough(style, case):
     value = native()
     if case == "root":
