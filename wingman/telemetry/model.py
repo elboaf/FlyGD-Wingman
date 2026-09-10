@@ -90,6 +90,14 @@ class StreamHealth:
 
 
 @dataclass(frozen=True)
+class CustomMatcherHealth:
+    state: str
+    rules_revision: int = 0
+    activation_epoch: int = 0
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
 class FleetRow:
     character: str
     dps: int | None
