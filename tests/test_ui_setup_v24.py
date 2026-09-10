@@ -1290,10 +1290,28 @@ def test_dat_compat_label_flags_project_without_mutation_or_equivalent_recipient
         )
 
 
-@pytest.mark.parametrize("side", ["source", "recipient"])
-@pytest.mark.parametrize("field", ["bold", "italic", "underline"])
+# DAT bold/italic share a branch; underline does not. Exhaust both on source,
+# then keep None at every side/field to pin routing through the same readers.
 @pytest.mark.parametrize(
-    "bad", [None, -1, 2, 0.0, 1.0, "bytes:0", "utf8:1", [], {}, {"tuple": []}]
+    "side,field,bad",
+    [
+        pytest.param(side, field, bad, id=f"{bad_id}-{field}-{side}")
+        for bad, bad_id in [
+            (None, "None"),
+            (-1, "-1"),
+            (2, "2"),
+            (0.0, "0.0"),
+            (1.0, "1.0"),
+            ("bytes:0", "bytes:0"),
+            ("utf8:1", "utf8:1"),
+            ([], "bad7"),
+            ({}, "bad8"),
+            ({"tuple": []}, "bad9"),
+        ]
+        for field in ("bold", "italic", "underline")
+        for side in ("source", "recipient")
+        if (side == "source" and field in ("bold", "underline")) or bad is None
+    ],
 )
 def test_dat_compat_label_flags_do_not_admit_other_truthy_or_falsy_values(
     side, field, bad

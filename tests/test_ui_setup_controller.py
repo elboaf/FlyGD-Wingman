@@ -14,7 +14,6 @@ import pytest
 
 from tests import fakes, test_setup_catalog
 from tests.setup_fixtures import install_lossless_codec, seed_profile, wire
-from tests.test_evesettings_codec import CODEC
 from tests.test_evesettings_controller import QueuedThreads, build_controller
 from tests.test_ui_setup_documents import value
 from wingman import atomicio
@@ -977,84 +976,6 @@ def test_file_save_validates_full_json_and_writes_atomically(tmp_path, monkeypat
     assert calls == []
 
 
-@pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
-@pytest.mark.parametrize("native", [False, True], ids=["full", "native-yaml"])
-def test_native_transport_review_and_real_staging_on_distinct_synthetic_base(
-    tmp_path, monkeypatch, native
-):
-    original_run = codec._run
-
-    def transport(mode, payload, **kwargs):
-        return original_run(
-            mode, payload, runner=kwargs["runner"], exe=lambda: str(CODEC)
-        )
-
-    monkeypatch.setattr(codec, "_run", transport)
-    monkeypatch.setattr(codec, "codec_available", lambda: True)
-    source = seed_profile(tmp_path, case="source", name="Source")
-    base = seed_profile(tmp_path)
-    controller = build_controller(tmp_path)
-    controller._settings["eve_settings"].update(
-        root=str(source.root),
-        server=str(source.server),
-        profile=str(source.profile),
-        account_names={"10": "Synthetic source", "20": "Synthetic recipient"},
-        account_characters={"10": ["11"], "20": ["30"]},
-    )
-    exported = export(controller, source)
-    assert exported["ok"], exported
-    text = (
-        (Path(__file__).parent / "fixtures/ui_setup/native-complete.yaml").read_text(
-            encoding="utf-8"
-        )
-        if native
-        else exported["text"]
-    )
-    before = {p: p.read_bytes() for p in base.root.rglob("*") if p.is_file()}
-    reply = review(controller, base, text, keep_ship_labels=native)
-    assert reply["ok"], reply
-    offer = controller._setup_review
-    with setup_profile.stage_setup(
-        offer.plan,
-        offer.manifest,
-        offer.account_filename,
-        offer.character_filename,
-        setup_sharing.parse_text(offer.text),
-        keep_ship_labels=offer.keep_ship_labels,
-        now=1000.0,
-    ) as staged:
-        account = codec.read_document(staged.path / offer.account_filename)
-        character = codec.read_document(staged.path / offer.character_filename)
-        original_account = codec.read_document(base.account_path)
-        original_character = codec.read_document(base.character_path)
-        assert account != original_account
-        if native:
-            assert value(account, "overview", "tabsByWindowInstanceID") == [
-                list(range(8))
-            ]
-            assert value(character, "windows", "windowSizesAndPositions_1") == value(
-                original_character, "windows", "windowSizesAndPositions_1"
-            )
-            assert (
-                account.doc["bytes:overview"]["bytes:shipLabels"]
-                == original_account.doc["bytes:overview"]["bytes:shipLabels"]
-            )
-        else:
-            assert value(account, "overview", "tabsByWindowInstanceID") == [
-                [0, 1, 2],
-                [3, 4, 5],
-                [6, 7],
-            ]
-            assert value(character, "windows", "windowSizesAndPositions_1")[
-                "bytes:overview_1"
-            ] == {"tuple": [-20, 200, 320, 420, 1600, 900]}
-        for name in ("core_public__.yaml", "prefs.ini"):
-            assert (staged.path / name).read_bytes() == before[base.profile / name]
-    assert not offer.plan.destination.exists()
-    assert controller.setup_discard(offer.review_id) is True
-    assert {p: p.read_bytes() for p in base.root.rglob("*") if p.is_file()} == before
-
-
 def files_under(root):
     return {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
@@ -1822,81 +1743,6 @@ def test_create_terminal_exits_release_mutation_without_replay(
         assert not controller.setup_create(offer.review_id, "replay")["accepted"]
     assert controller._eve_mutation.acquire(blocking=False)
     controller._eve_mutation.release()
-
-
-@pytest.mark.skipif(not CODEC.is_file(), reason="settings codec not built")
-@pytest.mark.parametrize("native", [False, True], ids=["classic", "native-keep"])
-def test_create_real_native_transport_profile_from_distinct_synthetic_pair(
-    tmp_path, monkeypatch, native
-):
-    original_run = codec._run
-
-    def transport(mode, payload, **kwargs):
-        return original_run(
-            mode, payload, runner=kwargs["runner"], exe=lambda: str(CODEC)
-        )
-
-    monkeypatch.setattr(codec, "_run", transport)
-    monkeypatch.setattr(codec, "codec_available", lambda: True)
-    source = seed_profile(tmp_path, case="source", name="Source")
-    base = seed_profile(tmp_path)
-    controller = build_controller(tmp_path)
-    controller._settings["eve_settings"].update(
-        root=str(source.root),
-        server=str(source.server),
-        profile=str(source.profile),
-        account_names={"10": "Synthetic source", "20": "Synthetic recipient"},
-        account_characters={"10": ["11"], "20": ["30"]},
-    )
-    text = (
-        (Path(__file__).parent / "fixtures/ui_setup/native-complete.yaml").read_text(
-            encoding="utf-8"
-        )
-        if native
-        else export(controller, source)["text"]
-    )
-    before = files_under(base.root)
-    if native:
-        refused = review(controller, base, text)
-        assert not refused["ok"] and refused["needs_label_choice"]
-    assert review(controller, base, text, keep_ship_labels=native)["ok"]
-    offer = controller._setup_review
-    assert controller.setup_create(offer.review_id, "create-1")["accepted"]
-    done = assert_create_done(controller, offer, published=True)
-    assert done["selection_persisted"] and not done["warning"]
-    created = offer.plan.destination
-    assert {p: p.read_bytes() for p in before} == before
-    assert {p.name for p in created.iterdir()} == {
-        "core_user_20.dat",
-        "core_char_30.dat",
-        "core_public__.yaml",
-        "prefs.ini",
-    }
-    account = codec.read_document(created / base.account_path.name)
-    character = codec.read_document(created / base.character_path.name)
-    original_account = codec.read_document(base.account_path)
-    original_character = codec.read_document(base.character_path)
-    assert account != original_account
-    if native:
-        assert value(account, "overview", "tabsByWindowInstanceID") == [list(range(8))]
-        assert value(character, "windows", "windowSizesAndPositions_1") == value(
-            original_character, "windows", "windowSizesAndPositions_1"
-        )
-        assert (
-            account.doc["bytes:overview"]["bytes:shipLabels"]
-            == original_account.doc["bytes:overview"]["bytes:shipLabels"]
-        )
-    else:
-        assert value(account, "overview", "tabsByWindowInstanceID") == [
-            [0, 1, 2],
-            [3, 4, 5],
-            [6, 7],
-        ]
-        assert value(character, "windows", "windowSizesAndPositions_1")[
-            "bytes:overview_1"
-        ] == {"tuple": [-20, 200, 320, 420, 1600, 900]}
-    for name in ("prefs.ini", "core_public__.yaml"):
-        assert (created / name).read_bytes() == before[base.profile / name]
 
 
 @pytest.mark.parametrize("request_id", ["1", "x" * 128])

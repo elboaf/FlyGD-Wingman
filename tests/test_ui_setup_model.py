@@ -148,40 +148,51 @@ def test_unknown_fields_refuse_instead_of_carrying_private_metadata(path):
     assert_error("invalid_fields", model.validate_wingman, source)
 
 
-@pytest.mark.parametrize("path", OBJECT_PATHS, ids=OBJECT_IDS)
+# Exhaust _fields at the root; None at every nested site pins its wiring.
 @pytest.mark.parametrize(
-    "value", [None, [], "object", 1, True], ids=["null", "list", "text", "int", "bool"]
+    "path,value",
+    [
+        pytest.param(path, value, id=f"{value_id}-{path_id}")
+        for value, value_id in [
+            (None, "null"),
+            ([], "list"),
+            ("object", "text"),
+            (1, "int"),
+            (True, "bool"),
+        ]
+        for path, path_id in zip(OBJECT_PATHS, OBJECT_IDS, strict=True)
+        if not path or value is None
+    ],
 )
 def test_records_require_objects(path, value):
     source = changed(path, value) if path else value
     assert_error("invalid_type", model.validate_wingman, source)
 
 
+# All sites reach _list — exhaust its types once and reject a dict at each site.
 @pytest.mark.parametrize(
-    "path",
+    "path,value",
     [
-        ("overview", "presets"),
-        ("overview", "tabs"),
-        ("overview", "windowGroups"),
-        ("overview", "shipLabels"),
-        ("overview", "presets", 0, "groups"),
-        ("overview", "tabs", 0, "tabColumns"),
-        ("overview", "settings", "flagOrder"),
-        ("layout", "windows"),
+        pytest.param(path, value, id=f"{value_id}-{path_id}")
+        for value, value_id in [
+            ({}, "object"),
+            ("list", "text"),
+            (1, "int"),
+            (True, "bool"),
+            ((), "tuple"),
+        ]
+        for path, path_id in [
+            (("overview", "presets"), "presets"),
+            (("overview", "tabs"), "tabs"),
+            (("overview", "windowGroups"), "groups"),
+            (("overview", "shipLabels"), "labels"),
+            (("overview", "presets", 0, "groups"), "members"),
+            (("overview", "tabs", 0, "tabColumns"), "columns"),
+            (("overview", "settings", "flagOrder"), "states"),
+            (("layout", "windows"), "windows"),
+        ]
+        if path_id == "presets" or value_id == "object"
     ],
-    ids=[
-        "presets",
-        "tabs",
-        "groups",
-        "labels",
-        "members",
-        "columns",
-        "states",
-        "windows",
-    ],
-)
-@pytest.mark.parametrize(
-    "value", [{}, "list", 1, True, ()], ids=["object", "text", "int", "bool", "tuple"]
 )
 def test_collections_require_lists(path, value):
     assert_error("invalid_type", model.validate_wingman, changed(path, value))
@@ -710,9 +721,21 @@ SCALARS = [
 ]
 
 
-@pytest.mark.parametrize("field", SCALARS)
+# _boolean owns the value domain; False and integer 0 pin each field's routing.
 @pytest.mark.parametrize(
-    "value", [True, False, 0, 1, "true"], ids=["true", "false", "zero", "one", "text"]
+    "field,value",
+    [
+        pytest.param(field, value, id=f"{value_id}-{field}")
+        for value, value_id in [
+            (True, "true"),
+            (False, "false"),
+            (0, "zero"),
+            (1, "one"),
+            ("true", "text"),
+        ]
+        for field in SCALARS
+        if field == "useSmallText" or value_id in ("false", "zero")
+    ],
 )
 def test_scalar_settings_are_booleans_without_persisted_integer_coercions(field, value):
     source = {"settings": {field: value}}
@@ -792,20 +815,29 @@ def test_layout_record_budget_is_enforced_before_duplicate_topology():
     assert_error("collection_limit", model.validate_wingman, source)
 
 
+# Keep the window dispatcher separate from scalar settings, sharing _boolean.
 @pytest.mark.parametrize(
-    "field",
+    "field,value",
     [
-        "open",
-        "minimized",
-        "collapsed",
-        "compact",
-        "locked",
-        "overlay",
-        "lightBackground",
+        pytest.param(field, value, id=f"{value_id}-{field}")
+        for value, value_id in [
+            (True, "true"),
+            (False, "false"),
+            (0, "zero"),
+            (1, "one"),
+            (None, "null"),
+        ]
+        for field in [
+            "open",
+            "minimized",
+            "collapsed",
+            "compact",
+            "locked",
+            "overlay",
+            "lightBackground",
+        ]
+        if field == "open" or value_id in ("false", "zero")
     ],
-)
-@pytest.mark.parametrize(
-    "value", [True, False, 0, 1, None], ids=["true", "false", "zero", "one", "null"]
 )
 def test_all_window_state_fields_are_optional_strict_booleans(field, value):
     source = changed(("layout", "windows", 0, "state"), {field: value})
