@@ -75,9 +75,10 @@ Important constraints established by source inspection:
   work remain. Four native-transport parameter cases intentionally use the real
   transport (controller tests:963,1810). Do not mislabel all 250 cases native.
 - Screenshots have **44 Node runtime cases and 11 Python-only cases**, not 55
-  Node launches. `_run` rebuilds inputs and starts Node; cleanup-test sleeps are
-  already patched. The DOM double repeatedly materializes descendant arrays
-  (`screenshot_pages.cjs:54–85`); its runtime share is not yet measured.
+  Node launches. `run_screenshot_page` rebuilds inputs and starts Node;
+  cleanup-test sleeps are already patched. The DOM double repeatedly materializes
+  descendant arrays (`screenshot_pages.cjs:54–85`); its runtime share is not yet
+  measured.
 - The YAML 100,000-node `[yaml]` case alone costs **12.142s median**, versus a much
   cheaper JSON counterpart. Real parsing and fixture serialization must be
   measured separately before attributing that cost to redundant tests.
@@ -152,7 +153,8 @@ exhaustive duplicate work. No production screenshot-wait or verifier changes.
 - Profile large-boundary `safe_dump` separately from parser work. A deterministic
   test-owned text builder is eligible only if independently checked node/byte
   counts and intended syntax are unchanged. Keep acceptance and one-over refusal
-  for both formats, including rejection before document construction.
+  for both formats. Preserve YAML's preconstruction refusal; JSON decodes first
+  and then checks structural limits. Do not change either reader's ordering.
 
 ### 4. Narrow only controller fixtures whose contracts do not need profile I/O
 
