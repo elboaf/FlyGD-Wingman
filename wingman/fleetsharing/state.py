@@ -26,6 +26,10 @@ MAX_STATE_FILE_BYTES = 64 * 1024
 STATE_VERSION = 3
 
 
+class CapacityError(ValueError):
+    """A candidate cannot fit; unlike an atomic I/O failure, retry cannot fix it."""
+
+
 @dataclass(frozen=True)
 class DeviceIdentity:
     """DPAPI-protected raw Ed25519 private key and canonical padded-base64 SPKI."""
@@ -412,6 +416,106 @@ def load(path: Path) -> SharingState:
         return EMPTY
 
 
+def _compact(raw: dict) -> str:
+    return json.dumps(raw, separators=(",", ":"), allow_nan=False)
+
+
+def _compact_utf8(raw: dict) -> str:
+    # JSON still owns control/quote/backslash escaping. Escape only code points
+    # UTF-8 cannot encode (lone surrogates), never replace their decoded value.
+    data = json.dumps(raw, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return data.encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+
+def _mutable_envelope(state: SharingState) -> dict:
+    """Sizing only, NEVER persisted: retained commands plus mutable upper bounds.
+
+    Identity/origin and Start bindings stay exact. Stop generations and all
+    metadata may grow; charge their maxima simultaneously, even when some
+    combinations cannot coexist. Both reservation policies share these bounds.
+    """
+    raw = _to_dict(state)
+    uuid = "00000000-0000-0000-0000-000000000000"
+    token, date = "A" * 43, "9999-12-31T23:59:59.999Z"
+    raw.update(
+        session_id="s" * 128,
+        last_revision=protocol.INT4_MAX,
+        device_id=uuid,
+        session_expires_at=date,
+        feature_enabled=False,
+        approved_capabilities=[protocol.SHARED_CAPABILITY],
+        session_approved_capabilities=[protocol.SHARED_CAPABILITY],
+        acknowledged_capabilities=[protocol.SHARED_CAPABILITY],
+        observed_participation={"enabled": False, "generation": protocol.INT4_MAX},
+        pending_recovery={
+            "request_id": token,
+            "issued_at": date,
+            "challenge": {
+                "challenge_id": uuid,
+                "request_id": token,
+                "nonce": token,
+                "expires_at": date,
+            },
+        },
+        pending_pairing={
+            "mode": "initial",
+            "pairing_id": "p" * 128,
+            "approval_url": "\U00010000" * 2048,
+            "expires_at": date,
+            "completion_attempted": False,
+        },
+        pending_participation={
+            "intent_id": uuid,
+            "enabled": False,
+            "expected_generation": protocol.INT4_MAX - 1,
+            "attempted": False,
+        },
+        auth_pause={"result": "device_key_conflict", "retry_not_before": date},
+    )
+    for command in raw["pending_source_commands"]:
+        if command["operation"] == "stop":
+            command["expected_generation"] = protocol.INT4_MAX - 1
+    return raw
+
+
+def _admission_envelope(state: SharingState) -> dict:
+    # New Start/pairing admissions retain the original ASCII reserve, including
+    # EVERY unused slot as a maximum Stop. Do not impose this on legacy controls.
+    raw = _mutable_envelope(state)
+    stop = {
+        "operation": "stop",
+        "source_id": "00000000-0000-0000-0000-000000000000",
+        "expected_generation": protocol.INT4_MAX - 1,
+    }
+    commands = raw["pending_source_commands"]
+    commands.extend(
+        dict(stop) for _ in range(protocol.MAX_SOURCE_INTENTS - len(commands))
+    )
+    return raw
+
+
+def check_control_capacity(state: SharingState) -> None:
+    """Defer new control growth that would strand older journal work.
+
+    Unlike new admission, reserve only ACTUAL retained commands. UTF-8 is the
+    writer's final fallback: valid URL scalars cost at most four bytes (quotes
+    cost two; controls/surrogates are rejected by protocol.text). A future new
+    pairing must pass its own admission check; only a pending pairing needs URL
+    space here. Completion releases that reserve without deleting any command.
+    """
+    raw = _mutable_envelope(state)
+    if state.pending_pairing is None:
+        raw["pending_pairing"] = None
+    if len(_compact_utf8(raw).encode("utf-8")) > MAX_STATE_FILE_BYTES:
+        raise CapacityError("Fleet state has no room for control growth.")
+
+
+def check_admission_capacity(state: SharingState) -> None:
+    """Reject only new admissions; never apply this reserve to existing journals."""
+    if len(_compact(_admission_envelope(state)).encode("utf-8")) > MAX_STATE_FILE_BYTES:
+        raise CapacityError("Fleet state has no room for another admission.")
+
+
 def save(path: Path, state: SharingState) -> None:
     """Validate the whole bounded journal BEFORE atomically replacing old state.
 
@@ -419,8 +523,18 @@ def save(path: Path, state: SharingState) -> None:
     retains that mode (Windows additionally protects private material with DPAPI).
     Failed validation/serialization leaves the last durable binding untouched.
     """
-    data = json.dumps(_to_dict(state), indent=2, allow_nan=False)
+    raw = _to_dict(state)
+    data = json.dumps(raw, indent=2, allow_nan=False)
     if len(data.encode("utf-8")) > MAX_STATE_FILE_BYTES:
-        raise ValueError("Fleet state exceeds the size limit.")
+        # Whitespace is not authority. Recover headroom in old indented journals
+        # without discarding any binding or relaxing the actual file byte bound.
+        data = _compact(raw)
+    if len(data.encode("utf-8")) > MAX_STATE_FILE_BYTES:
+        # A legacy pending upgrade bypasses new admission reserves. Its bounded
+        # approval URL can cost 12 ASCII escape bytes per astral character. UTF-8
+        # avoids that expansion without changing bindings or the file byte limit.
+        data = _compact_utf8(raw)
+    if len(data.encode("utf-8")) > MAX_STATE_FILE_BYTES:
+        raise CapacityError("Fleet state exceeds the size limit.")
     _parse_v3(protocol.decode_json(data.encode("utf-8")))
     atomicio.write_atomic(Path(path), data)

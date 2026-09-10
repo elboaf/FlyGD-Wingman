@@ -124,7 +124,7 @@
         reason: kind === 'paused' ? 'boss_lost' : kind === 'ended' ? 'stopped' : null,
         pending_expires_at: kind === 'pending' ? '2026-09-07T12:01:00.000Z' : null}];
     }
-    if (kind === 'expired') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'expired'}];
+    if (kind === 'expired' || kind === 'rejected') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: kind}];
     if (kind === 'unknown') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
     if (kind === 'save-failed' || kind === 'on-pending') {
       sharing.enabled = true; sharing.participation = 'queued';
@@ -143,6 +143,10 @@
   api.fleet_sharing_state = function () {return Promise.resolve(sharingCopy());};
   api.fleet_sharing_watch = function (open) {
     sharingCalls.push(['watch', open]);
+    var failure = devSearch.get('sharing-watch');
+    if (failure === 'null') return Promise.resolve(null);
+    if (failure === 'missing-worker') return Promise.resolve({queued: false, error: 'Fleet sharing is unavailable.', state: sharingCopy()});
+    if (failure === 'error-no-state') return Promise.resolve({queued: false, error: 'Fleet sharing is unavailable.'});
     var captured = sharingCopy();
     if (sharingHoldRead) return new Promise(function (resolve) {
       sharingReadReply = function () { resolve({queued: true, state: captured}); };
@@ -208,6 +212,10 @@
     return Promise.resolve({queued: true, error: null});
   };
   sharingScenario('unpaired');
+  if (devSearch.get('sharing-watch') === 'missing-worker') {
+    sharing.available = false;
+    sharing.metadata.loaded = false;
+  }
   // The roster is deliberately derived below: visible follows hidden, as it
   // does in Api.fleet_bar_settings(), so the harness cannot paint a state
   // Python would never return. The three base rows show running-visible,

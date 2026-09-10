@@ -3398,7 +3398,11 @@ class Api:
             return {"queued": False, "error": "Choose an open or closed source view."}
         with self._sharing_submission() as available:
             if not available:
-                return {"queued": False, "error": "Fleet sharing is unavailable."}
+                return {
+                    "queued": False,
+                    "error": "Fleet sharing is unavailable.",
+                    "state": self.fleet_sharing_state(),
+                }
             with self._sharing_delivery_lock:
                 self._sharing_section_open = enabled
                 self._sharing_watch = enabled and self._sharing_window_visible
