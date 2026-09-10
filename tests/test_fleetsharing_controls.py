@@ -392,7 +392,11 @@ def test_recovery_errors_never_turn_into_proven_outcomes(status, code, want):
         b'{"protocol":true,"error":"feature_disabled"}',
         b'{"protocol":1,"error":"feature_disabled","error":"feature_disabled"}',
         b'{"protocol":1,"error":"secret <script>"}',
-        b'{"protocol":1,"error":"feature_disabled"}' + b" " * 65536,
+        # Windows cannot export the full payload in PYTEST_CURRENT_TEST.
+        pytest.param(
+            b'{"protocol":1,"error":"feature_disabled"}' + b" " * 65536,
+            id="oversized",
+        ),
         b"[" * 2000,
     ],
 )
